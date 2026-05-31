@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { bucketByDay, clampDays } from "./metrics";
+import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -65,6 +65,44 @@ test("clampDays clamps to 1..90 and floors", () => {
   assert.equal(clampDays(30.9), 30);
   assert.equal(bucketByDay([], 0, now).length, 1);
   assert.equal(bucketByDay([], 500, now).length, 90);
+});
+
+test("bucketCentsByDay sums cents per UTC day, zero-filled & ascending", () => {
+  const out = bucketCentsByDay(
+    [
+      { at: "2026-05-31T00:01:00Z", cents: 500 }, // today
+      { at: "2026-05-31T23:59:00Z", cents: 250 }, // today
+      { at: "2026-05-30T10:00:00Z", cents: 1000 }, // yesterday
+    ],
+    7,
+    now
+  );
+  assert.equal(out.length, 7);
+  assert.equal(out[0].date, "2026-05-25");
+  assert.equal(out[6].date, "2026-05-31");
+  for (let i = 1; i < out.length; i++) assert.ok(out[i - 1].date < out[i].date);
+  const byDate = new Map(out.map((e) => [e.date, e.cents]));
+  assert.equal(byDate.get("2026-05-31"), 750);
+  assert.equal(byDate.get("2026-05-30"), 1000);
+  assert.equal(byDate.get("2026-05-29"), 0); // zero-filled
+});
+
+test("bucketCentsByDay ignores out-of-window and unparseable events", () => {
+  const out = bucketCentsByDay(
+    [
+      { at: "2026-05-01T10:00:00Z", cents: 999 }, // before the 7-day window
+      { at: "2026-06-15T10:00:00Z", cents: 999 }, // after now
+      { at: "not-a-date", cents: 999 }, // unparseable
+    ],
+    7,
+    now
+  );
+  assert.equal(out.reduce((s, e) => s + e.cents, 0), 0);
+});
+
+test("bucketCentsByDay clamps day window like bucketByDay", () => {
+  assert.equal(bucketCentsByDay([], 0, now).length, 1);
+  assert.equal(bucketCentsByDay([], 500, now).length, 90);
 });
 
 console.log(`\n${passed} test(s) passed`);

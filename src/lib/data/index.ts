@@ -16,12 +16,14 @@ import type {
   CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
+  FanCampaignBreakdown,
   FanDetail,
   FanPassView,
+  Grant,
   RedemptionItem,
   RedemptionStatus,
 } from "./types";
-import { bucketByDay, clampDays } from "./metrics";
+import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 import {
   mockGetFanPass,
   mockSpin,
@@ -205,6 +207,34 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
 
   if (!chosen) return { error: "no_prizes" };
 
+  // 3b. FIFO-attribute this spin to a campaign. Order the fan's grants
+  //     oldest→newest, build cumulative spin ranges; this spin's 0-based index
+  //     among the fan's spins (= spins already played) belongs to the grant
+  //     whose cumulative range covers it (null if beyond every grant).
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("campaign_id, spins, created_at")
+    .eq("fan_id", pass.fan_id)
+    .order("created_at", { ascending: true });
+  const { count: playedBefore } = await sb
+    .from("spins")
+    .select("id", { count: "exact", head: true })
+    .eq("fan_id", pass.fan_id);
+
+  let spinCampaignId: string | null = null;
+  {
+    const grants = (grantRows ?? []) as { campaign_id: string | null; spins: number }[];
+    const before = playedBefore ?? 0;
+    let cumulative = 0;
+    for (const g of grants) {
+      cumulative += g.spins;
+      if (before < cumulative) {
+        spinCampaignId = g.campaign_id;
+        break;
+      }
+    }
+  }
+
   // 4. Log the spin (against the fan account) + a pending redemption.
   const { data: spinRow } = await sb
     .from("spins")
@@ -216,6 +246,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       prize_id: chosen.prize.id,
       prize_label: chosen.prize.label,
       prize_rarity: chosen.prize.rarity,
+      campaign_id: spinCampaignId,
     })
     .select("id")
     .single();
@@ -242,10 +273,12 @@ export async function createPass(opts: {
   fanId?: string;
   wheelId?: string;
   campaignId?: string;
+  amountCents?: number;
 }): Promise<{ token: string; fanId: string } | { error: string }> {
   const spins = Math.max(0, Math.floor(opts.spins) || 0);
+  const amountCents = Math.max(0, Math.floor(opts.amountCents ?? 0) || 0);
   if (!isSupabaseConfigured()) {
-    return mockCreatePass(opts.name, spins, opts.fanId, opts.campaignId);
+    return mockCreatePass(opts.name, spins, opts.fanId, opts.campaignId, amountCents);
   }
 
   const sb = await createClient();
@@ -267,8 +300,11 @@ export async function createPass(opts: {
   }
   if (!wheelId) return { error: "no_wheel" };
 
-  // Reuse the existing fan account or create a new one.
+  const campaignId = opts.campaignId ?? null;
+
+  // Reuse the existing fan account (top-up) or create a new one.
   let fanId = opts.fanId;
+  let token: string;
   if (fanId) {
     const { data: fan } = await sb
       .from("fans")
@@ -283,6 +319,17 @@ export async function createPass(opts: {
         spins_granted_total: fan.spins_granted_total + spins,
       })
       .eq("id", fanId);
+
+    // Top-up: DON'T mint a new link — reuse the fan's newest existing token.
+    const { data: pass } = await sb
+      .from("fan_passes")
+      .select("token")
+      .eq("fan_id", fanId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!pass?.token) return { error: "no_pass" };
+    token = pass.token;
   } else {
     const { data: fan, error } = await sb
       .from("fans")
@@ -296,18 +343,30 @@ export async function createPass(opts: {
       .single();
     if (error || !fan) return { error: "db_error" };
     fanId = fan.id;
+
+    // New fan: mint exactly ONE link.
+    token = randomToken();
+    const { error: passErr } = await sb.from("fan_passes").insert({
+      token,
+      creator_id: user.id,
+      wheel_id: wheelId,
+      fan_id: fanId,
+      campaign_id: campaignId,
+    });
+    if (passErr) return { error: "db_error" };
   }
   if (!fanId) return { error: "db_error" };
 
-  const token = randomToken();
-  const { error } = await sb.from("fan_passes").insert({
-    token,
+  // Every grant (new fan OR top-up) is recorded for revenue + FIFO attribution.
+  const { error: grantErr } = await sb.from("grants").insert({
     creator_id: user.id,
-    wheel_id: wheelId,
     fan_id: fanId,
-    campaign_id: opts.campaignId ?? null,
+    campaign_id: campaignId,
+    spins,
+    amount_cents: amountCents,
   });
-  if (error) return { error: "db_error" };
+  if (grantErr) return { error: "db_error" };
+
   return { token, fanId };
 }
 
@@ -385,39 +444,38 @@ export async function getCampaignStats(): Promise<CampaignStats[]> {
 
   const result: CampaignStats[] = [];
   for (const campaign of campaigns) {
-    // The campaign's links (creator-scoped via RLS) + the fan behind each.
-    const { data: passRows } = await sb
-      .from("fan_passes")
-      .select("id, fan_id")
+    // Grants tagged to this campaign → spinsBought, revenue, uniqueFans.
+    const { data: grantRows } = await sb
+      .from("grants")
+      .select("fan_id, spins, amount_cents")
       .eq("creator_id", user.id)
       .eq("campaign_id", campaign.id);
 
-    const passes = (passRows ?? []) as { id: string; fan_id: string | null }[];
-    const passIds = passes.map((p) => p.id);
+    const grants = (grantRows ?? []) as {
+      fan_id: string;
+      spins: number;
+      amount_cents: number;
+    }[];
+    const spinsBought = grants.reduce((s, g) => s + g.spins, 0);
+    const revenue = grants.reduce((s, g) => s + g.amount_cents, 0);
+    const uniqueFans = new Set(grants.map((g) => g.fan_id)).size;
 
-    if (passIds.length === 0) {
-      result.push({ campaign, spins: 0, uniqueFans: 0, fulfilled: 0, topPrize: null });
-      continue;
-    }
-
-    const uniqueFans = new Set(
-      passes.map((p) => p.fan_id).filter((id): id is string => !!id)
-    ).size;
-
-    // Spins on those passes (snapshot prize fields live on the spin row).
+    // Spins attributed (FIFO) to this campaign → spinsPlayed + top prize.
     const { data: spinRows } = await sb
       .from("spins")
       .select("id, prize_label, prize_rarity")
-      .in("fan_pass_id", passIds);
+      .eq("creator_id", user.id)
+      .eq("campaign_id", campaign.id);
 
     const spins = (spinRows ?? []) as {
       id: string;
       prize_label: string;
       prize_rarity: Rarity;
     }[];
+    const spinsPlayed = spins.length;
     const spinIds = spins.map((s) => s.id);
 
-    // Fulfilled redemptions joined to those spins.
+    // Fulfilled redemptions joined to those campaign-attributed spins.
     let fulfilled = 0;
     if (spinIds.length > 0) {
       const { count } = await sb
@@ -443,11 +501,16 @@ export async function getCampaignStats(): Promise<CampaignStats[]> {
       if (!topPrize || entry.count > topPrize.count) topPrize = entry;
     }
 
+    const arpu = uniqueFans ? Math.round(revenue / uniqueFans) : 0;
+
     result.push({
       campaign,
-      spins: spins.length,
+      spinsBought,
+      spinsPlayed,
       uniqueFans,
       fulfilled,
+      revenue,
+      arpu,
       topPrize,
     });
   }
@@ -510,7 +573,8 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     .select(
       `id, display_name, handle, spins_remaining, spins_granted_total, created_at,
        fan_passes(token, created_at),
-       spins(prize_label, prize_rarity, created_at)`
+       spins(prize_label, prize_rarity, created_at),
+       grants(amount_cents, campaign_id, campaign:campaigns(name))`
     )
     .eq("creator_id", user.id)
     .order("created_at", { ascending: false });
@@ -523,19 +587,35 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     spins_granted_total: number;
     fan_passes: { token: string; created_at: string }[] | null;
     spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[] | null;
+    grants:
+      | { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[]
+      | null;
   }[];
 
   return rows.map((r) => {
     const wins = (r.spins ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const grants = r.grants ?? [];
+    const totalSpent = grants.reduce((s, g) => s + g.amount_cents, 0);
+    const campaignNames: string[] = [];
+    const seen = new Set<string>();
+    for (const g of grants) {
+      if (!g.campaign_id || !g.campaign?.name) continue;
+      if (seen.has(g.campaign_id)) continue;
+      seen.add(g.campaign_id);
+      campaignNames.push(g.campaign.name);
+    }
+    const links = (r.fan_passes ?? [])
+      .slice()
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
     return {
       fanId: r.id,
       name: r.display_name ?? r.handle ?? "Fan",
       spinsRemaining: r.spins_remaining,
       grantedTotal: r.spins_granted_total,
-      links: (r.fan_passes ?? [])
-        .slice()
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))
-        .map((p) => ({ token: p.token })),
+      primaryToken: links[0]?.token ?? null,
+      totalSpent,
+      campaignNames,
+      links: links.map((p) => ({ token: p.token })),
       lastWin: wins[0]
         ? { label: wins[0].prize_label, rarity: wins[0].prize_rarity, at: wins[0].created_at }
         : null,
@@ -561,11 +641,16 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   const { data: spinRows } = await sb
     .from("spins")
-    .select("prize_rarity, created_at")
+    .select("prize_label, prize_rarity, campaign_id, created_at")
     .eq("fan_id", fanId)
     .order("created_at", { ascending: false });
 
-  const spins = (spinRows ?? []) as { prize_rarity: Rarity; created_at: string }[];
+  const spins = (spinRows ?? []) as {
+    prize_label: string;
+    prize_rarity: Rarity;
+    campaign_id: string | null;
+    created_at: string;
+  }[];
   const totalSpins = spins.length;
   const lastActive = spins[0]?.created_at ?? null;
 
@@ -609,16 +694,100 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     (p) => ({ token: p.token, createdAt: p.created_at })
   );
 
+  // This fan's grants, newest first, with campaign name resolved via a join.
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("id, spins, amount_cents, campaign_id, created_at, campaign:campaigns(name)")
+    .eq("fan_id", fanId)
+    .order("created_at", { ascending: false });
+
+  const grantData = (grantRows ?? []) as unknown as {
+    id: string;
+    spins: number;
+    amount_cents: number;
+    campaign_id: string | null;
+    created_at: string;
+    campaign: { name: string } | null;
+  }[];
+
+  const grants: Grant[] = grantData.map((g) => ({
+    id: g.id,
+    spins: g.spins,
+    amountCents: g.amount_cents,
+    campaignId: g.campaign_id,
+    campaignName: g.campaign?.name ?? null,
+    at: g.created_at,
+  }));
+
+  const totalSpent = grantData.reduce((s, g) => s + g.amount_cents, 0);
+
+  // Per-campaign breakdown: grant rollups merged with FIFO-attributed spins.
+  // Bucket key is the campaignId, or "" for null-campaign grants/spins.
+  interface Bucket {
+    campaignId: string;
+    name: string;
+    spinsBought: number;
+    spinsPlayed: number;
+    spentCents: number;
+    prizeCounts: Map<string, { label: string; rarity: Rarity; count: number }>;
+  }
+  const buckets = new Map<string, Bucket>();
+  const nameById = new Map<string, string>();
+  for (const g of grantData) {
+    if (g.campaign_id && g.campaign?.name) nameById.set(g.campaign_id, g.campaign.name);
+  }
+  const bucketFor = (campaignId: string | null): Bucket => {
+    const key = campaignId ?? "";
+    let b = buckets.get(key);
+    if (!b) {
+      b = {
+        campaignId: key,
+        name: campaignId ? nameById.get(campaignId) ?? "Uncategorized" : "Uncategorized",
+        spinsBought: 0,
+        spinsPlayed: 0,
+        spentCents: 0,
+        prizeCounts: new Map(),
+      };
+      buckets.set(key, b);
+    }
+    return b;
+  };
+
+  for (const g of grantData) {
+    const b = bucketFor(g.campaign_id);
+    b.spinsBought += g.spins;
+    b.spentCents += g.amount_cents;
+  }
+  for (const s of spins) {
+    const b = bucketFor(s.campaign_id);
+    b.spinsPlayed += 1;
+    const cur = b.prizeCounts.get(s.prize_label);
+    if (cur) cur.count += 1;
+    else b.prizeCounts.set(s.prize_label, { label: s.prize_label, rarity: s.prize_rarity, count: 1 });
+  }
+
+  const byCampaign: FanCampaignBreakdown[] = [...buckets.values()].map((b) => ({
+    campaignId: b.campaignId,
+    name: b.name,
+    spinsBought: b.spinsBought,
+    spinsPlayed: b.spinsPlayed,
+    spentCents: b.spentCents,
+    prizes: [...b.prizeCounts.values()],
+  }));
+
   return {
     fanId: fan.id,
     name: fan.display_name ?? fan.handle ?? "Fan",
     spinsRemaining: fan.spins_remaining,
     grantedTotal: fan.spins_granted_total,
     totalSpins,
+    totalSpent,
     lastActive,
     winsByRarity,
     pendingPrizes,
     links,
+    grants,
+    byCampaign,
   };
 }
 
@@ -740,7 +909,7 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
 // Creator dashboard: metrics + the prize fulfilment queue.
 export async function getOverview(): Promise<CreatorOverview> {
   const empty: CreatorOverview = {
-    metrics: { fans: 0, spinsPlayed: 0, pending: 0, fulfilled: 0 },
+    metrics: { fans: 0, spinsPlayed: 0, pending: 0, fulfilled: 0, revenue: 0 },
     redemptions: [],
   };
   if (!isSupabaseConfigured()) return mockGetOverview();
@@ -791,12 +960,22 @@ export async function getOverview(): Promise<CreatorOverview> {
     .select("id", head)
     .eq("creator_id", user.id);
 
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("amount_cents")
+    .eq("creator_id", user.id);
+  const revenue = ((grantRows ?? []) as { amount_cents: number }[]).reduce(
+    (s, g) => s + g.amount_cents,
+    0
+  );
+
   return {
     metrics: {
       fans: fans ?? 0,
       spinsPlayed: spinsPlayed ?? 0,
       pending: redemptions.filter((r) => r.status === "pending").length,
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
+      revenue,
     },
     redemptions,
   };
@@ -816,7 +995,11 @@ export async function getMetricsExtra(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) {
-    return { trend: bucketByDay([], n), funnel: { links: 0, spun: 0, fulfilled: 0 } };
+    return {
+      trend: bucketByDay([], n),
+      funnel: { links: 0, spun: 0, fulfilled: 0 },
+      revenueTrend: bucketCentsByDay([], n),
+    };
   }
 
   const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
@@ -830,6 +1013,19 @@ export async function getMetricsExtra(
     (r) => r.created_at
   );
   const trend = bucketByDay(timestamps, n);
+
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("created_at, amount_cents")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+  const revenueTrend = bucketCentsByDay(
+    ((grantRows ?? []) as { created_at: string; amount_cents: number }[]).map((r) => ({
+      at: r.created_at,
+      cents: r.amount_cents,
+    })),
+    n
+  );
 
   const head = { count: "exact" as const, head: true };
   const { count: links } = await sb
@@ -853,6 +1049,7 @@ export async function getMetricsExtra(
       spun: spun ?? 0,
       fulfilled: fulfilled ?? 0,
     },
+    revenueTrend,
   };
 }
 

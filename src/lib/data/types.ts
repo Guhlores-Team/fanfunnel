@@ -25,7 +25,37 @@ export interface FanPassView {
 
 /** A creator's named grouping of links, for cross-promotion comparison. */
 export interface Campaign { id: string; name: string; isActive: boolean; createdAt: string }
-export interface CampaignStats { campaign: Campaign; spins: number; uniqueFans: number; fulfilled: number; topPrize: { label: string; rarity: Rarity; count: number } | null }
+
+/** A single granted purchase (new fan or top-up), tagged to a campaign. */
+export interface Grant {
+  id: string;
+  spins: number;
+  amountCents: number;
+  campaignId: string | null;
+  campaignName: string | null;
+  at: string; // ISO timestamp
+}
+
+export interface CampaignStats {
+  campaign: Campaign;
+  spinsBought: number; // sum grant spins tagged to this campaign
+  spinsPlayed: number; // spins attributed to this campaign (spins.campaign_id)
+  uniqueFans: number; // distinct fans with a grant in this campaign
+  fulfilled: number;
+  revenue: number; // cents
+  arpu: number; // cents = uniqueFans ? round(revenue/uniqueFans) : 0
+  topPrize: { label: string; rarity: Rarity; count: number } | null;
+}
+
+/** A fan's per-campaign rollup, for the fan drill-in. */
+export interface FanCampaignBreakdown {
+  campaignId: string;
+  name: string;
+  spinsBought: number;
+  spinsPlayed: number;
+  spentCents: number;
+  prizes: { label: string; rarity: Rarity; count: number }[];
+}
 
 export type RedemptionStatus = "pending" | "fulfilled" | "cancelled";
 
@@ -45,7 +75,10 @@ export interface FanAccountSummary {
   fanId: string;
   name: string;
   spinsRemaining: number;
-  grantedTotal: number;
+  grantedTotal: number; // lifetime granted
+  primaryToken: string | null;
+  totalSpent: number; // cents
+  campaignNames: string[]; // campaigns this fan has grants in
   links: { token: string }[];
   lastWin: { label: string; rarity: Rarity; at: string } | null;
 }
@@ -53,10 +86,13 @@ export interface FanAccountSummary {
 export interface FanDetail {
   fanId: string; name: string;
   spinsRemaining: number; grantedTotal: number; totalSpins: number;
+  totalSpent: number; // cents
   lastActive: string | null;
   winsByRarity: { rarity: Rarity; count: number }[];
   pendingPrizes: { label: string; rarity: Rarity; emoji?: string; at: string }[];
   links: { token: string; createdAt: string }[];
+  grants: Grant[]; // newest first
+  byCampaign: FanCampaignBreakdown[];
 }
 
 export interface CreatorMetrics {
@@ -64,6 +100,7 @@ export interface CreatorMetrics {
   spinsPlayed: number;
   pending: number;
   fulfilled: number;
+  revenue: number; // cents
 }
 
 /** Everything the creator dashboard's metrics + inbox need. */
@@ -73,8 +110,9 @@ export interface CreatorOverview {
 }
 
 export interface DailyCount { date: string; spins: number } // YYYY-MM-DD (UTC)
+export interface RevenueDaily { date: string; cents: number } // YYYY-MM-DD (UTC)
 export interface ConversionFunnel { links: number; spun: number; fulfilled: number }
-export interface CreatorMetricsExtra { trend: DailyCount[]; funnel: ConversionFunnel }
+export interface CreatorMetricsExtra { trend: DailyCount[]; funnel: ConversionFunnel; revenueTrend: RevenueDaily[] }
 
 // --- Admin (cross-account) --------------------------------------------------
 

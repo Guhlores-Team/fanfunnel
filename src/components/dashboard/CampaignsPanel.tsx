@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Campaign, CampaignStats } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
+import { formatCents } from "@/lib/format";
 import { EmptyState, Field } from "./ui";
 
 // Self-contained Campaigns tab. Creators name a campaign, attach it to the
@@ -113,9 +114,13 @@ export default function CampaignsPanel() {
 }
 
 function CampaignCard({ stats }: { stats: CampaignStats }) {
-  const { campaign, spins, uniqueFans, fulfilled, topPrize } = stats;
+  const { campaign, revenue, arpu, spinsBought, spinsPlayed, uniqueFans, fulfilled, topPrize } =
+    stats;
   const cells = [
-    { label: "Spins", value: spins },
+    { label: "Revenue", value: formatCents(revenue) },
+    { label: "ARPU", value: formatCents(arpu) },
+    { label: "Spins bought", value: spinsBought },
+    { label: "Spins played", value: spinsPlayed },
     { label: "Unique fans", value: uniqueFans },
     { label: "Fulfilled", value: fulfilled },
   ];
@@ -131,8 +136,8 @@ function CampaignCard({ stats }: { stats: CampaignStats }) {
         )}
       </div>
 
-      {/* Hairline-divided stat row, like the metrics tab. */}
-      <dl className="mt-4 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-line bg-line">
+      {/* Hairline-divided stat grid, like the metrics tab. */}
+      <dl className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3">
         {cells.map((c) => (
           <div key={c.label} className="bg-base px-4 py-3">
             <dd className="tnum text-xl font-bold text-ink">{c.value}</dd>

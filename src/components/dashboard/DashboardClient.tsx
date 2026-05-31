@@ -18,6 +18,7 @@ import type {
   RedemptionStatus,
 } from "@/lib/data/types";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
+import { formatCents } from "@/lib/format";
 import { OddsBar } from "@/components/dashboard/OddsBar";
 import Sparkline from "@/components/dashboard/Sparkline";
 import Funnel from "@/components/dashboard/Funnel";
@@ -252,6 +253,7 @@ function MetricsPanel({
 
   const stats = [
     { label: "Fans", value: m?.fans ?? 0 },
+    { label: "Revenue", value: formatCents(m?.revenue ?? 0) },
     { label: "Spins played", value: m?.spinsPlayed ?? 0 },
     { label: "To fulfil", value: m?.pending ?? 0 },
     { label: "Delivered", value: m?.fulfilled ?? 0 },
@@ -273,7 +275,7 @@ function MetricsPanel({
   return (
     <div className="space-y-6">
       {/* Compact stat row (hairline-divided, tabular). */}
-      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-5">
         {stats.map((s) => (
           <div key={s.label} className="bg-base px-4 py-4">
             <dd className="tnum text-2xl font-bold text-ink">{s.value}</dd>
@@ -313,6 +315,30 @@ function MetricsPanel({
               <div className="skeleton h-14 w-full rounded" />
             ) : (
               <Sparkline data={extra.trend} />
+            )}
+          </div>
+        </section>
+
+        {/* Revenue trend */}
+        <section className="card rounded-xl p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Revenue trend</h3>
+              <p className="mt-0.5 text-xs text-muted">Daily revenue over time.</p>
+            </div>
+            {!extraLoading && extra && (
+              <span className="tnum shrink-0 text-sm font-bold text-ink">
+                {formatCents(extra.revenueTrend.reduce((s, d) => s + d.cents, 0))}
+              </span>
+            )}
+          </div>
+          <div className="mt-4">
+            {extraLoading || !extra ? (
+              <div className="skeleton h-14 w-full rounded" />
+            ) : (
+              <Sparkline
+                data={extra.revenueTrend.map((d) => ({ date: d.date, spins: d.cents }))}
+              />
             )}
           </div>
         </section>
@@ -590,10 +616,13 @@ function FansPanel() {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [name, setName] = useState("");
   const [spins, setSpins] = useState(3);
+  const [amount, setAmount] = useState<string>("");
   const [campaignId, setCampaignId] = useState<string>("");
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [openFanId, setOpenFanId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [campaignFilter, setCampaignFilter] = useState<string>("");
   const toast = useToast();
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
@@ -634,9 +663,16 @@ function FansPanel() {
   async function createAccount() {
     setCreating(true);
     try {
-      const data = await call({ name: name.trim(), spins, campaignId: campaignId || undefined });
+      const amountDollars = amount ? Number(amount) : undefined;
+      const data = await call({
+        name: name.trim(),
+        spins,
+        campaignId: campaignId || undefined,
+        amountDollars: amountDollars || undefined,
+      });
       if (data) {
         setName("");
+        setAmount("");
         await load();
       }
     } finally {
@@ -644,10 +680,32 @@ function FansPanel() {
     }
   }
 
-  async function addLink(fanId: string, addSpins: number) {
-    const data = await call({ fanId, spins: addSpins });
+  // Top up an existing fan. The data layer tops up the balance without minting a
+  // new link, and can tag the grant to a (possibly different) campaign.
+  async function topUp(
+    fanId: string,
+    addSpins: number,
+    amountDollars?: number,
+    topUpCampaignId?: string
+  ) {
+    const data = await call({
+      fanId,
+      spins: addSpins,
+      amountDollars: amountDollars || undefined,
+      campaignId: topUpCampaignId || undefined,
+    });
     if (data) await load();
   }
+
+  // Client-side filtering over the loaded accounts. NOTE: once accounts
+  // paginate, this must move server-side so search/filter cover all fans.
+  const filtered = (accounts ?? []).filter((a) => {
+    const q = search.trim().toLowerCase();
+    const matchesSearch = !q || a.name.toLowerCase().includes(q);
+    const matchesCampaign =
+      !campaignFilter || a.campaignNames.includes(campaignFilter);
+    return matchesSearch && matchesCampaign;
+  });
 
   return (
     <div className="max-w-2xl">
@@ -675,6 +733,17 @@ function FansPanel() {
               onChange={(e) => setSpins(Math.max(1, Number(e.target.value)))}
             />
           </Field>
+          <Field label="$ amount (optional)">
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              className="ff-input tnum w-28"
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </Field>
           <Field label="Campaign (optional)">
             <select
               className="ff-input w-44"
@@ -699,6 +768,33 @@ function FansPanel() {
         </div>
       </div>
 
+      {accounts && accounts.length > 0 && (
+        <div className="mt-6 flex flex-wrap items-end gap-3">
+          <Field label="Search fans">
+            <input
+              className="ff-input w-56"
+              placeholder="Name or handle"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </Field>
+          <Field label="Campaign">
+            <select
+              className="ff-input w-44"
+              value={campaignFilter}
+              onChange={(e) => setCampaignFilter(e.target.value)}
+            >
+              <option value="">All campaigns</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      )}
+
       <div className="mt-6 space-y-4">
         {accounts === null && (
           <>
@@ -710,12 +806,16 @@ function FansPanel() {
         {accounts?.length === 0 && (
           <EmptyState title="No fans yet" body="Create your first fan account above to mint a link." />
         )}
-        {accounts?.map((acc) => (
+        {accounts && accounts.length > 0 && filtered.length === 0 && (
+          <EmptyState title="No matches" body="No fans match your search or campaign filter." />
+        )}
+        {filtered.map((acc) => (
           <AccountCard
             key={acc.fanId}
             account={acc}
             origin={origin}
-            onAddLink={addLink}
+            campaigns={campaigns}
+            onTopUp={topUp}
             onOpen={setOpenFanId}
           />
         ))}
@@ -728,15 +828,30 @@ function FansPanel() {
 function AccountCard({
   account,
   origin,
-  onAddLink,
+  campaigns,
+  onTopUp,
   onOpen,
 }: {
   account: FanAccountSummary;
   origin: string;
-  onAddLink: (fanId: string, spins: number) => void;
+  campaigns: { id: string; name: string }[];
+  onTopUp: (
+    fanId: string,
+    addSpins: number,
+    amountDollars?: number,
+    campaignId?: string
+  ) => void;
   onOpen: (fanId: string) => void;
 }) {
   const [topUp, setTopUp] = useState(3);
+  const [amount, setAmount] = useState<string>("");
+  const [campaignId, setCampaignId] = useState<string>("");
+  const [showAll, setShowAll] = useState(false);
+
+  // Surface only the primary link by default; the rest are revealed on demand.
+  const primaryToken = account.primaryToken ?? account.links[0]?.token ?? null;
+  const others = account.links.filter((l) => l.token !== primaryToken);
+
   return (
     <div className="card rounded-xl p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -762,7 +877,26 @@ function AccountCard({
             )}
           </p>
         </button>
-        <div className="flex items-center gap-2">
+      </div>
+
+      {/* Spend + campaign chips */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="text-muted">
+          <span className="tnum font-semibold text-ink">{formatCents(account.totalSpent)}</span> spent
+        </span>
+        {account.campaignNames.map((c) => (
+          <span
+            key={c}
+            className="rounded-full border border-line px-2 py-0.5 font-semibold text-muted"
+          >
+            {c}
+          </span>
+        ))}
+      </div>
+
+      {/* Top-up row: spins + optional $ + optional campaign tag. */}
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <Field label="Spins">
           <input
             type="number"
             min={1}
@@ -770,19 +904,68 @@ function AccountCard({
             value={topUp}
             onChange={(e) => setTopUp(Math.max(1, Number(e.target.value)))}
           />
-          <button
-            onClick={() => onAddLink(account.fanId, topUp)}
-            className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+        </Field>
+        <Field label="$ amount">
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            className="ff-input tnum w-24"
+            placeholder="0.00"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </Field>
+        <Field label="Campaign">
+          <select
+            className="ff-input w-40"
+            value={campaignId}
+            onChange={(e) => setCampaignId(e.target.value)}
           >
-            Top up + new link
-          </button>
+            <option value="">None</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <button
+          onClick={() => {
+            onTopUp(
+              account.fanId,
+              topUp,
+              amount ? Number(amount) || undefined : undefined,
+              campaignId || undefined
+            );
+            setAmount("");
+          }}
+          className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+        >
+          Top up
+        </button>
+      </div>
+
+      {primaryToken && (
+        <div className="mt-3 space-y-2">
+          <LinkRow url={`${origin}/spin/${primaryToken}`} latest />
+          {others.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowAll((v) => !v)}
+                className="text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
+              >
+                {showAll ? "Hide other links" : `Show all links (${account.links.length})`}
+              </button>
+              {showAll &&
+                others.map((l) => (
+                  <LinkRow key={l.token} url={`${origin}/spin/${l.token}`} latest={false} />
+                ))}
+            </>
+          )}
         </div>
-      </div>
-      <div className="mt-3 space-y-2">
-        {account.links.map((l, i) => (
-          <LinkRow key={l.token} url={`${origin}/spin/${l.token}`} latest={i === 0} />
-        ))}
-      </div>
+      )}
     </div>
   );
 }

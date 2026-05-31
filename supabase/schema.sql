@@ -336,3 +336,33 @@ create policy redemptions_rw on public.redemptions for all
 -- NOTE: there are intentionally NO insert policies for `spins` and no fan-side
 -- policies anywhere. Fan reads/writes go through the server using the service
 -- role (which bypasses RLS), keeping the secret token server-side.
+
+-- ============================================================================
+-- Revenue + many-to-many campaign attribution (migration 0002)
+-- A fan has one permanent link but can buy into many campaigns. Each grant
+-- (new fan or top-up) tags spins + money to a campaign; each spin is attributed
+-- to a campaign FIFO so per-campaign spins/prizes are exact.
+-- ============================================================================
+create table if not exists public.grants (
+  id           uuid primary key default gen_random_uuid(),
+  creator_id   uuid not null references public.profiles(id) on delete cascade,
+  fan_id       uuid not null references public.fans(id) on delete cascade,
+  campaign_id  uuid references public.campaigns(id) on delete set null,
+  spins        integer not null default 0 check (spins >= 0),
+  amount_cents integer not null default 0 check (amount_cents >= 0),
+  created_at   timestamptz not null default now()
+);
+create index if not exists grants_creator_idx   on public.grants(creator_id);
+create index if not exists grants_fan_idx        on public.grants(fan_id);
+create index if not exists grants_campaign_idx   on public.grants(campaign_id);
+create index if not exists grants_created_at_idx on public.grants(created_at);
+
+alter table public.grants enable row level security;
+drop policy if exists grants_rw on public.grants;
+create policy grants_rw on public.grants for all
+  using (creator_id = auth.uid() or public.is_admin())
+  with check (creator_id = auth.uid() or public.is_admin());
+
+alter table public.spins
+  add column if not exists campaign_id uuid references public.campaigns(id) on delete set null;
+create index if not exists spins_campaign_idx on public.spins(campaign_id);

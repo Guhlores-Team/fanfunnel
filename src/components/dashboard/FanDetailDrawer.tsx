@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { RARITY_COLORS, type Rarity } from "@/lib/games/wheel/types";
 import type { FanDetail } from "@/lib/data/types";
+import { formatCents } from "@/lib/format";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -92,6 +93,7 @@ export default function FanDetailDrawer({
     { label: "Spins left", value: String(detail?.spinsRemaining ?? 0) },
     { label: "Granted", value: String(detail?.grantedTotal ?? 0) },
     { label: "Total spins", value: String(detail?.totalSpins ?? 0) },
+    { label: "Total spent", value: formatCents(detail?.totalSpent ?? 0) },
     {
       label: "Last active",
       value: detail?.lastActive ? timeAgo(detail.lastActive) : "—",
@@ -195,6 +197,86 @@ export default function FanDetailDrawer({
                         ))}
                     </div>
                   </>
+                )}
+              </section>
+
+              {/* By campaign */}
+              <section>
+                <h3 className="text-sm font-semibold text-ink">By campaign</h3>
+                {loading || !detail ? (
+                  <div className="skeleton mt-3 h-10 w-full rounded" />
+                ) : detail.byCampaign.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted">No campaign activity yet.</p>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {detail.byCampaign.map((c) => (
+                      <li
+                        key={c.campaignId}
+                        className="rounded-lg border border-line bg-base/40 px-3 py-2.5"
+                      >
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="min-w-0 truncate text-sm font-semibold text-ink">
+                            {c.name}
+                          </span>
+                          <span className="tnum shrink-0 text-xs font-semibold text-ink">
+                            {formatCents(c.spentCents)}
+                          </span>
+                        </div>
+                        <p className="tnum mt-0.5 text-xs text-muted">
+                          {c.spinsBought} bought · {c.spinsPlayed} played
+                        </p>
+                        {c.prizes.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {c.prizes.map((p, i) => (
+                              <span
+                                key={`${p.label}-${i}`}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-xs text-ink"
+                              >
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: RARITY_COLORS[p.rarity] }}
+                                />
+                                <span className="truncate">{p.label}</span>
+                                <span className="tnum text-muted">×{p.count}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {/* Grant history */}
+              <section>
+                <h3 className="text-sm font-semibold text-ink">Grant history</h3>
+                {loading || !detail ? (
+                  <div className="skeleton mt-3 h-10 w-full rounded" />
+                ) : detail.grants.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted">No grants yet.</p>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {detail.grants.map((g) => (
+                      <li
+                        key={g.id}
+                        className="flex items-center gap-3 rounded-lg border border-line bg-base/40 px-3 py-2"
+                      >
+                        <span className="tnum shrink-0 text-sm font-semibold text-ink">
+                          +{g.spins}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm text-muted">
+                          <span className="tnum font-semibold text-ink">
+                            {formatCents(g.amountCents)}
+                          </span>{" "}
+                          · {g.campaignName ?? "—"}
+                        </span>
+                        <span className="tnum shrink-0 text-xs text-muted">
+                          {timeAgo(g.at)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </section>
 
