@@ -264,7 +264,10 @@ export interface CohortRow {
 
 export interface DailyCount { date: string; spins: number } // YYYY-MM-DD (UTC)
 export interface RevenueDaily { date: string; cents: number } // YYYY-MM-DD (UTC)
-export interface ConversionFunnel { links: number; spun: number; fulfilled: number }
+// Per-fan funnel (one permanent link per fan): fans created → fans who spun at
+// least once → fans with a fulfilled prize. Measures real audience conversion,
+// not link/spin volume.
+export interface ConversionFunnel { fans: number; spun: number; fulfilled: number }
 export interface CreatorMetricsExtra { trend: DailyCount[]; funnel: ConversionFunnel; revenueTrend: RevenueDaily[] }
 
 // --- Admin (cross-account) --------------------------------------------------

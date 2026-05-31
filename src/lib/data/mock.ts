@@ -1261,10 +1261,13 @@ export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
   return {
     trend,
     funnel: {
-      // "Opened" isn't tracked — funnel runs links → spun → fulfilled.
-      links: store.tokens.size,
-      spun: store.redemptions.length,
-      fulfilled: store.redemptions.filter((r) => r.status === "fulfilled").length,
+      // Per-fan funnel: fans created → fans with ≥1 spin → fans with a
+      // fulfilled prize. Each redemption is one spin and carries its fanId.
+      fans: store.fans.size,
+      spun: new Set(store.redemptions.map((r) => r.fanId)).size,
+      fulfilled: new Set(
+        store.redemptions.filter((r) => r.status === "fulfilled").map((r) => r.fanId)
+      ).size,
     },
     revenueTrend,
   };

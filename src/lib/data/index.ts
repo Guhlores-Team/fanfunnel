@@ -2349,28 +2349,41 @@ export async function getMetricsExtra(
     n
   );
 
+  // Per-fan funnel: fans created → fans with ≥1 spin → fans with a fulfilled
+  // prize. Counts distinct FANS (not links/spins), so it reflects how the
+  // audience converts under the one-permanent-link model.
   const head = { count: "exact" as const, head: true };
-  const { count: links } = await sb
-    .from("fan_passes")
+  const { count: fans } = await sb
+    .from("fans")
     .select("id", head)
     .eq("creator_id", user.id);
-  const { count: spun } = await sb
+
+  const { data: spunRows } = await sb
     .from("spins")
-    .select("id", head)
-    .eq("creator_id", user.id);
-  const { count: fulfilled } = await sb
+    .select("fan_id")
+    .eq("creator_id", user.id)
+    .not("fan_id", "is", null);
+  const spun = new Set(
+    ((spunRows ?? []) as { fan_id: string | null }[])
+      .map((r) => r.fan_id)
+      .filter((id): id is string => id !== null)
+  ).size;
+
+  // Fulfilled redemptions → distinct fans, joined through the spin.
+  const { data: fulfilledRows } = await sb
     .from("redemptions")
-    .select("id", head)
+    .select("spin:spins(fan_id)")
     .eq("creator_id", user.id)
     .eq("status", "fulfilled");
+  const fulfilled = new Set(
+    ((fulfilledRows ?? []) as unknown as { spin: { fan_id: string | null } | null }[])
+      .map((r) => r.spin?.fan_id)
+      .filter((id): id is string => !!id)
+  ).size;
 
   return {
     trend,
-    funnel: {
-      links: links ?? 0,
-      spun: spun ?? 0,
-      fulfilled: fulfilled ?? 0,
-    },
+    funnel: { fans: fans ?? 0, spun, fulfilled },
     revenueTrend,
   };
 }
