@@ -36,6 +36,7 @@ import InboxPanel from "@/components/dashboard/InboxPanel";
 import BoostsPanel from "@/components/dashboard/BoostsPanel";
 import AnalyticsPanel from "@/components/dashboard/AnalyticsPanel";
 import PrizePhoto from "@/components/dashboard/PrizePhoto";
+import ImportFans from "@/components/dashboard/ImportFans";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -516,17 +517,32 @@ function PrizesPanel({
 }) {
   const [filter, setFilter] = useState<RedemptionStatus | "all">("pending");
 
-  async function setStatus(id: string, status: RedemptionStatus) {
+  // PATCH a redemption: status and/or notes/dueAt. Optimistically patch the
+  // shared overview so the row updates instantly, then refresh authoritatively.
+  async function patchRow(
+    id: string,
+    patch: { status?: RedemptionStatus; notes?: string | null; dueAt?: string | null }
+  ) {
     setData((d) =>
-      d ? { ...d, redemptions: d.redemptions.map((r) => (r.id === id ? { ...r, status } : r)) } : d
+      d
+        ? {
+            ...d,
+            redemptions: d.redemptions.map((r) =>
+              r.id === id ? { ...r, ...patch } : r
+            ),
+          }
+        : d
     );
-    await fetch("/api/redemptions", {
-      method: "POST",
+    await fetch(`/api/redemptions/${id}`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status }),
+      body: JSON.stringify(patch),
     });
     refresh();
   }
+
+  const setStatus = (id: string, status: RedemptionStatus) =>
+    patchRow(id, { status });
 
   const redemptions = data?.redemptions ?? [];
   const shown = filter === "all" ? redemptions : redemptions.filter((r) => r.status === filter);
@@ -548,7 +564,7 @@ function PrizesPanel({
       </div>
 
       <div className="mt-4 flex gap-2">
-        {(["pending", "fulfilled", "cancelled", "all"] as const).map((f) => (
+        {(["pending", "in_progress", "fulfilled", "cancelled", "all"] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -558,7 +574,7 @@ function PrizesPanel({
                 : "border border-line text-muted hover:text-ink"
             }`}
           >
-            {f}
+            {f === "all" ? "all" : STATUS_LABEL[f]}
             {f === "pending" && pendingCount > 0 ? ` (${pendingCount})` : ""}
           </button>
         ))}
@@ -579,71 +595,146 @@ function PrizesPanel({
           />
         )}
         {shown.map((r) => (
-          <RedemptionRow key={r.id} r={r} onSet={setStatus} />
+          <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} />
         ))}
       </div>
     </div>
   );
 }
 
+// The next status in the pending → in_progress → fulfilled cycle.
+const STATUS_NEXT: Record<RedemptionStatus, RedemptionStatus> = {
+  pending: "in_progress",
+  in_progress: "fulfilled",
+  fulfilled: "pending",
+  cancelled: "pending",
+};
+
+const STATUS_CTA: Record<RedemptionStatus, string> = {
+  pending: "Start",
+  in_progress: "Mark fulfilled",
+  fulfilled: "Reopen",
+  cancelled: "Reopen",
+};
+
+const STATUS_PILL: Record<RedemptionStatus, string> = {
+  pending: "bg-white/10 text-muted",
+  in_progress: "bg-amber-500/15 text-amber-300",
+  fulfilled: "bg-emerald-500/15 text-emerald-300",
+  cancelled: "bg-white/10 text-muted",
+};
+
+const STATUS_LABEL: Record<RedemptionStatus, string> = {
+  pending: "Pending",
+  in_progress: "In progress",
+  fulfilled: "Fulfilled",
+  cancelled: "Cancelled",
+};
+
 function RedemptionRow({
   r,
   onSet,
+  onPatch,
 }: {
   r: RedemptionItem;
   onSet: (id: string, status: RedemptionStatus) => void;
+  onPatch: (
+    id: string,
+    patch: { status?: RedemptionStatus; notes?: string | null; dueAt?: string | null }
+  ) => void;
 }) {
   const color = RARITY_COLORS[r.rarity];
+  const [notes, setNotes] = useState(r.notes ?? "");
+  // Keep the local draft in sync when the row is refreshed from the server.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync draft to refreshed prop
+    setNotes(r.notes ?? "");
+  }, [r.notes]);
+
+  const dueValue = r.dueAt ? r.dueAt.slice(0, 10) : "";
+  const overdue =
+    !!r.dueAt &&
+    r.status !== "fulfilled" &&
+    r.status !== "cancelled" &&
+    // eslint-disable-next-line react-hooks/purity -- comparing a due date to "now" is inherently time-dependent
+    new Date(r.dueAt).getTime() < Date.now();
+
+  function commitNotes() {
+    const next = notes.trim() ? notes : null;
+    if ((r.notes ?? "") !== (next ?? "")) onPatch(r.id, { notes: next });
+  }
+
   return (
-    <div className="card flex flex-wrap items-center justify-between gap-3 rounded-xl p-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <div
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-xl"
-          style={{ backgroundColor: `color-mix(in oklab, ${color} 18%, transparent)` }}
-        >
-          {r.emoji ?? "🎁"}
+    <div className="card flex flex-col gap-3 rounded-xl p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-xl"
+            style={{ backgroundColor: `color-mix(in oklab, ${color} 18%, transparent)` }}
+          >
+            {r.emoji ?? "🎁"}
+          </div>
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-ink">{r.prizeLabel}</p>
+            <p className="truncate text-xs text-muted">
+              <span style={{ color }}>{RARITY_LABEL[r.rarity]}</span> · {r.fanName} ·{" "}
+              {new Date(r.at).toLocaleString()}
+            </p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <p className="truncate font-semibold text-ink">{r.prizeLabel}</p>
-          <p className="truncate text-xs text-muted">
-            <span style={{ color }}>{RARITY_LABEL[r.rarity]}</span> · {r.fanName} ·{" "}
-            {new Date(r.at).toLocaleString()}
-          </p>
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {r.status === "pending" ? (
-          <>
-            <button
-              onClick={() => onSet(r.id, "fulfilled")}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-400"
-            >
-              Mark fulfilled
-            </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {overdue && (
+            <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-bold text-red-400">
+              Overdue
+            </span>
+          )}
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-bold ${STATUS_PILL[r.status]}`}
+          >
+            {STATUS_LABEL[r.status]}
+          </span>
+          <button
+            onClick={() => onSet(r.id, STATUS_NEXT[r.status])}
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white transition ${
+              r.status === "in_progress"
+                ? "bg-emerald-500 hover:bg-emerald-400"
+                : "btn-brand"
+            }`}
+          >
+            {STATUS_CTA[r.status]}
+          </button>
+          {r.status !== "cancelled" && r.status !== "fulfilled" && (
             <button
               onClick={() => onSet(r.id, "cancelled")}
               className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
             >
               Cancel
             </button>
-          </>
-        ) : (
-          <span
-            className={`rounded-full px-3 py-1 text-xs font-bold ${
-              r.status === "fulfilled"
-                ? "bg-emerald-500/15 text-emerald-300"
-                : "bg-white/10 text-muted"
-            }`}
-          >
-            {r.status === "fulfilled" ? "Fulfilled" : "Cancelled"}
-            <button
-              onClick={() => onSet(r.id, "pending")}
-              className="ml-2 underline opacity-70 hover:opacity-100"
-            >
-              undo
-            </button>
-          </span>
-        )}
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="ff-input min-w-0 flex-1 text-sm"
+          placeholder="Add a note (e.g. shipped via DHL #123)…"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          onBlur={commitNotes}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+        />
+        <label className="flex items-center gap-1.5 text-xs text-muted">
+          Due
+          <input
+            type="date"
+            className="ff-input tnum text-sm"
+            value={dueValue}
+            onChange={(e) =>
+              onPatch(r.id, { dueAt: e.target.value ? e.target.value : null })
+            }
+          />
+        </label>
       </div>
     </div>
   );
@@ -902,6 +993,10 @@ function FansPanel() {
         >
           Manage messages
         </button>
+      </div>
+
+      <div className="mt-4">
+        <ImportFans campaignId={campaignId || undefined} onImported={load} />
       </div>
 
       <div className="mt-6 space-y-4">

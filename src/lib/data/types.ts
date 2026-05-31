@@ -147,7 +147,11 @@ export interface FanCampaignBreakdown {
   prizes: { label: string; rarity: Rarity; count: number }[];
 }
 
-export type RedemptionStatus = "pending" | "fulfilled" | "cancelled";
+export type RedemptionStatus =
+  | "pending"
+  | "in_progress"
+  | "fulfilled"
+  | "cancelled";
 
 /** A won prize in the creator's fulfilment queue. */
 export interface RedemptionItem {
@@ -158,6 +162,8 @@ export interface RedemptionItem {
   emoji?: string;
   status: RedemptionStatus;
   at: string; // ISO timestamp
+  notes?: string | null;
+  dueAt?: string | null; // ISO timestamp
 }
 
 /** A persistent fan account with its links — for the creator's Fans tab. */

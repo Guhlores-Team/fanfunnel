@@ -55,6 +55,7 @@ import {
   mockGetPrizeRoi,
   mockGetCohortRetention,
   mockSetRedemptionStatus,
+  mockSetRedemptionMeta,
   mockGetWheel,
   mockSaveWheel,
   mockGetAdminOverview,
@@ -2195,7 +2196,7 @@ export async function getOverview(): Promise<CreatorOverview> {
   const { data: reds } = await sb
     .from("redemptions")
     .select(
-      `id, status, created_at,
+      `id, status, created_at, notes, due_at,
        spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle))`
     )
     .eq("creator_id", user.id)
@@ -2206,6 +2207,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     id: string;
     status: RedemptionStatus;
     created_at: string;
+    notes: string | null;
+    due_at: string | null;
     spin: {
       prize_label: string;
       prize_rarity: RedemptionItem["rarity"];
@@ -2220,6 +2223,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     rarity: r.spin?.prize_rarity ?? "common",
     status: r.status,
     at: r.created_at,
+    notes: r.notes,
+    dueAt: r.due_at,
   }));
 
   const head = { count: "exact" as const, head: true };
@@ -2536,6 +2541,36 @@ export async function setRedemptionStatus(
       fulfilled_at: status === "fulfilled" ? new Date().toISOString() : null,
     })
     .eq("id", id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// Update a redemption's notes and/or due date, leaving its status untouched.
+export async function setRedemptionMeta(
+  id: string,
+  patch: { notes?: string | null; dueAt?: string | null }
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return mockSetRedemptionMeta(id, patch)
+      ? { ok: true }
+      : { error: "not_found" };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const update: { notes?: string | null; due_at?: string | null } = {};
+  if ("notes" in patch) update.notes = patch.notes ?? null;
+  if ("dueAt" in patch) update.due_at = patch.dueAt ?? null;
+  if (Object.keys(update).length === 0) return { ok: true };
+
+  const { error } = await sb
+    .from("redemptions")
+    .update(update)
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 

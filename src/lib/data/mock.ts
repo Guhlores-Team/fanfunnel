@@ -1187,6 +1187,8 @@ export function mockGetOverview(): CreatorOverview {
     emoji: r.emoji,
     status: r.status,
     at: r.at,
+    notes: r.notes ?? null,
+    dueAt: r.dueAt ?? null,
   }));
   const unreadMessages = store.messages.filter(
     (m) => m.sender === "fan" && m.readAt === null
@@ -1340,6 +1342,17 @@ export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
   const r = store.redemptions.find((x) => x.id === id);
   if (!r) return null;
   r.status = status;
+  return r;
+}
+
+export function mockSetRedemptionMeta(
+  id: string,
+  patch: { notes?: string | null; dueAt?: string | null }
+) {
+  const r = store.redemptions.find((x) => x.id === id);
+  if (!r) return null;
+  if ("notes" in patch) r.notes = patch.notes ?? null;
+  if ("dueAt" in patch) r.dueAt = patch.dueAt ?? null;
   return r;
 }
 
