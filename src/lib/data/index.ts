@@ -7,7 +7,7 @@ import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
 import { randomSeedHex, sha256Hex, makeRng } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
-import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
 import type {
   AdminAccount,
   AdminOverview,
@@ -4075,6 +4075,141 @@ export async function getPublicWheelTeaser(
     wheel: toWheelConfig(wheelData as unknown as DbWheelRow),
     happyHour,
   };
+}
+
+// --- SFW link-in-bio public profile -----------------------------------------
+
+export interface PublicProfile {
+  creatorTitle: string;
+  tagline: string | null;
+  brandColor: string;
+  // SFW prize teaser: labels + rarities only (no explicit media), best first.
+  prizes: { label: string; rarity: Rarity; emoji?: string }[];
+  hasTipUrl: boolean;
+}
+
+/** Public, SFW landing data for a creator's link-in-bio page (by slug). */
+export async function getPublicProfileBySlug(
+  slug: string
+): Promise<{ profile: PublicProfile; tipUrl: string | null } | null> {
+  if (!isSupabaseConfigured()) {
+    return {
+      profile: {
+        creatorTitle: "Demo Creator",
+        tagline: "Spin my wheel — every spin wins 🎡",
+        brandColor: "#ec4899",
+        prizes: SAMPLE_WHEEL.prizes.slice(0, 6).map((p) => ({
+          label: p.label,
+          rarity: p.rarity,
+          emoji: p.emoji,
+        })),
+        hasTipUrl: true,
+      },
+      tipUrl: "#",
+    };
+  }
+  const sb = createServiceClient();
+  const { data: prof } = await sb
+    .from("profiles")
+    .select("id, display_name, public_tagline, tip_url")
+    .eq("public_slug", slug)
+    .maybeSingle();
+  const p = prof as {
+    id: string;
+    display_name: string | null;
+    public_tagline: string | null;
+    tip_url: string | null;
+  } | null;
+  if (!p) return null;
+
+  const wheelId = await resolveActiveWheelId(sb, p.id, new Date());
+  let brandColor = "#ec4899";
+  let prizes: { label: string; rarity: Rarity; emoji?: string }[] = [];
+  if (wheelId) {
+    const { data: wheelData } = await sb
+      .from("wheels")
+      .select(WHEEL_SELECT)
+      .eq("id", wheelId)
+      .maybeSingle();
+    if (wheelData) {
+      const cfg = toWheelConfig(wheelData as unknown as DbWheelRow);
+      brandColor = cfg.brandColor ?? "#ec4899";
+      prizes = cfg.prizes
+        .slice()
+        .sort(
+          (a, b) =>
+            RARITY_ORDER.indexOf(b.rarity) - RARITY_ORDER.indexOf(a.rarity)
+        )
+        .slice(0, 6)
+        .map((pr) => ({ label: pr.label, rarity: pr.rarity, emoji: pr.emoji }));
+    }
+  }
+
+  return {
+    profile: {
+      creatorTitle: p.display_name ?? "Creator",
+      tagline: p.public_tagline,
+      brandColor,
+      prizes,
+      hasTipUrl: !!p.tip_url,
+    },
+    tipUrl: p.tip_url,
+  };
+}
+
+/** The signed-in creator's editable public-profile fields. */
+export async function getMyPublicProfile(): Promise<{
+  slug: string | null;
+  tipUrl: string | null;
+  tagline: string | null;
+}> {
+  if (!isSupabaseConfigured())
+    return { slug: "demo-creator", tipUrl: "", tagline: "" };
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { slug: null, tipUrl: null, tagline: null };
+  const { data } = await sb
+    .from("profiles")
+    .select("public_slug, tip_url, public_tagline")
+    .eq("id", user.id)
+    .maybeSingle();
+  const row = data as {
+    public_slug: string | null;
+    tip_url: string | null;
+    public_tagline: string | null;
+  } | null;
+  return {
+    slug: row?.public_slug ?? null,
+    tipUrl: row?.tip_url ?? null,
+    tagline: row?.public_tagline ?? null,
+  };
+}
+
+/** Creator updates their SFW link-in-bio fields (slug, tip URL, tagline). */
+export async function setMyPublicProfile(input: {
+  slug: string;
+  tipUrl: string;
+  tagline: string;
+}): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  // Normalize the slug to URL-safe lowercase.
+  const slug = input.slug
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const { error } = await sb.rpc("set_public_profile", {
+    p_slug: slug,
+    p_tip_url: input.tipUrl,
+    p_tagline: input.tagline,
+  });
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 // ---------------------------------------------------------------------------

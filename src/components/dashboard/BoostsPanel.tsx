@@ -24,6 +24,7 @@ export default function BoostsPanel({
 }) {
   return (
     <div className="space-y-8">
+      <PublicProfileCard />
       <LeaderboardToggle enabled={leaderboardEnabled} onChange={onLeaderboardChange} />
       <HappyHourScheduler />
       <div className="grid gap-6 sm:grid-cols-2">
@@ -32,6 +33,131 @@ export default function BoostsPanel({
       </div>
       <WebhooksCard />
     </div>
+  );
+}
+
+function PublicProfileCard() {
+  const [slug, setSlug] = useState("");
+  const [tipUrl, setTipUrl] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const toast = useToast();
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
+  useEffect(() => {
+    let live = true;
+    fetch("/api/public-profile", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!live || !d) return;
+        setSlug(d.slug ?? "");
+        setTipUrl(d.tipUrl ?? "");
+        setTagline(d.tagline ?? "");
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/public-profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, tipUrl, tagline }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Link-in-bio saved", { tone: "success" });
+      // Reflect any server-side slug normalization.
+      const fresh = await fetch("/api/public-profile", { cache: "no-store" }).then((r) => r.json());
+      setSlug(fresh.slug ?? "");
+    } catch {
+      toast("Couldn't save — that slug may be taken.", { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const url = slug ? `${origin}/c/${slug}` : "";
+  const copy = async () => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+
+  return (
+    <Section
+      title="Link-in-bio (SFW)"
+      hint="A clean, safe-for-work page you can post in your Instagram/TikTok bio. No explicit content — just your wheel + a way in."
+    >
+      <div className="space-y-3 rounded-xl border border-line p-4">
+        <label className="block text-xs text-muted">
+          Your public link
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-sm text-muted">{origin}/c/</span>
+            <input
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
+              className="ff-input flex-1"
+              placeholder="your-name"
+            />
+          </div>
+        </label>
+        <label className="block text-xs text-muted">
+          Tagline
+          <input
+            value={tagline}
+            onChange={(e) => setTagline(e.target.value)}
+            className="ff-input mt-1 w-full"
+            placeholder="Spin my wheel — every spin wins 🎡"
+          />
+        </label>
+        <label className="block text-xs text-muted">
+          Tip / buy-spins link (where fans go to pay)
+          <input
+            value={tipUrl}
+            onChange={(e) => setTipUrl(e.target.value)}
+            className="ff-input mt-1 w-full"
+            placeholder="https://onlyfans.com/you  or your tip link"
+          />
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={save}
+            disabled={busy}
+            className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
+          >
+            Save
+          </button>
+          {url && (
+            <>
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
+              >
+                Preview ↗
+              </a>
+              <button
+                onClick={copy}
+                className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
+              >
+                {copied ? "Copied!" : "Copy link"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
 
