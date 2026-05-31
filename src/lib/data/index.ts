@@ -499,10 +499,12 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
 
   if (!chosen) return { error: "no_prizes" };
 
-  // Persist the fan's next pity counter.
+  // Persist the fan's next pity counter. Spinning also auto-opts the fan into
+  // the leaderboard (handle-only; the board only shows when the CREATOR enables
+  // it, so this never leaks anything until the creator turns it on).
   await sb
     .from("fans")
-    .update({ pity_counter: chosen.nextPityCounter })
+    .update({ pity_counter: chosen.nextPityCounter, leaderboard_opt_in: true })
     .eq("id", pass.fan_id);
 
   // 3b. FIFO-attribute this spin to a campaign. Order the fan's grants

@@ -838,6 +838,9 @@ export async function mockSpin(token: string) {
 
   fan.spinsRemaining -= 1;
   fan.pityCounter = nextPityCounter;
+  // Spinning auto-opts the fan into the leaderboard (handle-only; the board only
+  // renders when the creator enables it, so nothing is exposed until then).
+  fan.leaderboardOptIn = true;
 
   // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
   const live = wheel.prizes[index];
