@@ -11,10 +11,12 @@ import {
   type WheelConfig,
 } from "@/lib/games/wheel/types";
 import type {
+  CampaignPack,
   CreatorMetricsExtra,
   CreatorOverview,
   DmTemplate,
   FanAccountSummary,
+  PrizeTemplate,
   RedemptionItem,
   RedemptionStatus,
 } from "@/lib/data/types";
@@ -27,6 +29,9 @@ import { EmptyState, Field, TagEditor } from "./ui";
 import QrButton from "@/components/dashboard/QrButton";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import CampaignsPanel from "@/components/dashboard/CampaignsPanel";
+import WheelSwitcher from "@/components/dashboard/WheelSwitcher";
+import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
+import PackPresets from "@/components/dashboard/PackPresets";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -109,6 +114,12 @@ export default function DashboardClient({
 }) {
   const [tab, setTab] = useState<Tab>("editor");
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
+  // Which wheel the editor is currently editing. Lifted so it survives tab
+  // switches and the WheelSwitcher highlights the right wheel. Seeded from the
+  // initial active wheel's id so the switcher highlights it on first paint.
+  const [editingWheelId, setEditingWheelId] = useState<string | null>(
+    initialWheel.id ?? null
+  );
   const overview = useOverview();
   const pending = overview.data?.metrics.pending ?? 0;
 
@@ -212,7 +223,13 @@ export default function DashboardClient({
         {tab === "fans" && <FansPanel />}
         {tab === "campaigns" && <CampaignsPanel />}
         {tab === "editor" && (
-          <WheelEditor wheel={wheel} setWheel={setWheel} initialWheel={initialWheel} />
+          <WheelEditor
+            wheel={wheel}
+            setWheel={setWheel}
+            initialWheel={initialWheel}
+            editingWheelId={editingWheelId}
+            setEditingWheelId={setEditingWheelId}
+          />
         )}
       </div>
     </div>
@@ -620,6 +637,9 @@ function FansPanel() {
   const [spins, setSpins] = useState(3);
   const [amount, setAmount] = useState<string>("");
   const [campaignId, setCampaignId] = useState<string>("");
+  // The pack a preset filled in, if any. Sent to the server which resolves it
+  // authoritatively; cleared on any manual override so we don't mis-attribute.
+  const [packId, setPackId] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [openFanId, setOpenFanId] = useState<string | null>(null);
@@ -686,10 +706,12 @@ function FansPanel() {
         spins,
         campaignId: campaignId || undefined,
         amountDollars: amountDollars || undefined,
+        ...(packId ? { packId } : {}),
       });
       if (data) {
         setName("");
         setAmount("");
+        setPackId(null);
         await load();
       }
     } finally {
@@ -703,13 +725,15 @@ function FansPanel() {
     fanId: string,
     addSpins: number,
     amountDollars?: number,
-    topUpCampaignId?: string
+    topUpCampaignId?: string,
+    packId?: string | null
   ) {
     const data = await call({
       fanId,
       spins: addSpins,
       amountDollars: amountDollars || undefined,
       campaignId: topUpCampaignId || undefined,
+      ...(packId ? { packId } : {}),
     });
     if (data) await load();
   }
@@ -748,7 +772,10 @@ function FansPanel() {
               min={1}
               className="ff-input tnum w-24"
               value={spins}
-              onChange={(e) => setSpins(Math.max(1, Number(e.target.value)))}
+              onChange={(e) => {
+                setSpins(Math.max(1, Number(e.target.value)));
+                setPackId(null);
+              }}
             />
           </Field>
           <Field label="$ amount (optional)">
@@ -759,14 +786,20 @@ function FansPanel() {
               className="ff-input tnum w-28"
               placeholder="0.00"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                setPackId(null);
+              }}
             />
           </Field>
           <Field label="Campaign (optional)">
             <select
               className="ff-input w-44"
               value={campaignId}
-              onChange={(e) => setCampaignId(e.target.value)}
+              onChange={(e) => {
+                setCampaignId(e.target.value);
+                setPackId(null);
+              }}
             >
               <option value="">None</option>
               {campaigns.map((c) => (
@@ -784,6 +817,18 @@ function FansPanel() {
             {creating ? "Creating…" : "Create account"}
           </button>
         </div>
+        {campaignId && (
+          <div className="mt-3">
+            <PackPresets
+              campaignId={campaignId}
+              onPick={(p: CampaignPack) => {
+                setSpins(p.spins);
+                setAmount((p.amountCents / 100).toString());
+                setPackId(p.id);
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
@@ -1044,7 +1089,8 @@ function AccountCard({
     fanId: string,
     addSpins: number,
     amountDollars?: number,
-    campaignId?: string
+    campaignId?: string,
+    packId?: string | null
   ) => void;
   onOpen: (fanId: string) => void;
   onDeleted: () => void;
@@ -1053,6 +1099,9 @@ function AccountCard({
   const [topUp, setTopUp] = useState(3);
   const [amount, setAmount] = useState<string>("");
   const [campaignId, setCampaignId] = useState<string>("");
+  // The pack a preset filled in, if any. Sent to the server which resolves it
+  // authoritatively; cleared on any manual override so we don't mis-attribute.
+  const [packId, setPackId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1214,7 +1263,10 @@ function AccountCard({
             min={1}
             className="ff-input tnum w-16 text-right"
             value={topUp}
-            onChange={(e) => setTopUp(Math.max(1, Number(e.target.value)))}
+            onChange={(e) => {
+              setTopUp(Math.max(1, Number(e.target.value)));
+              setPackId(null);
+            }}
           />
         </Field>
         <Field label="$ amount">
@@ -1225,14 +1277,20 @@ function AccountCard({
             className="ff-input tnum w-24"
             placeholder="0.00"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setAmount(e.target.value);
+              setPackId(null);
+            }}
           />
         </Field>
         <Field label="Campaign">
           <select
             className="ff-input w-40"
             value={campaignId}
-            onChange={(e) => setCampaignId(e.target.value)}
+            onChange={(e) => {
+              setCampaignId(e.target.value);
+              setPackId(null);
+            }}
           >
             <option value="">None</option>
             {campaigns.map((c) => (
@@ -1248,15 +1306,29 @@ function AccountCard({
               account.fanId,
               topUp,
               amount ? Number(amount) || undefined : undefined,
-              campaignId || undefined
+              campaignId || undefined,
+              packId
             );
             setAmount("");
+            setPackId(null);
           }}
           className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
         >
           Top up
         </button>
       </div>
+      {campaignId && (
+        <div className="mt-3">
+          <PackPresets
+            campaignId={campaignId}
+            onPick={(p: CampaignPack) => {
+              setTopUp(p.spins);
+              setAmount((p.amountCents / 100).toString());
+              setPackId(p.id);
+            }}
+          />
+        </div>
+      )}
 
       {primaryToken && (
         <div className="mt-3 space-y-2">
@@ -1402,10 +1474,14 @@ function WheelEditor({
   wheel,
   setWheel,
   initialWheel,
+  editingWheelId,
+  setEditingWheelId,
 }: {
   wheel: WheelConfig;
   setWheel: (w: WheelConfig) => void;
   initialWheel: WheelConfig;
+  editingWheelId: string | null;
+  setEditingWheelId: (id: string | null) => void;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
   // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
@@ -1418,6 +1494,7 @@ function WheelEditor({
   const [savedJson, setSavedJson] = useState(() => JSON.stringify(initialWheel));
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
   const dirty = JSON.stringify(wheel) !== savedJson;
 
   async function save() {
@@ -1433,6 +1510,7 @@ function WheelEditor({
       if (res.ok && data.wheel) {
         setWheel(data.wheel);
         setSavedJson(JSON.stringify(data.wheel));
+        setEditingWheelId(data.wheel.id);
         setJustSaved(true);
         setTimeout(() => setJustSaved(false), 2000);
       } else {
@@ -1450,6 +1528,65 @@ function WheelEditor({
   }
   function addPrize() {
     setWheel({ ...wheel, prizes: [...wheel.prizes, newPrize()] });
+  }
+  // Load a wheel's full config into the editor and mark it as the one being
+  // edited. The config carries its own id, so the existing save (PUT /api/wheel
+  // with the full config) targets the right wheel.
+  async function loadWheel(id: string) {
+    const res = await fetch(`/api/wheels/${id}`, { cache: "no-store" });
+    if (!res.ok) {
+      toast("Couldn't open that wheel.", { tone: "error" });
+      return;
+    }
+    const data = (await res.json()) as { wheel?: WheelConfig };
+    if (!data.wheel) {
+      toast("Couldn't open that wheel.", { tone: "error" });
+      return;
+    }
+    setWheel(data.wheel);
+    setSavedJson(JSON.stringify(data.wheel));
+    setEditingWheelId(data.wheel.id);
+  }
+  // Apply a saved wheel template: it mints a fresh wheel from the template
+  // server-side, then opens that new wheel in the editor.
+  async function applyWheelTemplate(templateId: string) {
+    const res = await fetch("/api/wheels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fromTemplateId: templateId }),
+    });
+    const data = (await res.json()) as { wheel?: WheelConfig };
+    if (!res.ok || !data.wheel) {
+      toast("Couldn't apply template.", { tone: "error" });
+      return;
+    }
+    await loadWheel(data.wheel.id);
+    toast("Template applied", { tone: "success" });
+  }
+  // Save the current editor wheel as a reusable template.
+  async function saveCurrentWheelAsTemplate(name: string) {
+    const res = await fetch("/api/templates/wheels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, config: wheel }),
+    });
+    if (res.ok) toast("Saved as template", { tone: "success" });
+    else toast("Couldn't save template.", { tone: "error" });
+  }
+  // Drop a library prize into the current wheel. Reuse the editor's newPrize()
+  // so ids/format match, then overlay the template's fields.
+  function applyPrizeTemplate(t: PrizeTemplate) {
+    const prize = {
+      ...newPrize(),
+      label: t.label,
+      description: t.description,
+      rarity: t.rarity,
+      weight: t.weight,
+      color: t.color,
+      emoji: t.emoji,
+    };
+    setWheel({ ...wheel, prizes: [...wheel.prizes, prize] });
+    toast("Prize added from library", { tone: "success" });
   }
   function movePrize(from: number, to: number) {
     if (to < 0 || to >= wheel.prizes.length || from === to) return;
@@ -1490,6 +1627,37 @@ function WheelEditor({
 
   return (
     <div>
+      <div className="mb-6">
+        <WheelSwitcher
+          currentWheelId={editingWheelId}
+          onEdit={loadWheel}
+          onChanged={() => {}}
+        />
+      </div>
+
+      <div className="mb-6 rounded-xl border border-line bg-surface">
+        <button
+          type="button"
+          onClick={() => setShowLibrary((v) => !v)}
+          aria-expanded={showLibrary}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        >
+          <span className="font-bold text-ink">Library</span>
+          <span className="text-sm font-semibold text-muted">
+            {showLibrary ? "Hide ▲" : "Show ▼"}
+          </span>
+        </button>
+        {showLibrary && (
+          <div className="border-t border-line px-4 py-4">
+            <TemplateLibrary
+              onApplyWheelTemplate={applyWheelTemplate}
+              onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
+              onApplyPrizeTemplate={applyPrizeTemplate}
+            />
+          </div>
+        )}
+      </div>
+
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
         <p className="text-sm">
           {dirty ? (

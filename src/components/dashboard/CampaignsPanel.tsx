@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Campaign, CampaignStats } from "@/lib/data/types";
+import type { Campaign, CampaignStats, WheelSummary } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
 import { formatCents } from "@/lib/format";
 import { EmptyState, Field } from "./ui";
+import PackEditor from "./PackEditor";
 
 // Self-contained Campaigns tab. Creators name a campaign, attach it to the
 // links they mint, then compare performance (spins, fans, fulfilment, top
@@ -14,6 +15,7 @@ import { EmptyState, Field } from "./ui";
 export default function CampaignsPanel() {
   const toast = useToast();
   const [stats, setStats] = useState<CampaignStats[] | null>(null);
+  const [wheels, setWheels] = useState<WheelSummary[]>([]);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -26,10 +28,20 @@ export default function CampaignsPanel() {
     else setStats([]);
   }, []);
 
+  // Fetch the creator's wheels once so each campaign can offer a pin selector.
+  const loadWheels = useCallback(async () => {
+    const res = await fetch("/api/wheels", { cache: "no-store" });
+    if (res.ok) {
+      const data = (await res.json()) as { wheels?: WheelSummary[] };
+      setWheels(data.wheels ?? []);
+    }
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     load();
-  }, [load]);
+    loadWheels();
+  }, [load, loadWheels]);
 
   async function createCampaign() {
     const trimmed = name.trim();
@@ -105,7 +117,7 @@ export default function CampaignsPanel() {
       ) : (
         <div className="space-y-4">
           {stats.map((s) => (
-            <CampaignCard key={s.campaign.id} stats={s} />
+            <CampaignCard key={s.campaign.id} stats={s} wheels={wheels} onRefresh={load} />
           ))}
         </div>
       )}
@@ -113,9 +125,40 @@ export default function CampaignsPanel() {
   );
 }
 
-function CampaignCard({ stats }: { stats: CampaignStats }) {
+function CampaignCard({
+  stats,
+  wheels,
+  onRefresh,
+}: {
+  stats: CampaignStats;
+  wheels: WheelSummary[];
+  onRefresh: () => Promise<void> | void;
+}) {
+  const toast = useToast();
   const { campaign, revenue, arpu, spinsBought, spinsPlayed, uniqueFans, fulfilled, topPrize } =
     stats;
+  const [showPacks, setShowPacks] = useState(false);
+  const [pinning, setPinning] = useState(false);
+
+  async function pinWheel(value: string) {
+    setPinning(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinnedWheelId: value || null }),
+      });
+      if (!res.ok) {
+        toast("Couldn't update the pinned wheel. Try again.", { tone: "error" });
+        return;
+      }
+      toast(value ? "Pinned wheel updated." : "Pin removed.", { tone: "success" });
+      await onRefresh();
+    } finally {
+      setPinning(false);
+    }
+  }
+
   const cells = [
     { label: "Revenue", value: formatCents(revenue) },
     { label: "ARPU", value: formatCents(arpu) },
@@ -162,6 +205,48 @@ function CampaignCard({ stats }: { stats: CampaignStats }) {
           </span>
         ) : (
           <span className="text-muted">—</span>
+        )}
+      </div>
+
+      {/* Pinned wheel selector. */}
+      <div className="mt-4 border-t border-line pt-4">
+        <Field label="Pinned wheel">
+          <select
+            className="ff-input w-full sm:w-72"
+            value={campaign.pinnedWheelId ?? ""}
+            disabled={pinning}
+            onChange={(e) => pinWheel(e.target.value)}
+          >
+            <option value="">No pin (use active wheel)</option>
+            {wheels.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.title}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <p className="mt-1.5 text-xs text-muted">
+          Pinned: fans in this campaign always spin this wheel.
+        </p>
+      </div>
+
+      {/* Spin packs (collapsible to keep the panel tidy). */}
+      <div className="mt-4 border-t border-line pt-4">
+        <button
+          type="button"
+          onClick={() => setShowPacks((v) => !v)}
+          aria-expanded={showPacks}
+          className="flex w-full items-center justify-between gap-2 text-left text-sm font-semibold text-ink"
+        >
+          <span>Spin packs</span>
+          <span aria-hidden className="text-muted">
+            {showPacks ? "Hide" : "Show"}
+          </span>
+        </button>
+        {showPacks && (
+          <div className="mt-4">
+            <PackEditor campaignId={campaign.id} />
+          </div>
         )}
       </div>
     </section>

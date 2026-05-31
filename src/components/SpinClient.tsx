@@ -10,6 +10,7 @@ import NearMissBeat, {
   detectNearMiss,
   type NearMiss,
 } from "./NearMissBeat";
+import PityBeat from "./PityBeat";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -39,6 +40,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [nearMiss, setNearMiss] = useState<NearMiss | null>(null);
+  const [pity, setPity] = useState<Prize | null>(null);
+  const [pityAwarded, setPityAwarded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
@@ -55,6 +58,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     setReveal(false);
     setWon(null);
     setNearMiss(null);
+    setPity(null);
+    setPityAwarded(false);
     try {
       const res = await fetch("/api/spin", {
         method: "POST",
@@ -76,6 +81,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setSpinsRemaining(data.spinsRemaining);
       setResult({ index: data.prizeIndex, nonce: Date.now() });
       setWon(prize);
+      setPityAwarded(data.pityAwarded === true);
     } catch {
       setError("Network error. Try again.");
       setBusy(false);
@@ -99,13 +105,17 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           ...h,
         ].slice(0, 50)
       );
-      // Near-miss beat: did the wheel stop one slice away from a legendary
-      // (or epic) prize? Derived from the landed slice index + wheel order.
-      if (result) {
+      // Pity beat takes precedence: a pity-forced spin is a *real win*, so we
+      // celebrate it and never show the "So close!" near-miss alongside it.
+      if (pityAwarded) {
+        setPity(won);
+      } else if (result) {
+        // Near-miss beat: did the wheel stop one slice away from a legendary
+        // (or epic) prize? Derived from the landed slice index + wheel order.
         setNearMiss(detectNearMiss(pass.wheel.prizes, result.index));
       }
     }
-  }, [won, muted, result, pass.wheel.prizes]);
+  }, [won, muted, result, pass.wheel.prizes, pityAwarded]);
 
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-7">
@@ -208,6 +218,10 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
 
       {reveal && won && (
         <PrizeModal prize={won} onClose={() => setReveal(false)} />
+      )}
+
+      {pity && (
+        <PityBeat prize={pity} onDone={() => setPity(null)} />
       )}
 
       {nearMiss && (
