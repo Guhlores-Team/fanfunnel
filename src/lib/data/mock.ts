@@ -337,6 +337,25 @@ export function mockGrantSpins(token: string, n: number) {
   return fan.spinsRemaining;
 }
 
+/**
+ * Permanently delete a fan account and everything linked to it: every token
+ * pointing at the fan (and its campaign tag), the fan's grants, and the fan's
+ * redemptions. Returns false if the fan doesn't exist.
+ */
+export function mockDeleteFan(fanId: string): boolean {
+  if (!store.fans.has(fanId)) return false;
+  store.fans.delete(fanId);
+  for (const [token, id] of store.tokens) {
+    if (id === fanId) {
+      store.tokens.delete(token);
+      store.tokenCampaign.delete(token);
+    }
+  }
+  store.grants = store.grants.filter((g) => g.fanId !== fanId);
+  store.redemptions = store.redemptions.filter((r) => r.fanId !== fanId);
+  return true;
+}
+
 export function mockListFans(): FanAccountSummary[] {
   const tokensByFan = new Map<string, string[]>();
   for (const [token, fanId] of store.tokens) {

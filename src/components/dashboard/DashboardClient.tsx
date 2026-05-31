@@ -817,6 +817,7 @@ function FansPanel() {
             campaigns={campaigns}
             onTopUp={topUp}
             onOpen={setOpenFanId}
+            onDeleted={load}
           />
         ))}
       </div>
@@ -831,6 +832,7 @@ function AccountCard({
   campaigns,
   onTopUp,
   onOpen,
+  onDeleted,
 }: {
   account: FanAccountSummary;
   origin: string;
@@ -842,11 +844,34 @@ function AccountCard({
     campaignId?: string
   ) => void;
   onOpen: (fanId: string) => void;
+  onDeleted: () => void;
 }) {
   const [topUp, setTopUp] = useState(3);
   const [amount, setAmount] = useState<string>("");
   const [campaignId, setCampaignId] = useState<string>("");
   const [showAll, setShowAll] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const toast = useToast();
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/fans/" + account.fanId, { method: "DELETE" });
+      if (res.ok) {
+        toast("Fan deleted", { tone: "success" });
+        onDeleted();
+      } else {
+        toast("Couldn't delete fan. Are you signed in?", { tone: "error" });
+        setConfirmDelete(false);
+      }
+    } catch {
+      toast("Couldn't delete fan. Are you signed in?", { tone: "error" });
+      setConfirmDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   // Surface only the primary link by default; the rest are revealed on demand.
   const primaryToken = account.primaryToken ?? account.links[0]?.token ?? null;
@@ -877,6 +902,39 @@ function AccountCard({
             )}
           </p>
         </button>
+
+        {confirmDelete ? (
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-muted">Delete fan?</span>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              aria-label={"Confirm delete " + account.name}
+              className="rounded-lg border border-red-500/50 px-2.5 py-1 font-bold text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
+            >
+              {deleting ? "Deleting…" : "Yes"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+              aria-label="Cancel delete"
+              className="rounded-lg border border-line px-2.5 py-1 font-semibold text-muted transition hover:text-ink disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            aria-label={"Delete " + account.name}
+            className="rounded-lg px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-red-500"
+          >
+            Delete
+          </button>
+        )}
       </div>
 
       {/* Spend + campaign chips */}

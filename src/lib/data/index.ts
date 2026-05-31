@@ -42,6 +42,7 @@ import {
   mockCreateCampaign,
   mockListCampaigns,
   mockGetCampaignStats,
+  mockDeleteFan,
 } from "./mock";
 
 function randomToken(): string {
@@ -789,6 +790,28 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     grants,
     byCampaign,
   };
+}
+
+/**
+ * Permanently delete a fan account. Schema FKs cascade the fan's links + grants
+ * and anonymize their spins, so a plain delete is safe. RLS keeps a creator
+ * scoped to their own fans.
+ */
+export async function deleteFan(
+  fanId: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return mockDeleteFan(fanId) ? { ok: true } : { error: "not_found" };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb.from("fans").delete().eq("id", fanId);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 // ---------------------------------------------------------------------------
