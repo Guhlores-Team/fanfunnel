@@ -46,6 +46,15 @@ export interface FanAccountSummary {
   lastWin: { label: string; rarity: Rarity; at: string } | null;
 }
 
+export interface FanDetail {
+  fanId: string; name: string;
+  spinsRemaining: number; grantedTotal: number; totalSpins: number;
+  lastActive: string | null;
+  winsByRarity: { rarity: Rarity; count: number }[];
+  pendingPrizes: { label: string; rarity: Rarity; emoji?: string; at: string }[];
+  links: { token: string; createdAt: string }[];
+}
+
 export interface CreatorMetrics {
   fans: number;
   spinsPlayed: number;

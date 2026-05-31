@@ -1,6 +1,6 @@
 import { pickPrize } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
-import { RARITY_COLORS, type WheelConfig } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
@@ -8,6 +8,7 @@ import type {
   CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
+  FanDetail,
   FanPassView,
   RedemptionItem,
   RedemptionStatus,
@@ -242,6 +243,52 @@ export function mockListFans(): FanAccountSummary[] {
       ? { label: f.wins[0].label, rarity: f.wins[0].rarity, at: f.wins[0].at }
       : null,
   }));
+}
+
+export function mockGetFanDetail(fanId: string): FanDetail | null {
+  const fan = store.fans.get(fanId);
+  if (!fan) return null;
+
+  const rarityCounts = new Map<Rarity, number>();
+  for (const w of fan.wins) {
+    rarityCounts.set(w.rarity, (rarityCounts.get(w.rarity) ?? 0) + 1);
+  }
+  const winsByRarity = [...rarityCounts.entries()].map(([rarity, count]) => ({
+    rarity,
+    count,
+  }));
+
+  // The mock has no separate granted total — reuse the remaining balance.
+  const grantedTotal = fan.spinsRemaining;
+
+  // Pending prizes: the mock store has no spin/fan_id link on redemptions, so we
+  // match by fan NAME. Two fans sharing a name would collide here.
+  const pendingPrizes = store.redemptions
+    .filter((r) => r.fanName === fan.name && r.status === "pending")
+    .map((r) => ({
+      label: r.prizeLabel,
+      rarity: r.rarity,
+      emoji: r.emoji,
+      at: r.at,
+    }));
+
+  // Links: every token pointing at this fan. The mock doesn't record link
+  // creation time, so createdAt is a stable epoch placeholder.
+  const links = Array.from(store.tokens.entries())
+    .filter(([, id]) => id === fanId)
+    .map(([token]) => ({ token, createdAt: new Date(0).toISOString() }));
+
+  return {
+    fanId: fan.id,
+    name: fan.name,
+    spinsRemaining: fan.spinsRemaining,
+    grantedTotal,
+    totalSpins: fan.wins.length,
+    lastActive: fan.wins[0]?.at ?? null,
+    winsByRarity,
+    pendingPrizes,
+    links,
+  };
 }
 
 export function mockGetOverview(): CreatorOverview {

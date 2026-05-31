@@ -11,6 +11,7 @@ import {
   type WheelConfig,
 } from "@/lib/games/wheel/types";
 import type {
+  CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
   RedemptionItem,
@@ -18,6 +19,9 @@ import type {
 } from "@/lib/data/types";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { OddsBar } from "@/components/dashboard/OddsBar";
+import Sparkline from "@/components/dashboard/Sparkline";
+import Funnel from "@/components/dashboard/Funnel";
+import { EmptyState, Field } from "./ui";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -59,6 +63,34 @@ function useOverview() {
     };
   }, [refresh]);
   return { data, loading, refresh, setData };
+}
+
+// Enhanced metrics (spin trend + conversion funnel), polled like the overview
+// and refetched whenever the selected window (`days`) changes.
+function useMetricsExtra(days: number) {
+  const [data, setData] = useState<CreatorMetricsExtra | null>(null);
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/metrics?days=${days}`, { cache: "no-store" });
+      if (res.ok) setData(await res.json());
+    } finally {
+      setLoading(false);
+    }
+  }, [days]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading when the window (`days`) changes, then refetch
+    setLoading(true);
+    refresh();
+    const id = setInterval(refresh, 12000);
+    const onVis = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [refresh]);
+  return { data, loading };
 }
 
 export default function DashboardClient({
@@ -195,6 +227,8 @@ function MetricsPanel({
 }) {
   const m = overview?.metrics;
   const reds = useMemo(() => overview?.redemptions ?? [], [overview]);
+  const [days, setDays] = useState(14);
+  const { data: extra, loading: extraLoading } = useMetricsExtra(days);
 
   const { topPrizes, rarityMix } = useMemo(() => {
     const prizeMap = new Map<string, { label: string; count: number; emoji?: string; rarity: Rarity }>();
@@ -245,6 +279,57 @@ function MetricsPanel({
           </div>
         ))}
       </dl>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Spins trend */}
+        <section className="card rounded-xl p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Spins trend</h3>
+              <p className="mt-0.5 text-xs text-muted">Daily spins over time.</p>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              {([14, 30] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDays(d)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                    days === d
+                      ? "bg-[var(--brand)] text-white"
+                      : "border border-line text-muted hover:text-ink"
+                  }`}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4">
+            {extraLoading || !extra ? (
+              <div className="skeleton h-14 w-full rounded" />
+            ) : (
+              <Sparkline data={extra.trend} />
+            )}
+          </div>
+        </section>
+
+        {/* Conversion */}
+        <section className="card rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-ink">Conversion</h3>
+          <p className="mt-0.5 text-xs text-muted">Link → spin → fulfilled.</p>
+          <div className="mt-4">
+            {extraLoading || !extra ? (
+              <div className="space-y-2.5">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="skeleton h-3 w-full rounded" />
+                ))}
+              </div>
+            ) : (
+              <Funnel funnel={extra.funnel} />
+            )}
+          </div>
+        </section>
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* What's landing */}
@@ -1063,42 +1148,3 @@ function WheelEditor({
   );
 }
 
-// ---------------------------------------------------------------------------
-function Field({
-  label,
-  children,
-  full,
-}: {
-  label: string;
-  children: React.ReactNode;
-  full?: boolean;
-}) {
-  return (
-    <label className={`flex min-w-0 flex-col gap-1 ${full ? "sm:col-span-2" : ""}`}>
-      <span className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function EmptyState({
-  title,
-  body,
-  action,
-}: {
-  title: string;
-  body: string;
-  action?: { label: string; onClick: () => void };
-}) {
-  return (
-    <div className="rounded-xl border border-dashed border-line p-8 text-center">
-      <p className="font-semibold text-ink">{title}</p>
-      <p className="mx-auto mt-1 max-w-sm text-sm text-muted">{body}</p>
-      {action && (
-        <button onClick={action.onClick} className="btn-brand mt-4 rounded-lg px-4 py-2 text-sm font-bold">
-          {action.label}
-        </button>
-      )}
-    </div>
-  );
-}

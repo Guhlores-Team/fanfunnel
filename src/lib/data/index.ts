@@ -14,6 +14,7 @@ import type {
   CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
+  FanDetail,
   FanPassView,
   RedemptionItem,
   RedemptionStatus,
@@ -25,6 +26,7 @@ import {
   mockCreatePass,
   mockGrantSpins,
   mockListFans,
+  mockGetFanDetail,
   mockGetOverview,
   mockGetMetricsExtra,
   mockSetRedemptionStatus,
@@ -388,6 +390,85 @@ export async function listFans(): Promise<FanAccountSummary[]> {
         : null,
     };
   });
+}
+
+/**
+ * A single fan account's full detail, for the creator's fan drill-in. RLS keeps
+ * this scoped to the owning creator, so we use the auth-scoped client.
+ */
+export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
+  if (!isSupabaseConfigured()) return mockGetFanDetail(fanId);
+
+  const sb = await createClient();
+
+  const { data: fan } = await sb
+    .from("fans")
+    .select("id, display_name, handle, spins_remaining, spins_granted_total")
+    .eq("id", fanId)
+    .maybeSingle();
+  if (!fan) return null;
+
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("prize_rarity, created_at")
+    .eq("fan_id", fanId)
+    .order("created_at", { ascending: false });
+
+  const spins = (spinRows ?? []) as { prize_rarity: Rarity; created_at: string }[];
+  const totalSpins = spins.length;
+  const lastActive = spins[0]?.created_at ?? null;
+
+  const rarityCounts = new Map<Rarity, number>();
+  for (const s of spins) {
+    rarityCounts.set(s.prize_rarity, (rarityCounts.get(s.prize_rarity) ?? 0) + 1);
+  }
+  const winsByRarity = [...rarityCounts.entries()].map(([rarity, count]) => ({
+    rarity,
+    count,
+  }));
+
+  // Pending prizes: this fan's pending redemptions, joined back to the spin for
+  // the prize label/rarity. Emoji isn't stored on spins, so it's omitted.
+  const { data: pendingRows } = await sb
+    .from("redemptions")
+    .select("created_at, spin:spins!inner(prize_label, prize_rarity, fan_id)")
+    .eq("status", "pending")
+    .eq("spin.fan_id", fanId)
+    .order("created_at", { ascending: false });
+
+  const pending = (pendingRows ?? []) as unknown as {
+    created_at: string;
+    spin: { prize_label: string; prize_rarity: Rarity; fan_id: string } | null;
+  }[];
+  const pendingPrizes = pending
+    .filter((r) => r.spin)
+    .map((r) => ({
+      label: r.spin!.prize_label,
+      rarity: r.spin!.prize_rarity,
+      at: r.created_at,
+    }));
+
+  const { data: passRows } = await sb
+    .from("fan_passes")
+    .select("token, created_at")
+    .eq("fan_id", fanId)
+    .order("created_at", { ascending: false });
+
+  const links = ((passRows ?? []) as { token: string; created_at: string }[]).map(
+    (p) => ({ token: p.token, createdAt: p.created_at })
+  );
+
+  return {
+    fanId: fan.id,
+    name: fan.display_name ?? fan.handle ?? "Fan",
+    spinsRemaining: fan.spins_remaining,
+    grantedTotal: fan.spins_granted_total,
+    totalSpins,
+    lastActive,
+    winsByRarity,
+    pendingPrizes,
+    links,
+  };
 }
 
 // ---------------------------------------------------------------------------
