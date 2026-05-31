@@ -55,13 +55,21 @@ store. Links you generate in the dashboard really work and really spin.
    `claim_spin` atomic function, and the auth trigger.
 2. **Copy `.env.example` → `.env.local`** and fill in the URL, anon key, and
    service-role key from Supabase → Project Settings → API.
-3. **Make yourself admin** (you're a creator + admin):
+3. **Sign up** at `/login` (email + password). For the smoothest start, turn
+   OFF "Confirm email" under Supabase → Authentication → Providers → Email
+   (or leave it on and confirm via the emailed link).
+4. **Make yourself admin** (you're a creator + admin) once your row exists:
    ```sql
    update public.profiles set role = 'admin' where email = 'you@example.com';
    ```
-   (after you've signed up once so the row exists.)
-4. **Deploy to Vercel** and add the same env vars in the Vercel project
+5. **Deploy to Vercel** and add the same env vars in the Vercel project
    settings. Done.
+
+### Auth & access
+- Creators/admins sign in at `/login`; middleware (`src/middleware.ts`)
+  refreshes sessions and guards `/dashboard`.
+- In demo mode (no env vars) auth is skipped and the dashboard is open.
+- Fans never authenticate — their secret link is their whole experience.
 
 ---
 
@@ -96,7 +104,9 @@ npx tsx src/lib/games/wheel/engine.test.ts
 ```
 
 ## Roadmap
-- Creator/admin auth + middleware (sign-in)
-- Persisted dashboard editing (wheels/prizes CRUD)
-- Redemption fulfilment workflow + richer metrics
-- More games: scratch tickets, bingo (same prize/fan system)
+- ✅ Creator/admin auth + middleware (sign-in)
+- ✅ Persisted wheel editor (saves wheel + prizes to Supabase)
+- ✅ Redemption fulfilment inbox + live metrics
+- Admin panel: manage creator accounts + cross-account metrics
+- Per-creator theming (fonts, background, photo-hub) — premium feel
+- More games: scratch tickets, bingo (same prize/fan/account system)

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
-import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import {
   RARITY_COLORS,
   RARITY_ORDER,
@@ -28,13 +27,18 @@ interface FanAccount {
   links: { token: string; spins: number }[];
 }
 
-const PREVIEW_NOTE =
-  "Demo workspace — changes live in your browser only. Connect Supabase to save & sync.";
-
-export default function DashboardClient({ isAdmin }: { isAdmin: boolean }) {
+export default function DashboardClient({
+  isAdmin,
+  email,
+  initialWheel,
+}: {
+  isAdmin: boolean;
+  email: string | null;
+  initialWheel: WheelConfig;
+}) {
   const [tab, setTab] = useState<Tab>("editor");
   const [wheel, setWheel] = useState<WheelConfig>(() =>
-    structuredClone(SAMPLE_WHEEL)
+    structuredClone(initialWheel)
   );
   const [accounts, setAccounts] = useState<FanAccount[]>([]);
 
@@ -43,13 +47,27 @@ export default function DashboardClient({ isAdmin }: { isAdmin: boolean }) {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold">Creator Dashboard</h1>
-          <p className="text-sm text-white/50">{PREVIEW_NOTE}</p>
+          <p className="text-sm text-white/50">
+            {email ?? "Demo workspace — no sign-in (connect Supabase to go live)"}
+          </p>
         </div>
-        {isAdmin && (
-          <span className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-300">
-            ADMIN · dual creator+admin account
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <span className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-300">
+              ADMIN · dual creator+admin
+            </span>
+          )}
+          {email && (
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/5"
+              >
+                Sign out
+              </button>
+            </form>
+          )}
+        </div>
       </header>
 
       <nav className="mt-6 flex gap-2 border-b border-white/10">
@@ -76,7 +94,9 @@ export default function DashboardClient({ isAdmin }: { isAdmin: boolean }) {
       </nav>
 
       <div className="mt-8">
-        {tab === "editor" && <WheelEditor wheel={wheel} setWheel={setWheel} />}
+        {tab === "editor" && (
+          <WheelEditor wheel={wheel} setWheel={setWheel} initialWheel={initialWheel} />
+        )}
         {tab === "fans" && (
           <FansPanel accounts={accounts} setAccounts={setAccounts} />
         )}
@@ -93,11 +113,41 @@ export default function DashboardClient({ isAdmin }: { isAdmin: boolean }) {
 function WheelEditor({
   wheel,
   setWheel,
+  initialWheel,
 }: {
   wheel: WheelConfig;
   setWheel: (w: WheelConfig) => void;
+  initialWheel: WheelConfig;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
+
+  const [savedJson, setSavedJson] = useState(() => JSON.stringify(initialWheel));
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const dirty = JSON.stringify(wheel) !== savedJson;
+
+  async function save() {
+    setSaving(true);
+    setJustSaved(false);
+    try {
+      const res = await fetch("/api/wheel", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wheel }),
+      });
+      const data = await res.json();
+      if (res.ok && data.wheel) {
+        setWheel(data.wheel);
+        setSavedJson(JSON.stringify(data.wheel));
+        setJustSaved(true);
+        setTimeout(() => setJustSaved(false), 2000);
+      } else {
+        alert("Couldn't save. Are you signed in?");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function updatePrize(id: string, patch: Partial<Prize>) {
     setWheel({
@@ -121,7 +171,28 @@ function WheelEditor({
   }
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[1fr_380px]">
+    <div>
+      {/* Save bar */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+        <p className="text-sm text-white/60">
+          {dirty ? (
+            <span className="text-amber-300">● Unsaved changes</span>
+          ) : justSaved ? (
+            <span className="text-green-300">✓ Saved</span>
+          ) : (
+            "All changes saved"
+          )}
+        </p>
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="rounded-lg bg-pink-500 px-5 py-2 text-sm font-bold text-white hover:bg-pink-400 disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Save wheel"}
+        </button>
+      </div>
+
+      <div className="grid gap-8 lg:grid-cols-[1fr_380px]">
       <div>
         {/* Wheel meta */}
         <div className="grid gap-4 sm:grid-cols-2">
@@ -280,6 +351,7 @@ function WheelEditor({
         <p className="text-center text-xs text-white/40">
           Rare prizes with low weight + limited stock create the &ldquo;chase.&rdquo;
         </p>
+      </div>
       </div>
     </div>
   );

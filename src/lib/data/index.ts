@@ -4,6 +4,7 @@ import {
   createClient,
 } from "@/lib/supabase/server";
 import { pickPrize } from "@/lib/games/wheel/engine";
+import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type {
@@ -19,6 +20,8 @@ import {
   mockGrantSpins,
   mockGetOverview,
   mockSetRedemptionStatus,
+  mockGetWheel,
+  mockSaveWheel,
 } from "./mock";
 
 function randomToken(): string {
@@ -323,6 +326,121 @@ export async function grantSpins(
     .single();
   if (error || !updated) return { error: "db_error" };
   return { spinsRemaining: updated.spins_remaining };
+}
+
+// ---------------------------------------------------------------------------
+// Wheel configuration (the editor reads + writes this)
+// ---------------------------------------------------------------------------
+
+// Returns the signed-in creator's wheel id, creating a default one (seeded from
+// the sample) on first use so a creator always has something to edit.
+async function ensureWheelId(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  userId: string
+): Promise<string | null> {
+  const { data: existing } = await sb
+    .from("wheels")
+    .select("id")
+    .eq("creator_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (existing?.id) return existing.id;
+
+  const { data: wheel, error } = await sb
+    .from("wheels")
+    .insert({
+      creator_id: userId,
+      title: SAMPLE_WHEEL.title,
+      subtitle: SAMPLE_WHEEL.subtitle ?? null,
+      brand_color: SAMPLE_WHEEL.brandColor ?? "#ec4899",
+    })
+    .select("id")
+    .single();
+  if (error || !wheel) return null;
+
+  await sb.from("prizes").insert(
+    SAMPLE_WHEEL.prizes.map((p, i) => prizeRow(wheel.id, p, i))
+  );
+  return wheel.id;
+}
+
+export async function getWheel(): Promise<WheelConfig | null> {
+  if (!isSupabaseConfigured()) return mockGetWheel();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return null;
+
+  const wheelId = await ensureWheelId(sb, user.id);
+  if (!wheelId) return null;
+
+  const { data } = await sb
+    .from("wheels")
+    .select(
+      `id, title, subtitle, brand_color,
+       prizes(id, label, description, rarity, weight, color, emoji, stock, sort_order)`
+    )
+    .eq("id", wheelId)
+    .single();
+
+  return toWheelConfig(data as unknown as DbWheelRow);
+}
+
+export async function saveWheel(
+  config: WheelConfig
+): Promise<{ wheel: WheelConfig } | { error: string }> {
+  if (!isSupabaseConfigured()) return { wheel: mockSaveWheel(config) };
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const wheelId = await ensureWheelId(sb, user.id);
+  if (!wheelId) return { error: "no_wheel" };
+
+  const { error: wErr } = await sb
+    .from("wheels")
+    .update({
+      title: config.title.slice(0, 120),
+      subtitle: config.subtitle?.slice(0, 200) ?? null,
+      brand_color: config.brandColor ?? "#ec4899",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", wheelId);
+  if (wErr) return { error: "db_error" };
+
+  // Replace prizes wholesale. Spin history is safe because spins snapshot the
+  // prize label/rarity and prizes.prize_id is ON DELETE SET NULL.
+  await sb.from("prizes").delete().eq("wheel_id", wheelId);
+  const rows = config.prizes
+    .slice(0, 24)
+    .map((p, i) => prizeRow(wheelId, p, i));
+  if (rows.length > 0) {
+    const { error: pErr } = await sb.from("prizes").insert(rows);
+    if (pErr) return { error: "db_error" };
+  }
+
+  const saved = await getWheel();
+  return saved ? { wheel: saved } : { error: "db_error" };
+}
+
+function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
+  return {
+    wheel_id: wheelId,
+    label: p.label.slice(0, 80) || "Prize",
+    description: p.description?.slice(0, 280) ?? null,
+    rarity: p.rarity,
+    weight: Math.max(0, Math.floor(p.weight) || 0),
+    color: p.color ?? null,
+    emoji: p.emoji ?? null,
+    stock: p.stock ?? null,
+    sort_order: sortOrder,
+  };
 }
 
 // Creator dashboard: metrics + the prize fulfilment queue.

@@ -10,22 +10,26 @@ import type {
 } from "./types";
 
 // In-memory demo store. Used automatically when Supabase env vars are absent,
-// so `npm run dev` gives a fully working wheel with zero setup. State resets
-// when the dev server restarts.
+// so `npm run dev` gives a fully working app with zero setup. State resets when
+// the dev server restarts.
 //
-// IMPORTANT: balance + win history live on the FAN (not the link), mirroring
-// production. Many tokens can point at one fan; they all share its account.
+// Mirrors production semantics:
+//  * ONE editable creator wheel (the editor saves here; fans read from it;
+//    limited stock is shared across all fans, like a real prizes table).
+//  * balance + win history live on the FAN account, not the link, so many
+//    tokens can point at one fan and share everything.
+
+const CREATOR_TITLE = "Demo Creator";
 
 interface MockFan {
   id: string;
   name: string;
-  creatorTitle: string;
-  wheel: WheelConfig;
   spinsRemaining: number;
   wins: WonPrize[];
 }
 
 interface Store {
+  wheel: WheelConfig; // the creator's editable wheel
   fans: Map<string, MockFan>; // fanId -> fan
   tokens: Map<string, string>; // token -> fanId
   redemptions: RedemptionItem[]; // creator-wide fulfilment queue (newest first)
@@ -36,14 +40,17 @@ interface Store {
 const g = globalThis as unknown as { __ffStore?: Store };
 const store: Store =
   g.__ffStore ??
-  (g.__ffStore = { fans: new Map(), tokens: new Map(), redemptions: [] });
+  (g.__ffStore = {
+    wheel: structuredClone(SAMPLE_WHEEL),
+    fans: new Map(),
+    tokens: new Map(),
+    redemptions: [],
+  });
 
 if (!store.fans.has("demo-fan")) {
   store.fans.set("demo-fan", {
     id: "demo-fan",
     name: "Demo Fan",
-    creatorTitle: "Demo Creator",
-    wheel: structuredClone(SAMPLE_WHEEL),
     spinsRemaining: 5,
     wins: [],
   });
@@ -55,20 +62,27 @@ function fanForToken(token: string): MockFan | null {
   return fanId ? store.fans.get(fanId) ?? null : null;
 }
 
-function viewOf(token: string, fan: MockFan): FanPassView {
-  return {
-    token,
-    fanName: fan.name,
-    creatorTitle: fan.creatorTitle,
-    wheel: fan.wheel,
-    spinsRemaining: fan.spinsRemaining,
-    recentWins: fan.wins,
-  };
+export function mockGetWheel(): WheelConfig {
+  return structuredClone(store.wheel);
+}
+
+export function mockSaveWheel(config: WheelConfig): WheelConfig {
+  // Preserve the stable wheel id; everything else is editable.
+  store.wheel = { ...structuredClone(config), id: store.wheel.id };
+  return structuredClone(store.wheel);
 }
 
 export function mockGetFanPass(token: string): FanPassView | null {
   const fan = fanForToken(token);
-  return fan ? structuredClone(viewOf(token, fan)) : null;
+  if (!fan) return null;
+  return structuredClone({
+    token,
+    fanName: fan.name,
+    creatorTitle: CREATOR_TITLE,
+    wheel: store.wheel,
+    spinsRemaining: fan.spinsRemaining,
+    recentWins: fan.wins,
+  });
 }
 
 export function mockSpin(token: string) {
@@ -76,11 +90,11 @@ export function mockSpin(token: string) {
   if (!fan) return { error: "not_found" as const };
   if (fan.spinsRemaining <= 0) return { error: "no_spins" as const };
 
-  const { prize, index } = pickPrize(fan.wheel);
+  const { prize, index } = pickPrize(store.wheel);
   fan.spinsRemaining -= 1;
 
-  // Decrement limited stock so rare prizes can sell out.
-  const live = fan.wheel.prizes[index];
+  // Decrement limited stock on the shared wheel so rare prizes can sell out.
+  const live = store.wheel.prizes[index];
   if (typeof live.stock === "number") live.stock -= 1;
 
   // Record the win on the fan account (persists across all their links).
@@ -129,14 +143,7 @@ export function mockCreatePass(
 
   if (!fan) {
     const id = "fan-" + Math.random().toString(36).slice(2, 9);
-    fan = {
-      id,
-      name: name.trim() || "Fan",
-      creatorTitle: "Demo Creator",
-      wheel: structuredClone(SAMPLE_WHEEL),
-      spinsRemaining: add,
-      wins: [],
-    };
+    fan = { id, name: name.trim() || "Fan", spinsRemaining: add, wins: [] };
     store.fans.set(id, fan);
   } else {
     fan.spinsRemaining += add;
