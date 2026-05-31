@@ -366,3 +366,25 @@ create policy grants_rw on public.grants for all
 alter table public.spins
   add column if not exists campaign_id uuid references public.campaigns(id) on delete set null;
 create index if not exists spins_campaign_idx on public.spins(campaign_id);
+
+-- ============================================================================
+-- Phase 1: per-fan notes/tags + saved DM templates (migration 0003)
+-- ============================================================================
+alter table public.fans add column if not exists notes text;
+alter table public.fans add column if not exists tags text[] not null default '{}';
+create index if not exists fans_tags_idx on public.fans using gin(tags);
+
+create table if not exists public.dm_templates (
+  id         uuid primary key default gen_random_uuid(),
+  creator_id uuid not null references public.profiles(id) on delete cascade,
+  title      text not null,
+  body       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists dm_templates_creator_idx on public.dm_templates(creator_id);
+
+alter table public.dm_templates enable row level security;
+drop policy if exists dm_templates_rw on public.dm_templates;
+create policy dm_templates_rw on public.dm_templates for all
+  using (creator_id = auth.uid() or public.is_admin())
+  with check (creator_id = auth.uid() or public.is_admin());
