@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { HappyHour, WheelSummary, WishlistDemand } from "@/lib/data/types";
+import type { HappyHour, Webhook, WheelSummary, WishlistDemand } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
 
@@ -30,6 +30,7 @@ export default function BoostsPanel({
         <WishlistDemandCard />
         <ReferralStatsCard />
       </div>
+      <WebhooksCard />
     </div>
   );
 }
@@ -301,6 +302,105 @@ function ReferralStatsCard() {
         <Stat label="Credited" value={stats?.creditedCount ?? 0} />
         <Stat label="Bonus spins" value={stats?.bonusAwarded ?? 0} />
       </div>
+    </Section>
+  );
+}
+
+function WebhooksCard() {
+  const [hooks, setHooks] = useState<Webhook[]>([]);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  useEffect(() => {
+    let live = true;
+    fetch("/api/webhooks", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { webhooks: [] }))
+      .then((d) => live && setHooks(d.webhooks ?? []))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const add = async () => {
+    const value = url.trim();
+    if (!/^https?:\/\//i.test(value)) {
+      toast("Enter a URL starting with http(s)://");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.webhook) throw new Error();
+      setHooks((h) => [data.webhook, ...h]);
+      setUrl("");
+      toast("Webhook added");
+    } catch {
+      toast("Couldn't add webhook");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    setHooks((h) => h.filter((x) => x.id !== id));
+    await fetch(`/api/webhooks/${id}`, { method: "DELETE" }).catch(() => {});
+  };
+
+  return (
+    <Section
+      title="Webhooks"
+      hint="POST a JSON payload to your endpoint when a prize is pending fulfilment."
+    >
+      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-line p-4">
+        <label className="flex flex-1 flex-col gap-1 text-xs text-muted">
+          Endpoint URL
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://example.com/hooks/fanfunnel"
+            className="rounded-lg border border-line bg-base px-3 py-2 text-sm text-ink"
+          />
+        </label>
+        <button
+          onClick={add}
+          disabled={busy}
+          className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
+        >
+          Add
+        </button>
+      </div>
+
+      {hooks.length > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {hooks.map((h) => (
+            <li
+              key={h.id}
+              className="flex items-center gap-3 rounded-lg border border-line px-3 py-2 text-sm"
+            >
+              <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-muted">
+                {h.event}
+              </span>
+              <span className="flex-1 truncate font-mono text-xs text-ink">
+                {h.url}
+              </span>
+              <button
+                onClick={() => remove(h.id)}
+                className="ml-auto text-xs text-muted transition hover:text-ink"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </Section>
   );
 }

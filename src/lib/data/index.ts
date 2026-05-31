@@ -4,6 +4,7 @@ import {
   createClient,
 } from "@/lib/supabase/server";
 import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
+import { randomSeedHex, sha256Hex, makeRng } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -40,6 +41,8 @@ import type {
   ReferralOverview,
   ChatMessage,
   FanThread,
+  SpinVerification,
+  Webhook,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 import {
@@ -105,6 +108,12 @@ import {
   mockGetThread,
   mockSendCreatorMessage,
   mockGetPublicWheelTeaser,
+  mockGetSpinVerification,
+  mockListWebhooks,
+  mockCreateWebhook,
+  mockDeleteWebhook,
+  mockFireWebhooks,
+  mockAckFan,
 } from "./mock";
 
 function randomToken(): string {
@@ -289,7 +298,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .from("fan_passes")
     .select(
       `id, creator_id, campaign_id, wheel_id, fan_id, is_active,
-       fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code),
+       fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at),
        creator:profiles(display_name)`
     )
     .eq("token", token)
@@ -309,6 +318,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       spins_remaining: number;
       spins_granted_total: number;
       referral_code: string | null;
+      acked_at: string | null;
     } | null;
     creator: { display_name: string | null } | null;
   } | null;
@@ -387,6 +397,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     },
     chatUnlocked:
       pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0,
+    needsAck: pass.fan.acked_at == null,
   };
 }
 
@@ -448,6 +459,14 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   const hh = await getActiveHappyHour(sb, wheelId, new Date());
   const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
 
+  // Provably-fair commitment: commit to a random server seed (store its hash),
+  // derive this spin's RNG deterministically from the seed + nonce, and reveal
+  // the seed on the logged spin so the commitment can be verified afterward.
+  const serverSeed = randomSeedHex();
+  const nonce = spinsRemaining;
+  const serverSeedHash = await sha256Hex(serverSeed);
+  const rng = makeRng(serverSeed, nonce);
+
   // 3. Pick a prize in TS (single source of truth), honouring pity. If a
   //    limited prize sold out between our read and write, exclude it + re-pick.
   let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
@@ -459,7 +478,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
         excluded.has(p.id) ? { ...p, stock: 0 } : p
       ),
     };
-    const pick = pickPrizeWithPity(pool, { pityCounter });
+    const pick = pickPrizeWithPity(pool, { pityCounter }, rng);
     if (pick.prize.stock === null || pick.prize.stock === undefined) {
       chosen = pick;
       break;
@@ -527,6 +546,9 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       prize_rarity: chosen.prize.rarity,
       prize_image_url: chosen.prize.imageUrl ?? null,
       campaign_id: spinCampaignId,
+      server_seed: serverSeed,
+      server_seed_hash: serverSeedHash,
+      nonce,
     })
     .select("id, share_id")
     .single();
@@ -537,6 +559,14 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       creator_id: pass.creator_id,
       status: "pending",
     });
+    // Best-effort fan-out to the creator's webhooks. Never blocks/throws — a
+    // slow or failing endpoint must not break the spin.
+    void fireWebhooks(pass.creator_id, {
+      event: "prize_pending",
+      prize: chosen.prize.label,
+      rarity: chosen.prize.rarity,
+      at: new Date().toISOString(),
+    }).catch(() => {});
   }
 
   return {
@@ -2834,6 +2864,177 @@ export async function getShareCard(
     imageUrl: row.prize_image_url ?? null,
     at: row.created_at,
   };
+}
+
+// --- Provably-fair verification (#23) ---------------------------------------
+
+/**
+ * The fairness data for a single spin, keyed by its non-secret share_id. Reveals
+ * the committed server seed + hash so a public verify page can recompute the
+ * hash and confirm the commitment held. Service-role read (fans aren't authed).
+ * Returns null when the spin isn't found or has no committed seed (older spins).
+ */
+export async function getSpinVerification(
+  shareId: string
+): Promise<SpinVerification | null> {
+  if (!isSupabaseConfigured()) return mockGetSpinVerification(shareId);
+
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("spins")
+    .select(
+      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, created_at"
+    )
+    .eq("share_id", shareId)
+    .maybeSingle();
+
+  const row = data as {
+    prize_label: string;
+    prize_rarity: Rarity;
+    server_seed: string | null;
+    server_seed_hash: string | null;
+    nonce: number | null;
+    created_at: string;
+  } | null;
+  if (!row || !row.server_seed || !row.server_seed_hash) return null;
+
+  const hashOk = (await sha256Hex(row.server_seed)) === row.server_seed_hash;
+  return {
+    prizeLabel: row.prize_label,
+    rarity: row.prize_rarity,
+    serverSeed: row.server_seed,
+    serverSeedHash: row.server_seed_hash,
+    nonce: row.nonce ?? 0,
+    hashOk,
+    at: row.created_at,
+  };
+}
+
+// --- Webhooks (#24) ---------------------------------------------------------
+
+/** The creator's registered outbound webhooks (newest first, RLS-scoped). */
+export async function listWebhooks(): Promise<Webhook[]> {
+  if (!isSupabaseConfigured()) return mockListWebhooks();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("webhooks")
+    .select("id, url, event, created_at")
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const rows = (data ?? []) as {
+    id: string;
+    url: string;
+    event: string;
+    created_at: string;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    url: r.url,
+    event: r.event,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function createWebhook(
+  url: string,
+  event = "prize_pending"
+): Promise<Webhook | { error: string }> {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return { error: "invalid_url" };
+  if (!isSupabaseConfigured()) return mockCreateWebhook(trimmed, event);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data, error } = await sb
+    .from("webhooks")
+    .insert({ creator_id: user.id, url: trimmed, event })
+    .select("id, url, event, created_at")
+    .single();
+  if (error || !data) return { error: "db_error" };
+  return {
+    id: data.id,
+    url: data.url,
+    event: data.event,
+    createdAt: data.created_at,
+  };
+}
+
+export async function deleteWebhook(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeleteWebhook(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb.from("webhooks").delete().eq("id", id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Best-effort fan-out: POST `payload` as JSON to each of the creator's webhooks,
+ * swallowing every error so a slow/failing endpoint can't break a spin. No-op in
+ * demo mode.
+ */
+export async function fireWebhooks(
+  creatorId: string,
+  payload: object
+): Promise<void> {
+  if (!isSupabaseConfigured()) return mockFireWebhooks(creatorId, payload);
+
+  try {
+    const sb = createServiceClient();
+    const { data } = await sb
+      .from("webhooks")
+      .select("url")
+      .eq("creator_id", creatorId);
+    const hooks = (data ?? []) as { url: string }[];
+    const body = JSON.stringify(payload);
+    await Promise.allSettled(
+      hooks.map((h) =>
+        fetch(h.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        })
+      )
+    );
+  } catch {
+    /* never throws */
+  }
+}
+
+// --- Age-gate / ToS (#24) ---------------------------------------------------
+
+/** Stamp the age-gate / ToS acknowledgement on the fan behind a token. */
+export async function ackFan(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockAckFan(token);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { error } = await sb
+    .from("fans")
+    .update({ acked_at: new Date().toISOString() })
+    .eq("id", resolved.fanId);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 // --- Wishlist ---------------------------------------------------------------

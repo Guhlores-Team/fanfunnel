@@ -1,4 +1,5 @@
 import { applyRareBoost, pickPrize, pickPrizeWithPity } from "@/lib/games/wheel/engine";
+import { makeRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { defaultFeatures } from "@/lib/features";
@@ -30,6 +31,8 @@ import type {
   RedemptionStatus,
   ReferralOverview,
   ShareCardData,
+  SpinVerification,
+  Webhook,
   WheelSummary,
   WheelTemplate,
   WishlistDemand,
@@ -59,6 +62,10 @@ interface MockWin extends WonPrize {
   campaignId: string | null;
   shareId: string; // Phase 3: opaque id for the shareable card
   imageUrl?: string | null; // Phase 3: snapshot of the prize photo
+  // Phase 5b (#23): provably-fair commitment for this spin.
+  serverSeed: string;
+  serverSeedHash: string;
+  nonce: number;
 }
 
 interface MockFan {
@@ -77,6 +84,16 @@ interface MockFan {
   referralCode: string; // this fan's own referral code
   referredByFanId: string | null; // who referred this fan, if anyone
   referralCredited: boolean; // whether this fan's referral has been credited
+  // Phase 5b (#24): age-gate / ToS acknowledgement timestamp (null = not yet).
+  ackedAt: string | null;
+}
+
+// Phase 5b (#24): a creator's registered outbound webhook (demo, in-memory).
+interface MockWebhook {
+  id: string;
+  url: string;
+  event: string;
+  createdAt: string;
 }
 
 // Phase 3 store rows.
@@ -147,6 +164,8 @@ interface Store {
   referrals: MockReferral[];
   messages: MockMessage[];
   leaderboardEnabled: boolean;
+  // Phase 5b
+  webhooks: MockWebhook[];
 }
 
 /** Short, unique id with a stable prefix (mirrors the file's existing style). */
@@ -342,6 +361,7 @@ const store: Store =
     referrals: [],
     messages: [],
     leaderboardEnabled: false,
+    webhooks: [],
   });
 
 // A store pinned by an older dev-server build may predate these fields, so
@@ -360,6 +380,7 @@ store.happyHours ??= [];
 store.referrals ??= [];
 store.messages ??= [];
 store.leaderboardEnabled ??= false;
+store.webhooks ??= [];
 
 // Migrate a store pinned before the multi-wheel refactor: a `wheel` single
 // field may exist on the old shape. Fold it into the wheels map as active.
@@ -395,9 +416,14 @@ for (const fan of store.fans.values()) {
   fan.referralCode ??= genId("ref");
   fan.referredByFanId ??= null;
   fan.referralCredited ??= false;
-  // Backfill shareId on any win pinned before that field existed.
+  // Phase 5b: default un-acked so the age-gate shows for pre-existing fans.
+  fan.ackedAt ??= null;
+  // Backfill shareId + fairness fields on any win pinned before they existed.
   for (const w of fan.wins) {
     w.shareId ??= genId("share");
+    w.serverSeed ??= randomSeedHex();
+    w.nonce ??= 0;
+    w.serverSeedHash ??= "";
   }
 }
 // Backfill bonusSpins on any grant pinned before that field existed.
@@ -425,6 +451,7 @@ if (!store.fans.has("demo-fan")) {
     referralCode: genId("ref"),
     referredByFanId: null,
     referralCredited: false,
+    ackedAt: null,
   });
   store.tokens.set("demo", "demo-fan");
   // Seed a grant so revenue/per-campaign data is coherent in demo mode.
@@ -771,10 +798,11 @@ export function mockGetFanPass(token: string): FanPassView | null {
     happyHour: mockGetActiveHappyHour(wheel.id),
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
     chatUnlocked: chatUnlockedFor(fan),
+    needsAck: fan.ackedAt == null,
   });
 }
 
-export function mockSpin(token: string) {
+export async function mockSpin(token: string) {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" as const };
   if (fan.spinsRemaining <= 0) return { error: "no_spins" as const };
@@ -788,9 +816,18 @@ export function mockSpin(token: string) {
   const hh = mockGetActiveHappyHour(wheel.id);
   const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
 
-  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(pickWheel, {
-    pityCounter: fan.pityCounter,
-  });
+  // Provably-fair commitment: commit to a server seed, derive this spin's RNG
+  // from it, and store the seed + its hash on the win so verify works in demo.
+  const serverSeed = randomSeedHex();
+  const nonce = fan.spinsRemaining;
+  const serverSeedHash = await sha256Hex(serverSeed);
+  const rng = makeRng(serverSeed, nonce);
+
+  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(
+    pickWheel,
+    { pityCounter: fan.pityCounter },
+    rng
+  );
 
   // FIFO-attribute THIS spin to a campaign: the 0-based index of this spin
   // among all the fan has played is the count played before it. Walk the fan's
@@ -819,6 +856,9 @@ export function mockSpin(token: string) {
       campaignId,
       shareId,
       imageUrl: prize.imageUrl ?? null,
+      serverSeed,
+      serverSeedHash,
+      nonce,
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -950,6 +990,7 @@ export function mockCreatePass(
       referralCode: genId("ref"),
       referredByFanId,
       referralCredited: false,
+      ackedAt: null,
     };
     store.fans.set(id, newFan);
     store.tokens.set(token, id);
@@ -1731,6 +1772,80 @@ export function mockGetShareCard(shareId: string): ShareCardData | null {
     }
   }
   return null;
+}
+
+// --- Phase 5b: Provably-fair verification (#23) -----------------------------
+
+/** Resolve the fairness data for a spin by its shareId, across all fans. */
+export async function mockGetSpinVerification(
+  shareId: string
+): Promise<SpinVerification | null> {
+  for (const fan of store.fans.values()) {
+    const win = fan.wins.find((w) => w.shareId === shareId);
+    if (!win) continue;
+    if (!win.serverSeed || !win.serverSeedHash) return null;
+    const hashOk = (await sha256Hex(win.serverSeed)) === win.serverSeedHash;
+    return {
+      prizeLabel: win.label,
+      rarity: win.rarity,
+      serverSeed: win.serverSeed,
+      serverSeedHash: win.serverSeedHash,
+      nonce: win.nonce ?? 0,
+      hashOk,
+      at: win.at,
+    };
+  }
+  return null;
+}
+
+// --- Phase 5b: Webhooks (#24) ----------------------------------------------
+
+export function mockListWebhooks(): Webhook[] {
+  return structuredClone(
+    store.webhooks
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  );
+}
+
+export function mockCreateWebhook(
+  url: string,
+  event = "prize_pending"
+): Webhook | { error: string } {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return { error: "invalid_url" };
+  const hook: MockWebhook = {
+    id: genId("wh"),
+    url: trimmed,
+    event: event.trim() || "prize_pending",
+    createdAt: new Date().toISOString(),
+  };
+  store.webhooks.push(hook);
+  return structuredClone(hook);
+}
+
+export function mockDeleteWebhook(id: string): { ok: true } | { error: string } {
+  const before = store.webhooks.length;
+  store.webhooks = store.webhooks.filter((w) => w.id !== id);
+  return store.webhooks.length < before ? { ok: true } : { error: "not_found" };
+}
+
+/** Demo mode never makes outbound calls — webhook fan-out is a no-op. */
+export async function mockFireWebhooks(
+  _creatorId: string,
+  _payload: object
+): Promise<void> {
+  /* no-op in demo mode */
+}
+
+// --- Phase 5b: Age-gate / ToS (#24) ----------------------------------------
+
+/** Mark the fan behind a token as having acknowledged the age-gate / ToS. */
+export function mockAckFan(token: string): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  fan.ackedAt = new Date().toISOString();
+  return { ok: true };
 }
 
 // --- Phase 3: Wishlist ------------------------------------------------------

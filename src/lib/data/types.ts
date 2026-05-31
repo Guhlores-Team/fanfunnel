@@ -52,6 +52,27 @@ export interface FanPassView {
   happyHour?: HappyHourStatus;
   referral?: { code: string; bonusPerReferral: number };
   chatUnlocked?: boolean;
+  /** Phase 5b: true until the fan has acknowledged the age-gate / ToS. */
+  needsAck?: boolean;
+}
+
+/** Phase 5b (#23): the data a public verify page needs for one spin. */
+export interface SpinVerification {
+  prizeLabel: string;
+  rarity: Rarity;
+  serverSeed: string;
+  serverSeedHash: string;
+  nonce: number;
+  hashOk: boolean;
+  at: string;
+}
+
+/** Phase 5b (#24): a creator's outbound webhook registration. */
+export interface Webhook {
+  id: string;
+  url: string;
+  event: string;
+  createdAt: string;
 }
 
 /** A creator's named grouping of links, for cross-promotion comparison. */

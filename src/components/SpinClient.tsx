@@ -50,6 +50,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
+  // Phase 5b: age-gate / ToS. Blocks everything until acknowledged.
+  const [needsAck, setNeedsAck] = useState(pass.needsAck ?? false);
   const size = useWheelSize();
 
   // Canvas needs a real color string (it can't read the --brand CSS var).
@@ -262,6 +264,111 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           onDone={() => setNearMiss(null)}
         />
       )}
+
+      {needsAck && (
+        <AgeGate
+          token={pass.token}
+          creatorTitle={pass.creatorTitle}
+          onAck={() => setNeedsAck(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * A blocking age + terms gate shown over the whole page until the fan confirms
+ * they're 18+ and accepts the terms. On confirm we persist the acknowledgement
+ * (POST /api/fans/ack) and dismiss locally so the fan can spin.
+ */
+function AgeGate({
+  token,
+  creatorTitle,
+  onAck,
+}: {
+  token: string;
+  creatorTitle: string;
+  onAck: () => void;
+}) {
+  const [adult, setAdult] = useState(false);
+  const [terms, setTerms] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const ready = adult && terms && !busy;
+
+  const confirm = async () => {
+    if (!ready) return;
+    setBusy(true);
+    try {
+      await fetch("/api/fans/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+    } catch {
+      /* best-effort — dismiss anyway so the fan isn't stuck */
+    } finally {
+      onAck();
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agegate-title"
+      style={{ animation: "ff-fade 0.2s ease-out" }}
+    >
+      <div className="card relative w-full max-w-sm rounded-[1.75rem] p-8">
+        <div className="text-center">
+          <div className="text-4xl">🔞</div>
+          <h2
+            id="agegate-title"
+            className="mt-3 font-[family-name:var(--font-display)] text-xl font-extrabold text-ink"
+          >
+            Before you spin
+          </h2>
+          <p className="mt-2 text-sm text-muted text-pretty">
+            {creatorTitle} requires you to confirm your age and agree to the
+            terms before playing.
+          </p>
+        </div>
+
+        <div className="mt-6 space-y-3 text-left text-sm">
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3">
+            <input
+              type="checkbox"
+              checked={adult}
+              onChange={(e) => setAdult(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+            />
+            <span className="text-ink">I am 18 years of age or older.</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3">
+            <input
+              type="checkbox"
+              checked={terms}
+              onChange={(e) => setTerms(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+            />
+            <span className="text-ink">
+              I agree to the Terms of Service and acknowledge prizes are subject
+              to the creator&rsquo;s fulfilment.
+            </span>
+          </label>
+        </div>
+
+        <button
+          onClick={confirm}
+          disabled={!ready}
+          className="btn-brand mt-6 w-full rounded-2xl py-3.5 font-extrabold tracking-wide disabled:opacity-40"
+        >
+          {busy ? "Confirming…" : "Enter & spin"}
+        </button>
+      </div>
+      <style>{`
+        @keyframes ff-fade { from { opacity: 0 } to { opacity: 1 } }
+      `}</style>
     </div>
   );
 }

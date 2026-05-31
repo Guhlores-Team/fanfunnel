@@ -78,6 +78,12 @@ export default async function SharePage({
           <p className="mt-3 text-sm text-muted text-pretty">
             Won on {card.creatorTitle}&rsquo;s prize wheel — every spin wins.
           </p>
+          <a
+            href={`/verify/${shareId}`}
+            className="mt-5 inline-block text-xs font-semibold text-muted underline-offset-4 transition hover:text-ink hover:underline"
+          >
+            Verify fairness ↗
+          </a>
         </div>
       </div>
       <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
