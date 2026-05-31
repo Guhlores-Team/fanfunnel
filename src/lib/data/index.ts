@@ -8,6 +8,9 @@ import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type {
+  AdminAccount,
+  AdminOverview,
+  AppRole,
   CreatorOverview,
   FanPassView,
   RedemptionItem,
@@ -22,6 +25,9 @@ import {
   mockSetRedemptionStatus,
   mockGetWheel,
   mockSaveWheel,
+  mockGetAdminOverview,
+  mockUpdateAccount,
+  mockCreateAccount,
 } from "./mock";
 
 function randomToken(): string {
@@ -527,6 +533,121 @@ export async function setRedemptionStatus(
     })
     .eq("id", id);
   return error ? { error: "db_error" } : { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Admin (cross-account)
+// ---------------------------------------------------------------------------
+
+async function requireAdmin(
+  sb: Awaited<ReturnType<typeof createClient>>
+): Promise<boolean> {
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return false;
+  const { data } = await sb
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+  return data?.role === "admin";
+}
+
+export async function getAdminOverview(): Promise<AdminOverview | null> {
+  if (!isSupabaseConfigured()) return mockGetAdminOverview();
+
+  const sb = await createClient();
+  const { data, error } = await sb.rpc("admin_account_stats");
+  // The function returns rows only to admins; empty ⇒ not authorized.
+  if (error || !data || data.length === 0) return null;
+
+  const rows = data as {
+    id: string;
+    email: string | null;
+    display_name: string | null;
+    role: AppRole;
+    is_active: boolean;
+    features: Record<string, boolean> | null;
+    wheels: number;
+    fans: number;
+    spins: number;
+    pending: number;
+  }[];
+
+  const accounts: AdminAccount[] = rows.map((r) => ({
+    id: r.id,
+    email: r.email ?? "",
+    displayName: r.display_name ?? r.email ?? "Creator",
+    role: r.role,
+    isActive: r.is_active,
+    features: r.features ?? {},
+    wheels: Number(r.wheels),
+    fans: Number(r.fans),
+    spins: Number(r.spins),
+    pending: Number(r.pending),
+  }));
+
+  return {
+    metrics: {
+      creators: accounts.length,
+      fans: accounts.reduce((s, a) => s + a.fans, 0),
+      spins: accounts.reduce((s, a) => s + a.spins, 0),
+      pending: accounts.reduce((s, a) => s + a.pending, 0),
+    },
+    accounts,
+  };
+}
+
+export async function updateAccount(
+  id: string,
+  patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return mockUpdateAccount(id, patch) ? { ok: true } : { error: "not_found" };
+  }
+
+  const sb = await createClient();
+  if (!(await requireAdmin(sb))) return { error: "unauthorized" };
+
+  const upd: Record<string, unknown> = {};
+  if (patch.role) upd.role = patch.role;
+  if (typeof patch.isActive === "boolean") upd.is_active = patch.isActive;
+  if (patch.features) upd.features = patch.features;
+  if (Object.keys(upd).length === 0) return { ok: true };
+
+  const { error } = await sb.from("profiles").update(upd).eq("id", id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+export async function createCreatorAccount(
+  email: string,
+  password: string,
+  displayName: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    mockCreateAccount(email, displayName);
+    return { ok: true };
+  }
+
+  const sb = await createClient();
+  if (!(await requireAdmin(sb))) return { error: "unauthorized" };
+
+  // Service role is required to create a user without a sign-up flow.
+  const svc = createServiceClient();
+  const { data, error } = await svc.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { display_name: displayName || email },
+  });
+  if (error || !data.user) return { error: error?.message ?? "create_failed" };
+
+  await svc
+    .from("profiles")
+    .update({ display_name: displayName || email })
+    .eq("id", data.user.id);
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

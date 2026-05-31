@@ -48,3 +48,30 @@ export interface CreatorOverview {
   metrics: CreatorMetrics;
   redemptions: RedemptionItem[];
 }
+
+// --- Admin (cross-account) --------------------------------------------------
+
+export type AppRole = "admin" | "creator";
+
+export interface AdminAccount {
+  id: string;
+  email: string;
+  displayName: string;
+  role: AppRole;
+  isActive: boolean;
+  features: Record<string, boolean>;
+  wheels: number;
+  fans: number;
+  spins: number;
+  pending: number;
+}
+
+export interface AdminOverview {
+  metrics: {
+    creators: number;
+    fans: number;
+    spins: number;
+    pending: number;
+  };
+  accounts: AdminAccount[];
+}

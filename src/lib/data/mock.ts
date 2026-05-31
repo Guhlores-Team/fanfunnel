@@ -1,7 +1,10 @@
 import { pickPrize } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, type WheelConfig } from "@/lib/games/wheel/types";
+import { defaultFeatures } from "@/lib/features";
 import type {
+  AdminAccount,
+  AdminOverview,
   CreatorOverview,
   FanPassView,
   RedemptionItem,
@@ -33,6 +36,61 @@ interface Store {
   fans: Map<string, MockFan>; // fanId -> fan
   tokens: Map<string, string>; // token -> fanId
   redemptions: RedemptionItem[]; // creator-wide fulfilment queue (newest first)
+  accounts: AdminAccount[]; // demo creator/admin accounts for the admin panel
+}
+
+// A few seeded accounts so the admin panel is explorable in demo mode.
+function seedAccounts(): AdminAccount[] {
+  return [
+    {
+      id: "acc-you",
+      email: "you@fanfunnel.app",
+      displayName: "You (Agency)",
+      role: "admin",
+      isActive: true,
+      features: { ...defaultFeatures(), scratch: true, bingo: true },
+      wheels: 1,
+      fans: 0,
+      spins: 0,
+      pending: 0,
+    },
+    {
+      id: "acc-bella",
+      email: "bella@example.com",
+      displayName: "Bella",
+      role: "creator",
+      isActive: true,
+      features: { ...defaultFeatures(), scratch: true },
+      wheels: 2,
+      fans: 48,
+      spins: 312,
+      pending: 7,
+    },
+    {
+      id: "acc-mia",
+      email: "mia@example.com",
+      displayName: "Mia Rose",
+      role: "creator",
+      isActive: true,
+      features: defaultFeatures(),
+      wheels: 1,
+      fans: 23,
+      spins: 96,
+      pending: 2,
+    },
+    {
+      id: "acc-jade",
+      email: "jade@example.com",
+      displayName: "Jade",
+      role: "creator",
+      isActive: false,
+      features: defaultFeatures(),
+      wheels: 1,
+      fans: 5,
+      spins: 11,
+      pending: 0,
+    },
+  ];
 }
 
 // Pin to globalThis so the store is shared across every Next.js entry point
@@ -45,6 +103,7 @@ const store: Store =
     fans: new Map(),
     tokens: new Map(),
     redemptions: [],
+    accounts: seedAccounts(),
   });
 
 if (!store.fans.has("demo-fan")) {
@@ -183,4 +242,58 @@ export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
   if (!r) return null;
   r.status = status;
   return r;
+}
+
+// --- Admin -----------------------------------------------------------------
+
+export function mockGetAdminOverview(): AdminOverview {
+  // Keep the "You" account's live numbers in sync with real demo activity.
+  const you = store.accounts.find((a) => a.id === "acc-you");
+  if (you) {
+    you.fans = store.fans.size;
+    you.spins = store.redemptions.length;
+    you.pending = store.redemptions.filter((r) => r.status === "pending").length;
+  }
+
+  // Show ALL accounts — admins included (an account can be promoted to admin
+  // and must still appear in the panel).
+  const accounts = structuredClone(store.accounts);
+  return {
+    metrics: {
+      creators: accounts.length,
+      fans: accounts.reduce((s, a) => s + a.fans, 0),
+      spins: accounts.reduce((s, a) => s + a.spins, 0),
+      pending: accounts.reduce((s, a) => s + a.pending, 0),
+    },
+    accounts,
+  };
+}
+
+export function mockUpdateAccount(
+  id: string,
+  patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
+) {
+  const acc = store.accounts.find((a) => a.id === id);
+  if (!acc) return null;
+  if (patch.role) acc.role = patch.role;
+  if (typeof patch.isActive === "boolean") acc.isActive = patch.isActive;
+  if (patch.features) acc.features = { ...acc.features, ...patch.features };
+  return structuredClone(acc);
+}
+
+export function mockCreateAccount(email: string, displayName: string) {
+  const acc: AdminAccount = {
+    id: "acc-" + Math.random().toString(36).slice(2, 9),
+    email,
+    displayName: displayName || email,
+    role: "creator",
+    isActive: true,
+    features: defaultFeatures(),
+    wheels: 0,
+    fans: 0,
+    spins: 0,
+    pending: 0,
+  };
+  store.accounts.push(acc);
+  return structuredClone(acc);
 }

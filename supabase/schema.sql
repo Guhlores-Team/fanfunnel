@@ -218,6 +218,39 @@ end;
 $$;
 
 -- ============================================================================
+-- Admin: per-account stats across ALL creators. Returns rows only to admins
+-- (the WHERE is_admin() gate makes it return nothing for everyone else).
+-- ============================================================================
+create or replace function public.admin_account_stats()
+returns table (
+  id uuid,
+  email text,
+  display_name text,
+  role app_role,
+  is_active boolean,
+  features jsonb,
+  wheels bigint,
+  fans bigint,
+  spins bigint,
+  pending bigint
+)
+language sql
+stable
+security definer set search_path = public
+as $$
+  select
+    p.id, p.email, p.display_name, p.role, p.is_active, p.features,
+    (select count(*) from public.wheels w where w.creator_id = p.id),
+    (select count(*) from public.fans f where f.creator_id = p.id),
+    (select count(*) from public.spins s where s.creator_id = p.id),
+    (select count(*) from public.redemptions r
+       where r.creator_id = p.id and r.status = 'pending')
+  from public.profiles p
+  where public.is_admin()
+  order by p.created_at;
+$$;
+
+-- ============================================================================
 -- Row Level Security
 -- ============================================================================
 alter table public.profiles    enable row level security;
@@ -233,10 +266,14 @@ drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select
   using (id = auth.uid() or public.is_admin());
 
+-- Only admins may UPDATE profiles. This is deliberate: it stops a creator from
+-- escalating their own role or granting themselves features. (No in-app
+-- self-profile edit exists yet; add a SECURITY DEFINER function for safe
+-- self-updates if that changes.)
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update
-  using (id = auth.uid() or public.is_admin())
-  with check (id = auth.uid() or public.is_admin());
+  using (public.is_admin())
+  with check (public.is_admin());
 
 -- Generic owner-or-admin policies for creator-owned tables.
 -- (creator_id = auth.uid()) gives a creator their own rows; is_admin() gives

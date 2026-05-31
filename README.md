@@ -97,6 +97,32 @@ Each wheel is just data (`WheelConfig`: prizes, weights, colors, stock). The
 same engine powers the hosted app today and can power future games and exports
 tomorrow without rewrites.
 
+## Admin panel
+
+Visit `/admin` (admin role required in production; open in demo mode). From
+there you can:
+- See cross-account metrics (accounts, total fans, spins, prizes pending)
+- Suspend / reactivate any creator account
+- Promote a creator to admin (or back)
+- Toggle per-account feature flags (Prize Wheel is the base; Scratch / Bingo
+  unlock as we ship them)
+- Create a new creator account directly — you set their login and hand it over
+
+## Resetting everything
+
+**Demo mode (no Supabase):** all data lives in memory. Just restart the dev
+server — stop it, then `npm run dev` — and the store re-seeds fresh (the
+`demo` wheel, the demo fan link, and the sample admin accounts).
+
+**Production (Supabase):** run [`supabase/reset.sql`](supabase/reset.sql) in
+the Supabase SQL Editor. It truncates all app data (wheels, prizes, fans,
+links, spins, redemptions) but keeps your tables and logins. Optional blocks at
+the bottom let you also delete creator accounts or reset roles/features.
+
+To rebuild the schema from scratch, re-run
+[`supabase/schema.sql`](supabase/schema.sql) — it's idempotent (safe to run
+repeatedly).
+
 ## Tests
 
 ```bash
@@ -107,6 +133,6 @@ npx tsx src/lib/games/wheel/engine.test.ts
 - ✅ Creator/admin auth + middleware (sign-in)
 - ✅ Persisted wheel editor (saves wheel + prizes to Supabase)
 - ✅ Redemption fulfilment inbox + live metrics
-- Admin panel: manage creator accounts + cross-account metrics
+- ✅ Admin panel: manage creator accounts + cross-account metrics
 - Per-creator theming (fonts, background, photo-hub) — premium feel
 - More games: scratch tickets, bingo (same prize/fan/account system)

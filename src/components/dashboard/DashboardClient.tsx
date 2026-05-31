@@ -52,10 +52,13 @@ export default function DashboardClient({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
-            <span className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-300">
-              ADMIN · dual creator+admin
-            </span>
+          {(isAdmin || !email) && (
+            <a
+              href="/admin"
+              className="rounded-lg bg-amber-400/15 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-400/25"
+            >
+              ⚡ Admin panel
+            </a>
           )}
           {email && (
             <form action="/auth/signout" method="post">
