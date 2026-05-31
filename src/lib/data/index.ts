@@ -78,6 +78,7 @@ import {
   mockCreateWheel,
   mockDuplicateWheel,
   mockArchiveWheel,
+  mockDeleteWheel,
   mockSetActiveWheel,
   mockSetWheelSchedule,
   mockListCampaignPacks,
@@ -1753,6 +1754,63 @@ export async function archiveWheel(
   if (error) return { error: "db_error" };
 
   // If we just archived the active wheel, promote the oldest survivor.
+  if (row.is_active) {
+    const { data: next } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("creator_id", user.id)
+      .is("archived_at", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (next?.id) {
+      await sb.from("wheels").update({ is_active: true }).eq("id", next.id);
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Permanently delete a wheel. Guarded: only allowed when the wheel has NO spins
+ * (deleting one with history would cascade-wipe spins/redemptions = revenue and
+ * analytics records). Callers should archive instead when there's history.
+ */
+export async function deleteWheel(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeleteWheel(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data: target } = await sb
+    .from("wheels")
+    .select("id, is_active")
+    .eq("id", id)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  const row = target as { id: string; is_active: boolean } | null;
+  if (!row) return { error: "not_found" };
+
+  // Block deleting a wheel that has spin history — protects revenue/analytics.
+  const { count } = await sb
+    .from("spins")
+    .select("id", { count: "exact", head: true })
+    .eq("wheel_id", id);
+  if ((count ?? 0) > 0) return { error: "has_history" };
+
+  const { error } = await sb
+    .from("wheels")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
+  if (error) return { error: "db_error" };
+
+  // If the deleted wheel was active, promote the oldest survivor.
   if (row.is_active) {
     const { data: next } = await sb
       .from("wheels")

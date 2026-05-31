@@ -755,6 +755,20 @@ export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
   return { ok: true };
 }
 
+/** Permanently remove a wheel (demo has no real spin history to protect). */
+export function mockDeleteWheel(id: string): { ok: true } | { error: string } {
+  const wheel = store.wheels.get(id);
+  if (!wheel) return { error: "not_found" };
+  const wasActive = wheel.isActive;
+  store.wheels.delete(id);
+  wheelMeta.delete(id);
+  if (wasActive) {
+    const remaining = wheelsByAge().filter((w) => !w.archivedAt);
+    if (remaining.length > 0) remaining[0].isActive = true;
+  }
+  return { ok: true };
+}
+
 /** Make a wheel the active one (clears the flag on all others). */
 export function mockSetActiveWheel(id: string): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);

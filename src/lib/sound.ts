@@ -39,6 +39,25 @@ export function playTick() {
   blip(900, 0.04, "square", 0.06);
 }
 
+/**
+ * Unlock + warm the AudioContext from inside a user gesture (e.g. the SPIN tap).
+ * iOS Safari starts the context "suspended" and only resumes it during a real
+ * gesture, so this MUST be called synchronously in the tap handler — otherwise
+ * the later win fanfare (fired after the animation) is silent. Plays an
+ * inaudible blip to fully wake the context on first use.
+ */
+export function unlockAudio() {
+  const ac = audio();
+  if (!ac) return;
+  if (ac.state === "suspended") void ac.resume();
+  // A near-silent tick warms the pipeline without being heard.
+  try {
+    blip(440, 0.01, "sine", 0.0001);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Win fanfare — richer for higher rarities. */
 export function playWin(rarity: string) {
   const scales: Record<string, number[]> = {

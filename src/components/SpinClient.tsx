@@ -5,7 +5,7 @@ import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
-import { playWin } from "@/lib/sound";
+import { playWin, unlockAudio, haptic } from "@/lib/sound";
 import NearMissBeat, {
   detectNearMiss,
   type NearMiss,
@@ -65,6 +65,10 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
 
   const handleSpin = useCallback(async () => {
     if (!canSpin) return;
+    // iOS: wake the audio context inside the tap so the win fanfare can play,
+    // and fire a haptic tick (works even on silent mode).
+    if (!muted) unlockAudio();
+    haptic(12);
     setBusy(true);
     setError(null);
     setReveal(false);
@@ -99,7 +103,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setError("Network error. Try again.");
       setBusy(false);
     }
-  }, [canSpin, pass.token]);
+  }, [canSpin, pass.token, muted]);
 
   // On the 1→0 spins transition (a spin that just emptied the balance), nudge
   // the fan via chat once. A later top-up (>0) re-arms the one-shot guard.
@@ -122,6 +126,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     setReveal(true);
     if (won) {
       if (!muted) playWin(won.rarity);
+      haptic(won.rarity === "legendary" || won.rarity === "epic" ? [18, 40, 18] : 16);
       setHistory((h) =>
         [
           {

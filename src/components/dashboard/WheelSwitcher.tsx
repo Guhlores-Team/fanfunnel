@@ -30,6 +30,8 @@ export default function WheelSwitcher({
   const [busy, setBusy] = useState(false);
   // Two-step archive confirm, keyed by wheel id (mirrors the delete-fan pattern).
   const [confirmArchive, setConfirmArchive] = useState<string | null>(null);
+  // Two-step permanent-delete confirm, keyed by wheel id.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // Local edits to the selected wheel's schedule inputs.
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
@@ -139,6 +141,30 @@ export default function WheelSwitcher({
     }
   }
 
+  async function hardDelete(id: string) {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/wheels/${id}?hard=1`, { method: "DELETE" });
+      if (res.status === 409) {
+        toast("This wheel has spins — archive it instead to keep your history.", {
+          tone: "error",
+        });
+        setConfirmDelete(null);
+        return;
+      }
+      if (!res.ok) {
+        toast("Couldn't delete wheel. Try again.", { tone: "error" });
+        return;
+      }
+      toast("Wheel deleted", { tone: "success" });
+      setConfirmDelete(null);
+      await load();
+      onChanged?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveSchedule() {
     if (!selected) return;
     await patchWheel(
@@ -208,7 +234,7 @@ export default function WheelSwitcher({
                     </div>
                     <p className="tnum mt-0.5 text-xs text-muted">
                       {w.prizeCount} {w.prizeCount === 1 ? "prize" : "prizes"} ·{" "}
-                      {scheduleHint(w.activeFrom, w.activeUntil)}
+                      {scheduleHint(w.activeFrom, w.activeUntil, w.isActive)}
                     </p>
                   </div>
                 </div>
@@ -264,6 +290,33 @@ export default function WheelSwitcher({
                       className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
                     >
                       Archive
+                    </button>
+                  )}
+                  {confirmDelete === w.id ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => hardDelete(w.id)}
+                        disabled={busy}
+                        className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
+                      >
+                        Delete forever
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(null)}
+                        className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(w.id)}
+                      className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-[#ef4444]"
+                    >
+                      Delete
                     </button>
                   )}
                 </div>
@@ -341,8 +394,14 @@ function toLocalInput(iso: string | null): string {
 }
 
 /** A compact human hint describing a wheel's schedule window. */
-function scheduleHint(activeFrom: string | null, activeUntil: string | null): string {
-  if (!activeFrom && !activeUntil) return "Always on";
+function scheduleHint(
+  activeFrom: string | null,
+  activeUntil: string | null,
+  isActive: boolean,
+): string {
+  // An unscheduled wheel is "Always on" only if it's THE active wheel; otherwise
+  // it's simply inactive (exactly one wheel serves fans at a time).
+  if (!activeFrom && !activeUntil) return isActive ? "Always on" : "Inactive";
   const fmt = (iso: string) => {
     const d = new Date(iso);
     return Number.isNaN(d.getTime())

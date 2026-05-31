@@ -21,13 +21,13 @@ export default async function SpinPage({
 
   return (
     <main
-      className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10"
+      className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 pt-10 pb-28"
       style={{ "--brand": brand } as CSSProperties}
     >
       <div className="relative z-[1] flex w-full justify-center">
         <SpinClient pass={pass} />
       </div>
-      <footer className="relative z-[1] mt-10 text-[11px] tracking-wide text-muted/70">
+      <footer className="relative z-[1] mt-10 text-center text-[11px] tracking-wide text-muted/70">
         Powered by FanFunnel · every spin wins
       </footer>
     </main>

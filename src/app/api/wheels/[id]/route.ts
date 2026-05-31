@@ -4,6 +4,7 @@ import {
   setActiveWheel,
   setWheelSchedule,
   archiveWheel,
+  deleteWheel,
 } from "@/lib/data";
 
 // Load one wheel's full config.
@@ -20,6 +21,7 @@ export async function GET(
 function statusForError(error: string): number {
   if (error === "unauthorized") return 401;
   if (error === "not_found") return 404;
+  if (error === "has_history") return 409;
   return 400;
 }
 
@@ -62,13 +64,15 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
-// Archive a wheel.
+// Archive a wheel — or permanently delete it with `?hard=1` (only allowed when
+// the wheel has no spin history; otherwise returns 409 has_history).
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const result = await archiveWheel(id);
+  const hard = new URL(req.url).searchParams.get("hard") === "1";
+  const result = hard ? await deleteWheel(id) : await archiveWheel(id);
   if ("error" in result) {
     return NextResponse.json(result, { status: statusForError(result.error) });
   }
