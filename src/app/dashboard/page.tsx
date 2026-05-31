@@ -1,7 +1,8 @@
 import type { CSSProperties } from "react";
+import { redirect } from "next/navigation";
 import DashboardClient from "@/components/dashboard/DashboardClient";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
-import { getWheel } from "@/lib/data";
+import { getWheel, getMyApprovalStatus } from "@/lib/data";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 
 // Creator/admin dashboard. With Supabase configured the middleware guards this
@@ -26,6 +27,11 @@ export default async function DashboardPage() {
         .maybeSingle();
       isAdmin = profile?.role === "admin";
     }
+
+    // Gate: only approved creators (and admins) reach the dashboard. Pending /
+    // rejected requesters are sent to the review-status page.
+    const status = await getMyApprovalStatus();
+    if (status !== "approved") redirect("/pending");
   }
 
   const initialWheel = (await getWheel()) ?? SAMPLE_WHEEL;

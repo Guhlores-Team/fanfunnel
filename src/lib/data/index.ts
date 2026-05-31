@@ -2792,9 +2792,132 @@ export async function createCreatorAccount(
 
   await svc
     .from("profiles")
-    .update({ display_name: displayName || email })
+    .update({ display_name: displayName || email, approval_status: "approved" })
     .eq("id", data.user.id);
   return { ok: true };
+}
+
+// --- Gated signups: request → admin approval queue ---------------------------
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "none";
+
+/** The signed-in user's approval status (drives the dashboard gate). */
+export async function getMyApprovalStatus(): Promise<ApprovalStatus> {
+  if (!isSupabaseConfigured()) return "approved"; // demo: always in
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return "none";
+  const { data } = await sb
+    .from("profiles")
+    .select("approval_status, role")
+    .eq("id", user.id)
+    .maybeSingle();
+  const row = data as { approval_status: ApprovalStatus; role: AppRole } | null;
+  if (!row) return "none";
+  if (row.role === "admin") return "approved";
+  return row.approval_status;
+}
+
+/** A signed-in pending user submits their creator details for vetting. */
+export async function submitCreatorApplication(input: {
+  displayName?: string;
+  socials?: string;
+  audienceSize?: string;
+  note?: string;
+}): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb.from("creator_applications").upsert(
+    {
+      profile_id: user.id,
+      email: user.email ?? null,
+      display_name: input.displayName?.slice(0, 120) ?? null,
+      socials: input.socials?.slice(0, 600) ?? null,
+      audience_size: input.audienceSize?.slice(0, 120) ?? null,
+      note: input.note?.slice(0, 1000) ?? null,
+      status: "pending",
+    },
+    { onConflict: "profile_id" }
+  );
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+export interface CreatorApplication {
+  id: string;
+  profileId: string;
+  email: string | null;
+  displayName: string | null;
+  socials: string | null;
+  audienceSize: string | null;
+  note: string | null;
+  status: ApprovalStatus;
+  createdAt: string;
+}
+
+/** Admin: the pending (and recently-decided) creator applications. */
+export async function listCreatorApplications(): Promise<CreatorApplication[]> {
+  if (!isSupabaseConfigured()) return [];
+  const sb = await createClient();
+  if (!(await requireAdmin(sb))) return [];
+
+  const { data } = await sb
+    .from("creator_applications")
+    .select(
+      "id, profile_id, email, display_name, socials, audience_size, note, status, created_at"
+    )
+    .order("created_at", { ascending: false });
+
+  return ((data ?? []) as {
+    id: string;
+    profile_id: string;
+    email: string | null;
+    display_name: string | null;
+    socials: string | null;
+    audience_size: string | null;
+    note: string | null;
+    status: ApprovalStatus;
+    created_at: string;
+  }[]).map((r) => ({
+    id: r.id,
+    profileId: r.profile_id,
+    email: r.email,
+    displayName: r.display_name,
+    socials: r.socials,
+    audienceSize: r.audience_size,
+    note: r.note,
+    status: r.status,
+    createdAt: r.created_at,
+  }));
+}
+
+/** Admin: approve or reject a creator application (flips the profile gate too). */
+export async function decideCreatorApplication(
+  profileId: string,
+  decision: "approved" | "rejected"
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  if (!(await requireAdmin(sb))) return { error: "unauthorized" };
+
+  const now = new Date().toISOString();
+  const { error: aErr } = await sb
+    .from("creator_applications")
+    .update({ status: decision, decided_at: now })
+    .eq("profile_id", profileId);
+  if (aErr) return { error: "db_error" };
+
+  const { error: pErr } = await sb
+    .from("profiles")
+    .update({ approval_status: decision })
+    .eq("id", profileId);
+  return pErr ? { error: "db_error" } : { ok: true };
 }
 
 // ---------------------------------------------------------------------------

@@ -5,11 +5,24 @@ import Link from "next/link";
 import { FEATURES } from "@/lib/features";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 
+interface PendingApp {
+  id: string;
+  profileId: string;
+  email: string | null;
+  displayName: string | null;
+  socials: string | null;
+  audienceSize: string | null;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+}
+
 export default function AdminClient() {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [apps, setApps] = useState<PendingApp[]>([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -19,6 +32,8 @@ export default function AdminClient() {
         return;
       }
       if (res.ok) setData(await res.json());
+      const ar = await fetch("/api/admin/applications", { cache: "no-store" });
+      if (ar.ok) setApps((await ar.json()).applications ?? []);
     } finally {
       setLoading(false);
     }
@@ -27,6 +42,16 @@ export default function AdminClient() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  async function decideApp(profileId: string, decision: "approved" | "rejected") {
+    setApps((list) => list.filter((a) => a.profileId !== profileId));
+    await fetch("/api/admin/applications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profileId, decision }),
+    });
+    refresh();
+  }
 
   // Optimistically patch one account in place, then persist.
   async function patchAccount(
@@ -120,6 +145,63 @@ export default function AdminClient() {
           </div>
         ))}
       </div>
+
+      {(() => {
+        const pending = apps.filter((a) => a.status === "pending");
+        if (pending.length === 0) return null;
+        return (
+          <section className="mt-8">
+            <h2 className="flex items-center gap-2 text-lg font-bold">
+              Access requests
+              <span className="rounded-full bg-pink-500 px-2 py-0.5 text-xs font-bold">
+                {pending.length}
+              </span>
+            </h2>
+            <div className="mt-3 space-y-3">
+              {pending.map((a) => (
+                <div
+                  key={a.id}
+                  className="rounded-2xl border border-pink-400/30 bg-pink-500/5 p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-bold">{a.displayName ?? a.email ?? "Creator"}</p>
+                      <p className="text-xs text-white/50">{a.email}</p>
+                      {a.audienceSize && (
+                        <p className="mt-1 text-xs text-white/60">
+                          Audience: {a.audienceSize}
+                        </p>
+                      )}
+                      {a.socials && (
+                        <p className="mt-1 break-words text-xs text-white/60">
+                          Links: {a.socials}
+                        </p>
+                      )}
+                      {a.note && (
+                        <p className="mt-1 text-xs text-white/50">“{a.note}”</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        onClick={() => decideApp(a.profileId, "approved")}
+                        className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold hover:bg-emerald-400"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => decideApp(a.profileId, "rejected")}
+                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/5"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })()}
 
       <div className="mt-8 space-y-3">
         {loading && <p className="text-sm text-white/40">Loading…</p>}

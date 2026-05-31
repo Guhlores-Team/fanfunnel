@@ -36,10 +36,14 @@ export default function LoginForm() {
         if (error) throw error;
         // If email confirmation is on, there's no session yet.
         if (!data.session) {
-          setMsg("Check your email to confirm your account, then sign in.");
+          setMsg("Check your email to confirm, then sign in to request access.");
           setMode("signin");
           return;
         }
+        // New accounts are pending approval → send them to the request page.
+        router.push("/pending");
+        router.refresh();
+        return;
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -62,12 +66,12 @@ export default function LoginForm() {
       className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white"
     >
       <h1 className="text-lg font-bold">
-        {mode === "signin" ? "Sign in" : "Create your account"}
+        {mode === "signin" ? "Sign in" : "Request creator access"}
       </h1>
       <p className="mt-1 text-sm text-white/50">
         {mode === "signin"
           ? "Welcome back to your creator dashboard."
-          : "Start building prize wheels for your fans."}
+          : "Creator accounts are reviewed by hand — sign up, then tell us about you."}
       </p>
 
       <div className="mt-5 space-y-3">
@@ -108,7 +112,7 @@ export default function LoginForm() {
         disabled={busy}
         className="mt-5 w-full rounded-xl bg-pink-500 py-2.5 font-bold text-white hover:bg-pink-400 disabled:opacity-50"
       >
-        {busy ? "…" : mode === "signin" ? "Sign in" : "Create account"}
+        {busy ? "…" : mode === "signin" ? "Sign in" : "Request access"}
       </button>
 
       <button
@@ -121,7 +125,7 @@ export default function LoginForm() {
         className="mt-4 w-full text-center text-sm text-white/50 hover:text-white"
       >
         {mode === "signin"
-          ? "No account? Create one"
+          ? "Want a creator account? Request access"
           : "Already have an account? Sign in"}
       </button>
     </form>
