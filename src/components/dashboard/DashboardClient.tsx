@@ -22,6 +22,7 @@ import { OddsBar } from "@/components/dashboard/OddsBar";
 import Sparkline from "@/components/dashboard/Sparkline";
 import Funnel from "@/components/dashboard/Funnel";
 import { EmptyState, Field } from "./ui";
+import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -587,6 +588,7 @@ function FansPanel() {
   const [name, setName] = useState("");
   const [spins, setSpins] = useState(3);
   const [creating, setCreating] = useState(false);
+  const [openFanId, setOpenFanId] = useState<string | null>(null);
   const toast = useToast();
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
@@ -685,9 +687,16 @@ function FansPanel() {
           <EmptyState title="No fans yet" body="Create your first fan account above to mint a link." />
         )}
         {accounts?.map((acc) => (
-          <AccountCard key={acc.fanId} account={acc} origin={origin} onAddLink={addLink} />
+          <AccountCard
+            key={acc.fanId}
+            account={acc}
+            origin={origin}
+            onAddLink={addLink}
+            onOpen={setOpenFanId}
+          />
         ))}
       </div>
+      <FanDetailDrawer fanId={openFanId} onClose={() => setOpenFanId(null)} />
     </div>
   );
 }
@@ -696,16 +705,23 @@ function AccountCard({
   account,
   origin,
   onAddLink,
+  onOpen,
 }: {
   account: FanAccountSummary;
   origin: string;
   onAddLink: (fanId: string, spins: number) => void;
+  onOpen: (fanId: string) => void;
 }) {
   const [topUp, setTopUp] = useState(3);
   return (
     <div className="card rounded-xl p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
+        <button
+          type="button"
+          onClick={() => onOpen(account.fanId)}
+          aria-label={"View " + account.name}
+          className="min-w-0 rounded-lg text-left transition hover:opacity-80"
+        >
           <p className="truncate font-bold text-ink">{account.name}</p>
           <p className="text-xs text-muted">
             <span className="tnum font-semibold text-ink">{account.spinsRemaining}</span> spins left
@@ -721,7 +737,7 @@ function AccountCard({
               </>
             )}
           </p>
-        </div>
+        </button>
         <div className="flex items-center gap-2">
           <input
             type="number"
