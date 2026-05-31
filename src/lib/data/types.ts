@@ -1,4 +1,4 @@
-import type { Rarity, WheelConfig } from "@/lib/games/wheel/types";
+import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 
 /** A prize the fan has already won (their personal history). */
 export interface WonPrize {
@@ -24,7 +24,16 @@ export interface FanPassView {
 }
 
 /** A creator's named grouping of links, for cross-promotion comparison. */
-export interface Campaign { id: string; name: string; isActive: boolean; createdAt: string }
+export interface Campaign {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  // Phase 2: a campaign may pin a default wheel. Optional so existing
+  // construction sites in data/index.ts + data/mock.ts (owned by a later task)
+  // compile until they're updated to populate it.
+  pinnedWheelId?: string | null;
+}
 
 /** A single granted purchase (new fan or top-up), tagged to a campaign. */
 export interface Grant {
@@ -34,6 +43,56 @@ export interface Grant {
   campaignId: string | null;
   campaignName: string | null;
   at: string; // ISO timestamp
+  bonusSpins?: number;
+}
+
+/** A compact view of a creator's wheel for list/management screens. */
+export interface WheelSummary {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  brandColor: string;
+  isActive: boolean;
+  archivedAt: string | null;
+  activeFrom: string | null;
+  activeUntil: string | null;
+  prizeCount: number;
+  updatedAt: string;
+}
+
+/** A purchasable spin pack, optionally scoped to a campaign. */
+export interface CampaignPack {
+  id: string;
+  campaignId: string | null;
+  label: string;
+  spins: number;
+  amountCents: number;
+  bonusSpins: number;
+  sortOrder: number;
+  createdAt: string;
+}
+
+/** A reusable prize the creator can drop into any wheel. */
+export interface PrizeTemplate {
+  id: string;
+  label: string;
+  description?: string;
+  rarity: Rarity;
+  weight: number;
+  color?: string;
+  emoji?: string;
+  createdAt: string;
+}
+
+/** A reusable wheel preset (title + branding + prize set, no ids). */
+export interface WheelTemplate {
+  id: string;
+  name: string;
+  title: string;
+  subtitle?: string;
+  brandColor: string;
+  prizes: Omit<Prize, "id">[];
+  createdAt: string;
 }
 
 export interface CampaignStats {

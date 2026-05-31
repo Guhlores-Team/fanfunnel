@@ -1,4 +1,5 @@
 import type { Prize, WheelConfig } from "./types";
+import { RARITY_ORDER } from "./types";
 
 // ---------------------------------------------------------------------------
 // Pure, deterministic-testable engine. NO React, NO database, NO randomness
@@ -58,6 +59,89 @@ export function pickPrize(
   // Floating-point safety net: return the last available prize.
   const last = pool[pool.length - 1];
   return { prize: last, index: config.prizes.indexOf(last) };
+}
+
+// ---------------------------------------------------------------------------
+// Pity system — guarantees a "rare or better" payout when a fan has gone too
+// long without one. The counter is tracked per-fan on the server; this engine
+// only computes the outcome and the next counter value.
+// ---------------------------------------------------------------------------
+
+/** Spins-without-a-rare after which the next spin is forced rare-or-better. */
+export const PITY_THRESHOLD = 10;
+
+/** A prize is "rare or better" if its rarity is rare/epic/legendary. */
+function isRareOrBetter(prize: Prize): boolean {
+  return RARITY_ORDER.indexOf(prize.rarity) >= RARITY_ORDER.indexOf("rare");
+}
+
+/**
+ * Weighted-pick across an arbitrary in-stock pool, mirroring `pickPrize`'s
+ * selection logic but over a caller-supplied subset. Returns the prize and its
+ * index within `config.prizes`. Caller guarantees `pool.length > 0`.
+ */
+function weightedPickFromPool(
+  config: WheelConfig,
+  pool: Prize[],
+  rng: () => number
+): { prize: Prize; index: number } {
+  const totalWeight = pool.reduce((sum, p) => sum + Math.max(0, p.weight), 0);
+  if (totalWeight <= 0) {
+    const idx = Math.floor(rng() * pool.length);
+    const prize = pool[Math.min(idx, pool.length - 1)];
+    return { prize, index: config.prizes.indexOf(prize) };
+  }
+
+  let roll = rng() * totalWeight;
+  for (const prize of pool) {
+    roll -= Math.max(0, prize.weight);
+    if (roll < 0) {
+      return { prize, index: config.prizes.indexOf(prize) };
+    }
+  }
+
+  const last = pool[pool.length - 1];
+  return { prize: last, index: config.prizes.indexOf(last) };
+}
+
+/**
+ * Pick a prize, honouring the pity system.
+ *
+ * When `pityCounter + 1` reaches `pityThreshold` the spin is forced to a
+ * weighted in-stock "rare or better" prize (resetting the counter). If no such
+ * prize is in stock we fall back to a normal pick — never throwing — and the
+ * counter keeps climbing. Otherwise a normal weighted pick happens; landing a
+ * rare-or-better resets the counter, anything else increments it.
+ *
+ * @param rng - float in [0, 1). Injectable for deterministic tests/replays.
+ */
+export function pickPrizeWithPity(
+  config: WheelConfig,
+  opts: { pityCounter: number; pityThreshold?: number },
+  rng: () => number = Math.random
+): { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } {
+  const pityThreshold = opts.pityThreshold ?? PITY_THRESHOLD;
+  const pityCounter = opts.pityCounter;
+
+  if (pityCounter + 1 >= pityThreshold) {
+    const rarePool = availablePrizes(config).filter(isRareOrBetter);
+    if (rarePool.length > 0) {
+      const { prize, index } = weightedPickFromPool(config, rarePool, rng);
+      return { prize, index, pityAwarded: true, nextPityCounter: 0 };
+    }
+    // No rare-or-better in stock: fall back to a normal pick, keep climbing.
+    const fallback = pickPrize(config, rng);
+    return {
+      prize: fallback.prize,
+      index: fallback.index,
+      pityAwarded: false,
+      nextPityCounter: pityCounter + 1,
+    };
+  }
+
+  const { prize, index } = pickPrize(config, rng);
+  const nextPityCounter = isRareOrBetter(prize) ? 0 : pityCounter + 1;
+  return { prize, index, pityAwarded: false, nextPityCounter };
 }
 
 /**

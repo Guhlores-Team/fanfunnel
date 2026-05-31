@@ -48,6 +48,11 @@ export interface WheelConfig {
   subtitle?: string;
   brandColor?: string;
   prizes: Prize[];
+  /** Phase 2: scheduling + lifecycle. All optional so existing callers are untouched. */
+  isActive?: boolean;
+  activeFrom?: string | null;
+  activeUntil?: string | null;
+  archivedAt?: string | null;
 }
 
 /** Result of a single server-authoritative spin. */
@@ -56,4 +61,6 @@ export interface SpinResult {
   /** Index of the winning prize within config.prizes (for client animation). */
   prizeIndex: number;
   spinsRemaining: number;
+  /** Phase 2: true when this spin's outcome was forced by the pity system. */
+  pityAwarded?: boolean;
 }

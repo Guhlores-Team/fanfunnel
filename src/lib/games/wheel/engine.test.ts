@@ -1,6 +1,6 @@
 // Lightweight test runner (no test framework needed). Run with:
 //   npx tsx src/lib/games/wheel/engine.test.ts
-import { pickPrize, prizeOdds, availablePrizes } from "./engine";
+import { pickPrize, prizeOdds, availablePrizes, pickPrizeWithPity, PITY_THRESHOLD } from "./engine";
 import type { WheelConfig } from "./types";
 
 let passed = 0;
@@ -75,6 +75,100 @@ const config: WheelConfig = {
     threw = true;
   }
   assert(threw, "empty wheel throws");
+}
+
+// ---------------------------------------------------------------------------
+// Pity system
+// ---------------------------------------------------------------------------
+
+// 6. Pity fires at threshold: returns rare-or-better and resets counter to 0.
+{
+  // pityCounter+1 === PITY_THRESHOLD triggers the forced pick. With unlimited
+  // rare-or-better stock, the only candidates are 'b' (rare) and 'c' (legendary).
+  const unlimited: WheelConfig = {
+    ...config,
+    prizes: config.prizes.map((p) => ({ ...p, stock: null })),
+  };
+  const res = pickPrizeWithPity(unlimited, { pityCounter: PITY_THRESHOLD - 1 }, () => 0);
+  assert(res.pityAwarded === true, "pity fires at threshold (pityAwarded)");
+  assert(["rare", "epic", "legendary"].includes(res.prize.rarity), "pity awards rare-or-better");
+  assert(res.nextPityCounter === 0, "pity resets nextPityCounter to 0");
+  assert(unlimited.prizes[res.index].id === res.prize.id, "pity index matches prize");
+}
+
+// 7. Below threshold: normal pick, and a non-rare result increments the counter.
+{
+  // rng=0 lands on the first prize 'a' (common) — not rare, so counter climbs.
+  const res = pickPrizeWithPity(config, { pityCounter: 3 }, () => 0);
+  assert(res.pityAwarded === false, "below threshold is not a pity award");
+  assert(res.prize.id === "a", "below threshold uses normal weighted pick");
+  assert(res.nextPityCounter === 4, "non-rare below threshold increments counter");
+}
+
+// 8. Hitting a rare normally (below threshold) resets the counter.
+{
+  // A two-prize wheel where rng=0 lands on the rare prize.
+  const rareFirst: WheelConfig = {
+    id: "rare-first",
+    title: "Rare First",
+    prizes: [
+      { id: "r", label: "Rare", rarity: "rare", weight: 50 },
+      { id: "c", label: "Common", rarity: "common", weight: 50 },
+    ],
+  };
+  const res = pickPrizeWithPity(rareFirst, { pityCounter: 5 }, () => 0);
+  assert(res.pityAwarded === false, "natural rare is not a pity award");
+  assert(res.prize.rarity === "rare", "natural rare hit below threshold");
+  assert(res.nextPityCounter === 0, "natural rare resets counter");
+}
+
+// 9. Pity with NO rare-or-better in stock falls back without throwing.
+{
+  // Both rare ('b') and legendary ('c') are sold out → only common remains.
+  const noRare: WheelConfig = {
+    ...config,
+    prizes: config.prizes.map((p) =>
+      p.rarity === "common" ? { ...p, stock: null } : { ...p, stock: 0 }
+    ),
+  };
+  let threw = false;
+  let res;
+  try {
+    res = pickPrizeWithPity(noRare, { pityCounter: PITY_THRESHOLD - 1 }, () => 0);
+  } catch {
+    threw = true;
+  }
+  assert(!threw, "pity with no rare in stock does not throw");
+  assert(res !== undefined && res.pityAwarded === false, "no-rare pity is not awarded");
+  assert(res !== undefined && res.prize.rarity === "common", "no-rare pity falls back to common");
+  assert(res !== undefined && res.nextPityCounter === PITY_THRESHOLD, "no-rare pity keeps climbing");
+}
+
+// 10. Determinism: a seeded rng yields identical results across runs.
+{
+  // Simple LCG seeded rng so the sequence is reproducible.
+  function seeded(seed: number): () => number {
+    let s = seed >>> 0;
+    return () => {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 0x100000000;
+    };
+  }
+  const runA: string[] = [];
+  const runB: string[] = [];
+  const rngA = seeded(42);
+  const rngB = seeded(42);
+  let counterA = 0;
+  let counterB = 0;
+  for (let i = 0; i < 50; i++) {
+    const a = pickPrizeWithPity(config, { pityCounter: counterA }, rngA);
+    const b = pickPrizeWithPity(config, { pityCounter: counterB }, rngB);
+    runA.push(`${a.prize.id}:${a.nextPityCounter}:${a.pityAwarded}`);
+    runB.push(`${b.prize.id}:${b.nextPityCounter}:${b.pityAwarded}`);
+    counterA = a.nextPityCounter;
+    counterB = b.nextPityCounter;
+  }
+  assert(JSON.stringify(runA) === JSON.stringify(runB), "seeded rng is deterministic");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
