@@ -24,6 +24,28 @@ const TWO_PI = Math.PI * 2;
 const SPIN_MS = 4400;
 const EXTRA_TURNS = 6;
 
+// Greedy word-wrap: split into lines that each fit maxWidth at the current font.
+function wrapLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string[] {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const test = cur ? cur + " " + w : w;
+    if (!cur || ctx.measureText(test).width <= maxWidth) {
+      cur = test;
+    } else {
+      lines.push(cur);
+      cur = w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
 function easeOutQuart(t: number): number {
   return 1 - Math.pow(1 - t, 4);
 }
@@ -114,8 +136,9 @@ export default function Wheel({
       ctx.strokeStyle = "rgba(255,255,255,0.5)";
       ctx.stroke();
 
-      // Label: shrink to fit the slice (radial length AND angular thickness) so
-      // nothing clips at the rim. Only ellipsize as a last resort at min size.
+      // Label: wrap long names onto up to two lines and size them to the slice
+      // (radial length AND angular thickness), so prizes read in full instead
+      // of truncating. Ellipsis is only a last resort at the minimum size.
       ctx.save();
       ctx.rotate(start + seg / 2);
       ctx.textAlign = "right";
@@ -125,25 +148,45 @@ export default function Wheel({
       ctx.shadowBlur = 3;
 
       const hubR = radius * 0.15;
-      const maxLen = radius - hubR - 20; // radial room from rim toward hub
-      const angularCap = seg * radius * 0.5; // keep text within its wedge
+      const maxLen = radius - hubR - 18; // radial room for each line
+      const textR = hubR + (radius - hubR) * 0.55; // mid radius the text sits at
+      const angularRoom = seg * textR * 0.92; // tangential room for the line stack
       const setFont = (f: number) => {
         ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
       };
-      let font = Math.max(9, Math.min(size * 0.042, angularCap, 19));
-      let text = `${prize.emoji ? prize.emoji + " " : ""}${prize.label}`;
-      setFont(font);
-      while (ctx.measureText(text).width > maxLen && font > 9) {
-        font -= 0.5;
+      const label = `${prize.emoji ? prize.emoji + " " : ""}${prize.label}`;
+
+      let font = Math.min(size * 0.046, 20);
+      let lines: string[] = [label];
+      for (; font >= 9; font -= 0.5) {
         setFont(font);
+        lines = wrapLines(ctx, label, maxLen);
+        const lineH = font * 1.08;
+        const fits =
+          lines.length <= 2 &&
+          lines.every((l) => ctx.measureText(l).width <= maxLen) &&
+          lines.length * lineH <= angularRoom;
+        if (fits) break;
       }
-      if (ctx.measureText(text).width > maxLen) {
-        while (text.length > 2 && ctx.measureText(text + "…").width > maxLen) {
-          text = text.slice(0, -1);
+      setFont(font);
+
+      // Final layout at the resolved size: cap to two lines, ellipsize only if
+      // a line still overflows (e.g. one very long word) or content was dropped.
+      const all = wrapLines(ctx, label, maxLen);
+      const dropped = all.length > 2;
+      lines = all.slice(0, 2).map((l, i) => {
+        const overflow = ctx.measureText(l).width > maxLen;
+        if (!overflow && !(i === 1 && dropped)) return l;
+        let s = l;
+        while (s.length > 1 && ctx.measureText(s + "…").width > maxLen) {
+          s = s.slice(0, -1);
         }
-        text = text.replace(/\s+$/, "") + "…";
-      }
-      ctx.fillText(text, radius - 14, 0);
+        return s.replace(/\s+$/, "") + "…";
+      });
+
+      const lineH = font * 1.08;
+      const offset = ((lines.length - 1) * lineH) / 2;
+      lines.forEach((l, i) => ctx.fillText(l, radius - 14, -offset + i * lineH));
       ctx.restore();
     });
 
