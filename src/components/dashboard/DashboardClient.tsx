@@ -32,6 +32,8 @@ import CampaignsPanel from "@/components/dashboard/CampaignsPanel";
 import WheelSwitcher from "@/components/dashboard/WheelSwitcher";
 import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
 import PackPresets from "@/components/dashboard/PackPresets";
+import InboxPanel from "@/components/dashboard/InboxPanel";
+import BoostsPanel from "@/components/dashboard/BoostsPanel";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -40,7 +42,7 @@ import {
   reorder,
 } from "@/components/dashboard/editorHelpers";
 
-type Tab = "metrics" | "prizes" | "fans" | "campaigns" | "editor";
+type Tab = "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -122,12 +124,15 @@ export default function DashboardClient({
   );
   const overview = useOverview();
   const pending = overview.data?.metrics.pending ?? 0;
+  const unread = overview.data?.metrics.unreadMessages ?? 0;
 
   const tabs: [Tab, string][] = [
     ["editor", "Wheel"],
     ["fans", "Fans"],
     ["prizes", "Prizes"],
     ["campaigns", "Campaigns"],
+    ["boosts", "Boosts"],
+    ["inbox", "Inbox"],
     ["metrics", "Metrics"],
   ];
 
@@ -200,6 +205,11 @@ export default function DashboardClient({
                 {pending}
               </span>
             )}
+            {id === "inbox" && unread > 0 && (
+              <span className="tnum grid h-5 min-w-5 place-items-center rounded-full bg-[var(--brand)] px-1 text-[11px] font-bold text-white">
+                {unread}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -222,6 +232,13 @@ export default function DashboardClient({
         )}
         {tab === "fans" && <FansPanel />}
         {tab === "campaigns" && <CampaignsPanel />}
+        {tab === "boosts" && (
+          <BoostsPanel
+            leaderboardEnabled={overview.data?.metrics.leaderboardEnabled ?? false}
+            onLeaderboardChange={overview.refresh}
+          />
+        )}
+        {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
         {tab === "editor" && (
           <WheelEditor
             wheel={wheel}

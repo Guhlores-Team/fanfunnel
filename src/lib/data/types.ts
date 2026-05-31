@@ -199,6 +199,8 @@ export interface CreatorMetrics {
   revenue: number; // cents
   /** Phase 3: count of unread fan messages. Optional so existing literals compile. */
   unreadMessages?: number;
+  /** Phase 3: whether the creator's public leaderboard is on. Optional. */
+  leaderboardEnabled?: boolean;
 }
 
 /** Everything the creator dashboard's metrics + inbox need. */

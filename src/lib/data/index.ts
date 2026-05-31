@@ -2240,6 +2240,12 @@ export async function getOverview(): Promise<CreatorOverview> {
     .eq("sender", "fan")
     .is("read_at", null);
 
+  const { data: prof } = await sb
+    .from("profiles")
+    .select("leaderboard_enabled")
+    .eq("id", user.id)
+    .maybeSingle();
+
   return {
     metrics: {
       fans: fans ?? 0,
@@ -2248,6 +2254,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
       revenue,
       unreadMessages: unreadMessages ?? 0,
+      leaderboardEnabled: (prof as { leaderboard_enabled: boolean } | null)?.leaderboard_enabled ?? false,
     },
     redemptions,
   };

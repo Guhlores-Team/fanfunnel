@@ -1196,6 +1196,7 @@ export function mockGetOverview(): CreatorOverview {
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
       revenue,
       unreadMessages,
+      leaderboardEnabled: store.leaderboardEnabled,
     },
     redemptions: structuredClone(items),
   };
