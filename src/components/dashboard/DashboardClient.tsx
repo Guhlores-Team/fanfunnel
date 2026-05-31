@@ -379,6 +379,8 @@ function MetricsPanel({
             ) : (
               <Sparkline
                 data={extra.revenueTrend.map((d) => ({ date: d.date, spins: d.cents }))}
+                format={formatCents}
+                noun="Revenue"
               />
             )}
           </div>
