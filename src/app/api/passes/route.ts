@@ -11,6 +11,8 @@ export async function POST(req: Request) {
     wheelId?: string;
     campaignId?: string;
     amountDollars?: number;
+    packId?: string;
+    bonusSpins?: number;
   };
   try {
     body = await req.json();
@@ -25,6 +27,8 @@ export async function POST(req: Request) {
     wheelId: body.wheelId,
     campaignId: body.campaignId,
     amountCents: Math.round(Math.max(0, body.amountDollars || 0) * 100),
+    packId: body.packId,
+    bonusSpins: body.bonusSpins != null ? Number(body.bonusSpins) : undefined,
   });
 
   if ("error" in result) {

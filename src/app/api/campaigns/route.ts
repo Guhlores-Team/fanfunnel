@@ -9,7 +9,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  let body: { name?: string };
+  let body: { name?: string; pinnedWheelId?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const result = await createCampaign(name);
+  const result = await createCampaign(name, body.pinnedWheelId ?? null);
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;
     return NextResponse.json(result, { status });
