@@ -1,0 +1,27 @@
+import { NextResponse } from "next/server";
+import { spin } from "@/lib/data";
+
+// The ONLY place a spin outcome is decided. The browser sends just a token;
+// the server validates spins remaining, picks the weighted prize, logs it,
+// and returns the result for the wheel to animate to.
+export async function POST(req: Request) {
+  let token: string | undefined;
+  try {
+    const body = await req.json();
+    token = body?.token;
+  } catch {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+  if (!token || typeof token !== "string") {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
+  const result = await spin(token);
+
+  if ("error" in result) {
+    const status = result.error === "not_found" ? 404 : 409;
+    return NextResponse.json({ error: result.error }, { status });
+  }
+
+  return NextResponse.json(result);
+}
