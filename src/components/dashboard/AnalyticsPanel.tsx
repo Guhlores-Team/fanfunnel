@@ -129,7 +129,7 @@ function PrizeRoiCard() {
   return (
     <Section
       title="Prize ROI"
-      hint="What each prize is costing you, based on wins in the last 90 days."
+      hint='What each prize costs you to fulfil × how often it&rsquo;s won (last 90 days). Set a "Cost" on a prize in the Wheel editor — your real cost to deliver it (e.g. your hourly rate for a video call) — and "—" becomes a dollar figure so you can see which prizes are eating your time/money.'
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted">No prize wins yet.</p>

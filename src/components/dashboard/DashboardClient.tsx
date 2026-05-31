@@ -891,7 +891,7 @@ function FansPanel() {
               }}
             />
           </Field>
-          <Field label="$ amount (optional)">
+          <Field label="$ amount (total, optional)">
             <input
               type="number"
               min={0}
@@ -904,6 +904,12 @@ function FansPanel() {
                 setPackId(null);
               }}
             />
+            {amount && Number(amount) > 0 && spins > 0 && (
+              <p className="mt-1 text-[11px] text-muted">
+                {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
+                {formatCents(Math.round(Number(amount) * 100))} total
+              </p>
+            )}
           </Field>
           <Field label="Campaign (optional)">
             <select
@@ -1752,29 +1758,6 @@ function WheelEditor({
         />
       </div>
 
-      <div className="mb-6 rounded-xl border border-line bg-surface">
-        <button
-          type="button"
-          onClick={() => setShowLibrary((v) => !v)}
-          aria-expanded={showLibrary}
-          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-        >
-          <span className="font-bold text-ink">Library</span>
-          <span className="text-sm font-semibold text-muted">
-            {showLibrary ? "Hide ▲" : "Show ▼"}
-          </span>
-        </button>
-        {showLibrary && (
-          <div className="border-t border-line px-4 py-4">
-            <TemplateLibrary
-              onApplyWheelTemplate={applyWheelTemplate}
-              onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
-              onApplyPrizeTemplate={applyPrizeTemplate}
-            />
-          </div>
-        )}
-      </div>
-
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
         <p className="text-sm">
           {dirty ? (
@@ -2060,6 +2043,31 @@ function WheelEditor({
             Low weight plus limited stock is what makes the best prizes feel rare.
           </p>
         </div>
+      </div>
+
+      {/* Library lives at the bottom: you build the wheel first, then optionally
+          save it as a template or pull reusable prizes/templates in. */}
+      <div className="mt-6 rounded-xl border border-line bg-surface">
+        <button
+          type="button"
+          onClick={() => setShowLibrary((v) => !v)}
+          aria-expanded={showLibrary}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        >
+          <span className="font-bold text-ink">Library</span>
+          <span className="text-sm font-semibold text-muted">
+            {showLibrary ? "Hide ▲" : "Templates & saved prizes ▼"}
+          </span>
+        </button>
+        {showLibrary && (
+          <div className="border-t border-line px-4 py-4">
+            <TemplateLibrary
+              onApplyWheelTemplate={applyWheelTemplate}
+              onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
+              onApplyPrizeTemplate={applyPrizeTemplate}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
