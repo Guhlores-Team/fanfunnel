@@ -117,6 +117,35 @@ export default function Wheel({
     ctx.translate(cx, cy);
     ctx.rotate(rotation);
 
+    // Label geometry + ONE uniform font size that fits every label (two-line
+    // wrap). A single size across all slices reads clean and intentional.
+    const hubR = radius * 0.15;
+    const maxLen = radius - hubR - 18; // radial room per line
+    const textR = hubR + (radius - hubR) * 0.55; // mid radius text sits at
+    const angularRoom = seg * textR * 0.9; // tangential room for the line stack
+    const labelFor = (p: Prize) => `${p.emoji ? p.emoji + " " : ""}${p.label}`;
+    const setLabelFont = (f: number) => {
+      ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
+    };
+    (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing =
+      "0.01em";
+
+    let labelFont = Math.min(size * 0.05, 22);
+    for (; labelFont >= 9; labelFont -= 0.5) {
+      setLabelFont(labelFont);
+      const lineH = labelFont * 1.08;
+      const allFit = prizes.every((p) => {
+        const ls = wrapLines(ctx, labelFor(p), maxLen);
+        return (
+          ls.length <= 2 &&
+          ls.every((l) => ctx.measureText(l).width <= maxLen) &&
+          ls.length * lineH <= angularRoom
+        );
+      });
+      if (allFit) break;
+    }
+    const lineH = labelFont * 1.08;
+
     prizes.forEach((prize, i) => {
       const start = i * seg;
       const end = start + seg;
@@ -136,47 +165,21 @@ export default function Wheel({
       ctx.strokeStyle = "rgba(255,255,255,0.5)";
       ctx.stroke();
 
-      // Label: wrap long names onto up to two lines and size them to the slice
-      // (radial length AND angular thickness), so prizes read in full instead
-      // of truncating. Ellipsis is only a last resort at the minimum size.
+      // Label — uniform size across every slice, wrapped to at most two lines.
       ctx.save();
       ctx.rotate(start + seg / 2);
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.shadowColor = "rgba(0,0,0,0.5)";
+      ctx.shadowColor = "rgba(0,0,0,0.45)";
       ctx.shadowBlur = 3;
+      setLabelFont(labelFont);
 
-      const hubR = radius * 0.15;
-      const maxLen = radius - hubR - 18; // radial room for each line
-      const textR = hubR + (radius - hubR) * 0.55; // mid radius the text sits at
-      const angularRoom = seg * textR * 0.92; // tangential room for the line stack
-      const setFont = (f: number) => {
-        ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
-      };
-      const label = `${prize.emoji ? prize.emoji + " " : ""}${prize.label}`;
-
-      let font = Math.min(size * 0.046, 20);
-      let lines: string[] = [label];
-      for (; font >= 9; font -= 0.5) {
-        setFont(font);
-        lines = wrapLines(ctx, label, maxLen);
-        const lineH = font * 1.08;
-        const fits =
-          lines.length <= 2 &&
-          lines.every((l) => ctx.measureText(l).width <= maxLen) &&
-          lines.length * lineH <= angularRoom;
-        if (fits) break;
-      }
-      setFont(font);
-
-      // Final layout at the resolved size: cap to two lines, ellipsize only if
-      // a line still overflows (e.g. one very long word) or content was dropped.
-      const all = wrapLines(ctx, label, maxLen);
+      const all = wrapLines(ctx, labelFor(prize), maxLen);
       const dropped = all.length > 2;
-      lines = all.slice(0, 2).map((l, i) => {
+      const lines = all.slice(0, 2).map((l, idx) => {
         const overflow = ctx.measureText(l).width > maxLen;
-        if (!overflow && !(i === 1 && dropped)) return l;
+        if (!overflow && !(idx === 1 && dropped)) return l;
         let s = l;
         while (s.length > 1 && ctx.measureText(s + "…").width > maxLen) {
           s = s.slice(0, -1);
@@ -184,9 +187,8 @@ export default function Wheel({
         return s.replace(/\s+$/, "") + "…";
       });
 
-      const lineH = font * 1.08;
       const offset = ((lines.length - 1) * lineH) / 2;
-      lines.forEach((l, i) => ctx.fillText(l, radius - 14, -offset + i * lineH));
+      lines.forEach((l, idx) => ctx.fillText(l, radius - 14, -offset + idx * lineH));
       ctx.restore();
     });
 
