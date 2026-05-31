@@ -12,6 +12,7 @@ import type {
   FanAccountSummary,
   FanCampaignBreakdown,
   FanDetail,
+  DmTemplate,
   FanPassView,
   Grant,
   RedemptionItem,
@@ -44,6 +45,8 @@ interface MockFan {
   spinsGrantedTotal: number; // tracked independently of remaining
   primaryToken: string;
   wins: MockWin[];
+  notes: string | null; // free-form creator notes
+  tags: string[]; // creator-applied labels
 }
 
 // A single grant (new fan creation OR a top-up), tagged to a campaign.
@@ -71,6 +74,7 @@ interface Store {
   campaigns: Campaign[]; // creator's campaigns (newest first)
   tokenCampaign: Map<string, string>; // token -> campaignId
   grants: MockGrant[]; // every grant ever made (oldest first per fan via push order)
+  dmTemplates: DmTemplate[]; // creator's saved DM templates (newest first)
 }
 
 // A few seeded accounts so the admin panel is explorable in demo mode.
@@ -127,6 +131,25 @@ function seedAccounts(): AdminAccount[] {
   ];
 }
 
+// Two default DM templates so the "Copy DM" picker is useful out of the box.
+// `{link}` is replaced with the fan's full spin URL when a template is used.
+function seedDmTemplates(): DmTemplate[] {
+  return [
+    {
+      id: "dm-spin-invite",
+      title: "Spin invite",
+      body: "Hey! 🎡 Here's your spin link: {link}",
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "dm-topup-nudge",
+      title: "Top-up nudge",
+      body: "You're out of spins — top up and let's go again: {link}",
+      createdAt: new Date().toISOString(),
+    },
+  ];
+}
+
 // Pin to globalThis so the store is shared across every Next.js entry point
 // (pages and route handlers are bundled separately).
 const g = globalThis as unknown as { __ffStore?: Store };
@@ -141,6 +164,7 @@ const store: Store =
     campaigns: [],
     tokenCampaign: new Map(),
     grants: [],
+    dmTemplates: seedDmTemplates(),
   });
 
 // A store pinned by an older dev-server build may predate these fields, so
@@ -148,6 +172,12 @@ const store: Store =
 store.campaigns ??= [];
 store.tokenCampaign ??= new Map();
 store.grants ??= [];
+store.dmTemplates ??= seedDmTemplates();
+// Backfill notes/tags on any fan pinned before these fields existed.
+for (const fan of store.fans.values()) {
+  fan.notes ??= null;
+  fan.tags ??= [];
+}
 
 if (!store.fans.has("demo-fan")) {
   const demoSpins = 5;
@@ -158,6 +188,8 @@ if (!store.fans.has("demo-fan")) {
     spinsGrantedTotal: demoSpins,
     primaryToken: "demo",
     wins: [],
+    notes: null,
+    tags: ["new"],
   });
   store.tokens.set("demo", "demo-fan");
   // Seed a grant so revenue/per-campaign data is coherent in demo mode.
@@ -314,6 +346,8 @@ export function mockCreatePass(
       spinsGrantedTotal: add,
       primaryToken: token,
       wins: [],
+      notes: null,
+      tags: [],
     });
     store.tokens.set(token, id);
     if (campaignId) store.tokenCampaign.set(token, campaignId);
@@ -384,6 +418,7 @@ export function mockListFans(): FanAccountSummary[] {
       primaryToken: f.primaryToken,
       totalSpent,
       campaignNames,
+      tags: f.tags ?? [],
       links: (tokensByFan.get(f.id) ?? []).map((token) => ({ token })),
       lastWin: f.wins[0]
         ? { label: f.wins[0].label, rarity: f.wins[0].rarity, at: f.wins[0].at }
@@ -495,6 +530,8 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
   return {
     fanId: fan.id,
     name: fan.name,
+    notes: fan.notes ?? null,
+    tags: fan.tags ?? [],
     spinsRemaining: fan.spinsRemaining,
     grantedTotal,
     totalSpins: fan.wins.length,
@@ -506,6 +543,18 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
     grants,
     byCampaign,
   };
+}
+
+/** Patch a fan's notes and/or tags in place. */
+export function mockUpdateFanMeta(
+  fanId: string,
+  patch: { notes?: string | null; tags?: string[] }
+): { ok: true } | { error: string } {
+  const fan = store.fans.get(fanId);
+  if (!fan) return { error: "not_found" };
+  if ("notes" in patch) fan.notes = patch.notes ?? null;
+  if (patch.tags) fan.tags = patch.tags;
+  return { ok: true };
 }
 
 export function mockGetOverview(): CreatorOverview {
@@ -661,6 +710,32 @@ export function mockUpdateAccount(
   if (patch.features) acc.features = { ...acc.features, ...patch.features };
   return structuredClone(acc);
 }
+
+// --- DM templates -----------------------------------------------------------
+
+export function mockListDmTemplates(): DmTemplate[] {
+  // Already stored newest-first.
+  return structuredClone(store.dmTemplates);
+}
+
+export function mockCreateDmTemplate(title: string, body: string): DmTemplate {
+  const template: DmTemplate = {
+    id: "dm-" + Math.random().toString(36).slice(2, 9),
+    title: title.trim() || "Template",
+    body,
+    createdAt: new Date().toISOString(),
+  };
+  store.dmTemplates.unshift(template);
+  return structuredClone(template);
+}
+
+export function mockDeleteDmTemplate(id: string): boolean {
+  const before = store.dmTemplates.length;
+  store.dmTemplates = store.dmTemplates.filter((t) => t.id !== id);
+  return store.dmTemplates.length < before;
+}
+
+// --- Admin (account creation) -----------------------------------------------
 
 export function mockCreateAccount(email: string, displayName: string) {
   const acc: AdminAccount = {

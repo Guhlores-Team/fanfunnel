@@ -15,6 +15,7 @@ import type {
   CampaignStats,
   CreatorMetricsExtra,
   CreatorOverview,
+  DmTemplate,
   FanAccountSummary,
   FanCampaignBreakdown,
   FanDetail,
@@ -43,6 +44,10 @@ import {
   mockListCampaigns,
   mockGetCampaignStats,
   mockDeleteFan,
+  mockUpdateFanMeta,
+  mockListDmTemplates,
+  mockCreateDmTemplate,
+  mockDeleteDmTemplate,
 } from "./mock";
 
 function randomToken(): string {
@@ -572,7 +577,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   const { data } = await sb
     .from("fans")
     .select(
-      `id, display_name, handle, spins_remaining, spins_granted_total, created_at,
+      `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at,
        fan_passes(token, created_at),
        spins(prize_label, prize_rarity, created_at),
        grants(amount_cents, campaign_id, campaign:campaigns(name))`
@@ -586,6 +591,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     handle: string | null;
     spins_remaining: number;
     spins_granted_total: number;
+    tags: string[] | null;
     fan_passes: { token: string; created_at: string }[] | null;
     spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[] | null;
     grants:
@@ -616,6 +622,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       primaryToken: links[0]?.token ?? null,
       totalSpent,
       campaignNames,
+      tags: r.tags ?? [],
       links: links.map((p) => ({ token: p.token })),
       lastWin: wins[0]
         ? { label: wins[0].prize_label, rarity: wins[0].prize_rarity, at: wins[0].created_at }
@@ -635,7 +642,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   const { data: fan } = await sb
     .from("fans")
-    .select("id, display_name, handle, spins_remaining, spins_granted_total")
+    .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags")
     .eq("id", fanId)
     .maybeSingle();
   if (!fan) return null;
@@ -779,6 +786,8 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   return {
     fanId: fan.id,
     name: fan.display_name ?? fan.handle ?? "Fan",
+    notes: fan.notes ?? null,
+    tags: fan.tags ?? [],
     spinsRemaining: fan.spins_remaining,
     grantedTotal: fan.spins_granted_total,
     totalSpins,
@@ -811,6 +820,113 @@ export async function deleteFan(
   if (!user) return { error: "unauthorized" };
 
   const { error } = await sb.from("fans").delete().eq("id", fanId);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Patch a fan's creator-applied metadata (free-form notes and/or tags). RLS
+ * scopes the update to the owning creator, so we use the auth-scoped client.
+ */
+export async function updateFanMeta(
+  fanId: string,
+  patch: { notes?: string | null; tags?: string[] }
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockUpdateFanMeta(fanId, patch);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const upd: Record<string, unknown> = {};
+  if ("notes" in patch) upd.notes = patch.notes ?? null;
+  if (patch.tags) upd.tags = patch.tags;
+  if (Object.keys(upd).length === 0) return { ok: true };
+
+  const { error } = await sb.from("fans").update(upd).eq("id", fanId);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// DM templates: a creator's saved, reusable direct-message snippets. `{link}`
+// is a placeholder the UI swaps for a fan's full spin URL. Creator-scoped (RLS).
+// ---------------------------------------------------------------------------
+
+export async function listDmTemplates(): Promise<DmTemplate[]> {
+  if (!isSupabaseConfigured()) return mockListDmTemplates();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("dm_templates")
+    .select("id, title, body, created_at")
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const rows = (data ?? []) as {
+    id: string;
+    title: string;
+    body: string;
+    created_at: string;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    body: r.body,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function createDmTemplate(
+  title: string,
+  body: string
+): Promise<{ template: DmTemplate } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return { template: mockCreateDmTemplate(title, body) };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data, error } = await sb
+    .from("dm_templates")
+    .insert({ creator_id: user.id, title, body })
+    .select("id, title, body, created_at")
+    .single();
+  if (error || !data) return { error: "db_error" };
+
+  return {
+    template: {
+      id: data.id,
+      title: data.title,
+      body: data.body,
+      createdAt: data.created_at,
+    },
+  };
+}
+
+export async function deleteDmTemplate(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return mockDeleteDmTemplate(id) ? { ok: true } : { error: "not_found" };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb.from("dm_templates").delete().eq("id", id);
   return error ? { error: "db_error" } : { ok: true };
 }
 

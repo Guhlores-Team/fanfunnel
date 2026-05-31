@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { RARITY_COLORS, type Rarity } from "@/lib/games/wheel/types";
 import type { FanDetail } from "@/lib/data/types";
 import { formatCents } from "@/lib/format";
+import { TagEditor } from "./ui";
+import { useToast } from "@/components/ui/Toast";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -35,16 +37,22 @@ function timeAgo(iso: string): string {
 export default function FanDetailDrawer({
   fanId,
   onClose,
+  onSaved,
 }: {
   fanId: string | null;
   onClose: () => void;
+  onSaved?: () => void;
 }) {
   const [detail, setDetail] = useState<FanDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [savingTags, setSavingTags] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
+  const toast = useToast();
 
   // Fetch the fan detail whenever the open fan changes.
   useEffect(() => {
@@ -54,12 +62,16 @@ export default function FanDetailDrawer({
     setLoading(true);
     setDetail(null);
     setNotFound(false);
+    setNotes("");
     (async () => {
       try {
         const res = await fetch(`/api/fans/${fanId}`, { cache: "no-store" });
         if (!active) return;
-        if (res.ok) setDetail(await res.json());
-        else setNotFound(true);
+        if (res.ok) {
+          const data: FanDetail = await res.json();
+          setDetail(data);
+          setNotes(data.notes ?? "");
+        } else setNotFound(true);
       } catch {
         if (active) setNotFound(true);
       } finally {
@@ -70,6 +82,53 @@ export default function FanDetailDrawer({
       active = false;
     };
   }, [fanId]);
+
+  // Persist a metadata patch (notes and/or tags) for the open fan.
+  async function patchMeta(
+    patch: { notes?: string | null; tags?: string[] }
+  ): Promise<boolean> {
+    if (!fanId) return false;
+    const res = await fetch(`/api/fans/${fanId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    return res.ok;
+  }
+
+  // Save notes on blur, but only when they've actually changed.
+  async function saveNotes() {
+    if (!detail) return;
+    const next = notes.trim() ? notes : null;
+    if ((detail.notes ?? null) === (next ?? null)) return;
+    setSavingNotes(true);
+    try {
+      if (await patchMeta({ notes: next })) {
+        setDetail((d) => (d ? { ...d, notes: next } : d));
+        toast("Notes saved", { tone: "success" });
+        onSaved?.();
+      } else {
+        toast("Couldn't save notes.", { tone: "error" });
+      }
+    } finally {
+      setSavingNotes(false);
+    }
+  }
+
+  async function saveTags(tags: string[]) {
+    if (!detail) return;
+    setSavingTags(true);
+    try {
+      if (await patchMeta({ tags })) {
+        setDetail((d) => (d ? { ...d, tags } : d));
+        onSaved?.();
+      } else {
+        toast("Couldn't save tags.", { tone: "error" });
+      }
+    } finally {
+      setSavingTags(false);
+    }
+  }
 
   // Escape-to-close + basic focus management (move in on open, restore on close).
   useEffect(() => {
@@ -156,6 +215,46 @@ export default function FanDetailDrawer({
                   </div>
                 ))}
               </dl>
+
+              {/* Tags */}
+              <section>
+                <h3 className="text-sm font-semibold text-ink">Tags</h3>
+                {loading || !detail ? (
+                  <div className="skeleton mt-3 h-8 w-full rounded" />
+                ) : (
+                  <div className="mt-3">
+                    <TagEditor
+                      tags={detail.tags}
+                      onChange={saveTags}
+                      disabled={savingTags}
+                    />
+                  </div>
+                )}
+              </section>
+
+              {/* Notes */}
+              <section>
+                <h3 className="text-sm font-semibold text-ink">Notes</h3>
+                {loading || !detail ? (
+                  <div className="skeleton mt-3 h-20 w-full rounded" />
+                ) : (
+                  <>
+                    <textarea
+                      className="ff-input mt-3 w-full"
+                      rows={3}
+                      placeholder="Private notes about this fan…"
+                      value={notes}
+                      disabled={savingNotes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      onBlur={saveNotes}
+                      aria-label="Fan notes"
+                    />
+                    <p className="mt-1 text-[11px] text-muted">
+                      {savingNotes ? "Saving…" : "Saved when you click away."}
+                    </p>
+                  </>
+                )}
+              </section>
 
               {/* Wins by rarity */}
               <section>

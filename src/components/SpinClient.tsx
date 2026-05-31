@@ -6,6 +6,10 @@ import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { playWin } from "@/lib/sound";
+import NearMissBeat, {
+  detectNearMiss,
+  type NearMiss,
+} from "./NearMissBeat";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -34,6 +38,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [won, setWon] = useState<Prize | null>(null);
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState(false);
+  const [nearMiss, setNearMiss] = useState<NearMiss | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
@@ -49,6 +54,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     setError(null);
     setReveal(false);
     setWon(null);
+    setNearMiss(null);
     try {
       const res = await fetch("/api/spin", {
         method: "POST",
@@ -93,8 +99,13 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           ...h,
         ].slice(0, 50)
       );
+      // Near-miss beat: did the wheel stop one slice away from a legendary
+      // (or epic) prize? Derived from the landed slice index + wheel order.
+      if (result) {
+        setNearMiss(detectNearMiss(pass.wheel.prizes, result.index));
+      }
     }
-  }, [won, muted]);
+  }, [won, muted, result, pass.wheel.prizes]);
 
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-7">
@@ -197,6 +208,13 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
 
       {reveal && won && (
         <PrizeModal prize={won} onClose={() => setReveal(false)} />
+      )}
+
+      {nearMiss && (
+        <NearMissBeat
+          nearMiss={nearMiss}
+          onDone={() => setNearMiss(null)}
+        />
       )}
     </div>
   );

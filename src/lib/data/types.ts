@@ -79,12 +79,15 @@ export interface FanAccountSummary {
   primaryToken: string | null;
   totalSpent: number; // cents
   campaignNames: string[]; // campaigns this fan has grants in
+  tags: string[]; // creator-applied labels (VIP, whale, …)
   links: { token: string }[];
   lastWin: { label: string; rarity: Rarity; at: string } | null;
 }
 
 export interface FanDetail {
   fanId: string; name: string;
+  notes: string | null; // free-form creator notes about the fan
+  tags: string[]; // creator-applied labels (VIP, whale, …)
   spinsRemaining: number; grantedTotal: number; totalSpins: number;
   totalSpent: number; // cents
   lastActive: string | null;
@@ -94,6 +97,9 @@ export interface FanDetail {
   grants: Grant[]; // newest first
   byCampaign: FanCampaignBreakdown[];
 }
+
+/** A creator's saved DM template, with {link} as a placeholder for a fan URL. */
+export interface DmTemplate { id: string; title: string; body: string; createdAt: string }
 
 export interface CreatorMetrics {
   fans: number;
