@@ -389,7 +389,7 @@ function MetricsPanel({
         {/* Conversion */}
         <section className="card rounded-xl p-5">
           <h3 className="text-sm font-semibold text-ink">Conversion</h3>
-          <p className="mt-0.5 text-xs text-muted">Link → spin → fulfilled.</p>
+          <p className="mt-0.5 text-xs text-muted">Fans created → spun → fulfilled.</p>
           <div className="mt-4">
             {extraLoading || !extra ? (
               <div className="space-y-2.5">
