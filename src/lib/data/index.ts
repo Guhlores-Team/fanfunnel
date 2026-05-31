@@ -3,7 +3,7 @@ import {
   createServiceClient,
   createClient,
 } from "@/lib/supabase/server";
-import { pickPrizeWithPity } from "@/lib/games/wheel/engine";
+import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -27,6 +27,16 @@ import type {
   RedemptionStatus,
   WheelSummary,
   WheelTemplate,
+  ShareCardData,
+  WishlistItem,
+  WishlistDemand,
+  LeaderboardView,
+  LeaderboardEntry,
+  HappyHour,
+  HappyHourStatus,
+  ReferralOverview,
+  ChatMessage,
+  FanThread,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 import {
@@ -70,6 +80,24 @@ import {
   mockListWheelTemplates,
   mockCreateWheelTemplate,
   mockDeleteWheelTemplate,
+  mockListHappyHours,
+  mockCreateHappyHour,
+  mockDeleteHappyHour,
+  mockGetShareCard,
+  mockAddWishlist,
+  mockRemoveWishlist,
+  mockGetWishlistDemand,
+  mockSetLeaderboardEnabled,
+  mockSetFanLeaderboardOptIn,
+  mockGetLeaderboard,
+  mockGetReferralOverview,
+  mockGetReferralStats,
+  mockSendFanMessage,
+  mockGetFanMessages,
+  mockListThreads,
+  mockGetThread,
+  mockSendCreatorMessage,
+  mockGetPublicWheelTeaser,
 } from "./mock";
 
 function randomToken(): string {
@@ -82,6 +110,11 @@ function randomToken(): string {
 export type { FanPassView } from "./types";
 export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" };
 
+// Phase 3 referral economy: how many referrals a fan can be credited for, and
+// how many bonus spins each credited referral grants to BOTH parties.
+const REFERRAL_CAP = 3;
+const REFERRAL_BONUS = 3;
+
 // Shapes of the Supabase rows we read (keeps us off `any`).
 interface DbPrizeRow {
   id: string;
@@ -91,6 +124,7 @@ interface DbPrizeRow {
   weight: number;
   color: string | null;
   emoji: string | null;
+  image_url: string | null;
   stock: number | null;
   sort_order: number | null;
 }
@@ -109,7 +143,7 @@ interface DbWheelRow {
 // The columns we select to load a wheel's full config (prizes joined).
 const WHEEL_SELECT =
   `id, title, subtitle, brand_color, is_active, active_from, active_until, archived_at,
-   prizes(id, label, description, rarity, weight, color, emoji, stock, sort_order)`;
+   prizes(id, label, description, rarity, weight, color, emoji, image_url, stock, sort_order)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
 type AnyClient =
@@ -208,6 +242,32 @@ async function resolveWheelId(
   return active ?? pass.wheel_id;
 }
 
+/**
+ * The currently-running happy hour for a wheel: any window where
+ * starts_at <= now < ends_at. When several overlap we take the largest
+ * multiplier. Returns an inactive status (multiplier 1) when none apply.
+ */
+async function getActiveHappyHour(
+  sb: AnyClient,
+  wheelId: string,
+  now: Date
+): Promise<HappyHourStatus> {
+  const iso = now.toISOString();
+  const { data } = await sb
+    .from("happy_hours")
+    .select("multiplier, ends_at")
+    .eq("wheel_id", wheelId)
+    .lte("starts_at", iso)
+    .gt("ends_at", iso);
+
+  const rows = (data ?? []) as { multiplier: number; ends_at: string }[];
+  if (rows.length === 0) return { active: false, multiplier: 1, endsAt: null };
+
+  let best = rows[0];
+  for (const r of rows) if (r.multiplier > best.multiplier) best = r;
+  return { active: true, multiplier: best.multiplier, endsAt: best.ends_at };
+}
+
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
 // configured, so local dev and previews work with zero setup.
@@ -221,7 +281,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .from("fan_passes")
     .select(
       `id, creator_id, campaign_id, wheel_id, fan_id, is_active,
-       fan:fans(id, display_name, handle, spins_remaining),
+       fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code),
        creator:profiles(display_name)`
     )
     .eq("token", token)
@@ -234,7 +294,14 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
-    fan: { id: string; display_name: string | null; handle: string | null; spins_remaining: number } | null;
+    fan: {
+      id: string;
+      display_name: string | null;
+      handle: string | null;
+      spins_remaining: number;
+      spins_granted_total: number;
+      referral_code: string | null;
+    } | null;
     creator: { display_name: string | null } | null;
   } | null;
 
@@ -255,7 +322,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // across every link the creator has ever minted for them.
   const { data: wins } = await sb
     .from("spins")
-    .select("prize_label, prize_rarity, created_at")
+    .select("prize_label, prize_rarity, prize_image_url, share_id, created_at")
     .eq("fan_id", pass.fan.id)
     .order("created_at", { ascending: false })
     .limit(50);
@@ -263,8 +330,32 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   const winRows = (wins ?? []) as {
     prize_label: string;
     prize_rarity: Rarity;
+    prize_image_url: string | null;
+    share_id: string | null;
     created_at: string;
   }[];
+
+  // Phase 3 fan-facing extras.
+  const { data: wishRows } = await sb
+    .from("wishlists")
+    .select("id, prize_label, prize_rarity, created_at")
+    .eq("fan_id", pass.fan.id)
+    .order("created_at", { ascending: false });
+  const wishlist: WishlistItem[] = (
+    (wishRows ?? []) as {
+      id: string;
+      prize_label: string;
+      prize_rarity: Rarity;
+      created_at: string;
+    }[]
+  ).map((w) => ({
+    id: w.id,
+    prizeLabel: w.prize_label,
+    rarity: w.prize_rarity,
+    at: w.created_at,
+  }));
+
+  const happyHour = await getActiveHappyHour(sb, wheelId, new Date());
 
   return {
     token,
@@ -277,7 +368,17 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       rarity: w.prize_rarity,
       color: RARITY_COLORS[w.prize_rarity],
       at: w.created_at,
+      shareId: w.share_id ?? undefined,
+      imageUrl: w.prize_image_url ?? null,
     })),
+    wishlist,
+    happyHour,
+    referral: {
+      code: pass.fan.referral_code ?? "",
+      bonusPerReferral: REFERRAL_BONUS,
+    },
+    chatUnlocked:
+      pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0,
   };
 }
 
@@ -335,14 +436,18 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     .maybeSingle();
   const pityCounter = (fanRow as { pity_counter: number } | null)?.pity_counter ?? 0;
 
+  // Happy hour (if any) boosts rare-or-better weights for this spin only.
+  const hh = await getActiveHappyHour(sb, wheelId, new Date());
+  const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
+
   // 3. Pick a prize in TS (single source of truth), honouring pity. If a
   //    limited prize sold out between our read and write, exclude it + re-pick.
   let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
   const excluded = new Set<string>();
-  for (let attempt = 0; attempt < config.prizes.length + 1; attempt++) {
+  for (let attempt = 0; attempt < pool0.prizes.length + 1; attempt++) {
     const pool: WheelConfig = {
-      ...config,
-      prizes: config.prizes.map((p) =>
+      ...pool0,
+      prizes: pool0.prizes.map((p) =>
         excluded.has(p.id) ? { ...p, stock: 0 } : p
       ),
     };
@@ -412,9 +517,10 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       prize_id: chosen.prize.id,
       prize_label: chosen.prize.label,
       prize_rarity: chosen.prize.rarity,
+      prize_image_url: chosen.prize.imageUrl ?? null,
       campaign_id: spinCampaignId,
     })
-    .select("id")
+    .select("id, share_id")
     .single();
 
   if (spinRow) {
@@ -430,6 +536,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     prizeIndex: chosen.index,
     spinsRemaining,
     pityAwarded: chosen.pityAwarded,
+    shareId: (spinRow as { id: string; share_id: string | null } | null)?.share_id ?? undefined,
   };
 }
 
@@ -447,6 +554,7 @@ export async function createPass(opts: {
   amountCents?: number;
   packId?: string;
   bonusSpins?: number;
+  referralCode?: string;
 }): Promise<{ token: string; fanId: string } | { error: string }> {
   let spins = Math.max(0, Math.floor(opts.spins) || 0);
   let amountCents = Math.max(0, Math.floor(opts.amountCents ?? 0) || 0);
@@ -459,7 +567,8 @@ export async function createPass(opts: {
       opts.campaignId,
       amountCents,
       bonusSpins,
-      opts.packId
+      opts.packId,
+      opts.referralCode
     );
   }
 
@@ -546,6 +655,31 @@ export async function createPass(opts: {
     if (error || !fan) return { error: "db_error" };
     fanId = fan.id;
 
+    // Referral: a NEW fan arriving with a code is linked to the referrer (same
+    // creator, not self). The credit is awarded later, on this fan's first PAID
+    // grant (see the crediting block below).
+    if (opts.referralCode) {
+      const { data: refRow } = await sb
+        .from("fans")
+        .select("id")
+        .eq("creator_id", user.id)
+        .eq("referral_code", opts.referralCode)
+        .maybeSingle();
+      const referrer = refRow as { id: string } | null;
+      if (referrer && referrer.id !== fanId) {
+        await sb
+          .from("fans")
+          .update({ referred_by_fan_id: referrer.id })
+          .eq("id", fanId);
+        await sb.from("referrals").insert({
+          creator_id: user.id,
+          referrer_fan_id: referrer.id,
+          referred_fan_id: fanId,
+          bonus_spins: REFERRAL_BONUS,
+        });
+      }
+    }
+
     // New fan: mint exactly ONE link.
     token = randomToken();
     const { error: passErr } = await sb.from("fan_passes").insert({
@@ -572,6 +706,85 @@ export async function createPass(opts: {
     bonus_spins: bonusSpins,
   });
   if (grantErr) return { error: "db_error" };
+
+  // Referral crediting (idempotent): the FIRST time this fan makes a PAID
+  // grant, if they were referred and haven't been credited yet, award the bonus
+  // to BOTH the fan and the referrer — capped at REFERRAL_CAP credited
+  // referrals per referrer. Guarded so it runs at most once.
+  if (amountCents > 0) {
+    const { data: meRow } = await sb
+      .from("fans")
+      .select("referred_by_fan_id, referral_credited, spins_remaining, spins_granted_total")
+      .eq("id", fanId)
+      .maybeSingle();
+    const me = meRow as {
+      referred_by_fan_id: string | null;
+      referral_credited: boolean;
+      spins_remaining: number;
+      spins_granted_total: number;
+    } | null;
+
+    if (me && me.referred_by_fan_id && !me.referral_credited) {
+      // How many referrals has the referrer already had credited?
+      const { count: creditedCount } = await sb
+        .from("referrals")
+        .select("id", { count: "exact", head: true })
+        .eq("referrer_fan_id", me.referred_by_fan_id)
+        .not("credited_at", "is", null);
+
+      if ((creditedCount ?? 0) < REFERRAL_CAP) {
+        // Mark this fan credited FIRST (idempotency guard): only proceed if the
+        // flag was still false at update time.
+        const { data: claimed } = await sb
+          .from("fans")
+          .update({ referral_credited: true })
+          .eq("id", fanId)
+          .eq("referral_credited", false)
+          .select("id")
+          .maybeSingle();
+
+        if (claimed) {
+          // Bonus to the referred fan (this fan).
+          await sb
+            .from("fans")
+            .update({
+              spins_remaining: me.spins_remaining + REFERRAL_BONUS,
+              spins_granted_total: me.spins_granted_total + REFERRAL_BONUS,
+            })
+            .eq("id", fanId);
+
+          // Bonus to the referrer.
+          const { data: refFan } = await sb
+            .from("fans")
+            .select("spins_remaining, spins_granted_total")
+            .eq("id", me.referred_by_fan_id)
+            .maybeSingle();
+          const rf = refFan as {
+            spins_remaining: number;
+            spins_granted_total: number;
+          } | null;
+          if (rf) {
+            await sb
+              .from("fans")
+              .update({
+                spins_remaining: rf.spins_remaining + REFERRAL_BONUS,
+                spins_granted_total: rf.spins_granted_total + REFERRAL_BONUS,
+              })
+              .eq("id", me.referred_by_fan_id);
+          }
+
+          // Mark the referral row credited.
+          await sb
+            .from("referrals")
+            .update({
+              credited_at: new Date().toISOString(),
+              bonus_spins: REFERRAL_BONUS,
+            })
+            .eq("referred_fan_id", fanId);
+        }
+      }
+    }
+  }
 
   return { token, fanId };
 }
@@ -1262,6 +1475,7 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     weight: Math.max(0, Math.floor(p.weight) || 0),
     color: p.color ?? null,
     emoji: p.emoji ?? null,
+    image_url: p.imageUrl ?? null,
     stock: p.stock ?? null,
     sort_order: sortOrder,
   };
@@ -2019,6 +2233,13 @@ export async function getOverview(): Promise<CreatorOverview> {
     0
   );
 
+  const { count: unreadMessages } = await sb
+    .from("messages")
+    .select("id", head)
+    .eq("creator_id", user.id)
+    .eq("sender", "fan")
+    .is("read_at", null);
+
   return {
     metrics: {
       fans: fans ?? 0,
@@ -2026,6 +2247,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       pending: redemptions.filter((r) => r.status === "pending").length,
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
       revenue,
+      unreadMessages: unreadMessages ?? 0,
     },
     redemptions,
   };
@@ -2240,6 +2462,731 @@ export async function createCreatorAccount(
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3: happy hours, share cards, wishlist, leaderboard, referrals, chat,
+// and the public teaser. Creator paths use the RLS client; fan/public paths use
+// the service-role client keyed by token (fans never authenticate).
+// ---------------------------------------------------------------------------
+
+function toHappyHour(r: {
+  id: string;
+  wheel_id: string;
+  multiplier: number;
+  starts_at: string;
+  ends_at: string;
+}): HappyHour {
+  return {
+    id: r.id,
+    wheelId: r.wheel_id,
+    multiplier: r.multiplier,
+    startsAt: r.starts_at,
+    endsAt: r.ends_at,
+  };
+}
+
+const HAPPY_HOUR_SELECT = "id, wheel_id, multiplier, starts_at, ends_at";
+
+/** All the creator's happy-hour windows (optionally for one wheel), newest first. */
+export async function listHappyHours(wheelId?: string): Promise<HappyHour[]> {
+  if (!isSupabaseConfigured()) return mockListHappyHours(wheelId);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  let query = sb
+    .from("happy_hours")
+    .select(HAPPY_HOUR_SELECT)
+    .eq("creator_id", user.id)
+    .order("starts_at", { ascending: false });
+  if (wheelId) query = query.eq("wheel_id", wheelId);
+
+  const { data } = await query;
+  const rows = (data ?? []) as Parameters<typeof toHappyHour>[0][];
+  return rows.map(toHappyHour);
+}
+
+export async function createHappyHour(input: {
+  wheelId: string;
+  multiplier: number;
+  startsAt: string;
+  endsAt: string;
+}): Promise<HappyHour | { error: string }> {
+  if (!isSupabaseConfigured()) return mockCreateHappyHour(input);
+
+  if (new Date(input.endsAt).getTime() <= new Date(input.startsAt).getTime())
+    return { error: "invalid_window" };
+  const multiplier = Number(input.multiplier);
+  if (!(multiplier >= 1 && multiplier <= 10))
+    return { error: "invalid_multiplier" };
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  // Ownership: the wheel must belong to this creator.
+  const { data: wheel } = await sb
+    .from("wheels")
+    .select("id")
+    .eq("id", input.wheelId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  if (!wheel) return { error: "not_found" };
+
+  const { data, error } = await sb
+    .from("happy_hours")
+    .insert({
+      creator_id: user.id,
+      wheel_id: input.wheelId,
+      multiplier,
+      starts_at: input.startsAt,
+      ends_at: input.endsAt,
+    })
+    .select(HAPPY_HOUR_SELECT)
+    .single();
+  if (error || !data) return { error: "db_error" };
+  return toHappyHour(data as Parameters<typeof toHappyHour>[0]);
+}
+
+export async function deleteHappyHour(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeleteHappyHour(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb
+    .from("happy_hours")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * A render-ready public share card for a single spin, keyed by its non-secret
+ * share_id. Service-role read (fans aren't authenticated). Returns ONLY display
+ * fields — never the pass token or any fan identity.
+ */
+export async function getShareCard(
+  shareId: string
+): Promise<ShareCardData | null> {
+  if (!isSupabaseConfigured()) return mockGetShareCard(shareId);
+
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("spins")
+    .select(
+      "prize_label, prize_rarity, prize_image_url, created_at, creator:profiles(display_name)"
+    )
+    .eq("share_id", shareId)
+    .maybeSingle();
+
+  const row = data as unknown as {
+    prize_label: string;
+    prize_rarity: Rarity;
+    prize_image_url: string | null;
+    created_at: string;
+    creator: { display_name: string | null } | null;
+  } | null;
+  if (!row) return null;
+
+  return {
+    creatorTitle: row.creator?.display_name ?? "Creator",
+    prizeLabel: row.prize_label,
+    rarity: row.prize_rarity,
+    color: RARITY_COLORS[row.prize_rarity],
+    imageUrl: row.prize_image_url ?? null,
+    at: row.created_at,
+  };
+}
+
+// --- Wishlist ---------------------------------------------------------------
+
+/** Resolve the fan + creator + active wheel behind a token (service role). */
+async function resolveFanByToken(
+  sb: ReturnType<typeof createServiceClient>,
+  token: string
+): Promise<{
+  fanId: string;
+  creatorId: string;
+  campaignId: string | null;
+  wheelId: string;
+} | null> {
+  const { data } = await sb
+    .from("fan_passes")
+    .select("creator_id, campaign_id, wheel_id, fan_id")
+    .eq("token", token)
+    .eq("is_active", true)
+    .maybeSingle();
+  const pass = data as {
+    creator_id: string;
+    campaign_id: string | null;
+    wheel_id: string;
+    fan_id: string;
+  } | null;
+  if (!pass) return null;
+  const wheelId = await resolveWheelId(sb, pass, new Date());
+  if (!wheelId) return null;
+  return {
+    fanId: pass.fan_id,
+    creatorId: pass.creator_id,
+    campaignId: pass.campaign_id,
+    wheelId,
+  };
+}
+
+export async function addWishlist(
+  token: string,
+  prizeLabel: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockAddWishlist(token, prizeLabel);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  // The label must exist on the fan's resolved wheel; snapshot its rarity.
+  const { data: prize } = await sb
+    .from("prizes")
+    .select("id, rarity")
+    .eq("wheel_id", resolved.wheelId)
+    .eq("label", prizeLabel)
+    .maybeSingle();
+  const p = prize as { id: string; rarity: Rarity } | null;
+  if (!p) return { error: "invalid_prize" };
+
+  const { error } = await sb
+    .from("wishlists")
+    .upsert(
+      {
+        creator_id: resolved.creatorId,
+        fan_id: resolved.fanId,
+        prize_id: p.id,
+        prize_label: prizeLabel,
+        prize_rarity: p.rarity,
+      },
+      { onConflict: "fan_id,prize_label" }
+    );
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+export async function removeWishlist(
+  token: string,
+  prizeLabel: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockRemoveWishlist(token, prizeLabel);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { error } = await sb
+    .from("wishlists")
+    .delete()
+    .eq("fan_id", resolved.fanId)
+    .eq("prize_label", prizeLabel);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** Aggregated wishlist demand across the creator's fans (authed, RLS-scoped). */
+export async function getWishlistDemand(): Promise<WishlistDemand[]> {
+  if (!isSupabaseConfigured()) return mockGetWishlistDemand();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("wishlists")
+    .select(
+      "prize_label, prize_rarity, fan:fans(display_name, handle)"
+    )
+    .eq("creator_id", user.id);
+
+  const rows = (data ?? []) as unknown as {
+    prize_label: string;
+    prize_rarity: Rarity;
+    fan: { display_name: string | null; handle: string | null } | null;
+  }[];
+
+  const byLabel = new Map<
+    string,
+    { prizeLabel: string; rarity: Rarity; count: number; fanNames: string[] }
+  >();
+  for (const r of rows) {
+    let entry = byLabel.get(r.prize_label);
+    if (!entry) {
+      entry = {
+        prizeLabel: r.prize_label,
+        rarity: r.prize_rarity,
+        count: 0,
+        fanNames: [],
+      };
+      byLabel.set(r.prize_label, entry);
+    }
+    entry.count += 1;
+    const name = r.fan?.display_name ?? r.fan?.handle;
+    if (name) entry.fanNames.push(name);
+  }
+  return [...byLabel.values()].sort((a, b) => b.count - a.count);
+}
+
+// --- Leaderboard ------------------------------------------------------------
+
+export async function setLeaderboardEnabled(
+  enabled: boolean
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetLeaderboardEnabled(enabled);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb.rpc("set_leaderboard_enabled", {
+    p_enabled: enabled,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+export async function setFanLeaderboardOptIn(
+  token: string,
+  optIn: boolean,
+  handle?: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured())
+    return mockSetFanLeaderboardOptIn(token, optIn, handle);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const upd: Record<string, unknown> = { leaderboard_opt_in: optIn };
+  if (handle !== undefined) upd.handle = handle;
+  const { error } = await sb.from("fans").update(upd).eq("id", resolved.fanId);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * The public leaderboard for a creator (service role; fans aren't authed). When
+ * the creator hasn't enabled it, returns enabled:false with no entries. Only
+ * opted-in fans appear, and only their handle (never email/token/fan_id).
+ */
+export async function getLeaderboard(
+  creatorId: string
+): Promise<LeaderboardView> {
+  if (!isSupabaseConfigured()) return mockGetLeaderboard(creatorId);
+
+  const sb = createServiceClient();
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("display_name, leaderboard_enabled")
+    .eq("id", creatorId)
+    .maybeSingle();
+  const prof = profile as {
+    display_name: string | null;
+    leaderboard_enabled: boolean;
+  } | null;
+  const creatorTitle = prof?.display_name ?? "Creator";
+
+  if (!prof || !prof.leaderboard_enabled) {
+    return { enabled: false, creatorTitle, entries: [] };
+  }
+
+  const { data: fanRows } = await sb
+    .from("fans")
+    .select("id, handle, display_name")
+    .eq("creator_id", creatorId)
+    .eq("leaderboard_opt_in", true);
+  const fans = (fanRows ?? []) as {
+    id: string;
+    handle: string | null;
+    display_name: string | null;
+  }[];
+  if (fans.length === 0) return { enabled: true, creatorTitle, entries: [] };
+
+  const fanIds = fans.map((f) => f.id);
+
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("fan_id, prize_rarity")
+    .in("fan_id", fanIds);
+  const spins = (spinRows ?? []) as { fan_id: string; prize_rarity: Rarity }[];
+
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("fan_id, amount_cents")
+    .in("fan_id", fanIds);
+  const grants = (grantRows ?? []) as {
+    fan_id: string;
+    amount_cents: number;
+  }[];
+
+  const spinCount = new Map<string, number>();
+  const rareCount = new Map<string, number>();
+  for (const s of spins) {
+    spinCount.set(s.fan_id, (spinCount.get(s.fan_id) ?? 0) + 1);
+    if (s.prize_rarity === "rare" || s.prize_rarity === "epic" || s.prize_rarity === "legendary") {
+      rareCount.set(s.fan_id, (rareCount.get(s.fan_id) ?? 0) + 1);
+    }
+  }
+  const spentCount = new Map<string, number>();
+  for (const g of grants) {
+    spentCount.set(g.fan_id, (spentCount.get(g.fan_id) ?? 0) + g.amount_cents);
+  }
+
+  const firstName = (name: string | null): string =>
+    (name ?? "").trim().split(/\s+/)[0] || "Fan";
+
+  const entries: LeaderboardEntry[] = fans
+    .map((f) => ({
+      handle: f.handle ?? firstName(f.display_name),
+      spins: spinCount.get(f.id) ?? 0,
+      spentCents: spentCount.get(f.id) ?? 0,
+      rareWins: rareCount.get(f.id) ?? 0,
+    }))
+    .sort((a, b) => b.spins - a.spins)
+    .map((e, i) => ({ rank: i + 1, ...e }));
+
+  return { enabled: true, creatorTitle, entries };
+}
+
+// --- Referral ---------------------------------------------------------------
+
+export async function getReferralOverview(
+  token: string
+): Promise<ReferralOverview> {
+  if (!isSupabaseConfigured())
+    return (
+      mockGetReferralOverview(token) ?? {
+        code: "",
+        referredCount: 0,
+        creditedCount: 0,
+        cap: REFERRAL_CAP,
+        bonusPerReferral: REFERRAL_BONUS,
+      }
+    );
+
+  const sb = createServiceClient();
+  const { data: passData } = await sb
+    .from("fan_passes")
+    .select("fan:fans(id, referral_code)")
+    .eq("token", token)
+    .eq("is_active", true)
+    .maybeSingle();
+  const fan = (passData as unknown as {
+    fan: { id: string; referral_code: string | null } | null;
+  } | null)?.fan;
+
+  const base = {
+    code: fan?.referral_code ?? "",
+    referredCount: 0,
+    creditedCount: 0,
+    cap: REFERRAL_CAP,
+    bonusPerReferral: REFERRAL_BONUS,
+  };
+  if (!fan) return base;
+
+  const { count: referredCount } = await sb
+    .from("referrals")
+    .select("id", { count: "exact", head: true })
+    .eq("referrer_fan_id", fan.id);
+  const { count: creditedCount } = await sb
+    .from("referrals")
+    .select("id", { count: "exact", head: true })
+    .eq("referrer_fan_id", fan.id)
+    .not("credited_at", "is", null);
+
+  return {
+    ...base,
+    referredCount: referredCount ?? 0,
+    creditedCount: creditedCount ?? 0,
+  };
+}
+
+export async function getReferralStats(): Promise<{
+  referredCount: number;
+  creditedCount: number;
+  bonusAwarded: number;
+}> {
+  if (!isSupabaseConfigured()) return mockGetReferralStats();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { referredCount: 0, creditedCount: 0, bonusAwarded: 0 };
+
+  const { data } = await sb
+    .from("referrals")
+    .select("credited_at, bonus_spins")
+    .eq("creator_id", user.id);
+  const rows = (data ?? []) as {
+    credited_at: string | null;
+    bonus_spins: number;
+  }[];
+
+  const referredCount = rows.length;
+  const credited = rows.filter((r) => r.credited_at !== null);
+  const creditedCount = credited.length;
+  // Both parties receive bonus_spins per credited referral.
+  const bonusAwarded = credited.reduce((s, r) => s + r.bonus_spins * 2, 0);
+  return { referredCount, creditedCount, bonusAwarded };
+}
+
+// --- Chat (spin-gated; messages are FREE) -----------------------------------
+
+function toChatMessage(r: {
+  id: string;
+  sender: "fan" | "creator";
+  body: string;
+  created_at: string;
+  read_at: string | null;
+}): ChatMessage {
+  return {
+    id: r.id,
+    sender: r.sender,
+    body: r.body,
+    at: r.created_at,
+    readAt: r.read_at,
+  };
+}
+
+const MESSAGE_SELECT = "id, sender, body, created_at, read_at";
+
+export async function sendFanMessage(
+  token: string,
+  body: string
+): Promise<{ ok: true } | { error: "not_found" | "locked" | "empty" | "db_error" }> {
+  if (!isSupabaseConfigured()) {
+    const res = mockSendFanMessage(token, body);
+    if ("ok" in res) return res;
+    // The mock may use its own validation code ("invalid_body"); normalize any
+    // unknown error to the contract's "empty".
+    const known = ["not_found", "locked", "empty", "db_error"] as const;
+    type Known = (typeof known)[number];
+    const code = (known as readonly string[]).includes(res.error)
+      ? (res.error as Known)
+      : "empty";
+    return { error: code };
+  }
+
+  const sb = createServiceClient();
+  const { data: passData } = await sb
+    .from("fan_passes")
+    .select("creator_id, fan:fans(id, spins_remaining, spins_granted_total)")
+    .eq("token", token)
+    .eq("is_active", true)
+    .maybeSingle();
+  const pass = passData as unknown as {
+    creator_id: string;
+    fan: {
+      id: string;
+      spins_remaining: number;
+      spins_granted_total: number;
+    } | null;
+  } | null;
+  if (!pass || !pass.fan) return { error: "not_found" };
+
+  // GATE: chat unlocks while the fan holds spins OR has ever been granted any.
+  if (!(pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0))
+    return { error: "locked" };
+
+  const trimmed = body.trim();
+  if (trimmed.length < 1 || trimmed.length > 2000) return { error: "empty" };
+
+  const { error } = await sb.from("messages").insert({
+    creator_id: pass.creator_id,
+    fan_id: pass.fan.id,
+    sender: "fan",
+    body: trimmed,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+export async function getFanMessages(token: string): Promise<ChatMessage[]> {
+  if (!isSupabaseConfigured()) return mockGetFanMessages(token);
+
+  const sb = createServiceClient();
+  const { data: passData } = await sb
+    .from("fan_passes")
+    .select("creator_id, fan_id")
+    .eq("token", token)
+    .eq("is_active", true)
+    .maybeSingle();
+  const pass = passData as { creator_id: string; fan_id: string } | null;
+  if (!pass) return [];
+
+  const { data } = await sb
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .eq("creator_id", pass.creator_id)
+    .eq("fan_id", pass.fan_id)
+    .order("created_at", { ascending: true });
+  const rows = (data ?? []) as Parameters<typeof toChatMessage>[0][];
+
+  // Mark creator→fan messages as read by the fan.
+  await sb
+    .from("messages")
+    .update({ read_at: new Date().toISOString() })
+    .eq("creator_id", pass.creator_id)
+    .eq("fan_id", pass.fan_id)
+    .eq("sender", "creator")
+    .is("read_at", null);
+
+  return rows.map(toChatMessage);
+}
+
+/** The creator's inbox: one row per fan, newest activity first (authed/RLS). */
+export async function listThreads(): Promise<FanThread[]> {
+  if (!isSupabaseConfigured()) return mockListThreads();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("messages")
+    .select(
+      "fan_id, sender, body, read_at, created_at, fan:fans(display_name, handle)"
+    )
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const rows = (data ?? []) as unknown as {
+    fan_id: string;
+    sender: "fan" | "creator";
+    body: string;
+    read_at: string | null;
+    created_at: string;
+    fan: { display_name: string | null; handle: string | null } | null;
+  }[];
+
+  const threads = new Map<string, FanThread>();
+  for (const r of rows) {
+    // Rows are newest-first, so the FIRST row per fan is the latest message.
+    let t = threads.get(r.fan_id);
+    if (!t) {
+      t = {
+        fanId: r.fan_id,
+        fanName: r.fan?.display_name ?? r.fan?.handle ?? "Fan",
+        lastBody: r.body,
+        lastAt: r.created_at,
+        unread: 0,
+      };
+      threads.set(r.fan_id, t);
+    }
+    if (r.sender === "fan" && r.read_at === null) t.unread += 1;
+  }
+  return [...threads.values()];
+}
+
+export async function getThread(fanId: string): Promise<ChatMessage[]> {
+  if (!isSupabaseConfigured()) return mockGetThread(fanId);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("messages")
+    .select(MESSAGE_SELECT)
+    .eq("creator_id", user.id)
+    .eq("fan_id", fanId)
+    .order("created_at", { ascending: true });
+  const rows = (data ?? []) as Parameters<typeof toChatMessage>[0][];
+
+  // Mark fan→creator messages as read by the creator.
+  await sb
+    .from("messages")
+    .update({ read_at: new Date().toISOString() })
+    .eq("creator_id", user.id)
+    .eq("fan_id", fanId)
+    .eq("sender", "fan")
+    .is("read_at", null);
+
+  return rows.map(toChatMessage);
+}
+
+export async function sendCreatorMessage(
+  fanId: string,
+  body: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSendCreatorMessage(fanId, body);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const trimmed = body.trim();
+  if (trimmed.length < 1 || trimmed.length > 2000) return { error: "empty" };
+
+  const { error } = await sb.from("messages").insert({
+    creator_id: user.id,
+    fan_id: fanId,
+    sender: "creator",
+    body: trimmed,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// --- Public teaser ----------------------------------------------------------
+
+/**
+ * A token-free preview of a creator's active wheel + current happy hour, for a
+ * public landing page. Service role; no spinning, no fan identity.
+ */
+export async function getPublicWheelTeaser(
+  creatorId: string
+): Promise<{ creatorTitle: string; wheel: WheelConfig; happyHour: HappyHourStatus } | null> {
+  if (!isSupabaseConfigured()) return mockGetPublicWheelTeaser(creatorId);
+
+  const sb = createServiceClient();
+  const wheelId = await resolveActiveWheelId(sb, creatorId, new Date());
+  if (!wheelId) return null;
+
+  const { data: wheelData } = await sb
+    .from("wheels")
+    .select(WHEEL_SELECT)
+    .eq("id", wheelId)
+    .maybeSingle();
+  if (!wheelData) return null;
+
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("display_name")
+    .eq("id", creatorId)
+    .maybeSingle();
+  const creatorTitle =
+    (profile as { display_name: string | null } | null)?.display_name ??
+    "Creator";
+
+  const happyHour = await getActiveHappyHour(sb, wheelId, new Date());
+  return {
+    creatorTitle,
+    wheel: toWheelConfig(wheelData as unknown as DbWheelRow),
+    happyHour,
+  };
+}
+
+// ---------------------------------------------------------------------------
 function toWheelConfig(wheel: DbWheelRow): WheelConfig {
   const prizes: Prize[] = (wheel.prizes ?? [])
     .slice()
@@ -2252,6 +3199,7 @@ function toWheelConfig(wheel: DbWheelRow): WheelConfig {
       weight: p.weight,
       color: p.color ?? RARITY_COLORS[p.rarity],
       emoji: p.emoji ?? undefined,
+      imageUrl: p.image_url ?? null,
       stock: p.stock ?? null,
     }));
 

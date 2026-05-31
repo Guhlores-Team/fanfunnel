@@ -76,6 +76,28 @@ function isRareOrBetter(prize: Prize): boolean {
 }
 
 /**
+ * Happy-hour boost: returns a CLONE of `config` where every rare-or-better
+ * prize has its weight scaled by `multiplier` (rounded, floored at 1). All
+ * other prizes are untouched, and every prize keeps its id/stock/other fields
+ * so downstream stock-decrement-by-id still works.
+ *
+ * A `multiplier <= 1` (or non-finite) is a no-op — the returned clone is
+ * weight-for-weight identical to the input. The input config is never mutated.
+ */
+export function applyRareBoost(config: WheelConfig, multiplier: number): WheelConfig {
+  const boost = Number.isFinite(multiplier) && multiplier > 1;
+  return {
+    ...config,
+    prizes: config.prizes.map((prize) => {
+      if (!boost || !isRareOrBetter(prize)) {
+        return { ...prize };
+      }
+      return { ...prize, weight: Math.max(1, Math.round(prize.weight * multiplier)) };
+    }),
+  };
+}
+
+/**
  * Weighted-pick across an arbitrary in-stock pool, mirroring `pickPrize`'s
  * selection logic but over a caller-supplied subset. Returns the prize and its
  * index within `config.prizes`. Caller guarantees `pool.length > 0`.

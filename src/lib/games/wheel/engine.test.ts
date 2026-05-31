@@ -1,6 +1,6 @@
 // Lightweight test runner (no test framework needed). Run with:
 //   npx tsx src/lib/games/wheel/engine.test.ts
-import { pickPrize, prizeOdds, availablePrizes, pickPrizeWithPity, PITY_THRESHOLD } from "./engine";
+import { pickPrize, prizeOdds, availablePrizes, pickPrizeWithPity, PITY_THRESHOLD, applyRareBoost } from "./engine";
 import type { WheelConfig } from "./types";
 
 let passed = 0;
@@ -169,6 +169,69 @@ const config: WheelConfig = {
     counterB = b.nextPityCounter;
   }
   assert(JSON.stringify(runA) === JSON.stringify(runB), "seeded rng is deterministic");
+}
+
+// ---------------------------------------------------------------------------
+// applyRareBoost — happy-hour rare boost
+// ---------------------------------------------------------------------------
+{
+  const boostCfg: WheelConfig = {
+    id: "boost",
+    title: "Boost Wheel",
+    prizes: [
+      { id: "p1", label: "Common", rarity: "common", weight: 90 },
+      { id: "p2", label: "Uncommon", rarity: "uncommon", weight: 40 },
+      { id: "p3", label: "Rare", rarity: "rare", weight: 9, stock: 5 },
+      { id: "p4", label: "Epic", rarity: "epic", weight: 3, stock: 2 },
+      { id: "p5", label: "Legendary", rarity: "legendary", weight: 1, stock: 1 },
+    ],
+  };
+
+  // 11. rare/epic/legendary weights scale by the multiplier and round.
+  {
+    const boosted = applyRareBoost(boostCfg, 2.5);
+    const by = (id: string) => boosted.prizes.find((p) => p.id === id)!;
+    assert(by("p3").weight === Math.round(9 * 2.5), `rare weight scales (got ${by("p3").weight})`);
+    assert(by("p4").weight === Math.round(3 * 2.5), `epic weight scales (got ${by("p4").weight})`);
+    assert(by("p5").weight === Math.max(1, Math.round(1 * 2.5)), `legendary weight scales (got ${by("p5").weight})`);
+  }
+
+  // 12. common/uncommon weights untouched.
+  {
+    const boosted = applyRareBoost(boostCfg, 3);
+    const by = (id: string) => boosted.prizes.find((p) => p.id === id)!;
+    assert(by("p1").weight === 90, "common weight untouched");
+    assert(by("p2").weight === 40, "uncommon weight untouched");
+  }
+
+  // 13. prize ids/stock preserved.
+  {
+    const boosted = applyRareBoost(boostCfg, 4);
+    const by = (id: string) => boosted.prizes.find((p) => p.id === id)!;
+    assert(boosted.prizes.map((p) => p.id).join(",") === "p1,p2,p3,p4,p5", "prize ids preserved + ordered");
+    assert(by("p3").stock === 5, "rare stock preserved");
+    assert(by("p4").stock === 2, "epic stock preserved");
+    assert(by("p5").stock === 1, "legendary stock preserved");
+  }
+
+  // 14. multiplier <= 1 (and non-finite) is a no-op.
+  {
+    for (const m of [1, 0.5, 0, -2, NaN, Infinity]) {
+      const out = applyRareBoost(boostCfg, m);
+      const same = out.prizes.every((p, i) => p.weight === boostCfg.prizes[i].weight);
+      assert(same, `multiplier ${m} is a no-op`);
+    }
+  }
+
+  // 15. input config is not mutated.
+  {
+    const before = JSON.stringify(boostCfg);
+    const out = applyRareBoost(boostCfg, 5);
+    assert(JSON.stringify(boostCfg) === before, "input config not mutated");
+    assert(out !== boostCfg, "returns a new config object");
+    assert(out.prizes !== boostCfg.prizes, "returns a new prizes array");
+    assert(out.prizes[2] !== boostCfg.prizes[2], "boosted prize is a clone");
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

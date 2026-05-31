@@ -34,6 +34,8 @@ export interface Prize {
   weight: number;
   color?: string;
   emoji?: string;
+  /** Optional photo for the prize (e.g. a real item shot). null/undefined = none. */
+  imageUrl?: string | null;
   /**
    * Limited-stock prizes (e.g. a single "legendary" item). When stock hits 0
    * the prize is excluded from future spins. null/undefined = unlimited.
@@ -63,4 +65,6 @@ export interface SpinResult {
   spinsRemaining: number;
   /** Phase 2: true when this spin's outcome was forced by the pity system. */
   pityAwarded?: boolean;
+  /** Phase 3: opaque id for a shareable card generated from this win. */
+  shareId?: string;
 }

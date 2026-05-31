@@ -7,7 +7,33 @@ export interface WonPrize {
   emoji?: string;
   color?: string;
   at: string; // ISO timestamp
+  /** Phase 3: opaque id for a shareable card generated from this win. */
+  shareId?: string;
+  /** Phase 3: optional photo for the prize. null/undefined = none. */
+  imageUrl?: string | null;
 }
+
+/** Phase 3: a render-ready shareable win card. */
+export interface ShareCardData { creatorTitle: string; prizeLabel: string; rarity: Rarity; emoji?: string; color: string; imageUrl?: string | null; at: string }
+/** Phase 3: a prize a fan has flagged they want. */
+export interface WishlistItem { id: string; prizeLabel: string; rarity: Rarity; at: string }
+/** Phase 3: aggregated wishlist demand for a prize, for the creator. */
+export interface WishlistDemand { prizeLabel: string; rarity: Rarity; count: number; fanNames: string[] }
+/** Phase 3: a single row in a public leaderboard. */
+export interface LeaderboardEntry { rank: number; handle: string; spins: number; spentCents: number; rareWins: number }
+/** Phase 3: the leaderboard as shown to fans. */
+export interface LeaderboardView { enabled: boolean; creatorTitle: string; entries: LeaderboardEntry[] }
+/** Phase 3: a scheduled happy-hour rare-boost window. */
+export interface HappyHour { id: string; wheelId: string; multiplier: number; startsAt: string; endsAt: string }
+/** Phase 3: the current happy-hour status for a wheel. */
+export interface HappyHourStatus { active: boolean; multiplier: number; endsAt: string | null }
+/** Phase 3: a fan's referral program summary. */
+export interface ReferralOverview { code: string; referredCount: number; creditedCount: number; cap: number; bonusPerReferral: number }
+export type MessageSender = "fan" | "creator";
+/** Phase 3: a single chat message between a fan and a creator. */
+export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null }
+/** Phase 3: a creator's inbox thread with one fan. */
+export interface FanThread { fanId: string; fanName: string; lastBody: string; lastAt: string; unread: number }
 
 /**
  * Everything the fan-facing page needs, resolved from a pass token.
@@ -21,6 +47,11 @@ export interface FanPassView {
   wheel: WheelConfig;
   spinsRemaining: number;
   recentWins: WonPrize[];
+  /** Phase 3: optional fan-facing extras. All optional so existing callers compile. */
+  wishlist?: WishlistItem[];
+  happyHour?: HappyHourStatus;
+  referral?: { code: string; bonusPerReferral: number };
+  chatUnlocked?: boolean;
 }
 
 /** A creator's named grouping of links, for cross-promotion comparison. */
@@ -166,6 +197,8 @@ export interface CreatorMetrics {
   pending: number;
   fulfilled: number;
   revenue: number; // cents
+  /** Phase 3: count of unread fan messages. Optional so existing literals compile. */
+  unreadMessages?: number;
 }
 
 /** Everything the creator dashboard's metrics + inbox need. */

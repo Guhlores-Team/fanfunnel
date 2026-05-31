@@ -1,6 +1,6 @@
-import { pickPrize, pickPrizeWithPity } from "@/lib/games/wheel/engine";
+import { applyRareBoost, pickPrize, pickPrizeWithPity } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
-import { RARITY_COLORS, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_ORDER, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
@@ -8,19 +8,29 @@ import type {
   Campaign,
   CampaignPack,
   CampaignStats,
+  ChatMessage,
   CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
   FanCampaignBreakdown,
   FanDetail,
+  FanThread,
   DmTemplate,
   FanPassView,
   Grant,
+  HappyHour,
+  HappyHourStatus,
+  LeaderboardEntry,
+  LeaderboardView,
   PrizeTemplate,
   RedemptionItem,
   RedemptionStatus,
+  ReferralOverview,
+  ShareCardData,
   WheelSummary,
   WheelTemplate,
+  WishlistDemand,
+  WishlistItem,
   WonPrize,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
@@ -37,9 +47,15 @@ import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 
 const CREATOR_TITLE = "Demo Creator";
 
+// Phase 3 referral constants.
+const REFERRAL_CAP = 3;
+const REFERRAL_BONUS = 3;
+
 // A win record carries the FIFO-attributed campaign for the spin that won it.
 interface MockWin extends WonPrize {
   campaignId: string | null;
+  shareId: string; // Phase 3: opaque id for the shareable card
+  imageUrl?: string | null; // Phase 3: snapshot of the prize photo
 }
 
 interface MockFan {
@@ -52,6 +68,44 @@ interface MockFan {
   notes: string | null; // free-form creator notes
   tags: string[]; // creator-applied labels
   pityCounter: number; // spins-without-a-rare, drives the pity guarantee
+  // Phase 3
+  leaderboardOptIn: boolean; // opted into the public leaderboard
+  handle?: string; // optional public handle for the leaderboard
+  referralCode: string; // this fan's own referral code
+  referredByFanId: string | null; // who referred this fan, if anyone
+  referralCredited: boolean; // whether this fan's referral has been credited
+}
+
+// Phase 3 store rows.
+interface MockWishlist {
+  id: string;
+  fanId: string;
+  prizeLabel: string;
+  prizeRarity: Rarity;
+  at: string;
+}
+interface MockHappyHour {
+  id: string;
+  wheelId: string;
+  multiplier: number;
+  startsAt: string;
+  endsAt: string;
+}
+interface MockReferral {
+  id: string;
+  referrerFanId: string;
+  referredFanId: string;
+  bonusSpins: number;
+  creditedAt: string | null;
+  at: string;
+}
+interface MockMessage {
+  id: string;
+  fanId: string;
+  sender: "fan" | "creator";
+  body: string;
+  readAt: string | null;
+  at: string;
 }
 
 // A single grant (new fan creation OR a top-up), tagged to a campaign.
@@ -84,6 +138,12 @@ interface Store {
   campaignPacks: CampaignPack[]; // purchasable spin packs (global or per-campaign)
   prizeTemplates: PrizeTemplate[]; // reusable prizes
   wheelTemplates: WheelTemplate[]; // reusable wheel presets
+  // Phase 3
+  wishlists: MockWishlist[];
+  happyHours: MockHappyHour[];
+  referrals: MockReferral[];
+  messages: MockMessage[];
+  leaderboardEnabled: boolean;
 }
 
 /** Short, unique id with a stable prefix (mirrors the file's existing style). */
@@ -274,6 +334,11 @@ const store: Store =
     campaignPacks: seedCampaignPacks(),
     prizeTemplates: seedPrizeTemplates(),
     wheelTemplates: seedWheelTemplates(),
+    wishlists: [],
+    happyHours: [],
+    referrals: [],
+    messages: [],
+    leaderboardEnabled: false,
   });
 
 // A store pinned by an older dev-server build may predate these fields, so
@@ -286,6 +351,12 @@ store.wheels ??= seedWheels();
 store.campaignPacks ??= seedCampaignPacks();
 store.prizeTemplates ??= seedPrizeTemplates();
 store.wheelTemplates ??= seedWheelTemplates();
+// Phase 3 collections (defensive-init for stores pinned before they existed).
+store.wishlists ??= [];
+store.happyHours ??= [];
+store.referrals ??= [];
+store.messages ??= [];
+store.leaderboardEnabled ??= false;
 
 // Migrate a store pinned before the multi-wheel refactor: a `wheel` single
 // field may exist on the old shape. Fold it into the wheels map as active.
@@ -316,6 +387,15 @@ for (const fan of store.fans.values()) {
   fan.notes ??= null;
   fan.tags ??= [];
   fan.pityCounter ??= 0;
+  // Phase 3 fields.
+  fan.leaderboardOptIn ??= false;
+  fan.referralCode ??= genId("ref");
+  fan.referredByFanId ??= null;
+  fan.referralCredited ??= false;
+  // Backfill shareId on any win pinned before that field existed.
+  for (const w of fan.wins) {
+    w.shareId ??= genId("share");
+  }
 }
 // Backfill bonusSpins on any grant pinned before that field existed.
 for (const grant of store.grants) {
@@ -338,6 +418,10 @@ if (!store.fans.has("demo-fan")) {
     notes: null,
     tags: ["new"],
     pityCounter: 0,
+    leaderboardOptIn: false,
+    referralCode: genId("ref"),
+    referredByFanId: null,
+    referralCredited: false,
   });
   store.tokens.set("demo", "demo-fan");
   // Seed a grant so revenue/per-campaign data is coherent in demo mode.
@@ -348,6 +432,26 @@ if (!store.fans.has("demo-fan")) {
     spins: demoSpins,
     amountCents: 0,
     bonusSpins: 0,
+    at: new Date().toISOString(),
+  });
+  // Phase 3: seed a wishlist + a fan message so demo views aren't empty.
+  const seedWheel = seedWheels().values().next().value as WheelConfig | undefined;
+  const seedPrize = seedWheel?.prizes[0];
+  if (seedPrize) {
+    store.wishlists.push({
+      id: genId("wish"),
+      fanId: "demo-fan",
+      prizeLabel: seedPrize.label,
+      prizeRarity: seedPrize.rarity,
+      at: new Date().toISOString(),
+    });
+  }
+  store.messages.push({
+    id: genId("msg"),
+    fanId: "demo-fan",
+    sender: "fan",
+    body: "Hi! Loving the wheel 🎡",
+    readAt: null,
     at: new Date().toISOString(),
   });
 }
@@ -634,6 +738,20 @@ export function mockSetWheelSchedule(
   return { ok: true };
 }
 
+/** True when a fan has any lifetime spins (unlocks chat). */
+function chatUnlockedFor(fan: MockFan): boolean {
+  return fan.spinsRemaining > 0 || fan.spinsGrantedTotal > 0;
+}
+
+/** A fan's wishlist, newest first. */
+function wishlistFor(fanId: string): WishlistItem[] {
+  return store.wishlists
+    .filter((w) => w.fanId === fanId)
+    .slice()
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .map((w) => ({ id: w.id, prizeLabel: w.prizeLabel, rarity: w.prizeRarity, at: w.at }));
+}
+
 export function mockGetFanPass(token: string): FanPassView | null {
   const fan = fanForToken(token);
   if (!fan) return null;
@@ -646,6 +764,10 @@ export function mockGetFanPass(token: string): FanPassView | null {
     wheel,
     spinsRemaining: fan.spinsRemaining,
     recentWins: fan.wins,
+    wishlist: wishlistFor(fan.id),
+    happyHour: mockGetActiveHappyHour(wheel.id),
+    referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
+    chatUnlocked: chatUnlockedFor(fan),
   });
 }
 
@@ -658,7 +780,12 @@ export function mockSpin(token: string) {
   const wheelId = mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
 
-  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(wheel, {
+  // Happy hour: boost rare-or-better weights for the pick (the returned clone is
+  // used only for selection — stock decrement below targets the real wheel).
+  const hh = mockGetActiveHappyHour(wheel.id);
+  const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
+
+  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(pickWheel, {
     pityCounter: fan.pityCounter,
   });
 
@@ -678,6 +805,7 @@ export function mockSpin(token: string) {
 
   // Record the win on the fan account (persists across all their links).
   const at = new Date().toISOString();
+  const shareId = genId("share");
   fan.wins = [
     {
       label: prize.label,
@@ -686,6 +814,8 @@ export function mockSpin(token: string) {
       color: prize.color ?? RARITY_COLORS[prize.rarity],
       at,
       campaignId,
+      shareId,
+      imageUrl: prize.imageUrl ?? null,
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -708,6 +838,7 @@ export function mockSpin(token: string) {
     prizeIndex: index,
     spinsRemaining: fan.spinsRemaining,
     pityAwarded,
+    shareId,
   };
 }
 
@@ -723,7 +854,8 @@ export function mockCreatePass(
   campaignId?: string,
   amountCents?: number,
   bonusSpins?: number,
-  packId?: string
+  packId?: string,
+  referralCode?: string
 ): { token: string; fanId: string } {
   // If a pack is supplied, its spins/amount/bonus are authoritative.
   let baseSpins = spins;
@@ -742,6 +874,33 @@ export function mockCreatePass(
   const paid = Math.max(0, Math.floor(baseSpins) || 0);
   const add = paid + bonus;
   const fan = fanId ? store.fans.get(fanId) : undefined;
+
+  // Credit a pending referral once, idempotently, when this grant is the fan's
+  // first PAID grant (money > 0) and the referrer is still under the cap.
+  const maybeCreditReferral = (creditedFan: MockFan, grantMoney: number) => {
+    if (grantMoney <= 0) return; // only paid grants trigger credit
+    if (creditedFan.referralCredited) return; // already credited (idempotent)
+    if (!creditedFan.referredByFanId) return; // not referred by anyone
+    const row = store.referrals.find(
+      (r) => r.referredFanId === creditedFan.id && r.creditedAt === null
+    );
+    if (!row) return;
+    const referrer = store.fans.get(creditedFan.referredByFanId);
+    if (!referrer) return;
+    // Enforce the cap on the REFERRER's credited referrals.
+    const creditedForReferrer = store.referrals.filter(
+      (r) => r.referrerFanId === referrer.id && r.creditedAt !== null
+    ).length;
+    if (creditedForReferrer >= REFERRAL_CAP) return;
+    // Award both fans + mark credited.
+    referrer.spinsRemaining += REFERRAL_BONUS;
+    referrer.spinsGrantedTotal += REFERRAL_BONUS;
+    creditedFan.spinsRemaining += REFERRAL_BONUS;
+    creditedFan.spinsGrantedTotal += REFERRAL_BONUS;
+    row.bonusSpins = REFERRAL_BONUS;
+    row.creditedAt = new Date().toISOString();
+    creditedFan.referralCredited = true;
+  };
 
   const pushGrant = (id: string) => {
     store.grants.push({
@@ -762,7 +921,19 @@ export function mockCreatePass(
       ((name.trim() || "fan").toLowerCase().replace(/[^a-z0-9]+/g, "-") || "fan") +
       "-" +
       Math.random().toString(36).slice(2, 8);
-    store.fans.set(id, {
+
+    // Resolve a referrer from the supplied code (cannot self-refer; the fan
+    // doesn't exist yet so self-referral is impossible here, but guard anyway).
+    let referredByFanId: string | null = null;
+    const code = referralCode?.trim();
+    if (code) {
+      const referrer = Array.from(store.fans.values()).find(
+        (f) => f.referralCode === code
+      );
+      if (referrer && referrer.id !== id) referredByFanId = referrer.id;
+    }
+
+    const newFan: MockFan = {
       id,
       name: name.trim() || "Fan",
       spinsRemaining: add,
@@ -772,10 +943,29 @@ export function mockCreatePass(
       notes: null,
       tags: [],
       pityCounter: 0,
-    });
+      leaderboardOptIn: false,
+      referralCode: genId("ref"),
+      referredByFanId,
+      referralCredited: false,
+    };
+    store.fans.set(id, newFan);
     store.tokens.set(token, id);
     if (campaignId) store.tokenCampaign.set(token, campaignId);
+
+    // Record an (uncredited) referral row linking referrer → this new fan.
+    if (referredByFanId) {
+      store.referrals.push({
+        id: genId("rfl"),
+        referrerFanId: referredByFanId,
+        referredFanId: id,
+        bonusSpins: 0,
+        creditedAt: null,
+        at: new Date().toISOString(),
+      });
+    }
+
     pushGrant(id);
+    maybeCreditReferral(newFan, money);
     return { token, fanId: id };
   }
 
@@ -783,6 +973,7 @@ export function mockCreatePass(
   fan.spinsRemaining += add;
   fan.spinsGrantedTotal += add;
   pushGrant(fan.id);
+  maybeCreditReferral(fan, money);
   if (campaignId) store.tokenCampaign.set(fan.primaryToken, campaignId);
   return { token: fan.primaryToken, fanId: fan.id };
 }
@@ -994,6 +1185,9 @@ export function mockGetOverview(): CreatorOverview {
     status: r.status,
     at: r.at,
   }));
+  const unreadMessages = store.messages.filter(
+    (m) => m.sender === "fan" && m.readAt === null
+  ).length;
   return {
     metrics: {
       fans: store.fans.size,
@@ -1001,6 +1195,7 @@ export function mockGetOverview(): CreatorOverview {
       pending: redemptions.filter((r) => r.status === "pending").length,
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
       revenue,
+      unreadMessages,
     },
     redemptions: structuredClone(items),
   };
@@ -1334,6 +1529,356 @@ export function mockDeleteDmTemplate(id: string): boolean {
 }
 
 // --- Admin (account creation) -----------------------------------------------
+
+// --- Phase 3: Happy hour ----------------------------------------------------
+
+/** The active happy-hour status for a wheel at `now` (max multiplier wins). */
+export function mockGetActiveHappyHour(
+  wheelId: string,
+  now: Date = new Date()
+): HappyHourStatus {
+  const nowIso = now.toISOString();
+  const active = store.happyHours.filter(
+    (h) => h.wheelId === wheelId && h.startsAt <= nowIso && h.endsAt > nowIso
+  );
+  if (active.length === 0) {
+    return { active: false, multiplier: 1, endsAt: null };
+  }
+  // Highest multiplier wins; report the endsAt of that window.
+  const best = active.reduce((a, b) => (b.multiplier > a.multiplier ? b : a));
+  return { active: true, multiplier: best.multiplier, endsAt: best.endsAt };
+}
+
+/** Happy hours, optionally filtered to a wheel, newest start first. */
+export function mockListHappyHours(wheelId?: string): HappyHour[] {
+  const rows = store.happyHours
+    .filter((h) => (wheelId === undefined ? true : h.wheelId === wheelId))
+    .slice()
+    .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+  return structuredClone(rows);
+}
+
+export function mockCreateHappyHour(input: {
+  wheelId: string;
+  multiplier: number;
+  startsAt: string;
+  endsAt: string;
+}): HappyHour | { error: string } {
+  if (!(input.endsAt > input.startsAt)) return { error: "invalid_window" };
+  const multiplier = Math.floor(input.multiplier);
+  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+    return { error: "invalid_multiplier" };
+  }
+  const row: MockHappyHour = {
+    id: genId("hh"),
+    wheelId: input.wheelId,
+    multiplier,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+  };
+  store.happyHours.push(row);
+  return structuredClone(row);
+}
+
+export function mockDeleteHappyHour(id: string): { ok: true } | { error: string } {
+  const before = store.happyHours.length;
+  store.happyHours = store.happyHours.filter((h) => h.id !== id);
+  return store.happyHours.length < before ? { ok: true } : { error: "not_found" };
+}
+
+// --- Phase 3: Share cards ---------------------------------------------------
+
+/** Resolve a shareable win card by its opaque shareId, across all fans. */
+export function mockGetShareCard(shareId: string): ShareCardData | null {
+  for (const fan of store.fans.values()) {
+    const win = fan.wins.find((w) => w.shareId === shareId);
+    if (win) {
+      return structuredClone({
+        creatorTitle: CREATOR_TITLE,
+        prizeLabel: win.label,
+        rarity: win.rarity,
+        emoji: win.emoji,
+        color: win.color ?? RARITY_COLORS[win.rarity],
+        imageUrl: win.imageUrl ?? null,
+        at: win.at,
+      });
+    }
+  }
+  return null;
+}
+
+// --- Phase 3: Wishlist ------------------------------------------------------
+
+export function mockAddWishlist(
+  token: string,
+  prizeLabel: string
+): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  const label = prizeLabel.trim();
+  if (!label) return { error: "invalid_label" };
+
+  // Validate the label exists on the fan's active wheel; snapshot its rarity.
+  const wheel = store.wheels.get(mockResolveActiveWheelId()) ?? activeWheel();
+  const prize = wheel.prizes.find((p) => p.label === label);
+  if (!prize) return { error: "unknown_prize" };
+
+  // Idempotent: don't double-add the same label for the same fan.
+  const exists = store.wishlists.some(
+    (w) => w.fanId === fan.id && w.prizeLabel === label
+  );
+  if (!exists) {
+    store.wishlists.push({
+      id: genId("wish"),
+      fanId: fan.id,
+      prizeLabel: label,
+      prizeRarity: prize.rarity,
+      at: new Date().toISOString(),
+    });
+  }
+  return { ok: true };
+}
+
+export function mockRemoveWishlist(
+  token: string,
+  prizeLabel: string
+): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  const label = prizeLabel.trim();
+  store.wishlists = store.wishlists.filter(
+    (w) => !(w.fanId === fan.id && w.prizeLabel === label)
+  );
+  return { ok: true };
+}
+
+/** Aggregate wishlist demand across all fans, grouped by prize label. */
+export function mockGetWishlistDemand(): WishlistDemand[] {
+  const byLabel = new Map<
+    string,
+    { prizeLabel: string; rarity: Rarity; count: number; fanNames: string[] }
+  >();
+  for (const w of store.wishlists) {
+    const fan = store.fans.get(w.fanId);
+    const fanName = fan?.name ?? "Fan";
+    let entry = byLabel.get(w.prizeLabel);
+    if (!entry) {
+      entry = { prizeLabel: w.prizeLabel, rarity: w.prizeRarity, count: 0, fanNames: [] };
+      byLabel.set(w.prizeLabel, entry);
+    }
+    entry.count += 1;
+    if (!entry.fanNames.includes(fanName)) entry.fanNames.push(fanName);
+  }
+  const out = [...byLabel.values()].sort((a, b) => b.count - a.count);
+  return structuredClone(out);
+}
+
+// --- Phase 3: Leaderboard ---------------------------------------------------
+
+export function mockSetLeaderboardEnabled(enabled: boolean): { ok: true } {
+  store.leaderboardEnabled = !!enabled;
+  return { ok: true };
+}
+
+export function mockSetFanLeaderboardOptIn(
+  token: string,
+  optIn: boolean,
+  handle?: string
+): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  fan.leaderboardOptIn = !!optIn;
+  if (handle !== undefined) {
+    const trimmed = handle.trim();
+    fan.handle = trimmed || undefined;
+  }
+  return { ok: true };
+}
+
+/** A first name from a fan's full name (leaderboard privacy fallback). */
+function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name.trim() || "Fan";
+}
+
+export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
+  if (!store.leaderboardEnabled) {
+    return { enabled: false, creatorTitle: CREATOR_TITLE, entries: [] };
+  }
+  const rows = Array.from(store.fans.values())
+    .filter((f) => f.leaderboardOptIn)
+    .map((f) => {
+      const spins = f.wins.length;
+      const spentCents = fanGrants(f.id).reduce((s, g) => s + g.amountCents, 0);
+      const rareWins = f.wins.filter(
+        (w) => RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")
+      ).length;
+      return {
+        handle: f.handle?.trim() || firstName(f.name),
+        spins,
+        spentCents,
+        rareWins,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.spins - a.spins || b.spentCents - a.spentCents || b.rareWins - a.rareWins
+    );
+  const entries: LeaderboardEntry[] = rows.map((r, i) => ({ rank: i + 1, ...r }));
+  return structuredClone({ enabled: true, creatorTitle: CREATOR_TITLE, entries });
+}
+
+// --- Phase 3: Referrals -----------------------------------------------------
+
+export function mockGetReferralOverview(token: string): ReferralOverview | null {
+  const fan = fanForToken(token);
+  if (!fan) return null;
+  const mine = store.referrals.filter((r) => r.referrerFanId === fan.id);
+  const referredCount = mine.length;
+  const creditedCount = mine.filter((r) => r.creditedAt !== null).length;
+  return structuredClone({
+    code: fan.referralCode,
+    referredCount,
+    creditedCount,
+    cap: REFERRAL_CAP,
+    bonusPerReferral: REFERRAL_BONUS,
+  });
+}
+
+export function mockGetReferralStats(): {
+  referredCount: number;
+  creditedCount: number;
+  bonusAwarded: number;
+} {
+  const referredCount = store.referrals.length;
+  const credited = store.referrals.filter((r) => r.creditedAt !== null);
+  const creditedCount = credited.length;
+  // Each credited referral awards REFERRAL_BONUS to BOTH fans.
+  const bonusAwarded = credited.reduce((s, r) => s + r.bonusSpins * 2, 0);
+  return { referredCount, creditedCount, bonusAwarded };
+}
+
+// --- Phase 3: Chat ----------------------------------------------------------
+
+export function mockSendFanMessage(
+  token: string,
+  body: string
+): { ok: true } | { error: "not_found" | "locked" | "empty" } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  if (!chatUnlockedFor(fan)) return { error: "locked" };
+  const text = body.trim();
+  if (text.length < 1 || text.length > 2000) return { error: "empty" };
+  store.messages.push({
+    id: genId("msg"),
+    fanId: fan.id,
+    sender: "fan",
+    body: text,
+    readAt: null,
+    at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+/** A fan's full thread (oldest first); marks creator→fan messages read. */
+export function mockGetFanMessages(token: string): ChatMessage[] {
+  const fan = fanForToken(token);
+  if (!fan) return [];
+  const now = new Date().toISOString();
+  const rows = store.messages
+    .filter((m) => m.fanId === fan.id)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  for (const m of rows) {
+    if (m.sender === "creator" && m.readAt === null) m.readAt = now;
+  }
+  return structuredClone(
+    rows.map((m) => ({
+      id: m.id,
+      sender: m.sender,
+      body: m.body,
+      at: m.at,
+      readAt: m.readAt,
+    }))
+  );
+}
+
+/** The creator's inbox: one thread per fan that has messages, newest first. */
+export function mockListThreads(): FanThread[] {
+  const byFan = new Map<string, MockMessage[]>();
+  for (const m of store.messages) {
+    (byFan.get(m.fanId) ?? byFan.set(m.fanId, []).get(m.fanId)!).push(m);
+  }
+  const threads: FanThread[] = [];
+  for (const [fanId, msgs] of byFan) {
+    const fan = store.fans.get(fanId);
+    const sorted = msgs.slice().sort((a, b) => a.at.localeCompare(b.at));
+    const last = sorted[sorted.length - 1];
+    const unread = sorted.filter(
+      (m) => m.sender === "fan" && m.readAt === null
+    ).length;
+    threads.push({
+      fanId,
+      fanName: fan?.name ?? "Fan",
+      lastBody: last.body,
+      lastAt: last.at,
+      unread,
+    });
+  }
+  threads.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  return structuredClone(threads);
+}
+
+/** A single fan's thread for the creator (oldest first); marks fan→creator read. */
+export function mockGetThread(fanId: string): ChatMessage[] {
+  const now = new Date().toISOString();
+  const rows = store.messages
+    .filter((m) => m.fanId === fanId)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  for (const m of rows) {
+    if (m.sender === "fan" && m.readAt === null) m.readAt = now;
+  }
+  return structuredClone(
+    rows.map((m) => ({
+      id: m.id,
+      sender: m.sender,
+      body: m.body,
+      at: m.at,
+      readAt: m.readAt,
+    }))
+  );
+}
+
+export function mockSendCreatorMessage(
+  fanId: string,
+  body: string
+): { ok: true } | { error: string } {
+  if (!store.fans.has(fanId)) return { error: "not_found" };
+  const text = body.trim();
+  if (text.length < 1 || text.length > 2000) return { error: "invalid_body" };
+  store.messages.push({
+    id: genId("msg"),
+    fanId,
+    sender: "creator",
+    body: text,
+    readAt: null,
+    at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+// --- Phase 3: Public teaser -------------------------------------------------
+
+/** A token-less public preview of the active wheel + its happy-hour status. */
+export function mockGetPublicWheelTeaser(
+  _creatorId?: string
+): { creatorTitle: string; wheel: WheelConfig; happyHour: HappyHourStatus } | null {
+  const wheel = store.wheels.get(mockResolveActiveWheelId()) ?? activeWheel();
+  if (!wheel) return null;
+  return structuredClone({
+    creatorTitle: CREATOR_TITLE,
+    wheel,
+    happyHour: mockGetActiveHappyHour(wheel.id),
+  });
+}
 
 export function mockCreateAccount(email: string, displayName: string) {
   const acc: AdminAccount = {
