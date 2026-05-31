@@ -15,6 +15,7 @@ import HappyHourBanner from "./fan/HappyHourBanner";
 import ReferralWidget from "./fan/ReferralWidget";
 import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";
+import TopUpMoment from "./fan/TopUpMoment";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -224,10 +225,13 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         </button>
 
         {error && <p className="text-center text-sm text-amber-300">{error}</p>}
-        {spinsRemaining === 0 && !error && !reveal && (
-          <p className="text-center text-sm text-muted">
-            Tip your creator to unlock more spins. 💖
-          </p>
+        {spinsRemaining === 0 && !reveal && (
+          <TopUpMoment
+            prizes={pass.wheel.prizes}
+            history={history}
+            creatorTitle={pass.creatorTitle}
+            tipUrl={pass.tipUrl}
+          />
         )}
       </div>
 

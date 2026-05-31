@@ -49,6 +49,8 @@ export default function FanDetailDrawer({
   const [notes, setNotes] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
+  const [blocking, setBlocking] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
@@ -127,6 +129,30 @@ export default function FanDetailDrawer({
       }
     } finally {
       setSavingTags(false);
+    }
+  }
+
+  async function toggleBlock() {
+    if (!fanId) return;
+    const next = !blocked;
+    setBlocking(true);
+    try {
+      const res = await fetch(`/api/fans/${fanId}/block`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocked: next }),
+      });
+      if (res.ok) {
+        setBlocked(next);
+        toast(next ? "Fan blocked — their link is disabled." : "Fan unblocked.", {
+          tone: "success",
+        });
+        onSaved?.();
+      } else {
+        toast("Couldn't update block status.", { tone: "error" });
+      }
+    } finally {
+      setBlocking(false);
     }
   }
 
@@ -424,6 +450,31 @@ export default function FanDetailDrawer({
                     ))}
                   </ul>
                 )}
+              </section>
+
+              {/* Safety: block this fan (disables all their links). */}
+              <section className="border-t border-line pt-4">
+                <h3 className="text-sm font-semibold text-ink">Safety</h3>
+                <p className="mt-1 text-xs text-muted">
+                  Blocking disables every link this fan has — they can&rsquo;t spin or
+                  message until you unblock them.
+                </p>
+                <button
+                  type="button"
+                  onClick={toggleBlock}
+                  disabled={blocking}
+                  className={`mt-3 rounded-lg border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${
+                    blocked
+                      ? "border-line text-muted hover:text-ink"
+                      : "border-[#ef4444] text-[#ef4444] hover:bg-[#ef4444]/10"
+                  }`}
+                >
+                  {blocking
+                    ? "…"
+                    : blocked
+                      ? "Unblock fan"
+                      : "🚫 Block fan"}
+                </button>
               </section>
             </div>
           )}

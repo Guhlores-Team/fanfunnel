@@ -56,6 +56,8 @@ export interface FanPassView {
   chatUnlocked?: boolean;
   /** Phase 5b: true until the fan has acknowledged the age-gate / ToS. */
   needsAck?: boolean;
+  /** Phase 7: where the fan goes to tip / buy more spins (creator-set). */
+  tipUrl?: string | null;
 }
 
 /** Phase 5b (#23): the data a public verify page needs for one spin. */
