@@ -5,6 +5,7 @@ import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
   AdminOverview,
+  CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
   FanPassView,
@@ -12,6 +13,7 @@ import type {
   RedemptionStatus,
   WonPrize,
 } from "./types";
+import { bucketByDay, clampDays } from "./metrics";
 
 // In-memory demo store. Used automatically when Supabase env vars are absent,
 // so `npm run dev` gives a fully working app with zero setup. State resets when
@@ -252,6 +254,23 @@ export function mockGetOverview(): CreatorOverview {
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
     },
     redemptions: structuredClone(redemptions).slice(0, 200),
+  };
+}
+
+export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
+  const n = clampDays(days);
+  const trend = bucketByDay(
+    store.redemptions.map((r) => r.at),
+    n
+  );
+  return {
+    trend,
+    funnel: {
+      // "Opened" isn't tracked — funnel runs links → spun → fulfilled.
+      links: store.tokens.size,
+      spun: store.redemptions.length,
+      fulfilled: store.redemptions.filter((r) => r.status === "fulfilled").length,
+    },
   };
 }
 

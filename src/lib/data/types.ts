@@ -59,6 +59,10 @@ export interface CreatorOverview {
   redemptions: RedemptionItem[];
 }
 
+export interface DailyCount { date: string; spins: number } // YYYY-MM-DD (UTC)
+export interface ConversionFunnel { links: number; spun: number; fulfilled: number }
+export interface CreatorMetricsExtra { trend: DailyCount[]; funnel: ConversionFunnel }
+
 // --- Admin (cross-account) --------------------------------------------------
 
 export type AppRole = "admin" | "creator";

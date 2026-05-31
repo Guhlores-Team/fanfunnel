@@ -16,6 +16,7 @@ import type {
   RedemptionItem,
   RedemptionStatus,
 } from "@/lib/data/types";
+import { ToastProvider, useToast } from "@/components/ui/Toast";
 
 type Tab = "metrics" | "prizes" | "fans" | "editor";
 
@@ -74,6 +75,7 @@ export default function DashboardClient({
   ];
 
   return (
+    <ToastProvider>
     <div className="mx-auto w-full max-w-5xl overflow-x-clip px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
@@ -167,6 +169,7 @@ export default function DashboardClient({
         )}
       </div>
     </div>
+    </ToastProvider>
   );
 }
 
@@ -491,6 +494,7 @@ function FansPanel() {
   const [name, setName] = useState("");
   const [spins, setSpins] = useState(3);
   const [creating, setCreating] = useState(false);
+  const toast = useToast();
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   const load = useCallback(async () => {
@@ -511,10 +515,11 @@ function FansPanel() {
     });
     const data = await res.json();
     if (!res.ok || !data.token) {
-      alert(
+      toast(
         data.error === "no_wheel"
           ? "Create and save a wheel first, then generate fan links."
-          : "Couldn't create link. Are you signed in?"
+          : "Couldn't create link. Are you signed in?",
+        { tone: "error" }
       );
       return null;
     }
@@ -698,6 +703,7 @@ function WheelEditor({
   initialWheel: WheelConfig;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
+  const toast = useToast();
   const [savedJson, setSavedJson] = useState(() => JSON.stringify(initialWheel));
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
@@ -719,7 +725,7 @@ function WheelEditor({
         setJustSaved(true);
         setTimeout(() => setJustSaved(false), 2000);
       } else {
-        alert("Couldn't save. Are you signed in?");
+        toast("Couldn't save. Are you signed in?", { tone: "error" });
       }
     } finally {
       setSaving(false);

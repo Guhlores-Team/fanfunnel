@@ -11,12 +11,14 @@ import type {
   AdminAccount,
   AdminOverview,
   AppRole,
+  CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
   FanPassView,
   RedemptionItem,
   RedemptionStatus,
 } from "./types";
+import { bucketByDay, clampDays } from "./metrics";
 import {
   mockGetFanPass,
   mockSpin,
@@ -24,6 +26,7 @@ import {
   mockGrantSpins,
   mockListFans,
   mockGetOverview,
+  mockGetMetricsExtra,
   mockSetRedemptionStatus,
   mockGetWheel,
   mockSaveWheel,
@@ -564,6 +567,60 @@ export async function getOverview(): Promise<CreatorOverview> {
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
     },
     redemptions,
+  };
+}
+
+// Extra metrics for the dashboard: a daily spin trend + a conversion funnel.
+// NOTE: "Opened" is NOT tracked anywhere, so the funnel runs links → spun →
+// fulfilled rather than the classic link → open → spin → fulfilled.
+export async function getMetricsExtra(
+  days: number = 30
+): Promise<CreatorMetricsExtra> {
+  const n = clampDays(days);
+  if (!isSupabaseConfigured()) return mockGetMetricsExtra(days);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) {
+    return { trend: bucketByDay([], n), funnel: { links: 0, spun: 0, fulfilled: 0 } };
+  }
+
+  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("created_at")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+
+  const timestamps = ((spinRows ?? []) as { created_at: string }[]).map(
+    (r) => r.created_at
+  );
+  const trend = bucketByDay(timestamps, n);
+
+  const head = { count: "exact" as const, head: true };
+  const { count: links } = await sb
+    .from("fan_passes")
+    .select("id", head)
+    .eq("creator_id", user.id);
+  const { count: spun } = await sb
+    .from("spins")
+    .select("id", head)
+    .eq("creator_id", user.id);
+  const { count: fulfilled } = await sb
+    .from("redemptions")
+    .select("id", head)
+    .eq("creator_id", user.id)
+    .eq("status", "fulfilled");
+
+  return {
+    trend,
+    funnel: {
+      links: links ?? 0,
+      spun: spun ?? 0,
+      fulfilled: fulfilled ?? 0,
+    },
   };
 }
 
