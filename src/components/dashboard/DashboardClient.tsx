@@ -192,7 +192,7 @@ export default function DashboardClient({
         </button>
       )}
 
-      <nav className="mt-6 flex gap-0.5 border-b border-line [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <nav className="mt-6 flex gap-0.5 overflow-x-auto border-b border-line [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map(([id, label]) => (
           <button
             key={id}

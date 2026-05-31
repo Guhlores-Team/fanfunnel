@@ -35,6 +35,11 @@ body {
   /* Safe-area insets so content clears the iPhone status bar / notch. */
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
+  /* Belt-and-suspenders against horizontal overflow (e.g. the wheel's wide
+     ambient glow) widening the layout past the viewport and forcing a
+     zoomed-out render on phones. `clip` (not `hidden`) keeps sticky/fixed
+     positioning intact and never creates a scroll container. */
+  overflow-x: clip;
 }
 
 /* Tabular figures for any metric/number so big values don't wobble. */
