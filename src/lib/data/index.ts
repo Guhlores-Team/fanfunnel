@@ -3,7 +3,7 @@ import {
   createServiceClient,
   createClient,
 } from "@/lib/supabase/server";
-import { pickPrize } from "@/lib/games/wheel/engine";
+import { pickPrizeWithPity } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -12,6 +12,7 @@ import type {
   AdminOverview,
   AppRole,
   Campaign,
+  CampaignPack,
   CampaignStats,
   CreatorMetricsExtra,
   CreatorOverview,
@@ -21,8 +22,11 @@ import type {
   FanDetail,
   FanPassView,
   Grant,
+  PrizeTemplate,
   RedemptionItem,
   RedemptionStatus,
+  WheelSummary,
+  WheelTemplate,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 import {
@@ -48,6 +52,24 @@ import {
   mockListDmTemplates,
   mockCreateDmTemplate,
   mockDeleteDmTemplate,
+  mockListWheels,
+  mockGetWheelById,
+  mockCreateWheel,
+  mockDuplicateWheel,
+  mockArchiveWheel,
+  mockSetActiveWheel,
+  mockSetWheelSchedule,
+  mockListCampaignPacks,
+  mockCreateCampaignPack,
+  mockUpdateCampaignPack,
+  mockDeleteCampaignPack,
+  mockSetCampaignPinnedWheel,
+  mockListPrizeTemplates,
+  mockCreatePrizeTemplate,
+  mockDeletePrizeTemplate,
+  mockListWheelTemplates,
+  mockCreateWheelTemplate,
+  mockDeleteWheelTemplate,
 } from "./mock";
 
 function randomToken(): string {
@@ -77,7 +99,113 @@ interface DbWheelRow {
   title: string;
   subtitle: string | null;
   brand_color: string | null;
+  is_active?: boolean;
+  active_from?: string | null;
+  active_until?: string | null;
+  archived_at?: string | null;
   prizes: DbPrizeRow[];
+}
+
+// The columns we select to load a wheel's full config (prizes joined).
+const WHEEL_SELECT =
+  `id, title, subtitle, brand_color, is_active, active_from, active_until, archived_at,
+   prizes(id, label, description, rarity, weight, color, emoji, stock, sort_order)`;
+
+// Any Supabase client (auth-scoped or service-role) we resolve wheels with.
+type AnyClient =
+  | Awaited<ReturnType<typeof createClient>>
+  | ReturnType<typeof createServiceClient>;
+
+// ---------------------------------------------------------------------------
+// Wheel resolution (Model C hybrid). Decides WHICH wheel a fan link points at
+// right now, given the creator's wheels, schedules, and the campaign pin.
+// ---------------------------------------------------------------------------
+
+/**
+ * The creator's currently-live wheel among their non-archived wheels:
+ *   1. a scheduled wheel whose window contains `now` (prefer latest
+ *      active_from, tie-break newest created_at);
+ *   2. else the wheel flagged is_active;
+ *   3. else the oldest non-archived wheel.
+ */
+async function resolveActiveWheelId(
+  sb: AnyClient,
+  creatorId: string,
+  now: Date
+): Promise<string | null> {
+  const { data } = await sb
+    .from("wheels")
+    .select("id, is_active, active_from, active_until, created_at")
+    .eq("creator_id", creatorId)
+    .is("archived_at", null);
+
+  const rows = (data ?? []) as {
+    id: string;
+    is_active: boolean;
+    active_from: string | null;
+    active_until: string | null;
+    created_at: string;
+  }[];
+  if (rows.length === 0) return null;
+
+  const nowMs = now.getTime();
+  const inWindow = rows.filter((w) => {
+    const fromOk = !w.active_from || new Date(w.active_from).getTime() <= nowMs;
+    const untilOk = !w.active_until || new Date(w.active_until).getTime() > nowMs;
+    return fromOk && untilOk;
+  });
+  if (inWindow.length > 0) {
+    inWindow.sort((a, b) => {
+      // Prefer latest active_from (a null active_from sorts oldest).
+      const af = a.active_from ? new Date(a.active_from).getTime() : -Infinity;
+      const bf = b.active_from ? new Date(b.active_from).getTime() : -Infinity;
+      if (af !== bf) return bf - af;
+      // Tie-break: newest created_at first.
+      return b.created_at.localeCompare(a.created_at);
+    });
+    return inWindow[0].id;
+  }
+
+  const active = rows.find((w) => w.is_active);
+  if (active) return active.id;
+
+  // Oldest non-archived wheel.
+  return rows
+    .slice()
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))[0].id;
+}
+
+/**
+ * The wheel a specific pass should use right now: the campaign's pinned wheel
+ * (if set + non-archived) wins; otherwise the creator's active wheel; otherwise
+ * the pass's own stored wheel_id.
+ */
+async function resolveWheelId(
+  sb: AnyClient,
+  pass: { creator_id: string; campaign_id: string | null; wheel_id: string },
+  now: Date
+): Promise<string | null> {
+  if (pass.campaign_id) {
+    const { data: campaign } = await sb
+      .from("campaigns")
+      .select("pinned_wheel_id")
+      .eq("id", pass.campaign_id)
+      .maybeSingle();
+    const pinnedId = (campaign as { pinned_wheel_id: string | null } | null)
+      ?.pinned_wheel_id;
+    if (pinnedId) {
+      const { data: pinned } = await sb
+        .from("wheels")
+        .select("id, archived_at")
+        .eq("id", pinnedId)
+        .maybeSingle();
+      const row = pinned as { id: string; archived_at: string | null } | null;
+      if (row && !row.archived_at) return row.id;
+    }
+  }
+
+  const active = await resolveActiveWheelId(sb, pass.creator_id, now);
+  return active ?? pass.wheel_id;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,23 +220,36 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   const { data } = await sb
     .from("fan_passes")
     .select(
-      `id, token, is_active,
+      `id, creator_id, campaign_id, wheel_id, fan_id, is_active,
        fan:fans(id, display_name, handle, spins_remaining),
-       creator:profiles(display_name),
-       wheel:wheels(id, title, subtitle, brand_color,
-         prizes(id, label, description, rarity, weight, color, emoji, stock, sort_order))`
+       creator:profiles(display_name)`
     )
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
 
   const pass = data as unknown as {
+    id: string;
+    creator_id: string;
+    campaign_id: string | null;
+    wheel_id: string;
+    fan_id: string;
     fan: { id: string; display_name: string | null; handle: string | null; spins_remaining: number } | null;
     creator: { display_name: string | null } | null;
-    wheel: DbWheelRow | null;
   } | null;
 
-  if (!pass || !pass.wheel || !pass.fan) return null;
+  if (!pass || !pass.fan) return null;
+
+  // Resolve WHICH wheel this link points at right now, then load its config.
+  const wheelId = await resolveWheelId(sb, pass, new Date());
+  if (!wheelId) return null;
+  const { data: wheelData } = await sb
+    .from("wheels")
+    .select(WHEEL_SELECT)
+    .eq("id", wheelId)
+    .maybeSingle();
+  if (!wheelData) return null;
+  const wheel = wheelData as unknown as DbWheelRow;
 
   // The fan's full win history — scoped to the fan ACCOUNT, so it persists
   // across every link the creator has ever minted for them.
@@ -130,7 +271,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
     creatorTitle: pass.creator?.display_name ?? "Creator",
     spinsRemaining: pass.fan.spins_remaining,
-    wheel: toWheelConfig(pass.wheel),
+    wheel: toWheelConfig(wheel),
     recentWins: winRows.map((w) => ({
       label: w.prize_label,
       rarity: w.prize_rarity,
@@ -161,29 +302,42 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   }
   const spinsRemaining = remaining as number;
 
-  // 2. Load link context (wheel + current prize stock).
+  // 2. Load link context, then resolve WHICH wheel this spin uses + its prizes.
   const { data } = await sb
     .from("fan_passes")
-    .select(
-      `id, creator_id, wheel_id, fan_id,
-       wheel:wheels(id, title, subtitle, brand_color,
-         prizes(id, label, description, rarity, weight, color, emoji, stock, sort_order))`
-    )
+    .select("id, creator_id, campaign_id, wheel_id, fan_id")
     .eq("token", token)
     .single();
 
   const pass = data as unknown as {
     id: string;
     creator_id: string;
+    campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
-    wheel: DbWheelRow;
   };
-  const config = toWheelConfig(pass.wheel);
 
-  // 3. Pick a prize in TS (single source of truth). If a limited prize sold
-  //    out between our read and write, exclude it and re-pick.
-  let chosen: { prize: Prize; index: number } | null = null;
+  const wheelId = await resolveWheelId(sb, pass, new Date());
+  if (!wheelId) return { error: "no_prizes" };
+  const { data: wheelData } = await sb
+    .from("wheels")
+    .select(WHEEL_SELECT)
+    .eq("id", wheelId)
+    .maybeSingle();
+  if (!wheelData) return { error: "no_prizes" };
+  const config = toWheelConfig(wheelData as unknown as DbWheelRow);
+
+  // Per-fan pity counter (guarantees a rare-or-better after a dry streak).
+  const { data: fanRow } = await sb
+    .from("fans")
+    .select("pity_counter")
+    .eq("id", pass.fan_id)
+    .maybeSingle();
+  const pityCounter = (fanRow as { pity_counter: number } | null)?.pity_counter ?? 0;
+
+  // 3. Pick a prize in TS (single source of truth), honouring pity. If a
+  //    limited prize sold out between our read and write, exclude it + re-pick.
+  let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
   const excluded = new Set<string>();
   for (let attempt = 0; attempt < config.prizes.length + 1; attempt++) {
     const pool: WheelConfig = {
@@ -192,7 +346,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
         excluded.has(p.id) ? { ...p, stock: 0 } : p
       ),
     };
-    const pick = pickPrize(pool);
+    const pick = pickPrizeWithPity(pool, { pityCounter });
     if (pick.prize.stock === null || pick.prize.stock === undefined) {
       chosen = pick;
       break;
@@ -212,6 +366,12 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   }
 
   if (!chosen) return { error: "no_prizes" };
+
+  // Persist the fan's next pity counter.
+  await sb
+    .from("fans")
+    .update({ pity_counter: chosen.nextPityCounter })
+    .eq("id", pass.fan_id);
 
   // 3b. FIFO-attribute this spin to a campaign. Order the fan's grants
   //     oldest→newest, build cumulative spin ranges; this spin's 0-based index
@@ -247,7 +407,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     .insert({
       fan_pass_id: pass.id,
       creator_id: pass.creator_id,
-      wheel_id: pass.wheel_id,
+      wheel_id: wheelId,
       fan_id: pass.fan_id,
       prize_id: chosen.prize.id,
       prize_label: chosen.prize.label,
@@ -265,7 +425,12 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     });
   }
 
-  return { prize: chosen.prize, prizeIndex: chosen.index, spinsRemaining };
+  return {
+    prize: chosen.prize,
+    prizeIndex: chosen.index,
+    spinsRemaining,
+    pityAwarded: chosen.pityAwarded,
+  };
 }
 
 /**
@@ -280,11 +445,22 @@ export async function createPass(opts: {
   wheelId?: string;
   campaignId?: string;
   amountCents?: number;
+  packId?: string;
+  bonusSpins?: number;
 }): Promise<{ token: string; fanId: string } | { error: string }> {
-  const spins = Math.max(0, Math.floor(opts.spins) || 0);
-  const amountCents = Math.max(0, Math.floor(opts.amountCents ?? 0) || 0);
+  let spins = Math.max(0, Math.floor(opts.spins) || 0);
+  let amountCents = Math.max(0, Math.floor(opts.amountCents ?? 0) || 0);
+  let bonusSpins = Math.max(0, Math.floor(opts.bonusSpins ?? 0) || 0);
   if (!isSupabaseConfigured()) {
-    return mockCreatePass(opts.name, spins, opts.fanId, opts.campaignId, amountCents);
+    return mockCreatePass(
+      opts.name,
+      spins,
+      opts.fanId,
+      opts.campaignId,
+      amountCents,
+      bonusSpins,
+      opts.packId
+    );
   }
 
   const sb = await createClient();
@@ -292,6 +468,26 @@ export async function createPass(opts: {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+
+  // A pack is authoritative: its spins/price/bonus override any client values.
+  if (opts.packId) {
+    const { data: pack } = await sb
+      .from("campaign_packs")
+      .select("spins, amount_cents, bonus_spins")
+      .eq("id", opts.packId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    const p = pack as
+      | { spins: number; amount_cents: number; bonus_spins: number }
+      | null;
+    if (!p) return { error: "pack_not_found" };
+    spins = Math.max(0, p.spins);
+    amountCents = Math.max(0, p.amount_cents);
+    bonusSpins = Math.max(0, p.bonus_spins);
+  }
+
+  // Effective balance added = paid spins + bonus spins.
+  const balanceAdd = spins + bonusSpins;
 
   let wheelId = opts.wheelId;
   if (!wheelId) {
@@ -321,8 +517,8 @@ export async function createPass(opts: {
     await sb
       .from("fans")
       .update({
-        spins_remaining: fan.spins_remaining + spins,
-        spins_granted_total: fan.spins_granted_total + spins,
+        spins_remaining: fan.spins_remaining + balanceAdd,
+        spins_granted_total: fan.spins_granted_total + balanceAdd,
       })
       .eq("id", fanId);
 
@@ -342,8 +538,8 @@ export async function createPass(opts: {
       .insert({
         creator_id: user.id,
         display_name: opts.name || "Fan",
-        spins_remaining: spins,
-        spins_granted_total: spins,
+        spins_remaining: balanceAdd,
+        spins_granted_total: balanceAdd,
       })
       .select("id")
       .single();
@@ -364,12 +560,16 @@ export async function createPass(opts: {
   if (!fanId) return { error: "db_error" };
 
   // Every grant (new fan OR top-up) is recorded for revenue + FIFO attribution.
+  // `spins` on the grant is the FULL balance added (paid + bonus) so FIFO
+  // attribution covers every spin the fan can actually play; `bonus_spins`
+  // records the comped portion separately for display.
   const { error: grantErr } = await sb.from("grants").insert({
     creator_id: user.id,
     fan_id: fanId,
     campaign_id: campaignId,
-    spins,
+    spins: balanceAdd,
     amount_cents: amountCents,
+    bonus_spins: bonusSpins,
   });
   if (grantErr) return { error: "db_error" };
 
@@ -381,9 +581,11 @@ export async function createPass(opts: {
 // ---------------------------------------------------------------------------
 
 export async function createCampaign(
-  name: string
+  name: string,
+  pinnedWheelId?: string | null
 ): Promise<{ campaign: Campaign } | { error: string }> {
-  if (!isSupabaseConfigured()) return { campaign: mockCreateCampaign(name) };
+  if (!isSupabaseConfigured())
+    return { campaign: mockCreateCampaign(name, pinnedWheelId) };
 
   const sb = await createClient();
   const {
@@ -393,8 +595,8 @@ export async function createCampaign(
 
   const { data, error } = await sb
     .from("campaigns")
-    .insert({ creator_id: user.id, name })
-    .select("id, name, is_active, created_at")
+    .insert({ creator_id: user.id, name, pinned_wheel_id: pinnedWheelId ?? null })
+    .select("id, name, is_active, created_at, pinned_wheel_id")
     .single();
   if (error || !data) return { error: "db_error" };
 
@@ -404,6 +606,7 @@ export async function createCampaign(
       name: data.name,
       isActive: data.is_active,
       createdAt: data.created_at,
+      pinnedWheelId: data.pinned_wheel_id ?? null,
     },
   };
 }
@@ -419,7 +622,7 @@ export async function listCampaigns(): Promise<Campaign[]> {
 
   const { data } = await sb
     .from("campaigns")
-    .select("id, name, is_active, created_at")
+    .select("id, name, is_active, created_at, pinned_wheel_id")
     .eq("creator_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -428,12 +631,14 @@ export async function listCampaigns(): Promise<Campaign[]> {
     name: string;
     is_active: boolean;
     created_at: string;
+    pinned_wheel_id: string | null;
   }[];
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     isActive: r.is_active,
     createdAt: r.created_at,
+    pinnedWheelId: r.pinned_wheel_id ?? null,
   }));
 }
 
@@ -705,7 +910,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   // This fan's grants, newest first, with campaign name resolved via a join.
   const { data: grantRows } = await sb
     .from("grants")
-    .select("id, spins, amount_cents, campaign_id, created_at, campaign:campaigns(name)")
+    .select("id, spins, amount_cents, bonus_spins, campaign_id, created_at, campaign:campaigns(name)")
     .eq("fan_id", fanId)
     .order("created_at", { ascending: false });
 
@@ -713,6 +918,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     id: string;
     spins: number;
     amount_cents: number;
+    bonus_spins: number;
     campaign_id: string | null;
     created_at: string;
     campaign: { name: string } | null;
@@ -722,6 +928,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     id: g.id,
     spins: g.spins,
     amountCents: g.amount_cents,
+    bonusSpins: g.bonus_spins,
     campaignId: g.campaign_id,
     campaignName: g.campaign?.name ?? null,
     at: g.created_at,
@@ -976,15 +1183,15 @@ export async function getWheel(): Promise<WheelConfig | null> {
   } = await sb.auth.getUser();
   if (!user) return null;
 
-  const wheelId = await ensureWheelId(sb, user.id);
+  // Bootstrap a first wheel if the creator has none, then resolve their
+  // currently-live wheel (schedule → is_active → oldest) and load its config.
+  await ensureWheelId(sb, user.id);
+  const wheelId = await resolveActiveWheelId(sb, user.id, new Date());
   if (!wheelId) return null;
 
   const { data } = await sb
     .from("wheels")
-    .select(
-      `id, title, subtitle, brand_color,
-       prizes(id, label, description, rarity, weight, color, emoji, stock, sort_order)`
-    )
+    .select(WHEEL_SELECT)
     .eq("id", wheelId)
     .single();
 
@@ -1002,19 +1209,34 @@ export async function saveWheel(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const wheelId = await ensureWheelId(sb, user.id);
+  // Save the wheel identified by `config.id`. ensureWheelId is only a bootstrap
+  // so a brand-new creator always has at least one wheel to edit.
+  await ensureWheelId(sb, user.id);
+  const wheelId = config.id;
   if (!wheelId) return { error: "no_wheel" };
 
-  const { error: wErr } = await sb
+  const upd: Record<string, unknown> = {
+    title: config.title.slice(0, 120),
+    subtitle: config.subtitle?.slice(0, 200) ?? null,
+    brand_color: config.brandColor ?? "#ec4899",
+    updated_at: new Date().toISOString(),
+  };
+  // Persist lifecycle/schedule fields only when present on the incoming config.
+  if (typeof config.isActive === "boolean") upd.is_active = config.isActive;
+  if (config.activeFrom !== undefined) upd.active_from = config.activeFrom;
+  if (config.activeUntil !== undefined) upd.active_until = config.activeUntil;
+
+  // The RLS-scoped client only sees the creator's own wheels, so this verifies
+  // ownership: a foreign/unknown id matches no row.
+  const { data: updated, error: wErr } = await sb
     .from("wheels")
-    .update({
-      title: config.title.slice(0, 120),
-      subtitle: config.subtitle?.slice(0, 200) ?? null,
-      brand_color: config.brandColor ?? "#ec4899",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", wheelId);
+    .update(upd)
+    .eq("id", wheelId)
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
   if (wErr) return { error: "db_error" };
+  if (!updated) return { error: "not_found" };
 
   // Replace prizes wholesale. Spin history is safe because spins snapshot the
   // prize label/rarity and prizes.prize_id is ON DELETE SET NULL.
@@ -1027,7 +1249,7 @@ export async function saveWheel(
     if (pErr) return { error: "db_error" };
   }
 
-  const saved = await getWheel();
+  const saved = await getWheelById(wheelId);
   return saved ? { wheel: saved } : { error: "db_error" };
 }
 
@@ -1043,6 +1265,695 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     stock: p.stock ?? null,
     sort_order: sortOrder,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Multi-wheel management (Phase 2): list/get/create/duplicate/archive,
+// activation, and scheduling. All creator-scoped via the RLS client.
+// ---------------------------------------------------------------------------
+
+/** Load one wheel's full config by id (creator-scoped via RLS). */
+export async function getWheelById(id: string): Promise<WheelConfig | null> {
+  if (!isSupabaseConfigured()) return mockGetWheelById(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return null;
+
+  const { data } = await sb
+    .from("wheels")
+    .select(WHEEL_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+  if (!data) return null;
+  return toWheelConfig(data as unknown as DbWheelRow);
+}
+
+/** All the creator's wheels (newest first), with a prize count each. */
+export async function listWheels(
+  includeArchived = false
+): Promise<WheelSummary[]> {
+  if (!isSupabaseConfigured()) return mockListWheels(includeArchived);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  let query = sb
+    .from("wheels")
+    .select(
+      `id, title, subtitle, brand_color, is_active, archived_at,
+       active_from, active_until, updated_at, prizes(id)`
+    )
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+  if (!includeArchived) query = query.is("archived_at", null);
+
+  const { data } = await query;
+  const rows = (data ?? []) as unknown as {
+    id: string;
+    title: string;
+    subtitle: string | null;
+    brand_color: string | null;
+    is_active: boolean;
+    archived_at: string | null;
+    active_from: string | null;
+    active_until: string | null;
+    updated_at: string;
+    prizes: { id: string }[] | null;
+  }[];
+
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    subtitle: r.subtitle ?? null,
+    brandColor: r.brand_color ?? "#ec4899",
+    isActive: r.is_active,
+    archivedAt: r.archived_at,
+    activeFrom: r.active_from,
+    activeUntil: r.active_until,
+    prizeCount: (r.prizes ?? []).length,
+    updatedAt: r.updated_at,
+  }));
+}
+
+/**
+ * Create a new wheel, seeding prizes from a wheel template (if given) or from
+ * the sample wheel. It becomes is_active only if it's the creator's first wheel.
+ */
+export async function createWheel(opts?: {
+  fromTemplateId?: string;
+  name?: string;
+}): Promise<{ wheel: WheelConfig }> {
+  if (!isSupabaseConfigured()) return mockCreateWheel(opts);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) throw new Error("unauthorized");
+
+  // First wheel? It should be the active one.
+  const { count: existing } = await sb
+    .from("wheels")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_id", user.id);
+  const isFirst = (existing ?? 0) === 0;
+
+  // Seed: a template snapshot, else the sample wheel.
+  let title = SAMPLE_WHEEL.title;
+  let subtitle: string | null = SAMPLE_WHEEL.subtitle ?? null;
+  let brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
+  let seedPrizes: Omit<Prize, "id">[] = SAMPLE_WHEEL.prizes.map(
+    ({ id: _id, ...rest }) => rest
+  );
+
+  if (opts?.fromTemplateId) {
+    const { data: tpl } = await sb
+      .from("wheel_templates")
+      .select("title, subtitle, brand_color, prizes")
+      .eq("id", opts.fromTemplateId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    const t = tpl as {
+      title: string;
+      subtitle: string | null;
+      brand_color: string | null;
+      prizes: Omit<Prize, "id">[] | null;
+    } | null;
+    if (t) {
+      title = t.title;
+      subtitle = t.subtitle;
+      brandColor = t.brand_color ?? "#ec4899";
+      seedPrizes = t.prizes ?? [];
+    }
+  }
+
+  if (opts?.name) title = opts.name;
+
+  const { data: wheel, error } = await sb
+    .from("wheels")
+    .insert({
+      creator_id: user.id,
+      title: title.slice(0, 120),
+      subtitle: subtitle?.slice(0, 200) ?? null,
+      brand_color: brandColor,
+      is_active: isFirst,
+    })
+    .select("id")
+    .single();
+  if (error || !wheel) throw new Error("db_error");
+
+  if (seedPrizes.length > 0) {
+    await sb.from("prizes").insert(
+      seedPrizes
+        .slice(0, 24)
+        .map((p, i) => prizeRow(wheel.id, p as Prize, i))
+    );
+  }
+
+  const saved = await getWheelById(wheel.id);
+  if (!saved) throw new Error("db_error");
+  return { wheel: saved };
+}
+
+/** Deep-copy a wheel + its prizes into a new inactive, unscheduled wheel. */
+export async function duplicateWheel(
+  id: string
+): Promise<{ wheel: WheelConfig }> {
+  if (!isSupabaseConfigured()) return mockDuplicateWheel(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) throw new Error("unauthorized");
+
+  const source = await getWheelById(id);
+  if (!source) throw new Error("not_found");
+
+  const { data: wheel, error } = await sb
+    .from("wheels")
+    .insert({
+      creator_id: user.id,
+      title: `${source.title} copy`.slice(0, 120),
+      subtitle: source.subtitle?.slice(0, 200) ?? null,
+      brand_color: source.brandColor ?? "#ec4899",
+      is_active: false,
+      active_from: null,
+      active_until: null,
+    })
+    .select("id")
+    .single();
+  if (error || !wheel) throw new Error("db_error");
+
+  if (source.prizes.length > 0) {
+    await sb.from("prizes").insert(
+      source.prizes.slice(0, 24).map((p, i) => prizeRow(wheel.id, p, i))
+    );
+  }
+
+  const saved = await getWheelById(wheel.id);
+  if (!saved) throw new Error("db_error");
+  return { wheel: saved };
+}
+
+/**
+ * Archive a wheel. If it was the active one, promote the oldest remaining
+ * non-archived wheel to active so the creator always has a live wheel.
+ */
+export async function archiveWheel(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockArchiveWheel(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data: target } = await sb
+    .from("wheels")
+    .select("id, is_active")
+    .eq("id", id)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  const row = target as { id: string; is_active: boolean } | null;
+  if (!row) return { error: "not_found" };
+
+  const { error } = await sb
+    .from("wheels")
+    .update({ archived_at: new Date().toISOString(), is_active: false })
+    .eq("id", id);
+  if (error) return { error: "db_error" };
+
+  // If we just archived the active wheel, promote the oldest survivor.
+  if (row.is_active) {
+    const { data: next } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("creator_id", user.id)
+      .is("archived_at", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (next?.id) {
+      await sb.from("wheels").update({ is_active: true }).eq("id", next.id);
+    }
+  }
+
+  return { ok: true };
+}
+
+/** Make exactly one wheel the creator's active wheel. */
+export async function setActiveWheel(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetActiveWheel(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data: target } = await sb
+    .from("wheels")
+    .select("id")
+    .eq("id", id)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  if (!target) return { error: "not_found" };
+
+  // Clear every flag for this creator, then set the chosen wheel.
+  const { error: clearErr } = await sb
+    .from("wheels")
+    .update({ is_active: false })
+    .eq("creator_id", user.id);
+  if (clearErr) return { error: "db_error" };
+
+  const { error } = await sb
+    .from("wheels")
+    .update({ is_active: true })
+    .eq("id", id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** Set (or clear) a wheel's scheduled active window. */
+export async function setWheelSchedule(
+  id: string,
+  { activeFrom, activeUntil }: { activeFrom: string | null; activeUntil: string | null }
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured())
+    return mockSetWheelSchedule(id, { activeFrom, activeUntil });
+
+  if (
+    activeFrom &&
+    activeUntil &&
+    new Date(activeUntil).getTime() <= new Date(activeFrom).getTime()
+  ) {
+    return { error: "invalid_window" };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data: updated, error } = await sb
+    .from("wheels")
+    .update({ active_from: activeFrom, active_until: activeUntil })
+    .eq("id", id)
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  if (!updated) return { error: "not_found" };
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Campaign packs (Phase 2): purchasable spin bundles, optionally scoped to a
+// campaign. Authoritative pricing lives here (see createPass).
+// ---------------------------------------------------------------------------
+
+function toCampaignPack(r: {
+  id: string;
+  campaign_id: string | null;
+  label: string;
+  spins: number;
+  amount_cents: number;
+  bonus_spins: number;
+  sort_order: number;
+  created_at: string;
+}): CampaignPack {
+  return {
+    id: r.id,
+    campaignId: r.campaign_id,
+    label: r.label,
+    spins: r.spins,
+    amountCents: r.amount_cents,
+    bonusSpins: r.bonus_spins,
+    sortOrder: r.sort_order,
+    createdAt: r.created_at,
+  };
+}
+
+const PACK_SELECT =
+  "id, campaign_id, label, spins, amount_cents, bonus_spins, sort_order, created_at";
+
+/**
+ * The creator's packs. With a campaignId, returns that campaign's packs plus any
+ * global (null-campaign) packs. Ordered by sort_order.
+ */
+export async function listCampaignPacks(
+  campaignId?: string
+): Promise<CampaignPack[]> {
+  if (!isSupabaseConfigured()) return mockListCampaignPacks(campaignId);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  let query = sb
+    .from("campaign_packs")
+    .select(PACK_SELECT)
+    .eq("creator_id", user.id)
+    .order("sort_order", { ascending: true });
+  if (campaignId) {
+    query = query.or(`campaign_id.eq.${campaignId},campaign_id.is.null`);
+  }
+
+  const { data } = await query;
+  const rows = (data ?? []) as Parameters<typeof toCampaignPack>[0][];
+  return rows.map(toCampaignPack);
+}
+
+export async function createCampaignPack(input: {
+  campaignId: string | null;
+  label: string;
+  spins: number;
+  amountCents: number;
+  bonusSpins?: number;
+  sortOrder?: number;
+}): Promise<CampaignPack> {
+  if (!isSupabaseConfigured()) return mockCreateCampaignPack(input);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) throw new Error("unauthorized");
+
+  const { data, error } = await sb
+    .from("campaign_packs")
+    .insert({
+      creator_id: user.id,
+      campaign_id: input.campaignId,
+      label: input.label,
+      spins: Math.max(0, Math.floor(input.spins) || 0),
+      amount_cents: Math.max(0, Math.floor(input.amountCents) || 0),
+      bonus_spins: Math.max(0, Math.floor(input.bonusSpins ?? 0) || 0),
+      sort_order: Math.floor(input.sortOrder ?? 0) || 0,
+    })
+    .select(PACK_SELECT)
+    .single();
+  if (error || !data) throw new Error("db_error");
+  return toCampaignPack(data as Parameters<typeof toCampaignPack>[0]);
+}
+
+export async function updateCampaignPack(
+  id: string,
+  patch: Partial<{
+    campaignId: string | null;
+    label: string;
+    spins: number;
+    amountCents: number;
+    bonusSpins: number;
+    sortOrder: number;
+  }>
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockUpdateCampaignPack(id, patch);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const upd: Record<string, unknown> = {};
+  if ("campaignId" in patch) upd.campaign_id = patch.campaignId ?? null;
+  if (patch.label !== undefined) upd.label = patch.label;
+  if (patch.spins !== undefined) upd.spins = Math.max(0, Math.floor(patch.spins) || 0);
+  if (patch.amountCents !== undefined)
+    upd.amount_cents = Math.max(0, Math.floor(patch.amountCents) || 0);
+  if (patch.bonusSpins !== undefined)
+    upd.bonus_spins = Math.max(0, Math.floor(patch.bonusSpins) || 0);
+  if (patch.sortOrder !== undefined) upd.sort_order = Math.floor(patch.sortOrder) || 0;
+  if (Object.keys(upd).length === 0) return { ok: true };
+
+  const { error } = await sb
+    .from("campaign_packs")
+    .update(upd)
+    .eq("id", id)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+export async function deleteCampaignPack(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeleteCampaignPack(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb
+    .from("campaign_packs")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** Pin (or unpin) a campaign's default wheel. */
+export async function setCampaignPinnedWheel(
+  campaignId: string,
+  wheelId: string | null
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured())
+    return mockSetCampaignPinnedWheel(campaignId, wheelId);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data: updated, error } = await sb
+    .from("campaigns")
+    .update({ pinned_wheel_id: wheelId })
+    .eq("id", campaignId)
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  if (!updated) return { error: "not_found" };
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Reusable templates (Phase 2): saved prizes + saved wheel presets.
+// ---------------------------------------------------------------------------
+
+const PRIZE_TEMPLATE_SELECT =
+  "id, label, description, rarity, weight, color, emoji, created_at";
+
+function toPrizeTemplate(r: {
+  id: string;
+  label: string;
+  description: string | null;
+  rarity: Rarity;
+  weight: number;
+  color: string | null;
+  emoji: string | null;
+  created_at: string;
+}): PrizeTemplate {
+  return {
+    id: r.id,
+    label: r.label,
+    description: r.description ?? undefined,
+    rarity: r.rarity,
+    weight: r.weight,
+    color: r.color ?? undefined,
+    emoji: r.emoji ?? undefined,
+    createdAt: r.created_at,
+  };
+}
+
+export async function listPrizeTemplates(): Promise<PrizeTemplate[]> {
+  if (!isSupabaseConfigured()) return mockListPrizeTemplates();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("prize_templates")
+    .select(PRIZE_TEMPLATE_SELECT)
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+  const rows = (data ?? []) as Parameters<typeof toPrizeTemplate>[0][];
+  return rows.map(toPrizeTemplate);
+}
+
+export async function createPrizeTemplate(input: {
+  label: string;
+  description?: string;
+  rarity: Rarity;
+  weight: number;
+  color?: string;
+  emoji?: string;
+}): Promise<PrizeTemplate> {
+  if (!isSupabaseConfigured()) return mockCreatePrizeTemplate(input);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) throw new Error("unauthorized");
+
+  const { data, error } = await sb
+    .from("prize_templates")
+    .insert({
+      creator_id: user.id,
+      label: input.label.slice(0, 80) || "Prize",
+      description: input.description?.slice(0, 280) ?? null,
+      rarity: input.rarity,
+      weight: Math.max(0, Math.floor(input.weight) || 0),
+      color: input.color ?? null,
+      emoji: input.emoji ?? null,
+    })
+    .select(PRIZE_TEMPLATE_SELECT)
+    .single();
+  if (error || !data) throw new Error("db_error");
+  return toPrizeTemplate(data as Parameters<typeof toPrizeTemplate>[0]);
+}
+
+export async function deletePrizeTemplate(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeletePrizeTemplate(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb
+    .from("prize_templates")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+function toWheelTemplate(r: {
+  id: string;
+  name: string;
+  title: string;
+  subtitle: string | null;
+  brand_color: string | null;
+  prizes: Omit<Prize, "id">[] | null;
+  created_at: string;
+}): WheelTemplate {
+  return {
+    id: r.id,
+    name: r.name,
+    title: r.title,
+    subtitle: r.subtitle ?? undefined,
+    brandColor: r.brand_color ?? "#ec4899",
+    prizes: r.prizes ?? [],
+    createdAt: r.created_at,
+  };
+}
+
+const WHEEL_TEMPLATE_SELECT =
+  "id, name, title, subtitle, brand_color, prizes, created_at";
+
+export async function listWheelTemplates(): Promise<WheelTemplate[]> {
+  if (!isSupabaseConfigured()) return mockListWheelTemplates();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("wheel_templates")
+    .select(WHEEL_TEMPLATE_SELECT)
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+  const rows = (data ?? []) as unknown as Parameters<typeof toWheelTemplate>[0][];
+  return rows.map(toWheelTemplate);
+}
+
+/**
+ * Save a wheel preset. Snapshots the prize set as id-less jsonb, sourced from an
+ * existing wheel (fromWheelId) or a provided config.
+ */
+export async function createWheelTemplate(input: {
+  name: string;
+  fromWheelId?: string;
+  config?: WheelConfig;
+}): Promise<WheelTemplate> {
+  if (!isSupabaseConfigured()) return mockCreateWheelTemplate(input);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) throw new Error("unauthorized");
+
+  let source: WheelConfig | null = input.config ?? null;
+  if (!source && input.fromWheelId) {
+    source = await getWheelById(input.fromWheelId);
+  }
+  if (!source) throw new Error("no_source");
+
+  // Strip ids off the prize snapshot.
+  const prizes: Omit<Prize, "id">[] = source.prizes
+    .slice(0, 24)
+    .map(({ id: _id, ...rest }) => rest);
+
+  const { data, error } = await sb
+    .from("wheel_templates")
+    .insert({
+      creator_id: user.id,
+      name: input.name.slice(0, 120) || "Template",
+      title: source.title.slice(0, 120),
+      subtitle: source.subtitle?.slice(0, 200) ?? null,
+      brand_color: source.brandColor ?? "#ec4899",
+      prizes,
+    })
+    .select(WHEEL_TEMPLATE_SELECT)
+    .single();
+  if (error || !data) throw new Error("db_error");
+  return toWheelTemplate(data as unknown as Parameters<typeof toWheelTemplate>[0]);
+}
+
+export async function deleteWheelTemplate(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeleteWheelTemplate(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb
+    .from("wheel_templates")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 // Creator dashboard: metrics + the prize fulfilment queue.

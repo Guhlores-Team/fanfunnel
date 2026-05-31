@@ -1,11 +1,12 @@
-import { pickPrize } from "@/lib/games/wheel/engine";
+import { pickPrize, pickPrizeWithPity } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
-import { RARITY_COLORS, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
   AdminOverview,
   Campaign,
+  CampaignPack,
   CampaignStats,
   CreatorMetricsExtra,
   CreatorOverview,
@@ -15,8 +16,11 @@ import type {
   DmTemplate,
   FanPassView,
   Grant,
+  PrizeTemplate,
   RedemptionItem,
   RedemptionStatus,
+  WheelSummary,
+  WheelTemplate,
   WonPrize,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
@@ -47,6 +51,7 @@ interface MockFan {
   wins: MockWin[];
   notes: string | null; // free-form creator notes
   tags: string[]; // creator-applied labels
+  pityCounter: number; // spins-without-a-rare, drives the pity guarantee
 }
 
 // A single grant (new fan creation OR a top-up), tagged to a campaign.
@@ -56,6 +61,7 @@ interface MockGrant {
   campaignId: string | null;
   spins: number;
   amountCents: number;
+  bonusSpins: number;
   at: string;
 }
 
@@ -66,7 +72,7 @@ interface MockRedemption extends RedemptionItem {
 }
 
 interface Store {
-  wheel: WheelConfig; // the creator's editable wheel
+  wheels: Map<string, WheelConfig>; // wheelId -> wheel config (multiple wheels)
   fans: Map<string, MockFan>; // fanId -> fan
   tokens: Map<string, string>; // token -> fanId
   redemptions: MockRedemption[]; // creator-wide fulfilment queue (newest first)
@@ -75,7 +81,25 @@ interface Store {
   tokenCampaign: Map<string, string>; // token -> campaignId
   grants: MockGrant[]; // every grant ever made (oldest first per fan via push order)
   dmTemplates: DmTemplate[]; // creator's saved DM templates (newest first)
+  campaignPacks: CampaignPack[]; // purchasable spin packs (global or per-campaign)
+  prizeTemplates: PrizeTemplate[]; // reusable prizes
+  wheelTemplates: WheelTemplate[]; // reusable wheel presets
 }
+
+/** Short, unique id with a stable prefix (mirrors the file's existing style). */
+function genId(prefix: string): string {
+  return prefix + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+// Track creation order for wheels (the Map preserves insertion order, but an
+// explicit field keeps "newest"/"oldest" resolution robust across saves).
+interface WheelMeta {
+  createdAt: string;
+  updatedAt: string;
+}
+const g2 = globalThis as unknown as { __ffWheelMeta?: Map<string, WheelMeta> };
+const wheelMeta: Map<string, WheelMeta> =
+  g2.__ffWheelMeta ?? (g2.__ffWheelMeta = new Map());
 
 // A few seeded accounts so the admin panel is explorable in demo mode.
 function seedAccounts(): AdminAccount[] {
@@ -150,13 +174,95 @@ function seedDmTemplates(): DmTemplate[] {
   ];
 }
 
+// Two demo spin packs (global — attached to no campaign) so the presets UI
+// shows something out of the box.
+function seedCampaignPacks(): CampaignPack[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "pack-starter",
+      campaignId: null,
+      label: "Starter — 5 spins",
+      spins: 5,
+      amountCents: 1000,
+      bonusSpins: 0,
+      sortOrder: 0,
+      createdAt: now,
+    },
+    {
+      id: "pack-value",
+      campaignId: null,
+      label: "Value — 12 spins (+2 bonus)",
+      spins: 12,
+      amountCents: 2000,
+      bonusSpins: 2,
+      sortOrder: 1,
+      createdAt: now,
+    },
+  ];
+}
+
+// A couple of reusable prizes so the prize library isn't empty in demo mode.
+function seedPrizeTemplates(): PrizeTemplate[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "ptpl-selfie",
+      label: "Exclusive Selfie",
+      rarity: "common",
+      weight: 40,
+      emoji: "🤳",
+      color: RARITY_COLORS.common,
+      createdAt: now,
+    },
+    {
+      id: "ptpl-call",
+      label: "10-min Video Call",
+      rarity: "rare",
+      weight: 6,
+      emoji: "📞",
+      color: RARITY_COLORS.rare,
+      createdAt: now,
+    },
+  ];
+}
+
+// One reusable wheel preset (derived from the sample wheel, ids stripped).
+function seedWheelTemplates(): WheelTemplate[] {
+  return [
+    {
+      id: "wtpl-starter",
+      name: "Starter Wheel",
+      title: SAMPLE_WHEEL.title,
+      subtitle: SAMPLE_WHEEL.subtitle,
+      brandColor: SAMPLE_WHEEL.brandColor ?? "#ec4899",
+      prizes: SAMPLE_WHEEL.prizes.map(({ id: _id, ...rest }) => rest),
+      createdAt: new Date().toISOString(),
+    },
+  ];
+}
+
+// Build the initial single active wheel seeded from SAMPLE_WHEEL.
+function seedWheels(): Map<string, WheelConfig> {
+  const wheel: WheelConfig = {
+    ...structuredClone(SAMPLE_WHEEL),
+    isActive: true,
+    activeFrom: null,
+    activeUntil: null,
+    archivedAt: null,
+  };
+  const m = new Map<string, WheelConfig>();
+  m.set(wheel.id, wheel);
+  return m;
+}
+
 // Pin to globalThis so the store is shared across every Next.js entry point
 // (pages and route handlers are bundled separately).
 const g = globalThis as unknown as { __ffStore?: Store };
 const store: Store =
   g.__ffStore ??
   (g.__ffStore = {
-    wheel: structuredClone(SAMPLE_WHEEL),
+    wheels: seedWheels(),
     fans: new Map(),
     tokens: new Map(),
     redemptions: [],
@@ -165,6 +271,9 @@ const store: Store =
     tokenCampaign: new Map(),
     grants: [],
     dmTemplates: seedDmTemplates(),
+    campaignPacks: seedCampaignPacks(),
+    prizeTemplates: seedPrizeTemplates(),
+    wheelTemplates: seedWheelTemplates(),
   });
 
 // A store pinned by an older dev-server build may predate these fields, so
@@ -173,10 +282,48 @@ store.campaigns ??= [];
 store.tokenCampaign ??= new Map();
 store.grants ??= [];
 store.dmTemplates ??= seedDmTemplates();
-// Backfill notes/tags on any fan pinned before these fields existed.
+store.wheels ??= seedWheels();
+store.campaignPacks ??= seedCampaignPacks();
+store.prizeTemplates ??= seedPrizeTemplates();
+store.wheelTemplates ??= seedWheelTemplates();
+
+// Migrate a store pinned before the multi-wheel refactor: a `wheel` single
+// field may exist on the old shape. Fold it into the wheels map as active.
+{
+  const legacy = (store as unknown as { wheel?: WheelConfig }).wheel;
+  if (legacy && store.wheels.size === 0) {
+    legacy.isActive ??= true;
+    legacy.activeFrom ??= null;
+    legacy.activeUntil ??= null;
+    legacy.archivedAt ??= null;
+    store.wheels.set(legacy.id, legacy);
+  }
+}
+
+// Backfill wheel meta + lifecycle fields for every wheel.
+for (const w of store.wheels.values()) {
+  w.activeFrom ??= null;
+  w.activeUntil ??= null;
+  w.archivedAt ??= null;
+  if (!wheelMeta.has(w.id)) {
+    const now = new Date().toISOString();
+    wheelMeta.set(w.id, { createdAt: now, updatedAt: now });
+  }
+}
+
+// Backfill notes/tags/pity on any fan pinned before these fields existed.
 for (const fan of store.fans.values()) {
   fan.notes ??= null;
   fan.tags ??= [];
+  fan.pityCounter ??= 0;
+}
+// Backfill bonusSpins on any grant pinned before that field existed.
+for (const grant of store.grants) {
+  grant.bonusSpins ??= 0;
+}
+// Backfill pinnedWheelId on any campaign pinned before that field existed.
+for (const campaign of store.campaigns) {
+  campaign.pinnedWheelId ??= null;
 }
 
 if (!store.fans.has("demo-fan")) {
@@ -190,6 +337,7 @@ if (!store.fans.has("demo-fan")) {
     wins: [],
     notes: null,
     tags: ["new"],
+    pityCounter: 0,
   });
   store.tokens.set("demo", "demo-fan");
   // Seed a grant so revenue/per-campaign data is coherent in demo mode.
@@ -199,6 +347,7 @@ if (!store.fans.has("demo-fan")) {
     campaignId: null,
     spins: demoSpins,
     amountCents: 0,
+    bonusSpins: 0,
     at: new Date().toISOString(),
   });
 }
@@ -206,6 +355,103 @@ if (!store.fans.has("demo-fan")) {
 function fanForToken(token: string): MockFan | null {
   const fanId = store.tokens.get(token);
   return fanId ? store.fans.get(fanId) ?? null : null;
+}
+
+// --- Wheel resolution -------------------------------------------------------
+
+function wheelCreatedAt(id: string): string {
+  return wheelMeta.get(id)?.createdAt ?? new Date(0).toISOString();
+}
+
+/** Wheels in creation order (oldest → newest). */
+function wheelsByAge(): WheelConfig[] {
+  return Array.from(store.wheels.values()).sort((a, b) =>
+    wheelCreatedAt(a.id).localeCompare(wheelCreatedAt(b.id))
+  );
+}
+
+/**
+ * Resolve the wheel id that's "active right now" among non-archived wheels:
+ *  1. window match (activeFrom <= now AND (activeUntil null OR > now)) — prefer
+ *     the latest activeFrom, then the newest wheel;
+ *  2. else the flagged isActive wheel;
+ *  3. else the oldest wheel (always returns something if any wheel exists).
+ */
+export function mockResolveActiveWheelId(now: Date = new Date()): string {
+  const live = wheelsByAge().filter((w) => !w.archivedAt);
+  if (live.length === 0) {
+    // Should never happen in demo mode, but stay defensive.
+    return store.wheels.keys().next().value ?? SAMPLE_WHEEL.id;
+  }
+
+  const nowIso = now.toISOString();
+  const windowed = live.filter(
+    (w) =>
+      w.activeFrom != null &&
+      w.activeFrom <= nowIso &&
+      (w.activeUntil == null || w.activeUntil > nowIso)
+  );
+  if (windowed.length > 0) {
+    windowed.sort((a, b) => {
+      const af = (a.activeFrom ?? "").localeCompare(b.activeFrom ?? "");
+      if (af !== 0) return af; // later activeFrom last
+      return wheelCreatedAt(a.id).localeCompare(wheelCreatedAt(b.id)); // newer last
+    });
+    return windowed[windowed.length - 1].id;
+  }
+
+  const flagged = live.find((w) => w.isActive);
+  if (flagged) return flagged.id;
+
+  return live[0].id; // oldest
+}
+
+/** The currently-active wheel config (always defined in demo mode). */
+function activeWheel(): WheelConfig {
+  const id = mockResolveActiveWheelId();
+  return store.wheels.get(id) ?? wheelsByAge()[0];
+}
+
+/**
+ * Resolve which wheel a fan's pass should use: a campaign pin (if the campaign
+ * exists, has pinnedWheelId, and that wheel is non-archived) wins; otherwise
+ * fall back to the active wheel.
+ */
+export function mockResolveWheelId(
+  pass: { campaignId: string | null; wheelId?: string },
+  now: Date = new Date()
+): string {
+  if (pass.campaignId) {
+    const campaign = store.campaigns.find((c) => c.id === pass.campaignId);
+    const pinned = campaign?.pinnedWheelId ?? null;
+    if (pinned) {
+      const w = store.wheels.get(pinned);
+      if (w && !w.archivedAt) return pinned;
+    }
+  }
+  return mockResolveActiveWheelId(now);
+}
+
+/** The campaign attached to a fan's primary token, if any. */
+function campaignForFan(fan: MockFan): string | null {
+  return store.tokenCampaign.get(fan.primaryToken) ?? null;
+}
+
+/** Lifecycle fields a WheelSummary needs, normalized. */
+function toWheelSummary(w: WheelConfig): WheelSummary {
+  const meta = wheelMeta.get(w.id);
+  return {
+    id: w.id,
+    title: w.title,
+    subtitle: w.subtitle ?? null,
+    brandColor: w.brandColor ?? "#ec4899",
+    isActive: w.id === mockResolveActiveWheelId(),
+    archivedAt: w.archivedAt ?? null,
+    activeFrom: w.activeFrom ?? null,
+    activeUntil: w.activeUntil ?? null,
+    prizeCount: w.prizes.length,
+    updatedAt: meta?.updatedAt ?? new Date().toISOString(),
+  };
 }
 
 // A fan's grants, oldest→newest (push order is creation order in the mock).
@@ -229,23 +475,175 @@ function fifoCampaignForSpin(fanId: string, playedBefore: number): string | null
 }
 
 export function mockGetWheel(): WheelConfig {
-  return structuredClone(store.wheel);
+  return structuredClone(activeWheel());
 }
 
 export function mockSaveWheel(config: WheelConfig): WheelConfig {
-  // Preserve the stable wheel id; everything else is editable.
-  store.wheel = { ...structuredClone(config), id: store.wheel.id };
-  return structuredClone(store.wheel);
+  // Save by id into the wheels map. If the id matches no existing wheel, treat
+  // the save as targeting the active wheel (preserving its stable id).
+  const targetId = store.wheels.has(config.id) ? config.id : activeWheel().id;
+  const existing = store.wheels.get(targetId);
+  const saved: WheelConfig = {
+    ...structuredClone(config),
+    id: targetId,
+    // Preserve lifecycle/schedule fields unless the incoming config sets them.
+    isActive: config.isActive ?? existing?.isActive,
+    activeFrom: config.activeFrom ?? existing?.activeFrom ?? null,
+    activeUntil: config.activeUntil ?? existing?.activeUntil ?? null,
+    archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
+  };
+  store.wheels.set(targetId, saved);
+  const meta = wheelMeta.get(targetId);
+  const now = new Date().toISOString();
+  if (meta) meta.updatedAt = now;
+  else wheelMeta.set(targetId, { createdAt: now, updatedAt: now });
+  return structuredClone(saved);
+}
+
+// --- Wheel management (multi-wheel) ----------------------------------------
+
+/** Every wheel as a compact summary, newest first. */
+export function mockListWheels(includeArchived = false): WheelSummary[] {
+  const wheels = wheelsByAge()
+    .slice()
+    .reverse() // newest first
+    .filter((w) => includeArchived || !w.archivedAt);
+  return wheels.map((w) => structuredClone(toWheelSummary(w)));
+}
+
+/** A single wheel's full config by id, or null. */
+export function mockGetWheelById(id: string): WheelConfig | null {
+  const w = store.wheels.get(id);
+  return w ? structuredClone(w) : null;
+}
+
+/**
+ * Create a new wheel, seeded from a wheel template (if given) or SAMPLE_WHEEL.
+ * Only the very first wheel in the store is created active.
+ */
+export function mockCreateWheel(opts?: {
+  fromTemplateId?: string;
+  name?: string;
+}): { wheel: WheelConfig } {
+  const isFirst = store.wheels.size === 0;
+  const id = genId("wheel");
+  const now = new Date().toISOString();
+
+  let title: string;
+  let subtitle: string | undefined;
+  let brandColor: string;
+  let prizes: Prize[];
+
+  const tpl = opts?.fromTemplateId
+    ? store.wheelTemplates.find((t) => t.id === opts.fromTemplateId)
+    : undefined;
+  if (tpl) {
+    title = tpl.title;
+    subtitle = tpl.subtitle;
+    brandColor = tpl.brandColor;
+    prizes = tpl.prizes.map((p) => ({ ...structuredClone(p), id: genId("prize") }));
+  } else {
+    const base = structuredClone(SAMPLE_WHEEL);
+    title = base.title;
+    subtitle = base.subtitle;
+    brandColor = base.brandColor ?? "#ec4899";
+    prizes = base.prizes.map((p) => ({ ...p, id: genId("prize") }));
+  }
+
+  const wheel: WheelConfig = {
+    id,
+    title: opts?.name?.trim() || title,
+    subtitle,
+    brandColor,
+    prizes,
+    isActive: isFirst,
+    activeFrom: null,
+    activeUntil: null,
+    archivedAt: null,
+  };
+  store.wheels.set(id, wheel);
+  wheelMeta.set(id, { createdAt: now, updatedAt: now });
+  return { wheel: structuredClone(wheel) };
+}
+
+/** Duplicate an existing wheel (deep copy, " copy" suffix, inactive). */
+export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
+  const src = store.wheels.get(id) ?? activeWheel();
+  const newId = genId("wheel");
+  const now = new Date().toISOString();
+  const wheel: WheelConfig = {
+    ...structuredClone(src),
+    id: newId,
+    title: `${src.title} copy`,
+    prizes: src.prizes.map((p) => ({ ...structuredClone(p), id: genId("prize") })),
+    isActive: false,
+    activeFrom: null,
+    activeUntil: null,
+    archivedAt: null,
+  };
+  store.wheels.set(newId, wheel);
+  wheelMeta.set(newId, { createdAt: now, updatedAt: now });
+  return { wheel: structuredClone(wheel) };
+}
+
+/**
+ * Archive a wheel. If it was the active one, promote the oldest remaining
+ * non-archived wheel to active so the creator always has a live wheel.
+ */
+export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
+  const wheel = store.wheels.get(id);
+  if (!wheel) return { error: "not_found" };
+  if (wheel.archivedAt) return { ok: true };
+
+  const wasActive = wheel.isActive;
+  wheel.archivedAt = new Date().toISOString();
+  wheel.isActive = false;
+
+  if (wasActive) {
+    const remaining = wheelsByAge().filter((w) => !w.archivedAt);
+    if (remaining.length > 0) remaining[0].isActive = true; // oldest remaining
+  }
+  return { ok: true };
+}
+
+/** Make a wheel the active one (clears the flag on all others). */
+export function mockSetActiveWheel(id: string): { ok: true } | { error: string } {
+  const wheel = store.wheels.get(id);
+  if (!wheel) return { error: "not_found" };
+  if (wheel.archivedAt) return { error: "archived" };
+  for (const w of store.wheels.values()) w.isActive = false;
+  wheel.isActive = true;
+  return { ok: true };
+}
+
+/** Set (or clear) a wheel's scheduled active window. */
+export function mockSetWheelSchedule(
+  id: string,
+  schedule: { activeFrom: string | null; activeUntil: string | null }
+): { ok: true } | { error: string } {
+  const wheel = store.wheels.get(id);
+  if (!wheel) return { error: "not_found" };
+  const { activeFrom, activeUntil } = schedule;
+  if (activeFrom != null && activeUntil != null && activeUntil <= activeFrom) {
+    return { error: "invalid_window" };
+  }
+  wheel.activeFrom = activeFrom;
+  wheel.activeUntil = activeUntil;
+  const meta = wheelMeta.get(id);
+  if (meta) meta.updatedAt = new Date().toISOString();
+  return { ok: true };
 }
 
 export function mockGetFanPass(token: string): FanPassView | null {
   const fan = fanForToken(token);
   if (!fan) return null;
+  const wheelId = mockResolveWheelId({ campaignId: campaignForFan(fan) });
+  const wheel = store.wheels.get(wheelId) ?? activeWheel();
   return structuredClone({
     token,
     fanName: fan.name,
     creatorTitle: CREATOR_TITLE,
-    wheel: store.wheel,
+    wheel,
     spinsRemaining: fan.spinsRemaining,
     recentWins: fan.wins,
   });
@@ -256,7 +654,13 @@ export function mockSpin(token: string) {
   if (!fan) return { error: "not_found" as const };
   if (fan.spinsRemaining <= 0) return { error: "no_spins" as const };
 
-  const { prize, index } = pickPrize(store.wheel);
+  // Resolve the wheel this fan's pass plays (campaign pin → active → fallback).
+  const wheelId = mockResolveWheelId({ campaignId: campaignForFan(fan) });
+  const wheel = store.wheels.get(wheelId) ?? activeWheel();
+
+  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(wheel, {
+    pityCounter: fan.pityCounter,
+  });
 
   // FIFO-attribute THIS spin to a campaign: the 0-based index of this spin
   // among all the fan has played is the count played before it. Walk the fan's
@@ -266,10 +670,11 @@ export function mockSpin(token: string) {
   const campaignId = fifoCampaignForSpin(fan.id, playedBefore);
 
   fan.spinsRemaining -= 1;
+  fan.pityCounter = nextPityCounter;
 
-  // Decrement limited stock on the shared wheel so rare prizes can sell out.
-  const live = store.wheel.prizes[index];
-  if (typeof live.stock === "number") live.stock -= 1;
+  // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
+  const live = wheel.prizes[index];
+  if (live && typeof live.stock === "number") live.stock -= 1;
 
   // Record the win on the fan account (persists across all their links).
   const at = new Date().toISOString();
@@ -302,6 +707,7 @@ export function mockSpin(token: string) {
     prize: structuredClone(prize),
     prizeIndex: index,
     spinsRemaining: fan.spinsRemaining,
+    pityAwarded,
   };
 }
 
@@ -315,19 +721,36 @@ export function mockCreatePass(
   spins: number,
   fanId?: string,
   campaignId?: string,
-  amountCents?: number
+  amountCents?: number,
+  bonusSpins?: number,
+  packId?: string
 ): { token: string; fanId: string } {
-  const add = Math.max(0, spins);
-  const money = Math.max(0, Math.floor(amountCents ?? 0) || 0);
+  // If a pack is supplied, its spins/amount/bonus are authoritative.
+  let baseSpins = spins;
+  let money = Math.max(0, Math.floor(amountCents ?? 0) || 0);
+  let bonus = Math.max(0, Math.floor(bonusSpins ?? 0) || 0);
+  if (packId) {
+    const pack = store.campaignPacks.find((p) => p.id === packId);
+    if (pack) {
+      baseSpins = pack.spins;
+      money = pack.amountCents;
+      bonus = pack.bonusSpins;
+    }
+  }
+
+  // Effective spins added = paid spins + bonus spins.
+  const paid = Math.max(0, Math.floor(baseSpins) || 0);
+  const add = paid + bonus;
   const fan = fanId ? store.fans.get(fanId) : undefined;
 
   const pushGrant = (id: string) => {
     store.grants.push({
-      id: "g-" + Math.random().toString(36).slice(2, 10),
+      id: genId("g"),
       fanId: id,
       campaignId: campaignId ?? null,
       spins: add,
       amountCents: money,
+      bonusSpins: bonus,
       at: new Date().toISOString(),
     });
   };
@@ -348,6 +771,7 @@ export function mockCreatePass(
       wins: [],
       notes: null,
       tags: [],
+      pityCounter: 0,
     });
     store.tokens.set(token, id);
     if (campaignId) store.tokenCampaign.set(token, campaignId);
@@ -613,15 +1037,33 @@ export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
 
 // --- Campaigns --------------------------------------------------------------
 
-export function mockCreateCampaign(name: string): Campaign {
+export function mockCreateCampaign(
+  name: string,
+  pinnedWheelId?: string | null
+): Campaign {
   const campaign: Campaign = {
     id: "camp-" + Math.random().toString(36).slice(2, 9),
     name: name.trim() || "Campaign",
     isActive: true,
     createdAt: new Date().toISOString(),
+    pinnedWheelId: pinnedWheelId ?? null,
   };
   store.campaigns.unshift(campaign);
   return structuredClone(campaign);
+}
+
+/** Pin (or unpin) a campaign's default wheel. */
+export function mockSetCampaignPinnedWheel(
+  campaignId: string,
+  wheelId: string | null
+): { ok: true } | { error: string } {
+  const campaign = store.campaigns.find((c) => c.id === campaignId);
+  if (!campaign) return { error: "not_found" };
+  if (wheelId !== null && !store.wheels.has(wheelId)) {
+    return { error: "wheel_not_found" };
+  }
+  campaign.pinnedWheelId = wheelId;
+  return { ok: true };
 }
 
 export function mockListCampaigns(): Campaign[] {
@@ -672,6 +1114,162 @@ export function mockGetCampaignStats(): CampaignStats[] {
       topPrize,
     };
   });
+}
+
+// --- Campaign packs (purchasable spin presets) ------------------------------
+
+/** Packs, optionally filtered to a campaign (or globals), ordered by sortOrder. */
+export function mockListCampaignPacks(campaignId?: string): CampaignPack[] {
+  const packs = store.campaignPacks
+    .filter((p) =>
+      campaignId === undefined ? true : p.campaignId === campaignId
+    )
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  return structuredClone(packs);
+}
+
+export function mockCreateCampaignPack(input: {
+  campaignId?: string | null;
+  label: string;
+  spins: number;
+  amountCents: number;
+  bonusSpins?: number;
+  sortOrder?: number;
+}): CampaignPack {
+  const pack: CampaignPack = {
+    id: genId("pack"),
+    campaignId: input.campaignId ?? null,
+    label: input.label.trim() || "Pack",
+    spins: Math.max(0, Math.floor(input.spins) || 0),
+    amountCents: Math.max(0, Math.floor(input.amountCents) || 0),
+    bonusSpins: Math.max(0, Math.floor(input.bonusSpins ?? 0) || 0),
+    sortOrder:
+      input.sortOrder ??
+      store.campaignPacks.reduce((max, p) => Math.max(max, p.sortOrder + 1), 0),
+    createdAt: new Date().toISOString(),
+  };
+  store.campaignPacks.push(pack);
+  return structuredClone(pack);
+}
+
+export function mockUpdateCampaignPack(
+  id: string,
+  patch: Partial<Pick<CampaignPack, "label" | "spins" | "amountCents" | "bonusSpins" | "sortOrder" | "campaignId">>
+): { ok: true } | { error: string } {
+  const pack = store.campaignPacks.find((p) => p.id === id);
+  if (!pack) return { error: "not_found" };
+  if (patch.label !== undefined) pack.label = patch.label.trim() || pack.label;
+  if (patch.spins !== undefined) pack.spins = Math.max(0, Math.floor(patch.spins) || 0);
+  if (patch.amountCents !== undefined)
+    pack.amountCents = Math.max(0, Math.floor(patch.amountCents) || 0);
+  if (patch.bonusSpins !== undefined)
+    pack.bonusSpins = Math.max(0, Math.floor(patch.bonusSpins) || 0);
+  if (patch.sortOrder !== undefined) pack.sortOrder = patch.sortOrder;
+  if (patch.campaignId !== undefined) pack.campaignId = patch.campaignId;
+  return { ok: true };
+}
+
+export function mockDeleteCampaignPack(id: string): { ok: true } | { error: string } {
+  const before = store.campaignPacks.length;
+  store.campaignPacks = store.campaignPacks.filter((p) => p.id !== id);
+  return store.campaignPacks.length < before ? { ok: true } : { error: "not_found" };
+}
+
+// --- Prize templates (reusable prizes) --------------------------------------
+
+export function mockListPrizeTemplates(): PrizeTemplate[] {
+  // Newest first.
+  return structuredClone(
+    store.prizeTemplates
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  );
+}
+
+export function mockCreatePrizeTemplate(input: {
+  label: string;
+  rarity: Rarity;
+  weight: number;
+  description?: string;
+  color?: string;
+  emoji?: string;
+}): PrizeTemplate {
+  const tpl: PrizeTemplate = {
+    id: genId("ptpl"),
+    label: input.label.trim() || "Prize",
+    rarity: input.rarity,
+    weight: Math.max(0, Math.floor(input.weight) || 0),
+    description: input.description,
+    color: input.color ?? RARITY_COLORS[input.rarity],
+    emoji: input.emoji,
+    createdAt: new Date().toISOString(),
+  };
+  store.prizeTemplates.unshift(tpl);
+  return structuredClone(tpl);
+}
+
+export function mockDeletePrizeTemplate(id: string): { ok: true } | { error: string } {
+  const before = store.prizeTemplates.length;
+  store.prizeTemplates = store.prizeTemplates.filter((t) => t.id !== id);
+  return store.prizeTemplates.length < before ? { ok: true } : { error: "not_found" };
+}
+
+// --- Wheel templates (reusable wheel presets) -------------------------------
+
+export function mockListWheelTemplates(): WheelTemplate[] {
+  // Newest first.
+  return structuredClone(
+    store.wheelTemplates
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  );
+}
+
+/**
+ * Create a wheel template, either from an existing wheel (ids stripped) or from
+ * an inline config. `fromWheelId` wins if both are supplied.
+ */
+export function mockCreateWheelTemplate(input: {
+  name: string;
+  fromWheelId?: string;
+  config?: { title: string; subtitle?: string; brandColor?: string; prizes: Omit<Prize, "id">[] };
+}): WheelTemplate {
+  let title = "Wheel";
+  let subtitle: string | undefined;
+  let brandColor = "#ec4899";
+  let prizes: Omit<Prize, "id">[] = [];
+
+  const source = input.fromWheelId ? store.wheels.get(input.fromWheelId) : undefined;
+  if (source) {
+    title = source.title;
+    subtitle = source.subtitle;
+    brandColor = source.brandColor ?? "#ec4899";
+    prizes = source.prizes.map(({ id: _id, ...rest }) => structuredClone(rest));
+  } else if (input.config) {
+    title = input.config.title;
+    subtitle = input.config.subtitle;
+    brandColor = input.config.brandColor ?? "#ec4899";
+    prizes = input.config.prizes.map((p) => structuredClone(p));
+  }
+
+  const tpl: WheelTemplate = {
+    id: genId("wtpl"),
+    name: input.name.trim() || "Template",
+    title,
+    subtitle,
+    brandColor,
+    prizes,
+    createdAt: new Date().toISOString(),
+  };
+  store.wheelTemplates.unshift(tpl);
+  return structuredClone(tpl);
+}
+
+export function mockDeleteWheelTemplate(id: string): { ok: true } | { error: string } {
+  const before = store.wheelTemplates.length;
+  store.wheelTemplates = store.wheelTemplates.filter((t) => t.id !== id);
+  return store.wheelTemplates.length < before ? { ok: true } : { error: "not_found" };
 }
 
 // --- Admin -----------------------------------------------------------------

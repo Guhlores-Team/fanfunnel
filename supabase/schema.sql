@@ -448,3 +448,4 @@ create policy wheel_templates_rw on public.wheel_templates for all
   using (creator_id = auth.uid() or public.is_admin()) with check (creator_id = auth.uid() or public.is_admin());
 
 alter table public.fans add column if not exists pity_counter integer not null default 0 check (pity_counter >= 0);
+alter table public.grants add column if not exists bonus_spins integer not null default 0 check (bonus_spins >= 0);

@@ -56,6 +56,9 @@ create policy wheel_templates_rw on public.wheel_templates for all
 
 alter table public.fans add column if not exists pity_counter integer not null default 0 check (pity_counter >= 0);
 
+-- #4 bulk bonus: record the comped (bonus) portion of a grant for display.
+alter table public.grants add column if not exists bonus_spins integer not null default 0 check (bonus_spins >= 0);
+
 -- Update admin_account_stats() so the wheels count excludes archived wheels.
 create or replace function public.admin_account_stats()
 returns table (
