@@ -34,6 +34,7 @@ import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
 import PackPresets from "@/components/dashboard/PackPresets";
 import InboxPanel from "@/components/dashboard/InboxPanel";
 import BoostsPanel from "@/components/dashboard/BoostsPanel";
+import AnalyticsPanel from "@/components/dashboard/AnalyticsPanel";
 import PrizePhoto from "@/components/dashboard/PrizePhoto";
 import {
   EMOJI_SUGGESTIONS,
@@ -43,7 +44,7 @@ import {
   reorder,
 } from "@/components/dashboard/editorHelpers";
 
-type Tab = "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts";
+type Tab = "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -134,6 +135,7 @@ export default function DashboardClient({
     ["campaigns", "Campaigns"],
     ["boosts", "Boosts"],
     ["inbox", "Inbox"],
+    ["analytics", "Analytics"],
     ["metrics", "Metrics"],
   ];
 
@@ -240,6 +242,7 @@ export default function DashboardClient({
           />
         )}
         {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
+        {tab === "analytics" && <AnalyticsPanel />}
         {tab === "editor" && (
           <WheelEditor
             wheel={wheel}
@@ -1837,6 +1840,25 @@ function WheelEditor({
                     imageUrl={p.imageUrl}
                     onChange={(url) => updatePrize(p.id, { imageUrl: url })}
                   />
+
+                  <Field label="Cost (your cost)">
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="0.00"
+                      className="ff-input tnum w-full text-right"
+                      value={p.cost == null ? "" : (p.cost ?? 0) / 100}
+                      onChange={(e) =>
+                        updatePrize(p.id, {
+                          cost:
+                            e.target.value === ""
+                              ? null
+                              : Math.round(Number(e.target.value) * 100),
+                        })
+                      }
+                    />
+                  </Field>
 
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <Field label="Rarity">

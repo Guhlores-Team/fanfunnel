@@ -209,6 +209,32 @@ export interface CreatorOverview {
   redemptions: RedemptionItem[];
 }
 
+// --- Phase 4 (deeper analytics) --------------------------------------------
+
+/** #17 Best-time heatmap: 168 cells (7 weekdays × 24 hours, UTC). */
+export interface EngagementHeatmap {
+  cells: { weekday: number; hour: number; count: number }[]; // weekday 0=Sun..6=Sat, hour 0..23
+  max: number;
+}
+
+/** #18 Prize ROI: a creator's per-prize win count and your cost to fulfil it. */
+export interface PrizeRoiRow {
+  label: string;
+  rarity: Rarity;
+  timesWon: number;
+  costCents: number | null;
+  totalCostCents: number; // (costCents ?? 0) * timesWon
+}
+
+/** #19 Cohort retention: fans cohorted by their first grant's campaign. */
+export interface CohortRow {
+  campaignId: string | null;
+  campaignName: string;
+  fans: number;
+  returningFans: number; // fans in the cohort with ≥2 grants
+  repeatRate: number; // returningFans / fans, 0 if fans=0
+}
+
 export interface DailyCount { date: string; spins: number } // YYYY-MM-DD (UTC)
 export interface RevenueDaily { date: string; cents: number } // YYYY-MM-DD (UTC)
 export interface ConversionFunnel { links: number; spun: number; fulfilled: number }

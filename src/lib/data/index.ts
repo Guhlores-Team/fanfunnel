@@ -14,9 +14,12 @@ import type {
   Campaign,
   CampaignPack,
   CampaignStats,
+  CohortRow,
   CreatorMetricsExtra,
   CreatorOverview,
   DmTemplate,
+  EngagementHeatmap,
+  PrizeRoiRow,
   FanAccountSummary,
   FanCampaignBreakdown,
   FanDetail,
@@ -48,6 +51,9 @@ import {
   mockGetFanDetail,
   mockGetOverview,
   mockGetMetricsExtra,
+  mockGetEngagementHeatmap,
+  mockGetPrizeRoi,
+  mockGetCohortRetention,
   mockSetRedemptionStatus,
   mockGetWheel,
   mockSaveWheel,
@@ -125,6 +131,7 @@ interface DbPrizeRow {
   color: string | null;
   emoji: string | null;
   image_url: string | null;
+  cost_cents: number | null;
   stock: number | null;
   sort_order: number | null;
 }
@@ -143,7 +150,7 @@ interface DbWheelRow {
 // The columns we select to load a wheel's full config (prizes joined).
 const WHEEL_SELECT =
   `id, title, subtitle, brand_color, is_active, active_from, active_until, archived_at,
-   prizes(id, label, description, rarity, weight, color, emoji, image_url, stock, sort_order)`;
+   prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
 type AnyClient =
@@ -1476,6 +1483,7 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     color: p.color ?? null,
     emoji: p.emoji ?? null,
     image_url: p.imageUrl ?? null,
+    cost_cents: p.cost ?? null,
     stock: p.stock ?? null,
     sort_order: sortOrder,
   };
@@ -2330,6 +2338,184 @@ export async function getMetricsExtra(
     },
     revenueTrend,
   };
+}
+
+// --- Phase 4 (deeper analytics) --------------------------------------------
+
+// #17 Best-time heatmap: bucket spin timestamps into a 7×24 (weekday×hour, UTC)
+// grid. Returns all 168 cells, zero-filled, plus the max count.
+export async function getEngagementHeatmap(
+  days: number = 90
+): Promise<EngagementHeatmap> {
+  const n = clampDays(days);
+  if (!isSupabaseConfigured()) return mockGetEngagementHeatmap(days);
+
+  const empty: EngagementHeatmap = (() => {
+    const cells: EngagementHeatmap["cells"] = [];
+    for (let weekday = 0; weekday < 7; weekday++)
+      for (let hour = 0; hour < 24; hour++)
+        cells.push({ weekday, hour, count: 0 });
+    return { cells, max: 0 };
+  })();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return empty;
+
+  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("created_at")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+
+  const counts = new Array<number>(7 * 24).fill(0);
+  for (const r of (spinRows ?? []) as { created_at: string }[]) {
+    const d = new Date(r.created_at);
+    if (Number.isNaN(d.getTime())) continue;
+    counts[d.getUTCDay() * 24 + d.getUTCHours()] += 1;
+  }
+
+  const cells: EngagementHeatmap["cells"] = [];
+  let max = 0;
+  for (let weekday = 0; weekday < 7; weekday++) {
+    for (let hour = 0; hour < 24; hour++) {
+      const count = counts[weekday * 24 + hour];
+      if (count > max) max = count;
+      cells.push({ weekday, hour, count });
+    }
+  }
+  return { cells, max };
+}
+
+// #18 Prize ROI: count wins per prize label and join the creator's cost.
+export async function getPrizeRoi(days: number = 90): Promise<PrizeRoiRow[]> {
+  const n = clampDays(days);
+  if (!isSupabaseConfigured()) return mockGetPrizeRoi(days);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  // Costs + rarity come from the creator's prize set (last write wins by label).
+  const { data: prizeRows } = await sb
+    .from("prizes")
+    .select("label, rarity, cost_cents, wheel:wheels!inner(creator_id)")
+    .eq("wheel.creator_id", user.id);
+  const meta = new Map<string, { rarity: Rarity; costCents: number | null }>();
+  for (const p of (prizeRows ?? []) as unknown as {
+    label: string;
+    rarity: Rarity;
+    cost_cents: number | null;
+  }[]) {
+    meta.set(p.label, { rarity: p.rarity, costCents: p.cost_cents ?? null });
+  }
+
+  // Counts come from spins (one row per spin) inside the window.
+  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("prize_label, prize_rarity")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+
+  const counts = new Map<string, { rarity: Rarity; timesWon: number }>();
+  for (const s of (spinRows ?? []) as {
+    prize_label: string;
+    prize_rarity: Rarity;
+  }[]) {
+    const cur = counts.get(s.prize_label);
+    if (cur) cur.timesWon += 1;
+    else counts.set(s.prize_label, { rarity: s.prize_rarity, timesWon: 1 });
+  }
+
+  const rows: PrizeRoiRow[] = [];
+  for (const [label, { rarity, timesWon }] of counts) {
+    const costCents = meta.get(label)?.costCents ?? null;
+    rows.push({
+      label,
+      rarity: meta.get(label)?.rarity ?? rarity,
+      timesWon,
+      costCents,
+      totalCostCents: (costCents ?? 0) * timesWon,
+    });
+  }
+  rows.sort((a, b) => b.totalCostCents - a.totalCostCents);
+  return rows;
+}
+
+// #19 Cohort retention: cohort each fan by their first grant's campaign.
+export async function getCohortRetention(): Promise<CohortRow[]> {
+  if (!isSupabaseConfigured()) return mockGetCohortRetention();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("fan_id, campaign_id, created_at")
+    .eq("creator_id", user.id);
+  const { data: campaignRows } = await sb
+    .from("campaigns")
+    .select("id, name")
+    .eq("creator_id", user.id);
+
+  const campaignName = new Map<string, string>();
+  for (const c of (campaignRows ?? []) as { id: string; name: string }[])
+    campaignName.set(c.id, c.name);
+
+  // First grant (earliest created_at) per fan determines the cohort; also track
+  // grant counts per fan for the "returning" definition (≥2 grants).
+  const firstCampaign = new Map<string, string | null>();
+  const firstAt = new Map<string, number>();
+  const grantCount = new Map<string, number>();
+  for (const g of (grantRows ?? []) as {
+    fan_id: string;
+    campaign_id: string | null;
+    created_at: string;
+  }[]) {
+    grantCount.set(g.fan_id, (grantCount.get(g.fan_id) ?? 0) + 1);
+    const t = new Date(g.created_at).getTime();
+    const prev = firstAt.get(g.fan_id);
+    if (prev === undefined || t < prev) {
+      firstAt.set(g.fan_id, Number.isNaN(t) ? Infinity : t);
+      firstCampaign.set(g.fan_id, g.campaign_id);
+    }
+  }
+
+  const cohorts = new Map<
+    string | null,
+    { fans: number; returningFans: number }
+  >();
+  for (const [fanId, campaignId] of firstCampaign) {
+    const c = cohorts.get(campaignId) ?? { fans: 0, returningFans: 0 };
+    c.fans += 1;
+    if ((grantCount.get(fanId) ?? 0) >= 2) c.returningFans += 1;
+    cohorts.set(campaignId, c);
+  }
+
+  const rows: CohortRow[] = [];
+  for (const [campaignId, { fans, returningFans }] of cohorts) {
+    rows.push({
+      campaignId,
+      campaignName:
+        campaignId === null
+          ? "Direct / no campaign"
+          : campaignName.get(campaignId) ?? "Direct / no campaign",
+      fans,
+      returningFans,
+      repeatRate: fans === 0 ? 0 : returningFans / fans,
+    });
+  }
+  rows.sort((a, b) => b.fans - a.fans);
+  return rows;
 }
 
 export async function setRedemptionStatus(
@@ -3207,6 +3393,7 @@ function toWheelConfig(wheel: DbWheelRow): WheelConfig {
       color: p.color ?? RARITY_COLORS[p.rarity],
       emoji: p.emoji ?? undefined,
       imageUrl: p.image_url ?? null,
+      cost: p.cost_cents ?? null,
       stock: p.stock ?? null,
     }));
 

@@ -36,6 +36,8 @@ export interface Prize {
   emoji?: string;
   /** Optional photo for the prize (e.g. a real item shot). null/undefined = none. */
   imageUrl?: string | null;
+  /** Phase 4: the creator's cost to fulfil this prize, in cents. null/undefined = unset. */
+  cost?: number | null;
   /**
    * Limited-stock prizes (e.g. a single "legendary" item). When stock hits 0
    * the prize is excluded from future spins. null/undefined = unlimited.

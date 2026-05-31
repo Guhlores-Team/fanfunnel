@@ -9,8 +9,10 @@ import type {
   CampaignPack,
   CampaignStats,
   ChatMessage,
+  CohortRow,
   CreatorMetricsExtra,
   CreatorOverview,
+  EngagementHeatmap,
   FanAccountSummary,
   FanCampaignBreakdown,
   FanDetail,
@@ -22,6 +24,7 @@ import type {
   HappyHourStatus,
   LeaderboardEntry,
   LeaderboardView,
+  PrizeRoiRow,
   PrizeTemplate,
   RedemptionItem,
   RedemptionStatus,
@@ -1222,6 +1225,115 @@ export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
     },
     revenueTrend,
   };
+}
+
+// --- Phase 4 (deeper analytics) --------------------------------------------
+
+/** #17 Best-time heatmap: bucket spin timestamps by (UTC weekday, UTC hour). */
+export function mockGetEngagementHeatmap(days?: number): EngagementHeatmap {
+  const n = clampDays(days ?? 90);
+  const since = Date.now() - n * 24 * 60 * 60 * 1000;
+  // 7×24 grid of zeros.
+  const counts = new Array<number>(7 * 24).fill(0);
+  for (const r of store.redemptions) {
+    const d = new Date(r.at);
+    if (Number.isNaN(d.getTime()) || d.getTime() < since) continue;
+    counts[d.getUTCDay() * 24 + d.getUTCHours()] += 1;
+  }
+  const cells: EngagementHeatmap["cells"] = [];
+  let max = 0;
+  for (let weekday = 0; weekday < 7; weekday++) {
+    for (let hour = 0; hour < 24; hour++) {
+      const count = counts[weekday * 24 + hour];
+      if (count > max) max = count;
+      cells.push({ weekday, hour, count });
+    }
+  }
+  return { cells, max };
+}
+
+/** #18 Prize ROI: count wins per prize label and join the creator's cost. */
+export function mockGetPrizeRoi(days?: number): PrizeRoiRow[] {
+  const n = clampDays(days ?? 90);
+  const since = Date.now() - n * 24 * 60 * 60 * 1000;
+
+  // Costs + rarity come from every wheel's prize config (last write wins).
+  const meta = new Map<string, { rarity: Rarity; costCents: number | null }>();
+  for (const w of store.wheels.values()) {
+    for (const p of w.prizes) {
+      meta.set(p.label, { rarity: p.rarity, costCents: p.cost ?? null });
+    }
+  }
+
+  // Counts come from redemptions (one row per spin) inside the window.
+  const counts = new Map<string, { rarity: Rarity; timesWon: number }>();
+  for (const r of store.redemptions) {
+    const d = new Date(r.at);
+    if (Number.isNaN(d.getTime()) || d.getTime() < since) continue;
+    const cur = counts.get(r.prizeLabel);
+    if (cur) cur.timesWon += 1;
+    else counts.set(r.prizeLabel, { rarity: r.rarity, timesWon: 1 });
+  }
+
+  const rows: PrizeRoiRow[] = [];
+  for (const [label, { rarity, timesWon }] of counts) {
+    const costCents = meta.get(label)?.costCents ?? null;
+    rows.push({
+      label,
+      rarity: meta.get(label)?.rarity ?? rarity,
+      timesWon,
+      costCents,
+      totalCostCents: (costCents ?? 0) * timesWon,
+    });
+  }
+  rows.sort((a, b) => b.totalCostCents - a.totalCostCents);
+  return rows;
+}
+
+/** #19 Cohort retention: cohort each fan by their first grant's campaign. */
+export function mockGetCohortRetention(): CohortRow[] {
+  const campaignName = new Map<string, string>();
+  for (const c of store.campaigns) campaignName.set(c.id, c.name);
+
+  // First grant (earliest `at`) per fan determines the cohort; also track grant
+  // counts per fan for the "returning" definition (≥2 grants).
+  const firstCampaign = new Map<string, string | null>();
+  const firstAt = new Map<string, number>();
+  const grantCount = new Map<string, number>();
+  for (const g of store.grants) {
+    grantCount.set(g.fanId, (grantCount.get(g.fanId) ?? 0) + 1);
+    const t = new Date(g.at).getTime();
+    const prev = firstAt.get(g.fanId);
+    if (prev === undefined || t < prev) {
+      firstAt.set(g.fanId, Number.isNaN(t) ? Infinity : t);
+      firstCampaign.set(g.fanId, g.campaignId);
+    }
+  }
+
+  // Group fans into cohorts keyed by their first campaign (null => direct).
+  const cohorts = new Map<string | null, { fans: number; returningFans: number }>();
+  for (const [fanId, campaignId] of firstCampaign) {
+    const c = cohorts.get(campaignId) ?? { fans: 0, returningFans: 0 };
+    c.fans += 1;
+    if ((grantCount.get(fanId) ?? 0) >= 2) c.returningFans += 1;
+    cohorts.set(campaignId, c);
+  }
+
+  const rows: CohortRow[] = [];
+  for (const [campaignId, { fans, returningFans }] of cohorts) {
+    rows.push({
+      campaignId,
+      campaignName:
+        campaignId === null
+          ? "Direct / no campaign"
+          : campaignName.get(campaignId) ?? "Direct / no campaign",
+      fans,
+      returningFans,
+      repeatRate: fans === 0 ? 0 : returningFans / fans,
+    });
+  }
+  rows.sort((a, b) => b.fans - a.fans);
+  return rows;
 }
 
 export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
