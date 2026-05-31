@@ -39,6 +39,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
   const size = useWheelSize();
 
+  // Canvas needs a real color string (it can't read the --brand CSS var).
+  const brand = pass.wheel.brandColor ?? "#ec4899";
   const canSpin = spinsRemaining > 0 && !busy;
 
   const handleSpin = useCallback(async () => {
@@ -66,7 +68,6 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       const data = await res.json();
       const prize: Prize = data.prize;
       setSpinsRemaining(data.spinsRemaining);
-      // Trigger the wheel animation; reveal happens on spin end.
       setResult({ index: data.prizeIndex, nonce: Date.now() });
       setWon(prize);
     } catch {
@@ -95,45 +96,57 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     }
   }, [won, muted]);
 
-  const brand = pass.wheel.brandColor ?? "#ec4899";
-
   return (
-    <div className="flex flex-col items-center gap-6 w-full max-w-md">
-      <header className="text-center">
-        <h1 className="text-3xl font-extrabold tracking-tight text-white">
+    <div className="flex w-full max-w-md flex-col items-center gap-7">
+      <header className="reveal text-center" style={{ animationDelay: "0.05s" }}>
+        {pass.fanName && (
+          <p className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted">
+            {pass.creatorTitle} · for {pass.fanName}
+          </p>
+        )}
+        <h1 className="font-[family-name:var(--font-display)] text-[2.1rem] font-extrabold leading-[1.05] tracking-tight text-ink text-balance">
           {pass.wheel.title}
         </h1>
         {pass.wheel.subtitle && (
-          <p className="mt-1 text-white/70">{pass.wheel.subtitle}</p>
-        )}
-        {pass.fanName && (
-          <p className="mt-2 text-sm text-white/50">
-            Welcome, <span className="font-semibold">{pass.fanName}</span> ·{" "}
-            {pass.creatorTitle}
+          <p className="mx-auto mt-2 max-w-xs text-sm text-muted text-pretty">
+            {pass.wheel.subtitle}
           </p>
         )}
       </header>
 
-      <Wheel
-        prizes={pass.wheel.prizes}
-        brandColor={brand}
-        result={result}
-        onSpinEnd={handleSpinEnd}
-        size={size}
-        muted={muted}
-      />
+      {/* Wheel with a soft brand halo behind it for depth. */}
+      <div className="reveal-scale relative flex items-center justify-center" style={{ animationDelay: "0.15s" }}>
+        <div
+          aria-hidden
+          className="ambient-glow pointer-events-none absolute h-[115%] w-[115%] rounded-full blur-2xl"
+          style={{
+            background:
+              "radial-gradient(circle, color-mix(in oklab, var(--brand) 38%, transparent), transparent 65%)",
+          }}
+        />
+        <div className="relative">
+          <Wheel
+            prizes={pass.wheel.prizes}
+            brandColor={brand}
+            result={result}
+            onSpinEnd={handleSpinEnd}
+            size={size}
+            muted={muted}
+          />
+        </div>
+      </div>
 
-      <div className="flex flex-col items-center gap-3 w-full">
+      <div className="reveal flex w-full flex-col items-center gap-4" style={{ animationDelay: "0.25s" }}>
         <div className="flex items-center gap-2">
-          <div
-            className="rounded-full px-4 py-1.5 text-sm font-semibold text-white"
-            style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
-          >
-            Spins left: <span style={{ color: brand }}>{spinsRemaining}</span>
+          <div className="rounded-full border border-line bg-surface/70 px-4 py-1.5 text-sm font-medium text-ink">
+            Spins left{" "}
+            <span className="tnum ml-1 font-bold text-[var(--brand)]">
+              {spinsRemaining}
+            </span>
           </div>
           <button
             onClick={() => setMuted((m) => !m)}
-            className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white/80 hover:bg-white/20"
+            className="rounded-full border border-line bg-surface/70 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
             aria-label={muted ? "Unmute" : "Mute"}
             title={muted ? "Unmute" : "Mute"}
           >
@@ -144,17 +157,14 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         <button
           onClick={handleSpin}
           disabled={!canSpin}
-          className="w-full rounded-2xl py-4 text-lg font-extrabold text-white shadow-lg transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
-          style={{ backgroundColor: brand }}
+          className="btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
         >
-          {busy ? "Spinning…" : spinsRemaining > 0 ? "SPIN 🎉" : "Out of spins"}
+          {busy ? "Spinning…" : spinsRemaining > 0 ? "SPIN" : "Out of spins"}
         </button>
 
-        {error && (
-          <p className="text-center text-sm text-amber-300">{error}</p>
-        )}
+        {error && <p className="text-center text-sm text-amber-300">{error}</p>}
         {spinsRemaining === 0 && !error && !reveal && (
-          <p className="text-center text-sm text-white/50">
+          <p className="text-center text-sm text-muted">
             Tip your creator to unlock more spins. 💖
           </p>
         )}
@@ -162,28 +172,32 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
 
       {history.length > 0 && (
         <div className="w-full">
-          <p className="mb-2 text-center text-xs uppercase tracking-wider text-white/40">
+          <p className="mb-3 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
             Your wins
           </p>
           <div className="flex flex-wrap justify-center gap-2">
-            {history.map((p, i) => (
-              <span
-                key={i}
-                className="rounded-full px-3 py-1 text-xs font-semibold text-white"
-                style={{
-                  backgroundColor:
-                    (p.color ?? RARITY_COLORS[p.rarity]) + "33",
-                  border: `1px solid ${p.color ?? RARITY_COLORS[p.rarity]}`,
-                }}
-              >
-                {p.emoji ?? "🎁"} {p.label}
-              </span>
-            ))}
+            {history.map((p, i) => {
+              const c = p.color ?? RARITY_COLORS[p.rarity];
+              return (
+                <span
+                  key={i}
+                  className="rounded-full px-3 py-1 text-xs font-semibold text-ink"
+                  style={{
+                    backgroundColor: `color-mix(in oklab, ${c} 18%, transparent)`,
+                    border: `1px solid color-mix(in oklab, ${c} 55%, transparent)`,
+                  }}
+                >
+                  {p.emoji ?? "🎁"} {p.label}
+                </span>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {reveal && won && <PrizeModal prize={won} onClose={() => setReveal(false)} />}
+      {reveal && won && (
+        <PrizeModal prize={won} onClose={() => setReveal(false)} />
+      )}
     </div>
   );
 }
@@ -194,37 +208,48 @@ function PrizeModal({ prize, onClose }: { prize: Prize; onClose: () => void }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
       onClick={onClose}
+      style={{ animation: "ff-fade 0.2s ease-out" }}
     >
       {isBig && <Confetti />}
       <div
-        className="relative w-full max-w-sm rounded-3xl bg-zinc-900 p-8 text-center shadow-2xl ring-1"
-        style={{ ["--tw-ring-color" as string]: color }}
+        className="card relative w-full max-w-sm rounded-[1.75rem] p-8 text-center"
+        style={{
+          boxShadow: `0 30px 80px -20px color-mix(in oklab, ${color} 50%, transparent)`,
+          borderColor: `color-mix(in oklab, ${color} 55%, transparent)`,
+          animation: "ff-pop 0.32s cubic-bezier(0.18,0.9,0.3,1.2)",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <span
-          className="inline-block rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider text-white"
+          className="inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
           style={{ backgroundColor: color }}
         >
           {RARITY_LABEL[prize.rarity]}
         </span>
-        <div className="my-4 text-6xl">{prize.emoji ?? "🎁"}</div>
-        <h2 className="text-2xl font-extrabold text-white">{prize.label}</h2>
+        <div className="my-5 text-6xl">{prize.emoji ?? "🎁"}</div>
+        <h2 className="font-[family-name:var(--font-display)] text-2xl font-extrabold text-ink text-balance">
+          {prize.label}
+        </h2>
         {prize.description && (
-          <p className="mt-2 text-white/60">{prize.description}</p>
+          <p className="mt-2 text-sm text-muted text-pretty">{prize.description}</p>
         )}
-        <p className="mt-4 text-sm text-white/50">
+        <p className="mt-5 text-sm text-muted">
           Screenshot this and send it to your creator to claim your prize!
         </p>
         <button
           onClick={onClose}
-          className="mt-6 w-full rounded-2xl py-3 font-bold text-white"
-          style={{ backgroundColor: color }}
+          className="btn-brand mt-6 w-full rounded-2xl py-3 font-bold"
+          style={{ ["--brand" as string]: color }}
         >
           Awesome!
         </button>
       </div>
+      <style>{`
+        @keyframes ff-fade { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes ff-pop { from { opacity: 0; transform: translateY(12px) scale(0.94) } to { opacity: 1; transform: none } }
+      `}</style>
     </div>
   );
 }
@@ -232,7 +257,7 @@ function PrizeModal({ prize, onClose }: { prize: Prize; onClose: () => void }) {
 // Lightweight CSS confetti — no dependency.
 function Confetti() {
   const [pieces] = useState(() =>
-    Array.from({ length: 60 }, (_, i) => ({
+    Array.from({ length: 70 }, (_, i) => ({
       id: i,
       left: Math.random() * 100,
       delay: Math.random() * 0.6,

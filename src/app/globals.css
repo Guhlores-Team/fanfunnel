@@ -1,46 +1,155 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ===========================================================================
+   FanFunnel design system
+   Premium, indulgent dark — tinted (not pure black), one brand accent that
+   ADAPTS per creator via --brand, characterful display type, grain + glow.
+   =========================================================================== */
+
+/* Plain @theme so the --color-* vars are emitted to :root AND utilities are
+   generated — our hand-written CSS below relies on var(--color-*). */
+@theme {
+  /* Tinted-dark neutrals (one consistent warm/plum hue, not cool+warm mixed) */
+  --color-base: #0c0a0e;
+  --color-surface: #16131c;
+  --color-surface-2: #1f1b27;
+  --color-ink: #f4f1f6;
+  --color-muted: #a09aa8;
+  --color-line: #2a2533;
 }
 
+/* inline: values reference runtime --ff-* vars next/font sets on <html>. */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-display: var(--ff-display), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--ff-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--ff-mono), ui-monospace, SFMono-Regular, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  /* Default brand accent; pages override per-creator with style={{--brand}} */
+  --brand: #ec4899;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-family: var(--font-sans);
+  /* Safe-area insets so content clears the iPhone status bar / notch. */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* Shared input styling for the dashboard editor. */
+/* Tabular figures for any metric/number so big values don't wobble. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Subtle film grain — kills the sterile "flat AI" feel. Fixed, non-interactive. */
+.grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Radial brand glow used behind hero / wheel for atmosphere + depth. */
+.brand-glow {
+  background:
+    radial-gradient(60% 50% at 50% 12%, color-mix(in oklab, var(--brand) 24%, transparent), transparent 70%),
+    var(--color-base);
+}
+
+/* Form inputs — refined, brand focus ring, accessible. */
 .ff-input {
-  border-radius: 0.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.05);
-  padding: 0.45rem 0.6rem;
-  font-size: 0.875rem;
-  color: #fff;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-line);
+  background: color-mix(in oklab, var(--color-ink) 4%, transparent);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+  color: var(--color-ink);
   outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
+.ff-input::placeholder { color: color-mix(in oklab, var(--color-ink) 30%, transparent); }
 .ff-input:focus {
-  border-color: #ec4899;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, transparent);
 }
-.ff-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+.ff-input option { color: #000; }
+
+/* Tactile primary button: brand fill, top highlight, brand-tinted shadow, press. */
+.btn-brand {
+  position: relative;
+  background: linear-gradient(180deg,
+    color-mix(in oklab, var(--brand) 88%, white 12%),
+    var(--brand));
+  color: #fff;
+  box-shadow:
+    0 1px 0 color-mix(in oklab, white 35%, transparent) inset,
+    0 12px 30px -10px color-mix(in oklab, var(--brand) 70%, transparent);
+  transition: transform 0.12s ease, filter 0.15s ease, box-shadow 0.15s ease;
 }
-.ff-input option {
-  color: #000;
+.btn-brand:hover { filter: brightness(1.06); }
+.btn-brand:active { transform: translateY(1px) scale(0.985); }
+.btn-brand:disabled { filter: grayscale(0.5) brightness(0.7); cursor: not-allowed; }
+
+/* Glassy elevated surface with a hairline + soft tinted shadow (not flat black). */
+.card {
+  background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.7);
+}
+
+/* ---------------------------------------------------------------------------
+   Motion layer — transform/opacity only, ease-out (no bounce). One
+   orchestrated page-load with staggered reveals (delays set inline), plus
+   ambient life on hero elements. Reduced-motion snaps everything to final.
+   --------------------------------------------------------------------------- */
+@keyframes ff-rise {
+  from { opacity: 0; transform: translateY(15px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ff-scale-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ff-glow-pulse {
+  0%, 100% { opacity: 0.8; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+@keyframes ff-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes ff-shimmer {
+  100% { background-position: 200% 0; }
+}
+
+.reveal { animation: ff-rise 0.62s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.reveal-scale { animation: ff-scale-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.ambient-glow { animation: ff-glow-pulse 6s ease-in-out infinite; }
+.ambient-float { animation: ff-float 7s ease-in-out infinite; }
+
+/* Skeleton shimmer for loading states (product surfaces). */
+.skeleton {
+  background: linear-gradient(
+    100deg,
+    var(--color-surface) 30%,
+    var(--color-surface-2) 50%,
+    var(--color-surface) 70%
+  );
+  background-size: 200% 100%;
+  animation: ff-shimmer 1.3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
