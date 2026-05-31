@@ -17,6 +17,14 @@ import type {
   RedemptionStatus,
 } from "@/lib/data/types";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
+import { OddsBar } from "@/components/dashboard/OddsBar";
+import {
+  EMOJI_SUGGESTIONS,
+  balanceOdds,
+  duplicatePrize,
+  newPrize,
+  reorder,
+} from "@/components/dashboard/editorHelpers";
 
 type Tab = "metrics" | "prizes" | "fans" | "editor";
 
@@ -703,6 +711,12 @@ function WheelEditor({
   initialWheel: WheelConfig;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
+  // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
+  const oddsPct = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [id, f] of odds) m.set(id, f * 100);
+    return m;
+  }, [odds]);
   const toast = useToast();
   const [savedJson, setSavedJson] = useState(() => JSON.stringify(initialWheel));
   const [saving, setSaving] = useState(false);
@@ -732,19 +746,49 @@ function WheelEditor({
     }
   }
 
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
   function updatePrize(id: string, patch: Partial<Prize>) {
     setWheel({ ...wheel, prizes: wheel.prizes.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
   }
   function addPrize() {
-    const id = "p" + Math.random().toString(36).slice(2, 8);
-    setWheel({
-      ...wheel,
-      prizes: [...wheel.prizes, { id, label: "New prize", rarity: "common", weight: 10, emoji: "🎁" }],
+    setWheel({ ...wheel, prizes: [...wheel.prizes, newPrize()] });
+  }
+  function movePrize(from: number, to: number) {
+    if (to < 0 || to >= wheel.prizes.length || from === to) return;
+    setWheel({ ...wheel, prizes: reorder(wheel.prizes, from, to) });
+  }
+  function duplicateAt(index: number) {
+    const next = wheel.prizes.slice();
+    next.splice(index + 1, 0, duplicatePrize(wheel.prizes[index]));
+    setWheel({ ...wheel, prizes: next });
+  }
+  /** Update rarity, preserving a custom color but refreshing a default one. */
+  function changeRarity(p: Prize, rarity: Rarity) {
+    const wasDefault = p.color == null || p.color === RARITY_COLORS[p.rarity];
+    updatePrize(p.id, {
+      rarity,
+      color: wasDefault ? RARITY_COLORS[rarity] : p.color,
     });
   }
   function removePrize(id: string) {
     if (wheel.prizes.length <= 2) return;
-    setWheel({ ...wheel, prizes: wheel.prizes.filter((p) => p.id !== id) });
+    const index = wheel.prizes.findIndex((p) => p.id === id);
+    if (index < 0) return;
+    const removed = wheel.prizes[index];
+    const afterRemoval = wheel.prizes.filter((p) => p.id !== id);
+    setWheel({ ...wheel, prizes: afterRemoval });
+    toast("Prize removed", {
+      tone: "info",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const restored = afterRemoval.slice();
+          restored.splice(Math.min(index, restored.length), 0, removed);
+          setWheel({ ...wheel, prizes: restored });
+        },
+      },
+    });
   }
 
   return (
@@ -802,91 +846,209 @@ function WheelEditor({
             </Field>
           </div>
 
-          <div className="mt-6 space-y-3">
-            {wheel.prizes.map((p) => (
-              <div key={p.id} className="card rounded-xl p-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    aria-label="Emoji"
-                    className="ff-input w-11 shrink-0 text-center text-base"
-                    value={p.emoji ?? ""}
-                    onChange={(e) => updatePrize(p.id, { emoji: e.target.value })}
-                  />
-                  <input
-                    aria-label="Prize name"
-                    className="ff-input min-w-0 flex-1"
-                    value={p.label}
-                    onChange={(e) => updatePrize(p.id, { label: e.target.value })}
-                  />
-                  <button
-                    onClick={() => removePrize(p.id)}
-                    className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-red-400"
-                    title="Remove prize"
-                    aria-label="Remove prize"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <Field label="Rarity">
-                    <select
-                      className="ff-input w-full"
-                      value={p.rarity}
-                      onChange={(e) =>
-                        updatePrize(p.id, {
-                          rarity: e.target.value as Rarity,
-                          color: RARITY_COLORS[e.target.value as Rarity],
-                        })
-                      }
-                    >
-                      {RARITY_ORDER.map((r) => (
-                        <option key={r} value={r}>
-                          {r}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Weight">
-                    <input
-                      type="number"
-                      min={0}
-                      className="ff-input tnum w-full text-right"
-                      value={p.weight}
-                      onChange={(e) => updatePrize(p.id, { weight: Number(e.target.value) })}
-                    />
-                  </Field>
-                  <Field label="Stock">
-                    <input
-                      type="number"
-                      min={0}
-                      placeholder="∞"
-                      className="ff-input tnum w-full text-right"
-                      value={p.stock ?? ""}
-                      onChange={(e) =>
-                        updatePrize(p.id, {
-                          stock: e.target.value === "" ? null : Number(e.target.value),
-                        })
-                      }
-                    />
-                  </Field>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-                      Odds
-                    </span>
-                    <span className="tnum py-2 text-right font-mono font-semibold text-[var(--brand)]">
-                      {(odds.get(p.id)! * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="card mt-6 rounded-xl p-3">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+              Odds
+            </span>
+            <div className="mt-2">
+              <OddsBar prizes={wheel.prizes} odds={oddsPct} />
+            </div>
           </div>
-          <button
-            onClick={addPrize}
-            className="mt-3 rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
-          >
-            + Add prize
-          </button>
+
+          <div className="mt-4 space-y-3">
+            {wheel.prizes.map((p, index) => {
+              const swatch = p.color ?? RARITY_COLORS[p.rarity];
+              return (
+                <div
+                  key={p.id}
+                  draggable
+                  onDragStart={() => setDragIdx(index)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragIdx !== null) movePrize(dragIdx, index);
+                    setDragIdx(null);
+                  }}
+                  onDragEnd={() => setDragIdx(null)}
+                  className={`card rounded-xl p-3 ${dragIdx === index ? "opacity-60" : ""}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="shrink-0 cursor-grab select-none px-1 text-muted"
+                      aria-label="Drag to reorder"
+                      title="Drag to reorder"
+                    >
+                      ☰
+                    </span>
+                    <div className="flex shrink-0 flex-col">
+                      <button
+                        type="button"
+                        onClick={() => movePrize(index, index - 1)}
+                        disabled={index === 0}
+                        className="rounded px-1 text-xs leading-tight text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
+                        aria-label="Move prize up"
+                        title="Move up"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => movePrize(index, index + 1)}
+                        disabled={index === wheel.prizes.length - 1}
+                        className="rounded px-1 text-xs leading-tight text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
+                        aria-label="Move prize down"
+                        title="Move down"
+                      >
+                        ▼
+                      </button>
+                    </div>
+                    <input
+                      aria-label="Emoji"
+                      className="ff-input w-11 shrink-0 text-center text-base"
+                      value={p.emoji ?? ""}
+                      onChange={(e) => updatePrize(p.id, { emoji: e.target.value })}
+                    />
+                    <input
+                      aria-label="Prize name"
+                      className="ff-input min-w-0 flex-1"
+                      value={p.label}
+                      onChange={(e) => updatePrize(p.id, { label: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => duplicateAt(index)}
+                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-ink"
+                      title="Duplicate prize"
+                      aria-label="Duplicate prize"
+                    >
+                      ⧉
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removePrize(p.id)}
+                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-red-400"
+                      title="Remove prize"
+                      aria-label="Remove prize"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {EMOJI_SUGGESTIONS.map((emo) => (
+                      <button
+                        key={emo}
+                        type="button"
+                        onClick={() => updatePrize(p.id, { emoji: emo })}
+                        className="rounded-md border border-line px-1.5 py-0.5 text-sm transition hover:bg-white/5"
+                        aria-label={`Use emoji ${emo}`}
+                        title={`Use ${emo}`}
+                      >
+                        {emo}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <Field label="Rarity">
+                      <select
+                        className="ff-input w-full"
+                        value={p.rarity}
+                        onChange={(e) => changeRarity(p, e.target.value as Rarity)}
+                      >
+                        {RARITY_ORDER.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Weight">
+                      <input
+                        type="number"
+                        min={0}
+                        className="ff-input tnum w-full text-right"
+                        value={p.weight}
+                        onChange={(e) => updatePrize(p.id, { weight: Number(e.target.value) })}
+                      />
+                    </Field>
+                    <Field label="Stock">
+                      <input
+                        type="number"
+                        min={0}
+                        placeholder="∞"
+                        className="ff-input tnum w-full text-right"
+                        value={p.stock ?? ""}
+                        onChange={(e) =>
+                          updatePrize(p.id, {
+                            stock: e.target.value === "" ? null : Number(e.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+                        Odds
+                      </span>
+                      <span className="tnum py-2 text-right font-mono font-semibold text-[var(--brand)]">
+                        {(odds.get(p.id)! * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <Field label="Color">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="h-9 w-12 shrink-0 rounded border border-line bg-transparent"
+                        value={swatch}
+                        onChange={(e) => updatePrize(p.id, { color: e.target.value })}
+                        aria-label="Prize color"
+                      />
+                      <input
+                        className="ff-input min-w-0 flex-1"
+                        value={swatch}
+                        onChange={(e) => updatePrize(p.id, { color: e.target.value })}
+                        aria-label="Prize color hex"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => updatePrize(p.id, { color: RARITY_COLORS[p.rarity] })}
+                        className="shrink-0 text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
+                      >
+                        Reset to rarity color
+                      </button>
+                    </div>
+                  </Field>
+
+                  <Field label="Description (shown on win)">
+                    <textarea
+                      className="ff-input w-full"
+                      rows={2}
+                      value={p.description ?? ""}
+                      onChange={(e) => updatePrize(p.id, { description: e.target.value })}
+                    />
+                  </Field>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={addPrize}
+              className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
+            >
+              + Add prize
+            </button>
+            <button
+              type="button"
+              onClick={() => setWheel({ ...wheel, prizes: balanceOdds(wheel.prizes) })}
+              className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
+            >
+              Balance odds
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-col items-center gap-4 self-start rounded-2xl border border-line bg-surface p-6">
