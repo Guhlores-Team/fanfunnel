@@ -1,7 +1,13 @@
 import { pickPrize } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, type WheelConfig } from "@/lib/games/wheel/types";
-import type { FanPassView, WonPrize } from "./types";
+import type {
+  CreatorOverview,
+  FanPassView,
+  RedemptionItem,
+  RedemptionStatus,
+  WonPrize,
+} from "./types";
 
 // In-memory demo store. Used automatically when Supabase env vars are absent,
 // so `npm run dev` gives a fully working wheel with zero setup. State resets
@@ -22,6 +28,7 @@ interface MockFan {
 interface Store {
   fans: Map<string, MockFan>; // fanId -> fan
   tokens: Map<string, string>; // token -> fanId
+  redemptions: RedemptionItem[]; // creator-wide fulfilment queue (newest first)
 }
 
 // Pin to globalThis so the store is shared across every Next.js entry point
@@ -29,7 +36,7 @@ interface Store {
 const g = globalThis as unknown as { __ffStore?: Store };
 const store: Store =
   g.__ffStore ??
-  (g.__ffStore = { fans: new Map(), tokens: new Map() });
+  (g.__ffStore = { fans: new Map(), tokens: new Map(), redemptions: [] });
 
 if (!store.fans.has("demo-fan")) {
   store.fans.set("demo-fan", {
@@ -77,16 +84,28 @@ export function mockSpin(token: string) {
   if (typeof live.stock === "number") live.stock -= 1;
 
   // Record the win on the fan account (persists across all their links).
+  const at = new Date().toISOString();
   fan.wins = [
     {
       label: prize.label,
       rarity: prize.rarity,
       emoji: prize.emoji,
       color: prize.color ?? RARITY_COLORS[prize.rarity],
-      at: new Date().toISOString(),
+      at,
     },
     ...fan.wins,
   ].slice(0, 50);
+
+  // Add it to the creator's fulfilment queue.
+  store.redemptions.unshift({
+    id: "r-" + Math.random().toString(36).slice(2, 10),
+    fanName: fan.name,
+    prizeLabel: prize.label,
+    rarity: prize.rarity,
+    emoji: prize.emoji,
+    status: "pending",
+    at,
+  });
 
   return {
     prize: structuredClone(prize),
@@ -137,4 +156,24 @@ export function mockGrantSpins(token: string, n: number) {
   if (!fan) return null;
   fan.spinsRemaining += Math.max(0, n);
   return fan.spinsRemaining;
+}
+
+export function mockGetOverview(): CreatorOverview {
+  const redemptions = store.redemptions;
+  return {
+    metrics: {
+      fans: store.fans.size,
+      spinsPlayed: redemptions.length,
+      pending: redemptions.filter((r) => r.status === "pending").length,
+      fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
+    },
+    redemptions: structuredClone(redemptions).slice(0, 200),
+  };
+}
+
+export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
+  const r = store.redemptions.find((x) => x.id === id);
+  if (!r) return null;
+  r.status = status;
+  return r;
 }

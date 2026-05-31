@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
@@ -11,8 +11,13 @@ import {
   type Rarity,
   type WheelConfig,
 } from "@/lib/games/wheel/types";
+import type {
+  CreatorOverview,
+  RedemptionItem,
+  RedemptionStatus,
+} from "@/lib/data/types";
 
-type Tab = "editor" | "fans" | "metrics";
+type Tab = "editor" | "fans" | "prizes" | "metrics";
 
 // A persistent fan account, with the (possibly many) links minted for it.
 // Balance + win history live on the account, so any link shows the full story.
@@ -52,6 +57,7 @@ export default function DashboardClient({ isAdmin }: { isAdmin: boolean }) {
           [
             ["editor", "🎡 Wheel editor"],
             ["fans", "🔗 Fans & links"],
+            ["prizes", "🎁 Prizes"],
             ["metrics", "📊 Metrics"],
           ] as [Tab, string][]
         ).map(([id, label]) => (
@@ -74,7 +80,8 @@ export default function DashboardClient({ isAdmin }: { isAdmin: boolean }) {
         {tab === "fans" && (
           <FansPanel accounts={accounts} setAccounts={setAccounts} />
         )}
-        {tab === "metrics" && <MetricsPanel accounts={accounts} />}
+        {tab === "prizes" && <PrizesPanel />}
+        {tab === "metrics" && <MetricsPanel />}
       </div>
     </div>
   );
@@ -507,16 +514,189 @@ function LinkRow({
 }
 
 // ---------------------------------------------------------------------------
+// Overview data (metrics + prize inbox) — shared by the Prizes and Metrics tabs
+// ---------------------------------------------------------------------------
+const RARITY_LABEL: Record<Rarity, string> = {
+  common: "Common",
+  uncommon: "Uncommon",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
+};
+
+function useOverview() {
+  const [data, setData] = useState<CreatorOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch("/api/overview", { cache: "no-store" });
+      if (res.ok) setData(await res.json());
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+  return { data, loading, refresh, setData };
+}
+
+// ---------------------------------------------------------------------------
+// Prizes inbox — the creator's daily fulfilment queue
+// ---------------------------------------------------------------------------
+function PrizesPanel() {
+  const { data, loading, refresh, setData } = useOverview();
+  const [filter, setFilter] = useState<RedemptionStatus | "all">("pending");
+
+  async function setStatus(id: string, status: RedemptionStatus) {
+    // Optimistic update.
+    setData((d) =>
+      d
+        ? {
+            ...d,
+            redemptions: d.redemptions.map((r) =>
+              r.id === id ? { ...r, status } : r
+            ),
+          }
+        : d
+    );
+    await fetch("/api/redemptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    refresh();
+  }
+
+  const redemptions = data?.redemptions ?? [];
+  const shown =
+    filter === "all" ? redemptions : redemptions.filter((r) => r.status === filter);
+  const pendingCount = redemptions.filter((r) => r.status === "pending").length;
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-bold">Prize fulfilment queue</h3>
+          <p className="text-sm text-white/50">
+            Every fan spin lands here. Deliver the prize, then mark it done.
+          </p>
+        </div>
+        <button
+          onClick={refresh}
+          className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold hover:bg-white/5"
+        >
+          ↻ Refresh
+        </button>
+      </div>
+
+      <div className="mt-4 flex gap-2">
+        {(["pending", "fulfilled", "cancelled", "all"] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition ${
+              filter === f
+                ? "bg-pink-500 text-white"
+                : "bg-white/5 text-white/60 hover:bg-white/10"
+            }`}
+          >
+            {f}
+            {f === "pending" && pendingCount > 0 ? ` (${pendingCount})` : ""}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {loading && <p className="text-sm text-white/40">Loading…</p>}
+        {!loading && shown.length === 0 && (
+          <p className="rounded-xl border border-dashed border-white/15 p-6 text-center text-sm text-white/40">
+            Nothing here yet. Create a fan link, open it, and spin — wins show up
+            instantly.
+          </p>
+        )}
+        {shown.map((r) => (
+          <RedemptionRow key={r.id} r={r} onSet={setStatus} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RedemptionRow({
+  r,
+  onSet,
+}: {
+  r: RedemptionItem;
+  onSet: (id: string, status: RedemptionStatus) => void;
+}) {
+  const color = RARITY_COLORS[r.rarity];
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
+      <div className="flex items-center gap-3">
+        <div
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-xl"
+          style={{ backgroundColor: color + "22" }}
+        >
+          {r.emoji ?? "🎁"}
+        </div>
+        <div>
+          <p className="font-semibold">{r.prizeLabel}</p>
+          <p className="text-xs text-white/40">
+            <span style={{ color }}>{RARITY_LABEL[r.rarity]}</span> ·{" "}
+            {r.fanName} · {new Date(r.at).toLocaleString()}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {r.status === "pending" ? (
+          <>
+            <button
+              onClick={() => onSet(r.id, "fulfilled")}
+              className="rounded-lg bg-green-500/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-green-400"
+            >
+              ✓ Fulfilled
+            </button>
+            <button
+              onClick={() => onSet(r.id, "cancelled")}
+              className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/60 hover:bg-white/5"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-bold ${
+              r.status === "fulfilled"
+                ? "bg-green-500/15 text-green-300"
+                : "bg-white/10 text-white/40"
+            }`}
+          >
+            {r.status === "fulfilled" ? "✓ Fulfilled" : "Cancelled"}
+            <button
+              onClick={() => onSet(r.id, "pending")}
+              className="ml-2 text-white/40 underline hover:text-white/70"
+            >
+              undo
+            </button>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Metrics
 // ---------------------------------------------------------------------------
-function MetricsPanel({ accounts }: { accounts: FanAccount[] }) {
-  const totalGranted = accounts.reduce((s, a) => s + a.grantedTotal, 0);
-  const totalLinks = accounts.reduce((s, a) => s + a.links.length, 0);
+function MetricsPanel() {
+  const { data, loading } = useOverview();
+  const m = data?.metrics;
   const tiles = [
-    { label: "Fan accounts", value: accounts.length },
-    { label: "Links minted", value: totalLinks },
-    { label: "Spins granted", value: totalGranted },
-    { label: "Prizes to fulfil", value: 0 },
+    { label: "Fan accounts", value: m?.fans ?? 0 },
+    { label: "Spins played", value: m?.spinsPlayed ?? 0 },
+    { label: "Prizes to fulfil", value: m?.pending ?? 0 },
+    { label: "Prizes delivered", value: m?.fulfilled ?? 0 },
   ];
   return (
     <div>
@@ -526,14 +706,16 @@ function MetricsPanel({ accounts }: { accounts: FanAccount[] }) {
             key={t.label}
             className="rounded-2xl border border-white/10 bg-white/5 p-5"
           >
-            <p className="text-3xl font-extrabold text-pink-300">{t.value}</p>
+            <p className="text-3xl font-extrabold text-pink-300">
+              {loading ? "—" : t.value}
+            </p>
             <p className="mt-1 text-sm text-white/50">{t.label}</p>
           </div>
         ))}
       </div>
       <p className="mt-6 text-sm text-white/40">
-        Real-time metrics (spins played, redemptions, top fans, revenue-per-fan)
-        populate once Supabase is connected and fans start spinning.
+        These update live as fans spin. Create a fan link, open it, and spin to
+        watch them move.
       </p>
     </div>
   );

@@ -22,3 +22,29 @@ export interface FanPassView {
   spinsRemaining: number;
   recentWins: WonPrize[];
 }
+
+export type RedemptionStatus = "pending" | "fulfilled" | "cancelled";
+
+/** A won prize in the creator's fulfilment queue. */
+export interface RedemptionItem {
+  id: string;
+  fanName: string;
+  prizeLabel: string;
+  rarity: Rarity;
+  emoji?: string;
+  status: RedemptionStatus;
+  at: string; // ISO timestamp
+}
+
+export interface CreatorMetrics {
+  fans: number;
+  spinsPlayed: number;
+  pending: number;
+  fulfilled: number;
+}
+
+/** Everything the creator dashboard's metrics + inbox need. */
+export interface CreatorOverview {
+  metrics: CreatorMetrics;
+  redemptions: RedemptionItem[];
+}

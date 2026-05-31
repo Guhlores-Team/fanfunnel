@@ -6,8 +6,20 @@ import {
 import { pickPrize } from "@/lib/games/wheel/engine";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
-import type { FanPassView } from "./types";
-import { mockGetFanPass, mockSpin, mockCreatePass, mockGrantSpins } from "./mock";
+import type {
+  CreatorOverview,
+  FanPassView,
+  RedemptionItem,
+  RedemptionStatus,
+} from "./types";
+import {
+  mockGetFanPass,
+  mockSpin,
+  mockCreatePass,
+  mockGrantSpins,
+  mockGetOverview,
+  mockSetRedemptionStatus,
+} from "./mock";
 
 function randomToken(): string {
   // URL-safe, unguessable token for a fan link.
@@ -311,6 +323,92 @@ export async function grantSpins(
     .single();
   if (error || !updated) return { error: "db_error" };
   return { spinsRemaining: updated.spins_remaining };
+}
+
+// Creator dashboard: metrics + the prize fulfilment queue.
+export async function getOverview(): Promise<CreatorOverview> {
+  const empty: CreatorOverview = {
+    metrics: { fans: 0, spinsPlayed: 0, pending: 0, fulfilled: 0 },
+    redemptions: [],
+  };
+  if (!isSupabaseConfigured()) return mockGetOverview();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return empty;
+
+  const { data: reds } = await sb
+    .from("redemptions")
+    .select(
+      `id, status, created_at,
+       spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle))`
+    )
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  const rows = (reds ?? []) as unknown as {
+    id: string;
+    status: RedemptionStatus;
+    created_at: string;
+    spin: {
+      prize_label: string;
+      prize_rarity: RedemptionItem["rarity"];
+      fan: { display_name: string | null; handle: string | null } | null;
+    } | null;
+  }[];
+
+  const redemptions: RedemptionItem[] = rows.map((r) => ({
+    id: r.id,
+    fanName: r.spin?.fan?.display_name ?? r.spin?.fan?.handle ?? "Fan",
+    prizeLabel: r.spin?.prize_label ?? "Prize",
+    rarity: r.spin?.prize_rarity ?? "common",
+    status: r.status,
+    at: r.created_at,
+  }));
+
+  const head = { count: "exact" as const, head: true };
+  const { count: fans } = await sb
+    .from("fans")
+    .select("id", head)
+    .eq("creator_id", user.id);
+  const { count: spinsPlayed } = await sb
+    .from("spins")
+    .select("id", head)
+    .eq("creator_id", user.id);
+
+  return {
+    metrics: {
+      fans: fans ?? 0,
+      spinsPlayed: spinsPlayed ?? 0,
+      pending: redemptions.filter((r) => r.status === "pending").length,
+      fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
+    },
+    redemptions,
+  };
+}
+
+export async function setRedemptionStatus(
+  id: string,
+  status: RedemptionStatus
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return mockSetRedemptionStatus(id, status)
+      ? { ok: true }
+      : { error: "not_found" };
+  }
+
+  const sb = await createClient();
+  const { error } = await sb
+    .from("redemptions")
+    .update({
+      status,
+      fulfilled_at: status === "fulfilled" ? new Date().toISOString() : null,
+    })
+    .eq("id", id);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 // ---------------------------------------------------------------------------
