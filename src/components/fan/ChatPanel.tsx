@@ -1,0 +1,244 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChatMessage } from "@/lib/data/types";
+
+/**
+ * Spin-gated DM thread with the creator. Fans with ≥1 spin (chatUnlocked) can
+ * message; otherwise they see a top-up nudge. Polls every 3s while open, and
+ * every 12s while closed so a creator reply surfaces an unread dot on the 💬
+ * button. Fans aren't authed, so this stays HTTP polling (no realtime).
+ */
+export default function ChatPanel({
+  token,
+  unlocked,
+  creatorTitle,
+}: {
+  token: string;
+  unlocked: boolean;
+  creatorTitle: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [hasUnread, setHasUnread] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+  // Guard so the auto-intro is only requested once per mount.
+  const introRequested = useRef(false);
+
+  // "Last seen" creator-message timestamp, persisted per token so the unread
+  // dot survives reloads. Read lazily (client-only) to stay SSR-safe.
+  const seenKey = `ff_chat_seen_${token}`;
+  const readSeen = useCallback((): string => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(seenKey) ?? "";
+    } catch {
+      return "";
+    }
+  }, [seenKey]);
+  const writeSeen = useCallback(
+    (at: string) => {
+      if (typeof window === "undefined") return;
+      try {
+        window.localStorage.setItem(seenKey, at);
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    [seenKey]
+  );
+
+  // Latest creator-message timestamp in a list (or "" when none).
+  const latestCreatorAt = (list: ChatMessage[]): string => {
+    let latest = "";
+    for (const m of list) {
+      if (m.sender === "creator" && m.at > latest) latest = m.at;
+    }
+    return latest;
+  };
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const list: ChatMessage[] = d.messages ?? [];
+        setMessages(list);
+        // While the panel is open the fan is "seeing" everything; mark read.
+        const latest = latestCreatorAt(list);
+        if (latest) writeSeen(latest);
+        setHasUnread(false);
+      }
+    } catch {
+      /* transient */
+    }
+  }, [token, writeSeen]);
+
+  // Lightweight closed-panel poll: just detect whether a creator message newer
+  // than the fan's last view exists, and toggle the unread dot.
+  const checkUnread = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const d = await res.json();
+      const list: ChatMessage[] = d.messages ?? [];
+      const latest = latestCreatorAt(list);
+      setHasUnread(latest !== "" && latest > readSeen());
+    } catch {
+      /* transient */
+    }
+  }, [token, readSeen]);
+
+  // When the panel OPENS and is unlocked: request the auto-intro once (so the
+  // greeting is waiting), then load + poll fast (3s).
+  useEffect(() => {
+    if (!open || !unlocked) return;
+    let live = true;
+    const run = async () => {
+      if (!introRequested.current) {
+        introRequested.current = true;
+        try {
+          await fetch("/api/messages/auto-intro", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (live) await load();
+    };
+    run();
+    const id = setInterval(load, 3000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [open, unlocked, load, token]);
+
+  // While the panel is CLOSED (and unlocked): poll slowly (12s) for unread.
+  useEffect(() => {
+    if (open || !unlocked) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- poll for unread, then poll
+    checkUnread();
+    const id = setInterval(checkUnread, 12000);
+    return () => clearInterval(id);
+  }, [open, unlocked, checkUnread]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  const send = async () => {
+    const body = draft.trim();
+    if (!body || sending) return;
+    setSending(true);
+    try {
+      const res = await fetch("/api/messages/fan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, body }),
+      });
+      if (res.ok) {
+        setDraft("");
+        await load();
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="fixed bottom-4 right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)]"
+        aria-label="Message creator"
+      >
+        💬 Message
+        {hasUnread && !open && (
+          <span
+            aria-label="New message"
+            className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full border-2 border-surface"
+            style={{ background: "var(--brand)" }}
+          />
+        )}
+      </button>
+
+      {open && (
+        <div className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[80vh] w-full max-w-md flex-col rounded-t-3xl border border-line bg-surface p-4 shadow-2xl sm:bottom-4 sm:right-4 sm:left-auto sm:mx-0 sm:max-h-[28rem] sm:rounded-3xl">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-bold text-ink">{creatorTitle}</p>
+            <button
+              onClick={() => setOpen(false)}
+              className="text-muted transition hover:text-ink"
+              aria-label="Close chat"
+            >
+              ✕
+            </button>
+          </div>
+
+          {!unlocked ? (
+            <div className="flex flex-1 items-center justify-center px-4 py-10 text-center text-sm text-muted">
+              Top up from {creatorTitle} to start a conversation. 💖
+            </div>
+          ) : (
+            <>
+              <div className="flex-1 space-y-2 overflow-y-auto py-2">
+                {messages.length === 0 && (
+                  <p className="py-8 text-center text-sm text-muted">
+                    Say hi to {creatorTitle} 👋
+                  </p>
+                )}
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={
+                      m.sender === "fan" ? "flex justify-end" : "flex justify-start"
+                    }
+                  >
+                    <span
+                      className="max-w-[80%] rounded-2xl px-3 py-2 text-sm"
+                      style={
+                        m.sender === "fan"
+                          ? { background: "var(--brand)", color: "#fff" }
+                          : { background: "color-mix(in oklab, var(--color-ink) 8%, transparent)", color: "var(--color-ink)" }
+                      }
+                    >
+                      {m.body}
+                    </span>
+                  </div>
+                ))}
+                <div ref={endRef} />
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && send()}
+                  maxLength={2000}
+                  placeholder="Message…"
+                  className="flex-1 rounded-full border border-line bg-base px-4 py-2 text-sm text-ink outline-none focus:border-[var(--brand)]"
+                />
+                <button
+                  onClick={send}
+                  disabled={sending || !draft.trim()}
+                  className="btn-brand rounded-full px-4 py-2 text-sm font-bold disabled:opacity-50"
+                >
+                  Send
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}

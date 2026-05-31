@@ -54,6 +54,12 @@ export function playWin(rarity: string) {
   });
 }
 
+/** A short two-note "ping" for a new inbound message (creator inbox). */
+export function playPing() {
+  blip(880, 0.12, "sine", 0.1);
+  setTimeout(() => blip(1175, 0.16, "sine", 0.1), 110);
+}
+
 /** Mobile haptic tap (no-op where unsupported). */
 export function haptic(pattern: number | number[] = 12) {
   if (typeof navigator !== "undefined" && "vibrate" in navigator) {

@@ -62,6 +62,41 @@ Cut: **#1** daily free spin (not a casino — monetize instead).
 | #23 | **Provably-fair** | Server commits a hashed seed pre-spin, reveals post-spin; a verify page lets fans confirm the result wasn't swapped. | Yes: store seed/commit on `spins` | (engine) postgres-patterns | M–L |
 | #24 | **Webhooks + email digest + age-gate/ToS** | Pending-prize email/Zapier; fan age-gate + ToS acceptance gate on the spin page. | Yes: `webhooks`, `fan ack` | api-design, mcp-builder | M |
 
+> **Note:** #22 **Prize photos** was built then **cut** (May 2026) — prizes are
+> label + optional emoji, with a per-rarity gradient medallion in the win modal /
+> share card. The `prizes.image_url` column + share `imageUrl` field remain in
+> the schema/types as dormant (harmless) in case we revisit richer prize media.
+
+## Phase 6 — Conversion deepeners (RESEARCH FIRST, then build)
+**Gate:** each item gets brainstorm → spec → prototype → A/B on a test creator
+before going live. These touch payout economics and/or delivery security, so they
+are NOT auto-shipped with the earlier phases.
+
+| # | Feature | Design sketch | Migration? | Skills | Effort |
+|---|---|---|---|---|---|
+| #25 | **Wishlist focus-pack / chase pity** (gacha) | A fan can pay a *premium* pack that boosts the odds of a prize they wishlisted. Two models to test: **(a) Focus pack** — temporary ×N weight on the target prize for the next N spins (reuses `applyRareBoost` aimed at one prize id); **(b) Chase pity** — a hard "guaranteed within N spins" counter for the target (reuses the pity engine, scoped to a prize). | Yes: `focus_packs` / per-fan `chase_target` + counter on `fans` | (engine) postgres-patterns, react-patterns | M–L |
+| #26 | **Instant-delivery / auto-fulfil prizes** | A prize can carry a pre-loaded **digital reward** (a link, unlock code, or short text). On win it's revealed to the fan immediately AND the redemption is auto-marked `fulfilled` (no creator step). Mixed wheels (some instant, some manual) supported. | Yes: `prizes.reward_kind` + `reward_payload` (encrypted at rest); spin auto-creates a fulfilled redemption | postgres-patterns, api-design | M |
+| 🔔 | **Web push (closed-tab notifications)** | True OS push when the dashboard/app is closed — new message, prize pending, low stock. Needs a service worker + VAPID keys + a push-subscription table + a sender (Supabase Edge Function or cron). Builds on the in-app + Notification-API layer from the chat work. | Yes: `push_subscriptions`; VAPID env keys | mcp-builder, deployment-patterns | L |
+
+### #25 design risks to resolve before build
+- **Stocked/limited prizes:** a guaranteed/boosted chase can oversell — needs a
+  per-prize "boostable?" flag + a stock guard.
+- **Payout economics:** boosting a high-value prize changes the EV the creator
+  pays out — needs a min-price/guardrail and a clear "this is what you'll owe"
+  preview for the creator.
+- **Fairness optics:** must stay provably-fair (#23) — the boost has to be part
+  of the committed seed derivation, not a post-hoc swap.
+- **Recommendation:** ship **(a) Focus pack** first (soft odds, no hard promise
+  to honor); treat **(b) Chase pity** as a follow-up once economics are proven.
+
+### #26 design risks to resolve before build
+- **Reward security:** codes/links are sensitive — encrypt `reward_payload` at
+  rest, never expose it before a win, and one-time-reveal per spin.
+- **Inventory:** a code can only be handed out once — either a pool of codes per
+  prize (decrement on win) or "same link for all." Decide per prize.
+- **Workflow:** auto-fulfilled redemptions still appear in the queue (status
+  `fulfilled`, flagged "auto") so the creator has an audit trail.
+
 ---
 
 ## Execution method

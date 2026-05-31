@@ -9,10 +9,17 @@ import type { DailyCount } from "@/lib/data/types";
 export default function Sparkline({
   data,
   height = 56,
+  format,
+  noun = "Spin",
 }: {
   data: DailyCount[];
   height?: number;
+  /** Format the total/peak labels (e.g. formatCents for a revenue series). */
+  format?: (n: number) => string;
+  /** Noun used in the aria-label ("Spin trend" / "Revenue trend"). */
+  noun?: string;
 }) {
+  const fmt = format ?? ((n: number) => String(n));
   const total = data.reduce((s, d) => s + d.spins, 0);
   const peak = data.reduce((m, d) => Math.max(m, d.spins), 0);
   const n = data.length;
@@ -30,7 +37,7 @@ export default function Sparkline({
   const areaPoints =
     n > 0 ? `0,100 ${linePoints} 100,100` : "0,100 100,100";
 
-  const label = `Spin trend: ${total} total over ${n} day${n === 1 ? "" : "s"}, peak ${peak} in a day.`;
+  const label = `${noun} trend: ${fmt(total)} total over ${n} day${n === 1 ? "" : "s"}, peak ${fmt(peak)} in a day.`;
 
   return (
     <div>
@@ -59,10 +66,10 @@ export default function Sparkline({
       </svg>
       <div className="mt-2 flex items-center justify-between text-xs text-muted">
         <span>
-          <span className="tnum font-semibold text-ink">{total}</span> total
+          <span className="tnum font-semibold text-ink">{fmt(total)}</span> total
         </span>
         <span>
-          peak <span className="tnum font-semibold text-ink">{peak}</span>/day
+          peak <span className="tnum font-semibold text-ink">{fmt(peak)}</span>/day
         </span>
       </div>
     </div>

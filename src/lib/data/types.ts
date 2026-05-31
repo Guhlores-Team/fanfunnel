@@ -34,6 +34,8 @@ export type MessageSender = "fan" | "creator";
 export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null }
 /** Phase 3: a creator's inbox thread with one fan. */
 export interface FanThread { fanId: string; fanName: string; lastBody: string; lastAt: string; unread: number }
+/** Wave 3: a creator's editable auto intro/outro chat messages. */
+export interface ChatSettings { intro: string | null; outro: string | null }
 
 /**
  * Everything the fan-facing page needs, resolved from a pass token.
@@ -52,6 +54,27 @@ export interface FanPassView {
   happyHour?: HappyHourStatus;
   referral?: { code: string; bonusPerReferral: number };
   chatUnlocked?: boolean;
+  /** Phase 5b: true until the fan has acknowledged the age-gate / ToS. */
+  needsAck?: boolean;
+}
+
+/** Phase 5b (#23): the data a public verify page needs for one spin. */
+export interface SpinVerification {
+  prizeLabel: string;
+  rarity: Rarity;
+  serverSeed: string;
+  serverSeedHash: string;
+  nonce: number;
+  hashOk: boolean;
+  at: string;
+}
+
+/** Phase 5b (#24): a creator's outbound webhook registration. */
+export interface Webhook {
+  id: string;
+  url: string;
+  event: string;
+  createdAt: string;
 }
 
 /** A creator's named grouping of links, for cross-promotion comparison. */
@@ -147,7 +170,11 @@ export interface FanCampaignBreakdown {
   prizes: { label: string; rarity: Rarity; count: number }[];
 }
 
-export type RedemptionStatus = "pending" | "fulfilled" | "cancelled";
+export type RedemptionStatus =
+  | "pending"
+  | "in_progress"
+  | "fulfilled"
+  | "cancelled";
 
 /** A won prize in the creator's fulfilment queue. */
 export interface RedemptionItem {
@@ -158,6 +185,8 @@ export interface RedemptionItem {
   emoji?: string;
   status: RedemptionStatus;
   at: string; // ISO timestamp
+  notes?: string | null;
+  dueAt?: string | null; // ISO timestamp
 }
 
 /** A persistent fan account with its links — for the creator's Fans tab. */
@@ -199,6 +228,8 @@ export interface CreatorMetrics {
   revenue: number; // cents
   /** Phase 3: count of unread fan messages. Optional so existing literals compile. */
   unreadMessages?: number;
+  /** Phase 3: whether the creator's public leaderboard is on. Optional. */
+  leaderboardEnabled?: boolean;
 }
 
 /** Everything the creator dashboard's metrics + inbox need. */
@@ -207,9 +238,38 @@ export interface CreatorOverview {
   redemptions: RedemptionItem[];
 }
 
+// --- Phase 4 (deeper analytics) --------------------------------------------
+
+/** #17 Best-time heatmap: 168 cells (7 weekdays × 24 hours, UTC). */
+export interface EngagementHeatmap {
+  cells: { weekday: number; hour: number; count: number }[]; // weekday 0=Sun..6=Sat, hour 0..23
+  max: number;
+}
+
+/** #18 Prize ROI: a creator's per-prize win count and your cost to fulfil it. */
+export interface PrizeRoiRow {
+  label: string;
+  rarity: Rarity;
+  timesWon: number;
+  costCents: number | null;
+  totalCostCents: number; // (costCents ?? 0) * timesWon
+}
+
+/** #19 Cohort retention: fans cohorted by their first grant's campaign. */
+export interface CohortRow {
+  campaignId: string | null;
+  campaignName: string;
+  fans: number;
+  returningFans: number; // fans in the cohort with ≥2 grants
+  repeatRate: number; // returningFans / fans, 0 if fans=0
+}
+
 export interface DailyCount { date: string; spins: number } // YYYY-MM-DD (UTC)
 export interface RevenueDaily { date: string; cents: number } // YYYY-MM-DD (UTC)
-export interface ConversionFunnel { links: number; spun: number; fulfilled: number }
+// Per-fan funnel (one permanent link per fan): fans created → fans who spun at
+// least once → fans with a fulfilled prize. Measures real audience conversion,
+// not link/spin volume.
+export interface ConversionFunnel { fans: number; spun: number; fulfilled: number }
 export interface CreatorMetricsExtra { trend: DailyCount[]; funnel: ConversionFunnel; revenueTrend: RevenueDaily[] }
 
 // --- Admin (cross-account) --------------------------------------------------

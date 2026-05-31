@@ -4,6 +4,7 @@ import {
   createClient,
 } from "@/lib/supabase/server";
 import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
+import { randomSeedHex, sha256Hex, makeRng } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -14,9 +15,12 @@ import type {
   Campaign,
   CampaignPack,
   CampaignStats,
+  CohortRow,
   CreatorMetricsExtra,
   CreatorOverview,
   DmTemplate,
+  EngagementHeatmap,
+  PrizeRoiRow,
   FanAccountSummary,
   FanCampaignBreakdown,
   FanDetail,
@@ -36,7 +40,10 @@ import type {
   HappyHourStatus,
   ReferralOverview,
   ChatMessage,
+  ChatSettings,
   FanThread,
+  SpinVerification,
+  Webhook,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 import {
@@ -48,7 +55,11 @@ import {
   mockGetFanDetail,
   mockGetOverview,
   mockGetMetricsExtra,
+  mockGetEngagementHeatmap,
+  mockGetPrizeRoi,
+  mockGetCohortRetention,
   mockSetRedemptionStatus,
+  mockSetRedemptionMeta,
   mockGetWheel,
   mockSaveWheel,
   mockGetAdminOverview,
@@ -97,7 +108,17 @@ import {
   mockListThreads,
   mockGetThread,
   mockSendCreatorMessage,
+  mockGetChatSettings,
+  mockSetChatSettings,
+  mockEnsureChatIntro,
+  mockSendChatOutro,
   mockGetPublicWheelTeaser,
+  mockGetSpinVerification,
+  mockListWebhooks,
+  mockCreateWebhook,
+  mockDeleteWebhook,
+  mockFireWebhooks,
+  mockAckFan,
 } from "./mock";
 
 function randomToken(): string {
@@ -125,6 +146,7 @@ interface DbPrizeRow {
   color: string | null;
   emoji: string | null;
   image_url: string | null;
+  cost_cents: number | null;
   stock: number | null;
   sort_order: number | null;
 }
@@ -143,7 +165,7 @@ interface DbWheelRow {
 // The columns we select to load a wheel's full config (prizes joined).
 const WHEEL_SELECT =
   `id, title, subtitle, brand_color, is_active, active_from, active_until, archived_at,
-   prizes(id, label, description, rarity, weight, color, emoji, image_url, stock, sort_order)`;
+   prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
 type AnyClient =
@@ -281,7 +303,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .from("fan_passes")
     .select(
       `id, creator_id, campaign_id, wheel_id, fan_id, is_active,
-       fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code),
+       fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at),
        creator:profiles(display_name)`
     )
     .eq("token", token)
@@ -301,6 +323,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       spins_remaining: number;
       spins_granted_total: number;
       referral_code: string | null;
+      acked_at: string | null;
     } | null;
     creator: { display_name: string | null } | null;
   } | null;
@@ -379,6 +402,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     },
     chatUnlocked:
       pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0,
+    needsAck: pass.fan.acked_at == null,
   };
 }
 
@@ -440,6 +464,14 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   const hh = await getActiveHappyHour(sb, wheelId, new Date());
   const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
 
+  // Provably-fair commitment: commit to a random server seed (store its hash),
+  // derive this spin's RNG deterministically from the seed + nonce, and reveal
+  // the seed on the logged spin so the commitment can be verified afterward.
+  const serverSeed = randomSeedHex();
+  const nonce = spinsRemaining;
+  const serverSeedHash = await sha256Hex(serverSeed);
+  const rng = makeRng(serverSeed, nonce);
+
   // 3. Pick a prize in TS (single source of truth), honouring pity. If a
   //    limited prize sold out between our read and write, exclude it + re-pick.
   let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
@@ -451,7 +483,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
         excluded.has(p.id) ? { ...p, stock: 0 } : p
       ),
     };
-    const pick = pickPrizeWithPity(pool, { pityCounter });
+    const pick = pickPrizeWithPity(pool, { pityCounter }, rng);
     if (pick.prize.stock === null || pick.prize.stock === undefined) {
       chosen = pick;
       break;
@@ -472,10 +504,12 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
 
   if (!chosen) return { error: "no_prizes" };
 
-  // Persist the fan's next pity counter.
+  // Persist the fan's next pity counter. Spinning also auto-opts the fan into
+  // the leaderboard (handle-only; the board only shows when the CREATOR enables
+  // it, so this never leaks anything until the creator turns it on).
   await sb
     .from("fans")
-    .update({ pity_counter: chosen.nextPityCounter })
+    .update({ pity_counter: chosen.nextPityCounter, leaderboard_opt_in: true })
     .eq("id", pass.fan_id);
 
   // 3b. FIFO-attribute this spin to a campaign. Order the fan's grants
@@ -519,6 +553,9 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       prize_rarity: chosen.prize.rarity,
       prize_image_url: chosen.prize.imageUrl ?? null,
       campaign_id: spinCampaignId,
+      server_seed: serverSeed,
+      server_seed_hash: serverSeedHash,
+      nonce,
     })
     .select("id, share_id")
     .single();
@@ -529,6 +566,14 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       creator_id: pass.creator_id,
       status: "pending",
     });
+    // Best-effort fan-out to the creator's webhooks. Never blocks/throws — a
+    // slow or failing endpoint must not break the spin.
+    void fireWebhooks(pass.creator_id, {
+      event: "prize_pending",
+      prize: chosen.prize.label,
+      rarity: chosen.prize.rarity,
+      at: new Date().toISOString(),
+    }).catch(() => {});
   }
 
   return {
@@ -1476,6 +1521,7 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     color: p.color ?? null,
     emoji: p.emoji ?? null,
     image_url: p.imageUrl ?? null,
+    cost_cents: p.cost ?? null,
     stock: p.stock ?? null,
     sort_order: sortOrder,
   };
@@ -2187,7 +2233,7 @@ export async function getOverview(): Promise<CreatorOverview> {
   const { data: reds } = await sb
     .from("redemptions")
     .select(
-      `id, status, created_at,
+      `id, status, created_at, notes, due_at,
        spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle))`
     )
     .eq("creator_id", user.id)
@@ -2198,6 +2244,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     id: string;
     status: RedemptionStatus;
     created_at: string;
+    notes: string | null;
+    due_at: string | null;
     spin: {
       prize_label: string;
       prize_rarity: RedemptionItem["rarity"];
@@ -2212,6 +2260,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     rarity: r.spin?.prize_rarity ?? "common",
     status: r.status,
     at: r.created_at,
+    notes: r.notes,
+    dueAt: r.due_at,
   }));
 
   const head = { count: "exact" as const, head: true };
@@ -2240,6 +2290,12 @@ export async function getOverview(): Promise<CreatorOverview> {
     .eq("sender", "fan")
     .is("read_at", null);
 
+  const { data: prof } = await sb
+    .from("profiles")
+    .select("leaderboard_enabled")
+    .eq("id", user.id)
+    .maybeSingle();
+
   return {
     metrics: {
       fans: fans ?? 0,
@@ -2248,6 +2304,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
       revenue,
       unreadMessages: unreadMessages ?? 0,
+      leaderboardEnabled: (prof as { leaderboard_enabled: boolean } | null)?.leaderboard_enabled ?? false,
     },
     redemptions,
   };
@@ -2269,7 +2326,7 @@ export async function getMetricsExtra(
   if (!user) {
     return {
       trend: bucketByDay([], n),
-      funnel: { links: 0, spun: 0, fulfilled: 0 },
+      funnel: { fans: 0, spun: 0, fulfilled: 0 },
       revenueTrend: bucketCentsByDay([], n),
     };
   }
@@ -2299,30 +2356,221 @@ export async function getMetricsExtra(
     n
   );
 
+  // Per-fan funnel: fans created → fans with ≥1 spin → fans with a fulfilled
+  // prize. Counts distinct FANS (not links/spins), so it reflects how the
+  // audience converts under the one-permanent-link model.
   const head = { count: "exact" as const, head: true };
-  const { count: links } = await sb
-    .from("fan_passes")
+  const { count: fans } = await sb
+    .from("fans")
     .select("id", head)
     .eq("creator_id", user.id);
-  const { count: spun } = await sb
+
+  const { data: spunRows } = await sb
     .from("spins")
-    .select("id", head)
-    .eq("creator_id", user.id);
-  const { count: fulfilled } = await sb
+    .select("fan_id")
+    .eq("creator_id", user.id)
+    .not("fan_id", "is", null);
+  const spun = new Set(
+    ((spunRows ?? []) as { fan_id: string | null }[])
+      .map((r) => r.fan_id)
+      .filter((id): id is string => id !== null)
+  ).size;
+
+  // Fulfilled redemptions → distinct fans, joined through the spin.
+  const { data: fulfilledRows } = await sb
     .from("redemptions")
-    .select("id", head)
+    .select("spin:spins(fan_id)")
     .eq("creator_id", user.id)
     .eq("status", "fulfilled");
+  const fulfilled = new Set(
+    ((fulfilledRows ?? []) as unknown as { spin: { fan_id: string | null } | null }[])
+      .map((r) => r.spin?.fan_id)
+      .filter((id): id is string => !!id)
+  ).size;
 
   return {
     trend,
-    funnel: {
-      links: links ?? 0,
-      spun: spun ?? 0,
-      fulfilled: fulfilled ?? 0,
-    },
+    funnel: { fans: fans ?? 0, spun, fulfilled },
     revenueTrend,
   };
+}
+
+// --- Phase 4 (deeper analytics) --------------------------------------------
+
+// #17 Best-time heatmap: bucket spin timestamps into a 7×24 (weekday×hour, UTC)
+// grid. Returns all 168 cells, zero-filled, plus the max count.
+export async function getEngagementHeatmap(
+  days: number = 90
+): Promise<EngagementHeatmap> {
+  const n = clampDays(days);
+  if (!isSupabaseConfigured()) return mockGetEngagementHeatmap(days);
+
+  const empty: EngagementHeatmap = (() => {
+    const cells: EngagementHeatmap["cells"] = [];
+    for (let weekday = 0; weekday < 7; weekday++)
+      for (let hour = 0; hour < 24; hour++)
+        cells.push({ weekday, hour, count: 0 });
+    return { cells, max: 0 };
+  })();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return empty;
+
+  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("created_at")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+
+  const counts = new Array<number>(7 * 24).fill(0);
+  for (const r of (spinRows ?? []) as { created_at: string }[]) {
+    const d = new Date(r.created_at);
+    if (Number.isNaN(d.getTime())) continue;
+    counts[d.getUTCDay() * 24 + d.getUTCHours()] += 1;
+  }
+
+  const cells: EngagementHeatmap["cells"] = [];
+  let max = 0;
+  for (let weekday = 0; weekday < 7; weekday++) {
+    for (let hour = 0; hour < 24; hour++) {
+      const count = counts[weekday * 24 + hour];
+      if (count > max) max = count;
+      cells.push({ weekday, hour, count });
+    }
+  }
+  return { cells, max };
+}
+
+// #18 Prize ROI: count wins per prize label and join the creator's cost.
+export async function getPrizeRoi(days: number = 90): Promise<PrizeRoiRow[]> {
+  const n = clampDays(days);
+  if (!isSupabaseConfigured()) return mockGetPrizeRoi(days);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  // Costs + rarity come from the creator's prize set (last write wins by label).
+  const { data: prizeRows } = await sb
+    .from("prizes")
+    .select("label, rarity, cost_cents, wheel:wheels!inner(creator_id)")
+    .eq("wheel.creator_id", user.id);
+  const meta = new Map<string, { rarity: Rarity; costCents: number | null }>();
+  for (const p of (prizeRows ?? []) as unknown as {
+    label: string;
+    rarity: Rarity;
+    cost_cents: number | null;
+  }[]) {
+    meta.set(p.label, { rarity: p.rarity, costCents: p.cost_cents ?? null });
+  }
+
+  // Counts come from spins (one row per spin) inside the window.
+  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("prize_label, prize_rarity")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+
+  const counts = new Map<string, { rarity: Rarity; timesWon: number }>();
+  for (const s of (spinRows ?? []) as {
+    prize_label: string;
+    prize_rarity: Rarity;
+  }[]) {
+    const cur = counts.get(s.prize_label);
+    if (cur) cur.timesWon += 1;
+    else counts.set(s.prize_label, { rarity: s.prize_rarity, timesWon: 1 });
+  }
+
+  const rows: PrizeRoiRow[] = [];
+  for (const [label, { rarity, timesWon }] of counts) {
+    const costCents = meta.get(label)?.costCents ?? null;
+    rows.push({
+      label,
+      rarity: meta.get(label)?.rarity ?? rarity,
+      timesWon,
+      costCents,
+      totalCostCents: (costCents ?? 0) * timesWon,
+    });
+  }
+  rows.sort((a, b) => b.totalCostCents - a.totalCostCents);
+  return rows;
+}
+
+// #19 Cohort retention: cohort each fan by their first grant's campaign.
+export async function getCohortRetention(): Promise<CohortRow[]> {
+  if (!isSupabaseConfigured()) return mockGetCohortRetention();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("fan_id, campaign_id, created_at")
+    .eq("creator_id", user.id);
+  const { data: campaignRows } = await sb
+    .from("campaigns")
+    .select("id, name")
+    .eq("creator_id", user.id);
+
+  const campaignName = new Map<string, string>();
+  for (const c of (campaignRows ?? []) as { id: string; name: string }[])
+    campaignName.set(c.id, c.name);
+
+  // First grant (earliest created_at) per fan determines the cohort; also track
+  // grant counts per fan for the "returning" definition (≥2 grants).
+  const firstCampaign = new Map<string, string | null>();
+  const firstAt = new Map<string, number>();
+  const grantCount = new Map<string, number>();
+  for (const g of (grantRows ?? []) as {
+    fan_id: string;
+    campaign_id: string | null;
+    created_at: string;
+  }[]) {
+    grantCount.set(g.fan_id, (grantCount.get(g.fan_id) ?? 0) + 1);
+    const t = new Date(g.created_at).getTime();
+    const prev = firstAt.get(g.fan_id);
+    if (prev === undefined || t < prev) {
+      firstAt.set(g.fan_id, Number.isNaN(t) ? Infinity : t);
+      firstCampaign.set(g.fan_id, g.campaign_id);
+    }
+  }
+
+  const cohorts = new Map<
+    string | null,
+    { fans: number; returningFans: number }
+  >();
+  for (const [fanId, campaignId] of firstCampaign) {
+    const c = cohorts.get(campaignId) ?? { fans: 0, returningFans: 0 };
+    c.fans += 1;
+    if ((grantCount.get(fanId) ?? 0) >= 2) c.returningFans += 1;
+    cohorts.set(campaignId, c);
+  }
+
+  const rows: CohortRow[] = [];
+  for (const [campaignId, { fans, returningFans }] of cohorts) {
+    rows.push({
+      campaignId,
+      campaignName:
+        campaignId === null
+          ? "Direct / no campaign"
+          : campaignName.get(campaignId) ?? "Direct / no campaign",
+      fans,
+      returningFans,
+      repeatRate: fans === 0 ? 0 : returningFans / fans,
+    });
+  }
+  rows.sort((a, b) => b.fans - a.fans);
+  return rows;
 }
 
 export async function setRedemptionStatus(
@@ -2343,6 +2591,36 @@ export async function setRedemptionStatus(
       fulfilled_at: status === "fulfilled" ? new Date().toISOString() : null,
     })
     .eq("id", id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// Update a redemption's notes and/or due date, leaving its status untouched.
+export async function setRedemptionMeta(
+  id: string,
+  patch: { notes?: string | null; dueAt?: string | null }
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return mockSetRedemptionMeta(id, patch)
+      ? { ok: true }
+      : { error: "not_found" };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const update: { notes?: string | null; due_at?: string | null } = {};
+  if ("notes" in patch) update.notes = patch.notes ?? null;
+  if ("dueAt" in patch) update.due_at = patch.dueAt ?? null;
+  if (Object.keys(update).length === 0) return { ok: true };
+
+  const { error } = await sb
+    .from("redemptions")
+    .update(update)
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -2606,6 +2884,177 @@ export async function getShareCard(
     imageUrl: row.prize_image_url ?? null,
     at: row.created_at,
   };
+}
+
+// --- Provably-fair verification (#23) ---------------------------------------
+
+/**
+ * The fairness data for a single spin, keyed by its non-secret share_id. Reveals
+ * the committed server seed + hash so a public verify page can recompute the
+ * hash and confirm the commitment held. Service-role read (fans aren't authed).
+ * Returns null when the spin isn't found or has no committed seed (older spins).
+ */
+export async function getSpinVerification(
+  shareId: string
+): Promise<SpinVerification | null> {
+  if (!isSupabaseConfigured()) return mockGetSpinVerification(shareId);
+
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("spins")
+    .select(
+      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, created_at"
+    )
+    .eq("share_id", shareId)
+    .maybeSingle();
+
+  const row = data as {
+    prize_label: string;
+    prize_rarity: Rarity;
+    server_seed: string | null;
+    server_seed_hash: string | null;
+    nonce: number | null;
+    created_at: string;
+  } | null;
+  if (!row || !row.server_seed || !row.server_seed_hash) return null;
+
+  const hashOk = (await sha256Hex(row.server_seed)) === row.server_seed_hash;
+  return {
+    prizeLabel: row.prize_label,
+    rarity: row.prize_rarity,
+    serverSeed: row.server_seed,
+    serverSeedHash: row.server_seed_hash,
+    nonce: row.nonce ?? 0,
+    hashOk,
+    at: row.created_at,
+  };
+}
+
+// --- Webhooks (#24) ---------------------------------------------------------
+
+/** The creator's registered outbound webhooks (newest first, RLS-scoped). */
+export async function listWebhooks(): Promise<Webhook[]> {
+  if (!isSupabaseConfigured()) return mockListWebhooks();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("webhooks")
+    .select("id, url, event, created_at")
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const rows = (data ?? []) as {
+    id: string;
+    url: string;
+    event: string;
+    created_at: string;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    url: r.url,
+    event: r.event,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function createWebhook(
+  url: string,
+  event = "prize_pending"
+): Promise<Webhook | { error: string }> {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return { error: "invalid_url" };
+  if (!isSupabaseConfigured()) return mockCreateWebhook(trimmed, event);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data, error } = await sb
+    .from("webhooks")
+    .insert({ creator_id: user.id, url: trimmed, event })
+    .select("id, url, event, created_at")
+    .single();
+  if (error || !data) return { error: "db_error" };
+  return {
+    id: data.id,
+    url: data.url,
+    event: data.event,
+    createdAt: data.created_at,
+  };
+}
+
+export async function deleteWebhook(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeleteWebhook(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb.from("webhooks").delete().eq("id", id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Best-effort fan-out: POST `payload` as JSON to each of the creator's webhooks,
+ * swallowing every error so a slow/failing endpoint can't break a spin. No-op in
+ * demo mode.
+ */
+export async function fireWebhooks(
+  creatorId: string,
+  payload: object
+): Promise<void> {
+  if (!isSupabaseConfigured()) return mockFireWebhooks(creatorId, payload);
+
+  try {
+    const sb = createServiceClient();
+    const { data } = await sb
+      .from("webhooks")
+      .select("url")
+      .eq("creator_id", creatorId);
+    const hooks = (data ?? []) as { url: string }[];
+    const body = JSON.stringify(payload);
+    await Promise.allSettled(
+      hooks.map((h) =>
+        fetch(h.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        })
+      )
+    );
+  } catch {
+    /* never throws */
+  }
+}
+
+// --- Age-gate / ToS (#24) ---------------------------------------------------
+
+/** Stamp the age-gate / ToS acknowledgement on the fan behind a token. */
+export async function ackFan(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockAckFan(token);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { error } = await sb
+    .from("fans")
+    .update({ acked_at: new Date().toISOString() })
+    .eq("id", resolved.fanId);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 // --- Wishlist ---------------------------------------------------------------
@@ -3147,6 +3596,136 @@ export async function sendCreatorMessage(
   return error ? { error: "db_error" } : { ok: true };
 }
 
+// --- Wave 3: editable auto intro/outro --------------------------------------
+
+/** The creator's editable auto greeting + out-of-spins messages (authed/RLS). */
+export async function getChatSettings(): Promise<ChatSettings> {
+  if (!isSupabaseConfigured()) return mockGetChatSettings();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { intro: null, outro: null };
+
+  const { data } = await sb
+    .from("profiles")
+    .select("chat_intro, chat_outro")
+    .eq("id", user.id)
+    .maybeSingle();
+  const row = data as { chat_intro: string | null; chat_outro: string | null } | null;
+  return { intro: row?.chat_intro ?? null, outro: row?.chat_outro ?? null };
+}
+
+/** Update the creator's auto greeting + out-of-spins messages (authed/RLS). */
+export async function setChatSettings(input: {
+  intro?: string | null;
+  outro?: string | null;
+}): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetChatSettings(input);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const upd: Record<string, unknown> = {};
+  if (input.intro !== undefined) {
+    const t = (input.intro ?? "").trim();
+    upd.chat_intro = t || null;
+  }
+  if (input.outro !== undefined) {
+    const t = (input.outro ?? "").trim();
+    upd.chat_outro = t || null;
+  }
+  if (Object.keys(upd).length === 0) return { ok: true };
+
+  const { error } = await sb.from("profiles").update(upd).eq("id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Auto-send the creator's greeting when a fan first opens chat (service role:
+ * fans aren't authed). Inserts the intro as a `creator` message only if the
+ * creator has a non-empty chat_intro AND the thread has ZERO messages.
+ * Idempotent: a no-op once any message exists.
+ */
+export async function ensureChatIntro(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockEnsureChatIntro(token);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("chat_intro")
+    .eq("id", resolved.creatorId)
+    .maybeSingle();
+  const intro = ((profile as { chat_intro: string | null } | null)?.chat_intro ?? "").trim();
+  if (!intro) return { ok: true };
+
+  const { count } = await sb
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_id", resolved.creatorId)
+    .eq("fan_id", resolved.fanId);
+  if ((count ?? 0) > 0) return { ok: true };
+
+  const { error } = await sb.from("messages").insert({
+    creator_id: resolved.creatorId,
+    fan_id: resolved.fanId,
+    sender: "creator",
+    body: intro,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Auto-send the creator's out-of-spins nudge (service role). Inserts the outro
+ * as a `creator` message only if the creator has a non-empty chat_outro AND the
+ * most-recent message isn't already that exact outro (guards against spamming).
+ */
+export async function sendChatOutro(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSendChatOutro(token);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("chat_outro")
+    .eq("id", resolved.creatorId)
+    .maybeSingle();
+  const outro = ((profile as { chat_outro: string | null } | null)?.chat_outro ?? "").trim();
+  if (!outro) return { ok: true };
+
+  const { data: lastRow } = await sb
+    .from("messages")
+    .select("sender, body")
+    .eq("creator_id", resolved.creatorId)
+    .eq("fan_id", resolved.fanId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const last = lastRow as { sender: "fan" | "creator"; body: string } | null;
+  if (last && last.sender === "creator" && last.body === outro) return { ok: true };
+
+  const { error } = await sb.from("messages").insert({
+    creator_id: resolved.creatorId,
+    fan_id: resolved.fanId,
+    sender: "creator",
+    body: outro,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
 // --- Public teaser ----------------------------------------------------------
 
 /**
@@ -3200,6 +3779,7 @@ function toWheelConfig(wheel: DbWheelRow): WheelConfig {
       color: p.color ?? RARITY_COLORS[p.rarity],
       emoji: p.emoji ?? undefined,
       imageUrl: p.image_url ?? null,
+      cost: p.cost_cents ?? null,
       stock: p.stock ?? null,
     }));
 

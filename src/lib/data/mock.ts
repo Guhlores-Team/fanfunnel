@@ -1,4 +1,5 @@
 import { applyRareBoost, pickPrize, pickPrizeWithPity } from "@/lib/games/wheel/engine";
+import { makeRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { defaultFeatures } from "@/lib/features";
@@ -9,8 +10,11 @@ import type {
   CampaignPack,
   CampaignStats,
   ChatMessage,
+  ChatSettings,
+  CohortRow,
   CreatorMetricsExtra,
   CreatorOverview,
+  EngagementHeatmap,
   FanAccountSummary,
   FanCampaignBreakdown,
   FanDetail,
@@ -22,11 +26,14 @@ import type {
   HappyHourStatus,
   LeaderboardEntry,
   LeaderboardView,
+  PrizeRoiRow,
   PrizeTemplate,
   RedemptionItem,
   RedemptionStatus,
   ReferralOverview,
   ShareCardData,
+  SpinVerification,
+  Webhook,
   WheelSummary,
   WheelTemplate,
   WishlistDemand,
@@ -56,6 +63,10 @@ interface MockWin extends WonPrize {
   campaignId: string | null;
   shareId: string; // Phase 3: opaque id for the shareable card
   imageUrl?: string | null; // Phase 3: snapshot of the prize photo
+  // Phase 5b (#23): provably-fair commitment for this spin.
+  serverSeed: string;
+  serverSeedHash: string;
+  nonce: number;
 }
 
 interface MockFan {
@@ -74,6 +85,16 @@ interface MockFan {
   referralCode: string; // this fan's own referral code
   referredByFanId: string | null; // who referred this fan, if anyone
   referralCredited: boolean; // whether this fan's referral has been credited
+  // Phase 5b (#24): age-gate / ToS acknowledgement timestamp (null = not yet).
+  ackedAt: string | null;
+}
+
+// Phase 5b (#24): a creator's registered outbound webhook (demo, in-memory).
+interface MockWebhook {
+  id: string;
+  url: string;
+  event: string;
+  createdAt: string;
 }
 
 // Phase 3 store rows.
@@ -144,7 +165,18 @@ interface Store {
   referrals: MockReferral[];
   messages: MockMessage[];
   leaderboardEnabled: boolean;
+  // Phase 5b
+  webhooks: MockWebhook[];
+  // Wave 3: editable auto intro/outro chat messages (creator-level).
+  chatIntro: string | null;
+  chatOutro: string | null;
 }
+
+// Wave 3: flirty defaults so the auto-messages feature works out of the box.
+const DEFAULT_CHAT_INTRO =
+  "Hey you 😘 so glad you're here — spin and let's see what you get…";
+const DEFAULT_CHAT_OUTRO =
+  "Out of spins already? 🥵 Top me up and let's keep going…";
 
 /** Short, unique id with a stable prefix (mirrors the file's existing style). */
 function genId(prefix: string): string {
@@ -339,6 +371,9 @@ const store: Store =
     referrals: [],
     messages: [],
     leaderboardEnabled: false,
+    webhooks: [],
+    chatIntro: DEFAULT_CHAT_INTRO,
+    chatOutro: DEFAULT_CHAT_OUTRO,
   });
 
 // A store pinned by an older dev-server build may predate these fields, so
@@ -357,6 +392,10 @@ store.happyHours ??= [];
 store.referrals ??= [];
 store.messages ??= [];
 store.leaderboardEnabled ??= false;
+store.webhooks ??= [];
+// Wave 3: backfill auto-message defaults on stores pinned before they existed.
+if (store.chatIntro === undefined) store.chatIntro = DEFAULT_CHAT_INTRO;
+if (store.chatOutro === undefined) store.chatOutro = DEFAULT_CHAT_OUTRO;
 
 // Migrate a store pinned before the multi-wheel refactor: a `wheel` single
 // field may exist on the old shape. Fold it into the wheels map as active.
@@ -392,9 +431,14 @@ for (const fan of store.fans.values()) {
   fan.referralCode ??= genId("ref");
   fan.referredByFanId ??= null;
   fan.referralCredited ??= false;
-  // Backfill shareId on any win pinned before that field existed.
+  // Phase 5b: default un-acked so the age-gate shows for pre-existing fans.
+  fan.ackedAt ??= null;
+  // Backfill shareId + fairness fields on any win pinned before they existed.
   for (const w of fan.wins) {
     w.shareId ??= genId("share");
+    w.serverSeed ??= randomSeedHex();
+    w.nonce ??= 0;
+    w.serverSeedHash ??= "";
   }
 }
 // Backfill bonusSpins on any grant pinned before that field existed.
@@ -422,6 +466,7 @@ if (!store.fans.has("demo-fan")) {
     referralCode: genId("ref"),
     referredByFanId: null,
     referralCredited: false,
+    ackedAt: null,
   });
   store.tokens.set("demo", "demo-fan");
   // Seed a grant so revenue/per-campaign data is coherent in demo mode.
@@ -768,10 +813,11 @@ export function mockGetFanPass(token: string): FanPassView | null {
     happyHour: mockGetActiveHappyHour(wheel.id),
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
     chatUnlocked: chatUnlockedFor(fan),
+    needsAck: fan.ackedAt == null,
   });
 }
 
-export function mockSpin(token: string) {
+export async function mockSpin(token: string) {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" as const };
   if (fan.spinsRemaining <= 0) return { error: "no_spins" as const };
@@ -785,9 +831,18 @@ export function mockSpin(token: string) {
   const hh = mockGetActiveHappyHour(wheel.id);
   const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
 
-  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(pickWheel, {
-    pityCounter: fan.pityCounter,
-  });
+  // Provably-fair commitment: commit to a server seed, derive this spin's RNG
+  // from it, and store the seed + its hash on the win so verify works in demo.
+  const serverSeed = randomSeedHex();
+  const nonce = fan.spinsRemaining;
+  const serverSeedHash = await sha256Hex(serverSeed);
+  const rng = makeRng(serverSeed, nonce);
+
+  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(
+    pickWheel,
+    { pityCounter: fan.pityCounter },
+    rng
+  );
 
   // FIFO-attribute THIS spin to a campaign: the 0-based index of this spin
   // among all the fan has played is the count played before it. Walk the fan's
@@ -798,6 +853,9 @@ export function mockSpin(token: string) {
 
   fan.spinsRemaining -= 1;
   fan.pityCounter = nextPityCounter;
+  // Spinning auto-opts the fan into the leaderboard (handle-only; the board only
+  // renders when the creator enables it, so nothing is exposed until then).
+  fan.leaderboardOptIn = true;
 
   // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
   const live = wheel.prizes[index];
@@ -816,6 +874,9 @@ export function mockSpin(token: string) {
       campaignId,
       shareId,
       imageUrl: prize.imageUrl ?? null,
+      serverSeed,
+      serverSeedHash,
+      nonce,
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -947,6 +1008,7 @@ export function mockCreatePass(
       referralCode: genId("ref"),
       referredByFanId,
       referralCredited: false,
+      ackedAt: null,
     };
     store.fans.set(id, newFan);
     store.tokens.set(token, id);
@@ -1184,6 +1246,8 @@ export function mockGetOverview(): CreatorOverview {
     emoji: r.emoji,
     status: r.status,
     at: r.at,
+    notes: r.notes ?? null,
+    dueAt: r.dueAt ?? null,
   }));
   const unreadMessages = store.messages.filter(
     (m) => m.sender === "fan" && m.readAt === null
@@ -1196,6 +1260,7 @@ export function mockGetOverview(): CreatorOverview {
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
       revenue,
       unreadMessages,
+      leaderboardEnabled: store.leaderboardEnabled,
     },
     redemptions: structuredClone(items),
   };
@@ -1214,19 +1279,142 @@ export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
   return {
     trend,
     funnel: {
-      // "Opened" isn't tracked — funnel runs links → spun → fulfilled.
-      links: store.tokens.size,
-      spun: store.redemptions.length,
-      fulfilled: store.redemptions.filter((r) => r.status === "fulfilled").length,
+      // Per-fan funnel: fans created → fans with ≥1 spin → fans with a
+      // fulfilled prize. Each redemption is one spin and carries its fanId.
+      fans: store.fans.size,
+      spun: new Set(store.redemptions.map((r) => r.fanId)).size,
+      fulfilled: new Set(
+        store.redemptions.filter((r) => r.status === "fulfilled").map((r) => r.fanId)
+      ).size,
     },
     revenueTrend,
   };
+}
+
+// --- Phase 4 (deeper analytics) --------------------------------------------
+
+/** #17 Best-time heatmap: bucket spin timestamps by (UTC weekday, UTC hour). */
+export function mockGetEngagementHeatmap(days?: number): EngagementHeatmap {
+  const n = clampDays(days ?? 90);
+  const since = Date.now() - n * 24 * 60 * 60 * 1000;
+  // 7×24 grid of zeros.
+  const counts = new Array<number>(7 * 24).fill(0);
+  for (const r of store.redemptions) {
+    const d = new Date(r.at);
+    if (Number.isNaN(d.getTime()) || d.getTime() < since) continue;
+    counts[d.getUTCDay() * 24 + d.getUTCHours()] += 1;
+  }
+  const cells: EngagementHeatmap["cells"] = [];
+  let max = 0;
+  for (let weekday = 0; weekday < 7; weekday++) {
+    for (let hour = 0; hour < 24; hour++) {
+      const count = counts[weekday * 24 + hour];
+      if (count > max) max = count;
+      cells.push({ weekday, hour, count });
+    }
+  }
+  return { cells, max };
+}
+
+/** #18 Prize ROI: count wins per prize label and join the creator's cost. */
+export function mockGetPrizeRoi(days?: number): PrizeRoiRow[] {
+  const n = clampDays(days ?? 90);
+  const since = Date.now() - n * 24 * 60 * 60 * 1000;
+
+  // Costs + rarity come from every wheel's prize config (last write wins).
+  const meta = new Map<string, { rarity: Rarity; costCents: number | null }>();
+  for (const w of store.wheels.values()) {
+    for (const p of w.prizes) {
+      meta.set(p.label, { rarity: p.rarity, costCents: p.cost ?? null });
+    }
+  }
+
+  // Counts come from redemptions (one row per spin) inside the window.
+  const counts = new Map<string, { rarity: Rarity; timesWon: number }>();
+  for (const r of store.redemptions) {
+    const d = new Date(r.at);
+    if (Number.isNaN(d.getTime()) || d.getTime() < since) continue;
+    const cur = counts.get(r.prizeLabel);
+    if (cur) cur.timesWon += 1;
+    else counts.set(r.prizeLabel, { rarity: r.rarity, timesWon: 1 });
+  }
+
+  const rows: PrizeRoiRow[] = [];
+  for (const [label, { rarity, timesWon }] of counts) {
+    const costCents = meta.get(label)?.costCents ?? null;
+    rows.push({
+      label,
+      rarity: meta.get(label)?.rarity ?? rarity,
+      timesWon,
+      costCents,
+      totalCostCents: (costCents ?? 0) * timesWon,
+    });
+  }
+  rows.sort((a, b) => b.totalCostCents - a.totalCostCents);
+  return rows;
+}
+
+/** #19 Cohort retention: cohort each fan by their first grant's campaign. */
+export function mockGetCohortRetention(): CohortRow[] {
+  const campaignName = new Map<string, string>();
+  for (const c of store.campaigns) campaignName.set(c.id, c.name);
+
+  // First grant (earliest `at`) per fan determines the cohort; also track grant
+  // counts per fan for the "returning" definition (≥2 grants).
+  const firstCampaign = new Map<string, string | null>();
+  const firstAt = new Map<string, number>();
+  const grantCount = new Map<string, number>();
+  for (const g of store.grants) {
+    grantCount.set(g.fanId, (grantCount.get(g.fanId) ?? 0) + 1);
+    const t = new Date(g.at).getTime();
+    const prev = firstAt.get(g.fanId);
+    if (prev === undefined || t < prev) {
+      firstAt.set(g.fanId, Number.isNaN(t) ? Infinity : t);
+      firstCampaign.set(g.fanId, g.campaignId);
+    }
+  }
+
+  // Group fans into cohorts keyed by their first campaign (null => direct).
+  const cohorts = new Map<string | null, { fans: number; returningFans: number }>();
+  for (const [fanId, campaignId] of firstCampaign) {
+    const c = cohorts.get(campaignId) ?? { fans: 0, returningFans: 0 };
+    c.fans += 1;
+    if ((grantCount.get(fanId) ?? 0) >= 2) c.returningFans += 1;
+    cohorts.set(campaignId, c);
+  }
+
+  const rows: CohortRow[] = [];
+  for (const [campaignId, { fans, returningFans }] of cohorts) {
+    rows.push({
+      campaignId,
+      campaignName:
+        campaignId === null
+          ? "Direct / no campaign"
+          : campaignName.get(campaignId) ?? "Direct / no campaign",
+      fans,
+      returningFans,
+      repeatRate: fans === 0 ? 0 : returningFans / fans,
+    });
+  }
+  rows.sort((a, b) => b.fans - a.fans);
+  return rows;
 }
 
 export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
   const r = store.redemptions.find((x) => x.id === id);
   if (!r) return null;
   r.status = status;
+  return r;
+}
+
+export function mockSetRedemptionMeta(
+  id: string,
+  patch: { notes?: string | null; dueAt?: string | null }
+) {
+  const r = store.redemptions.find((x) => x.id === id);
+  if (!r) return null;
+  if ("notes" in patch) r.notes = patch.notes ?? null;
+  if ("dueAt" in patch) r.dueAt = patch.dueAt ?? null;
   return r;
 }
 
@@ -1607,6 +1795,80 @@ export function mockGetShareCard(shareId: string): ShareCardData | null {
   return null;
 }
 
+// --- Phase 5b: Provably-fair verification (#23) -----------------------------
+
+/** Resolve the fairness data for a spin by its shareId, across all fans. */
+export async function mockGetSpinVerification(
+  shareId: string
+): Promise<SpinVerification | null> {
+  for (const fan of store.fans.values()) {
+    const win = fan.wins.find((w) => w.shareId === shareId);
+    if (!win) continue;
+    if (!win.serverSeed || !win.serverSeedHash) return null;
+    const hashOk = (await sha256Hex(win.serverSeed)) === win.serverSeedHash;
+    return {
+      prizeLabel: win.label,
+      rarity: win.rarity,
+      serverSeed: win.serverSeed,
+      serverSeedHash: win.serverSeedHash,
+      nonce: win.nonce ?? 0,
+      hashOk,
+      at: win.at,
+    };
+  }
+  return null;
+}
+
+// --- Phase 5b: Webhooks (#24) ----------------------------------------------
+
+export function mockListWebhooks(): Webhook[] {
+  return structuredClone(
+    store.webhooks
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  );
+}
+
+export function mockCreateWebhook(
+  url: string,
+  event = "prize_pending"
+): Webhook | { error: string } {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return { error: "invalid_url" };
+  const hook: MockWebhook = {
+    id: genId("wh"),
+    url: trimmed,
+    event: event.trim() || "prize_pending",
+    createdAt: new Date().toISOString(),
+  };
+  store.webhooks.push(hook);
+  return structuredClone(hook);
+}
+
+export function mockDeleteWebhook(id: string): { ok: true } | { error: string } {
+  const before = store.webhooks.length;
+  store.webhooks = store.webhooks.filter((w) => w.id !== id);
+  return store.webhooks.length < before ? { ok: true } : { error: "not_found" };
+}
+
+/** Demo mode never makes outbound calls — webhook fan-out is a no-op. */
+export async function mockFireWebhooks(
+  _creatorId: string,
+  _payload: object
+): Promise<void> {
+  /* no-op in demo mode */
+}
+
+// --- Phase 5b: Age-gate / ToS (#24) ----------------------------------------
+
+/** Mark the fan behind a token as having acknowledged the age-gate / ToS. */
+export function mockAckFan(token: string): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  fan.ackedAt = new Date().toISOString();
+  return { ok: true };
+}
+
 // --- Phase 3: Wishlist ------------------------------------------------------
 
 export function mockAddWishlist(
@@ -1859,6 +2121,80 @@ export function mockSendCreatorMessage(
     fanId,
     sender: "creator",
     body: text,
+    readAt: null,
+    at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+// --- Wave 3: editable auto intro/outro --------------------------------------
+
+export function mockGetChatSettings(): ChatSettings {
+  return { intro: store.chatIntro, outro: store.chatOutro };
+}
+
+export function mockSetChatSettings(input: {
+  intro?: string | null;
+  outro?: string | null;
+}): { ok: true } {
+  if (input.intro !== undefined) {
+    const t = (input.intro ?? "").trim();
+    store.chatIntro = t || null;
+  }
+  if (input.outro !== undefined) {
+    const t = (input.outro ?? "").trim();
+    store.chatOutro = t || null;
+  }
+  return { ok: true };
+}
+
+/**
+ * Auto-send the creator's greeting when a fan first opens chat: only if the
+ * creator has a non-empty intro AND the thread currently has zero messages.
+ * Idempotent (no-op once any message exists).
+ */
+export function mockEnsureChatIntro(
+  token: string
+): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  const intro = (store.chatIntro ?? "").trim();
+  if (!intro) return { ok: true };
+  const hasAny = store.messages.some((m) => m.fanId === fan.id);
+  if (hasAny) return { ok: true };
+  store.messages.push({
+    id: genId("msg"),
+    fanId: fan.id,
+    sender: "creator",
+    body: intro,
+    readAt: null,
+    at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+/**
+ * Auto-send the creator's out-of-spins nudge: only if the creator has a
+ * non-empty outro AND the most-recent message isn't already that exact outro
+ * (guards against spamming).
+ */
+export function mockSendChatOutro(
+  token: string
+): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  const outro = (store.chatOutro ?? "").trim();
+  if (!outro) return { ok: true };
+  const mine = store.messages
+    .filter((m) => m.fanId === fan.id)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  const last = mine[mine.length - 1];
+  if (last && last.sender === "creator" && last.body === outro) return { ok: true };
+  store.messages.push({
+    id: genId("msg"),
+    fanId: fan.id,
+    sender: "creator",
+    body: outro,
     readAt: null,
     at: new Date().toISOString(),
   });

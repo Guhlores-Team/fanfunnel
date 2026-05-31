@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
@@ -11,6 +11,10 @@ import NearMissBeat, {
   type NearMiss,
 } from "./NearMissBeat";
 import PityBeat from "./PityBeat";
+import HappyHourBanner from "./fan/HappyHourBanner";
+import ReferralWidget from "./fan/ReferralWidget";
+import WishlistSection from "./fan/WishlistSection";
+import ChatPanel from "./fan/ChatPanel";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -37,6 +41,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [spinsRemaining, setSpinsRemaining] = useState(pass.spinsRemaining);
   const [result, setResult] = useState<WheelResult | null>(null);
   const [won, setWon] = useState<Prize | null>(null);
+  const [wonShareId, setWonShareId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [nearMiss, setNearMiss] = useState<NearMiss | null>(null);
@@ -45,7 +50,14 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
+  // Phase 5b: age-gate / ToS. Blocks everything until acknowledged.
+  const [needsAck, setNeedsAck] = useState(pass.needsAck ?? false);
   const size = useWheelSize();
+
+  // Track the previous spin count so we can fire the out-of-spins auto-message
+  // exactly once on the 1→0 edge (a top-up later can re-arm it).
+  const prevSpins = useRef(pass.spinsRemaining);
+  const outroFired = useRef(false);
 
   // Canvas needs a real color string (it can't read the --brand CSS var).
   const brand = pass.wheel.brandColor ?? "#ec4899";
@@ -81,12 +93,29 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setSpinsRemaining(data.spinsRemaining);
       setResult({ index: data.prizeIndex, nonce: Date.now() });
       setWon(prize);
+      setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
       setPityAwarded(data.pityAwarded === true);
     } catch {
       setError("Network error. Try again.");
       setBusy(false);
     }
   }, [canSpin, pass.token]);
+
+  // On the 1→0 spins transition (a spin that just emptied the balance), nudge
+  // the fan via chat once. A later top-up (>0) re-arms the one-shot guard.
+  useEffect(() => {
+    const prev = prevSpins.current;
+    if (spinsRemaining > 0) outroFired.current = false;
+    if (prev > 0 && spinsRemaining === 0 && !outroFired.current) {
+      outroFired.current = true;
+      void fetch("/api/messages/auto-outro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: pass.token }),
+      }).catch(() => {});
+    }
+    prevSpins.current = spinsRemaining;
+  }, [spinsRemaining, pass.token]);
 
   const handleSpinEnd = useCallback(() => {
     setBusy(false);
@@ -134,6 +163,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           </p>
         )}
       </header>
+
+      {pass.happyHour && <HappyHourBanner status={pass.happyHour} />}
 
       {/* Wheel with a soft brand halo behind it for depth. */}
       <div className="reveal-scale relative flex items-center justify-center" style={{ animationDelay: "0.15s" }}>
@@ -216,8 +247,32 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         </div>
       )}
 
+      <WishlistSection
+        token={pass.token}
+        prizes={pass.wheel.prizes}
+        initial={pass.wishlist ?? []}
+      />
+
+      {pass.referral && pass.referral.code && (
+        <ReferralWidget
+          token={pass.token}
+          code={pass.referral.code}
+          bonusPerReferral={pass.referral.bonusPerReferral}
+        />
+      )}
+
+      <ChatPanel
+        token={pass.token}
+        unlocked={pass.chatUnlocked ?? false}
+        creatorTitle={pass.creatorTitle}
+      />
+
       {reveal && won && (
-        <PrizeModal prize={won} onClose={() => setReveal(false)} />
+        <PrizeModal
+          prize={won}
+          shareId={wonShareId}
+          onClose={() => setReveal(false)}
+        />
       )}
 
       {pity && (
@@ -230,13 +285,144 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           onDone={() => setNearMiss(null)}
         />
       )}
+
+      {needsAck && (
+        <AgeGate
+          token={pass.token}
+          creatorTitle={pass.creatorTitle}
+          onAck={() => setNeedsAck(false)}
+        />
+      )}
     </div>
   );
 }
 
-function PrizeModal({ prize, onClose }: { prize: Prize; onClose: () => void }) {
+/**
+ * A blocking age + terms gate shown over the whole page until the fan confirms
+ * they're 18+ and accepts the terms. On confirm we persist the acknowledgement
+ * (POST /api/fans/ack) and dismiss locally so the fan can spin.
+ */
+function AgeGate({
+  token,
+  creatorTitle,
+  onAck,
+}: {
+  token: string;
+  creatorTitle: string;
+  onAck: () => void;
+}) {
+  const [adult, setAdult] = useState(false);
+  const [terms, setTerms] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const ready = adult && terms && !busy;
+
+  const confirm = async () => {
+    if (!ready) return;
+    setBusy(true);
+    try {
+      await fetch("/api/fans/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+    } catch {
+      /* best-effort — dismiss anyway so the fan isn't stuck */
+    } finally {
+      onAck();
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agegate-title"
+      style={{ animation: "ff-fade 0.2s ease-out" }}
+    >
+      <div className="card relative w-full max-w-sm rounded-[1.75rem] p-8">
+        <div className="text-center">
+          <div className="text-4xl">🔞</div>
+          <h2
+            id="agegate-title"
+            className="mt-3 font-[family-name:var(--font-display)] text-xl font-extrabold text-ink"
+          >
+            Before you spin
+          </h2>
+          <p className="mt-2 text-sm text-muted text-pretty">
+            {creatorTitle} requires you to confirm your age and agree to the
+            terms before playing.
+          </p>
+        </div>
+
+        <div className="mt-6 space-y-3 text-left text-sm">
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3">
+            <input
+              type="checkbox"
+              checked={adult}
+              onChange={(e) => setAdult(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+            />
+            <span className="text-ink">I am 18 years of age or older.</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3">
+            <input
+              type="checkbox"
+              checked={terms}
+              onChange={(e) => setTerms(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+            />
+            <span className="text-ink">
+              I agree to the Terms of Service and acknowledge prizes are subject
+              to the creator&rsquo;s fulfilment.
+            </span>
+          </label>
+        </div>
+
+        <button
+          onClick={confirm}
+          disabled={!ready}
+          className="btn-brand mt-6 w-full rounded-2xl py-3.5 font-extrabold tracking-wide disabled:opacity-40"
+        >
+          {busy ? "Confirming…" : "Enter & spin"}
+        </button>
+      </div>
+      <style>{`
+        @keyframes ff-fade { from { opacity: 0 } to { opacity: 1 } }
+      `}</style>
+    </div>
+  );
+}
+
+function PrizeModal({
+  prize,
+  shareId,
+  onClose,
+}: {
+  prize: Prize;
+  shareId: string | null;
+  onClose: () => void;
+}) {
   const color = prize.color ?? RARITY_COLORS[prize.rarity];
   const isBig = prize.rarity === "epic" || prize.rarity === "legendary";
+  const [shared, setShared] = useState(false);
+
+  const share = async () => {
+    if (!shareId) return;
+    const url = `${window.location.origin}/share/${shareId}`;
+    const text = `I just won ${prize.label}! 🎉`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: prize.label, text, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShared(true);
+        setTimeout(() => setShared(false), 1500);
+      }
+    } catch {
+      /* user cancelled or share unavailable */
+    }
+  };
 
   return (
     <div
@@ -260,7 +446,19 @@ function PrizeModal({ prize, onClose }: { prize: Prize; onClose: () => void }) {
         >
           {RARITY_LABEL[prize.rarity]}
         </span>
-        <div className="my-5 text-6xl">{prize.emoji ?? "🎁"}</div>
+        {/* Rarity medallion — a tinted gradient halo behind the emoji so
+            photoless wins still feel premium, scaled up for epic/legendary. */}
+        <div
+          className="mx-auto my-6 grid place-items-center rounded-full"
+          style={{
+            width: isBig ? 132 : 112,
+            height: isBig ? 132 : 112,
+            background: `radial-gradient(circle at 50% 35%, color-mix(in oklab, ${color} 45%, transparent), color-mix(in oklab, ${color} 12%, transparent) 70%)`,
+            boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${color} 45%, transparent), 0 12px 40px -12px color-mix(in oklab, ${color} 60%, transparent)`,
+          }}
+        >
+          <span style={{ fontSize: isBig ? 64 : 52 }}>{prize.emoji ?? "🎁"}</span>
+        </div>
         <h2 className="font-[family-name:var(--font-display)] text-2xl font-extrabold text-ink text-balance">
           {prize.label}
         </h2>
@@ -270,9 +468,18 @@ function PrizeModal({ prize, onClose }: { prize: Prize; onClose: () => void }) {
         <p className="mt-5 text-sm text-muted">
           Screenshot this and send it to your creator to claim your prize!
         </p>
+        {shareId && (
+          <button
+            onClick={share}
+            className="mt-6 w-full rounded-2xl border py-3 font-semibold text-ink transition hover:brightness-110"
+            style={{ borderColor: color }}
+          >
+            {shared ? "Link copied!" : "Share your win ↗"}
+          </button>
+        )}
         <button
           onClick={onClose}
-          className="btn-brand mt-6 w-full rounded-2xl py-3 font-bold"
+          className="btn-brand mt-3 w-full rounded-2xl py-3 font-bold"
           style={{ ["--brand" as string]: color }}
         >
           Awesome!
