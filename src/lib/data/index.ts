@@ -12,6 +12,7 @@ import type {
   AdminOverview,
   AppRole,
   CreatorOverview,
+  FanAccountSummary,
   FanPassView,
   RedemptionItem,
   RedemptionStatus,
@@ -21,6 +22,7 @@ import {
   mockSpin,
   mockCreatePass,
   mockGrantSpins,
+  mockListFans,
   mockGetOverview,
   mockSetRedemptionStatus,
   mockGetWheel,
@@ -332,6 +334,57 @@ export async function grantSpins(
     .single();
   if (error || !updated) return { error: "db_error" };
   return { spinsRemaining: updated.spins_remaining };
+}
+
+/**
+ * The creator's persistent fan accounts (+ their links). Loaded by the Fans
+ * tab on mount so accounts survive a page refresh.
+ */
+export async function listFans(): Promise<FanAccountSummary[]> {
+  if (!isSupabaseConfigured()) return mockListFans();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("fans")
+    .select(
+      `id, display_name, handle, spins_remaining, spins_granted_total, created_at,
+       fan_passes(token, created_at),
+       spins(prize_label, prize_rarity, created_at)`
+    )
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const rows = (data ?? []) as unknown as {
+    id: string;
+    display_name: string | null;
+    handle: string | null;
+    spins_remaining: number;
+    spins_granted_total: number;
+    fan_passes: { token: string; created_at: string }[] | null;
+    spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[] | null;
+  }[];
+
+  return rows.map((r) => {
+    const wins = (r.spins ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return {
+      fanId: r.id,
+      name: r.display_name ?? r.handle ?? "Fan",
+      spinsRemaining: r.spins_remaining,
+      grantedTotal: r.spins_granted_total,
+      links: (r.fan_passes ?? [])
+        .slice()
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .map((p) => ({ token: p.token })),
+      lastWin: wins[0]
+        ? { label: wins[0].prize_label, rarity: wins[0].prize_rarity, at: wins[0].created_at }
+        : null,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

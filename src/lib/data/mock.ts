@@ -6,6 +6,7 @@ import type {
   AdminAccount,
   AdminOverview,
   CreatorOverview,
+  FanAccountSummary,
   FanPassView,
   RedemptionItem,
   RedemptionStatus,
@@ -222,6 +223,23 @@ export function mockGrantSpins(token: string, n: number) {
   if (!fan) return null;
   fan.spinsRemaining += Math.max(0, n);
   return fan.spinsRemaining;
+}
+
+export function mockListFans(): FanAccountSummary[] {
+  const tokensByFan = new Map<string, string[]>();
+  for (const [token, fanId] of store.tokens) {
+    (tokensByFan.get(fanId) ?? tokensByFan.set(fanId, []).get(fanId)!).push(token);
+  }
+  return Array.from(store.fans.values()).map((f) => ({
+    fanId: f.id,
+    name: f.name,
+    spinsRemaining: f.spinsRemaining,
+    grantedTotal: f.spinsRemaining,
+    links: (tokensByFan.get(f.id) ?? []).map((token) => ({ token })),
+    lastWin: f.wins[0]
+      ? { label: f.wins[0].label, rarity: f.wins[0].rarity, at: f.wins[0].at }
+      : null,
+  }));
 }
 
 export function mockGetOverview(): CreatorOverview {

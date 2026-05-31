@@ -114,15 +114,36 @@ export default function Wheel({
       ctx.strokeStyle = "rgba(255,255,255,0.5)";
       ctx.stroke();
 
+      // Label: shrink to fit the slice (radial length AND angular thickness) so
+      // nothing clips at the rim. Only ellipsize as a last resort at min size.
       ctx.save();
       ctx.rotate(start + seg / 2);
       ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.shadowColor = "rgba(0,0,0,0.35)";
-      ctx.shadowBlur = 2;
-      ctx.font = `600 ${Math.max(11, size * 0.033)}px var(--font-geist-sans), system-ui, sans-serif`;
-      const text = `${prize.emoji ? prize.emoji + " " : ""}${prize.label}`;
-      ctx.fillText(truncate(text, 18), radius - 14, 5);
+      ctx.shadowColor = "rgba(0,0,0,0.5)";
+      ctx.shadowBlur = 3;
+
+      const hubR = radius * 0.15;
+      const maxLen = radius - hubR - 20; // radial room from rim toward hub
+      const angularCap = seg * radius * 0.5; // keep text within its wedge
+      const setFont = (f: number) => {
+        ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
+      };
+      let font = Math.max(9, Math.min(size * 0.042, angularCap, 19));
+      let text = `${prize.emoji ? prize.emoji + " " : ""}${prize.label}`;
+      setFont(font);
+      while (ctx.measureText(text).width > maxLen && font > 9) {
+        font -= 0.5;
+        setFont(font);
+      }
+      if (ctx.measureText(text).width > maxLen) {
+        while (text.length > 2 && ctx.measureText(text + "…").width > maxLen) {
+          text = text.slice(0, -1);
+        }
+        text = text.replace(/\s+$/, "") + "…";
+      }
+      ctx.fillText(text, radius - 14, 0);
       ctx.restore();
     });
 
@@ -253,8 +274,4 @@ export default function Wheel({
       />
     </div>
   );
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }

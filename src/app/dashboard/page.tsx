@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import DashboardClient from "@/components/dashboard/DashboardClient";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { getWheel } from "@/lib/data";
@@ -30,7 +31,10 @@ export default async function DashboardPage() {
   const initialWheel = (await getWheel()) ?? SAMPLE_WHEEL;
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black">
+    <main
+      className="min-h-[100dvh] overflow-x-clip bg-base"
+      style={{ "--brand": initialWheel.brandColor ?? "#ec4899" } as CSSProperties}
+    >
       <DashboardClient
         isAdmin={isAdmin}
         email={email}

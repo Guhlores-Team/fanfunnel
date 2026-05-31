@@ -36,6 +36,16 @@ export interface RedemptionItem {
   at: string; // ISO timestamp
 }
 
+/** A persistent fan account with its links — for the creator's Fans tab. */
+export interface FanAccountSummary {
+  fanId: string;
+  name: string;
+  spinsRemaining: number;
+  grantedTotal: number;
+  links: { token: string }[];
+  lastWin: { label: string; rarity: Rarity; at: string } | null;
+}
+
 export interface CreatorMetrics {
   fans: number;
   spinsPlayed: number;
