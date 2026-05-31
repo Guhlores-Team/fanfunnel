@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
@@ -54,6 +54,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [needsAck, setNeedsAck] = useState(pass.needsAck ?? false);
   const size = useWheelSize();
 
+  // Track the previous spin count so we can fire the out-of-spins auto-message
+  // exactly once on the 1→0 edge (a top-up later can re-arm it).
+  const prevSpins = useRef(pass.spinsRemaining);
+  const outroFired = useRef(false);
+
   // Canvas needs a real color string (it can't read the --brand CSS var).
   const brand = pass.wheel.brandColor ?? "#ec4899";
   const canSpin = spinsRemaining > 0 && !busy;
@@ -95,6 +100,22 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setBusy(false);
     }
   }, [canSpin, pass.token]);
+
+  // On the 1→0 spins transition (a spin that just emptied the balance), nudge
+  // the fan via chat once. A later top-up (>0) re-arms the one-shot guard.
+  useEffect(() => {
+    const prev = prevSpins.current;
+    if (spinsRemaining > 0) outroFired.current = false;
+    if (prev > 0 && spinsRemaining === 0 && !outroFired.current) {
+      outroFired.current = true;
+      void fetch("/api/messages/auto-outro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: pass.token }),
+      }).catch(() => {});
+    }
+    prevSpins.current = spinsRemaining;
+  }, [spinsRemaining, pass.token]);
 
   const handleSpinEnd = useCallback(() => {
     setBusy(false);

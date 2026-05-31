@@ -5,7 +5,9 @@ import type { ChatMessage } from "@/lib/data/types";
 
 /**
  * Spin-gated DM thread with the creator. Fans with ≥1 spin (chatUnlocked) can
- * message; otherwise they see a top-up nudge. Polls every 5s while open.
+ * message; otherwise they see a top-up nudge. Polls every 3s while open, and
+ * every 12s while closed so a creator reply surfaces an unread dot on the 💬
+ * button. Fans aren't authed, so this stays HTTP polling (no realtime).
  */
 export default function ChatPanel({
   token,
@@ -20,7 +22,42 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [hasUnread, setHasUnread] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  // Guard so the auto-intro is only requested once per mount.
+  const introRequested = useRef(false);
+
+  // "Last seen" creator-message timestamp, persisted per token so the unread
+  // dot survives reloads. Read lazily (client-only) to stay SSR-safe.
+  const seenKey = `ff_chat_seen_${token}`;
+  const readSeen = useCallback((): string => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(seenKey) ?? "";
+    } catch {
+      return "";
+    }
+  }, [seenKey]);
+  const writeSeen = useCallback(
+    (at: string) => {
+      if (typeof window === "undefined") return;
+      try {
+        window.localStorage.setItem(seenKey, at);
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    [seenKey]
+  );
+
+  // Latest creator-message timestamp in a list (or "" when none).
+  const latestCreatorAt = (list: ChatMessage[]): string => {
+    let latest = "";
+    for (const m of list) {
+      if (m.sender === "creator" && m.at > latest) latest = m.at;
+    }
+    return latest;
+  };
 
   const load = useCallback(async () => {
     try {
@@ -29,20 +66,71 @@ export default function ChatPanel({
       });
       if (res.ok) {
         const d = await res.json();
-        setMessages(d.messages ?? []);
+        const list: ChatMessage[] = d.messages ?? [];
+        setMessages(list);
+        // While the panel is open the fan is "seeing" everything; mark read.
+        const latest = latestCreatorAt(list);
+        if (latest) writeSeen(latest);
+        setHasUnread(false);
       }
     } catch {
       /* transient */
     }
-  }, [token]);
+  }, [token, writeSeen]);
 
+  // Lightweight closed-panel poll: just detect whether a creator message newer
+  // than the fan's last view exists, and toggle the unread dot.
+  const checkUnread = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const d = await res.json();
+      const list: ChatMessage[] = d.messages ?? [];
+      const latest = latestCreatorAt(list);
+      setHasUnread(latest !== "" && latest > readSeen());
+    } catch {
+      /* transient */
+    }
+  }, [token, readSeen]);
+
+  // When the panel OPENS and is unlocked: request the auto-intro once (so the
+  // greeting is waiting), then load + poll fast (3s).
   useEffect(() => {
     if (!open || !unlocked) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load thread on open, then poll
-    load();
-    const id = setInterval(load, 5000);
+    let live = true;
+    const run = async () => {
+      if (!introRequested.current) {
+        introRequested.current = true;
+        try {
+          await fetch("/api/messages/auto-intro", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (live) await load();
+    };
+    run();
+    const id = setInterval(load, 3000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [open, unlocked, load, token]);
+
+  // While the panel is CLOSED (and unlocked): poll slowly (12s) for unread.
+  useEffect(() => {
+    if (open || !unlocked) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- poll for unread, then poll
+    checkUnread();
+    const id = setInterval(checkUnread, 12000);
     return () => clearInterval(id);
-  }, [open, unlocked, load]);
+  }, [open, unlocked, checkUnread]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -75,6 +163,13 @@ export default function ChatPanel({
         aria-label="Message creator"
       >
         💬 Message
+        {hasUnread && !open && (
+          <span
+            aria-label="New message"
+            className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full border-2 border-surface"
+            style={{ background: "var(--brand)" }}
+          />
+        )}
       </button>
 
       {open && (

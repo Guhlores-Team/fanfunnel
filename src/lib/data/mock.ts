@@ -10,6 +10,7 @@ import type {
   CampaignPack,
   CampaignStats,
   ChatMessage,
+  ChatSettings,
   CohortRow,
   CreatorMetricsExtra,
   CreatorOverview,
@@ -166,7 +167,16 @@ interface Store {
   leaderboardEnabled: boolean;
   // Phase 5b
   webhooks: MockWebhook[];
+  // Wave 3: editable auto intro/outro chat messages (creator-level).
+  chatIntro: string | null;
+  chatOutro: string | null;
 }
+
+// Wave 3: flirty defaults so the auto-messages feature works out of the box.
+const DEFAULT_CHAT_INTRO =
+  "Hey you 😘 so glad you're here — spin and let's see what you get…";
+const DEFAULT_CHAT_OUTRO =
+  "Out of spins already? 🥵 Top me up and let's keep going…";
 
 /** Short, unique id with a stable prefix (mirrors the file's existing style). */
 function genId(prefix: string): string {
@@ -362,6 +372,8 @@ const store: Store =
     messages: [],
     leaderboardEnabled: false,
     webhooks: [],
+    chatIntro: DEFAULT_CHAT_INTRO,
+    chatOutro: DEFAULT_CHAT_OUTRO,
   });
 
 // A store pinned by an older dev-server build may predate these fields, so
@@ -381,6 +393,9 @@ store.referrals ??= [];
 store.messages ??= [];
 store.leaderboardEnabled ??= false;
 store.webhooks ??= [];
+// Wave 3: backfill auto-message defaults on stores pinned before they existed.
+if (store.chatIntro === undefined) store.chatIntro = DEFAULT_CHAT_INTRO;
+if (store.chatOutro === undefined) store.chatOutro = DEFAULT_CHAT_OUTRO;
 
 // Migrate a store pinned before the multi-wheel refactor: a `wheel` single
 // field may exist on the old shape. Fold it into the wheels map as active.
@@ -2106,6 +2121,80 @@ export function mockSendCreatorMessage(
     fanId,
     sender: "creator",
     body: text,
+    readAt: null,
+    at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+// --- Wave 3: editable auto intro/outro --------------------------------------
+
+export function mockGetChatSettings(): ChatSettings {
+  return { intro: store.chatIntro, outro: store.chatOutro };
+}
+
+export function mockSetChatSettings(input: {
+  intro?: string | null;
+  outro?: string | null;
+}): { ok: true } {
+  if (input.intro !== undefined) {
+    const t = (input.intro ?? "").trim();
+    store.chatIntro = t || null;
+  }
+  if (input.outro !== undefined) {
+    const t = (input.outro ?? "").trim();
+    store.chatOutro = t || null;
+  }
+  return { ok: true };
+}
+
+/**
+ * Auto-send the creator's greeting when a fan first opens chat: only if the
+ * creator has a non-empty intro AND the thread currently has zero messages.
+ * Idempotent (no-op once any message exists).
+ */
+export function mockEnsureChatIntro(
+  token: string
+): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  const intro = (store.chatIntro ?? "").trim();
+  if (!intro) return { ok: true };
+  const hasAny = store.messages.some((m) => m.fanId === fan.id);
+  if (hasAny) return { ok: true };
+  store.messages.push({
+    id: genId("msg"),
+    fanId: fan.id,
+    sender: "creator",
+    body: intro,
+    readAt: null,
+    at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+/**
+ * Auto-send the creator's out-of-spins nudge: only if the creator has a
+ * non-empty outro AND the most-recent message isn't already that exact outro
+ * (guards against spamming).
+ */
+export function mockSendChatOutro(
+  token: string
+): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  const outro = (store.chatOutro ?? "").trim();
+  if (!outro) return { ok: true };
+  const mine = store.messages
+    .filter((m) => m.fanId === fan.id)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  const last = mine[mine.length - 1];
+  if (last && last.sender === "creator" && last.body === outro) return { ok: true };
+  store.messages.push({
+    id: genId("msg"),
+    fanId: fan.id,
+    sender: "creator",
+    body: outro,
     readAt: null,
     at: new Date().toISOString(),
   });

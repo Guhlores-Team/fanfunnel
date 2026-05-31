@@ -34,6 +34,8 @@ export type MessageSender = "fan" | "creator";
 export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null }
 /** Phase 3: a creator's inbox thread with one fan. */
 export interface FanThread { fanId: string; fanName: string; lastBody: string; lastAt: string; unread: number }
+/** Wave 3: a creator's editable auto intro/outro chat messages. */
+export interface ChatSettings { intro: string | null; outro: string | null }
 
 /**
  * Everything the fan-facing page needs, resolved from a pass token.

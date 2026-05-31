@@ -40,6 +40,7 @@ import type {
   HappyHourStatus,
   ReferralOverview,
   ChatMessage,
+  ChatSettings,
   FanThread,
   SpinVerification,
   Webhook,
@@ -107,6 +108,10 @@ import {
   mockListThreads,
   mockGetThread,
   mockSendCreatorMessage,
+  mockGetChatSettings,
+  mockSetChatSettings,
+  mockEnsureChatIntro,
+  mockSendChatOutro,
   mockGetPublicWheelTeaser,
   mockGetSpinVerification,
   mockListWebhooks,
@@ -3587,6 +3592,136 @@ export async function sendCreatorMessage(
     fan_id: fanId,
     sender: "creator",
     body: trimmed,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// --- Wave 3: editable auto intro/outro --------------------------------------
+
+/** The creator's editable auto greeting + out-of-spins messages (authed/RLS). */
+export async function getChatSettings(): Promise<ChatSettings> {
+  if (!isSupabaseConfigured()) return mockGetChatSettings();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { intro: null, outro: null };
+
+  const { data } = await sb
+    .from("profiles")
+    .select("chat_intro, chat_outro")
+    .eq("id", user.id)
+    .maybeSingle();
+  const row = data as { chat_intro: string | null; chat_outro: string | null } | null;
+  return { intro: row?.chat_intro ?? null, outro: row?.chat_outro ?? null };
+}
+
+/** Update the creator's auto greeting + out-of-spins messages (authed/RLS). */
+export async function setChatSettings(input: {
+  intro?: string | null;
+  outro?: string | null;
+}): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetChatSettings(input);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const upd: Record<string, unknown> = {};
+  if (input.intro !== undefined) {
+    const t = (input.intro ?? "").trim();
+    upd.chat_intro = t || null;
+  }
+  if (input.outro !== undefined) {
+    const t = (input.outro ?? "").trim();
+    upd.chat_outro = t || null;
+  }
+  if (Object.keys(upd).length === 0) return { ok: true };
+
+  const { error } = await sb.from("profiles").update(upd).eq("id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Auto-send the creator's greeting when a fan first opens chat (service role:
+ * fans aren't authed). Inserts the intro as a `creator` message only if the
+ * creator has a non-empty chat_intro AND the thread has ZERO messages.
+ * Idempotent: a no-op once any message exists.
+ */
+export async function ensureChatIntro(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockEnsureChatIntro(token);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("chat_intro")
+    .eq("id", resolved.creatorId)
+    .maybeSingle();
+  const intro = ((profile as { chat_intro: string | null } | null)?.chat_intro ?? "").trim();
+  if (!intro) return { ok: true };
+
+  const { count } = await sb
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_id", resolved.creatorId)
+    .eq("fan_id", resolved.fanId);
+  if ((count ?? 0) > 0) return { ok: true };
+
+  const { error } = await sb.from("messages").insert({
+    creator_id: resolved.creatorId,
+    fan_id: resolved.fanId,
+    sender: "creator",
+    body: intro,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Auto-send the creator's out-of-spins nudge (service role). Inserts the outro
+ * as a `creator` message only if the creator has a non-empty chat_outro AND the
+ * most-recent message isn't already that exact outro (guards against spamming).
+ */
+export async function sendChatOutro(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSendChatOutro(token);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("chat_outro")
+    .eq("id", resolved.creatorId)
+    .maybeSingle();
+  const outro = ((profile as { chat_outro: string | null } | null)?.chat_outro ?? "").trim();
+  if (!outro) return { ok: true };
+
+  const { data: lastRow } = await sb
+    .from("messages")
+    .select("sender, body")
+    .eq("creator_id", resolved.creatorId)
+    .eq("fan_id", resolved.fanId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const last = lastRow as { sender: "fan" | "creator"; body: string } | null;
+  if (last && last.sender === "creator" && last.body === outro) return { ok: true };
+
+  const { error } = await sb.from("messages").insert({
+    creator_id: resolved.creatorId,
+    fan_id: resolved.fanId,
+    sender: "creator",
+    body: outro,
   });
   return error ? { error: "db_error" } : { ok: true };
 }
