@@ -34,6 +34,7 @@ import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
 import PackPresets from "@/components/dashboard/PackPresets";
 import InboxPanel from "@/components/dashboard/InboxPanel";
 import BoostsPanel from "@/components/dashboard/BoostsPanel";
+import PrizePhoto from "@/components/dashboard/PrizePhoto";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -1831,6 +1832,11 @@ function WheelEditor({
                     ))}
                   </div>
                   <p className="mt-1 text-[11px] text-muted">Tip: type or paste any emoji.</p>
+
+                  <PrizePhoto
+                    imageUrl={p.imageUrl}
+                    onChange={(url) => updatePrize(p.id, { imageUrl: url })}
+                  />
 
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <Field label="Rarity">

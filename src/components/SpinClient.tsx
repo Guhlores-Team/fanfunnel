@@ -318,7 +318,16 @@ function PrizeModal({
         >
           {RARITY_LABEL[prize.rarity]}
         </span>
-        <div className="my-5 text-6xl">{prize.emoji ?? "🎁"}</div>
+        {prize.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={prize.imageUrl}
+            alt={prize.label}
+            className="mx-auto my-5 h-44 w-44 rounded-2xl object-cover"
+          />
+        ) : (
+          <div className="my-5 text-6xl">{prize.emoji ?? "🎁"}</div>
+        )}
         <h2 className="font-[family-name:var(--font-display)] text-2xl font-extrabold text-ink text-balance">
           {prize.label}
         </h2>
