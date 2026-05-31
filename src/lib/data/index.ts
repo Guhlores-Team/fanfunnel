@@ -2319,7 +2319,7 @@ export async function getMetricsExtra(
   if (!user) {
     return {
       trend: bucketByDay([], n),
-      funnel: { links: 0, spun: 0, fulfilled: 0 },
+      funnel: { fans: 0, spun: 0, fulfilled: 0 },
       revenueTrend: bucketCentsByDay([], n),
     };
   }

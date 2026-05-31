@@ -45,22 +45,22 @@ Conventions (match existing code):
 
 ---
 
-## Phase 4 — Deeper analytics
+## Phase 4 — Deeper analytics ✅ done
 
-- [ ] **#17 Best-time heatmap** — reads `spins` timestamps → hour×weekday grid. No migration. `getEngagementHeatmap()` → `/api/analytics/heatmap` → heatmap panel in metrics.
-- [ ] **#18 Prize ROI** — migration `0006`: `prizes.cost_cents`. `getPrizeRoi()` (value given vs spins/revenue) → `/api/analytics/roi` → ROI table. Cost editable in wheel editor.
-- [ ] **#19 Cohort retention** — reads `grants`; cohort by first-grant campaign, repeat-grant curve. `getCohortRetention()` → `/api/analytics/cohorts` → cohort grid.
+- [x] **#17 Best-time heatmap** — reads `spins` timestamps → hour×weekday grid. No migration. `getEngagementHeatmap()` → `/api/analytics/heatmap` → heatmap panel in metrics.
+- [x] **#18 Prize ROI** — migration `0006`: `prizes.cost_cents`. `getPrizeRoi()` (value given vs spins/revenue) → `/api/analytics/roi` → ROI table. Cost editable in wheel editor.
+- [x] **#19 Cohort retention** — reads `grants`; cohort by first-grant campaign, repeat-grant curve. `getCohortRetention()` → `/api/analytics/cohorts` → cohort grid.
 
 All three live behind an **Analytics** dashboard tab.
 
 ---
 
-## Phase 5 — Trust, safety & ops
+## Phase 5 — Trust, safety & ops ✅ done
 
-- [ ] **#13 Fulfilment workflow** — migration `0007`: extend `redemptions` (`status` add `in_progress`, `notes`, `due_at`). Richer Prizes queue (status chips, due/SLA flag, note).
-- [ ] **#10 Bulk CSV import** — `POST /api/fans/import` (parse rows → create fans + optional grant/campaign). Dashboard upload + preview. No migration.
-- [ ] **#23 Provably-fair** — migration `0008`: `spins.server_seed_hash`, `server_seed`, `nonce`. Commit hashed seed pre-spin, reveal post-spin. `/verify/[shareId]` page recomputes the outcome.
-- [ ] **#24 Webhooks + age-gate/ToS** — migration `0009`: `webhooks`, `fans.acked_at`. Pending-prize webhook fire; age-gate + ToS acceptance gate on the spin page before first spin.
+- [x] **#13 Fulfilment workflow** — migration `0007`: extend `redemptions` (`status` add `in_progress`, `notes`, `due_at`). Richer Prizes queue (status chips, due/SLA flag, note).
+- [x] **#10 Bulk CSV import** — `POST /api/fans/import` (parse rows → create fans + optional grant/campaign). Dashboard upload + preview. No migration.
+- [x] **#23 Provably-fair** — migration `0008`: `spins.server_seed_hash`, `server_seed`, `nonce`. Commit hashed seed pre-spin, reveal post-spin. `/verify/[shareId]` page recomputes the outcome.
+- [x] **#24 Webhooks + age-gate/ToS** — migration `0009`: `webhooks`, `fans.acked_at`. Pending-prize webhook fire; age-gate + ToS acceptance gate on the spin page before first spin.
 
 ---
 
@@ -83,10 +83,10 @@ If either default is wrong, they're isolated and easy to flip.
 
 ## Polish bugs (fold into integration pass, after phases land)
 
-- [ ] **5. Revenue sparkline raw cents** — `Sparkline.tsx` total/peak labels bypass `formatCents`. Wrap them.
-- [ ] **6. Conversion 4/6 counts links** — switch `ConversionFunnel` to per-fan (created → spun → fulfilled).
-- [ ] **3. QR popover overflow** — `QrButton.tsx` renders off-screen left on mobile → centered modal/sheet on small screens.
-- [ ] **2. Mobile horizontal overflow** — track the element wider than the viewport (nowrap stat row / wheel canvas) and clamp.
+- [x] **5. Revenue sparkline raw cents** — `Sparkline.tsx` total/peak labels bypass `formatCents`. Wrap them.
+- [x] **6. Conversion 4/6 counts links** — switch `ConversionFunnel` to per-fan (created → spun → fulfilled).
+- [x] **3. QR popover overflow** — `QrButton.tsx` renders off-screen left on mobile → centered modal/sheet on small screens.
+- [x] **2. Mobile horizontal overflow** — track the element wider than the viewport (nowrap stat row / wheel canvas) and clamp.
 
 ---
 
