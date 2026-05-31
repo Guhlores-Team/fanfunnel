@@ -62,16 +62,17 @@ export default async function SharePage({
           >
             {RARITY_LABEL[card.rarity] ?? card.rarity}
           </span>
-          {card.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={card.imageUrl}
-              alt={card.prizeLabel}
-              className="mx-auto my-5 h-40 w-40 rounded-2xl object-cover"
-            />
-          ) : (
-            <div className="my-5 text-6xl">{card.emoji ?? "🎁"}</div>
-          )}
+          <div
+            className="mx-auto my-6 grid place-items-center rounded-full"
+            style={{
+              width: 120,
+              height: 120,
+              background: `radial-gradient(circle at 50% 35%, color-mix(in oklab, ${card.color} 45%, transparent), color-mix(in oklab, ${card.color} 12%, transparent) 70%)`,
+              boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${card.color} 45%, transparent)`,
+            }}
+          >
+            <span className="text-5xl">{card.emoji ?? "🎁"}</span>
+          </div>
           <h1 className="font-[family-name:var(--font-display)] text-2xl font-extrabold text-ink text-balance">
             {card.prizeLabel}
           </h1>

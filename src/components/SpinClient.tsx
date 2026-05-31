@@ -425,16 +425,19 @@ function PrizeModal({
         >
           {RARITY_LABEL[prize.rarity]}
         </span>
-        {prize.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={prize.imageUrl}
-            alt={prize.label}
-            className="mx-auto my-5 h-44 w-44 rounded-2xl object-cover"
-          />
-        ) : (
-          <div className="my-5 text-6xl">{prize.emoji ?? "🎁"}</div>
-        )}
+        {/* Rarity medallion — a tinted gradient halo behind the emoji so
+            photoless wins still feel premium, scaled up for epic/legendary. */}
+        <div
+          className="mx-auto my-6 grid place-items-center rounded-full"
+          style={{
+            width: isBig ? 132 : 112,
+            height: isBig ? 132 : 112,
+            background: `radial-gradient(circle at 50% 35%, color-mix(in oklab, ${color} 45%, transparent), color-mix(in oklab, ${color} 12%, transparent) 70%)`,
+            boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${color} 45%, transparent), 0 12px 40px -12px color-mix(in oklab, ${color} 60%, transparent)`,
+          }}
+        >
+          <span style={{ fontSize: isBig ? 64 : 52 }}>{prize.emoji ?? "🎁"}</span>
+        </div>
         <h2 className="font-[family-name:var(--font-display)] text-2xl font-extrabold text-ink text-balance">
           {prize.label}
         </h2>
