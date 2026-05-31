@@ -11,6 +11,10 @@ import NearMissBeat, {
   type NearMiss,
 } from "./NearMissBeat";
 import PityBeat from "./PityBeat";
+import HappyHourBanner from "./fan/HappyHourBanner";
+import ReferralWidget from "./fan/ReferralWidget";
+import WishlistSection from "./fan/WishlistSection";
+import ChatPanel from "./fan/ChatPanel";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -37,6 +41,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [spinsRemaining, setSpinsRemaining] = useState(pass.spinsRemaining);
   const [result, setResult] = useState<WheelResult | null>(null);
   const [won, setWon] = useState<Prize | null>(null);
+  const [wonShareId, setWonShareId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [nearMiss, setNearMiss] = useState<NearMiss | null>(null);
@@ -81,6 +86,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setSpinsRemaining(data.spinsRemaining);
       setResult({ index: data.prizeIndex, nonce: Date.now() });
       setWon(prize);
+      setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
       setPityAwarded(data.pityAwarded === true);
     } catch {
       setError("Network error. Try again.");
@@ -134,6 +140,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           </p>
         )}
       </header>
+
+      {pass.happyHour && <HappyHourBanner status={pass.happyHour} />}
 
       {/* Wheel with a soft brand halo behind it for depth. */}
       <div className="reveal-scale relative flex items-center justify-center" style={{ animationDelay: "0.15s" }}>
@@ -216,8 +224,32 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         </div>
       )}
 
+      <WishlistSection
+        token={pass.token}
+        prizes={pass.wheel.prizes}
+        initial={pass.wishlist ?? []}
+      />
+
+      {pass.referral && pass.referral.code && (
+        <ReferralWidget
+          token={pass.token}
+          code={pass.referral.code}
+          bonusPerReferral={pass.referral.bonusPerReferral}
+        />
+      )}
+
+      <ChatPanel
+        token={pass.token}
+        unlocked={pass.chatUnlocked ?? false}
+        creatorTitle={pass.creatorTitle}
+      />
+
       {reveal && won && (
-        <PrizeModal prize={won} onClose={() => setReveal(false)} />
+        <PrizeModal
+          prize={won}
+          shareId={wonShareId}
+          onClose={() => setReveal(false)}
+        />
       )}
 
       {pity && (
@@ -234,9 +266,35 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   );
 }
 
-function PrizeModal({ prize, onClose }: { prize: Prize; onClose: () => void }) {
+function PrizeModal({
+  prize,
+  shareId,
+  onClose,
+}: {
+  prize: Prize;
+  shareId: string | null;
+  onClose: () => void;
+}) {
   const color = prize.color ?? RARITY_COLORS[prize.rarity];
   const isBig = prize.rarity === "epic" || prize.rarity === "legendary";
+  const [shared, setShared] = useState(false);
+
+  const share = async () => {
+    if (!shareId) return;
+    const url = `${window.location.origin}/share/${shareId}`;
+    const text = `I just won ${prize.label}! 🎉`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: prize.label, text, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShared(true);
+        setTimeout(() => setShared(false), 1500);
+      }
+    } catch {
+      /* user cancelled or share unavailable */
+    }
+  };
 
   return (
     <div
@@ -270,9 +328,18 @@ function PrizeModal({ prize, onClose }: { prize: Prize; onClose: () => void }) {
         <p className="mt-5 text-sm text-muted">
           Screenshot this and send it to your creator to claim your prize!
         </p>
+        {shareId && (
+          <button
+            onClick={share}
+            className="mt-6 w-full rounded-2xl border py-3 font-semibold text-ink transition hover:brightness-110"
+            style={{ borderColor: color }}
+          >
+            {shared ? "Link copied!" : "Share your win ↗"}
+          </button>
+        )}
         <button
           onClick={onClose}
-          className="btn-brand mt-6 w-full rounded-2xl py-3 font-bold"
+          className="btn-brand mt-3 w-full rounded-2xl py-3 font-bold"
           style={{ ["--brand" as string]: color }}
         >
           Awesome!
