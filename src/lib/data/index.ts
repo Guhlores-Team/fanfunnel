@@ -1108,6 +1108,66 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   });
 }
 
+// --- Creator CRM: whales (top LTV) + dormant fans to win back ----------------
+
+export interface CrmFan {
+  fanId: string;
+  name: string;
+  totalSpent: number; // cents (lifetime = LTV)
+  spinsRemaining: number;
+  lastActiveAt: string | null;
+  daysSince: number | null;
+  primaryToken: string | null;
+}
+export interface CreatorCrm {
+  totalLtv: number; // cents across all fans
+  avgLtv: number; // cents per fan with spend
+  whales: CrmFan[]; // top spenders, desc
+  dormant: CrmFan[]; // spent before, quiet 14+ days
+}
+
+/**
+ * Whale detection + win-back, derived from existing fan data (no new tables):
+ *   • LTV per fan = sum of their grant amounts (real money tied to their spins).
+ *   • Whales = fans ranked by LTV desc (your highest-value relationships).
+ *   • Dormant = fans who HAVE spent (LTV > 0) but whose last win/activity is
+ *     14+ days ago — the cheapest revenue is a fan you already converted.
+ */
+export async function getCreatorCrm(): Promise<CreatorCrm> {
+  const fans = await listFans();
+  const now = Date.now();
+  const DAY = 86_400_000;
+
+  const enrich = (f: FanAccountSummary): CrmFan => {
+    const lastActiveAt = f.lastWin?.at ?? null;
+    const daysSince = lastActiveAt
+      ? Math.floor((now - new Date(lastActiveAt).getTime()) / DAY)
+      : null;
+    return {
+      fanId: f.fanId,
+      name: f.name,
+      totalSpent: f.totalSpent,
+      spinsRemaining: f.spinsRemaining,
+      lastActiveAt,
+      daysSince,
+      primaryToken: f.primaryToken,
+    };
+  };
+
+  const all = fans.map(enrich);
+  const spenders = all.filter((f) => f.totalSpent > 0);
+  const totalLtv = spenders.reduce((s, f) => s + f.totalSpent, 0);
+  const avgLtv = spenders.length ? Math.round(totalLtv / spenders.length) : 0;
+
+  const whales = [...spenders].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 10);
+  const dormant = spenders
+    .filter((f) => f.daysSince !== null && f.daysSince >= 14)
+    .sort((a, b) => b.totalSpent - a.totalSpent)
+    .slice(0, 20);
+
+  return { totalLtv, avgLtv, whales, dormant };
+}
+
 /**
  * A single fan account's full detail, for the creator's fan drill-in. RLS keeps
  * this scoped to the owning creator, so we use the auth-scoped client.

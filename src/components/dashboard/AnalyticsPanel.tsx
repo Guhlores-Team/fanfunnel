@@ -8,6 +8,7 @@ import type {
 } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { formatCents } from "@/lib/format";
+import CrmPanel from "@/components/dashboard/CrmPanel";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -19,6 +20,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export default function AnalyticsPanel() {
   return (
     <div className="space-y-8">
+      <CrmPanel />
       <HeatmapCard />
       <PrizeRoiCard />
       <CohortCard />
