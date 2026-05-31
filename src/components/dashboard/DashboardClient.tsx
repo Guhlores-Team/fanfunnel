@@ -191,7 +191,7 @@ export default function DashboardClient({
         </button>
       )}
 
-      <nav className="-mx-4 mt-6 flex gap-0.5 overflow-x-auto border-b border-line px-4 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+      <nav className="-mx-4 mt-6 flex flex-nowrap gap-0.5 overflow-x-auto overflow-y-hidden border-b border-line px-4 [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain] [scrollbar-width:none] [touch-action:pan-x] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
         {tabs.map(([id, label]) => (
           <button
             key={id}
@@ -891,16 +891,17 @@ function FansPanel() {
               }}
             />
           </Field>
-          <Field label="$ amount (total, optional)">
+          <Field label="$ per spin (optional)">
             <input
               type="number"
               min={0}
               step={0.01}
               className="ff-input tnum w-28"
               placeholder="0.00"
-              value={amount}
+              value={spins > 0 && amount ? (Number(amount) / spins).toFixed(2) : ""}
               onChange={(e) => {
-                setAmount(e.target.value);
+                const per = Number(e.target.value);
+                setAmount(per > 0 ? (per * spins).toFixed(2) : "");
                 setPackId(null);
               }}
             />
@@ -1392,19 +1393,25 @@ function AccountCard({
             }}
           />
         </Field>
-        <Field label="$ amount">
+        <Field label="$ per spin">
           <input
             type="number"
             min={0}
             step={0.01}
             className="ff-input tnum w-24"
             placeholder="0.00"
-            value={amount}
+            value={topUp > 0 && amount ? (Number(amount) / topUp).toFixed(2) : ""}
             onChange={(e) => {
-              setAmount(e.target.value);
+              const per = Number(e.target.value);
+              setAmount(per > 0 ? (per * topUp).toFixed(2) : "");
               setPackId(null);
             }}
           />
+          {amount && Number(amount) > 0 && topUp > 0 && (
+            <p className="mt-1 text-[11px] text-muted">
+              {formatCents(Math.round(Number(amount) * 100))} total
+            </p>
+          )}
         </Field>
         <Field label="Campaign">
           <select

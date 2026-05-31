@@ -14,21 +14,44 @@ export default function PendingClient({
   email: string;
 }) {
   const [displayName, setDisplayName] = useState("");
+  const [platform, setPlatform] = useState("");
   const [socials, setSocials] = useState("");
   const [audienceSize, setAudienceSize] = useState("");
+  const [country, setCountry] = useState("");
+  const [referral, setReferral] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Require the fields we actually vet on.
+  const ready =
+    displayName.trim().length > 1 &&
+    socials.trim().length > 3 &&
+    platform.trim().length > 0 &&
+    audienceSize.trim().length > 0;
+
   const submit = async () => {
+    if (!ready) {
+      setError("Please fill in your name, main platform, links, and audience size.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
+      // Fold the extra vetting fields into the note so no migration is needed.
+      const composedNote = [
+        platform && `Main platform: ${platform}`,
+        country && `Based in: ${country}`,
+        referral && `Heard about us: ${referral}`,
+        note && `Notes: ${note}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
       const res = await fetch("/api/creator-application", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ displayName, socials, audienceSize, note }),
+        body: JSON.stringify({ displayName, socials, audienceSize, note: composedNote }),
       });
       if (!res.ok) throw new Error();
       setSent(true);
@@ -93,7 +116,7 @@ export default function PendingClient({
       </div>
 
       <div className="mt-6 space-y-3">
-        <Field label="Creator / display name">
+        <Field label="Creator / display name *">
           <input
             className="ff-input w-full"
             value={displayName}
@@ -101,21 +124,45 @@ export default function PendingClient({
             placeholder="How fans know you"
           />
         </Field>
-        <Field label="Your links / handles">
+        <Field label="Main platform *">
+          <input
+            className="ff-input w-full"
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+            placeholder="OnlyFans / Fansly / Fanvue / etc."
+          />
+        </Field>
+        <Field label="Your links / handles *">
           <textarea
             className="ff-input w-full"
             rows={2}
             value={socials}
             onChange={(e) => setSocials(e.target.value)}
-            placeholder="OnlyFans, Instagram, X, etc."
+            placeholder="Profile URL + Instagram / X handles (so we can verify it's you)"
           />
         </Field>
-        <Field label="Audience size (rough)">
+        <Field label="Audience size *">
           <input
             className="ff-input w-full"
             value={audienceSize}
             onChange={(e) => setAudienceSize(e.target.value)}
-            placeholder="e.g. ~5k subscribers"
+            placeholder="e.g. ~5k subscribers / 30k followers"
+          />
+        </Field>
+        <Field label="Based in (country)">
+          <input
+            className="ff-input w-full"
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            placeholder="For payouts & compliance"
+          />
+        </Field>
+        <Field label="How did you hear about us?">
+          <input
+            className="ff-input w-full"
+            value={referral}
+            onChange={(e) => setReferral(e.target.value)}
+            placeholder="Agency, a friend, X, etc."
           />
         </Field>
         <Field label="Anything else (optional)">
@@ -127,13 +174,14 @@ export default function PendingClient({
             placeholder="Tell us why FanFunnel's a fit"
           />
         </Field>
+        <p className="text-[11px] text-muted">* required</p>
       </div>
 
       {error && <p className="mt-3 text-center text-sm text-amber-300">{error}</p>}
 
       <button
         onClick={submit}
-        disabled={busy || !displayName.trim()}
+        disabled={busy || !ready}
         className="btn-brand mt-5 w-full rounded-2xl py-3 font-bold disabled:opacity-50"
       >
         {busy ? "Submitting…" : "Submit request"}
