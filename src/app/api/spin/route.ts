@@ -33,7 +33,14 @@ export async function POST(req: Request) {
   const result = await spin(token);
 
   if ("error" in result) {
-    const status = result.error === "not_found" ? 404 : 409;
+    const status =
+      result.error === "not_found"
+        ? 404
+        : result.error === "rate_limited"
+          ? 429
+          : result.error === "blocked"
+            ? 403
+            : 409;
     return NextResponse.json({ error: result.error }, { status });
   }
 

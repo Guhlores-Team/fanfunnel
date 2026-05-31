@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getFanPass } from "@/lib/data";
 import SpinClient from "@/components/SpinClient";
+import SafetyMenu from "@/components/fan/SafetyMenu";
 import type { CSSProperties } from "react";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
@@ -27,8 +28,9 @@ export default async function SpinPage({
       <div className="relative z-[1] flex w-full justify-center">
         <SpinClient pass={pass} />
       </div>
-      <footer className="relative z-[1] mt-10 text-center text-[11px] tracking-wide text-muted/70">
-        Powered by FanFunnel · every spin wins
+      <footer className="relative z-[1] mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted/70">
+        <span>Powered by FanFunnel · every spin wins</span>
+        <SafetyMenu token={token} />
       </footer>
     </main>
   );

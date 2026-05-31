@@ -130,7 +130,7 @@ function randomToken(): string {
 }
 
 export type { FanPassView } from "./types";
-export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" };
+export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" };
 
 // Phase 3 referral economy: how many referrals a fan can be credited for, and
 // how many bonus spins each credited referral grants to BOTH parties.
@@ -418,13 +418,25 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   const { data: remaining, error: claimErr } = await sb.rpc("claim_spin", {
     p_token: token,
   });
+  // -1 is the rate-limit sentinel from claim_spin (too many spins too fast).
+  if (remaining === -1) return { error: "rate_limited" };
   if (claimErr || remaining === null || remaining === undefined) {
-    const { data: exists } = await sb
+    // Distinguish blocked/self-excluded/inactive from out-of-spins.
+    const { data: existsRow } = await sb
       .from("fan_passes")
-      .select("id")
+      .select("id, is_active, self_excluded_at, fan:fans(blocked_at)")
       .eq("token", token)
       .maybeSingle();
-    return { error: exists ? "no_spins" : "not_found" };
+    const row = existsRow as unknown as {
+      id: string;
+      is_active: boolean;
+      self_excluded_at: string | null;
+      fan: { blocked_at: string | null } | null;
+    } | null;
+    if (!row) return { error: "not_found" };
+    if (row.fan?.blocked_at || row.self_excluded_at || !row.is_active)
+      return { error: "blocked" };
+    return { error: "no_spins" };
   }
   const spinsRemaining = remaining as number;
 
@@ -1286,6 +1298,64 @@ export async function deleteFan(
   if (!user) return { error: "unauthorized" };
 
   const { error } = await sb.from("fans").delete().eq("id", fanId);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** Block or unblock a fan — blocked fans' links stop working (enforced in claim_spin). */
+export async function setFanBlocked(
+  fanId: string,
+  blocked: boolean
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { error } = await sb
+    .from("fans")
+    .update({ blocked_at: blocked ? new Date().toISOString() : null })
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** A fan reports the creator behind their token (service-role; fans aren't authed). */
+export async function reportCreator(
+  token: string,
+  reason: string,
+  detail?: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  if (!reason.trim()) return { error: "empty" };
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("fan_passes")
+    .select("creator_id, fan_id")
+    .eq("token", token)
+    .maybeSingle();
+  const pass = data as { creator_id: string; fan_id: string } | null;
+  if (!pass) return { error: "not_found" };
+  const { error } = await sb.from("creator_reports").insert({
+    creator_id: pass.creator_id,
+    fan_id: pass.fan_id,
+    token,
+    reason: reason.slice(0, 120),
+    detail: detail?.slice(0, 2000) ?? null,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** A fan pauses (self-excludes) their own link from the spin page. */
+export async function selfExclude(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = createServiceClient();
+  const { error } = await sb
+    .from("fan_passes")
+    .update({ self_excluded_at: new Date().toISOString(), is_active: false })
+    .eq("token", token);
   return error ? { error: "db_error" } : { ok: true };
 }
 

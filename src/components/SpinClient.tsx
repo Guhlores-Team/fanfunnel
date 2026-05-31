@@ -87,7 +87,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         setError(
           body.error === "no_spins"
             ? "You're out of spins! Tip your creator to get more. 💖"
-            : "Something went wrong. Try again."
+            : body.error === "rate_limited"
+              ? "Whoa, slow down a sec — try again in a moment. 😅"
+              : body.error === "blocked"
+                ? "This link isn't active. Reach out to your creator."
+                : "Something went wrong. Try again."
         );
         setBusy(false);
         return;
