@@ -188,7 +188,15 @@ export default function Wheel({
       });
 
       const offset = ((lines.length - 1) * lineH) / 2;
-      lines.forEach((l, idx) => ctx.fillText(l, radius - 14, -offset + idx * lineH));
+      if (lines.length > 1) {
+        // Center the two lines relative to each other, anchored at the rim.
+        ctx.textAlign = "center";
+        const longest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+        const cxText = radius - 14 - longest / 2;
+        lines.forEach((l, idx) => ctx.fillText(l, cxText, -offset + idx * lineH));
+      } else {
+        ctx.fillText(lines[0], radius - 14, 0);
+      }
       ctx.restore();
     });
 
