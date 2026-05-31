@@ -104,17 +104,17 @@ export default function DashboardClient({
   email: string | null;
   initialWheel: WheelConfig;
 }) {
-  const [tab, setTab] = useState<Tab>("metrics");
+  const [tab, setTab] = useState<Tab>("editor");
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
   const overview = useOverview();
   const pending = overview.data?.metrics.pending ?? 0;
 
   const tabs: [Tab, string][] = [
-    ["metrics", "Metrics"],
+    ["editor", "Wheel"],
+    ["fans", "Fans"],
     ["prizes", "Prizes"],
-    ["fans", "Fans & links"],
     ["campaigns", "Campaigns"],
-    ["editor", "Wheel editor"],
+    ["metrics", "Metrics"],
   ];
 
   return (
@@ -169,12 +169,12 @@ export default function DashboardClient({
         </button>
       )}
 
-      <nav className="mt-6 flex gap-1 overflow-x-auto border-b border-line">
+      <nav className="mt-6 flex gap-0.5 border-b border-line [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`-mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3.5 py-2.5 text-sm font-semibold transition ${
+            className={`-mb-px flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] font-semibold transition sm:text-sm ${
               tab === id
                 ? "border-[var(--brand)] text-ink"
                 : "border-transparent text-muted hover:text-ink"
@@ -1073,6 +1073,7 @@ function WheelEditor({
                       </button>
                     ))}
                   </div>
+                  <p className="mt-1 text-[11px] text-muted">Tip: type or paste any emoji.</p>
 
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <Field label="Rarity">

@@ -25,21 +25,52 @@ const SPIN_MS = 4400;
 const EXTRA_TURNS = 6;
 
 // Greedy word-wrap: split into lines that each fit maxWidth at the current font.
+// Tokens break on spaces AND on hyphens; hyphen sub-tokens keep their trailing
+// hyphen and join with no extra space, so "Behind-the-Scenes" can wrap.
+interface Token {
+  text: string;
+  /** Whether a space precedes this token when joined onto the current line. */
+  space: boolean;
+}
+
+function tokenize(text: string): Token[] {
+  const tokens: Token[] = [];
+  for (const word of text.split(" ")) {
+    if (word === "") continue;
+    if (word.includes("-")) {
+      // Split keeping the hyphen attached to the preceding part:
+      // "Behind-the-Scenes" → ["Behind-", "the-", "Scenes"].
+      const parts = word.split("-");
+      parts.forEach((part, i) => {
+        const isLast = i === parts.length - 1;
+        const piece = isLast ? part : part + "-";
+        if (piece === "") return;
+        // First sub-token of the word follows a space; the rest do not.
+        tokens.push({ text: piece, space: i === 0 });
+      });
+    } else {
+      tokens.push({ text: word, space: true });
+    }
+  }
+  return tokens;
+}
+
 function wrapLines(
   ctx: CanvasRenderingContext2D,
   text: string,
   maxWidth: number
 ): string[] {
-  const words = text.split(" ");
+  const tokens = tokenize(text);
   const lines: string[] = [];
   let cur = "";
-  for (const w of words) {
-    const test = cur ? cur + " " + w : w;
+  for (const tok of tokens) {
+    const sep = cur && tok.space ? " " : "";
+    const test = cur ? cur + sep + tok.text : tok.text;
     if (!cur || ctx.measureText(test).width <= maxWidth) {
       cur = test;
     } else {
       lines.push(cur);
-      cur = w;
+      cur = tok.text;
     }
   }
   if (cur) lines.push(cur);

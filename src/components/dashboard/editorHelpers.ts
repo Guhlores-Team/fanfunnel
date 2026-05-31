@@ -5,6 +5,7 @@ import { type Prize, RARITY_ORDER } from "@/lib/games/wheel/types";
 
 /** Curated emoji palette offered as quick-pick suggestions in the editor. */
 export const EMOJI_SUGGESTIONS: string[] = [
+  // Originals
   "🎁",
   "🤳",
   "🎙️",
@@ -17,6 +18,33 @@ export const EMOJI_SUGGESTIONS: string[] = [
   "💎",
   "🔥",
   "⭐",
+  // Faces / people
+  "😍",
+  "😘",
+  "🥰",
+  "😈",
+  // Hearts
+  "💖",
+  "💕",
+  "❤️‍🔥",
+  // Money
+  "💰",
+  "💵",
+  "🤑",
+  // Media
+  "🎥",
+  "📺",
+  "🎧",
+  // Gifts / treats
+  "🍫",
+  "🌹",
+  "🎀",
+  "🥂",
+  // Sparkle / fun
+  "🎉",
+  "✨",
+  "🌟",
+  "💫",
 ];
 
 /**
