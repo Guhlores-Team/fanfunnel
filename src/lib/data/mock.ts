@@ -5,6 +5,8 @@ import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
   AdminOverview,
+  Campaign,
+  CampaignStats,
   CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
@@ -41,6 +43,8 @@ interface Store {
   tokens: Map<string, string>; // token -> fanId
   redemptions: RedemptionItem[]; // creator-wide fulfilment queue (newest first)
   accounts: AdminAccount[]; // demo creator/admin accounts for the admin panel
+  campaigns: Campaign[]; // creator's campaigns (newest first)
+  tokenCampaign: Map<string, string>; // token -> campaignId
 }
 
 // A few seeded accounts so the admin panel is explorable in demo mode.
@@ -108,7 +112,14 @@ const store: Store =
     tokens: new Map(),
     redemptions: [],
     accounts: seedAccounts(),
+    campaigns: [],
+    tokenCampaign: new Map(),
   });
+
+// A store pinned by an older dev-server build may predate these fields, so
+// backfill them defensively rather than crashing on the new code paths.
+store.campaigns ??= [];
+store.tokenCampaign ??= new Map();
 
 if (!store.fans.has("demo-fan")) {
   store.fans.set("demo-fan", {
@@ -199,7 +210,8 @@ export function mockSpin(token: string) {
 export function mockCreatePass(
   name: string,
   spins: number,
-  fanId?: string
+  fanId?: string,
+  campaignId?: string
 ): { token: string; fanId: string } {
   const add = Math.max(0, spins);
   let fan = fanId ? store.fans.get(fanId) : undefined;
@@ -217,6 +229,7 @@ export function mockCreatePass(
     "-" +
     Math.random().toString(36).slice(2, 8);
   store.tokens.set(token, fan.id);
+  if (campaignId) store.tokenCampaign.set(token, campaignId);
   return { token, fanId: fan.id };
 }
 
@@ -326,6 +339,69 @@ export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
   if (!r) return null;
   r.status = status;
   return r;
+}
+
+// --- Campaigns --------------------------------------------------------------
+
+export function mockCreateCampaign(name: string): Campaign {
+  const campaign: Campaign = {
+    id: "camp-" + Math.random().toString(36).slice(2, 9),
+    name: name.trim() || "Campaign",
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  };
+  store.campaigns.unshift(campaign);
+  return structuredClone(campaign);
+}
+
+export function mockListCampaigns(): Campaign[] {
+  // Already stored newest-first.
+  return structuredClone(store.campaigns);
+}
+
+export function mockGetCampaignStats(): CampaignStats[] {
+  return store.campaigns.map((campaign) => {
+    // A campaign's links are the tokens tagged with it; resolve each to a fan.
+    const fanIds = new Set<string>();
+    for (const [token, campaignId] of store.tokenCampaign) {
+      if (campaignId !== campaign.id) continue;
+      const fanId = store.tokens.get(token);
+      if (fanId) fanIds.add(fanId);
+    }
+
+    const fans = [...fanIds]
+      .map((id) => store.fans.get(id))
+      .filter((f): f is MockFan => !!f);
+
+    // Approximation: the mock has no per-spin campaign link, so a campaign's
+    // spins/top prize are derived from the win history of the fans reached via
+    // its links. A fan reached by two campaigns counts toward both.
+    const spins = fans.reduce((sum, f) => sum + f.wins.length, 0);
+    const uniqueFans = fanIds.size;
+
+    // Approximation: redemptions carry no fan_id/campaign link in the mock, so
+    // fulfilled is matched by fan NAME. Two fans sharing a name would collide.
+    const names = new Set(fans.map((f) => f.name));
+    const fulfilled = store.redemptions.filter(
+      (r) => r.status === "fulfilled" && names.has(r.fanName)
+    ).length;
+
+    // Top prize: the mode of those fans' win labels (carrying its rarity).
+    const counts = new Map<string, { label: string; rarity: Rarity; count: number }>();
+    for (const f of fans) {
+      for (const w of f.wins) {
+        const cur = counts.get(w.label);
+        if (cur) cur.count += 1;
+        else counts.set(w.label, { label: w.label, rarity: w.rarity, count: 1 });
+      }
+    }
+    let topPrize: { label: string; rarity: Rarity; count: number } | null = null;
+    for (const entry of counts.values()) {
+      if (!topPrize || entry.count > topPrize.count) topPrize = entry;
+    }
+
+    return { campaign: structuredClone(campaign), spins, uniqueFans, fulfilled, topPrize };
+  });
 }
 
 // --- Admin -----------------------------------------------------------------

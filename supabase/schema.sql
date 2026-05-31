@@ -114,6 +114,22 @@ create index if not exists fan_passes_wheel_idx on public.fan_passes(wheel_id);
 create index if not exists fan_passes_fan_idx on public.fan_passes(fan_id);
 
 -- ---------------------------------------------------------------------------
+-- campaigns: a named grouping a creator can attach to the links they mint, so
+-- they can compare performance (spins, fans, fulfilment) across promotions.
+-- A fan_pass optionally belongs to one campaign.
+-- ---------------------------------------------------------------------------
+create table if not exists public.campaigns (
+  id uuid primary key default gen_random_uuid(),
+  creator_id uuid not null references public.profiles(id) on delete cascade,
+  name text not null,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists campaigns_creator_idx on public.campaigns(creator_id);
+alter table public.fan_passes add column if not exists campaign_id uuid references public.campaigns(id) on delete set null;
+create index if not exists fan_passes_campaign_idx on public.fan_passes(campaign_id);
+
+-- ---------------------------------------------------------------------------
 -- spins: immutable log of every spin (audit + metrics + anti-cheat).
 -- Prize fields are snapshotted so history survives prize edits/deletes.
 -- ---------------------------------------------------------------------------
@@ -258,6 +274,7 @@ alter table public.wheels      enable row level security;
 alter table public.prizes      enable row level security;
 alter table public.fans        enable row level security;
 alter table public.fan_passes  enable row level security;
+alter table public.campaigns   enable row level security;
 alter table public.spins       enable row level security;
 alter table public.redemptions enable row level security;
 
@@ -299,6 +316,11 @@ create policy fans_rw on public.fans for all
 
 drop policy if exists fan_passes_rw on public.fan_passes;
 create policy fan_passes_rw on public.fan_passes for all
+  using (creator_id = auth.uid() or public.is_admin())
+  with check (creator_id = auth.uid() or public.is_admin());
+
+drop policy if exists campaigns_rw on public.campaigns;
+create policy campaigns_rw on public.campaigns for all
   using (creator_id = auth.uid() or public.is_admin())
   with check (creator_id = auth.uid() or public.is_admin());
 

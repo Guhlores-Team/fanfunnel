@@ -4,7 +4,13 @@ import { createPass } from "@/lib/data";
 // Creates a unique, working fan pass and returns its token. The creator's
 // dashboard calls this so every generated link genuinely opens and spins.
 export async function POST(req: Request) {
-  let body: { name?: string; spins?: number; fanId?: string; wheelId?: string };
+  let body: {
+    name?: string;
+    spins?: number;
+    fanId?: string;
+    wheelId?: string;
+    campaignId?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -16,6 +22,7 @@ export async function POST(req: Request) {
     spins: Number(body.spins ?? 0),
     fanId: body.fanId,
     wheelId: body.wheelId,
+    campaignId: body.campaignId,
   });
 
   if ("error" in result) {

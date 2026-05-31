@@ -23,6 +23,10 @@ export interface FanPassView {
   recentWins: WonPrize[];
 }
 
+/** A creator's named grouping of links, for cross-promotion comparison. */
+export interface Campaign { id: string; name: string; isActive: boolean; createdAt: string }
+export interface CampaignStats { campaign: Campaign; spins: number; uniqueFans: number; fulfilled: number; topPrize: { label: string; rarity: Rarity; count: number } | null }
+
 export type RedemptionStatus = "pending" | "fulfilled" | "cancelled";
 
 /** A won prize in the creator's fulfilment queue. */

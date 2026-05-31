@@ -11,6 +11,8 @@ import type {
   AdminAccount,
   AdminOverview,
   AppRole,
+  Campaign,
+  CampaignStats,
   CreatorMetricsExtra,
   CreatorOverview,
   FanAccountSummary,
@@ -35,6 +37,9 @@ import {
   mockGetAdminOverview,
   mockUpdateAccount,
   mockCreateAccount,
+  mockCreateCampaign,
+  mockListCampaigns,
+  mockGetCampaignStats,
 } from "./mock";
 
 function randomToken(): string {
@@ -236,10 +241,11 @@ export async function createPass(opts: {
   spins: number;
   fanId?: string;
   wheelId?: string;
+  campaignId?: string;
 }): Promise<{ token: string; fanId: string } | { error: string }> {
   const spins = Math.max(0, Math.floor(opts.spins) || 0);
   if (!isSupabaseConfigured()) {
-    return mockCreatePass(opts.name, spins, opts.fanId);
+    return mockCreatePass(opts.name, spins, opts.fanId, opts.campaignId);
   }
 
   const sb = await createClient();
@@ -299,9 +305,154 @@ export async function createPass(opts: {
     creator_id: user.id,
     wheel_id: wheelId,
     fan_id: fanId,
+    campaign_id: opts.campaignId ?? null,
   });
   if (error) return { error: "db_error" };
   return { token, fanId };
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns: named groupings of links a creator can compare against each other.
+// ---------------------------------------------------------------------------
+
+export async function createCampaign(
+  name: string
+): Promise<{ campaign: Campaign } | { error: string }> {
+  if (!isSupabaseConfigured()) return { campaign: mockCreateCampaign(name) };
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data, error } = await sb
+    .from("campaigns")
+    .insert({ creator_id: user.id, name })
+    .select("id, name, is_active, created_at")
+    .single();
+  if (error || !data) return { error: "db_error" };
+
+  return {
+    campaign: {
+      id: data.id,
+      name: data.name,
+      isActive: data.is_active,
+      createdAt: data.created_at,
+    },
+  };
+}
+
+export async function listCampaigns(): Promise<Campaign[]> {
+  if (!isSupabaseConfigured()) return mockListCampaigns();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await sb
+    .from("campaigns")
+    .select("id, name, is_active, created_at")
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const rows = (data ?? []) as {
+    id: string;
+    name: string;
+    is_active: boolean;
+    created_at: string;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    isActive: r.is_active,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function getCampaignStats(): Promise<CampaignStats[]> {
+  if (!isSupabaseConfigured()) return mockGetCampaignStats();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const campaigns = await listCampaigns();
+
+  const result: CampaignStats[] = [];
+  for (const campaign of campaigns) {
+    // The campaign's links (creator-scoped via RLS) + the fan behind each.
+    const { data: passRows } = await sb
+      .from("fan_passes")
+      .select("id, fan_id")
+      .eq("creator_id", user.id)
+      .eq("campaign_id", campaign.id);
+
+    const passes = (passRows ?? []) as { id: string; fan_id: string | null }[];
+    const passIds = passes.map((p) => p.id);
+
+    if (passIds.length === 0) {
+      result.push({ campaign, spins: 0, uniqueFans: 0, fulfilled: 0, topPrize: null });
+      continue;
+    }
+
+    const uniqueFans = new Set(
+      passes.map((p) => p.fan_id).filter((id): id is string => !!id)
+    ).size;
+
+    // Spins on those passes (snapshot prize fields live on the spin row).
+    const { data: spinRows } = await sb
+      .from("spins")
+      .select("id, prize_label, prize_rarity")
+      .in("fan_pass_id", passIds);
+
+    const spins = (spinRows ?? []) as {
+      id: string;
+      prize_label: string;
+      prize_rarity: Rarity;
+    }[];
+    const spinIds = spins.map((s) => s.id);
+
+    // Fulfilled redemptions joined to those spins.
+    let fulfilled = 0;
+    if (spinIds.length > 0) {
+      const { count } = await sb
+        .from("redemptions")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "fulfilled")
+        .in("spin_id", spinIds);
+      fulfilled = count ?? 0;
+    }
+
+    // Top prize: the most frequent (label + rarity) among those spins.
+    const counts = new Map<
+      string,
+      { label: string; rarity: Rarity; count: number }
+    >();
+    for (const s of spins) {
+      const cur = counts.get(s.prize_label);
+      if (cur) cur.count += 1;
+      else counts.set(s.prize_label, { label: s.prize_label, rarity: s.prize_rarity, count: 1 });
+    }
+    let topPrize: { label: string; rarity: Rarity; count: number } | null = null;
+    for (const entry of counts.values()) {
+      if (!topPrize || entry.count > topPrize.count) topPrize = entry;
+    }
+
+    result.push({
+      campaign,
+      spins: spins.length,
+      uniqueFans,
+      fulfilled,
+      topPrize,
+    });
+  }
+
+  return result;
 }
 
 /** Top up spins on the fan account behind a token (e.g. after another tip). */

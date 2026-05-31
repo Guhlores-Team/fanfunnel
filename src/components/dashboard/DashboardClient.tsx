@@ -23,6 +23,7 @@ import Sparkline from "@/components/dashboard/Sparkline";
 import Funnel from "@/components/dashboard/Funnel";
 import { EmptyState, Field } from "./ui";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
+import CampaignsPanel from "@/components/dashboard/CampaignsPanel";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -31,7 +32,7 @@ import {
   reorder,
 } from "@/components/dashboard/editorHelpers";
 
-type Tab = "metrics" | "prizes" | "fans" | "editor";
+type Tab = "metrics" | "prizes" | "fans" | "campaigns" | "editor";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -112,6 +113,7 @@ export default function DashboardClient({
     ["metrics", "Metrics"],
     ["prizes", "Prizes"],
     ["fans", "Fans & links"],
+    ["campaigns", "Campaigns"],
     ["editor", "Wheel editor"],
   ];
 
@@ -205,6 +207,7 @@ export default function DashboardClient({
           />
         )}
         {tab === "fans" && <FansPanel />}
+        {tab === "campaigns" && <CampaignsPanel />}
         {tab === "editor" && (
           <WheelEditor wheel={wheel} setWheel={setWheel} initialWheel={initialWheel} />
         )}
@@ -587,6 +590,8 @@ function FansPanel() {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [name, setName] = useState("");
   const [spins, setSpins] = useState(3);
+  const [campaignId, setCampaignId] = useState<string>("");
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [openFanId, setOpenFanId] = useState<string | null>(null);
   const toast = useToast();
@@ -597,10 +602,15 @@ function FansPanel() {
     if (res.ok) setAccounts((await res.json()).fans ?? []);
     else setAccounts([]);
   }, []);
+  const loadCampaigns = useCallback(async () => {
+    const res = await fetch("/api/campaigns", { cache: "no-store" });
+    if (res.ok) setCampaigns((await res.json()).campaigns ?? []);
+  }, []);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     load();
-  }, [load]);
+    loadCampaigns();
+  }, [load, loadCampaigns]);
 
   async function call(body: object) {
     const res = await fetch("/api/passes", {
@@ -624,7 +634,7 @@ function FansPanel() {
   async function createAccount() {
     setCreating(true);
     try {
-      const data = await call({ name: name.trim(), spins });
+      const data = await call({ name: name.trim(), spins, campaignId: campaignId || undefined });
       if (data) {
         setName("");
         await load();
@@ -664,6 +674,20 @@ function FansPanel() {
               value={spins}
               onChange={(e) => setSpins(Math.max(1, Number(e.target.value)))}
             />
+          </Field>
+          <Field label="Campaign (optional)">
+            <select
+              className="ff-input w-44"
+              value={campaignId}
+              onChange={(e) => setCampaignId(e.target.value)}
+            >
+              <option value="">None</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </Field>
           <button
             onClick={createAccount}
