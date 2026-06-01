@@ -1,5 +1,4 @@
 import { getLeaderboard } from "@/lib/data";
-import { formatCents } from "@/lib/format";
 import type { CSSProperties } from "react";
 
 export const dynamic = "force-dynamic";
@@ -49,11 +48,11 @@ export default async function LeaderboardPage({
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-ink">{e.handle}</p>
                   <p className="text-xs text-muted">
-                    {e.spins} spins · {e.rareWins} rare wins
+                    {e.rareWins} rare {e.rareWins === 1 ? "win" : "wins"}
                   </p>
                 </div>
-                <span className="tnum text-sm font-bold text-ink">
-                  {formatCents(e.spentCents)}
+                <span className="tnum shrink-0 text-sm font-bold text-ink">
+                  {e.spins} <span className="text-xs font-normal text-muted">spins</span>
                 </span>
               </li>
             ))}
