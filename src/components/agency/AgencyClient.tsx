@@ -21,12 +21,17 @@ interface Member {
   displayName: string;
   role: string;
 }
+interface Invite {
+  id: string;
+  email: string;
+}
 interface Overview {
   org: { id: string; name: string } | null;
   isOwner: boolean;
   totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
   creators: CreatorStat[];
   members: Member[];
+  invites: Invite[];
 }
 
 const ROLES = ["manager", "chatter", "fulfiller", "analyst"] as const;
@@ -132,11 +137,34 @@ export default function AgencyClient() {
         <h2 className="text-lg font-bold">Creators</h2>
         {isOwner && (
           <AddByEmail
-            placeholder="Add creator by email"
+            placeholder="Invite creator by email"
+            cta="Invite"
             onAdd={(email) => run({ action: "add_creator", orgId: org.id, email })}
           />
         )}
       </div>
+
+      {isOwner && data.invites.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {data.invites.map((inv) => (
+            <div
+              key={inv.id}
+              className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] p-4"
+            >
+              <div className="min-w-0">
+                <p className="text-sm text-white/70">{inv.email}</p>
+                <p className="text-xs text-amber-300/80">Invited · awaiting acceptance</p>
+              </div>
+              <button
+                onClick={() => run({ action: "revoke_invite", inviteId: inv.id })}
+                className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white"
+              >
+                Revoke
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mt-3 space-y-2">
         {data.creators.map((c) => (
           <div
@@ -164,7 +192,7 @@ export default function AgencyClient() {
           </div>
         ))}
         {data.creators.length === 0 && (
-          <p className="text-sm text-white/40">No creators yet. Add one by email above.</p>
+          <p className="text-sm text-white/40">No creators yet. Invite one by email above — they join once they accept.</p>
         )}
       </div>
 
@@ -267,10 +295,12 @@ function CreateOrg({ onCreate }: { onCreate: (name: string) => Promise<boolean> 
 function AddByEmail({
   placeholder,
   withRole,
+  cta = "Add",
   onAdd,
 }: {
   placeholder: string;
   withRole?: boolean;
+  cta?: string;
   onAdd: (email: string, role?: string) => Promise<boolean>;
 }) {
   const [email, setEmail] = useState("");
@@ -308,7 +338,7 @@ function AddByEmail({
         disabled={busy}
         className="rounded-lg bg-pink-500 px-3 py-1.5 text-sm font-bold hover:bg-pink-400 disabled:opacity-50"
       >
-        Add
+        {cta}
       </button>
     </div>
   );

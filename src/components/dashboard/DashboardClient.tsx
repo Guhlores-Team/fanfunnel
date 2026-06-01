@@ -35,6 +35,7 @@ import PackPresets from "@/components/dashboard/PackPresets";
 import InboxPanel from "@/components/dashboard/InboxPanel";
 import BoostsPanel from "@/components/dashboard/BoostsPanel";
 import TodayPanel from "@/components/dashboard/TodayPanel";
+import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import AnalyticsPanel from "@/components/dashboard/AnalyticsPanel";
 import ImportFans from "@/components/dashboard/ImportFans";
 import {
@@ -174,6 +175,12 @@ export default function DashboardClient({
           )}
         </div>
       </header>
+
+      {email && (
+        <div className="mt-5">
+          <InvitesBanner />
+        </div>
+      )}
 
       {pending > 0 && tab !== "prizes" && (
         <button

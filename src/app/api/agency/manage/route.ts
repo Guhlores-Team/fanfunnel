@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import {
   createOrg,
-  addOrgCreator,
+  inviteOrgCreator,
+  revokeOrgInvite,
   removeOrgCreator,
   addOrgMember,
   removeOrgMember,
@@ -26,8 +27,11 @@ export async function POST(req: Request) {
     case "create_org":
       result = await createOrg(s("name"));
       break;
-    case "add_creator":
-      result = await addOrgCreator(s("orgId"), s("email"));
+    case "add_creator": // sends an invite; the creator must accept
+      result = await inviteOrgCreator(s("orgId"), s("email"));
+      break;
+    case "revoke_invite":
+      result = await revokeOrgInvite(s("inviteId"));
       break;
     case "remove_creator":
       result = await removeOrgCreator(s("orgId"), s("creatorId"));

@@ -3222,12 +3222,17 @@ export interface OrgMember {
   displayName: string;
   role: OrgRole;
 }
+export interface PendingInvite {
+  id: string;
+  email: string;
+}
 export interface AgencyOverview {
   org: { id: string; name: string } | null;
   isOwner: boolean;
   totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
   creators: OrgCreatorStat[];
   members: OrgMember[];
+  invites: PendingInvite[];
 }
 
 /** The agency roll-up for the org the signed-in user owns or belongs to. */
@@ -3278,6 +3283,16 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     revenue: Number(r.revenue),
   }));
 
+  // Pending outgoing invites (owner-only view; RLS returns none to staff).
+  const { data: inviteRows } = await sb
+    .from("org_invites")
+    .select("id, email")
+    .eq("org_id", org.id)
+    .eq("status", "pending");
+  const invites: PendingInvite[] = ((inviteRows ?? []) as { id: string; email: string }[]).map(
+    (r) => ({ id: r.id, email: r.email })
+  );
+
   const { data: memberRows } = await sb
     .from("org_members")
     .select("id, role, profile:profiles(id, email, display_name)")
@@ -3306,6 +3321,7 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     },
     creators,
     members,
+    invites,
   };
 }
 
@@ -3318,7 +3334,9 @@ export async function createOrg(name: string): Promise<{ ok: true } | { error: s
 }
 
 type OrgRpc =
-  | { fn: "org_add_creator"; args: { p_org: string; p_email: string } }
+  | { fn: "org_invite_creator"; args: { p_org: string; p_email: string } }
+  | { fn: "org_invite_revoke"; args: { p_invite: string } }
+  | { fn: "org_invite_respond"; args: { p_invite: string; p_accept: boolean } }
   | { fn: "org_remove_creator"; args: { p_org: string; p_creator: string } }
   | { fn: "org_add_member"; args: { p_org: string; p_email: string; p_role: OrgRole } }
   | { fn: "org_remove_member"; args: { p_member: string } }
@@ -3333,8 +3351,13 @@ async function agencyRpc(call: OrgRpc): Promise<{ ok: true } | { error: string }
   return data === "ok" ? { ok: true } : { error: String(data) };
 }
 
-export const addOrgCreator = (orgId: string, email: string) =>
-  agencyRpc({ fn: "org_add_creator", args: { p_org: orgId, p_email: email } });
+// Creators join via consent: the owner sends an invite, the creator accepts.
+export const inviteOrgCreator = (orgId: string, email: string) =>
+  agencyRpc({ fn: "org_invite_creator", args: { p_org: orgId, p_email: email } });
+export const revokeOrgInvite = (inviteId: string) =>
+  agencyRpc({ fn: "org_invite_revoke", args: { p_invite: inviteId } });
+export const respondToOrgInvite = (inviteId: string, accept: boolean) =>
+  agencyRpc({ fn: "org_invite_respond", args: { p_invite: inviteId, p_accept: accept } });
 export const removeOrgCreator = (orgId: string, creatorId: string) =>
   agencyRpc({ fn: "org_remove_creator", args: { p_org: orgId, p_creator: creatorId } });
 export const addOrgMember = (orgId: string, email: string, role: OrgRole) =>
@@ -3343,6 +3366,31 @@ export const removeOrgMember = (memberId: string) =>
   agencyRpc({ fn: "org_remove_member", args: { p_member: memberId } });
 export const scopeOrgCreator = (memberId: string, creatorId: string, on: boolean) =>
   agencyRpc({ fn: "org_scope_creator", args: { p_member: memberId, p_creator: creatorId, p_on: on } });
+
+export interface MyInvite {
+  id: string;
+  orgId: string;
+  orgName: string;
+}
+
+/** Pending agency invites addressed to the signed-in user (for their dashboard). */
+export async function getMyInvites(): Promise<MyInvite[]> {
+  if (!isSupabaseConfigured()) return [];
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+  const { data } = await sb
+    .from("org_invites")
+    .select("id, org_id, status, org:orgs(name)")
+    .eq("status", "pending");
+  return ((data ?? []) as unknown as {
+    id: string;
+    org_id: string;
+    org: { name: string } | null;
+  }[]).map((r) => ({ id: r.id, orgId: r.org_id, orgName: r.org?.name ?? "An agency" }));
+}
 
 export async function updateAccount(
   id: string,
