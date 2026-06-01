@@ -3309,6 +3309,41 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
   };
 }
 
+/** Create the caller's agency org (or return their existing one). */
+export async function createOrg(name: string): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  const { error } = await sb.rpc("org_create", { p_name: name });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+type OrgRpc =
+  | { fn: "org_add_creator"; args: { p_org: string; p_email: string } }
+  | { fn: "org_remove_creator"; args: { p_org: string; p_creator: string } }
+  | { fn: "org_add_member"; args: { p_org: string; p_email: string; p_role: OrgRole } }
+  | { fn: "org_remove_member"; args: { p_member: string } }
+  | { fn: "org_scope_creator"; args: { p_member: string; p_creator: string; p_on: boolean } };
+
+/** Run an owner-guarded agency RPC; the RPC returns a status string. */
+async function agencyRpc(call: OrgRpc): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  const { data, error } = await sb.rpc(call.fn, call.args);
+  if (error) return { error: "db_error" };
+  return data === "ok" ? { ok: true } : { error: String(data) };
+}
+
+export const addOrgCreator = (orgId: string, email: string) =>
+  agencyRpc({ fn: "org_add_creator", args: { p_org: orgId, p_email: email } });
+export const removeOrgCreator = (orgId: string, creatorId: string) =>
+  agencyRpc({ fn: "org_remove_creator", args: { p_org: orgId, p_creator: creatorId } });
+export const addOrgMember = (orgId: string, email: string, role: OrgRole) =>
+  agencyRpc({ fn: "org_add_member", args: { p_org: orgId, p_email: email, p_role: role } });
+export const removeOrgMember = (memberId: string) =>
+  agencyRpc({ fn: "org_remove_member", args: { p_member: memberId } });
+export const scopeOrgCreator = (memberId: string, creatorId: string, on: boolean) =>
+  agencyRpc({ fn: "org_scope_creator", args: { p_member: memberId, p_creator: creatorId, p_on: on } });
+
 export async function updateAccount(
   id: string,
   patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
