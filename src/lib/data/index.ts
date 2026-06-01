@@ -2924,6 +2924,114 @@ export async function getAdminOverview(): Promise<AdminOverview | null> {
   };
 }
 
+// --- Agency console (orgs + scoped seats) -----------------------------------
+
+export type OrgRole = "owner" | "manager" | "chatter" | "fulfiller" | "analyst";
+
+export interface OrgCreatorStat {
+  id: string;
+  displayName: string;
+  email: string;
+  wheels: number;
+  fans: number;
+  spins: number;
+  pending: number;
+  revenue: number; // cents
+}
+export interface OrgMember {
+  id: string;
+  profileId: string;
+  email: string;
+  displayName: string;
+  role: OrgRole;
+}
+export interface AgencyOverview {
+  org: { id: string; name: string } | null;
+  isOwner: boolean;
+  totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
+  creators: OrgCreatorStat[];
+  members: OrgMember[];
+}
+
+/** The agency roll-up for the org the signed-in user owns or belongs to. */
+export async function getAgencyOverview(): Promise<AgencyOverview | null> {
+  if (!isSupabaseConfigured()) return null;
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return null;
+
+  // Resolve the user's org: one they own, else one they're a member of.
+  const { data: ownedOrg } = await sb
+    .from("orgs")
+    .select("id, name")
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  let org = ownedOrg as { id: string; name: string } | null;
+  let isOwner = !!org;
+  if (!org) {
+    const { data: mem } = await sb
+      .from("org_members")
+      .select("org:orgs(id, name)")
+      .eq("profile_id", user.id)
+      .maybeSingle();
+    org = (mem as unknown as { org: { id: string; name: string } | null } | null)?.org ?? null;
+  }
+  if (!org) return null;
+
+  const { data: statRows } = await sb.rpc("org_account_stats", { p_org: org.id });
+  const creators: OrgCreatorStat[] = ((statRows ?? []) as {
+    id: string;
+    email: string | null;
+    display_name: string | null;
+    wheels: number;
+    fans: number;
+    spins: number;
+    pending: number;
+    revenue: number;
+  }[]).map((r) => ({
+    id: r.id,
+    displayName: r.display_name ?? r.email ?? "Creator",
+    email: r.email ?? "",
+    wheels: Number(r.wheels),
+    fans: Number(r.fans),
+    spins: Number(r.spins),
+    pending: Number(r.pending),
+    revenue: Number(r.revenue),
+  }));
+
+  const { data: memberRows } = await sb
+    .from("org_members")
+    .select("id, role, profile:profiles(id, email, display_name)")
+    .eq("org_id", org.id);
+  const members: OrgMember[] = ((memberRows ?? []) as unknown as {
+    id: string;
+    role: OrgRole;
+    profile: { id: string; email: string | null; display_name: string | null } | null;
+  }[]).map((m) => ({
+    id: m.id,
+    profileId: m.profile?.id ?? "",
+    email: m.profile?.email ?? "",
+    displayName: m.profile?.display_name ?? m.profile?.email ?? "Member",
+    role: m.role,
+  }));
+
+  return {
+    org,
+    isOwner,
+    totals: {
+      creators: creators.length,
+      fans: creators.reduce((s, c) => s + c.fans, 0),
+      spins: creators.reduce((s, c) => s + c.spins, 0),
+      pending: creators.reduce((s, c) => s + c.pending, 0),
+      revenue: creators.reduce((s, c) => s + c.revenue, 0),
+    },
+    creators,
+    members,
+  };
+}
+
 export async function updateAccount(
   id: string,
   patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
