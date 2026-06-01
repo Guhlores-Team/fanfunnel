@@ -3631,6 +3631,7 @@ export async function getLeaderboard(
       rareWins: rareCount.get(f.id) ?? 0,
     }))
     .sort((a, b) => b.spins - a.spins)
+    .slice(0, 100) // sane upper bound for the public board
     .map((e, i) => ({ rank: i + 1, ...e }));
 
   return { enabled: true, creatorTitle, entries };
