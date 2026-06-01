@@ -794,7 +794,10 @@ function FansPanel() {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [name, setName] = useState("");
   const [spins, setSpins] = useState(3);
-  const [amount, setAmount] = useState<string>("");
+  // Price the creator types is PER SPIN; it's its own state so typing isn't
+  // fought by a derived value. The total is computed from perSpin × spins.
+  const [perSpin, setPerSpin] = useState<string>("");
+  const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
   const [campaignId, setCampaignId] = useState<string>("");
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
@@ -869,7 +872,7 @@ function FansPanel() {
       });
       if (data) {
         setName("");
-        setAmount("");
+        setPerSpin("");
         setPackId(null);
         await load();
       }
@@ -944,10 +947,9 @@ function FansPanel() {
               step={0.01}
               className="ff-input tnum w-28"
               placeholder="0.00"
-              value={spins > 0 && amount ? (Number(amount) / spins).toFixed(2) : ""}
+              value={perSpin}
               onChange={(e) => {
-                const per = Number(e.target.value);
-                setAmount(per > 0 ? (per * spins).toFixed(2) : "");
+                setPerSpin(e.target.value);
                 setPackId(null);
               }}
             />
@@ -989,7 +991,7 @@ function FansPanel() {
               campaignId={campaignId}
               onPick={(p: CampaignPack) => {
                 setSpins(p.spins);
-                setAmount((p.amountCents / 100).toString());
+                setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
                 setPackId(p.id);
               }}
             />
@@ -1267,7 +1269,9 @@ function AccountCard({
   refresh: () => void;
 }) {
   const [topUp, setTopUp] = useState(3);
-  const [amount, setAmount] = useState<string>("");
+  // Per-spin price as its own state (see FansPanel) so typing two digits works.
+  const [perSpin, setPerSpin] = useState<string>("");
+  const amount = perSpin && topUp > 0 ? (Number(perSpin) * topUp).toFixed(2) : "";
   const [campaignId, setCampaignId] = useState<string>("");
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
@@ -1445,10 +1449,9 @@ function AccountCard({
             step={0.01}
             className="ff-input tnum w-24"
             placeholder="0.00"
-            value={topUp > 0 && amount ? (Number(amount) / topUp).toFixed(2) : ""}
+            value={perSpin}
             onChange={(e) => {
-              const per = Number(e.target.value);
-              setAmount(per > 0 ? (per * topUp).toFixed(2) : "");
+              setPerSpin(e.target.value);
               setPackId(null);
             }}
           />
@@ -1484,7 +1487,7 @@ function AccountCard({
               campaignId || undefined,
               packId
             );
-            setAmount("");
+            setPerSpin("");
             setPackId(null);
           }}
           className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
@@ -1498,7 +1501,7 @@ function AccountCard({
             campaignId={campaignId}
             onPick={(p: CampaignPack) => {
               setTopUp(p.spins);
-              setAmount((p.amountCents / 100).toString());
+              setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
               setPackId(p.id);
             }}
           />
