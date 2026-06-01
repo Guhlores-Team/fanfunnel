@@ -828,6 +828,8 @@ export function mockGetFanPass(token: string): FanPassView | null {
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
     chatUnlocked: chatUnlockedFor(fan),
     needsAck: fan.ackedAt == null,
+    creatorId: "demo-creator",
+    leaderboardEnabled: store.leaderboardEnabled,
   });
 }
 

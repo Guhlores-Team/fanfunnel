@@ -16,6 +16,7 @@ import ReferralWidget from "./fan/ReferralWidget";
 import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";
 import TopUpMoment from "./fan/TopUpMoment";
+import FanLeaderboard from "./fan/FanLeaderboard";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -258,6 +259,10 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             })}
           </div>
         </div>
+      )}
+
+      {pass.leaderboardEnabled && pass.creatorId && (
+        <FanLeaderboard creatorId={pass.creatorId} />
       )}
 
       <WishlistSection

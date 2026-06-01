@@ -58,6 +58,10 @@ export interface FanPassView {
   needsAck?: boolean;
   /** Phase 7: where the fan goes to tip / buy more spins (creator-set). */
   tipUrl?: string | null;
+  /** Phase 7: the creator id, so the fan page can fetch the embedded leaderboard. */
+  creatorId?: string;
+  /** Phase 7: whether the creator's leaderboard is on (embed it inline if so). */
+  leaderboardEnabled?: boolean;
 }
 
 /** Phase 5b (#23): the data a public verify page needs for one spin. */

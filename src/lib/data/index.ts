@@ -305,7 +305,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .select(
       `id, creator_id, campaign_id, wheel_id, fan_id, is_active,
        fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at),
-       creator:profiles(display_name, tip_url)`
+       creator:profiles(display_name, tip_url, leaderboard_enabled)`
     )
     .eq("token", token)
     .eq("is_active", true)
@@ -326,7 +326,11 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       referral_code: string | null;
       acked_at: string | null;
     } | null;
-    creator: { display_name: string | null; tip_url: string | null } | null;
+    creator: {
+      display_name: string | null;
+      tip_url: string | null;
+      leaderboard_enabled: boolean | null;
+    } | null;
   } | null;
 
   if (!pass || !pass.fan) return null;
@@ -405,6 +409,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0,
     needsAck: pass.fan.acked_at == null,
     tipUrl: pass.creator?.tip_url ?? null,
+    creatorId: pass.creator_id,
+    leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
   };
 }
 
