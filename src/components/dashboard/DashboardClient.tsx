@@ -36,6 +36,7 @@ import InboxPanel from "@/components/dashboard/InboxPanel";
 import BoostsPanel from "@/components/dashboard/BoostsPanel";
 import TodayPanel from "@/components/dashboard/TodayPanel";
 import InvitesBanner from "@/components/dashboard/InvitesBanner";
+import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
 import AnalyticsPanel from "@/components/dashboard/AnalyticsPanel";
 import ImportFans from "@/components/dashboard/ImportFans";
 import {
@@ -47,6 +48,9 @@ import {
 } from "@/components/dashboard/editorHelpers";
 
 type Tab = "today" | "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
+
+// The starter wheel's id; a creator who hasn't saved their own wheel still uses it.
+const SAMPLE_WHEEL_ID = "demo-wheel";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -130,6 +134,29 @@ export default function DashboardClient({
   const pending = overview.data?.metrics.pending ?? 0;
   const unread = overview.data?.metrics.unreadMessages ?? 0;
 
+  // First-run signals: a brand-new creator has no fans and no spins yet, and is
+  // still on the sample wheel (no saved wheel id of their own).
+  const metricsFans = overview.data?.metrics.fans ?? 0;
+  const metricsSpins = overview.data?.metrics.spinsPlayed ?? 0;
+  const wheelSaved = wheel.id !== SAMPLE_WHEEL_ID;
+
+  // New creators should land on the Wheel editor (their first task), not the
+  // empty "Today" feed. Switch once, on first data load, only if they haven't
+  // already navigated somewhere themselves.
+  const userPickedTab = useRef(false);
+  const autoLanded = useRef(false);
+  useEffect(() => {
+    if (autoLanded.current || overview.loading || userPickedTab.current) return;
+    autoLanded.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time landing choice after async overview load
+    if (metricsFans === 0 && metricsSpins === 0) setTab("editor");
+  }, [overview.loading, metricsFans, metricsSpins]);
+
+  const goTab = (t: Tab) => {
+    userPickedTab.current = true;
+    setTab(t);
+  };
+
   const tabs: [Tab, string][] = [
     ["today", "Today"],
     ["editor", "Wheel"],
@@ -182,6 +209,15 @@ export default function DashboardClient({
         </div>
       )}
 
+      {!overview.loading && (
+        <GetStartedChecklist
+          wheelSaved={wheelSaved}
+          fans={metricsFans}
+          spins={metricsSpins}
+          onGoTo={(t) => goTab(t as Tab)}
+        />
+      )}
+
       {pending > 0 && tab !== "prizes" && (
         <button
           onClick={() => setTab("prizes")}
@@ -204,7 +240,7 @@ export default function DashboardClient({
         {tabs.map(([id, label]) => (
           <button
             key={id}
-            onClick={() => setTab(id)}
+            onClick={() => goTab(id)}
             className={`-mb-px flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] font-semibold transition sm:text-sm ${
               tab === id
                 ? "border-[var(--brand)] text-ink"
