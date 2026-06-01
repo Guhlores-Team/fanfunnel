@@ -2838,6 +2838,37 @@ async function requireAdmin(
   return data?.role === "admin";
 }
 
+/**
+ * One-time admin bootstrap: promote the signed-in user to admin IF their email
+ * is in the ADMIN_EMAILS env allowlist. Lets the owner claim admin without
+ * touching the database. No-op (and safe) when the allowlist is unset/empty.
+ */
+export async function claimAdmin(): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const allow = (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (allow.length === 0) return { error: "not_configured" };
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const email = (user.email ?? "").toLowerCase();
+  if (!allow.includes(email)) return { error: "not_allowed" };
+
+  // Service-role write: promote + approve this profile (RLS profiles_update is
+  // admin-only, and the user isn't admin yet — that's the bootstrap chicken/egg).
+  const svc = createServiceClient();
+  const { error } = await svc
+    .from("profiles")
+    .update({ role: "admin", approval_status: "approved", is_active: true })
+    .eq("id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
 export async function getAdminOverview(): Promise<AdminOverview | null> {
   if (!isSupabaseConfigured()) return mockGetAdminOverview();
 
