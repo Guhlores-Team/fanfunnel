@@ -2862,6 +2862,16 @@ export async function claimAdmin(): Promise<{ ok: true } | { error: string }> {
   // Service-role write: promote + approve this profile (RLS profiles_update is
   // admin-only, and the user isn't admin yet — that's the bootstrap chicken/egg).
   const svc = createServiceClient();
+
+  // Lock: this bootstrap can ONLY ever create the FIRST admin. Once any admin
+  // exists, it's permanently inert (further admin management goes through the
+  // proper roles system / an existing admin).
+  const { count: adminCount } = await svc
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("role", "admin");
+  if ((adminCount ?? 0) > 0) return { error: "already_bootstrapped" };
+
   const { error } = await svc
     .from("profiles")
     .update({ role: "admin", approval_status: "approved", is_active: true })

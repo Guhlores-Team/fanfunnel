@@ -27,7 +27,9 @@ export default function AdminClaim() {
           ? "Your email isn't on the admin allowlist."
           : body.error === "not_configured"
             ? "Admin allowlist (ADMIN_EMAILS) isn't set on the server yet."
-            : "Couldn't claim admin. Try again."
+            : body.error === "already_bootstrapped"
+              ? "An admin already exists — ask them to grant you access."
+              : "Couldn't claim admin. Try again."
       );
     } finally {
       setBusy(false);
