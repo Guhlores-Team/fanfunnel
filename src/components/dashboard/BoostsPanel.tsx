@@ -174,10 +174,23 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 function LeaderboardToggle({ enabled, onChange }: { enabled: boolean; onChange?: () => void }) {
   const [on, setOn] = useState(enabled);
   const [busy, setBusy] = useState(false);
+  const [slug, setSlug] = useState<string | null>(null);
   const toast = useToast();
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror the persisted flag when the overview refreshes
   useEffect(() => setOn(enabled), [enabled]);
+
+  useEffect(() => {
+    let live = true;
+    fetch("/api/public-profile", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => live && d && setSlug(d.slug ?? null))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const toggle = async () => {
     const next = !on;
@@ -205,21 +218,54 @@ function LeaderboardToggle({ enabled, onChange }: { enabled: boolean; onChange?:
       title="Public leaderboard"
       hint="Rank opted-in fans by spins, spend, and rare wins. Drives competitive tipping."
     >
-      <button
-        onClick={toggle}
-        disabled={busy}
-        className="flex items-center gap-3 rounded-xl border border-line px-4 py-3 transition hover:border-[var(--brand)]/50"
-        aria-pressed={on}
-      >
-        <span
-          className={`relative h-6 w-11 rounded-full transition ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={toggle}
+          disabled={busy}
+          className="flex items-center gap-3 rounded-xl border border-line px-4 py-3 transition hover:border-[var(--brand)]/50"
+          aria-pressed={on}
         >
           <span
-            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${on ? "left-[1.375rem]" : "left-0.5"}`}
-          />
-        </span>
-        <span className="text-sm font-semibold text-ink">{on ? "On" : "Off"}</span>
-      </button>
+            className={`relative h-6 w-11 rounded-full transition ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${on ? "left-[1.375rem]" : "left-0.5"}`}
+            />
+          </span>
+          <span className="text-sm font-semibold text-ink">{on ? "On" : "Off"}</span>
+        </button>
+        {on && slug && (
+          <div className="flex items-center gap-2">
+            <a
+              href={`/leaderboard/${slug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
+            >
+              View ↗
+            </a>
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(`${origin}/leaderboard/${slug}`);
+                  toast("Leaderboard link copied", { tone: "success" });
+                } catch {
+                  /* clipboard blocked */
+                }
+              }}
+              className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
+            >
+              Copy link
+            </button>
+          </div>
+        )}
+      </div>
+      {on && !slug && (
+        <p className="mt-2 text-xs text-muted">
+          Set your public link in “Link-in-bio (SFW)” above to get a shareable
+          leaderboard URL.
+        </p>
+      )}
     </Section>
   );
 }

@@ -1293,12 +1293,12 @@ function AccountCard({
 
   return (
     <div className="card rounded-xl p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-start justify-between gap-2">
         <button
           type="button"
           onClick={() => onOpen(account.fanId)}
           aria-label={"View " + account.name}
-          className="min-w-0 rounded-lg text-left transition hover:opacity-80"
+          className="min-w-0 flex-1 rounded-lg text-left transition hover:opacity-80"
         >
           <p className="truncate font-bold text-ink">{account.name}</p>
           <p className="text-xs text-muted">
@@ -1318,23 +1318,22 @@ function AccountCard({
         </button>
 
         {confirmDelete ? (
-          <div className="flex items-center gap-1.5 text-xs">
-            <span className="text-muted">Delete fan?</span>
+          <div className="flex shrink-0 items-center gap-1.5 text-xs">
             <button
               type="button"
               onClick={handleDelete}
               disabled={deleting}
               aria-label={"Confirm delete " + account.name}
-              className="rounded-lg border border-red-500/50 px-2.5 py-1 font-bold text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
+              className="rounded-full border border-red-500/60 px-3 py-1 font-bold text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
             >
-              {deleting ? "Deleting…" : "Yes"}
+              {deleting ? "Deleting…" : "Delete?"}
             </button>
             <button
               type="button"
               onClick={() => setConfirmDelete(false)}
               disabled={deleting}
               aria-label="Cancel delete"
-              className="rounded-lg border border-line px-2.5 py-1 font-semibold text-muted transition hover:text-ink disabled:opacity-50"
+              className="rounded-full border border-line px-3 py-1 font-semibold text-muted transition hover:text-ink disabled:opacity-50"
             >
               Cancel
             </button>
@@ -1344,7 +1343,7 @@ function AccountCard({
             type="button"
             onClick={() => setConfirmDelete(true)}
             aria-label={"Delete " + account.name}
-            className="rounded-lg px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-red-500"
+            className="shrink-0 rounded-full border border-line px-3 py-1 text-xs font-semibold text-muted transition hover:border-red-500/60 hover:text-red-500"
           >
             Delete
           </button>

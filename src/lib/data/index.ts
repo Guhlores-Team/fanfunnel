@@ -3545,16 +3545,23 @@ export async function setFanLeaderboardOptIn(
  * opted-in fans appear, and only their handle (never email/token/fan_id).
  */
 export async function getLeaderboard(
-  creatorId: string
+  creatorIdOrSlug: string
 ): Promise<LeaderboardView> {
-  if (!isSupabaseConfigured()) return mockGetLeaderboard(creatorId);
+  if (!isSupabaseConfigured()) return mockGetLeaderboard(creatorIdOrSlug);
 
   const sb = createServiceClient();
+  // Accept either a UUID id or a public_slug, so the shareable URL can be
+  // /leaderboard/<slug> (pretty) or /leaderboard/<uuid> (internal).
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      creatorIdOrSlug
+    );
   const { data: profile } = await sb
     .from("profiles")
-    .select("display_name, leaderboard_enabled")
-    .eq("id", creatorId)
+    .select("id, display_name, leaderboard_enabled")
+    .eq(isUuid ? "id" : "public_slug", creatorIdOrSlug)
     .maybeSingle();
+  const creatorId = (profile as { id: string } | null)?.id ?? creatorIdOrSlug;
   const prof = profile as {
     display_name: string | null;
     leaderboard_enabled: boolean;
