@@ -305,7 +305,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .select(
       `id, creator_id, campaign_id, wheel_id, fan_id, is_active,
        fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at),
-       creator:profiles(display_name, tip_url, leaderboard_enabled)`
+       creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`
     )
     .eq("token", token)
     .eq("is_active", true)
@@ -330,6 +330,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       display_name: string | null;
       tip_url: string | null;
       leaderboard_enabled: boolean | null;
+      creator_note: string | null;
+      avatar_url: string | null;
     } | null;
   } | null;
 
@@ -411,6 +413,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     tipUrl: pass.creator?.tip_url ?? null,
     creatorId: pass.creator_id,
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
+    creatorNote: pass.creator?.creator_note ?? null,
+    creatorAvatarUrl: pass.creator?.avatar_url ?? null,
   };
 }
 
@@ -4521,36 +4525,44 @@ export async function getMyPublicProfile(): Promise<{
   slug: string | null;
   tipUrl: string | null;
   tagline: string | null;
+  note: string | null;
+  avatarUrl: string | null;
 }> {
   if (!isSupabaseConfigured())
-    return { slug: "demo-creator", tipUrl: "", tagline: "" };
+    return { slug: "demo-creator", tipUrl: "", tagline: "", note: "", avatarUrl: "" };
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (!user) return { slug: null, tipUrl: null, tagline: null };
+  if (!user) return { slug: null, tipUrl: null, tagline: null, note: null, avatarUrl: null };
   const { data } = await sb
     .from("profiles")
-    .select("public_slug, tip_url, public_tagline")
+    .select("public_slug, tip_url, public_tagline, creator_note, avatar_url")
     .eq("id", user.id)
     .maybeSingle();
   const row = data as {
     public_slug: string | null;
     tip_url: string | null;
     public_tagline: string | null;
+    creator_note: string | null;
+    avatar_url: string | null;
   } | null;
   return {
     slug: row?.public_slug ?? null,
     tipUrl: row?.tip_url ?? null,
     tagline: row?.public_tagline ?? null,
+    note: row?.creator_note ?? null,
+    avatarUrl: row?.avatar_url ?? null,
   };
 }
 
-/** Creator updates their SFW link-in-bio fields (slug, tip URL, tagline). */
+/** Creator updates their SFW link-in-bio fields + fan-page personal note. */
 export async function setMyPublicProfile(input: {
   slug: string;
   tipUrl: string;
   tagline: string;
+  note?: string;
+  avatarUrl?: string;
 }): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return { ok: true };
   const sb = await createClient();
@@ -4568,7 +4580,14 @@ export async function setMyPublicProfile(input: {
     p_tip_url: input.tipUrl,
     p_tagline: input.tagline,
   });
-  return error ? { error: "db_error" } : { ok: true };
+  if (error) return { error: "db_error" };
+  if (input.note !== undefined || input.avatarUrl !== undefined) {
+    await sb.rpc("set_creator_note", {
+      p_note: input.note ?? "",
+      p_avatar: input.avatarUrl ?? "",
+    });
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,8 @@ function PublicProfileCard() {
   const [slug, setSlug] = useState("");
   const [tipUrl, setTipUrl] = useState("");
   const [tagline, setTagline] = useState("");
+  const [note, setNote] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const toast = useToast();
@@ -54,6 +56,8 @@ function PublicProfileCard() {
         setSlug(d.slug ?? "");
         setTipUrl(d.tipUrl ?? "");
         setTagline(d.tagline ?? "");
+        setNote(d.note ?? "");
+        setAvatarUrl(d.avatarUrl ?? "");
       })
       .catch(() => {});
     return () => {
@@ -67,7 +71,7 @@ function PublicProfileCard() {
       const res = await fetch("/api/public-profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, tipUrl, tagline }),
+        body: JSON.stringify({ slug, tipUrl, tagline, note, avatarUrl }),
       });
       if (!res.ok) throw new Error();
       toast("Link-in-bio saved", { tone: "success" });
@@ -127,6 +131,24 @@ function PublicProfileCard() {
             onChange={(e) => setTipUrl(e.target.value)}
             className="ff-input mt-1 w-full"
             placeholder="https://onlyfans.com/you  or your tip link"
+          />
+        </label>
+        <label className="block text-xs text-muted">
+          Personal note to fans (shown atop their spin page)
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="ff-input mt-1 w-full"
+            placeholder="Hey you 😘 spin away — every spin wins!"
+          />
+        </label>
+        <label className="block text-xs text-muted">
+          Avatar image URL (optional)
+          <input
+            value={avatarUrl}
+            onChange={(e) => setAvatarUrl(e.target.value)}
+            className="ff-input mt-1 w-full"
+            placeholder="https://…/your-photo.jpg"
           />
         </label>
         <div className="flex flex-wrap items-center gap-2">

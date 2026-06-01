@@ -830,6 +830,8 @@ export function mockGetFanPass(token: string): FanPassView | null {
     needsAck: fan.ackedAt == null,
     creatorId: "demo-creator",
     leaderboardEnabled: store.leaderboardEnabled,
+    creatorNote: "Hey you 😘 spin away — every spin wins!",
+    creatorAvatarUrl: null,
   });
 }
 

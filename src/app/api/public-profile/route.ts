@@ -8,7 +8,7 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  let body: { slug?: string; tipUrl?: string; tagline?: string };
+  let body: { slug?: string; tipUrl?: string; tagline?: string; note?: string; avatarUrl?: string };
   try {
     body = await req.json();
   } catch {
@@ -18,6 +18,8 @@ export async function PUT(req: Request) {
     slug: body.slug ?? "",
     tipUrl: body.tipUrl ?? "",
     tagline: body.tagline ?? "",
+    note: body.note,
+    avatarUrl: body.avatarUrl,
   });
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;

@@ -17,6 +17,8 @@ import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";
 import TopUpMoment from "./fan/TopUpMoment";
 import FanLeaderboard from "./fan/FanLeaderboard";
+import CreatorNote from "./fan/CreatorNote";
+import PrizeBook from "./fan/PrizeBook";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -175,6 +177,13 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         )}
       </header>
 
+      <CreatorNote
+        creatorTitle={pass.creatorTitle}
+        note={pass.creatorNote}
+        avatarUrl={pass.creatorAvatarUrl}
+        fanName={pass.fanName}
+      />
+
       {pass.happyHour && <HappyHourBanner status={pass.happyHour} />}
 
       {/* Wheel with a soft brand halo behind it for depth. */}
@@ -260,6 +269,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           </div>
         </div>
       )}
+
+      <PrizeBook prizes={pass.wheel.prizes} history={history} />
 
       {pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard creatorId={pass.creatorId} />

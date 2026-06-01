@@ -62,6 +62,9 @@ export interface FanPassView {
   creatorId?: string;
   /** Phase 7: whether the creator's leaderboard is on (embed it inline if so). */
   leaderboardEnabled?: boolean;
+  /** Phase 8C: optional personal note + avatar from the creator (mini-hero). */
+  creatorNote?: string | null;
+  creatorAvatarUrl?: string | null;
 }
 
 /** Phase 5b (#23): the data a public verify page needs for one spin. */
