@@ -102,6 +102,7 @@ import {
   mockSetLeaderboardEnabled,
   mockSetFanLeaderboardOptIn,
   mockGetLeaderboard,
+  mockGetRecentWins,
   mockGetReferralOverview,
   mockGetReferralStats,
   mockSendFanMessage,
@@ -2808,14 +2809,26 @@ export async function getAutopilot(): Promise<AutopilotCard[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
-  const [crm, overview, heatmap, demand, extra, roi] = await Promise.all([
+  const [crm, overview, heatmap, demand, extra, roi, cohorts] = await Promise.all([
     getCreatorCrm(),
     getOverview(),
     getEngagementHeatmap(30),
     getWishlistDemand(),
     getMetricsExtra(30),
     getPrizeRoi(90),
+    getCohortRetention(),
   ]);
+
+  // Low-stock prizes (real scarcity) — a light direct read; stock lives on prizes.
+  const { data: stockRows } = await sb
+    .from("prizes")
+    .select("label, stock, wheel:wheels!inner(creator_id)")
+    .eq("wheel.creator_id", user.id)
+    .not("stock", "is", null);
+  const lowStock = ((stockRows ?? []) as unknown as {
+    label: string;
+    stock: number | null;
+  }[]).filter((p) => typeof p.stock === "number" && p.stock > 0 && p.stock <= 3);
 
   const cards: AutopilotCard[] = [];
   const push = (c: Omit<AutopilotCard, "score"> & { score: number }) => cards.push(c);
@@ -2928,6 +2941,70 @@ export async function getAutopilot(): Promise<AutopilotCard[]> {
       cta: "Open fulfilment",
       action: { kind: "open_fulfilment" },
       score: 60,
+    });
+  }
+
+  // 9. Engaged whale who's out of spins — top them up before they cool off.
+  const drySpender = crm.whales.find((w) => w.spinsRemaining === 0);
+  if (drySpender) {
+    push({
+      key: `out_of_spins_${drySpender.fanId}`,
+      icon: "🪫",
+      title: `${drySpender.name} is out of spins`,
+      body: "One of your top spenders has nothing left to play. Nudge them to grab more before the momentum fades.",
+      cta: "Send their link",
+      action: { kind: "copy_link", token: drySpender.primaryToken },
+      score: 80,
+    });
+  }
+
+  // 10. Over-given rarity — a top-tier prize is landing far too often (margin leak).
+  const totalWins = roi.reduce((s, r) => s + r.timesWon, 0);
+  const overGiven = roi.find(
+    (r) =>
+      (r.rarity === "legendary" || r.rarity === "epic") &&
+      totalWins >= 20 &&
+      r.timesWon / totalWins > 0.15
+  );
+  if (overGiven) {
+    push({
+      key: `over_given_${overGiven.label}`,
+      icon: "📉",
+      title: `"${overGiven.label}" is being won too often`,
+      body: `Your ${overGiven.rarity} "${overGiven.label}" is ${Math.round((overGiven.timesWon / totalWins) * 100)}% of all wins. Lower its odds to protect the magic (and your margin).`,
+      cta: "Open wheel editor",
+      action: { kind: "edit_wheel" },
+      score: 55,
+    });
+  }
+
+  // 11. Restock — a limited prize is almost gone.
+  if (lowStock.length > 0) {
+    const p = lowStock.sort((a, b) => (a.stock ?? 0) - (b.stock ?? 0))[0];
+    push({
+      key: `restock_${p.label}`,
+      icon: "📦",
+      title: `"${p.label}" is almost gone (${p.stock} left)`,
+      body: "Decide now: restock to keep it on the wheel, or let it sell out as a scarcity moment.",
+      cta: "Open wheel editor",
+      action: { kind: "edit_wheel" },
+      score: 58,
+    });
+  }
+
+  // 12. Campaign fuel — your best-retaining campaign deserves more spend.
+  const fuel = [...cohorts]
+    .filter((c) => c.fans >= 3)
+    .sort((a, b) => b.repeatRate - a.repeatRate)[0];
+  if (fuel && fuel.repeatRate >= 0.4 && fuel.campaignId) {
+    push({
+      key: `campaign_fuel_${fuel.campaignId}`,
+      icon: "⛽",
+      title: `"${fuel.campaignName}" fans keep coming back`,
+      body: `${Math.round(fuel.repeatRate * 100)}% of that cohort spent again. Pour more traffic into your highest-retention campaign.`,
+      cta: "Open campaigns",
+      action: { kind: "none" },
+      score: 50,
     });
   }
 
@@ -3984,6 +4061,71 @@ export async function getLeaderboard(
     .map((e, i) => ({ rank: i + 1, ...e }));
 
   return { enabled: true, creatorTitle, entries };
+}
+
+export interface RecentWin {
+  handle: string;
+  prizeLabel: string;
+  rarity: Rarity;
+  at: string;
+}
+
+/**
+ * Recent notable wins (rare+), handle-only, from fans who opted into the
+ * leaderboard. Honest social proof for the ticker — gated by the same opt-in,
+ * so no fan is ever surfaced without consent. Returns [] when the board is off.
+ */
+export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[]> {
+  if (!isSupabaseConfigured()) return mockGetRecentWins();
+  const sb = createServiceClient();
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(creatorIdOrSlug);
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("id, leaderboard_enabled")
+    .eq(isUuid ? "id" : "public_slug", creatorIdOrSlug)
+    .maybeSingle();
+  const prof = profile as { id: string; leaderboard_enabled: boolean } | null;
+  if (!prof || !prof.leaderboard_enabled) return [];
+
+  const { data: fanRows } = await sb
+    .from("fans")
+    .select("id, handle, display_name")
+    .eq("creator_id", prof.id)
+    .eq("leaderboard_opt_in", true);
+  const fans = (fanRows ?? []) as {
+    id: string;
+    handle: string | null;
+    display_name: string | null;
+  }[];
+  if (fans.length === 0) return [];
+  const byId = new Map(fans.map((f) => [f.id, f]));
+
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("fan_id, prize_label, prize_rarity, created_at")
+    .in("fan_id", Array.from(byId.keys()))
+    .in("prize_rarity", ["rare", "epic", "legendary"])
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  const firstName = (name: string | null): string =>
+    (name ?? "").trim().split(/\s+/)[0] || "Fan";
+
+  return ((spinRows ?? []) as {
+    fan_id: string;
+    prize_label: string;
+    prize_rarity: Rarity;
+    created_at: string;
+  }[]).map((s) => {
+    const f = byId.get(s.fan_id);
+    return {
+      handle: f?.handle ?? firstName(f?.display_name ?? null),
+      prizeLabel: s.prize_label,
+      rarity: s.prize_rarity,
+      at: s.created_at,
+    };
+  });
 }
 
 // --- Referral ---------------------------------------------------------------

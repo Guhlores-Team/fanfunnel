@@ -137,6 +137,11 @@ body {
 .ambient-glow { animation: ff-glow-pulse 6s ease-in-out infinite; }
 .ambient-float { animation: ff-float 7s ease-in-out infinite; }
 
+/* Recent-wins ticker: continuous horizontal scroll (loops via duplicated list).
+   The global reduced-motion guard above pauses it; the component also wraps. */
+@keyframes ff-ticker { to { transform: translateX(-50%); } }
+.ticker-track { animation: ff-ticker 22s linear infinite; }
+
 /* Skeleton shimmer for loading states (product surfaces). */
 .skeleton {
   background: linear-gradient(

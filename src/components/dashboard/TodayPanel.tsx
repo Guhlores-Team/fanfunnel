@@ -64,6 +64,9 @@ export default function TodayPanel({
       case "schedule_happy_hour":
         onNavigate("boosts");
         break;
+      case "none":
+        onNavigate("campaigns");
+        break;
       case "dm_fan":
       case "copy_link":
         if (a.token) {

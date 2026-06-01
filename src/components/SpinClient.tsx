@@ -19,6 +19,7 @@ import TopUpMoment from "./fan/TopUpMoment";
 import FanLeaderboard from "./fan/FanLeaderboard";
 import CreatorNote from "./fan/CreatorNote";
 import PrizeBook from "./fan/PrizeBook";
+import RecentWinsTicker from "./fan/RecentWinsTicker";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -183,6 +184,10 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         avatarUrl={pass.creatorAvatarUrl}
         fanName={pass.fanName}
       />
+
+      {pass.leaderboardEnabled && pass.creatorId && (
+        <RecentWinsTicker creatorId={pass.creatorId} />
+      )}
 
       {pass.happyHour && <HappyHourBanner status={pass.happyHour} />}
 
@@ -435,6 +440,40 @@ function PrizeModal({
   const color = prize.color ?? RARITY_COLORS[prize.rarity];
   const isBig = prize.rarity === "epic" || prize.rarity === "legendary";
   const [shared, setShared] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // A11y: focus the primary action on open, close on Escape, and trap Tab
+  // within the dialog so keyboard/screen-reader users aren't stranded behind it.
+  useEffect(() => {
+    const prevFocus = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      prevFocus?.focus?.();
+    };
+  }, [onClose]);
 
   const share = async () => {
     if (!shareId) return;
@@ -460,7 +499,15 @@ function PrizeModal({
       style={{ animation: "ff-fade 0.2s ease-out" }}
     >
       {isBig && <Confetti />}
+      {/* Screen-reader announcement — the visual modal is decorative for AT. */}
+      <p className="sr-only" role="status" aria-live="assertive">
+        You won {prize.label}, a {RARITY_LABEL[prize.rarity]} prize.
+      </p>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`You won ${prize.label}`}
         className="card relative w-full max-w-sm rounded-[1.75rem] p-8 text-center"
         style={{
           boxShadow: `0 30px 80px -20px color-mix(in oklab, ${color} 50%, transparent)`,
@@ -507,6 +554,7 @@ function PrizeModal({
           </button>
         )}
         <button
+          ref={closeRef}
           onClick={onClose}
           className="btn-brand mt-3 w-full rounded-2xl py-3 font-bold"
           style={{ ["--brand" as string]: color }}

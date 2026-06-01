@@ -2007,6 +2007,28 @@ export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
   return structuredClone({ enabled: true, creatorTitle: CREATOR_TITLE, entries });
 }
 
+export function mockGetRecentWins(): {
+  handle: string;
+  prizeLabel: string;
+  rarity: Rarity;
+  at: string;
+}[] {
+  if (!store.leaderboardEnabled) return [];
+  const wins: { handle: string; prizeLabel: string; rarity: Rarity; at: string }[] = [];
+  for (const f of store.fans.values()) {
+    if (!f.leaderboardOptIn) continue;
+    const handle = f.handle?.trim() || firstName(f.name);
+    for (const w of f.wins) {
+      if (RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")) {
+        wins.push({ handle, prizeLabel: w.label, rarity: w.rarity, at: w.at });
+      }
+    }
+  }
+  return structuredClone(
+    wins.sort((a, b) => +new Date(b.at) - +new Date(a.at)).slice(0, 20)
+  );
+}
+
 // --- Phase 3: Referrals -----------------------------------------------------
 
 export function mockGetReferralOverview(token: string): ReferralOverview | null {
