@@ -34,6 +34,7 @@ import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
 import PackPresets from "@/components/dashboard/PackPresets";
 import InboxPanel from "@/components/dashboard/InboxPanel";
 import BoostsPanel from "@/components/dashboard/BoostsPanel";
+import TodayPanel from "@/components/dashboard/TodayPanel";
 import AnalyticsPanel from "@/components/dashboard/AnalyticsPanel";
 import ImportFans from "@/components/dashboard/ImportFans";
 import {
@@ -44,7 +45,7 @@ import {
   reorder,
 } from "@/components/dashboard/editorHelpers";
 
-type Tab = "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
+type Tab = "today" | "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -116,7 +117,7 @@ export default function DashboardClient({
   email: string | null;
   initialWheel: WheelConfig;
 }) {
-  const [tab, setTab] = useState<Tab>("editor");
+  const [tab, setTab] = useState<Tab>("today");
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
   // Which wheel the editor is currently editing. Lifted so it survives tab
   // switches and the WheelSwitcher highlights the right wheel. Seeded from the
@@ -129,6 +130,7 @@ export default function DashboardClient({
   const unread = overview.data?.metrics.unreadMessages ?? 0;
 
   const tabs: [Tab, string][] = [
+    ["today", "Today"],
     ["editor", "Wheel"],
     ["fans", "Fans"],
     ["prizes", "Prizes"],
@@ -218,6 +220,7 @@ export default function DashboardClient({
       </nav>
 
       <div className="mt-7">
+        {tab === "today" && <TodayPanel onNavigate={(t) => setTab(t as Tab)} />}
         {tab === "metrics" && (
           <MetricsPanel
             overview={overview.data}

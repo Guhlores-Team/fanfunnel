@@ -2768,6 +2768,202 @@ export async function getCohortRetention(): Promise<CohortRow[]> {
   return rows;
 }
 
+// --- Autopilot: a ranked, prescriptive "do this next" feed -------------------
+
+export type AutopilotAction =
+  | { kind: "dm_fan"; fanId: string; token: string | null }
+  | { kind: "open_inbox" }
+  | { kind: "open_fulfilment" }
+  | { kind: "schedule_happy_hour"; weekday: number; hour: number }
+  | { kind: "edit_wheel" }
+  | { kind: "copy_link"; token: string | null }
+  | { kind: "none" };
+
+export interface AutopilotCard {
+  key: string; // stable dedupe key
+  icon: string;
+  title: string;
+  body: string;
+  cta: string;
+  action: AutopilotAction;
+  score: number; // ranking
+}
+
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Generate a ranked action feed from the analytics we already compute. Pure
+ * read + rank; one-tap execution happens client-side via the existing flows.
+ * Dismissed/snoozed cards (autopilot_dismissals) are filtered out.
+ */
+export async function getAutopilot(): Promise<AutopilotCard[]> {
+  if (!isSupabaseConfigured()) return [];
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const [crm, overview, heatmap, demand, extra, roi] = await Promise.all([
+    getCreatorCrm(),
+    getOverview(),
+    getEngagementHeatmap(30),
+    getWishlistDemand(),
+    getMetricsExtra(30),
+    getPrizeRoi(90),
+  ]);
+
+  const cards: AutopilotCard[] = [];
+  const push = (c: Omit<AutopilotCard, "score"> & { score: number }) => cards.push(c);
+
+  // 1. DM your top whales.
+  if (crm.whales.length > 0) {
+    const top = crm.whales.slice(0, 3);
+    push({
+      key: "dm_whales",
+      icon: "🐳",
+      title: `Check in with your top ${top.length === 1 ? "spender" : "spenders"}`,
+      body: `${top.map((w) => w.name).join(", ")} — your highest LTV fans. A quick personal message keeps whales loyal.`,
+      cta: "Message them",
+      action: { kind: "dm_fan", fanId: top[0].fanId, token: top[0].primaryToken },
+      score: 95,
+    });
+  }
+
+  // 2. Win back dormant spenders.
+  if (crm.dormant.length > 0) {
+    const d = crm.dormant[0];
+    push({
+      key: "winback",
+      icon: "💤",
+      title: `${crm.dormant.length} paying ${crm.dormant.length === 1 ? "fan has" : "fans have"} gone quiet`,
+      body: `${d.name} last played ${d.daysSince}d ago. The cheapest revenue is a fan you already won — send a fresh link.`,
+      cta: "Win them back",
+      action: { kind: "copy_link", token: d.primaryToken },
+      score: 88,
+    });
+  }
+
+  // 3. Overdue fulfilment.
+  const pending = overview.metrics.pending ?? 0;
+  if (pending > 0) {
+    push({
+      key: "fulfil",
+      icon: "🎁",
+      title: `${pending} ${pending === 1 ? "prize is" : "prizes are"} waiting to be fulfilled`,
+      body: "Fans remember slow delivery. Clear the queue to keep your reputation high.",
+      cta: "Open fulfilment",
+      action: { kind: "open_fulfilment" },
+      score: 90,
+    });
+  }
+
+  // 4. Unread fan messages.
+  const unread = overview.metrics.unreadMessages ?? 0;
+  if (unread > 0) {
+    push({
+      key: "answer_fans",
+      icon: "💬",
+      title: `${unread} unread ${unread === 1 ? "message" : "messages"}`,
+      body: "A fast reply while they're spinning turns chat into spend.",
+      cta: "Open inbox",
+      action: { kind: "open_inbox" },
+      score: 92,
+    });
+  }
+
+  // 5. Schedule a drop in your hottest slot.
+  const hot = [...heatmap.cells].sort((a, b) => b.count - a.count)[0];
+  if (hot && hot.count > 0) {
+    push({
+      key: `hot_slot_${hot.weekday}_${hot.hour}`,
+      icon: "🔥",
+      title: `Your fans spin most on ${WEEKDAY_NAMES[hot.weekday]} ~${hot.hour}:00 UTC`,
+      body: "Schedule a happy-hour rare boost in that window to turn peak attention into spend.",
+      cta: "Schedule a drop",
+      action: { kind: "schedule_happy_hour", weekday: hot.weekday, hour: hot.hour },
+      score: 70,
+    });
+  }
+
+  // 6. Wishlist demand spike for a prize not heavily stocked / not present.
+  if (demand.length > 0 && demand[0].count >= 2) {
+    const d = demand[0];
+    push({
+      key: `wishlist_${d.prizeLabel}`,
+      icon: "⭐",
+      title: `${d.count} fans are chasing "${d.prizeLabel}"`,
+      body: "Demand is real. Feature it on the wheel (or DM the wishers) while interest is hot.",
+      cta: "Open wheel editor",
+      action: { kind: "edit_wheel" },
+      score: 65,
+    });
+  }
+
+  // 7. Set costs on won prizes that have none (ROI is blind without them).
+  const blind = roi.filter((r) => r.costCents === null && r.timesWon > 0);
+  if (blind.length > 0) {
+    push({
+      key: "set_costs",
+      icon: "🧮",
+      title: `Set a cost on ${blind.length} ${blind.length === 1 ? "prize" : "prizes"}`,
+      body: "Prizes are being won with no cost set, so your ROI is blind. Add costs to see what's draining you.",
+      cta: "Open wheel editor",
+      action: { kind: "edit_wheel" },
+      score: 40,
+    });
+  }
+
+  // 8. Funnel leak: spun ≫ fulfilled.
+  if (extra.funnel.spun > 0 && extra.funnel.fulfilled < extra.funnel.spun / 2 && pending > 0) {
+    push({
+      key: "funnel_leak",
+      icon: "🚰",
+      title: "Wins aren't getting fulfilled",
+      body: `${extra.funnel.spun} fans have won but only ${extra.funnel.fulfilled} were fulfilled. Close the gap.`,
+      cta: "Open fulfilment",
+      action: { kind: "open_fulfilment" },
+      score: 60,
+    });
+  }
+
+  // Filter out dismissed / still-snoozed cards.
+  const { data: dis } = await sb
+    .from("autopilot_dismissals")
+    .select("dedupe_key, snooze_until")
+    .eq("creator_id", user.id);
+  const now = Date.now();
+  const hidden = new Set(
+    ((dis ?? []) as { dedupe_key: string; snooze_until: string | null }[])
+      .filter((d) => d.snooze_until === null || new Date(d.snooze_until).getTime() > now)
+      .map((d) => d.dedupe_key)
+  );
+
+  return cards.filter((c) => !hidden.has(c.key)).sort((a, b) => b.score - a.score);
+}
+
+/** Dismiss (permanent) or snooze (until a time) an autopilot card. */
+export async function dismissAutopilotCard(
+  key: string,
+  snoozeUntil?: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { error } = await sb.from("autopilot_dismissals").upsert(
+    {
+      creator_id: user.id,
+      dedupe_key: key,
+      snooze_until: snoozeUntil ?? null,
+    },
+    { onConflict: "creator_id,dedupe_key" }
+  );
+  return error ? { error: "db_error" } : { ok: true };
+}
+
 export async function setRedemptionStatus(
   id: string,
   status: RedemptionStatus
