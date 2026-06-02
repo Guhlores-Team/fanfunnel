@@ -43,7 +43,12 @@ export default function RecentWinsTicker({ creatorId }: { creatorId: string }) {
       style={{ animationDelay: "0.1s" }}
       aria-label="Recent wins from other fans"
     >
-      <div className="ticker-track flex w-max gap-6 px-4 motion-reduce:animate-none motion-reduce:flex-wrap motion-reduce:justify-center">
+      <div
+        className="ticker-track flex w-max gap-6 px-4 motion-reduce:animate-none motion-reduce:flex-wrap motion-reduce:justify-center"
+        // Speed scales with how many wins there are (~6s per item) so it reads at
+        // a calm, constant pace instead of zipping when the list is long.
+        style={{ animationDuration: `${Math.max(24, wins.length * 6)}s` }}
+      >
         {loop.map((w, i) => {
           const c = RARITY_COLORS[w.rarity];
           return (
