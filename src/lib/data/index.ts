@@ -309,16 +309,27 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   if (!isSupabaseConfigured()) return mockGetFanPass(token);
 
   const sb = createServiceClient();
-  const { data } = await sb
+  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at)`;
+  const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`;
+  // Per-wheel balance lives on the pass (migration 0020). If that column isn't
+  // present yet (migration not run), fall back to the legacy select so the fan
+  // page still works (using the fan-level aggregate balance) instead of 500ing.
+  const primary = await sb
     .from("fan_passes")
-    .select(
-      `id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining,
-       fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at),
-       creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`
-    )
+    .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, ${FAN}, ${CREATOR}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
+  let data: unknown = primary.data;
+  if (primary.error) {
+    const legacy = await sb
+      .from("fan_passes")
+      .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, ${FAN}, ${CREATOR}`)
+      .eq("token", token)
+      .eq("is_active", true)
+      .maybeSingle();
+    data = legacy.data;
+  }
 
   const pass = data as unknown as {
     id: string;
@@ -326,7 +337,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
-    spins_remaining: number;
+    spins_remaining?: number; // present post-0020; falls back to fan aggregate
     fan: {
       id: string;
       display_name: string | null;
@@ -402,8 +413,9 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
     fanHandle: pass.fan.handle ?? null,
     creatorTitle: pass.creator?.display_name ?? "Creator",
-    // Per-wheel: the balance the fan can spin on THIS wheel's link.
-    spinsRemaining: pass.spins_remaining,
+    // Per-wheel: the balance the fan can spin on THIS wheel's link (falls back
+    // to the fan-level aggregate pre-0020).
+    spinsRemaining: pass.spins_remaining ?? pass.fan.spins_remaining,
     wheel: toWheelConfig(wheel),
     recentWins: winRows.map((w) => ({
       label: w.prize_label,
@@ -1233,16 +1245,33 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
-  const { data } = await sb
+  const TAIL = `spins(prize_label, prize_rarity, created_at),
+       grants(amount_cents, campaign_id, campaign:campaigns(name))`;
+  // Per-wheel pass columns come from migration 0020. If they're not present yet,
+  // fall back to the legacy pass select so the Fans tab still loads (without the
+  // per-wheel breakdown) instead of returning nothing.
+  const primary = await sb
     .from("fans")
     .select(
       `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at,
        fan_passes(token, created_at, spins_remaining, wheel_id, wheel:wheels(title), campaign:campaigns(name)),
-       spins(prize_label, prize_rarity, created_at),
-       grants(amount_cents, campaign_id, campaign:campaigns(name))`
+       ${TAIL}`
     )
     .eq("creator_id", user.id)
     .order("created_at", { ascending: false });
+  let data: unknown = primary.data;
+  if (primary.error) {
+    const legacy = await sb
+      .from("fans")
+      .select(
+        `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at,
+         fan_passes(token, created_at),
+         ${TAIL}`
+      )
+      .eq("creator_id", user.id)
+      .order("created_at", { ascending: false });
+    data = legacy.data;
+  }
 
   const rows = (data ?? []) as unknown as {
     id: string;
@@ -1255,10 +1284,10 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       | {
           token: string;
           created_at: string;
-          spins_remaining: number;
-          wheel_id: string;
-          wheel: { title: string } | null;
-          campaign: { name: string } | null;
+          spins_remaining?: number; // per-wheel fields are absent pre-0020
+          wheel_id?: string;
+          wheel?: { title: string } | null;
+          campaign?: { name: string } | null;
         }[]
       | null;
     spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[] | null;
@@ -1282,13 +1311,17 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     const links = (r.fan_passes ?? [])
       .slice()
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
-    const passes = links.map((p) => ({
-      token: p.token,
-      wheelId: p.wheel_id,
-      wheelTitle: p.wheel?.title ?? "Wheel",
-      campaignName: p.campaign?.name ?? null,
-      spinsRemaining: p.spins_remaining ?? 0,
-    }));
+    // Only build per-wheel passes when the 0020 columns are present; pre-0020
+    // (legacy fallback) we leave passes empty and the card shows the single link.
+    const passes = links
+      .filter((p): p is typeof p & { wheel_id: string } => typeof p.wheel_id === "string")
+      .map((p) => ({
+        token: p.token,
+        wheelId: p.wheel_id,
+        wheelTitle: p.wheel?.title ?? "Wheel",
+        campaignName: p.campaign?.name ?? null,
+        spinsRemaining: p.spins_remaining ?? 0,
+      }));
     return {
       fanId: r.id,
       name: r.display_name ?? r.handle ?? "Fan",
