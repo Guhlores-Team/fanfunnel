@@ -92,6 +92,8 @@ import {
   mockRenameCampaign,
   mockDeleteCampaign,
   mockClearMyData,
+  mockGetUncategorizedStats,
+  mockEditGrant,
   mockListPrizeTemplates,
   mockCreatePrizeTemplate,
   mockDeletePrizeTemplate,
@@ -1019,6 +1021,97 @@ export async function getCampaignStats(): Promise<CampaignStats[]> {
   }
 
   return result;
+}
+
+export interface UncategorizedStats {
+  revenue: number; // cents from grants with no campaign
+  spinsBought: number;
+  spinsPlayed: number;
+  fans: number;
+}
+
+/** Revenue/spins NOT attributed to any campaign — so nothing sits in "limbo". */
+export async function getUncategorizedStats(): Promise<UncategorizedStats> {
+  const empty = { revenue: 0, spinsBought: 0, spinsPlayed: 0, fans: 0 };
+  if (!isSupabaseConfigured()) return mockGetUncategorizedStats();
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return empty;
+
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("fan_id, spins, amount_cents")
+    .eq("creator_id", user.id)
+    .is("campaign_id", null);
+  const grants = (grantRows ?? []) as { fan_id: string; spins: number; amount_cents: number }[];
+
+  const { count: spinsPlayed } = await sb
+    .from("spins")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_id", user.id)
+    .is("campaign_id", null);
+
+  return {
+    revenue: grants.reduce((s, g) => s + g.amount_cents, 0),
+    spinsBought: grants.reduce((s, g) => s + g.spins, 0),
+    spinsPlayed: spinsPlayed ?? 0,
+    fans: new Set(grants.map((g) => g.fan_id)).size,
+  };
+}
+
+/** Edit an existing grant's spins / amount / campaign after the fact. Adjusts
+ *  the fan's balance by the spin delta (floored at 0) so totals stay consistent. */
+export async function editGrant(
+  grantId: string,
+  patch: { spins?: number; amountCents?: number; campaignId?: string | null }
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockEditGrant(grantId, patch);
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { data: gRow } = await sb
+    .from("grants")
+    .select("id, fan_id, spins")
+    .eq("id", grantId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  const grant = gRow as { id: string; fan_id: string; spins: number } | null;
+  if (!grant) return { error: "not_found" };
+
+  const update: Record<string, unknown> = {};
+  if (patch.amountCents != null) update.amount_cents = Math.max(0, Math.round(patch.amountCents));
+  if (patch.campaignId !== undefined) update.campaign_id = patch.campaignId;
+
+  if (patch.spins != null) {
+    const newSpins = Math.max(0, Math.floor(patch.spins));
+    const delta = newSpins - grant.spins;
+    update.spins = newSpins;
+    if (delta !== 0) {
+      const { data: fanRow } = await sb
+        .from("fans")
+        .select("spins_remaining, spins_granted_total")
+        .eq("id", grant.fan_id)
+        .maybeSingle();
+      const fan = fanRow as { spins_remaining: number; spins_granted_total: number } | null;
+      if (fan) {
+        await sb
+          .from("fans")
+          .update({
+            spins_remaining: Math.max(0, fan.spins_remaining + delta),
+            spins_granted_total: Math.max(0, fan.spins_granted_total + delta),
+          })
+          .eq("id", grant.fan_id);
+      }
+    }
+  }
+
+  const { error } = await sb.from("grants").update(update).eq("id", grantId);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 /** Top up spins on the fan account behind a token (e.g. after another tip). */

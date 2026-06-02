@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
-import { getCampaignStats } from "@/lib/data";
+import { getCampaignStats, getUncategorizedStats } from "@/lib/data";
 
-// Per-campaign comparison stats (spins, unique fans, fulfilled, top prize).
+// Per-campaign comparison stats + an "uncategorized" rollup for spins/revenue
+// not attributed to any campaign (so nothing sits in limbo).
 export async function GET() {
-  const stats = await getCampaignStats();
-  return NextResponse.json({ stats });
+  const [stats, uncategorized] = await Promise.all([
+    getCampaignStats(),
+    getUncategorizedStats(),
+  ]);
+  return NextResponse.json({ stats, uncategorized });
 }

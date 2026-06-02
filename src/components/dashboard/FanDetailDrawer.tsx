@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RARITY_COLORS, type Rarity } from "@/lib/games/wheel/types";
-import type { FanDetail } from "@/lib/data/types";
+import type { FanDetail, Grant } from "@/lib/data/types";
 import { formatCents } from "@/lib/format";
 import { TagEditor } from "./ui";
 import { useToast } from "@/components/ui/Toast";
@@ -56,6 +56,15 @@ export default function FanDetailDrawer({
   const restoreRef = useRef<HTMLElement | null>(null);
   const toast = useToast();
 
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
+
+  // Refetch the open fan's detail (after an inline grant edit, etc.).
+  const reload = useCallback(async () => {
+    if (!fanId) return;
+    const res = await fetch(`/api/fans/${fanId}`, { cache: "no-store" });
+    if (res.ok) setDetail(await res.json());
+  }, [fanId]);
+
   // Fetch the fan detail whenever the open fan changes.
   useEffect(() => {
     if (!fanId) return;
@@ -67,13 +76,20 @@ export default function FanDetailDrawer({
     setNotes("");
     (async () => {
       try {
-        const res = await fetch(`/api/fans/${fanId}`, { cache: "no-store" });
+        const [res, cRes] = await Promise.all([
+          fetch(`/api/fans/${fanId}`, { cache: "no-store" }),
+          fetch(`/api/campaigns`, { cache: "no-store" }),
+        ]);
         if (!active) return;
         if (res.ok) {
           const data: FanDetail = await res.json();
           setDetail(data);
           setNotes(data.notes ?? "");
         } else setNotFound(true);
+        if (cRes.ok) {
+          const cd = await cRes.json();
+          setCampaigns((cd.campaigns ?? []).map((c: { id: string; name: string }) => ({ id: c.id, name: c.name })));
+        }
       } catch {
         if (active) setNotFound(true);
       } finally {
@@ -383,23 +399,7 @@ export default function FanDetailDrawer({
                 ) : (
                   <ul className="mt-3 space-y-2">
                     {detail.grants.map((g) => (
-                      <li
-                        key={g.id}
-                        className="flex items-center gap-3 rounded-lg border border-line bg-base/40 px-3 py-2"
-                      >
-                        <span className="tnum shrink-0 text-sm font-semibold text-ink">
-                          +{g.spins}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-sm text-muted">
-                          <span className="tnum font-semibold text-ink">
-                            {formatCents(g.amountCents)}
-                          </span>{" "}
-                          · {g.campaignName ?? "—"}
-                        </span>
-                        <span className="tnum shrink-0 text-xs text-muted">
-                          {timeAgo(g.at)}
-                        </span>
-                      </li>
+                      <GrantRow key={g.id} g={g} campaigns={campaigns} onSaved={reload} />
                     ))}
                   </ul>
                 )}
@@ -501,6 +501,126 @@ function LinkRow({ token }: { token: string }) {
       >
         {copied ? "Copied" : "Copy"}
       </button>
+    </li>
+  );
+}
+
+/** A grant history row that expands into an inline editor (spins / $ / campaign).
+ *  Editing spins adjusts the fan's balance server-side; we refetch on save. */
+function GrantRow({
+  g,
+  campaigns,
+  onSaved,
+}: {
+  g: Grant;
+  campaigns: { id: string; name: string }[];
+  onSaved: () => void | Promise<void>;
+}) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [spins, setSpins] = useState(String(g.spins));
+  const [perSpin, setPerSpin] = useState(
+    g.spins > 0 && g.amountCents > 0 ? (g.amountCents / 100 / g.spins).toFixed(2) : ""
+  );
+  const [campaignId, setCampaignId] = useState(g.campaignId ?? "");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const nSpins = Math.max(0, Math.floor(Number(spins) || 0));
+      const amountCents = perSpin ? Math.round(Number(perSpin) * nSpins * 100) : 0;
+      const res = await fetch(`/api/grants/${g.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spins: nSpins, amountCents, campaignId: campaignId || null }),
+      });
+      if (res.ok) {
+        toast("Grant updated", { tone: "success" });
+        setEditing(false);
+        await onSaved();
+      } else {
+        toast("Couldn't update grant.", { tone: "error" });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <li className="flex items-center gap-3 rounded-lg border border-line bg-base/40 px-3 py-2">
+        <span className="tnum shrink-0 text-sm font-semibold text-ink">+{g.spins}</span>
+        <span className="min-w-0 flex-1 truncate text-sm text-muted">
+          <span className="tnum font-semibold text-ink">{formatCents(g.amountCents)}</span> ·{" "}
+          {g.campaignName ?? "No campaign"}
+        </span>
+        <button
+          onClick={() => setEditing(true)}
+          className="shrink-0 rounded-md border border-line px-2 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+        >
+          Edit
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <li className="space-y-2 rounded-lg border border-[var(--brand)]/40 bg-base/40 px-3 py-3">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-0.5 text-[11px] text-muted">
+          Spins
+          <input
+            type="number"
+            min={0}
+            value={spins}
+            onChange={(e) => setSpins(e.target.value)}
+            className="ff-input tnum w-20"
+          />
+        </label>
+        <label className="flex flex-col gap-0.5 text-[11px] text-muted">
+          $ / spin
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            value={perSpin}
+            onChange={(e) => setPerSpin(e.target.value)}
+            placeholder="0.00"
+            className="ff-input tnum w-24"
+          />
+        </label>
+        <label className="flex min-w-0 flex-1 flex-col gap-0.5 text-[11px] text-muted">
+          Campaign
+          <select
+            value={campaignId}
+            onChange={(e) => setCampaignId(e.target.value)}
+            className="ff-input w-full"
+          >
+            <option value="">No campaign (untracked)</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={save}
+          disabled={busy}
+          className="btn-brand rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button
+          onClick={() => setEditing(false)}
+          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
+        >
+          Cancel
+        </button>
+      </div>
     </li>
   );
 }

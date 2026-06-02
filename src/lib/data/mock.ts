@@ -1485,6 +1485,43 @@ export function mockSetRedemptionMeta(
 
 // --- Campaigns --------------------------------------------------------------
 
+export function mockGetUncategorizedStats(): {
+  revenue: number;
+  spinsBought: number;
+  spinsPlayed: number;
+  fans: number;
+} {
+  const g = store.grants.filter((x) => x.campaignId == null);
+  const spinsPlayed = store.redemptions.filter((r) => r.campaignId == null).length;
+  return {
+    revenue: g.reduce((s, x) => s + x.amountCents, 0),
+    spinsBought: g.reduce((s, x) => s + x.spins, 0),
+    spinsPlayed,
+    fans: new Set(g.map((x) => x.fanId)).size,
+  };
+}
+
+export function mockEditGrant(
+  grantId: string,
+  patch: { spins?: number; amountCents?: number; campaignId?: string | null }
+): { ok: true } | { error: string } {
+  const grant = store.grants.find((x) => x.id === grantId);
+  if (!grant) return { error: "not_found" };
+  if (patch.amountCents != null) grant.amountCents = Math.max(0, Math.round(patch.amountCents));
+  if (patch.campaignId !== undefined) grant.campaignId = patch.campaignId;
+  if (patch.spins != null) {
+    const newSpins = Math.max(0, Math.floor(patch.spins));
+    const delta = newSpins - grant.spins;
+    grant.spins = newSpins;
+    const fan = store.fans.get(grant.fanId);
+    if (fan && delta !== 0) {
+      fan.spinsRemaining = Math.max(0, fan.spinsRemaining + delta);
+      fan.spinsGrantedTotal = Math.max(0, fan.spinsGrantedTotal + delta);
+    }
+  }
+  return { ok: true };
+}
+
 export function mockClearMyData(): { ok: true } | { error: string } {
   store.fans = new Map();
   store.tokens = new Map();

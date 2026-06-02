@@ -15,6 +15,7 @@ import PackEditor from "./PackEditor";
 export default function CampaignsPanel() {
   const toast = useToast();
   const [stats, setStats] = useState<CampaignStats[] | null>(null);
+  const [uncat, setUncat] = useState<{ revenue: number; spinsBought: number; spinsPlayed: number; fans: number } | null>(null);
   const [wheels, setWheels] = useState<WheelSummary[]>([]);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -24,8 +25,11 @@ export default function CampaignsPanel() {
     // the whole comparison list. /api/campaigns stays available for callers that
     // only need the bare list.
     const res = await fetch("/api/campaigns/stats", { cache: "no-store" });
-    if (res.ok) setStats(((await res.json()).stats ?? []) as CampaignStats[]);
-    else setStats([]);
+    if (res.ok) {
+      const d = await res.json();
+      setStats((d.stats ?? []) as CampaignStats[]);
+      setUncat(d.uncategorized ?? null);
+    } else setStats([]);
   }, []);
 
   // Fetch the creator's wheels once so each campaign can offer a pin selector.
@@ -101,6 +105,34 @@ export default function CampaignsPanel() {
           </button>
         </div>
       </div>
+
+      {/* Uncategorized: revenue/spins not tagged to any campaign, so it's never
+          invisible. Appears only when there's something untracked. */}
+      {uncat && (uncat.revenue > 0 || uncat.spinsBought > 0) && (
+        <div className="mb-4 rounded-xl border border-dashed border-amber-400/40 bg-amber-400/5 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-bold text-ink">Uncategorized</h3>
+            <span className="text-[11px] text-amber-300">no campaign attached</span>
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            Spins/revenue from top-ups with no campaign selected. Pick a campaign on
+            future top-ups to attribute them.
+          </p>
+          <dl className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4">
+            {[
+              { label: "Revenue", value: formatCents(uncat.revenue) },
+              { label: "Spins bought", value: uncat.spinsBought },
+              { label: "Spins played", value: uncat.spinsPlayed },
+              { label: "Fans", value: uncat.fans },
+            ].map((c) => (
+              <div key={c.label} className="bg-base px-4 py-3">
+                <dd className="tnum text-xl font-bold text-ink">{c.value}</dd>
+                <dt className="mt-0.5 text-xs text-muted">{c.label}</dt>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
 
       {/* Comparison list */}
       {stats === null ? (
