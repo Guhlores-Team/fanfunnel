@@ -58,19 +58,54 @@ export function unlockAudio() {
   }
 }
 
-/** Win fanfare — richer for higher rarities. */
+/** Play several frequencies at once — a chord, for triumphant moments. */
+function chord(freqs: number[], duration: number, type: OscillatorType, gain: number) {
+  freqs.forEach((f) => blip(f, duration, type, gain));
+}
+
+/**
+ * Win fanfare — richer for higher rarities. Common→rare get a quick ascending
+ * arpeggio. Epic and legendary get a genuine jackpot moment: a faster run that
+ * resolves into a sustained major chord, a low bass thump for impact, and a
+ * high sparkle on top — legendary grander than epic.
+ */
 export function playWin(rarity: string) {
+  if (rarity === "epic" || rarity === "legendary") {
+    playBigWin(rarity === "legendary");
+    return;
+  }
   const scales: Record<string, number[]> = {
     common: [523, 659],
     uncommon: [523, 659, 784],
     rare: [523, 659, 784, 1047],
-    epic: [523, 659, 784, 1047, 1319],
-    legendary: [523, 659, 784, 1047, 1319, 1568],
   };
   const notes = scales[rarity] ?? scales.common;
   notes.forEach((f, i) => {
     setTimeout(() => blip(f, 0.18, "triangle", 0.12), i * 90);
   });
+}
+
+/** The big-win jackpot fanfare for epic (and, grander, legendary) prizes. */
+function playBigWin(legendary: boolean) {
+  // Low bass thump for physical "impact".
+  blip(legendary ? 110 : 147, 0.5, "sine", legendary ? 0.2 : 0.16);
+
+  // Fast ascending run.
+  const run = legendary
+    ? [523, 659, 784, 1047, 1319, 1568]
+    : [523, 659, 784, 1047, 1319];
+  run.forEach((f, i) => setTimeout(() => blip(f, 0.16, "triangle", 0.13), i * 70));
+
+  // Resolve into a sustained major chord once the run lands.
+  const runEnd = run.length * 70;
+  const finalChord = legendary ? [1047, 1319, 1568, 2093] : [784, 1047, 1319];
+  setTimeout(() => chord(finalChord, legendary ? 0.8 : 0.55, "triangle", 0.12), runEnd);
+
+  // High sparkle shimmer on top of the chord.
+  const sparkle = legendary ? [2637, 3136, 3520] : [2093, 2637];
+  sparkle.forEach((f, i) =>
+    setTimeout(() => blip(f, 0.25, "sine", 0.07), runEnd + 60 + i * 80)
+  );
 }
 
 /** A short two-note "ping" for a new inbound message (creator inbox). */
