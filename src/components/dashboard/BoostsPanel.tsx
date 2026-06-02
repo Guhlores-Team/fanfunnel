@@ -621,8 +621,8 @@ function WebhooksCard() {
 
   return (
     <Section
-      title="Webhooks"
-      hint="POST a JSON payload to your endpoint when a prize is pending fulfilment."
+      title="Webhooks (advanced — optional)"
+      hint="Automatically ping another app the moment a fan wins. FanFunnel sends the win's details to a web address you choose, so you can connect it to tools like Zapier, Make, Discord, or Slack (e.g. auto-log wins to a spreadsheet or get a chat notification). Most creators can skip this."
     >
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-line p-4">
         <label className="flex flex-1 flex-col gap-1 text-xs text-muted">
