@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { getPublicProfileBySlug } from "@/lib/data";
+import { externalUrl } from "@/lib/format";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 
 export const dynamic = "force-dynamic";
@@ -86,7 +87,7 @@ export default async function PublicProfilePage({
 
         {tipUrl ? (
           <a
-            href={tipUrl}
+            href={externalUrl(tipUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="btn-brand mt-8 inline-block w-full rounded-2xl py-4 text-lg font-extrabold"

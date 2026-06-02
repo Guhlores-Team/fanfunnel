@@ -3,6 +3,7 @@
 import type { Prize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
+import { externalUrl } from "@/lib/format";
 
 /**
  * The highest-intent moment in the funnel: the fan just hit 0 spins. Instead of
@@ -54,7 +55,7 @@ export default function TopUpMoment({
       )}
       {tipUrl ? (
         <a
-          href={tipUrl}
+          href={externalUrl(tipUrl)}
           target="_blank"
           rel="noopener noreferrer"
           className="btn-brand mt-4 inline-block w-full rounded-2xl py-3 font-extrabold"

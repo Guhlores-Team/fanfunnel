@@ -1342,6 +1342,45 @@ export function mockGetEngagementHeatmap(days?: number): EngagementHeatmap {
 }
 
 /** #18 Prize ROI: count wins per prize label and join the creator's cost. */
+export function mockGetProfitSummary(days?: number): {
+  revenueCents: number;
+  costCents: number;
+  profitCents: number;
+  marginPct: number;
+  costsComplete: boolean;
+} {
+  const n = clampDays(days ?? 90);
+  const since = Date.now() - n * 24 * 60 * 60 * 1000;
+  const inWindow = (iso: string) => {
+    const t = new Date(iso).getTime();
+    return !Number.isNaN(t) && t >= since;
+  };
+  const revenueCents = store.grants
+    .filter((g) => inWindow(g.at))
+    .reduce((s, g) => s + g.amountCents, 0);
+
+  const costByLabel = new Map<string, number | null>();
+  for (const w of store.wheels.values())
+    for (const p of w.prizes) costByLabel.set(p.label, p.cost ?? null);
+
+  let costCents = 0;
+  let costsComplete = true;
+  for (const r of store.redemptions) {
+    if (!inWindow(r.at)) continue;
+    const c = costByLabel.get(r.prizeLabel);
+    if (c == null) costsComplete = false;
+    else costCents += c;
+  }
+  const profitCents = revenueCents - costCents;
+  return {
+    revenueCents,
+    costCents,
+    profitCents,
+    marginPct: revenueCents > 0 ? profitCents / revenueCents : 0,
+    costsComplete,
+  };
+}
+
 export function mockGetPrizeRoi(days?: number): PrizeRoiRow[] {
   const n = clampDays(days ?? 90);
   const since = Date.now() - n * 24 * 60 * 60 * 1000;

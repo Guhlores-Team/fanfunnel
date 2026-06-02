@@ -114,14 +114,27 @@ function HeatmapCard() {
   );
 }
 
+interface ProfitSummary {
+  revenueCents: number;
+  costCents: number;
+  profitCents: number;
+  marginPct: number;
+  costsComplete: boolean;
+}
+
 function PrizeRoiCard() {
   const [rows, setRows] = useState<PrizeRoiRow[]>([]);
+  const [profit, setProfit] = useState<ProfitSummary | null>(null);
 
   useEffect(() => {
     let live = true;
     fetch("/api/analytics/roi?days=90", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { rows: [] }))
       .then((d) => live && setRows(d.rows ?? []))
+      .catch(() => {});
+    fetch("/api/analytics/profit?days=90", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { summary: null }))
+      .then((d) => live && setProfit(d.summary ?? null))
       .catch(() => {});
     return () => {
       live = false;
@@ -130,9 +143,29 @@ function PrizeRoiCard() {
 
   return (
     <Section
-      title="Prize ROI"
-      hint='What each prize costs you to fulfil × how often it&rsquo;s won (last 90 days). Set a "Cost" on a prize in the Wheel editor — your real cost to deliver it (e.g. your hourly rate for a video call) — and "—" becomes a dollar figure so you can see which prizes are eating your time/money.'
+      title="Profit & prize costs"
+      hint='Your real bottom line over the last 90 days: revenue (what fans paid) minus prize cost (won prizes × the "Cost" you set on each in the Wheel editor) = profit. Per-prize ROI can&rsquo;t be exact because a fan pays for spins, not a specific prize — so the table shows each prize&rsquo;s cost and its share of revenue.'
     >
+      {profit && (
+        <div className="card mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4">
+          {[
+            { label: "Revenue", value: formatCents(profit.revenueCents) },
+            { label: "Prize cost", value: formatCents(profit.costCents) },
+            { label: "Profit", value: formatCents(profit.profitCents) },
+            { label: "Margin", value: `${Math.round(profit.marginPct * 100)}%` },
+          ].map((c) => (
+            <div key={c.label} className="bg-base px-4 py-3">
+              <p className="tnum text-xl font-bold text-ink">{c.value}</p>
+              <p className="mt-0.5 text-xs text-muted">{c.label}</p>
+            </div>
+          ))}
+          {!profit.costsComplete && (
+            <p className="col-span-2 bg-base px-4 py-2 text-[11px] text-amber-300 sm:col-span-4">
+              Some won prizes have no cost set, so cost (and profit) is understated. Set a Cost on each prize in the Wheel editor for an exact figure.
+            </p>
+          )}
+        </div>
+      )}
       {rows.length === 0 ? (
         <p className="text-sm text-muted">No prize wins yet.</p>
       ) : (
@@ -148,6 +181,9 @@ function PrizeRoiCard() {
                 </th>
                 <th className="px-4 py-2.5 text-right font-semibold">
                   Total cost
+                </th>
+                <th className="px-4 py-2.5 text-right font-semibold">
+                  % of revenue
                 </th>
               </tr>
             </thead>
@@ -175,6 +211,11 @@ function PrizeRoiCard() {
                   </td>
                   <td className="tnum px-4 py-2.5 text-right font-semibold text-ink">
                     {formatCents(r.totalCostCents)}
+                  </td>
+                  <td className="tnum px-4 py-2.5 text-right text-muted">
+                    {profit && profit.revenueCents > 0
+                      ? `${Math.round((r.totalCostCents / profit.revenueCents) * 100)}%`
+                      : "—"}
                   </td>
                 </tr>
               ))}

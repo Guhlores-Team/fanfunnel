@@ -3,6 +3,7 @@ import {
   createServiceClient,
   createClient,
 } from "@/lib/supabase/server";
+import { externalUrl } from "@/lib/format";
 import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
 import { randomSeedHex, sha256Hex, makeRng } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
@@ -57,6 +58,7 @@ import {
   mockGetMetricsExtra,
   mockGetEngagementHeatmap,
   mockGetPrizeRoi,
+  mockGetProfitSummary,
   mockGetCohortRetention,
   mockSetRedemptionStatus,
   mockSetRedemptionMeta,
@@ -2808,6 +2810,85 @@ export async function getPrizeRoi(days: number = 90): Promise<PrizeRoiRow[]> {
   return rows;
 }
 
+export interface ProfitSummary {
+  revenueCents: number; // what fans paid (grants) in the window
+  costCents: number; // prize fulfilment cost (won prizes × their set cost)
+  profitCents: number; // revenue − cost
+  marginPct: number; // profit ÷ revenue (0 if no revenue)
+  costsComplete: boolean; // false if some won prizes have no cost set (cost understated)
+}
+
+/**
+ * The real bottom line over a window: revenue (what fans paid) minus prize cost
+ * (won prizes × their set cost) = profit. This is the honest "ROI" the per-prize
+ * cost table can't give, because revenue isn't attributable to a single prize.
+ */
+export async function getProfitSummary(days: number = 90): Promise<ProfitSummary> {
+  const n = clampDays(days);
+  const empty: ProfitSummary = {
+    revenueCents: 0,
+    costCents: 0,
+    profitCents: 0,
+    marginPct: 0,
+    costsComplete: true,
+  };
+  if (!isSupabaseConfigured()) return mockGetProfitSummary(days);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return empty;
+
+  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+
+  // Revenue: grants in the window.
+  const { data: grantRows } = await sb
+    .from("grants")
+    .select("amount_cents")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+  const revenueCents = ((grantRows ?? []) as { amount_cents: number }[]).reduce(
+    (s, g) => s + (g.amount_cents ?? 0),
+    0
+  );
+
+  // Cost: each won prize (in window) × its set cost, by label.
+  const { data: prizeRows } = await sb
+    .from("prizes")
+    .select("label, cost_cents, wheel:wheels!inner(creator_id)")
+    .eq("wheel.creator_id", user.id);
+  const costByLabel = new Map<string, number | null>();
+  for (const p of (prizeRows ?? []) as unknown as {
+    label: string;
+    cost_cents: number | null;
+  }[]) {
+    costByLabel.set(p.label, p.cost_cents ?? null);
+  }
+  const { data: spinRows } = await sb
+    .from("spins")
+    .select("prize_label")
+    .eq("creator_id", user.id)
+    .gte("created_at", since);
+
+  let costCents = 0;
+  let costsComplete = true;
+  for (const s of (spinRows ?? []) as { prize_label: string }[]) {
+    const c = costByLabel.get(s.prize_label);
+    if (c == null) costsComplete = false;
+    else costCents += c;
+  }
+
+  const profitCents = revenueCents - costCents;
+  return {
+    revenueCents,
+    costCents,
+    profitCents,
+    marginPct: revenueCents > 0 ? profitCents / revenueCents : 0,
+    costsComplete,
+  };
+}
+
 // #19 Cohort retention: cohort each fan by their first grant's campaign.
 export async function getCohortRetention(): Promise<CohortRow[]> {
   if (!isSupabaseConfigured()) return mockGetCohortRetention();
@@ -4907,7 +4988,7 @@ export async function setMyPublicProfile(input: {
     .replace(/^-+|-+$/g, "");
   const { error } = await sb.rpc("set_public_profile", {
     p_slug: slug,
-    p_tip_url: input.tipUrl,
+    p_tip_url: externalUrl(input.tipUrl),
     p_tagline: input.tagline,
   });
   if (error) return { error: "db_error" };
