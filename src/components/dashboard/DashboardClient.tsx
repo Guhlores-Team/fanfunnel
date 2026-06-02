@@ -564,6 +564,9 @@ function PrizesPanel({
   setData: React.Dispatch<React.SetStateAction<CreatorOverview | null>>;
 }) {
   const [filter, setFilter] = useState<RedemptionStatus | "all">("pending");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const PER_PAGE = 15;
 
   // PATCH a redemption: status and/or notes/dueAt. Optimistically patch the
   // shared overview so the row updates instantly, then refresh authoritatively.
@@ -593,7 +596,17 @@ function PrizesPanel({
     patchRow(id, { status });
 
   const redemptions = data?.redemptions ?? [];
-  const shown = filter === "all" ? redemptions : redemptions.filter((r) => r.status === filter);
+  const q = search.trim().toLowerCase();
+  const matched = redemptions
+    .filter((r) => filter === "all" || r.status === filter)
+    .filter(
+      (r) =>
+        q === "" ||
+        r.fanName.toLowerCase().includes(q) ||
+        r.prizeLabel.toLowerCase().includes(q)
+    );
+  const shown = matched.slice(0, page * PER_PAGE);
+  const hasMore = matched.length > shown.length;
   const pendingCount = redemptions.filter((r) => r.status === "pending").length;
 
   return (
@@ -611,12 +624,15 @@ function PrizesPanel({
         </button>
       </div>
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex gap-2 overflow-x-auto [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {(["pending", "in_progress", "fulfilled", "cancelled", "all"] as const).map((f) => (
           <button
             key={f}
-            onClick={() => setFilter(f)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition ${
+            onClick={() => {
+              setFilter(f);
+              setPage(1);
+            }}
+            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition ${
               filter === f
                 ? "bg-[var(--brand)] text-white"
                 : "border border-line text-muted hover:text-ink"
@@ -627,6 +643,16 @@ function PrizesPanel({
           </button>
         ))}
       </div>
+
+      <input
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setPage(1);
+        }}
+        placeholder="Search by fan or prize…"
+        className="ff-input mt-3 w-full"
+      />
 
       <div className="mt-4 space-y-2">
         {loading && (
@@ -645,6 +671,21 @@ function PrizesPanel({
         {shown.map((r) => (
           <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} />
         ))}
+        {!loading && shown.length > 0 && (
+          <div className="flex items-center justify-between pt-1 text-xs text-muted">
+            <span>
+              Showing {shown.length} of {matched.length}
+            </span>
+            {hasMore && (
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                className="rounded-lg border border-line px-3 py-1.5 font-semibold text-ink transition hover:bg-white/5"
+              >
+                Load more
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
