@@ -312,7 +312,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   const { data } = await sb
     .from("fan_passes")
     .select(
-      `id, creator_id, campaign_id, wheel_id, fan_id, is_active,
+      `id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining,
        fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at),
        creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`
     )
@@ -326,6 +326,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
+    spins_remaining: number;
     fan: {
       id: string;
       display_name: string | null;
@@ -401,7 +402,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
     fanHandle: pass.fan.handle ?? null,
     creatorTitle: pass.creator?.display_name ?? "Creator",
-    spinsRemaining: pass.fan.spins_remaining,
+    // Per-wheel: the balance the fan can spin on THIS wheel's link.
+    spinsRemaining: pass.spins_remaining,
     wheel: toWheelConfig(wheel),
     recentWins: winRows.map((w) => ({
       label: w.prize_label,
@@ -546,33 +548,9 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     .update({ pity_counter: chosen.nextPityCounter, leaderboard_opt_in: true })
     .eq("id", pass.fan_id);
 
-  // 3b. FIFO-attribute this spin to a campaign. Order the fan's grants
-  //     oldest→newest, build cumulative spin ranges; this spin's 0-based index
-  //     among the fan's spins (= spins already played) belongs to the grant
-  //     whose cumulative range covers it (null if beyond every grant).
-  const { data: grantRows } = await sb
-    .from("grants")
-    .select("campaign_id, spins, created_at")
-    .eq("fan_id", pass.fan_id)
-    .order("created_at", { ascending: true });
-  const { count: playedBefore } = await sb
-    .from("spins")
-    .select("id", { count: "exact", head: true })
-    .eq("fan_id", pass.fan_id);
-
-  let spinCampaignId: string | null = null;
-  {
-    const grants = (grantRows ?? []) as { campaign_id: string | null; spins: number }[];
-    const before = playedBefore ?? 0;
-    let cumulative = 0;
-    for (const g of grants) {
-      cumulative += g.spins;
-      if (before < cumulative) {
-        spinCampaignId = g.campaign_id;
-        break;
-      }
-    }
-  }
+  // 3b. Per-wheel attribution: the spin belongs to THIS pass's campaign (the
+  //     link the fan is spinning), so spins land on the right campaign directly.
+  const spinCampaignId: string | null = pass.campaign_id;
 
   // 4. Log the spin (against the fan account) + a pending redemption.
   const { data: spinRow } = await sb
@@ -647,7 +625,8 @@ export async function createPass(opts: {
       amountCents,
       bonusSpins,
       opts.packId,
-      opts.referralCode
+      opts.referralCode,
+      opts.wheelId
     );
   }
 
@@ -677,12 +656,36 @@ export async function createPass(opts: {
   // Effective balance added = paid spins + bonus spins.
   const balanceAdd = spins + bonusSpins;
 
+  const campaignId = opts.campaignId ?? null;
+
+  // Resolve which wheel these spins are for (spins are per-wheel):
+  //   explicit wheelId > the campaign's pinned wheel > the active wheel > oldest.
   let wheelId = opts.wheelId;
+  if (!wheelId && campaignId) {
+    const { data: camp } = await sb
+      .from("campaigns")
+      .select("pinned_wheel_id")
+      .eq("id", campaignId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    wheelId = (camp as { pinned_wheel_id: string | null } | null)?.pinned_wheel_id ?? undefined;
+  }
+  if (!wheelId) {
+    const { data: active } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("creator_id", user.id)
+      .eq("is_active", true)
+      .is("archived_at", null)
+      .maybeSingle();
+    wheelId = (active as { id: string } | null)?.id;
+  }
   if (!wheelId) {
     const { data: w } = await sb
       .from("wheels")
       .select("id")
       .eq("creator_id", user.id)
+      .is("archived_at", null)
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -690,12 +693,56 @@ export async function createPass(opts: {
   }
   if (!wheelId) return { error: "no_wheel" };
 
-  const campaignId = opts.campaignId ?? null;
-
   // Reuse the existing fan account (top-up) or create a new one.
   let fanId = opts.fanId;
   let token: string;
+  let passId: string;
+
   if (fanId) {
+    // Existing fan: find this fan's pass FOR THIS WHEEL. Top it up if it exists,
+    // otherwise mint a new per-wheel link. Spins live on the pass, not the fan.
+    const { data: existing } = await sb
+      .from("fan_passes")
+      .select("id, token, spins_remaining, spins_granted_total")
+      .eq("fan_id", fanId)
+      .eq("wheel_id", wheelId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    const ex = existing as
+      | { id: string; token: string; spins_remaining: number; spins_granted_total: number }
+      | null;
+    if (ex) {
+      passId = ex.id;
+      token = ex.token;
+      await sb
+        .from("fan_passes")
+        .update({
+          spins_remaining: ex.spins_remaining + balanceAdd,
+          spins_granted_total: ex.spins_granted_total + balanceAdd,
+          ...(campaignId ? { campaign_id: campaignId } : {}),
+        })
+        .eq("id", ex.id);
+    } else {
+      token = randomToken();
+      const { data: np, error: npErr } = await sb
+        .from("fan_passes")
+        .insert({
+          token,
+          creator_id: user.id,
+          wheel_id: wheelId,
+          fan_id: fanId,
+          campaign_id: campaignId,
+          spins_remaining: balanceAdd,
+          spins_granted_total: balanceAdd,
+        })
+        .select("id")
+        .single();
+      if (npErr || !np) return { error: "db_error" };
+      passId = np.id;
+    }
+
+    // Keep the fan-level aggregate (sum of passes) in sync.
     const { data: fan } = await sb
       .from("fans")
       .select("spins_remaining, spins_granted_total")
@@ -709,17 +756,6 @@ export async function createPass(opts: {
         spins_granted_total: fan.spins_granted_total + balanceAdd,
       })
       .eq("id", fanId);
-
-    // Top-up: DON'T mint a new link — reuse the fan's newest existing token.
-    const { data: pass } = await sb
-      .from("fan_passes")
-      .select("token")
-      .eq("fan_id", fanId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (!pass?.token) return { error: "no_pass" };
-    token = pass.token;
   } else {
     const { data: fan, error } = await sb
       .from("fans")
@@ -734,9 +770,7 @@ export async function createPass(opts: {
     if (error || !fan) return { error: "db_error" };
     fanId = fan.id;
 
-    // Referral: a NEW fan arriving with a code is linked to the referrer (same
-    // creator, not self). The credit is awarded later, on this fan's first PAID
-    // grant (see the crediting block below).
+    // Referral linking (dormant feature; credit awarded on first paid grant).
     if (opts.referralCode) {
       const { data: refRow } = await sb
         .from("fans")
@@ -746,10 +780,7 @@ export async function createPass(opts: {
         .maybeSingle();
       const referrer = refRow as { id: string } | null;
       if (referrer && referrer.id !== fanId) {
-        await sb
-          .from("fans")
-          .update({ referred_by_fan_id: referrer.id })
-          .eq("id", fanId);
+        await sb.from("fans").update({ referred_by_fan_id: referrer.id }).eq("id", fanId);
         await sb.from("referrals").insert({
           creator_id: user.id,
           referrer_fan_id: referrer.id,
@@ -759,26 +790,31 @@ export async function createPass(opts: {
       }
     }
 
-    // New fan: mint exactly ONE link.
+    // New fan: mint their first per-wheel link with the balance on the pass.
     token = randomToken();
-    const { error: passErr } = await sb.from("fan_passes").insert({
-      token,
-      creator_id: user.id,
-      wheel_id: wheelId,
-      fan_id: fanId,
-      campaign_id: campaignId,
-    });
-    if (passErr) return { error: "db_error" };
+    const { data: np, error: passErr } = await sb
+      .from("fan_passes")
+      .insert({
+        token,
+        creator_id: user.id,
+        wheel_id: wheelId,
+        fan_id: fanId,
+        campaign_id: campaignId,
+        spins_remaining: balanceAdd,
+        spins_granted_total: balanceAdd,
+      })
+      .select("id")
+      .single();
+    if (passErr || !np) return { error: "db_error" };
+    passId = np.id;
   }
   if (!fanId) return { error: "db_error" };
 
-  // Every grant (new fan OR top-up) is recorded for revenue + FIFO attribution.
-  // `spins` on the grant is the FULL balance added (paid + bonus) so FIFO
-  // attribution covers every spin the fan can actually play; `bonus_spins`
-  // records the comped portion separately for display.
+  // Record the grant for revenue, attributed to this pass (= wheel/campaign).
   const { error: grantErr } = await sb.from("grants").insert({
     creator_id: user.id,
     fan_id: fanId,
+    fan_pass_id: passId,
     campaign_id: campaignId,
     spins: balanceAdd,
     amount_cents: amountCents,
@@ -1076,11 +1112,13 @@ export async function editGrant(
 
   const { data: gRow } = await sb
     .from("grants")
-    .select("id, fan_id, spins")
+    .select("id, fan_id, fan_pass_id, spins")
     .eq("id", grantId)
     .eq("creator_id", user.id)
     .maybeSingle();
-  const grant = gRow as { id: string; fan_id: string; spins: number } | null;
+  const grant = gRow as
+    | { id: string; fan_id: string; fan_pass_id: string | null; spins: number }
+    | null;
   if (!grant) return { error: "not_found" };
 
   const update: Record<string, unknown> = {};
@@ -1092,6 +1130,7 @@ export async function editGrant(
     const delta = newSpins - grant.spins;
     update.spins = newSpins;
     if (delta !== 0) {
+      // Adjust the fan-level aggregate.
       const { data: fanRow } = await sb
         .from("fans")
         .select("spins_remaining, spins_granted_total")
@@ -1106,6 +1145,24 @@ export async function editGrant(
             spins_granted_total: Math.max(0, fan.spins_granted_total + delta),
           })
           .eq("id", grant.fan_id);
+      }
+      // And the specific wheel's pass balance this grant landed on.
+      if (grant.fan_pass_id) {
+        const { data: pRow } = await sb
+          .from("fan_passes")
+          .select("spins_remaining, spins_granted_total")
+          .eq("id", grant.fan_pass_id)
+          .maybeSingle();
+        const p = pRow as { spins_remaining: number; spins_granted_total: number } | null;
+        if (p) {
+          await sb
+            .from("fan_passes")
+            .update({
+              spins_remaining: Math.max(0, p.spins_remaining + delta),
+              spins_granted_total: Math.max(0, p.spins_granted_total + delta),
+            })
+            .eq("id", grant.fan_pass_id);
+        }
       }
     }
   }
@@ -1130,24 +1187,36 @@ export async function grantSpins(
   const sb = await createClient();
   const { data: pass } = await sb
     .from("fan_passes")
-    .select("fan:fans(id, spins_remaining, spins_granted_total)")
+    .select("id, spins_remaining, spins_granted_total, fan:fans(id, spins_remaining, spins_granted_total)")
     .eq("token", token)
     .maybeSingle();
 
-  const fan = (pass as unknown as { fan: { id: string; spins_remaining: number; spins_granted_total: number } | null } | null)
-    ?.fan;
-  if (!fan) return { error: "not_found" };
+  const p = pass as unknown as {
+    id: string;
+    spins_remaining: number;
+    spins_granted_total: number;
+    fan: { id: string; spins_remaining: number; spins_granted_total: number } | null;
+  } | null;
+  if (!p || !p.fan) return { error: "not_found" };
 
+  // Top up THIS pass (per-wheel) and the fan-level aggregate.
   const { data: updated, error } = await sb
-    .from("fans")
+    .from("fan_passes")
     .update({
-      spins_remaining: fan.spins_remaining + add,
-      spins_granted_total: fan.spins_granted_total + add,
+      spins_remaining: p.spins_remaining + add,
+      spins_granted_total: p.spins_granted_total + add,
     })
-    .eq("id", fan.id)
+    .eq("id", p.id)
     .select("spins_remaining")
     .single();
   if (error || !updated) return { error: "db_error" };
+  await sb
+    .from("fans")
+    .update({
+      spins_remaining: p.fan.spins_remaining + add,
+      spins_granted_total: p.fan.spins_granted_total + add,
+    })
+    .eq("id", p.fan.id);
   return { spinsRemaining: updated.spins_remaining };
 }
 
@@ -1168,7 +1237,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     .from("fans")
     .select(
       `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at,
-       fan_passes(token, created_at),
+       fan_passes(token, created_at, spins_remaining, wheel_id, wheel:wheels(title), campaign:campaigns(name)),
        spins(prize_label, prize_rarity, created_at),
        grants(amount_cents, campaign_id, campaign:campaigns(name))`
     )
@@ -1182,7 +1251,16 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     spins_remaining: number;
     spins_granted_total: number;
     tags: string[] | null;
-    fan_passes: { token: string; created_at: string }[] | null;
+    fan_passes:
+      | {
+          token: string;
+          created_at: string;
+          spins_remaining: number;
+          wheel_id: string;
+          wheel: { title: string } | null;
+          campaign: { name: string } | null;
+        }[]
+      | null;
     spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[] | null;
     grants:
       | { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[]
@@ -1204,6 +1282,13 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     const links = (r.fan_passes ?? [])
       .slice()
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const passes = links.map((p) => ({
+      token: p.token,
+      wheelId: p.wheel_id,
+      wheelTitle: p.wheel?.title ?? "Wheel",
+      campaignName: p.campaign?.name ?? null,
+      spinsRemaining: p.spins_remaining ?? 0,
+    }));
     return {
       fanId: r.id,
       name: r.display_name ?? r.handle ?? "Fan",
@@ -1214,6 +1299,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       campaignNames,
       tags: r.tags ?? [],
       links: links.map((p) => ({ token: p.token })),
+      passes,
       lastWin: wins[0]
         ? { label: wins[0].prize_label, rarity: wins[0].prize_rarity, at: wins[0].created_at }
         : null,

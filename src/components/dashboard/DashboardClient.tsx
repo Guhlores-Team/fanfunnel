@@ -845,6 +845,7 @@ function FansPanel() {
   // authoritatively; cleared on any manual override so we don't mis-attribute.
   const [packId, setPackId] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
+  const [wheels, setWheels] = useState<{ id: string; title: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [openFanId, setOpenFanId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -868,12 +869,20 @@ function FansPanel() {
     const res = await fetch("/api/dm-templates", { cache: "no-store" });
     if (res.ok) setTemplates((await res.json()).templates ?? []);
   }, []);
+  const loadWheels = useCallback(async () => {
+    const res = await fetch("/api/wheels", { cache: "no-store" });
+    if (res.ok) {
+      const d = (await res.json()) as { wheels?: { id: string; title: string }[] };
+      setWheels((d.wheels ?? []).map((w) => ({ id: w.id, title: w.title })));
+    }
+  }, []);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     load();
     loadCampaigns();
     loadTemplates();
-  }, [load, loadCampaigns, loadTemplates]);
+    loadWheels();
+  }, [load, loadCampaigns, loadTemplates, loadWheels]);
 
   // Every distinct tag across loaded accounts, for the tag filter dropdown.
   const allTags = useMemo(() => {
@@ -930,13 +939,15 @@ function FansPanel() {
     addSpins: number,
     amountDollars?: number,
     topUpCampaignId?: string,
-    packId?: string | null
+    packId?: string | null,
+    wheelId?: string
   ) {
     const data = await call({
       fanId,
       spins: addSpins,
       amountDollars: amountDollars || undefined,
       campaignId: topUpCampaignId || undefined,
+      wheelId: wheelId || undefined,
       ...(packId ? { packId } : {}),
     });
     if (data) await load();
@@ -1117,6 +1128,7 @@ function FansPanel() {
             account={acc}
             origin={origin}
             campaigns={campaigns}
+            wheels={wheels}
             templates={templates}
             onTopUp={topUp}
             onOpen={setOpenFanId}
@@ -1289,6 +1301,7 @@ function AccountCard({
   account,
   origin,
   campaigns,
+  wheels,
   templates,
   onTopUp,
   onOpen,
@@ -1298,18 +1311,25 @@ function AccountCard({
   account: FanAccountSummary;
   origin: string;
   campaigns: { id: string; name: string }[];
+  wheels: { id: string; title: string }[];
   templates: DmTemplate[];
   onTopUp: (
     fanId: string,
     addSpins: number,
     amountDollars?: number,
     campaignId?: string,
-    packId?: string | null
+    packId?: string | null,
+    wheelId?: string
   ) => void;
   onOpen: (fanId: string) => void;
   onDeleted: () => void;
   refresh: () => void;
 }) {
+  // Which wheel the top-up targets (per-wheel spins). Default to the fan's
+  // first existing wheel-pass, else the first wheel.
+  const [topUpWheelId, setTopUpWheelId] = useState<string>(
+    account.passes[0]?.wheelId ?? wheels[0]?.id ?? ""
+  );
   const [topUp, setTopUp] = useState(3);
   // Per-spin price as its own state (see FansPanel) so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
@@ -1323,7 +1343,6 @@ function AccountCard({
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
   const [packId, setPackId] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
@@ -1385,8 +1404,6 @@ function AccountCard({
     }
   }
 
-  // The rest of the fan's links are revealed on demand (primary shown above).
-  const others = account.links.filter((l) => l.token !== primaryToken);
 
   return (
     <div className="card rounded-xl p-4">
@@ -1509,6 +1526,20 @@ function AccountCard({
             </p>
           )}
         </Field>
+        <Field label="Wheel">
+          <select
+            className="ff-input w-40"
+            value={topUpWheelId}
+            onChange={(e) => setTopUpWheelId(e.target.value)}
+          >
+            {wheels.length === 0 && <option value="">Active wheel</option>}
+            {wheels.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.title}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Campaign">
           <select
             className="ff-input w-40"
@@ -1533,7 +1564,8 @@ function AccountCard({
               topUp,
               amount ? Number(amount) || undefined : undefined,
               campaignId || undefined,
-              packId
+              packId,
+              topUpWheelId || undefined
             );
             setPerSpin("");
             setPackId(null);
@@ -1556,25 +1588,37 @@ function AccountCard({
         </div>
       )}
 
-      {primaryToken && (
+      {/* Per-wheel links: each wheel the fan plays has its OWN link + spin
+          balance, so a Spooky top-up and a Summer top-up are separate. */}
+      {account.passes.length > 0 ? (
         <div className="mt-3 space-y-2">
-          <LinkRow url={`${origin}/spin/${primaryToken}`} latest />
-          {others.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setShowAll((v) => !v)}
-                className="text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
-              >
-                {showAll ? "Hide other links" : `Show all links (${account.links.length})`}
-              </button>
-              {showAll &&
-                others.map((l) => (
-                  <LinkRow key={l.token} url={`${origin}/spin/${l.token}`} latest={false} />
-                ))}
-            </>
-          )}
+          {account.passes.map((p) => (
+            <div key={p.token} className="rounded-lg border border-line bg-base/40 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-sm font-semibold text-ink">
+                  🎡 {p.wheelTitle}
+                </span>
+                <span className="tnum shrink-0 text-xs font-bold text-[var(--brand)]">
+                  {p.spinsRemaining} spins
+                </span>
+              </div>
+              {p.campaignName && (
+                <span className="mt-0.5 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-muted">
+                  {p.campaignName}
+                </span>
+              )}
+              <div className="mt-2">
+                <LinkRow url={`${origin}/spin/${p.token}`} latest={false} />
+              </div>
+            </div>
+          ))}
         </div>
+      ) : (
+        primaryToken && (
+          <div className="mt-3">
+            <LinkRow url={`${origin}/spin/${primaryToken}`} latest />
+          </div>
+        )
       )}
     </div>
   );

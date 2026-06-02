@@ -69,12 +69,23 @@ interface MockWin extends WonPrize {
   nonce: number;
 }
 
+// A per-wheel link under a fan: its own balance + which wheel/campaign it's for.
+interface MockPass {
+  token: string;
+  wheelId: string;
+  campaignId: string | null;
+  spinsRemaining: number;
+  spinsGrantedTotal: number;
+  createdAt: string;
+}
+
 interface MockFan {
   id: string;
   name: string;
-  spinsRemaining: number;
+  spinsRemaining: number; // maintained aggregate = sum of passes
   spinsGrantedTotal: number; // tracked independently of remaining
   primaryToken: string;
+  passes: MockPass[]; // per-wheel links/balances (authoritative)
   wins: MockWin[];
   notes: string | null; // free-form creator notes
   tags: string[]; // creator-applied labels
@@ -458,6 +469,16 @@ if (!store.fans.has("demo-fan")) {
     spinsRemaining: demoSpins,
     spinsGrantedTotal: demoSpins,
     primaryToken: "demo",
+    passes: [
+      {
+        token: "demo",
+        wheelId: mockResolveActiveWheelId(),
+        campaignId: null,
+        spinsRemaining: demoSpins,
+        spinsGrantedTotal: demoSpins,
+        createdAt: new Date().toISOString(),
+      },
+    ],
     wins: [],
     notes: null,
     tags: ["new"],
@@ -584,6 +605,39 @@ export function mockResolveWheelId(
 /** The campaign attached to a fan's primary token, if any. */
 function campaignForFan(fan: MockFan): string | null {
   return store.tokenCampaign.get(fan.primaryToken) ?? null;
+}
+
+/** Find the pass (per-wheel link) + its fan for a token. */
+function passForToken(token: string): { fan: MockFan; pass: MockPass } | null {
+  for (const fan of store.fans.values()) {
+    const pass = fan.passes?.find((p) => p.token === token);
+    if (pass) return { fan, pass };
+  }
+  return null;
+}
+
+/** Re-derive a fan's aggregate balance from the sum of their passes. */
+function recomputeFanAggregate(fan: MockFan) {
+  fan.spinsRemaining = (fan.passes ?? []).reduce((s, p) => s + p.spinsRemaining, 0);
+  fan.spinsGrantedTotal = (fan.passes ?? []).reduce((s, p) => s + p.spinsGrantedTotal, 0);
+}
+
+/** Backfill: give any fan without per-wheel passes a single pass derived from
+ *  their legacy primaryToken + balance (so older in-memory stores keep working). */
+function ensurePasses(fan: MockFan) {
+  if (fan.passes && fan.passes.length > 0) return;
+  const campaignId = store.tokenCampaign.get(fan.primaryToken) ?? null;
+  const wheelId = mockResolveWheelId({ campaignId });
+  fan.passes = [
+    {
+      token: fan.primaryToken,
+      wheelId,
+      campaignId,
+      spinsRemaining: fan.spinsRemaining,
+      spinsGrantedTotal: fan.spinsGrantedTotal,
+      createdAt: new Date().toISOString(),
+    },
+  ];
 }
 
 /** Lifecycle fields a WheelSummary needs, normalized. */
@@ -821,7 +875,10 @@ function wishlistFor(fanId: string): WishlistItem[] {
 export function mockGetFanPass(token: string): FanPassView | null {
   const fan = fanForToken(token);
   if (!fan) return null;
-  const wheelId = mockResolveWheelId({ campaignId: campaignForFan(fan) });
+  ensurePasses(fan);
+  // Per-wheel: this token's pass decides the wheel + the balance shown.
+  const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
+  const wheelId = pass?.wheelId ?? mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
   return structuredClone({
     token,
@@ -829,7 +886,7 @@ export function mockGetFanPass(token: string): FanPassView | null {
     fanHandle: fan.handle ?? null,
     creatorTitle: CREATOR_TITLE,
     wheel,
-    spinsRemaining: fan.spinsRemaining,
+    spinsRemaining: pass?.spinsRemaining ?? fan.spinsRemaining,
     recentWins: fan.wins,
     wishlist: wishlistFor(fan.id),
     happyHour: mockGetActiveHappyHour(wheel.id),
@@ -844,12 +901,20 @@ export function mockGetFanPass(token: string): FanPassView | null {
 }
 
 export async function mockSpin(token: string) {
-  const fan = fanForToken(token);
-  if (!fan) return { error: "not_found" as const };
-  if (fan.spinsRemaining <= 0) return { error: "no_spins" as const };
+  const found = passForToken(token);
+  if (!found) {
+    // Legacy fan with no pass row yet — backfill then retry resolution.
+    const f = fanForToken(token);
+    if (!f) return { error: "not_found" as const };
+    ensurePasses(f);
+  }
+  const ctx = passForToken(token);
+  if (!ctx) return { error: "not_found" as const };
+  const { fan, pass } = ctx;
+  // Per-wheel: spend only THIS pass's balance, on THIS pass's wheel.
+  if (pass.spinsRemaining <= 0) return { error: "no_spins" as const };
 
-  // Resolve the wheel this fan's pass plays (campaign pin → active → fallback).
-  const wheelId = mockResolveWheelId({ campaignId: campaignForFan(fan) });
+  const wheelId = pass.wheelId;
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
 
   // Happy hour: boost rare-or-better weights for the pick (the returned clone is
@@ -870,14 +935,11 @@ export async function mockSpin(token: string) {
     rng
   );
 
-  // FIFO-attribute THIS spin to a campaign: the 0-based index of this spin
-  // among all the fan has played is the count played before it. Walk the fan's
-  // grants oldest→newest, building cumulative spin ranges, and find the grant
-  // whose range covers that index (null if beyond every grant).
-  const playedBefore = fan.wins.length;
-  const campaignId = fifoCampaignForSpin(fan.id, playedBefore);
+  // Per-wheel: the spin belongs to THIS pass's campaign directly.
+  const campaignId = pass.campaignId;
 
-  fan.spinsRemaining -= 1;
+  pass.spinsRemaining -= 1; // spend from this wheel's pass
+  recomputeFanAggregate(fan); // keep the fan-level total in sync
   fan.pityCounter = nextPityCounter;
   // Spinning auto-opts the fan into the leaderboard (handle-only; the board only
   // renders when the creator enables it, so nothing is exposed until then).
@@ -942,7 +1004,8 @@ export function mockCreatePass(
   amountCents?: number,
   bonusSpins?: number,
   packId?: string,
-  referralCode?: string
+  referralCode?: string,
+  wheelId?: string
 ): { token: string; fanId: string } {
   // If a pack is supplied, its spins/amount/bonus are authoritative.
   let baseSpins = spins;
@@ -1020,12 +1083,23 @@ export function mockCreatePass(
       if (referrer && referrer.id !== id) referredByFanId = referrer.id;
     }
 
+    const newWheelId = mockResolveWheelId({ campaignId: campaignId ?? null, wheelId });
     const newFan: MockFan = {
       id,
       name: name.trim() || "Fan",
       spinsRemaining: add,
       spinsGrantedTotal: add,
       primaryToken: token,
+      passes: [
+        {
+          token,
+          wheelId: newWheelId,
+          campaignId: campaignId ?? null,
+          spinsRemaining: add,
+          spinsGrantedTotal: add,
+          createdAt: new Date().toISOString(),
+        },
+      ],
       wins: [],
       notes: null,
       tags: [],
@@ -1057,21 +1131,55 @@ export function mockCreatePass(
     return { token, fanId: id };
   }
 
-  // Existing fan (top-up): add to balances, DON'T mint a new token, just grant.
-  fan.spinsRemaining += add;
-  fan.spinsGrantedTotal += add;
+  // Existing fan (top-up): per-wheel — find this fan's pass for the target wheel
+  // and top it up, or mint a NEW per-wheel link if they don't have one yet.
+  ensurePasses(fan);
+  const targetWheel = mockResolveWheelId({ campaignId: campaignId ?? null, wheelId });
+  let pass = fan.passes.find((p) => p.wheelId === targetWheel);
+  let tokenOut: string;
+  if (pass) {
+    pass.spinsRemaining += add;
+    pass.spinsGrantedTotal += add;
+    if (campaignId) pass.campaignId = campaignId;
+    tokenOut = pass.token;
+  } else {
+    tokenOut =
+      ((name.trim() || fan.name || "fan").toLowerCase().replace(/[^a-z0-9]+/g, "-") || "fan") +
+      "-" +
+      Math.random().toString(36).slice(2, 8);
+    pass = {
+      token: tokenOut,
+      wheelId: targetWheel,
+      campaignId: campaignId ?? null,
+      spinsRemaining: add,
+      spinsGrantedTotal: add,
+      createdAt: new Date().toISOString(),
+    };
+    fan.passes.push(pass);
+    store.tokens.set(tokenOut, fan.id);
+  }
+  recomputeFanAggregate(fan);
   pushGrant(fan.id);
   maybeCreditReferral(fan, money);
-  if (campaignId) store.tokenCampaign.set(fan.primaryToken, campaignId);
-  return { token: fan.primaryToken, fanId: fan.id };
+  if (campaignId) store.tokenCampaign.set(tokenOut, campaignId);
+  return { token: tokenOut, fanId: fan.id };
 }
 
-/** Top up spins on the fan account behind a token. */
+/** Top up spins on the per-wheel pass behind a token; returns that pass's balance. */
 export function mockGrantSpins(token: string, n: number) {
-  const fan = fanForToken(token);
-  if (!fan) return null;
-  fan.spinsRemaining += Math.max(0, n);
-  return fan.spinsRemaining;
+  const ctx = passForToken(token);
+  if (!ctx) {
+    const fan = fanForToken(token);
+    if (!fan) return null;
+    ensurePasses(fan);
+  }
+  const found = passForToken(token);
+  if (!found) return null;
+  const add = Math.max(0, n);
+  found.pass.spinsRemaining += add;
+  found.pass.spinsGrantedTotal += add;
+  recomputeFanAggregate(found.fan);
+  return found.pass.spinsRemaining;
 }
 
 /**
@@ -1101,6 +1209,7 @@ export function mockListFans(): FanAccountSummary[] {
   const campaignName = new Map(store.campaigns.map((c) => [c.id, c.name]));
 
   return Array.from(store.fans.values()).map((f) => {
+    ensurePasses(f);
     const grants = fanGrants(f.id);
     const totalSpent = grants.reduce((s, g) => s + g.amountCents, 0);
     const campaignNames: string[] = [];
@@ -1113,6 +1222,13 @@ export function mockListFans(): FanAccountSummary[] {
         campaignNames.push(name);
       }
     }
+    const passes = f.passes.map((p) => ({
+      token: p.token,
+      wheelId: p.wheelId,
+      wheelTitle: store.wheels.get(p.wheelId)?.title ?? "Wheel",
+      campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
+      spinsRemaining: p.spinsRemaining,
+    }));
     return {
       fanId: f.id,
       name: f.name,
@@ -1123,6 +1239,7 @@ export function mockListFans(): FanAccountSummary[] {
       campaignNames,
       tags: f.tags ?? [],
       links: (tokensByFan.get(f.id) ?? []).map((token) => ({ token })),
+      passes,
       lastWin: f.wins[0]
         ? { label: f.wins[0].label, rarity: f.wins[0].rarity, at: f.wins[0].at }
         : null,
@@ -1515,8 +1632,14 @@ export function mockEditGrant(
     grant.spins = newSpins;
     const fan = store.fans.get(grant.fanId);
     if (fan && delta !== 0) {
-      fan.spinsRemaining = Math.max(0, fan.spinsRemaining + delta);
-      fan.spinsGrantedTotal = Math.max(0, fan.spinsGrantedTotal + delta);
+      ensurePasses(fan);
+      // Apply the delta to the fan's first pass, then re-derive the aggregate.
+      const pass = fan.passes[0];
+      if (pass) {
+        pass.spinsRemaining = Math.max(0, pass.spinsRemaining + delta);
+        pass.spinsGrantedTotal = Math.max(0, pass.spinsGrantedTotal + delta);
+      }
+      recomputeFanAggregate(fan);
     }
   }
   return { ok: true };

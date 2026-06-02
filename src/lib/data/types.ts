@@ -201,17 +201,27 @@ export interface RedemptionItem {
   dueAt?: string | null; // ISO timestamp
 }
 
+/** One per-wheel link under a fan: its own spin balance + which wheel/campaign. */
+export interface FanPassInfo {
+  token: string;
+  wheelId: string;
+  wheelTitle: string;
+  campaignName: string | null;
+  spinsRemaining: number;
+}
+
 /** A persistent fan account with its links — for the creator's Fans tab. */
 export interface FanAccountSummary {
   fanId: string;
   name: string;
-  spinsRemaining: number;
+  spinsRemaining: number; // total across all wheels (sum of passes)
   grantedTotal: number; // lifetime granted
   primaryToken: string | null;
   totalSpent: number; // cents
   campaignNames: string[]; // campaigns this fan has grants in
   tags: string[]; // creator-applied labels (VIP, whale, …)
   links: { token: string }[];
+  passes: FanPassInfo[]; // per-wheel: link + balance + wheel/campaign
   lastWin: { label: string; rarity: Rarity; at: string } | null;
 }
 
