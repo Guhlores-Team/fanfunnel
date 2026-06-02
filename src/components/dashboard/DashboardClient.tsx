@@ -920,7 +920,7 @@ function FansPanel() {
           You create the account; the fan never signs up. Balance and win history
           live on the account, so you can mint fresh links anytime.
         </p>
-        <div className="mt-4 flex flex-wrap items-end gap-3">
+        <div className="mt-4 flex flex-wrap items-start gap-3">
           <Field label="Fan name / handle">
             <input
               className="ff-input w-44"
@@ -981,7 +981,7 @@ function FansPanel() {
           <button
             onClick={createAccount}
             disabled={creating}
-            className="btn-brand rounded-lg px-5 py-2 text-sm font-bold"
+            className="btn-brand mt-5 rounded-lg px-5 py-2 text-sm font-bold"
           >
             {creating ? "Creating…" : "Create account"}
           </button>
@@ -1429,8 +1429,9 @@ function AccountCard({
         </div>
       )}
 
-      {/* Top-up row: spins + optional $ + optional campaign tag. */}
-      <div className="mt-3 flex flex-wrap items-end gap-2">
+      {/* Top-up row: spins + optional $ + optional campaign tag. Align to the
+          top so the "$X total" helper under $/spin doesn't shove Spins down. */}
+      <div className="mt-3 flex flex-wrap items-start gap-2">
         <Field label="Spins">
           <input
             type="number"
@@ -1491,7 +1492,7 @@ function AccountCard({
             setPerSpin("");
             setPackId(null);
           }}
-          className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+          className="mt-5 rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
         >
           Top up
         </button>

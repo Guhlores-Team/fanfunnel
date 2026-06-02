@@ -4,6 +4,7 @@ import {
   setActiveWheel,
   setWheelSchedule,
   archiveWheel,
+  unarchiveWheel,
   deleteWheel,
 } from "@/lib/data";
 
@@ -35,6 +36,7 @@ export async function PATCH(
 
   let body: {
     isActive?: boolean;
+    archived?: boolean;
     activeFrom?: string | null;
     activeUntil?: string | null;
   };
@@ -42,6 +44,14 @@ export async function PATCH(
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
+  // Restore an archived wheel.
+  if (body.archived === false) {
+    const result = await unarchiveWheel(id);
+    if ("error" in result) {
+      return NextResponse.json(result, { status: statusForError(result.error) });
+    }
   }
 
   if (body.isActive === true) {

@@ -739,6 +739,13 @@ export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
  * Archive a wheel. If it was the active one, promote the oldest remaining
  * non-archived wheel to active so the creator always has a live wheel.
  */
+export function mockUnarchiveWheel(id: string): { ok: true } | { error: string } {
+  const wheel = store.wheels.get(id);
+  if (!wheel) return { error: "not_found" };
+  wheel.archivedAt = null;
+  return { ok: true };
+}
+
 export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
@@ -1465,6 +1472,24 @@ export function mockSetCampaignPinnedWheel(
   }
   campaign.pinnedWheelId = wheelId;
   return { ok: true };
+}
+
+export function mockRenameCampaign(
+  campaignId: string,
+  name: string
+): { ok: true } | { error: string } {
+  const campaign = store.campaigns.find((c) => c.id === campaignId);
+  if (!campaign) return { error: "not_found" };
+  campaign.name = name;
+  return { ok: true };
+}
+
+export function mockDeleteCampaign(campaignId: string): { ok: true } | { error: string } {
+  const before = store.campaigns.length;
+  store.campaigns = store.campaigns.filter((c) => c.id !== campaignId);
+  // Detach grants from the deleted campaign (keep their history).
+  for (const g of store.grants) if (g.campaignId === campaignId) g.campaignId = null;
+  return before === store.campaigns.length ? { error: "not_found" } : { ok: true };
 }
 
 export function mockListCampaigns(): Campaign[] {

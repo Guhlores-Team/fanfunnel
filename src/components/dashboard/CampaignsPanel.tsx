@@ -139,6 +139,50 @@ function CampaignCard({
     stats;
   const [showPacks, setShowPacks] = useState(false);
   const [pinning, setPinning] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName] = useState(campaign.name);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function saveName() {
+    const trimmed = draftName.trim();
+    if (!trimmed || trimmed === campaign.name) {
+      setEditingName(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        toast("Couldn't rename campaign.", { tone: "error" });
+        return;
+      }
+      toast("Campaign renamed.", { tone: "success" });
+      setEditingName(false);
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        toast("Couldn't delete campaign.", { tone: "error" });
+        return;
+      }
+      toast("Campaign deleted.", { tone: "success" });
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function pinWheel(value: string) {
     setPinning(true);
@@ -171,11 +215,73 @@ function CampaignCard({
   return (
     <section className="card rounded-xl p-5">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="min-w-0 truncate font-bold text-ink">{campaign.name}</h3>
-        {!campaign.isActive && (
-          <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-xs font-semibold text-muted">
-            Inactive
-          </span>
+        {editingName ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <input
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveName();
+                if (e.key === "Escape") {
+                  setDraftName(campaign.name);
+                  setEditingName(false);
+                }
+              }}
+              className="ff-input min-w-0 flex-1"
+            />
+            <button
+              onClick={saveName}
+              disabled={busy}
+              className="btn-brand shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <h3 className="min-w-0 truncate font-bold text-ink">{campaign.name}</h3>
+        )}
+        {!editingName && (
+          <div className="flex shrink-0 items-center gap-2">
+            {!campaign.isActive && (
+              <span className="rounded-full border border-line px-2 py-0.5 text-xs font-semibold text-muted">
+                Inactive
+              </span>
+            )}
+            <button
+              onClick={() => {
+                setDraftName(campaign.name);
+                setEditingName(true);
+              }}
+              className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+            >
+              Rename
+            </button>
+            {confirmDelete ? (
+              <>
+                <button
+                  onClick={remove}
+                  disabled={busy}
+                  className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
+                >
+                  Confirm
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-[#ef4444]"
+              >
+                Delete
+              </button>
+            )}
+          </div>
         )}
       </div>
 

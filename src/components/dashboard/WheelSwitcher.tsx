@@ -37,7 +37,8 @@ export default function WheelSwitcher({
   const [until, setUntil] = useState("");
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/wheels", { cache: "no-store" });
+    // Include archived wheels so they're visible (and restorable), not hidden.
+    const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
     if (res.ok) {
       const data = (await res.json()) as { wheels?: WheelSummary[] };
       setWheels(data.wheels ?? []);
@@ -104,6 +105,10 @@ export default function WheelSwitcher({
 
   async function setActive(id: string) {
     await patchWheel(id, { isActive: true }, "Wheel set active");
+  }
+
+  async function restore(id: string) {
+    await patchWheel(id, { archived: false }, "Wheel restored");
   }
 
   async function duplicate(id: string) {
@@ -197,6 +202,11 @@ export default function WheelSwitcher({
           ＋ New wheel
         </button>
       </div>
+      <p className="mt-1 text-xs text-muted">
+        One wheel is <strong>active</strong> (the one fans spin) at a time — set another active to
+        swap. <strong>Archive</strong> takes a wheel out of rotation but keeps its history (you can
+        Restore it). Wheels with no spins can be deleted outright.
+      </p>
 
       {wheels === null ? (
         <div className="mt-4 space-y-2">
@@ -247,7 +257,7 @@ export default function WheelSwitcher({
                   >
                     Edit
                   </button>
-                  {!w.isActive && (
+                  {!w.isActive && !w.archivedAt && (
                     <button
                       type="button"
                       onClick={() => setActive(w.id)}
@@ -255,6 +265,16 @@ export default function WheelSwitcher({
                       className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5 disabled:opacity-50"
                     >
                       Set active
+                    </button>
+                  )}
+                  {w.archivedAt && (
+                    <button
+                      type="button"
+                      onClick={() => restore(w.id)}
+                      disabled={busy}
+                      className="rounded-lg border border-[var(--brand)]/50 px-2.5 py-1 text-xs font-semibold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] disabled:opacity-50"
+                    >
+                      Restore
                     </button>
                   )}
                   <button
@@ -265,33 +285,34 @@ export default function WheelSwitcher({
                   >
                     Duplicate
                   </button>
-                  {confirmArchive === w.id ? (
-                    <>
+                  {!w.archivedAt &&
+                    (confirmArchive === w.id ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => archive(w.id)}
+                          disabled={busy}
+                          className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
+                        >
+                          Confirm archive
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmArchive(null)}
+                          className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => archive(w.id)}
-                        disabled={busy}
-                        className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
-                      >
-                        Confirm archive
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmArchive(null)}
+                        onClick={() => setConfirmArchive(w.id)}
                         className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
                       >
-                        Cancel
+                        Archive
                       </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmArchive(w.id)}
-                      className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
-                    >
-                      Archive
-                    </button>
-                  )}
+                    ))}
                   {confirmDelete === w.id ? (
                     <>
                       <button

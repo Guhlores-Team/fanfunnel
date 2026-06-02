@@ -78,6 +78,7 @@ import {
   mockCreateWheel,
   mockDuplicateWheel,
   mockArchiveWheel,
+  mockUnarchiveWheel,
   mockDeleteWheel,
   mockSetActiveWheel,
   mockSetWheelSchedule,
@@ -86,6 +87,8 @@ import {
   mockUpdateCampaignPack,
   mockDeleteCampaignPack,
   mockSetCampaignPinnedWheel,
+  mockRenameCampaign,
+  mockDeleteCampaign,
   mockListPrizeTemplates,
   mockCreatePrizeTemplate,
   mockDeletePrizeTemplate,
@@ -1913,6 +1916,27 @@ export async function archiveWheel(
   return { ok: true };
 }
 
+/** Restore an archived wheel (clears archived_at). It returns as inactive; the
+ *  creator can then Set active if they want it serving fans. */
+export async function unarchiveWheel(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockUnarchiveWheel(id);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb
+    .from("wheels")
+    .update({ archived_at: null })
+    .eq("id", id)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
 /**
  * Permanently delete a wheel. Guarded: only allowed when the wheel has NO spins
  * (deleting one with history would cascade-wipe spins/redemptions = revenue and
@@ -2211,6 +2235,51 @@ export async function setCampaignPinnedWheel(
   if (error) return { error: "db_error" };
   if (!updated) return { error: "not_found" };
   return { ok: true };
+}
+
+/** Rename a campaign. */
+export async function renameCampaign(
+  campaignId: string,
+  name: string
+): Promise<{ ok: true } | { error: string }> {
+  const trimmed = name.trim();
+  if (!trimmed) return { error: "bad_request" };
+  if (!isSupabaseConfigured()) return mockRenameCampaign(campaignId, trimmed);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { data: updated, error } = await sb
+    .from("campaigns")
+    .update({ name: trimmed })
+    .eq("id", campaignId)
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  if (!updated) return { error: "not_found" };
+  return { ok: true };
+}
+
+/** Delete a campaign. Grants keep their history (campaign_id → null on delete). */
+export async function deleteCampaign(
+  campaignId: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockDeleteCampaign(campaignId);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { error } = await sb
+    .from("campaigns")
+    .delete()
+    .eq("id", campaignId)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 // ---------------------------------------------------------------------------
