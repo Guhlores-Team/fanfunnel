@@ -1839,9 +1839,16 @@ export function mockCreatePrizeTemplate(input: {
   color?: string;
   emoji?: string;
 }): PrizeTemplate {
+  const label = input.label.trim() || "Prize";
+  // Dedupe by name + rarity (double-clicks shouldn't create duplicates).
+  const existing = store.prizeTemplates.find(
+    (t) => t.label === label && t.rarity === input.rarity
+  );
+  if (existing) return structuredClone(existing);
+
   const tpl: PrizeTemplate = {
     id: genId("ptpl"),
-    label: input.label.trim() || "Prize",
+    label,
     rarity: input.rarity,
     weight: Math.max(0, Math.floor(input.weight) || 0),
     description: input.description,

@@ -2565,11 +2565,24 @@ export async function createPrizeTemplate(input: {
   } = await sb.auth.getUser();
   if (!user) throw new Error("unauthorized");
 
+  const label = input.label.slice(0, 80) || "Prize";
+
+  // Dedupe: a prize with the same name + rarity is "the same prize" — return the
+  // existing library entry instead of saving a duplicate (e.g. double-clicks).
+  const { data: dupe } = await sb
+    .from("prize_templates")
+    .select(PRIZE_TEMPLATE_SELECT)
+    .eq("creator_id", user.id)
+    .eq("label", label)
+    .eq("rarity", input.rarity)
+    .maybeSingle();
+  if (dupe) return toPrizeTemplate(dupe as Parameters<typeof toPrizeTemplate>[0]);
+
   const { data, error } = await sb
     .from("prize_templates")
     .insert({
       creator_id: user.id,
-      label: input.label.slice(0, 80) || "Prize",
+      label,
       description: input.description?.slice(0, 280) ?? null,
       rarity: input.rarity,
       weight: Math.max(0, Math.floor(input.weight) || 0),
