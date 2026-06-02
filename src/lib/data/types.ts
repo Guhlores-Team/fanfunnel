@@ -45,6 +45,7 @@ export interface ChatSettings { intro: string | null; outro: string | null }
 export interface FanPassView {
   token: string;
   fanName: string | null;
+  fanHandle?: string | null; // the fan's leaderboard handle (for "You're #X")
   creatorTitle: string;
   wheel: WheelConfig;
   spinsRemaining: number;

@@ -255,7 +255,10 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       <PrizeBook prizes={pass.wheel.prizes} history={history} />
 
       {pass.leaderboardEnabled && pass.creatorId && (
-        <FanLeaderboard creatorId={pass.creatorId} />
+        <FanLeaderboard
+          creatorId={pass.creatorId}
+          youHandle={pass.fanHandle ?? (pass.fanName ?? "").trim().split(/\s+/)[0] ?? null}
+        />
       )}
 
       <WishlistSection

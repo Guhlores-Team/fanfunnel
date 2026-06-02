@@ -397,6 +397,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   return {
     token,
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
+    fanHandle: pass.fan.handle ?? null,
     creatorTitle: pass.creator?.display_name ?? "Creator",
     spinsRemaining: pass.fan.spins_remaining,
     wheel: toWheelConfig(wheel),

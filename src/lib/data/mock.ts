@@ -826,6 +826,7 @@ export function mockGetFanPass(token: string): FanPassView | null {
   return structuredClone({
     token,
     fanName: fan.name,
+    fanHandle: fan.handle ?? null,
     creatorTitle: CREATOR_TITLE,
     wheel,
     spinsRemaining: fan.spinsRemaining,

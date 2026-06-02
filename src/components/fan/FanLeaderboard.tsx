@@ -26,7 +26,13 @@ const MEDAL = ["🥇", "🥈", "🥉"];
 // How many to show before the "Show all" expander kicks in.
 const PREVIEW = 10;
 
-export default function FanLeaderboard({ creatorId }: { creatorId: string }) {
+export default function FanLeaderboard({
+  creatorId,
+  youHandle,
+}: {
+  creatorId: string;
+  youHandle?: string | null;
+}) {
   const [view, setView] = useState<View | null>(null);
   const [expanded, setExpanded] = useState(false);
 
@@ -42,27 +48,55 @@ export default function FanLeaderboard({ creatorId }: { creatorId: string }) {
   }, [creatorId]);
 
   if (!view || !view.enabled || view.entries.length === 0) return null;
-  const shown = expanded ? view.entries : view.entries.slice(0, PREVIEW);
+
+  // Find the viewing fan's own row (by their board handle) to highlight + chase.
+  const you = youHandle
+    ? view.entries.find((e) => e.handle.toLowerCase() === youHandle.toLowerCase()) ?? null
+    : null;
+  const nextUp = you ? view.entries.find((e) => e.rank === you.rank - 1) ?? null : null;
+  const gap = nextUp ? Math.max(1, nextUp.spins - you!.spins) : 0;
+
+  // Always include the fan's own row even if it's past the preview cutoff.
+  let shown = expanded ? view.entries : view.entries.slice(0, PREVIEW);
+  if (you && !shown.some((e) => e.rank === you.rank)) shown = [...shown, you];
   const hasMore = view.entries.length > PREVIEW;
 
   return (
     <div className="w-full">
-      <p className="mb-3 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
+      <p className="mb-2 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
         🏆 Top spinners
       </p>
+      {you && (
+        <p className="mb-3 text-center text-sm font-semibold text-ink">
+          You&rsquo;re <span className="text-[var(--brand)]">#{you.rank}</span>
+          {nextUp ? (
+            <span className="font-normal text-muted">
+              {" "}
+              · {gap} more {gap === 1 ? "spin" : "spins"} to catch{" "}
+              {nextUp.handle} at #{nextUp.rank}
+            </span>
+          ) : (
+            <span className="font-normal text-muted"> · you&rsquo;re in the lead 👑</span>
+          )}
+        </p>
+      )}
       <ul className="space-y-1.5">
         {shown.map((e) => (
           <li
             key={e.rank}
-            className="flex items-center gap-3 rounded-xl border border-line bg-surface/60 px-3 py-2"
+            className="flex items-center gap-3 rounded-xl border bg-surface/60 px-3 py-2"
             style={
-              e.rank <= 3
+              you && e.rank === you.rank
                 ? {
-                    borderColor:
-                      "color-mix(in oklab, var(--brand) 45%, transparent)",
-                    background: "color-mix(in oklab, var(--brand) 8%, transparent)",
+                    borderColor: "var(--brand)",
+                    background: "color-mix(in oklab, var(--brand) 16%, transparent)",
                   }
-                : undefined
+                : e.rank <= 3
+                  ? {
+                      borderColor: "color-mix(in oklab, var(--brand) 45%, transparent)",
+                      background: "color-mix(in oklab, var(--brand) 8%, transparent)",
+                    }
+                  : { borderColor: "var(--color-line)" }
             }
           >
             <span className="w-6 shrink-0 text-center text-sm font-extrabold">
@@ -70,6 +104,11 @@ export default function FanLeaderboard({ creatorId }: { creatorId: string }) {
             </span>
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
               {e.handle}
+              {you && e.rank === you.rank && (
+                <span className="ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                  You
+                </span>
+              )}
             </span>
             <span className="shrink-0 text-right text-xs text-muted">
               {e.spins} spins
