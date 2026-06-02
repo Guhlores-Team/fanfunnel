@@ -1009,6 +1009,8 @@ export async function getCampaignStats(): Promise<CampaignStats[]> {
       spinsPlayed,
       uniqueFans,
       fulfilled,
+      pending: Math.max(0, spinsPlayed - fulfilled),
+      playThroughPct: spinsBought > 0 ? spinsPlayed / spinsBought : 0,
       revenue,
       arpu,
       topPrize,

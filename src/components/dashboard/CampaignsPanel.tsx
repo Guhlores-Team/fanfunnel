@@ -208,8 +208,10 @@ function CampaignCard({
     { label: "ARPU", value: formatCents(arpu) },
     { label: "Spins bought", value: spinsBought },
     { label: "Spins played", value: spinsPlayed },
+    { label: "Play-through", value: `${Math.round(stats.playThroughPct * 100)}%` },
     { label: "Unique fans", value: uniqueFans },
     { label: "Fulfilled", value: fulfilled },
+    { label: "Pending", value: stats.pending },
   ];
 
   return (

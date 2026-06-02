@@ -164,6 +164,8 @@ export interface CampaignStats {
   spinsPlayed: number; // spins attributed to this campaign (spins.campaign_id)
   uniqueFans: number; // distinct fans with a grant in this campaign
   fulfilled: number;
+  pending: number; // prizes won in this campaign not yet fulfilled/cancelled
+  playThroughPct: number; // spinsPlayed / spinsBought (0..1), 0 if none bought
   revenue: number; // cents
   arpu: number; // cents = uniqueFans ? round(revenue/uniqueFans) : 0
   topPrize: { label: string; rarity: Rarity; count: number } | null;
