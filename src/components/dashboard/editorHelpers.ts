@@ -1,7 +1,21 @@
-import { type Prize, RARITY_ORDER } from "@/lib/games/wheel/types";
+import { type Prize, type Rarity, RARITY_ORDER } from "@/lib/games/wheel/types";
 
 // Pure (no React) helpers for the wheel editor. Kept framework-agnostic and
 // deterministic so they can be unit-tested in isolation.
+
+/**
+ * Default "raffle tickets" (weights) per rarity. Picking a rarity auto-fills
+ * these so the creator doesn't have to think in raw numbers. They're relative:
+ * the real % is each prize's tickets ÷ all tickets, so this scales to any number
+ * of prizes while keeping rarer tiers rarer. Editable per prize after.
+ */
+export const RARITY_DEFAULT_WEIGHT: Record<Rarity, number> = {
+  common: 50,
+  uncommon: 25,
+  rare: 15,
+  epic: 7,
+  legendary: 3,
+};
 
 /** Curated emoji palette offered as quick-pick suggestions in the editor. */
 export const EMOJI_SUGGESTIONS: string[] = [
@@ -62,13 +76,17 @@ export function reorder<T>(list: T[], from: number, to: number): T[] {
   return next;
 }
 
-/** A fresh blank prize with a short random id. */
+/**
+ * A fresh prize. Defaults to UNCOMMON (a neutral middle tier) rather than
+ * climbing the rarity ladder, so adding several prizes doesn't silently make
+ * each one rarer. The weight matches the rarity's default tickets.
+ */
 export function newPrize(): Prize {
   return {
     id: "p" + Math.random().toString(36).slice(2, 8),
     label: "New prize",
-    rarity: "common",
-    weight: 10,
+    rarity: "uncommon",
+    weight: RARITY_DEFAULT_WEIGHT.uncommon,
     emoji: "🎁",
   };
 }

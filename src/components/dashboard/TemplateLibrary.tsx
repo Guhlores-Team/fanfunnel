@@ -36,7 +36,7 @@ export default function TemplateLibrary({
   onApplyWheelTemplate: (templateId: string) => void;
   onSaveCurrentWheelAsTemplate: (name: string) => void;
   onApplyPrizeTemplate: (t: PrizeTemplate) => void;
-  onSaveCurrentPrizesToLibrary?: () => void;
+  onSaveCurrentPrizesToLibrary?: () => void | Promise<void>;
 }) {
   const toast = useToast();
   const [wheelTemplates, setWheelTemplates] = useState<WheelTemplate[] | null>(null);
@@ -59,8 +59,10 @@ export default function TemplateLibrary({
   const loadPrizes = useCallback(async () => {
     const res = await fetch("/api/templates/prizes", { cache: "no-store" });
     if (res.ok) {
-      const data = (await res.json()) as { prizes?: PrizeTemplate[] };
-      setPrizes(data.prizes ?? []);
+      // The API returns { templates }; read that (was mistakenly { prizes }, so
+      // the library always looked empty even after saving).
+      const data = (await res.json()) as { templates?: PrizeTemplate[] };
+      setPrizes(data.templates ?? []);
     } else {
       setPrizes([]);
     }
@@ -233,7 +235,10 @@ export default function TemplateLibrary({
           {onSaveCurrentPrizesToLibrary && (
             <button
               type="button"
-              onClick={onSaveCurrentPrizesToLibrary}
+              onClick={async () => {
+                await onSaveCurrentPrizesToLibrary();
+                await loadPrizes();
+              }}
               className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
             >
               Save current prizes

@@ -12,7 +12,6 @@ import NearMissBeat, {
 } from "./NearMissBeat";
 import PityBeat from "./PityBeat";
 import HappyHourBanner from "./fan/HappyHourBanner";
-import ReferralWidget from "./fan/ReferralWidget";
 import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";
 import TopUpMoment from "./fan/TopUpMoment";
@@ -287,13 +286,6 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         initial={pass.wishlist ?? []}
       />
 
-      {pass.referral && pass.referral.code && (
-        <ReferralWidget
-          token={pass.token}
-          code={pass.referral.code}
-          bonusPerReferral={pass.referral.bonusPerReferral}
-        />
-      )}
 
       <ChatPanel
         token={pass.token}

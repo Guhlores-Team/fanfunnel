@@ -45,6 +45,7 @@ import {
   duplicatePrize,
   newPrize,
   reorder,
+  RARITY_DEFAULT_WEIGHT,
 } from "@/components/dashboard/editorHelpers";
 
 type Tab = "today" | "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
@@ -1751,6 +1752,28 @@ function WheelEditor({
     if (res.ok) toast("Saved as template", { tone: "success" });
     else toast("Couldn't save template.", { tone: "error" });
   }
+  // Save every prize on the current wheel into the reusable prize library.
+  async function saveCurrentPrizesToLibrary() {
+    const results = await Promise.all(
+      wheel.prizes.map((p) =>
+        fetch("/api/templates/prizes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: p.label,
+            description: p.description,
+            rarity: p.rarity,
+            weight: p.weight,
+            color: p.color,
+            emoji: p.emoji,
+          }),
+        }).then((r) => r.ok)
+      )
+    );
+    const saved = results.filter(Boolean).length;
+    if (saved > 0) toast(`Saved ${saved} ${saved === 1 ? "prize" : "prizes"} to library`, { tone: "success" });
+    else toast("Couldn't save prizes.", { tone: "error" });
+  }
   // Drop a library prize into the current wheel. Reuse the editor's newPrize()
   // so ids/format match, then overlay the template's fields.
   function applyPrizeTemplate(t: PrizeTemplate) {
@@ -1777,10 +1800,14 @@ function WheelEditor({
   }
   /** Update rarity, preserving a custom color but refreshing a default one. */
   function changeRarity(p: Prize, rarity: Rarity) {
-    const wasDefault = p.color == null || p.color === RARITY_COLORS[p.rarity];
+    const wasDefaultColor = p.color == null || p.color === RARITY_COLORS[p.rarity];
+    // Auto-fill the weight from the new rarity's default tickets — unless the
+    // creator has already hand-tuned this prize's weight (then we leave it).
+    const wasDefaultWeight = p.weight === RARITY_DEFAULT_WEIGHT[p.rarity];
     updatePrize(p.id, {
       rarity,
-      color: wasDefault ? RARITY_COLORS[rarity] : p.color,
+      color: wasDefaultColor ? RARITY_COLORS[rarity] : p.color,
+      weight: wasDefaultWeight ? RARITY_DEFAULT_WEIGHT[rarity] : p.weight,
     });
   }
   function removePrize(id: string) {
@@ -2003,7 +2030,7 @@ function WheelEditor({
                         ))}
                       </select>
                     </Field>
-                    <Field label="Weight">
+                    <Field label="Tickets">
                       <input
                         type="number"
                         min={0}
@@ -2095,7 +2122,10 @@ function WheelEditor({
           <p className="text-xs font-medium uppercase tracking-wider text-muted">Live preview</p>
           <Wheel prizes={wheel.prizes} brandColor={wheel.brandColor ?? "#ec4899"} result={null} size={280} />
           <p className="text-center text-xs text-muted">
-            Low weight plus limited stock is what makes the best prizes feel rare.
+            Think of <strong>tickets</strong> like a raffle: a prize&rsquo;s chance is its
+            tickets ÷ all tickets. The <span className="text-[var(--brand)]">%</span> next to
+            each prize is its real odds — it updates live as you add prizes or change tickets.
+            Pick a rarity and we fill sensible tickets for you.
           </p>
         </div>
       </div>
@@ -2109,9 +2139,9 @@ function WheelEditor({
           aria-expanded={showLibrary}
           className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
         >
-          <span className="font-bold text-ink">Library</span>
+          <span className="font-bold text-ink">📚 Prize &amp; wheel library</span>
           <span className="text-sm font-semibold text-muted">
-            {showLibrary ? "Hide ▲" : "Templates & saved prizes ▼"}
+            {showLibrary ? "Hide ▲" : "Save / reuse prizes & templates ▼"}
           </span>
         </button>
         {showLibrary && (
@@ -2120,6 +2150,7 @@ function WheelEditor({
               onApplyWheelTemplate={applyWheelTemplate}
               onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
               onApplyPrizeTemplate={applyPrizeTemplate}
+              onSaveCurrentPrizesToLibrary={saveCurrentPrizesToLibrary}
             />
           </div>
         )}
