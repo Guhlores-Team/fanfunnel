@@ -1775,6 +1775,25 @@ function WheelEditor({
     if (saved > 0) toast(`Saved ${saved} ${saved === 1 ? "prize" : "prizes"} to library`, { tone: "success" });
     else toast("Couldn't save prizes.", { tone: "error" });
   }
+  // Save a SINGLE prize to the reusable library (the ★ on each prize row).
+  async function savePrizeToLibrary(p: Prize) {
+    const res = await fetch("/api/templates/prizes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: p.label,
+        description: p.description,
+        rarity: p.rarity,
+        weight: p.weight,
+        color: p.color,
+        emoji: p.emoji,
+      }),
+    });
+    toast(
+      res.ok ? `Saved "${p.label}" to library` : "Couldn't save prize.",
+      { tone: res.ok ? "success" : "error" }
+    );
+  }
   // Drop a library prize into the current wheel. Reuse the editor's newPrize()
   // so ids/format match, then overlay the template's fields.
   function applyPrizeTemplate(t: PrizeTemplate) {
@@ -1962,6 +1981,15 @@ function WheelEditor({
                       value={p.label}
                       onChange={(e) => updatePrize(p.id, { label: e.target.value })}
                     />
+                    <button
+                      type="button"
+                      onClick={() => savePrizeToLibrary(p)}
+                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-[var(--brand)]"
+                      title="Save this prize to your library"
+                      aria-label="Save prize to library"
+                    >
+                      ★
+                    </button>
                     <button
                       type="button"
                       onClick={() => duplicateAt(index)}

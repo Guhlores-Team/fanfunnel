@@ -182,7 +182,7 @@ export default function TemplateLibrary({
                     style={{ backgroundColor: t.brandColor }}
                   />
                   <div className="min-w-0 flex-1">
-                    <span className="truncate font-semibold text-ink">{t.name}</span>
+                    <span className="block truncate font-semibold text-ink">{t.name}</span>
                     <p className="tnum mt-0.5 text-xs text-muted">
                       {t.prizes.length} {t.prizes.length === 1 ? "prize" : "prizes"}
                     </p>
