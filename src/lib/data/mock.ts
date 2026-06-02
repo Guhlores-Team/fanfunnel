@@ -1445,6 +1445,22 @@ export function mockSetRedemptionMeta(
 
 // --- Campaigns --------------------------------------------------------------
 
+export function mockClearMyData(): { ok: true } | { error: string } {
+  store.fans = new Map();
+  store.tokens = new Map();
+  store.tokenCampaign = new Map();
+  store.grants = [];
+  store.redemptions = [];
+  store.campaigns = [];
+  store.wishlists = [];
+  store.happyHours = [];
+  store.referrals = [];
+  store.messages = [];
+  // Keep one fresh starter wheel so the account isn't wheel-less.
+  store.wheels = seedWheels();
+  return { ok: true };
+}
+
 export function mockCreateCampaign(
   name: string,
   pinnedWheelId?: string | null

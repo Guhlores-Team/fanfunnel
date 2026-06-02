@@ -32,6 +32,78 @@ export default function BoostsPanel({
         <ReferralStatsCard />
       </div>
       <WebhooksCard />
+      <DangerZone />
+    </div>
+  );
+}
+
+/** Destructive account reset — wipes all wheels/fans/spins/campaigns. */
+function DangerZone() {
+  const toast = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function reset() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/account/reset", { method: "POST" });
+      if (res.ok) {
+        toast("Account reset — starting fresh.", { tone: "success" });
+        setTimeout(() => window.location.reload(), 700);
+      } else {
+        toast("Couldn't reset. Are you signed in?", { tone: "error" });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-[#ef4444]/30 bg-[#ef4444]/5 p-4">
+      <h3 className="font-bold text-ink">Danger zone</h3>
+      <p className="mt-1 text-sm text-muted">
+        Clear all data — wheels, prizes, fans, links, spins, grants, campaigns, and
+        metrics — and start fresh. This <strong>cannot be undone</strong>.
+      </p>
+      {!confirming ? (
+        <button
+          onClick={() => setConfirming(true)}
+          className="mt-3 rounded-lg border border-[#ef4444]/60 px-3 py-1.5 text-sm font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10"
+        >
+          Clear all data
+        </button>
+      ) : (
+        <div className="mt-3 space-y-2">
+          <p className="text-sm text-ink">
+            Type <strong>RESET</strong> to confirm:
+          </p>
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            className="ff-input w-full"
+            placeholder="RESET"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={reset}
+              disabled={busy || typed !== "RESET"}
+              className="rounded-lg bg-[#ef4444] px-3 py-1.5 text-sm font-bold text-white transition hover:brightness-110 disabled:opacity-40"
+            >
+              {busy ? "Clearing…" : "Permanently clear everything"}
+            </button>
+            <button
+              onClick={() => {
+                setConfirming(false);
+                setTyped("");
+              }}
+              className="rounded-lg border border-line px-3 py-1.5 text-sm font-semibold text-muted transition hover:text-ink"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -105,12 +177,12 @@ function PublicProfileCard() {
       <div className="space-y-3 rounded-xl border border-line p-4">
         <label className="block text-xs text-muted">
           Your public link
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-sm text-muted">{origin}/c/</span>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="shrink-0 break-all text-sm text-muted">{origin}/c/</span>
             <input
               value={slug}
               onChange={(e) => setSlug(e.target.value)}
-              className="ff-input flex-1"
+              className="ff-input min-w-0 flex-1"
               placeholder="your-name"
             />
           </div>

@@ -89,6 +89,7 @@ import {
   mockSetCampaignPinnedWheel,
   mockRenameCampaign,
   mockDeleteCampaign,
+  mockClearMyData,
   mockListPrizeTemplates,
   mockCreatePrizeTemplate,
   mockDeletePrizeTemplate,
@@ -2234,6 +2235,41 @@ export async function setCampaignPinnedWheel(
     .maybeSingle();
   if (error) return { error: "db_error" };
   if (!updated) return { error: "not_found" };
+  return { ok: true };
+}
+
+/**
+ * Wipe ALL of the signed-in creator's data — wheels, prizes, fans, links, spins,
+ * grants, redemptions, campaigns, packs, templates, happy hours — leaving a
+ * fresh account. Destructive and irreversible. Child rows cascade from the
+ * parents below; we delete the creator-owned parents explicitly.
+ */
+export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockClearMyData();
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  // fans → cascades fan_passes, spins, grants, messages, wishlists, referrals.
+  // wheels → cascades prizes, (wheel-scoped) passes, happy_hours.
+  // Then standalone creator-owned tables.
+  const tables = [
+    "fans",
+    "wheels",
+    "campaigns",
+    "campaign_packs",
+    "dm_templates",
+    "prize_templates",
+    "wheel_templates",
+    "happy_hours",
+    "autopilot_dismissals",
+  ];
+  for (const t of tables) {
+    const { error } = await sb.from(t).delete().eq("creator_id", user.id);
+    if (error) return { error: `db_error:${t}` };
+  }
   return { ok: true };
 }
 
