@@ -18,8 +18,33 @@ export default function ChatPanel({
   unlocked: boolean;
   creatorTitle: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Remember whether the fan had the chat open, per token, so a refresh doesn't
+  // collapse the conversation (it stays visible like the creator's inbox does).
+  const openKey = `ff_chat_open_${token}`;
+  const setOpen = useCallback(
+    (next: boolean | ((o: boolean) => boolean)) => {
+      setOpenState((prev) => {
+        const value = typeof next === "function" ? next(prev) : next;
+        try {
+          window.localStorage.setItem(openKey, value ? "1" : "0");
+        } catch {
+          /* storage unavailable */
+        }
+        return value;
+      });
+    },
+    [openKey]
+  );
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted open state on mount
+      if (window.localStorage.getItem(openKey) === "1") setOpenState(true);
+    } catch {
+      /* ignore */
+    }
+  }, [openKey]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
