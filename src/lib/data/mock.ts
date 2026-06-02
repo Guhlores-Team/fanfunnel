@@ -591,6 +591,11 @@ export function mockResolveWheelId(
   pass: { campaignId: string | null; wheelId?: string },
   now: Date = new Date()
 ): string {
+  // An explicit wheel wins (per-wheel top-ups target a specific wheel).
+  if (pass.wheelId) {
+    const w = store.wheels.get(pass.wheelId);
+    if (w && !w.archivedAt) return pass.wheelId;
+  }
   if (pass.campaignId) {
     const campaign = store.campaigns.find((c) => c.id === pass.campaignId);
     const pinned = campaign?.pinnedWheelId ?? null;
@@ -985,7 +990,9 @@ export async function mockSpin(token: string) {
   return {
     prize: structuredClone(prize),
     prizeIndex: index,
-    spinsRemaining: fan.spinsRemaining,
+    // Per-wheel: report THIS pass's remaining balance (not the fan aggregate),
+    // so the spin page shows the right count for the wheel being played.
+    spinsRemaining: pass.spinsRemaining,
     pityAwarded,
     shareId,
   };
