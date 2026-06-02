@@ -19,6 +19,7 @@ import FanLeaderboard from "./fan/FanLeaderboard";
 import CreatorNote from "./fan/CreatorNote";
 import PrizeBook from "./fan/PrizeBook";
 import RecentWinsTicker from "./fan/RecentWinsTicker";
+import WinsGallery from "./fan/WinsGallery";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -249,30 +250,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         )}
       </div>
 
-      {history.length > 0 && (
-        <div className="w-full">
-          <p className="mb-3 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
-            Your wins
-          </p>
-          <div className="flex flex-wrap justify-center gap-2">
-            {history.map((p, i) => {
-              const c = p.color ?? RARITY_COLORS[p.rarity];
-              return (
-                <span
-                  key={i}
-                  className="rounded-full px-3 py-1 text-xs font-semibold text-ink"
-                  style={{
-                    backgroundColor: `color-mix(in oklab, ${c} 18%, transparent)`,
-                    border: `1px solid color-mix(in oklab, ${c} 55%, transparent)`,
-                  }}
-                >
-                  {p.emoji ?? "🎁"} {p.label}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <WinsGallery history={history} />
 
       <PrizeBook prizes={pass.wheel.prizes} history={history} />
 
