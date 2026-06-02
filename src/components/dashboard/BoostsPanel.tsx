@@ -215,13 +215,24 @@ function PublicProfileCard() {
           />
         </label>
         <label className="block text-xs text-muted">
-          Avatar image URL (optional)
-          <input
-            value={avatarUrl}
-            onChange={(e) => setAvatarUrl(e.target.value)}
-            className="ff-input mt-1 w-full"
-            placeholder="https://…/your-photo.jpg"
-          />
+          Avatar (optional)
+          <div className="mt-1 flex items-center gap-3">
+            {avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatarUrl} alt="" className="h-12 w-12 shrink-0 rounded-full object-cover ring-1 ring-line" />
+            ) : (
+              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white/5 text-lg">📷</span>
+            )}
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <input
+                value={avatarUrl}
+                onChange={(e) => setAvatarUrl(e.target.value)}
+                className="ff-input w-full"
+                placeholder="Paste an image URL, or upload →"
+              />
+              <AvatarUpload onUploaded={setAvatarUrl} />
+            </div>
+          </div>
         </label>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -262,6 +273,51 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
       {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
       <div className="mt-3">{children}</div>
     </section>
+  );
+}
+
+/** A file picker that uploads an avatar to Storage and returns its public URL. */
+function AvatarUpload({ onUploaded }: { onUploaded: (url: string) => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast("Please choose an image file.", { tone: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/account/avatar", { method: "POST", body: form });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.url) {
+        onUploaded(d.url);
+        toast("Photo uploaded — Save to apply.", { tone: "success" });
+      } else {
+        toast(
+          d.error === "too_large"
+            ? "Image too large (max 5 MB)."
+            : d.error === "demo_mode"
+              ? "Upload needs Supabase configured (demo mode)."
+              : "Upload failed.",
+          { tone: "error" }
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <label className="inline-flex w-fit cursor-pointer items-center rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5">
+      {busy ? "Uploading…" : "⬆ Upload photo"}
+      <input type="file" accept="image/*" onChange={pick} disabled={busy} className="hidden" />
+    </label>
   );
 }
 
