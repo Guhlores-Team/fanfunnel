@@ -1011,7 +1011,7 @@ function FansPanel() {
                 setPackId(null);
               }}
             >
-              <option value="">None</option>
+              <option value="">No campaign (untracked)</option>
               {campaigns.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -1314,7 +1314,12 @@ function AccountCard({
   // Per-spin price as its own state (see FansPanel) so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
   const amount = perSpin && topUp > 0 ? (Number(perSpin) * topUp).toFixed(2) : "";
-  const [campaignId, setCampaignId] = useState<string>("");
+  // Default the top-up to a campaign this fan already belongs to, so revenue
+  // doesn't silently fall into "untracked" (a top-up = more spins on a wheel).
+  const [campaignId, setCampaignId] = useState<string>(() => {
+    const match = campaigns.find((c) => account.campaignNames.includes(c.name));
+    return match?.id ?? "";
+  });
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
   const [packId, setPackId] = useState<string | null>(null);
@@ -1513,7 +1518,7 @@ function AccountCard({
               setPackId(null);
             }}
           >
-            <option value="">None</option>
+            <option value="">No campaign (untracked)</option>
             {campaigns.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
