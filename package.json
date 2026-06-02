@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "for f in $(find src -name '*.test.ts' | sort); do echo \"# $f\"; npx tsx \"$f\" || exit 1; done"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
