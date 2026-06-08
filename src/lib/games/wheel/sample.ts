@@ -1,4 +1,4 @@
-import type { WheelConfig } from "./types";
+import { RARITY_COLORS, type Prize, type WheelConfig } from "./types";
 
 /** The default starter wheel — used by the demo pass and the dashboard editor. */
 export const SAMPLE_WHEEL: WheelConfig = {
@@ -31,6 +31,11 @@ export function isStarterWheel(wheel: WheelConfig): boolean {
   if ((wheel.subtitle ?? "") !== (SAMPLE_WHEEL.subtitle ?? "")) return false;
   if ((wheel.brandColor ?? "") !== (SAMPLE_WHEEL.brandColor ?? "")) return false;
   if (wheel.prizes.length !== SAMPLE_WHEEL.prizes.length) return false;
+  // The starter is stored without explicit prize colors, but the data layer
+  // fills in the per-rarity default when loading a wheel back (color ?? default).
+  // Compare *effective* colors so a freshly bootstrapped wheel still reads as
+  // the untouched starter, while a real custom color is still detected.
+  const effColor = (p: Prize) => p.color ?? RARITY_COLORS[p.rarity];
   return wheel.prizes.every((p, i) => {
     const s = SAMPLE_WHEEL.prizes[i];
     return (
@@ -39,7 +44,7 @@ export function isStarterWheel(wheel: WheelConfig): boolean {
       p.weight === s.weight &&
       (p.emoji ?? "") === (s.emoji ?? "") &&
       (p.stock ?? null) === (s.stock ?? null) &&
-      (p.color ?? "") === (s.color ?? "")
+      effColor(p) === effColor(s)
     );
   });
 }
