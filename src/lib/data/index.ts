@@ -108,6 +108,8 @@ import {
   mockRemoveWishlist,
   mockGetWishlistDemand,
   mockSetLeaderboardEnabled,
+  mockGetOnboardingDismissed,
+  mockSetOnboardingDismissed,
   mockSetFanLeaderboardOptIn,
   mockGetLeaderboard,
   mockGetRecentWins,
@@ -4446,6 +4448,42 @@ export async function setLeaderboardEnabled(
 
   const { error } = await sb.rpc("set_leaderboard_enabled", {
     p_enabled: enabled,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** Whether the signed-in creator has dismissed the Get-started checklist. */
+export async function getOnboardingDismissed(): Promise<boolean> {
+  if (!isSupabaseConfigured()) return mockGetOnboardingDismissed();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return false;
+
+  const { data } = await sb
+    .from("profiles")
+    .select("onboarding_dismissed")
+    .eq("id", user.id)
+    .maybeSingle();
+  return (data as { onboarding_dismissed: boolean } | null)?.onboarding_dismissed ?? false;
+}
+
+/** Persist the creator's Get-started checklist dismissal (account, not browser). */
+export async function setOnboardingDismissed(
+  dismissed: boolean
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetOnboardingDismissed(dismissed);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb.rpc("set_onboarding_dismissed", {
+    p_dismissed: dismissed,
   });
   return error ? { error: "db_error" } : { ok: true };
 }

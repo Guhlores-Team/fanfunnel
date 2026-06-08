@@ -575,3 +575,12 @@ create policy prize_photos_update on storage.objects for update to authenticated
 drop policy if exists prize_photos_delete on storage.objects;
 create policy prize_photos_delete on storage.objects for delete to authenticated
   using (bucket_id = 'prize-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- #onboarding Get-started checklist dismissal — persisted per account ----------
+alter table public.profiles add column if not exists onboarding_dismissed boolean not null default false;
+
+-- Safe self-update of just onboarding_dismissed (profiles_update is admin-only).
+create or replace function public.set_onboarding_dismissed(p_dismissed boolean)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles set onboarding_dismissed = p_dismissed where id = auth.uid();
+$$;

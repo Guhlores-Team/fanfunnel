@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 interface Step {
   key: string;
   label: string;
@@ -16,25 +14,26 @@ interface Step {
  * steps that actually matter — build a wheel, grant a fan spins, send the link —
  * and self-hides once all are done (or the creator dismisses it). Each step
  * deep-links to the tab where it happens.
+ *
+ * Dismissal is controlled by the parent and persisted to the creator's account
+ * (so it follows them across devices and can be re-opened from the header),
+ * rather than being kept in this browser's localStorage.
  */
 export default function GetStartedChecklist({
   wheelSaved,
   fans,
   spins,
+  dismissed,
+  onDismiss,
   onGoTo,
 }: {
   wheelSaved: boolean;
   fans: number;
   spins: number;
+  dismissed: boolean;
+  onDismiss: () => void;
   onGoTo: (tab: string) => void;
 }) {
-  const [dismissed, setDismissed] = useState(true); // assume hidden until we read storage
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- read persisted dismissal on mount
-    setDismissed(localStorage.getItem("ff_getstarted_dismissed") === "1");
-  }, []);
-
   const steps: Step[] = [
     {
       key: "wheel",
@@ -65,11 +64,6 @@ export default function GetStartedChecklist({
   const doneCount = steps.filter((s) => s.done).length;
   const allDone = doneCount === steps.length;
   if (dismissed || allDone) return null;
-
-  const dismiss = () => {
-    localStorage.setItem("ff_getstarted_dismissed", "1");
-    setDismissed(true);
-  };
 
   return (
     <div className="card mt-5 rounded-2xl border-[var(--brand)]/30 p-5">
@@ -112,7 +106,7 @@ export default function GetStartedChecklist({
       </ol>
 
       <button
-        onClick={dismiss}
+        onClick={onDismiss}
         className="mt-3 text-xs font-semibold text-muted transition hover:text-ink"
       >
         Dismiss — I&rsquo;ll explore on my own

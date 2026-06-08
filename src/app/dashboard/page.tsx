@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { redirect } from "next/navigation";
 import DashboardClient from "@/components/dashboard/DashboardClient";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
-import { getWheel, getMyApprovalStatus } from "@/lib/data";
+import { getWheel, getMyApprovalStatus, getOnboardingDismissed } from "@/lib/data";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 
 // Creator/admin dashboard. With Supabase configured the middleware guards this
@@ -35,6 +35,7 @@ export default async function DashboardPage() {
   }
 
   const initialWheel = (await getWheel()) ?? SAMPLE_WHEEL;
+  const onboardingDismissed = await getOnboardingDismissed();
 
   return (
     <main
@@ -45,6 +46,7 @@ export default async function DashboardPage() {
         isAdmin={isAdmin}
         email={email}
         initialWheel={initialWheel}
+        initialOnboardingDismissed={onboardingDismissed}
       />
     </main>
   );

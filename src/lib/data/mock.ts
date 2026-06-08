@@ -176,6 +176,8 @@ interface Store {
   referrals: MockReferral[];
   messages: MockMessage[];
   leaderboardEnabled: boolean;
+  // Get-started checklist dismissal (account-level; survives reloads in demo).
+  onboardingDismissed: boolean;
   // Phase 5b
   webhooks: MockWebhook[];
   // Wave 3: editable auto intro/outro chat messages (creator-level).
@@ -382,6 +384,7 @@ const store: Store =
     referrals: [],
     messages: [],
     leaderboardEnabled: false,
+    onboardingDismissed: false,
     webhooks: [],
     chatIntro: DEFAULT_CHAT_INTRO,
     chatOutro: DEFAULT_CHAT_OUTRO,
@@ -403,6 +406,7 @@ store.happyHours ??= [];
 store.referrals ??= [];
 store.messages ??= [];
 store.leaderboardEnabled ??= false;
+store.onboardingDismissed ??= false;
 store.webhooks ??= [];
 // Wave 3: backfill auto-message defaults on stores pinned before they existed.
 if (store.chatIntro === undefined) store.chatIntro = DEFAULT_CHAT_INTRO;
@@ -2214,6 +2218,15 @@ export function mockGetWishlistDemand(): WishlistDemand[] {
 
 export function mockSetLeaderboardEnabled(enabled: boolean): { ok: true } {
   store.leaderboardEnabled = !!enabled;
+  return { ok: true };
+}
+
+export function mockGetOnboardingDismissed(): boolean {
+  return store.onboardingDismissed;
+}
+
+export function mockSetOnboardingDismissed(dismissed: boolean): { ok: true } {
+  store.onboardingDismissed = !!dismissed;
   return { ok: true };
 }
 

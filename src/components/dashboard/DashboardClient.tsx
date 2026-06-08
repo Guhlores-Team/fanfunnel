@@ -116,10 +116,12 @@ export default function DashboardClient({
   isAdmin,
   email,
   initialWheel,
+  initialOnboardingDismissed = false,
 }: {
   isAdmin: boolean;
   email: string | null;
   initialWheel: WheelConfig;
+  initialOnboardingDismissed?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("today");
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
@@ -141,6 +143,22 @@ export default function DashboardClient({
   // starter — not merely that a wheel row exists (every creator is bootstrapped
   // with one), which is why we compare content rather than id.
   const wheelSaved = !isStarterWheel(wheel);
+
+  // Get-started checklist dismissal, persisted to the account (not the browser).
+  // Seeded from the server so it's correct on first paint and across devices.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(
+    initialOnboardingDismissed
+  );
+  const onboardingAllDone = wheelSaved && metricsFans > 0 && metricsSpins > 0;
+  const setOnboardingHidden = useCallback((hidden: boolean) => {
+    setOnboardingDismissed(hidden);
+    // Fire-and-forget: the UI already reflects the change optimistically.
+    void fetch("/api/account/onboarding", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dismissed: hidden }),
+    }).catch(() => {});
+  }, []);
 
   // New creators should land on the Wheel editor (their first task), not the
   // empty "Today" feed. Switch once, on first data load, only if they haven't
@@ -184,6 +202,16 @@ export default function DashboardClient({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {!overview.loading && onboardingDismissed && !onboardingAllDone && (
+            <button
+              type="button"
+              onClick={() => setOnboardingHidden(false)}
+              className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-semibold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+              title="Show the setup checklist again"
+            >
+              🚀 Get started
+            </button>
+          )}
           {(isAdmin || !email) && (
             <a
               href="/admin"
@@ -216,6 +244,8 @@ export default function DashboardClient({
           wheelSaved={wheelSaved}
           fans={metricsFans}
           spins={metricsSpins}
+          dismissed={onboardingDismissed}
+          onDismiss={() => setOnboardingHidden(true)}
           onGoTo={(t) => goTab(t as Tab)}
         />
       )}

@@ -1182,3 +1182,14 @@ begin
   return remaining; -- spins left ON THIS PASS
 end;
 $$;
+
+-- ============================================================
+-- 0021_onboarding_dismissed.sql
+-- ============================================================
+alter table public.profiles
+  add column if not exists onboarding_dismissed boolean not null default false;
+
+create or replace function public.set_onboarding_dismissed(p_dismissed boolean)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles set onboarding_dismissed = p_dismissed where id = auth.uid();
+$$;
