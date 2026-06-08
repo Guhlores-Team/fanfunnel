@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
+import { isStarterWheel } from "@/lib/games/wheel/sample";
 import {
   RARITY_COLORS,
   RARITY_ORDER,
@@ -49,9 +50,6 @@ import {
 } from "@/components/dashboard/editorHelpers";
 
 type Tab = "today" | "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
-
-// The starter wheel's id; a creator who hasn't saved their own wheel still uses it.
-const SAMPLE_WHEEL_ID = "demo-wheel";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -139,7 +137,10 @@ export default function DashboardClient({
   // still on the sample wheel (no saved wheel id of their own).
   const metricsFans = overview.data?.metrics.fans ?? 0;
   const metricsSpins = overview.data?.metrics.spinsPlayed ?? 0;
-  const wheelSaved = wheel.id !== SAMPLE_WHEEL_ID;
+  // "Built" means the creator has customized the wheel away from the seeded
+  // starter — not merely that a wheel row exists (every creator is bootstrapped
+  // with one), which is why we compare content rather than id.
+  const wheelSaved = !isStarterWheel(wheel);
 
   // New creators should land on the Wheel editor (their first task), not the
   // empty "Today" feed. Switch once, on first data load, only if they haven't
