@@ -85,16 +85,29 @@ function segmentColor(p: Prize): string {
   return p.color ?? RARITY_COLORS[p.rarity] ?? "#6b7280";
 }
 
-function shade(hex: string, amt: number): string {
-  // Lighten (amt>0) or darken (amt<0) a hex color for slice gradients.
-  const m = hex.replace("#", "");
-  if (m.length !== 6) return hex;
+// Fallback when a prize has no usable color (e.g. a half-typed hex in the editor).
+const FALLBACK_COLOR = "#6b7280";
+
+// Parse #rgb or #rrggbb into [r,g,b]. Returns null for anything incomplete or
+// malformed — partial values like "#ec" stream in while the user types a hex in
+// the editor, and feeding those to canvas APIs throws (see shade).
+function parseHex(hex: string): [number, number, number] | null {
+  let m = hex.trim().replace(/^#/, "");
+  if (m.length === 3) m = m[0] + m[0] + m[1] + m[1] + m[2] + m[2];
+  if (!/^[0-9a-fA-F]{6}$/.test(m)) return null;
   const num = parseInt(m, 16);
+  return [(num >> 16) & 0xff, (num >> 8) & 0xff, num & 0xff];
+}
+
+function shade(hex: string, amt: number): string {
+  // Lighten (amt>0) or darken (amt<0) a hex color for slice gradients. Always
+  // returns a valid rgb() string: CanvasGradient.addColorStop throws a
+  // SyntaxError on an unparseable color, which would crash the draw, so an
+  // invalid input falls back instead of being passed through.
+  const rgb = parseHex(hex) ?? parseHex(FALLBACK_COLOR)!;
   const clamp = (v: number) => Math.max(0, Math.min(255, v));
-  const r = clamp((num >> 16) + amt);
-  const g = clamp(((num >> 8) & 0xff) + amt);
-  const b = clamp((num & 0xff) + amt);
-  return `rgb(${r},${g},${b})`;
+  const [r, g, b] = rgb;
+  return `rgb(${clamp(r + amt)},${clamp(g + amt)},${clamp(b + amt)})`;
 }
 
 export default function Wheel({
