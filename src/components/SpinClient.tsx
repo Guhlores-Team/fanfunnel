@@ -1,16 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { playWin, unlockAudio, haptic } from "@/lib/sound";
-import NearMissBeat, {
-  detectNearMiss,
-  type NearMiss,
-} from "./NearMissBeat";
-import PityBeat from "./PityBeat";
+import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
+// Both beats pull in the motion library and only render briefly after a spin,
+// so defer them off the fan page's initial bundle.
+const NearMissBeat = dynamic(() => import("./NearMissBeat"), { ssr: false });
+const PityBeat = dynamic(() => import("./PityBeat"), { ssr: false });
 import HappyHourBanner from "./fan/HappyHourBanner";
 import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";

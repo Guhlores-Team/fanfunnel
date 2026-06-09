@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import dynamic from "next/dynamic";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
@@ -28,19 +29,31 @@ import { OddsBar } from "@/components/dashboard/OddsBar";
 import Sparkline from "@/components/dashboard/Sparkline";
 import Funnel from "@/components/dashboard/Funnel";
 import { EmptyState, Field, TagEditor } from "./ui";
-import QrButton from "@/components/dashboard/QrButton";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
-import CampaignsPanel from "@/components/dashboard/CampaignsPanel";
 import WheelSwitcher from "@/components/dashboard/WheelSwitcher";
 import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
 import PackPresets from "@/components/dashboard/PackPresets";
-import InboxPanel from "@/components/dashboard/InboxPanel";
-import BoostsPanel from "@/components/dashboard/BoostsPanel";
 import TodayPanel from "@/components/dashboard/TodayPanel";
 import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
-import AnalyticsPanel from "@/components/dashboard/AnalyticsPanel";
 import ImportFans from "@/components/dashboard/ImportFans";
+
+// Code-split the tab-gated panels (and the qrcode-pulling QrButton) so the
+// initial dashboard bundle doesn't carry every tab a creator may never open.
+const PanelFallback = () => <div className="skeleton mt-4 h-64 rounded-xl" />;
+const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
+const CampaignsPanel = dynamic(() => import("@/components/dashboard/CampaignsPanel"), {
+  loading: PanelFallback,
+});
+const InboxPanel = dynamic(() => import("@/components/dashboard/InboxPanel"), {
+  loading: PanelFallback,
+});
+const BoostsPanel = dynamic(() => import("@/components/dashboard/BoostsPanel"), {
+  loading: PanelFallback,
+});
+const AnalyticsPanel = dynamic(() => import("@/components/dashboard/AnalyticsPanel"), {
+  loading: PanelFallback,
+});
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,

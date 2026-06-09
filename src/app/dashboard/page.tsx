@@ -34,8 +34,11 @@ export default async function DashboardPage() {
     if (status !== "approved") redirect("/pending");
   }
 
-  const initialWheel = (await getWheel()) ?? SAMPLE_WHEEL;
-  const onboardingDismissed = await getOnboardingDismissed();
+  const [wheelResult, onboardingDismissed] = await Promise.all([
+    getWheel(),
+    getOnboardingDismissed(),
+  ]);
+  const initialWheel = wheelResult ?? SAMPLE_WHEEL;
 
   return (
     <main
