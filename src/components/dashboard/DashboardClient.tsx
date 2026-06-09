@@ -203,6 +203,16 @@ export default function DashboardClient({
     });
   }, [tab]);
 
+  // Onboarding CTAs: switch to the relevant tab AND scroll its panel into view,
+  // so a creator on a phone is actually taken to the section to act on it.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const goToSection = (t: Tab) => {
+    goTab(t);
+    requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   const tabs: [Tab, string][] = [
     ["today", "Today"],
     ["editor", "Wheel"],
@@ -272,7 +282,7 @@ export default function DashboardClient({
           spins={metricsSpins}
           dismissed={onboardingDismissed}
           onDismiss={() => setOnboardingHidden(true)}
-          onGoTo={(t) => goTab(t as Tab)}
+          onGoTo={(t) => goToSection(t as Tab)}
         />
       )}
 
@@ -331,7 +341,13 @@ export default function DashboardClient({
         ))}
       </nav>
 
-      <div className="mt-7" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+      <div
+        ref={panelRef}
+        className="scroll-mt-4 mt-7"
+        role="tabpanel"
+        id={`panel-${tab}`}
+        aria-labelledby={`tab-${tab}`}
+      >
         {tab === "today" && <TodayPanel onNavigate={(t) => setTab(t as Tab)} />}
         {tab === "metrics" && (
           <MetricsPanel
