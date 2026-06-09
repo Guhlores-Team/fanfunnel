@@ -1406,6 +1406,17 @@ export function mockGetOverview(): CreatorOverview {
   const unreadMessages = store.messages.filter(
     (m) => m.sender === "fan" && m.readAt === null
   ).length;
+  // Mirror getOverview: built = saved an edit (updatedAt past createdAt) or has
+  // more than the single bootstrap wheel.
+  const liveWheels = [...store.wheels.values()].filter((w) => !w.archivedAt);
+  const wheelBuilt =
+    liveWheels.length > 1 ||
+    liveWheels.some((w) => {
+      const m = wheelMeta.get(w.id);
+      return m
+        ? new Date(m.updatedAt).getTime() - new Date(m.createdAt).getTime() > 1500
+        : false;
+    });
   return {
     metrics: {
       fans: store.fans.size,
@@ -1415,6 +1426,7 @@ export function mockGetOverview(): CreatorOverview {
       revenue,
       unreadMessages,
       leaderboardEnabled: store.leaderboardEnabled,
+      wheelBuilt,
     },
     redemptions: structuredClone(items),
   };

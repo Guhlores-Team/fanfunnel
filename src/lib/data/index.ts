@@ -2787,6 +2787,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     { data: grantRows },
     { count: unreadMessages },
     { data: prof },
+    { data: wheelRows },
   ] = await Promise.all([
     sb
       .from("redemptions")
@@ -2807,6 +2808,10 @@ export async function getOverview(): Promise<CreatorOverview> {
       .eq("sender", "fan")
       .is("read_at", null),
     sb.from("profiles").select("leaderboard_enabled").eq("id", user.id).maybeSingle(),
+    sb
+      .from("wheels")
+      .select("created_at, updated_at, archived_at")
+      .eq("creator_id", user.id),
   ]);
 
   const rows = (reds ?? []) as unknown as {
@@ -2838,6 +2843,22 @@ export async function getOverview(): Promise<CreatorOverview> {
     0
   );
 
+  // "Built a wheel" = saved an edit (a wheel whose updated_at advanced past its
+  // created_at) OR has more than the single bootstrap wheel. Content-agnostic,
+  // so it catches every edit — not just the few fields a sample-diff compares.
+  const activeWheels = (
+    (wheelRows ?? []) as {
+      created_at: string;
+      updated_at: string;
+      archived_at: string | null;
+    }[]
+  ).filter((w) => !w.archived_at);
+  const wheelBuilt =
+    activeWheels.length > 1 ||
+    activeWheels.some(
+      (w) => new Date(w.updated_at).getTime() - new Date(w.created_at).getTime() > 1500
+    );
+
   return {
     metrics: {
       fans: fans ?? 0,
@@ -2847,6 +2868,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       revenue,
       unreadMessages: unreadMessages ?? 0,
       leaderboardEnabled: (prof as { leaderboard_enabled: boolean } | null)?.leaderboard_enabled ?? false,
+      wheelBuilt,
     },
     redemptions,
   };

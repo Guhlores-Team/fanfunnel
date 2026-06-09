@@ -252,6 +252,13 @@ export interface CreatorMetrics {
   unreadMessages?: number;
   /** Phase 3: whether the creator's public leaderboard is on. Optional. */
   leaderboardEnabled?: boolean;
+  /**
+   * Onboarding: whether the creator has actually built a wheel — i.e. saved an
+   * edit (a wheel updated since creation) or has more than the bootstrap wheel.
+   * Drives the "Build your prize wheel" checklist step. Optional so literals
+   * compile.
+   */
+  wheelBuilt?: boolean;
 }
 
 /** Everything the creator dashboard's metrics + inbox need. */

@@ -153,10 +153,11 @@ export default function DashboardClient({
   // still on the sample wheel (no saved wheel id of their own).
   const metricsFans = overview.data?.metrics.fans ?? 0;
   const metricsSpins = overview.data?.metrics.spinsPlayed ?? 0;
-  // "Built" means the creator has customized the wheel away from the seeded
-  // starter — not merely that a wheel row exists (every creator is bootstrapped
-  // with one), which is why we compare content rather than id.
-  const wheelSaved = !isStarterWheel(wheel);
+  // "Built a wheel" comes from the server (saved an edit, or has >1 wheel) so it
+  // catches every edit and reliably survives reloads / new wheels. The local
+  // content check is a fast pre-save hint so editing ticks the step instantly.
+  const wheelBuilt = overview.data?.metrics.wheelBuilt ?? false;
+  const wheelSaved = wheelBuilt || !isStarterWheel(wheel);
 
   // Get-started checklist dismissal, persisted to the account (not the browser).
   // Seeded from the server so it's correct on first paint and across devices.
@@ -364,6 +365,7 @@ export default function DashboardClient({
             initialWheel={initialWheel}
             editingWheelId={editingWheelId}
             setEditingWheelId={setEditingWheelId}
+            onWheelMutated={overview.refresh}
           />
         )}
       </div>
@@ -1814,12 +1816,15 @@ function WheelEditor({
   initialWheel,
   editingWheelId,
   setEditingWheelId,
+  onWheelMutated,
 }: {
   wheel: WheelConfig;
   setWheel: Dispatch<SetStateAction<WheelConfig>>;
   initialWheel: WheelConfig;
   editingWheelId: string | null;
   setEditingWheelId: (id: string | null) => void;
+  /** Notify the parent (refreshes overview, incl. the wheelBuilt onboarding signal). */
+  onWheelMutated: () => void;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
   // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
@@ -1851,6 +1856,8 @@ function WheelEditor({
         setEditingWheelId(data.wheel.id);
         setJustSaved(true);
         setTimeout(() => setJustSaved(false), 2000);
+        // Refresh the onboarding "wheelBuilt" signal now that this wheel saved.
+        onWheelMutated();
       } else {
         toast("Couldn't save. Are you signed in?", { tone: "error" });
       }
@@ -2022,7 +2029,7 @@ function WheelEditor({
         <WheelSwitcher
           currentWheelId={editingWheelId}
           onEdit={loadWheel}
-          onChanged={() => {}}
+          onChanged={onWheelMutated}
         />
       </div>
 
