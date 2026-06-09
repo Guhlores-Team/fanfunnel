@@ -450,6 +450,14 @@ function HappyHourScheduler() {
       toast("Pick a wheel and a start/end time");
       return;
     }
+    // Guard partial datetime-local values: .toISOString() on an Invalid Date
+    // throws RangeError, which would surface as a misleading generic error.
+    const startDate = new Date(startsAt);
+    const endDate = new Date(endsAt);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      toast("Enter a complete start and end time");
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/happy-hours", {
@@ -458,8 +466,8 @@ function HappyHourScheduler() {
         body: JSON.stringify({
           wheelId,
           multiplier,
-          startsAt: new Date(startsAt).toISOString(),
-          endsAt: new Date(endsAt).toISOString(),
+          startsAt: startDate.toISOString(),
+          endsAt: endDate.toISOString(),
         }),
       });
       if (!res.ok) throw new Error();

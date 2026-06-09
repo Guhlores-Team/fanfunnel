@@ -172,11 +172,19 @@ export default function WheelSwitcher({
 
   async function saveSchedule() {
     if (!selected) return;
+    // A partial datetime-local value (e.g. while editing) makes an Invalid Date,
+    // and .toISOString() on that throws RangeError — guard before converting.
+    const fromDate = from ? new Date(from) : null;
+    const untilDate = until ? new Date(until) : null;
+    if ((fromDate && isNaN(fromDate.getTime())) || (untilDate && isNaN(untilDate.getTime()))) {
+      toast("Enter a complete date and time.", { tone: "error" });
+      return;
+    }
     await patchWheel(
       selected.id,
       {
-        activeFrom: from ? new Date(from).toISOString() : null,
-        activeUntil: until ? new Date(until).toISOString() : null,
+        activeFrom: fromDate ? fromDate.toISOString() : null,
+        activeUntil: untilDate ? untilDate.toISOString() : null,
       },
       "Schedule updated",
     );

@@ -525,6 +525,17 @@ function GrantRow({
   const [campaignId, setCampaignId] = useState(g.campaignId ?? "");
   const [busy, setBusy] = useState(false);
 
+  // Re-sync the form when the underlying grant changes (e.g. the drawer reloads
+  // after another action), unless the user is actively editing this row.
+  useEffect(() => {
+    if (editing) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- mirror persisted grant into the idle form */
+    setSpins(String(g.spins));
+    setPerSpin(g.spins > 0 && g.amountCents > 0 ? (g.amountCents / 100 / g.spins).toFixed(2) : "");
+    setCampaignId(g.campaignId ?? "");
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [g.spins, g.amountCents, g.campaignId, editing]);
+
   async function save() {
     setBusy(true);
     try {

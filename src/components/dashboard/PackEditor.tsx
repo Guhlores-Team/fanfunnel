@@ -233,6 +233,14 @@ function PackRow({
     setBonus(String(pack.bonusSpins));
   }
 
+  // Re-sync the form when the underlying pack changes (e.g. after a save
+  // refetches the list and React reuses this row), unless the user is mid-edit.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror persisted pack into the idle form
+    if (!editing) reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset() reads latest pack fields
+  }, [pack.label, pack.spins, pack.amountCents, pack.bonusSpins, editing]);
+
   async function save() {
     const nSpins = Number(spins);
     const nAmount = Math.round(Number(amount) * 100);

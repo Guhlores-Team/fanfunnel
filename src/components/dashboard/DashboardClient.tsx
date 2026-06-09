@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
@@ -1779,7 +1780,7 @@ function WheelEditor({
   setEditingWheelId,
 }: {
   wheel: WheelConfig;
-  setWheel: (w: WheelConfig) => void;
+  setWheel: Dispatch<SetStateAction<WheelConfig>>;
   initialWheel: WheelConfig;
   editingWheelId: string | null;
   setEditingWheelId: (id: string | null) => void;
@@ -1956,16 +1957,24 @@ function WheelEditor({
     const index = wheel.prizes.findIndex((p) => p.id === id);
     if (index < 0) return;
     const removed = wheel.prizes[index];
-    const afterRemoval = wheel.prizes.filter((p) => p.id !== id);
-    setWheel({ ...wheel, prizes: afterRemoval });
+    setWheel((current) => ({
+      ...current,
+      prizes: current.prizes.filter((p) => p.id !== id),
+    }));
     toast("Prize removed", {
       tone: "info",
       action: {
         label: "Undo",
+        // Functional update against the *current* wheel, not the snapshot at
+        // removal time, so re-inserting the prize doesn't clobber any edits the
+        // creator made during the undo window.
         onClick: () => {
-          const restored = afterRemoval.slice();
-          restored.splice(Math.min(index, restored.length), 0, removed);
-          setWheel({ ...wheel, prizes: restored });
+          setWheel((current) => {
+            if (current.prizes.some((p) => p.id === removed.id)) return current;
+            const restored = current.prizes.slice();
+            restored.splice(Math.min(index, restored.length), 0, removed);
+            return { ...current, prizes: restored };
+          });
         },
       },
     });
@@ -2208,7 +2217,7 @@ function WheelEditor({
                         Odds
                       </span>
                       <span className="tnum py-2 text-right font-mono font-semibold text-[var(--brand)]">
-                        {(odds.get(p.id)! * 100).toFixed(1)}%
+                        {((odds.get(p.id) ?? 0) * 100).toFixed(1)}%
                       </span>
                     </div>
                   </div>

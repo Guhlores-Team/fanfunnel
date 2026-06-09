@@ -110,6 +110,15 @@ function shade(hex: string, amt: number): string {
   return `rgb(${clamp(r + amt)},${clamp(g + amt)},${clamp(b + amt)})`;
 }
 
+// Normalize any color string to one that's always safe to assign to canvas
+// fillStyle/strokeStyle or a CSS border. A half-typed brand-color hex (e.g.
+// "#e") streams in from the editor; an invalid fillStyle is silently ignored by
+// Chromium but can throw on stricter engines (iOS WebKit) and collapses the CSS
+// ticker peg, so fall back to a valid color instead of passing it through.
+function safeColor(hex: string): string {
+  return parseHex(hex) ? hex : FALLBACK_COLOR;
+}
+
 export default function Wheel({
   prizes,
   brandColor = "#ec4899",
@@ -247,16 +256,17 @@ export default function Wheel({
     ctx.restore();
 
     // Center hub
+    const hubColor = safeColor(brandColor);
     ctx.beginPath();
     ctx.arc(cx, cy, radius * 0.15, 0, TWO_PI);
     ctx.fillStyle = "#fff";
     ctx.fill();
     ctx.lineWidth = 4;
-    ctx.strokeStyle = brandColor;
+    ctx.strokeStyle = hubColor;
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(cx, cy, radius * 0.05, 0, TWO_PI);
-    ctx.fillStyle = brandColor;
+    ctx.fillStyle = hubColor;
     ctx.fill();
   }
 
@@ -359,7 +369,7 @@ export default function Wheel({
             height: 0,
             borderLeft: "15px solid transparent",
             borderRight: "15px solid transparent",
-            borderTop: `28px solid ${brandColor}`,
+            borderTop: `28px solid ${safeColor(brandColor)}`,
             filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.4))",
           }}
         />
