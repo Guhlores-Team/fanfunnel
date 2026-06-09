@@ -18,7 +18,9 @@ export async function POST(req: Request) {
 
   const result = await setRedemptionStatus(body.id, body.status);
   if ("error" in result) {
-    return NextResponse.json(result, { status: 400 });
+    const status =
+      result.error === "unauthorized" ? 401 : result.error === "not_found" ? 404 : 400;
+    return NextResponse.json(result, { status });
   }
   return NextResponse.json(result);
 }

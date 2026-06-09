@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getFanMessages, sendFanMessage } from "@/lib/data";
+import { rateLimitOr429 } from "@/lib/api/limit";
 
 // A fan's chat thread with the creator. Token-gated; sending requires ≥1 spin
 // (the data layer enforces the "locked" gate).
@@ -18,9 +19,12 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
-  if (!body.token || !body.body) {
+  if (typeof body.token !== "string" || typeof body.body !== "string" || !body.token || !body.body) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  // Per-fan send cap to stop inbox flooding.
+  const limited = rateLimitOr429("msg:" + body.token, 10, 60_000);
+  if (limited) return limited;
   const result = await sendFanMessage(body.token, body.body);
   if ("error" in result) {
     const status =

@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
 import { getWheel, saveWheel } from "@/lib/data";
 import type { WheelConfig } from "@/lib/games/wheel/types";
+import { RARITY_ORDER } from "@/lib/games/wheel/types";
+
+// Reject prize fields the data layer forwards without sanitizing. rarity drives
+// the odds defaults, and imageUrl is rendered (and must not be a non-http(s)
+// target). Color is intentionally not constrained here — it's freeform and the
+// wheel renderer already guards invalid values safely.
+function prizesValid(prizes: WheelConfig["prizes"]): boolean {
+  if (prizes.length > 24) return false;
+  return prizes.every(
+    (p) =>
+      p != null &&
+      typeof p.label === "string" &&
+      RARITY_ORDER.includes(p.rarity) &&
+      Number.isFinite(p.weight) &&
+      p.weight >= 0 &&
+      (p.imageUrl == null ||
+        (typeof p.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl))),
+  );
+}
 
 // Read the signed-in creator's wheel configuration.
 export async function GET() {
@@ -18,7 +37,7 @@ export async function PUT(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
-  if (!config || !Array.isArray(config.prizes)) {
+  if (!config || !Array.isArray(config.prizes) || !prizesValid(config.prizes)) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 

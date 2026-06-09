@@ -16,10 +16,10 @@ export async function POST(req: Request) {
   }
 
   const url = String(body.url ?? "").trim();
-  if (!url) {
+  if (!url || url.length > 2000) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
-  const event = body.event ? String(body.event) : undefined;
+  const event = body.event ? String(body.event).slice(0, 80) : undefined;
 
   const result = await createWebhook(url, event);
   if ("error" in result) {

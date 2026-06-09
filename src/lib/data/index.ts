@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import {
   isSupabaseConfigured,
   createServiceClient,
@@ -1883,7 +1885,7 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     label: p.label.slice(0, 80) || "Prize",
     description: p.description?.slice(0, 280) ?? null,
     rarity: p.rarity,
-    weight: Math.max(0, Math.floor(p.weight) || 0),
+    weight: Number.isFinite(p.weight) ? Math.max(0, Math.floor(p.weight) || 0) : 0,
     color: p.color ?? null,
     emoji: p.emoji ?? null,
     image_url: p.imageUrl ?? null,
@@ -3472,13 +3474,19 @@ export async function setRedemptionStatus(
   }
 
   const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
   const { error } = await sb
     .from("redemptions")
     .update({
       status,
       fulfilled_at: status === "fulfilled" ? new Date().toISOString() : null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -4205,12 +4213,60 @@ export async function listWebhooks(): Promise<Webhook[]> {
   }));
 }
 
+// --- Webhook SSRF guard -----------------------------------------------------
+// Webhooks let a creator POST spin events to an arbitrary URL from our server,
+// so block targets that point at internal infrastructure (loopback, RFC1918,
+// link-local incl. the 169.254.169.254 cloud-metadata IP, CGNAT, IPv6 local).
+function isPrivateIp(ip: string): boolean {
+  if (isIP(ip) === 4) {
+    const [a, b] = ip.split(".").map(Number);
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    );
+  }
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  return (
+    lower === "::1" ||
+    lower === "::" ||
+    lower.startsWith("fc") ||
+    lower.startsWith("fd") ||
+    lower.startsWith("fe80")
+  );
+}
+
+async function isBlockedWebhookHost(hostname: string): Promise<boolean> {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) {
+    return true;
+  }
+  if (isIP(host)) return isPrivateIp(host);
+  try {
+    const { address } = await lookup(host);
+    return isPrivateIp(address);
+  } catch {
+    return true; // unresolvable host → treat as unsafe
+  }
+}
+
 export async function createWebhook(
   url: string,
   event = "prize_pending"
 ): Promise<Webhook | { error: string }> {
   const trimmed = url.trim();
   if (!/^https?:\/\//i.test(trimmed)) return { error: "invalid_url" };
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { error: "invalid_url" };
+  }
+  if (await isBlockedWebhookHost(parsed.hostname)) return { error: "blocked_url" };
   if (!isSupabaseConfigured()) return mockCreateWebhook(trimmed, event);
 
   const sb = await createClient();
@@ -4244,7 +4300,11 @@ export async function deleteWebhook(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb.from("webhooks").delete().eq("id", id);
+  const { error } = await sb
+    .from("webhooks")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -4268,13 +4328,22 @@ export async function fireWebhooks(
     const hooks = (data ?? []) as { url: string }[];
     const body = JSON.stringify(payload);
     await Promise.allSettled(
-      hooks.map((h) =>
-        fetch(h.url, {
+      hooks.map(async (h) => {
+        // Re-validate at fire time too (guards against a host that has since
+        // been re-pointed at an internal IP via DNS).
+        let parsed: URL;
+        try {
+          parsed = new URL(h.url);
+        } catch {
+          return;
+        }
+        if (await isBlockedWebhookHost(parsed.hostname)) return;
+        await fetch(h.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
-        })
-      )
+        });
+      })
     );
   } catch {
     /* never throws */

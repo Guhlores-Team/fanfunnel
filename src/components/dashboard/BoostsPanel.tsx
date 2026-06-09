@@ -47,7 +47,11 @@ function DangerZone() {
   async function reset() {
     setBusy(true);
     try {
-      const res = await fetch("/api/account/reset", { method: "POST" });
+      const res = await fetch("/api/account/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: typed }),
+      });
       if (res.ok) {
         toast("Account reset — starting fresh.", { tone: "success" });
         setTimeout(() => window.location.reload(), 700);

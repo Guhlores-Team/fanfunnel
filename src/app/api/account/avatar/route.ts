@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
+import { rateLimitOr429 } from "@/lib/api/limit";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "gif", "webp"]);
 
 // Upload an avatar image to the public `avatars` bucket and return its URL.
 // Auth'd creator only; the upload itself uses the service key (bucket has no
@@ -16,6 +18,10 @@ export async function POST(req: Request) {
   } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // Cap upload frequency per creator to protect storage/compute budget.
+  const limited = rateLimitOr429("avatar:" + user.id, 10, 60_000);
+  if (limited) return limited;
+
   let file: File | null = null;
   try {
     const form = await req.formData();
@@ -29,7 +35,8 @@ export async function POST(req: Request) {
   if (file.size > MAX_BYTES)
     return NextResponse.json({ error: "too_large" }, { status: 400 });
 
-  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+  let ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!ALLOWED_EXT.has(ext)) ext = "jpg";
   const path = `${user.id}/${Date.now()}.${ext}`;
   const bytes = new Uint8Array(await file.arrayBuffer());
 
