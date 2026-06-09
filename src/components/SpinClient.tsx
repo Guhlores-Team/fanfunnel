@@ -6,7 +6,7 @@ import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
-import { playWin, unlockAudio, haptic } from "@/lib/sound";
+import { playWin, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
 // Both beats pull in the motion library and only render briefly after a spin,
 // so defer them off the fan page's initial bundle.
@@ -240,7 +240,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           {busy ? "Spinning…" : spinsRemaining > 0 ? "SPIN" : "Out of spins"}
         </button>
 
-        {error && <p className="text-center text-sm text-amber-300">{error}</p>}
+        {error && (
+          <p role="alert" className="text-center text-sm text-amber-300">
+            {error}
+          </p>
+        )}
         {spinsRemaining === 0 && !reveal && (
           <TopUpMoment
             prizes={pass.wheel.prizes}
@@ -323,6 +327,33 @@ function AgeGate({
   const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const ready = adult && terms && !busy;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const firstRef = useRef<HTMLInputElement>(null);
+
+  // A11y: this gate is blocking, so move focus into it on open and trap Tab so
+  // keyboard users can't step *past* it onto the page behind (which would let
+  // them bypass age verification). Intentionally no Escape-to-close.
+  useEffect(() => {
+    firstRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input, [href], [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const confirm = async () => {
     if (!ready) return;
@@ -342,6 +373,7 @@ function AgeGate({
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
@@ -366,6 +398,7 @@ function AgeGate({
         <div className="mt-6 space-y-3 text-left text-sm">
           <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3">
             <input
+              ref={firstRef}
               type="checkbox"
               checked={adult}
               onChange={(e) => setAdult(e.target.checked)}
@@ -544,8 +577,10 @@ function PrizeModal({
   );
 }
 
-// Lightweight CSS confetti — no dependency.
+// Lightweight CSS confetti — no dependency. Skipped entirely for users who
+// prefer reduced motion (70 full-viewport moving elements is a vestibular risk).
 function Confetti() {
+  const reduce = prefersReducedMotion();
   const [pieces] = useState(() =>
     Array.from({ length: 70 }, (_, i) => ({
       id: i,
@@ -562,8 +597,9 @@ function Confetti() {
     document.head.appendChild(style);
     return () => style.remove();
   }, []);
+  if (reduce) return null;
   return (
-    <div className="pointer-events-none fixed inset-0 overflow-hidden">
+    <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden">
       {pieces.map((p) => (
         <span
           key={p.id}

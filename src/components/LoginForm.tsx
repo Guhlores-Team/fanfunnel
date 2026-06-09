@@ -77,6 +77,7 @@ export default function LoginForm() {
       <div className="mt-5 space-y-3">
         {mode === "signup" && (
           <input
+            aria-label="Display name"
             className="ff-input w-full"
             placeholder="Display name"
             value={displayName}
@@ -87,6 +88,7 @@ export default function LoginForm() {
           type="email"
           required
           autoComplete="email"
+          aria-label="Email address"
           className="ff-input w-full"
           placeholder="you@example.com"
           value={email}
@@ -97,6 +99,7 @@ export default function LoginForm() {
           required
           minLength={6}
           autoComplete={mode === "signin" ? "current-password" : "new-password"}
+          aria-label="Password"
           className="ff-input w-full"
           placeholder="Password (min 6 chars)"
           value={password}
@@ -104,8 +107,16 @@ export default function LoginForm() {
         />
       </div>
 
-      {error && <p className="mt-3 text-sm text-amber-300">{error}</p>}
-      {msg && <p className="mt-3 text-sm text-green-300">{msg}</p>}
+      {error && (
+        <p role="alert" className="mt-3 text-sm text-amber-300">
+          {error}
+        </p>
+      )}
+      {msg && (
+        <p role="status" className="mt-3 text-sm text-green-300">
+          {msg}
+        </p>
+      )}
 
       <button
         type="submit"

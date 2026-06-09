@@ -107,7 +107,7 @@ export default function GetStartedChecklist({
 
       <button
         onClick={onDismiss}
-        className="mt-3 text-xs font-semibold text-muted transition hover:text-ink"
+        className="-mx-1 mt-3 px-1 py-2 text-xs font-semibold text-muted transition hover:text-ink"
       >
         Dismiss — I&rsquo;ll explore on my own
       </button>

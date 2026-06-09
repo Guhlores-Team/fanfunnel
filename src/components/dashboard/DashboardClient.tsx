@@ -191,6 +191,17 @@ export default function DashboardClient({
     setTab(t);
   };
 
+  // Keep the active tab visible in the horizontally-scrolling tab bar on mobile
+  // (otherwise an earlier/later tab can sit clipped off-screen after switching).
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
+  useEffect(() => {
+    tabRefs.current[tab]?.scrollIntoView({
+      behavior: "smooth",
+      inline: "center",
+      block: "nearest",
+    });
+  }, [tab]);
+
   const tabs: [Tab, string][] = [
     ["today", "Today"],
     ["editor", "Wheel"],
@@ -282,10 +293,21 @@ export default function DashboardClient({
         </button>
       )}
 
-      <nav className="-mx-4 mt-6 flex flex-nowrap gap-0.5 overflow-x-auto overflow-y-hidden border-b border-line px-4 [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain] [scrollbar-width:none] [touch-action:pan-x] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+      <nav
+        role="tablist"
+        aria-label="Dashboard sections"
+        className="-mx-4 mt-6 flex flex-nowrap gap-0.5 overflow-x-auto overflow-y-hidden border-b border-line px-4 [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain] [scrollbar-width:none] [touch-action:pan-x] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"
+      >
         {tabs.map(([id, label]) => (
           <button
             key={id}
+            ref={(el) => {
+              tabRefs.current[id] = el;
+            }}
+            role="tab"
+            aria-selected={tab === id}
+            aria-controls={`panel-${id}`}
+            id={`tab-${id}`}
             onClick={() => goTab(id)}
             className={`-mb-px flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] font-semibold transition sm:text-sm ${
               tab === id
@@ -308,7 +330,7 @@ export default function DashboardClient({
         ))}
       </nav>
 
-      <div className="mt-7">
+      <div className="mt-7" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "today" && <TodayPanel onNavigate={(t) => setTab(t as Tab)} />}
         {tab === "metrics" && (
           <MetricsPanel
@@ -696,6 +718,7 @@ function PrizesPanel({
           setPage(1);
         }}
         placeholder="Search by fan or prize…"
+        aria-label="Search redemptions by fan or prize"
         className="ff-input mt-3 w-full"
       />
 
@@ -2084,9 +2107,9 @@ function WheelEditor({
                 >
                   <div className="flex items-center gap-2">
                     <span
+                      aria-hidden="true"
                       className="shrink-0 cursor-grab select-none px-1 text-muted"
-                      aria-label="Drag to reorder"
-                      title="Drag to reorder"
+                      title="Drag to reorder (or use the ▲ ▼ buttons)"
                     >
                       ☰
                     </span>
@@ -2095,7 +2118,7 @@ function WheelEditor({
                         type="button"
                         onClick={() => movePrize(index, index - 1)}
                         disabled={index === 0}
-                        className="rounded px-1 text-xs leading-tight text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
+                        className="grid h-6 min-w-6 place-items-center rounded text-xs leading-none text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
                         aria-label="Move prize up"
                         title="Move up"
                       >
@@ -2105,7 +2128,7 @@ function WheelEditor({
                         type="button"
                         onClick={() => movePrize(index, index + 1)}
                         disabled={index === wheel.prizes.length - 1}
-                        className="rounded px-1 text-xs leading-tight text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
+                        className="grid h-6 min-w-6 place-items-center rounded text-xs leading-none text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
                         aria-label="Move prize down"
                         title="Move down"
                       >

@@ -73,8 +73,9 @@ export default function Home() {
           </dl>
         </div>
 
-        {/* Live product as the hero visual. */}
-        <div className="reveal-scale relative hidden items-center justify-center lg:flex" style={{ animationDelay: "0.3s" }}>
+        {/* Live product as the hero visual — shown on mobile too (smaller) so
+            phone visitors actually see what the product is. */}
+        <div className="reveal-scale relative mt-10 flex items-center justify-center lg:mt-0" style={{ animationDelay: "0.3s" }}>
           <div
             aria-hidden
             className="ambient-glow pointer-events-none absolute h-[90%] w-[90%] rounded-full blur-3xl"
@@ -84,7 +85,12 @@ export default function Home() {
             }}
           />
           <div className="ambient-float relative">
-            <Wheel prizes={SAMPLE_WHEEL.prizes} brandColor={brand} result={null} size={360} />
+            <div className="lg:hidden">
+              <Wheel prizes={SAMPLE_WHEEL.prizes} brandColor={brand} result={null} size={260} />
+            </div>
+            <div className="hidden lg:block">
+              <Wheel prizes={SAMPLE_WHEEL.prizes} brandColor={brand} result={null} size={360} />
+            </div>
           </div>
         </div>
       </section>

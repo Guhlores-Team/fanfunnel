@@ -184,7 +184,7 @@ export default function ChatPanel({
     <>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-4 right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)]"
+        className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)]"
         aria-label="Message creator"
       >
         💬 Message
@@ -198,7 +198,13 @@ export default function ChatPanel({
       </button>
 
       {open && (
-        <div className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[80vh] w-full max-w-md flex-col rounded-t-3xl border border-line bg-surface p-4 shadow-2xl sm:bottom-4 sm:right-4 sm:left-auto sm:mx-0 sm:max-h-[28rem] sm:rounded-3xl">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Chat with ${creatorTitle}`}
+          className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[80vh] w-full max-w-md flex-col rounded-t-3xl border border-line bg-surface p-4 shadow-2xl sm:bottom-4 sm:right-4 sm:left-auto sm:mx-0 sm:max-h-[28rem] sm:rounded-3xl"
+          style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+        >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-bold text-ink">{creatorTitle}</p>
             <button
@@ -245,6 +251,7 @@ export default function ChatPanel({
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <input
+                  aria-label={`Message ${creatorTitle}`}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && send()}

@@ -108,6 +108,7 @@ export default function SafetyMenu({ token }: { token: string }) {
               <>
                 <p className="text-sm font-bold text-ink">Report this creator</p>
                 <select
+                  aria-label="Reason for report"
                   className="ff-input mt-3 w-full"
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
@@ -120,6 +121,7 @@ export default function SafetyMenu({ token }: { token: string }) {
                   <option>Other</option>
                 </select>
                 <textarea
+                  aria-label="Additional details (optional)"
                   className="ff-input mt-2 w-full"
                   rows={3}
                   placeholder="Anything else we should know (optional)"
