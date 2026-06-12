@@ -3829,7 +3829,7 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     .eq("owner_id", user.id)
     .maybeSingle();
   let org = ownedOrg as { id: string; name: string } | null;
-  let isOwner = !!org;
+  const isOwner = !!org;
   if (!org) {
     const { data: mem } = await sb
       .from("org_members")
