@@ -7,7 +7,7 @@ import {
 } from "@/lib/supabase/server";
 import { externalUrl } from "@/lib/format";
 import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
-import { randomSeedHex, sha256Hex, makeRng } from "@/lib/games/wheel/fairness";
+import { randomSeedHex, sha256Hex, makeFairRng, normalizeClientSeed } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
@@ -327,19 +327,29 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // page still works (using the fan-level aggregate balance) instead of 500ing.
   const primary = await sb
     .from("fan_passes")
-    .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, ${FAN}, ${CREATOR}`)
+    .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
   let data: unknown = primary.data;
   if (primary.error) {
-    const legacy = await sb
+    // DB has 0020 (per-wheel balances) but not 0022 (commit-reveal) yet.
+    const mid = await sb
       .from("fan_passes")
-      .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, ${FAN}, ${CREATOR}`)
+      .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, ${FAN}, ${CREATOR}`)
       .eq("token", token)
       .eq("is_active", true)
       .maybeSingle();
-    data = legacy.data;
+    data = mid.data;
+    if (mid.error) {
+      const legacy = await sb
+        .from("fan_passes")
+        .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, ${FAN}, ${CREATOR}`)
+        .eq("token", token)
+        .eq("is_active", true)
+        .maybeSingle();
+      data = legacy.data;
+    }
   }
 
   const pass = data as unknown as {
@@ -349,6 +359,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     wheel_id: string;
     fan_id: string;
     spins_remaining?: number; // present post-0020; falls back to fan aggregate
+    next_server_seed_hash?: string | null; // commit-reveal (migration 0022)
     fan: {
       id: string;
       display_name: string | null;
@@ -368,6 +379,33 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   } | null;
 
   if (!pass || !pass.fan) return null;
+
+  // Commit-reveal: make sure this pass holds a pre-committed seed for the
+  // fan's NEXT spin, and publish its hash on the page. Generating it here
+  // (page load) rather than at spin time is the entire point: the commitment
+  // observably predates the spin request.
+  let nextSpinHash = pass.next_server_seed_hash ?? null;
+  // Only commit when the columns exist (primary select succeeded); on a
+  // pre-0022 DB we'd otherwise publish a hash the spin could never honour.
+  if (!nextSpinHash && !primary.error) {
+    const seed = randomSeedHex();
+    nextSpinHash = await sha256Hex(seed);
+    await sb
+      .from("fan_passes")
+      .update({ next_server_seed: seed, next_server_seed_hash: nextSpinHash })
+      .eq("id", pass.id)
+      .is("next_server_seed", null); // never clobber a concurrent commit
+    // Re-read: if a concurrent request committed first, show THAT hash so the
+    // published commitment always matches the seed the next spin will use.
+    const { data: fresh } = await sb
+      .from("fan_passes")
+      .select("next_server_seed_hash")
+      .eq("id", pass.id)
+      .maybeSingle();
+    nextSpinHash =
+      (fresh as { next_server_seed_hash: string | null } | null)
+        ?.next_server_seed_hash ?? nextSpinHash;
+  }
 
   // Resolve WHICH wheel this link points at right now, then load its config.
   const wheelId = await resolveWheelId(sb, pass, new Date());
@@ -453,12 +491,18 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
     creatorNote: pass.creator?.creator_note ?? null,
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
+    nextSpinHash,
   };
 }
 
-export async function spin(token: string): Promise<SpinResult | SpinError> {
+export async function spin(
+  token: string,
+  rawClientSeed?: unknown
+): Promise<SpinResult | SpinError> {
+  // The fan's browser contributes this seed; sanitize + bound it server-side.
+  const clientSeed = normalizeClientSeed(rawClientSeed);
   if (!isSupabaseConfigured()) {
-    return mockSpin(token);
+    return mockSpin(token, clientSeed);
   }
 
   const sb = createServiceClient();
@@ -502,11 +546,22 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   const spinsRemaining = remaining as number;
 
   // 2. Load link context, then resolve WHICH wheel this spin uses + its prizes.
-  const { data } = await sb
+  const ctx = await sb
     .from("fan_passes")
-    .select("id, creator_id, campaign_id, wheel_id, fan_id")
+    .select("id, creator_id, campaign_id, wheel_id, fan_id, next_server_seed, next_server_seed_hash")
     .eq("token", token)
     .single();
+  const hasCommitRevealCols = !ctx.error;
+  let data: unknown = ctx.data;
+  if (ctx.error) {
+    // Pre-0022 DB (no commit-reveal columns yet): fall back so spins still work.
+    const legacy = await sb
+      .from("fan_passes")
+      .select("id, creator_id, campaign_id, wheel_id, fan_id")
+      .eq("token", token)
+      .single();
+    data = legacy.data;
+  }
 
   const pass = data as unknown as {
     id: string;
@@ -514,6 +569,8 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
+    next_server_seed: string | null;
+    next_server_seed_hash: string | null;
   };
 
   const wheelId = await resolveWheelId(sb, pass, new Date());
@@ -538,13 +595,34 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   const hh = await getActiveHappyHour(sb, wheelId, new Date());
   const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
 
-  // Provably-fair commitment: commit to a random server seed (store its hash),
-  // derive this spin's RNG deterministically from the seed + nonce, and reveal
-  // the seed on the logged spin so the commitment can be verified afterward.
-  const serverSeed = randomSeedHex();
+  // Provably-fair commit-reveal: use the seed that was PRE-committed on the
+  // pass (its hash was published to the fan before this spin, so the server
+  // can't grind seeds after seeing the request). Legacy passes without a
+  // committed seed fall back to a fresh one for this spin only — the rotation
+  // below ensures every subsequent spin is fully pre-committed. The fan's
+  // clientSeed is mixed into the RNG so the server can't dictate the outcome.
+  const serverSeed = pass.next_server_seed ?? randomSeedHex();
   const nonce = spinsRemaining;
-  const serverSeedHash = await sha256Hex(serverSeed);
-  const rng = makeRng(serverSeed, nonce);
+  const serverSeedHash =
+    pass.next_server_seed && pass.next_server_seed_hash
+      ? pass.next_server_seed_hash
+      : await sha256Hex(serverSeed);
+  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
+
+  // Rotate: commit the NEXT spin's seed now and publish its hash with the
+  // result, so the fan always holds a commitment that predates their spin.
+  // (Skipped on a pre-0022 DB that lacks the columns.)
+  const nextServerSeed = randomSeedHex();
+  const nextServerSeedHash = await sha256Hex(nextServerSeed);
+  if (hasCommitRevealCols) {
+    await sb
+      .from("fan_passes")
+      .update({
+        next_server_seed: nextServerSeed,
+        next_server_seed_hash: nextServerSeedHash,
+      })
+      .eq("id", pass.id);
+  }
 
   // 3. Pick a prize in TS (single source of truth), honouring pity. If a
   //    limited prize sold out between our read and write, exclude it + re-pick.
@@ -606,6 +684,8 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       server_seed: serverSeed,
       server_seed_hash: serverSeedHash,
       nonce,
+      // Only on a 0022+ DB — including an unknown column would fail the insert.
+      ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
     })
     .select("id, share_id")
     .single();
@@ -632,6 +712,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     spinsRemaining,
     pityAwarded: chosen.pityAwarded,
     shareId: (spinRow as { id: string; share_id: string | null } | null)?.share_id ?? undefined,
+    nextSpinHash: nextServerSeedHash,
   };
 }
 
@@ -4227,7 +4308,7 @@ export async function getSpinVerification(
   const { data } = await sb
     .from("spins")
     .select(
-      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, created_at"
+      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at"
     )
     .eq("share_id", shareId)
     .maybeSingle();
@@ -4238,6 +4319,7 @@ export async function getSpinVerification(
     server_seed: string | null;
     server_seed_hash: string | null;
     nonce: number | null;
+    client_seed: string | null;
     created_at: string;
   } | null;
   if (!row || !row.server_seed || !row.server_seed_hash) return null;
@@ -4251,6 +4333,7 @@ export async function getSpinVerification(
     nonce: row.nonce ?? 0,
     hashOk,
     at: row.created_at,
+    clientSeed: row.client_seed,
   };
 }
 

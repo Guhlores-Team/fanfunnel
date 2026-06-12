@@ -69,4 +69,6 @@ export interface SpinResult {
   pityAwarded?: boolean;
   /** Phase 3: opaque id for a shareable card generated from this win. */
   shareId?: string;
+  /** Commit-reveal: sha256 of the NEXT spin's pre-committed server seed. */
+  nextSpinHash?: string;
 }

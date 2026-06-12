@@ -123,6 +123,16 @@ export default async function VerifyPage({
                 {v.serverSeed}
               </dd>
             </div>
+            {v.clientSeed ? (
+              <div>
+                <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted">
+                  Your client seed
+                </dt>
+                <dd className="mt-1 break-all rounded-lg border border-line bg-surface px-3 py-2 font-mono text-xs text-ink">
+                  {v.clientSeed}
+                </dd>
+              </div>
+            ) : null}
             <div>
               <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted">
                 Nonce
@@ -132,11 +142,17 @@ export default async function VerifyPage({
           </dl>
 
           <p className="mt-6 text-[11px] leading-relaxed text-muted/80 text-pretty">
-            How it works: before the wheel was spun, the server picked a random
-            seed and published its SHA-256 hash. After the spin, the seed itself
-            was revealed. Because re-hashing the revealed seed reproduces the
-            committed hash, the seed (and the outcome it drove) couldn&rsquo;t
-            have been changed after the fact. This verifies the
+            How it works: the server committed to this spin&rsquo;s random seed
+            <strong className="text-ink"> before</strong> you spun, by publishing
+            its SHA-256 hash on your spin page. Your browser contributed its own
+            seed, so neither side could dictate the outcome alone. The result was
+            drawn from{" "}
+            <code className="font-mono text-[10px] text-ink">
+              SHA-256(serverSeed:clientSeed:nonce:block)
+            </code>
+            . After the spin the seed was revealed; because re-hashing it
+            reproduces the committed hash, the outcome couldn&rsquo;t have been
+            changed after the fact. This verifies the
             <strong className="text-ink"> commitment&rsquo;s integrity</strong>;
             it does not re-simulate the full prize pool.
           </p>

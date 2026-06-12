@@ -66,6 +66,8 @@ export interface FanPassView {
   /** Phase 8C: optional personal note + avatar from the creator (mini-hero). */
   creatorNote?: string | null;
   creatorAvatarUrl?: string | null;
+  /** Commit-reveal: sha256 of the pre-committed seed for the fan's NEXT spin. */
+  nextSpinHash?: string | null;
 }
 
 /** Phase 5b (#23): the data a public verify page needs for one spin. */
@@ -77,6 +79,8 @@ export interface SpinVerification {
   nonce: number;
   hashOk: boolean;
   at: string;
+  /** Commit-reveal: the fan-contributed seed mixed into the RNG ("" pre-0022). */
+  clientSeed?: string | null;
 }
 
 /** Phase 5b (#24): a creator's outbound webhook registration. */

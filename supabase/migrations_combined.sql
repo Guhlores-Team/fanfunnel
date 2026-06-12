@@ -1194,3 +1194,10 @@ create or replace function public.set_onboarding_dismissed(p_dismissed boolean)
 returns void language sql security definer set search_path = public as $$
   update public.profiles set onboarding_dismissed = p_dismissed where id = auth.uid();
 $$;
+
+-- ============================================================
+-- 0022_commit_reveal.sql
+-- ============================================================
+alter table public.fan_passes add column if not exists next_server_seed text;
+alter table public.fan_passes add column if not exists next_server_seed_hash text;
+alter table public.spins add column if not exists client_seed text;
