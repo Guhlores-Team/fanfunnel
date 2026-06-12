@@ -13,8 +13,8 @@ Three connections: **GitHub→Vercel**, **Vercel→Supabase env vars**, **schema
 
 1. Go to **supabase.com → your project** (the one you've been running SQL on).
 2. Left sidebar → **SQL Editor** → **New query**.
-3. **If this is a brand-new project:** open `supabase/schema.sql`, paste it, **Run**. (Skip if your project already has the base tables.)
-4. New query → open **`supabase/migrations_combined.sql`**, paste the whole file, **Run**. This is idempotent (safe to re-run) and brings the DB up to date through Phase 5 (cost, fairness seeds, webhooks, chat, in-progress status, age-gate).
+3. **Brand-new project (recommended):** open `supabase/schema.sql`, paste it, **Run**. This one file is now **complete** — base tables + every migration (self-exclusion, age-gate ack, provably-fair seeds, webhooks, chat, reports, in-progress status) and the hardened `claim_spin`. Nothing else to run.
+4. **Existing project that pre-dates these migrations:** new query → open **`supabase/migrations_combined.sql`**, paste it, **Run** to bring an older DB up to date. Idempotent (safe to re-run). Not needed if you ran `schema.sql` in step 3.
 5. (Optional) Authentication → Providers → Email → turn **OFF "Confirm email"** so you can sign in instantly while testing.
 
 **Get your 3 keys:** Supabase → **Project Settings → API**:

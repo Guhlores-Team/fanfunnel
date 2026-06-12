@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listPrizeTemplates, createPrizeTemplate } from "@/lib/data";
-import type { Rarity } from "@/lib/games/wheel/types";
+import { RARITY_ORDER, type Rarity } from "@/lib/games/wheel/types";
 
 // The creator's saved prize presets.
 export async function GET() {
@@ -28,13 +28,20 @@ export async function POST(req: Request) {
   if (!label || !body.rarity || body.weight == null) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  if (!RARITY_ORDER.includes(body.rarity)) {
+    return NextResponse.json({ error: "bad_rarity" }, { status: 400 });
+  }
+  const weight = Number(body.weight);
+  if (!Number.isFinite(weight) || weight < 0) {
+    return NextResponse.json({ error: "bad_weight" }, { status: 400 });
+  }
 
   try {
     const template = await createPrizeTemplate({
       label,
       description: body.description,
       rarity: body.rarity,
-      weight: Number(body.weight),
+      weight,
       color: body.color,
       emoji: body.emoji,
     });

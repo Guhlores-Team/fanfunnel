@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { setRedemptionStatus } from "@/lib/data";
 import type { RedemptionStatus } from "@/lib/data/types";
 
-const VALID: RedemptionStatus[] = ["pending", "fulfilled", "cancelled"];
+const VALID: RedemptionStatus[] = ["pending", "in_progress", "fulfilled", "cancelled"];
 
 // Mark a won prize as fulfilled / cancelled / pending.
 export async function POST(req: Request) {

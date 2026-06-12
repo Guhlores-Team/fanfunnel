@@ -21,6 +21,14 @@ export async function POST(req: Request) {
   if (!name || (!body.fromWheelId && !body.config)) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  // If a raw config is supplied (not sourced from an existing wheel), validate
+  // its shape so a malformed payload returns 400 rather than throwing a TypeError.
+  if (body.config && !body.fromWheelId) {
+    const c = body.config;
+    if (typeof c.title !== "string" || !Array.isArray(c.prizes)) {
+      return NextResponse.json({ error: "bad_config" }, { status: 400 });
+    }
+  }
 
   try {
     const template = await createWheelTemplate({

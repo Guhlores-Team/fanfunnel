@@ -133,6 +133,8 @@ import {
   mockDeleteWebhook,
   mockFireWebhooks,
   mockAckFan,
+  mockSelfExclude,
+  mockReportCreator,
 } from "./mock";
 
 function randomToken(): string {
@@ -143,7 +145,12 @@ function randomToken(): string {
 }
 
 export type { FanPassView } from "./types";
-export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" };
+export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" | "needs_ack" };
+
+/** True if `s` is a canonical UUID — used to keep raw ids out of filter strings. */
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
 
 // Phase 3 referral economy: how many referrals a fan can be credited for, and
 // how many bonus spins each credited referral grants to BOTH parties.
@@ -455,6 +462,18 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   }
 
   const sb = createServiceClient();
+
+  // 0. Enforce the age-gate / ToS server-side BEFORE claiming a spin. The client
+  //    modal is a UX affordance, not a security boundary — a fan hitting this
+  //    endpoint directly must still have acknowledged first.
+  const { data: ackRow } = await sb
+    .from("fan_passes")
+    .select("fan:fans(acked_at)")
+    .eq("token", token)
+    .maybeSingle();
+  const ackedAt = (ackRow as unknown as { fan: { acked_at: string | null } | null } | null)
+    ?.fan?.acked_at;
+  if (ackRow && !ackedAt) return { error: "needs_ack" };
 
   // 1. Atomically claim one spin from the fan account (can't be forged).
   const { data: remaining, error: claimErr } = await sb.rpc("claim_spin", {
@@ -1420,11 +1439,14 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   if (!isSupabaseConfigured()) return mockGetFanDetail(fanId);
 
   const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
 
   const { data: fan } = await sb
     .from("fans")
     .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags")
     .eq("id", fanId)
+    .eq("creator_id", user.id)
     .maybeSingle();
   if (!fan) return null;
 
@@ -1602,7 +1624,11 @@ export async function deleteFan(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb.from("fans").delete().eq("id", fanId);
+  const { error } = await sb
+    .from("fans")
+    .delete()
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -1631,8 +1657,8 @@ export async function reportCreator(
   reason: string,
   detail?: string
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
   if (!reason.trim()) return { error: "empty" };
+  if (!isSupabaseConfigured()) return mockReportCreator(token, reason, detail);
   const sb = createServiceClient();
   const { data } = await sb
     .from("fan_passes")
@@ -1655,7 +1681,7 @@ export async function reportCreator(
 export async function selfExclude(
   token: string
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  if (!isSupabaseConfigured()) return mockSelfExclude(token);
   const sb = createServiceClient();
   const { error } = await sb
     .from("fan_passes")
@@ -1685,7 +1711,11 @@ export async function updateFanMeta(
   if (patch.tags) upd.tags = patch.tags;
   if (Object.keys(upd).length === 0) return { ok: true };
 
-  const { error } = await sb.from("fans").update(upd).eq("id", fanId);
+  const { error } = await sb
+    .from("fans")
+    .update(upd)
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -1767,7 +1797,11 @@ export async function deleteDmTemplate(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb.from("dm_templates").delete().eq("id", id);
+  const { error } = await sb
+    .from("dm_templates")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -1922,6 +1956,7 @@ export async function getWheelById(id: string): Promise<WheelConfig | null> {
     .from("wheels")
     .select(WHEEL_SELECT)
     .eq("id", id)
+    .eq("creator_id", user.id)
     .maybeSingle();
   if (!data) return null;
   return toWheelConfig(data as unknown as DbWheelRow);
@@ -2125,7 +2160,8 @@ export async function archiveWheel(
   const { error } = await sb
     .from("wheels")
     .update({ archived_at: new Date().toISOString(), is_active: false })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("creator_id", user.id);
   if (error) return { error: "db_error" };
 
   // If we just archived the active wheel, promote the oldest survivor.
@@ -2254,7 +2290,8 @@ export async function setActiveWheel(
   const { error } = await sb
     .from("wheels")
     .update({ is_active: true })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -2342,7 +2379,9 @@ export async function listCampaignPacks(
     .select(PACK_SELECT)
     .eq("creator_id", user.id)
     .order("sort_order", { ascending: true });
-  if (campaignId) {
+  // Only interpolate campaignId into the PostgREST .or() filter if it's a real
+  // UUID — guards against filter-string injection from a malformed query param.
+  if (campaignId && isUuid(campaignId)) {
     query = query.or(`campaign_id.eq.${campaignId},campaign_id.is.null`);
   }
 
@@ -2454,6 +2493,18 @@ export async function setCampaignPinnedWheel(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+
+  // Verify the pinned wheel belongs to this creator before referencing it, so a
+  // campaign can't be pointed at another creator's wheel id.
+  if (wheelId) {
+    const { data: ownWheel } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("id", wheelId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownWheel) return { error: "not_found" };
+  }
 
   const { data: updated, error } = await sb
     .from("campaigns")
@@ -4360,11 +4411,18 @@ export async function fireWebhooks(
           return;
         }
         if (await isBlockedWebhookHost(parsed.hostname)) return;
-        await fetch(h.url, {
+        // `redirect: "manual"` is critical: without it `fetch` would follow a
+        // 3xx from an allowed public host to an internal target (e.g. the cloud
+        // metadata IP 169.254.169.254), defeating the SSRF host check above.
+        const res = await fetch(h.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
+          redirect: "manual",
         });
+        // A redirected response means the endpoint tried to bounce us elsewhere;
+        // drop it rather than chase the Location to a possibly-internal host.
+        if (res.status >= 300 && res.status < 400) return;
       })
     );
   } catch {
@@ -5030,6 +5088,17 @@ export async function sendCreatorMessage(
   const trimmed = body.trim();
   if (trimmed.length < 1 || trimmed.length > 2000) return { error: "empty" };
 
+  // Confirm the fan belongs to this creator before tagging a message to them.
+  // RLS only checks `creator_id`, so without this a creator could create rows
+  // referencing an arbitrary fan UUID.
+  const { data: ownFan } = await sb
+    .from("fans")
+    .select("id")
+    .eq("id", fanId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  if (!ownFan) return { error: "not_found" };
+
   const { error } = await sb.from("messages").insert({
     creator_id: user.id,
     fan_id: fanId,
@@ -5073,13 +5142,17 @@ export async function setChatSettings(input: {
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
+  // These auto-send verbatim to fans, so cap them like DM templates (2000).
+  const CHAT_MSG_MAX = 2000;
   const upd: Record<string, unknown> = {};
   if (input.intro !== undefined) {
     const t = (input.intro ?? "").trim();
+    if (t.length > CHAT_MSG_MAX) return { error: "too_long" };
     upd.chat_intro = t || null;
   }
   if (input.outro !== undefined) {
     const t = (input.outro ?? "").trim();
+    if (t.length > CHAT_MSG_MAX) return { error: "too_long" };
     upd.chat_outro = t || null;
   }
   if (Object.keys(upd).length === 0) return { ok: true };

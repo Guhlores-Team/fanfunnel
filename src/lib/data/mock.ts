@@ -98,6 +98,8 @@ interface MockFan {
   referralCredited: boolean; // whether this fan's referral has been credited
   // Phase 5b (#24): age-gate / ToS acknowledgement timestamp (null = not yet).
   ackedAt: string | null;
+  // Phase 5b: fan self-excluded (paused) their own link (null = active).
+  selfExcludedAt: string | null;
 }
 
 // Phase 5b (#24): a creator's registered outbound webhook (demo, in-memory).
@@ -448,6 +450,7 @@ for (const fan of store.fans.values()) {
   fan.referralCredited ??= false;
   // Phase 5b: default un-acked so the age-gate shows for pre-existing fans.
   fan.ackedAt ??= null;
+  fan.selfExcludedAt ??= null;
   // Backfill shareId + fairness fields on any win pinned before they existed.
   for (const w of fan.wins) {
     w.shareId ??= genId("share");
@@ -492,6 +495,7 @@ if (!store.fans.has("demo-fan")) {
     referredByFanId: null,
     referralCredited: false,
     ackedAt: null,
+    selfExcludedAt: null,
   });
   store.tokens.set("demo", "demo-fan");
   // Seed a grant so revenue/per-campaign data is coherent in demo mode.
@@ -920,6 +924,11 @@ export async function mockSpin(token: string) {
   const ctx = passForToken(token);
   if (!ctx) return { error: "not_found" as const };
   const { fan, pass } = ctx;
+  // Mirror the hardened claim_spin guards so the demo behaves like production:
+  // a self-excluded fan can't spin, and the age-gate/ToS must be acknowledged
+  // first (the client modal is not the enforcement boundary).
+  if (fan.selfExcludedAt) return { error: "blocked" as const };
+  if (fan.ackedAt == null) return { error: "needs_ack" as const };
   // Per-wheel: spend only THIS pass's balance, on THIS pass's wheel.
   if (pass.spinsRemaining <= 0) return { error: "no_spins" as const };
 
@@ -1120,6 +1129,7 @@ export function mockCreatePass(
       referredByFanId,
       referralCredited: false,
       ackedAt: null,
+      selfExcludedAt: null,
     };
     store.fans.set(id, newFan);
     store.tokens.set(token, id);
@@ -2157,6 +2167,39 @@ export function mockAckFan(token: string): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   fan.ackedAt = new Date().toISOString();
+  return { ok: true };
+}
+
+/**
+ * A fan self-excludes (pauses) their own link. Unlike the old no-op, this now
+ * records the exclusion so mockSpin actually blocks subsequent spins — matching
+ * the Supabase path and giving the demo/tests a real guard to exercise.
+ */
+export function mockSelfExclude(token: string): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  fan.selfExcludedAt = new Date().toISOString();
+  return { ok: true };
+}
+
+// In-memory record of fan→creator reports (demo only; mirrors creator_reports).
+const mockReports: { token: string; reason: string; detail: string | null; at: string }[] = [];
+
+/** A fan reports the creator behind their token (demo: store it, validate reason). */
+export function mockReportCreator(
+  token: string,
+  reason: string,
+  detail?: string
+): { ok: true } | { error: string } {
+  if (!reason.trim()) return { error: "empty" };
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  mockReports.push({
+    token,
+    reason: reason.slice(0, 120),
+    detail: detail?.slice(0, 2000) ?? null,
+    at: new Date().toISOString(),
+  });
   return { ok: true };
 }
 
