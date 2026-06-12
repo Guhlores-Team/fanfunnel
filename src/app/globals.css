@@ -83,6 +83,13 @@ body {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, transparent);
 }
 .ff-input option { color: #000; }
+/* Native pickers (date/time) should render their popovers + indicator icons in
+   dark mode to match the app — otherwise the calendar is near-invisible. */
+input[type="datetime-local"],
+input[type="date"],
+input[type="time"] {
+  color-scheme: dark;
+}
 
 /* Tactile primary button: brand fill, top highlight, brand-tinted shadow, press. */
 .btn-brand {

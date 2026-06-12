@@ -44,15 +44,24 @@ export default async function PublicProfilePage({
       style={{ "--brand": profile.brandColor } as CSSProperties}
     >
       <div className="relative z-[1] w-full max-w-md text-center">
-        <div
-          aria-hidden
-          className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full text-4xl"
-          style={{
-            background: `radial-gradient(circle, color-mix(in oklab, var(--brand) 40%, transparent), transparent 70%)`,
-          }}
-        >
-          🎡
-        </div>
+        {profile.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- remote creator avatar
+          <img
+            src={profile.avatarUrl}
+            alt={profile.creatorTitle}
+            className="mx-auto mb-6 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand)]"
+          />
+        ) : (
+          <div
+            aria-hidden
+            className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full text-4xl"
+            style={{
+              background: `radial-gradient(circle, color-mix(in oklab, var(--brand) 40%, transparent), transparent 70%)`,
+            }}
+          >
+            🎡
+          </div>
+        )}
         <h1 className="font-[family-name:var(--font-display)] text-3xl font-extrabold text-ink">
           {profile.creatorTitle}
         </h1>

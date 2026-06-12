@@ -139,6 +139,12 @@ export default function ChatPanel({
         }
       }
       if (live) await load();
+      // One quick retry shortly after open: if the first load raced the
+      // auto-intro insert (or hit a transient error), history still appears
+      // immediately instead of waiting for the next poll tick.
+      setTimeout(() => {
+        if (live) void load();
+      }, 800);
     };
     run();
     const id = setInterval(load, 3000);

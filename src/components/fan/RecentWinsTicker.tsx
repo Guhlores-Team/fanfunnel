@@ -16,21 +16,34 @@ interface Win {
  * ("@nova just won Signed Polaroid"). Handle-only, opt-in fans only. Pauses for
  * reduced-motion users (shows a static list instead). Renders nothing if empty.
  */
-export default function RecentWinsTicker({ creatorId }: { creatorId: string }) {
+export default function RecentWinsTicker({
+  creatorId,
+  refreshKey = 0,
+}: {
+  creatorId: string;
+  /** Bump to refetch immediately (e.g. right after the fan's own spin). */
+  refreshKey?: number;
+}) {
   const [wins, setWins] = useState<Win[]>([]);
 
+  // Fetch on mount + refreshKey, then keep polling so other fans' wins appear
+  // without a reload — the ticker is social proof, it should feel alive.
   useEffect(() => {
     let live = true;
-    fetch(`/api/recent-wins/${creatorId}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (live && d?.wins) setWins(d.wins);
-      })
-      .catch(() => {});
+    const load = () =>
+      fetch(`/api/recent-wins/${creatorId}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (live && d?.wins) setWins(d.wins);
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 20000);
     return () => {
       live = false;
+      clearInterval(id);
     };
-  }, [creatorId]);
+  }, [creatorId, refreshKey]);
 
   if (wins.length === 0) return null;
 
@@ -45,9 +58,9 @@ export default function RecentWinsTicker({ creatorId }: { creatorId: string }) {
     >
       <div
         className="ticker-track flex w-max gap-6 px-4 motion-reduce:animate-none motion-reduce:flex-wrap motion-reduce:justify-center"
-        // Speed scales with how many wins there are (~6s per item) so it reads at
-        // a calm, constant pace instead of zipping when the list is long.
-        style={{ animationDuration: `${Math.max(24, wins.length * 6)}s` }}
+        // Speed scales with how many wins there are (~3.5s per item) so it reads
+        // at a brisk but legible pace instead of crawling when the list is long.
+        style={{ animationDuration: `${Math.max(14, wins.length * 3.5)}s` }}
       >
         {loop.map((w, i) => {
           const c = RARITY_COLORS[w.rarity];

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
@@ -64,6 +65,24 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [nextSpinHash, setNextSpinHash] = useState<string | null>(
     pass.nextSpinHash ?? null
   );
+  const router = useRouter();
+  // Creator edits (prizes, colors, copy) are server-rendered into this page.
+  // When the fan returns to an already-open tab, quietly re-fetch the server
+  // payload so the wheel they see matches what the creator just published —
+  // throttled, and never while a spin is in flight.
+  const lastRefresh = useRef(0);
+  useEffect(() => {
+    lastRefresh.current = Date.now();
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastRefresh.current < 30000) return;
+      lastRefresh.current = Date.now();
+      router.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [router]);
+
   const [clientSeed] = useState(() =>
     Array.from(crypto.getRandomValues(new Uint8Array(8)))
       .map((b) => b.toString(16).padStart(2, "0"))
@@ -75,6 +94,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   // exactly once on the 1→0 edge (a top-up later can re-arm it).
   const prevSpins = useRef(pass.spinsRemaining);
   const outroFired = useRef(false);
+  // Failsafe: if the wheel animation's completion callback ever fails to fire
+  // (tab backgrounded mid-spin, animation interrupted), `busy` would stay true
+  // forever and the SPIN button would be dead until reload. The watchdog clears
+  // it well after any normal spin should have finished.
+  const spinWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Canvas needs a real color string (it can't read the --brand CSS var).
   const brand = pass.wheel.brandColor ?? "#ec4899";
@@ -121,6 +145,12 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
       setPityAwarded(data.pityAwarded === true);
       if (typeof data.nextSpinHash === "string") setNextSpinHash(data.nextSpinHash);
+      // Arm the stuck-spin watchdog (cleared by handleSpinEnd on normal finish).
+      if (spinWatchdog.current) clearTimeout(spinWatchdog.current);
+      spinWatchdog.current = setTimeout(() => {
+        spinWatchdog.current = null;
+        setBusy(false);
+      }, 9000);
     } catch {
       setError("Network error. Try again.");
       setBusy(false);
@@ -143,9 +173,18 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     prevSpins.current = spinsRemaining;
   }, [spinsRemaining, pass.token]);
 
+  // Bumped after every completed spin so the leaderboard + recent-wins ticker
+  // refetch immediately — the fan sees their rank move without a reload.
+  const [boardRefresh, setBoardRefresh] = useState(0);
+
   const handleSpinEnd = useCallback(() => {
+    if (spinWatchdog.current) {
+      clearTimeout(spinWatchdog.current);
+      spinWatchdog.current = null;
+    }
     setBusy(false);
     setReveal(true);
+    setBoardRefresh((n) => n + 1);
     if (won) {
       if (!muted) playWin(won.rarity);
       haptic(won.rarity === "legendary" || won.rarity === "epic" ? [18, 40, 18] : 16);
@@ -199,7 +238,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       />
 
       {pass.leaderboardEnabled && pass.creatorId && (
-        <RecentWinsTicker creatorId={pass.creatorId} />
+        <RecentWinsTicker creatorId={pass.creatorId} refreshKey={boardRefresh} />
       )}
 
       {pass.happyHour && <HappyHourBanner status={pass.happyHour} />}
@@ -240,7 +279,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             aria-label={muted ? "Unmute" : "Mute"}
             title={muted ? "Unmute" : "Mute"}
           >
-            {muted ? "🔇" : "🔊"}
+            {muted ? "🔇 Muted" : "🔊 Sound on"}
           </button>
         </div>
 
@@ -284,6 +323,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         <FanLeaderboard
           creatorId={pass.creatorId}
           youHandle={pass.fanHandle ?? (pass.fanName ?? "").trim().split(/\s+/)[0] ?? null}
+          refreshKey={boardRefresh}
         />
       )}
 

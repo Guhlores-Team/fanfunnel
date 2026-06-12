@@ -82,10 +82,11 @@ export default function QrButton({
 
       {open && (
         <>
-          {/* On phones the popover becomes a centered sheet with a dimmed
-              backdrop so it can never clip past the viewport edge. */}
+          {/* Always a centered dialog with a dimmed backdrop — anchoring to
+              the button clipped off-screen whenever the row sat near a
+              viewport edge (e.g. the QR buttons in the fans table). */}
           <div
-            className="fixed inset-0 z-30 bg-black/50 sm:hidden"
+            className="fixed inset-0 z-30 bg-black/50"
             onClick={() => setOpen(false)}
             aria-hidden
           />
@@ -93,7 +94,7 @@ export default function QrButton({
             id={panelId}
             role="dialog"
             aria-label={`QR code for ${label}`}
-            className="fixed left-1/2 top-1/2 z-40 w-[calc(100vw-2rem)] max-w-xs -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface p-4 shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-60 sm:max-w-[calc(100vw-2rem)] sm:translate-x-0 sm:translate-y-0"
+            className="fixed left-1/2 top-1/2 z-40 w-[calc(100vw-2rem)] max-w-xs -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface p-4 shadow-2xl"
           >
           <p className="mb-3 truncate text-xs text-muted" title={url}>
             {label}

@@ -24,7 +24,7 @@ function check(label: string, cond: boolean) {
   const p: Prize = { id: "abc", label: "VIP", rarity: "rare", weight: 7, emoji: "💎" };
   const dup = duplicatePrize(p);
   check("duplicatePrize has new id", dup.id !== p.id);
-  check("duplicatePrize adds ' copy' suffix", dup.label === "VIP copy");
+  check("duplicatePrize keeps the label as-is", dup.label === "VIP");
   check("duplicatePrize keeps other fields", dup.rarity === "rare" && dup.weight === 7 && dup.emoji === "💎");
   check("duplicatePrize does not mutate input", p.label === "VIP" && p.id === "abc");
 }

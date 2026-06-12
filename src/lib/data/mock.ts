@@ -795,7 +795,7 @@ export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
   const wheel: WheelConfig = {
     ...structuredClone(src),
     id: newId,
-    title: `${src.title} copy`,
+    title: src.title,
     prizes: src.prizes.map((p) => ({ ...structuredClone(p), id: genId("prize") })),
     isActive: false,
     activeFrom: null,
@@ -1716,6 +1716,9 @@ export function mockClearMyData(): { ok: true } | { error: string } {
   store.messages = [];
   // Keep one fresh starter wheel so the account isn't wheel-less.
   store.wheels = seedWheels();
+  // Parity with Supabase: a reset also restores profile prefs to defaults.
+  store.leaderboardEnabled = false;
+  store.webhooks = [];
   return { ok: true };
 }
 
