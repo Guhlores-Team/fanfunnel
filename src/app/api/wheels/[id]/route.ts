@@ -46,6 +46,18 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  // Validate field types up front so a malformed payload returns 400 cleanly.
+  if (
+    (body.isActive !== undefined && typeof body.isActive !== "boolean") ||
+    (body.archived !== undefined && typeof body.archived !== "boolean") ||
+    (typeof body.activeFrom === "string" &&
+      Number.isNaN(new Date(body.activeFrom).getTime())) ||
+    (typeof body.activeUntil === "string" &&
+      Number.isNaN(new Date(body.activeUntil).getTime()))
+  ) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
   // Restore an archived wheel.
   if (body.archived === false) {
     const result = await unarchiveWheel(id);

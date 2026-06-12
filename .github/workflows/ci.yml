@@ -1,0 +1,32 @@
+name: CI
+
+# Gate every push and PR on a clean typecheck/build, the unit + RLS-lint tests,
+# and lint. This is the safety net DEPLOY.md's "merge to main" step relied on a
+# human to run manually.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test (unit + RLS security lint)
+        run: npm test
+
+      - name: Build
+        run: npm run build

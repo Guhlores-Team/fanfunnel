@@ -58,6 +58,17 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
   // Phase 5b: age-gate / ToS. Blocks everything until acknowledged.
   const [needsAck, setNeedsAck] = useState(pass.needsAck ?? false);
+  // Commit-reveal: the server pre-committed the next spin's seed; we show its
+  // hash so the fan can later verify the outcome wasn't picked after the fact.
+  // The browser also contributes its own seed, mixed into the RNG server-side.
+  const [nextSpinHash, setNextSpinHash] = useState<string | null>(
+    pass.nextSpinHash ?? null
+  );
+  const [clientSeed] = useState(() =>
+    Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("")
+  );
   const size = useWheelSize();
 
   // Track the previous spin count so we can fire the out-of-spins auto-message
@@ -86,7 +97,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       const res = await fetch("/api/spin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: pass.token }),
+        body: JSON.stringify({ token: pass.token, clientSeed }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -109,11 +120,12 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setWon(prize);
       setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
       setPityAwarded(data.pityAwarded === true);
+      if (typeof data.nextSpinHash === "string") setNextSpinHash(data.nextSpinHash);
     } catch {
       setError("Network error. Try again.");
       setBusy(false);
     }
-  }, [canSpin, pass.token, muted]);
+  }, [canSpin, pass.token, muted, clientSeed]);
 
   // On the 1→0 spins transition (a spin that just emptied the balance), nudge
   // the fan via chat once. A later top-up (>0) re-arms the one-shot guard.
@@ -243,6 +255,15 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         {error && (
           <p role="alert" className="text-center text-sm text-amber-300">
             {error}
+          </p>
+        )}
+        {nextSpinHash && (
+          <p
+            className="text-center text-[10px] tracking-wide text-muted/60"
+            title="The server committed to your next spin's random seed before you spin — after spinning, the verify page proves the outcome matches this commitment."
+          >
+            🔒 Provably fair · next-spin commitment{" "}
+            <span className="font-mono">{nextSpinHash.slice(0, 12)}…</span>
           </p>
         )}
         {spinsRemaining === 0 && !reveal && (

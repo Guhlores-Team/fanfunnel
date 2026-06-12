@@ -43,6 +43,13 @@ export async function PATCH(
   }
 
   if ("notes" in body || "dueAt" in body) {
+    // Cap notes and require dueAt (when present) to be a valid date.
+    if (typeof body.notes === "string" && body.notes.length > 2000) {
+      return NextResponse.json({ error: "notes_too_long" }, { status: 400 });
+    }
+    if (typeof body.dueAt === "string" && Number.isNaN(new Date(body.dueAt).getTime())) {
+      return NextResponse.json({ error: "bad_due_date" }, { status: 400 });
+    }
     const patch: { notes?: string | null; dueAt?: string | null } = {};
     if ("notes" in body) patch.notes = body.notes ?? null;
     if ("dueAt" in body) patch.dueAt = body.dueAt ?? null;

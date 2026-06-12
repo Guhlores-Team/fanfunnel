@@ -355,6 +355,7 @@ create table if not exists public.webhooks (
 create index if not exists webhooks_creator_idx on public.webhooks(creator_id);
 alter table public.webhooks enable row level security;
 
+drop policy if exists webhooks_rw on public.webhooks;
 create policy webhooks_rw on public.webhooks for all
   using (creator_id = auth.uid() or public.is_admin())
   with check (creator_id = auth.uid() or public.is_admin());
@@ -1193,3 +1194,10 @@ create or replace function public.set_onboarding_dismissed(p_dismissed boolean)
 returns void language sql security definer set search_path = public as $$
   update public.profiles set onboarding_dismissed = p_dismissed where id = auth.uid();
 $$;
+
+-- ============================================================
+-- 0022_commit_reveal.sql
+-- ============================================================
+alter table public.fan_passes add column if not exists next_server_seed text;
+alter table public.fan_passes add column if not exists next_server_seed_hash text;
+alter table public.spins add column if not exists client_seed text;

@@ -7,9 +7,11 @@ import { rateLimit } from "@/lib/rateLimit";
 // and returns the result for the wheel to animate to.
 export async function POST(req: Request) {
   let token: string | undefined;
+  let clientSeed: unknown;
   try {
     const body = await req.json();
     token = body?.token;
+    clientSeed = body?.clientSeed;
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
@@ -30,7 +32,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const result = await spin(token);
+  const result = await spin(token, clientSeed);
 
   if ("error" in result) {
     const status =
@@ -38,7 +40,7 @@ export async function POST(req: Request) {
         ? 404
         : result.error === "rate_limited"
           ? 429
-          : result.error === "blocked"
+          : result.error === "blocked" || result.error === "needs_ack"
             ? 403
             : 409;
     return NextResponse.json({ error: result.error }, { status });

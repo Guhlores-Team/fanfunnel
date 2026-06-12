@@ -7,7 +7,7 @@ import {
 } from "@/lib/supabase/server";
 import { externalUrl } from "@/lib/format";
 import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
-import { randomSeedHex, sha256Hex, makeRng } from "@/lib/games/wheel/fairness";
+import { randomSeedHex, sha256Hex, makeFairRng, normalizeClientSeed } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
@@ -133,6 +133,8 @@ import {
   mockDeleteWebhook,
   mockFireWebhooks,
   mockAckFan,
+  mockSelfExclude,
+  mockReportCreator,
 } from "./mock";
 
 function randomToken(): string {
@@ -143,7 +145,12 @@ function randomToken(): string {
 }
 
 export type { FanPassView } from "./types";
-export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" };
+export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" | "needs_ack" };
+
+/** True if `s` is a canonical UUID — used to keep raw ids out of filter strings. */
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
 
 // Phase 3 referral economy: how many referrals a fan can be credited for, and
 // how many bonus spins each credited referral grants to BOTH parties.
@@ -320,19 +327,29 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // page still works (using the fan-level aggregate balance) instead of 500ing.
   const primary = await sb
     .from("fan_passes")
-    .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, ${FAN}, ${CREATOR}`)
+    .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
   let data: unknown = primary.data;
   if (primary.error) {
-    const legacy = await sb
+    // DB has 0020 (per-wheel balances) but not 0022 (commit-reveal) yet.
+    const mid = await sb
       .from("fan_passes")
-      .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, ${FAN}, ${CREATOR}`)
+      .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, ${FAN}, ${CREATOR}`)
       .eq("token", token)
       .eq("is_active", true)
       .maybeSingle();
-    data = legacy.data;
+    data = mid.data;
+    if (mid.error) {
+      const legacy = await sb
+        .from("fan_passes")
+        .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, ${FAN}, ${CREATOR}`)
+        .eq("token", token)
+        .eq("is_active", true)
+        .maybeSingle();
+      data = legacy.data;
+    }
   }
 
   const pass = data as unknown as {
@@ -342,6 +359,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     wheel_id: string;
     fan_id: string;
     spins_remaining?: number; // present post-0020; falls back to fan aggregate
+    next_server_seed_hash?: string | null; // commit-reveal (migration 0022)
     fan: {
       id: string;
       display_name: string | null;
@@ -361,6 +379,33 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   } | null;
 
   if (!pass || !pass.fan) return null;
+
+  // Commit-reveal: make sure this pass holds a pre-committed seed for the
+  // fan's NEXT spin, and publish its hash on the page. Generating it here
+  // (page load) rather than at spin time is the entire point: the commitment
+  // observably predates the spin request.
+  let nextSpinHash = pass.next_server_seed_hash ?? null;
+  // Only commit when the columns exist (primary select succeeded); on a
+  // pre-0022 DB we'd otherwise publish a hash the spin could never honour.
+  if (!nextSpinHash && !primary.error) {
+    const seed = randomSeedHex();
+    nextSpinHash = await sha256Hex(seed);
+    await sb
+      .from("fan_passes")
+      .update({ next_server_seed: seed, next_server_seed_hash: nextSpinHash })
+      .eq("id", pass.id)
+      .is("next_server_seed", null); // never clobber a concurrent commit
+    // Re-read: if a concurrent request committed first, show THAT hash so the
+    // published commitment always matches the seed the next spin will use.
+    const { data: fresh } = await sb
+      .from("fan_passes")
+      .select("next_server_seed_hash")
+      .eq("id", pass.id)
+      .maybeSingle();
+    nextSpinHash =
+      (fresh as { next_server_seed_hash: string | null } | null)
+        ?.next_server_seed_hash ?? nextSpinHash;
+  }
 
   // Resolve WHICH wheel this link points at right now, then load its config.
   const wheelId = await resolveWheelId(sb, pass, new Date());
@@ -446,15 +491,33 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
     creatorNote: pass.creator?.creator_note ?? null,
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
+    nextSpinHash,
   };
 }
 
-export async function spin(token: string): Promise<SpinResult | SpinError> {
+export async function spin(
+  token: string,
+  rawClientSeed?: unknown
+): Promise<SpinResult | SpinError> {
+  // The fan's browser contributes this seed; sanitize + bound it server-side.
+  const clientSeed = normalizeClientSeed(rawClientSeed);
   if (!isSupabaseConfigured()) {
-    return mockSpin(token);
+    return mockSpin(token, clientSeed);
   }
 
   const sb = createServiceClient();
+
+  // 0. Enforce the age-gate / ToS server-side BEFORE claiming a spin. The client
+  //    modal is a UX affordance, not a security boundary — a fan hitting this
+  //    endpoint directly must still have acknowledged first.
+  const { data: ackRow } = await sb
+    .from("fan_passes")
+    .select("fan:fans(acked_at)")
+    .eq("token", token)
+    .maybeSingle();
+  const ackedAt = (ackRow as unknown as { fan: { acked_at: string | null } | null } | null)
+    ?.fan?.acked_at;
+  if (ackRow && !ackedAt) return { error: "needs_ack" };
 
   // 1. Atomically claim one spin from the fan account (can't be forged).
   const { data: remaining, error: claimErr } = await sb.rpc("claim_spin", {
@@ -483,11 +546,22 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   const spinsRemaining = remaining as number;
 
   // 2. Load link context, then resolve WHICH wheel this spin uses + its prizes.
-  const { data } = await sb
+  const ctx = await sb
     .from("fan_passes")
-    .select("id, creator_id, campaign_id, wheel_id, fan_id")
+    .select("id, creator_id, campaign_id, wheel_id, fan_id, next_server_seed, next_server_seed_hash")
     .eq("token", token)
     .single();
+  const hasCommitRevealCols = !ctx.error;
+  let data: unknown = ctx.data;
+  if (ctx.error) {
+    // Pre-0022 DB (no commit-reveal columns yet): fall back so spins still work.
+    const legacy = await sb
+      .from("fan_passes")
+      .select("id, creator_id, campaign_id, wheel_id, fan_id")
+      .eq("token", token)
+      .single();
+    data = legacy.data;
+  }
 
   const pass = data as unknown as {
     id: string;
@@ -495,6 +569,8 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
+    next_server_seed: string | null;
+    next_server_seed_hash: string | null;
   };
 
   const wheelId = await resolveWheelId(sb, pass, new Date());
@@ -519,13 +595,34 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
   const hh = await getActiveHappyHour(sb, wheelId, new Date());
   const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
 
-  // Provably-fair commitment: commit to a random server seed (store its hash),
-  // derive this spin's RNG deterministically from the seed + nonce, and reveal
-  // the seed on the logged spin so the commitment can be verified afterward.
-  const serverSeed = randomSeedHex();
+  // Provably-fair commit-reveal: use the seed that was PRE-committed on the
+  // pass (its hash was published to the fan before this spin, so the server
+  // can't grind seeds after seeing the request). Legacy passes without a
+  // committed seed fall back to a fresh one for this spin only — the rotation
+  // below ensures every subsequent spin is fully pre-committed. The fan's
+  // clientSeed is mixed into the RNG so the server can't dictate the outcome.
+  const serverSeed = pass.next_server_seed ?? randomSeedHex();
   const nonce = spinsRemaining;
-  const serverSeedHash = await sha256Hex(serverSeed);
-  const rng = makeRng(serverSeed, nonce);
+  const serverSeedHash =
+    pass.next_server_seed && pass.next_server_seed_hash
+      ? pass.next_server_seed_hash
+      : await sha256Hex(serverSeed);
+  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
+
+  // Rotate: commit the NEXT spin's seed now and publish its hash with the
+  // result, so the fan always holds a commitment that predates their spin.
+  // (Skipped on a pre-0022 DB that lacks the columns.)
+  const nextServerSeed = randomSeedHex();
+  const nextServerSeedHash = await sha256Hex(nextServerSeed);
+  if (hasCommitRevealCols) {
+    await sb
+      .from("fan_passes")
+      .update({
+        next_server_seed: nextServerSeed,
+        next_server_seed_hash: nextServerSeedHash,
+      })
+      .eq("id", pass.id);
+  }
 
   // 3. Pick a prize in TS (single source of truth), honouring pity. If a
   //    limited prize sold out between our read and write, exclude it + re-pick.
@@ -587,6 +684,8 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
       server_seed: serverSeed,
       server_seed_hash: serverSeedHash,
       nonce,
+      // Only on a 0022+ DB — including an unknown column would fail the insert.
+      ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
     })
     .select("id, share_id")
     .single();
@@ -613,6 +712,7 @@ export async function spin(token: string): Promise<SpinResult | SpinError> {
     spinsRemaining,
     pityAwarded: chosen.pityAwarded,
     shareId: (spinRow as { id: string; share_id: string | null } | null)?.share_id ?? undefined,
+    nextSpinHash: nextServerSeedHash,
   };
 }
 
@@ -1420,11 +1520,14 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   if (!isSupabaseConfigured()) return mockGetFanDetail(fanId);
 
   const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
 
   const { data: fan } = await sb
     .from("fans")
     .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags")
     .eq("id", fanId)
+    .eq("creator_id", user.id)
     .maybeSingle();
   if (!fan) return null;
 
@@ -1602,7 +1705,11 @@ export async function deleteFan(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb.from("fans").delete().eq("id", fanId);
+  const { error } = await sb
+    .from("fans")
+    .delete()
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -1631,8 +1738,8 @@ export async function reportCreator(
   reason: string,
   detail?: string
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
   if (!reason.trim()) return { error: "empty" };
+  if (!isSupabaseConfigured()) return mockReportCreator(token, reason, detail);
   const sb = createServiceClient();
   const { data } = await sb
     .from("fan_passes")
@@ -1655,7 +1762,7 @@ export async function reportCreator(
 export async function selfExclude(
   token: string
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  if (!isSupabaseConfigured()) return mockSelfExclude(token);
   const sb = createServiceClient();
   const { error } = await sb
     .from("fan_passes")
@@ -1685,7 +1792,11 @@ export async function updateFanMeta(
   if (patch.tags) upd.tags = patch.tags;
   if (Object.keys(upd).length === 0) return { ok: true };
 
-  const { error } = await sb.from("fans").update(upd).eq("id", fanId);
+  const { error } = await sb
+    .from("fans")
+    .update(upd)
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -1767,7 +1878,11 @@ export async function deleteDmTemplate(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb.from("dm_templates").delete().eq("id", id);
+  const { error } = await sb
+    .from("dm_templates")
+    .delete()
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -1922,6 +2037,7 @@ export async function getWheelById(id: string): Promise<WheelConfig | null> {
     .from("wheels")
     .select(WHEEL_SELECT)
     .eq("id", id)
+    .eq("creator_id", user.id)
     .maybeSingle();
   if (!data) return null;
   return toWheelConfig(data as unknown as DbWheelRow);
@@ -2125,7 +2241,8 @@ export async function archiveWheel(
   const { error } = await sb
     .from("wheels")
     .update({ archived_at: new Date().toISOString(), is_active: false })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("creator_id", user.id);
   if (error) return { error: "db_error" };
 
   // If we just archived the active wheel, promote the oldest survivor.
@@ -2254,7 +2371,8 @@ export async function setActiveWheel(
   const { error } = await sb
     .from("wheels")
     .update({ is_active: true })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("creator_id", user.id);
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -2342,7 +2460,9 @@ export async function listCampaignPacks(
     .select(PACK_SELECT)
     .eq("creator_id", user.id)
     .order("sort_order", { ascending: true });
-  if (campaignId) {
+  // Only interpolate campaignId into the PostgREST .or() filter if it's a real
+  // UUID — guards against filter-string injection from a malformed query param.
+  if (campaignId && isUuid(campaignId)) {
     query = query.or(`campaign_id.eq.${campaignId},campaign_id.is.null`);
   }
 
@@ -2454,6 +2574,18 @@ export async function setCampaignPinnedWheel(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+
+  // Verify the pinned wheel belongs to this creator before referencing it, so a
+  // campaign can't be pointed at another creator's wheel id.
+  if (wheelId) {
+    const { data: ownWheel } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("id", wheelId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownWheel) return { error: "not_found" };
+  }
 
   const { data: updated, error } = await sb
     .from("campaigns")
@@ -4176,7 +4308,7 @@ export async function getSpinVerification(
   const { data } = await sb
     .from("spins")
     .select(
-      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, created_at"
+      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at"
     )
     .eq("share_id", shareId)
     .maybeSingle();
@@ -4187,6 +4319,7 @@ export async function getSpinVerification(
     server_seed: string | null;
     server_seed_hash: string | null;
     nonce: number | null;
+    client_seed: string | null;
     created_at: string;
   } | null;
   if (!row || !row.server_seed || !row.server_seed_hash) return null;
@@ -4200,6 +4333,7 @@ export async function getSpinVerification(
     nonce: row.nonce ?? 0,
     hashOk,
     at: row.created_at,
+    clientSeed: row.client_seed,
   };
 }
 
@@ -4360,11 +4494,18 @@ export async function fireWebhooks(
           return;
         }
         if (await isBlockedWebhookHost(parsed.hostname)) return;
-        await fetch(h.url, {
+        // `redirect: "manual"` is critical: without it `fetch` would follow a
+        // 3xx from an allowed public host to an internal target (e.g. the cloud
+        // metadata IP 169.254.169.254), defeating the SSRF host check above.
+        const res = await fetch(h.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
+          redirect: "manual",
         });
+        // A redirected response means the endpoint tried to bounce us elsewhere;
+        // drop it rather than chase the Location to a possibly-internal host.
+        if (res.status >= 300 && res.status < 400) return;
       })
     );
   } catch {
@@ -5030,6 +5171,17 @@ export async function sendCreatorMessage(
   const trimmed = body.trim();
   if (trimmed.length < 1 || trimmed.length > 2000) return { error: "empty" };
 
+  // Confirm the fan belongs to this creator before tagging a message to them.
+  // RLS only checks `creator_id`, so without this a creator could create rows
+  // referencing an arbitrary fan UUID.
+  const { data: ownFan } = await sb
+    .from("fans")
+    .select("id")
+    .eq("id", fanId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  if (!ownFan) return { error: "not_found" };
+
   const { error } = await sb.from("messages").insert({
     creator_id: user.id,
     fan_id: fanId,
@@ -5073,13 +5225,17 @@ export async function setChatSettings(input: {
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
+  // These auto-send verbatim to fans, so cap them like DM templates (2000).
+  const CHAT_MSG_MAX = 2000;
   const upd: Record<string, unknown> = {};
   if (input.intro !== undefined) {
     const t = (input.intro ?? "").trim();
+    if (t.length > CHAT_MSG_MAX) return { error: "too_long" };
     upd.chat_intro = t || null;
   }
   if (input.outro !== undefined) {
     const t = (input.outro ?? "").trim();
+    if (t.length > CHAT_MSG_MAX) return { error: "too_long" };
     upd.chat_outro = t || null;
   }
   if (Object.keys(upd).length === 0) return { ok: true };

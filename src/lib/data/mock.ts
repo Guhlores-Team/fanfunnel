@@ -1,5 +1,5 @@
 import { applyRareBoost, pickPrize, pickPrizeWithPity } from "@/lib/games/wheel/engine";
-import { makeRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
+import { makeFairRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { defaultFeatures } from "@/lib/features";
@@ -67,6 +67,8 @@ interface MockWin extends WonPrize {
   serverSeed: string;
   serverSeedHash: string;
   nonce: number;
+  // Commit-reveal v2: the fan-contributed seed mixed into the RNG.
+  clientSeed?: string | null;
 }
 
 // A per-wheel link under a fan: its own balance + which wheel/campaign it's for.
@@ -74,6 +76,9 @@ interface MockPass {
   token: string;
   wheelId: string;
   campaignId: string | null;
+  // Commit-reveal v2: pre-committed seed for the NEXT spin on this link.
+  nextServerSeed?: string;
+  nextServerSeedHash?: string;
   spinsRemaining: number;
   spinsGrantedTotal: number;
   createdAt: string;
@@ -98,6 +103,8 @@ interface MockFan {
   referralCredited: boolean; // whether this fan's referral has been credited
   // Phase 5b (#24): age-gate / ToS acknowledgement timestamp (null = not yet).
   ackedAt: string | null;
+  // Phase 5b: fan self-excluded (paused) their own link (null = active).
+  selfExcludedAt: string | null;
 }
 
 // Phase 5b (#24): a creator's registered outbound webhook (demo, in-memory).
@@ -448,6 +455,7 @@ for (const fan of store.fans.values()) {
   fan.referralCredited ??= false;
   // Phase 5b: default un-acked so the age-gate shows for pre-existing fans.
   fan.ackedAt ??= null;
+  fan.selfExcludedAt ??= null;
   // Backfill shareId + fairness fields on any win pinned before they existed.
   for (const w of fan.wins) {
     w.shareId ??= genId("share");
@@ -492,6 +500,7 @@ if (!store.fans.has("demo-fan")) {
     referredByFanId: null,
     referralCredited: false,
     ackedAt: null,
+    selfExcludedAt: null,
   });
   store.tokens.set("demo", "demo-fan");
   // Seed a grant so revenue/per-campaign data is coherent in demo mode.
@@ -881,14 +890,25 @@ function wishlistFor(fanId: string): WishlistItem[] {
     .map((w) => ({ id: w.id, prizeLabel: w.prizeLabel, rarity: w.prizeRarity, at: w.at }));
 }
 
-export function mockGetFanPass(token: string): FanPassView | null {
+export async function mockGetFanPass(
+  token: string
+): Promise<FanPassView | null> {
   const fan = fanForToken(token);
   if (!fan) return null;
+  // Parity with Supabase: self-exclusion deactivates the link entirely (the
+  // real path filters is_active=true), so the paused page 404s, not just spins.
+  if (fan.selfExcludedAt) return null;
   ensurePasses(fan);
   // Per-wheel: this token's pass decides the wheel + the balance shown.
   const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
   const wheelId = pass?.wheelId ?? mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
+  // Commit-reveal: make sure this link holds a pre-committed seed for the next
+  // spin and publish its hash on the page (commitment predates the spin).
+  if (pass && !pass.nextServerSeedHash) {
+    pass.nextServerSeed = randomSeedHex();
+    pass.nextServerSeedHash = await sha256Hex(pass.nextServerSeed);
+  }
   return structuredClone({
     token,
     fanName: fan.name,
@@ -906,10 +926,11 @@ export function mockGetFanPass(token: string): FanPassView | null {
     leaderboardEnabled: store.leaderboardEnabled,
     creatorNote: "Hey you 😘 spin away — every spin wins!",
     creatorAvatarUrl: null,
+    nextSpinHash: pass?.nextServerSeedHash ?? null,
   });
 }
 
-export async function mockSpin(token: string) {
+export async function mockSpin(token: string, clientSeed = "") {
   const found = passForToken(token);
   if (!found) {
     // Legacy fan with no pass row yet — backfill then retry resolution.
@@ -920,6 +941,11 @@ export async function mockSpin(token: string) {
   const ctx = passForToken(token);
   if (!ctx) return { error: "not_found" as const };
   const { fan, pass } = ctx;
+  // Mirror the hardened claim_spin guards so the demo behaves like production:
+  // a self-excluded fan can't spin, and the age-gate/ToS must be acknowledged
+  // first (the client modal is not the enforcement boundary).
+  if (fan.selfExcludedAt) return { error: "blocked" as const };
+  if (fan.ackedAt == null) return { error: "needs_ack" as const };
   // Per-wheel: spend only THIS pass's balance, on THIS pass's wheel.
   if (pass.spinsRemaining <= 0) return { error: "no_spins" as const };
 
@@ -931,12 +957,18 @@ export async function mockSpin(token: string) {
   const hh = mockGetActiveHappyHour(wheel.id);
   const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
 
-  // Provably-fair commitment: commit to a server seed, derive this spin's RNG
-  // from it, and store the seed + its hash on the win so verify works in demo.
-  const serverSeed = randomSeedHex();
+  // Provably-fair commit-reveal: use the seed pre-committed on this pass (its
+  // hash was already shown to the fan), mix in the fan's clientSeed, then
+  // rotate so the next spin is committed too — mirroring the Supabase path.
+  const serverSeed = pass.nextServerSeed ?? randomSeedHex();
   const nonce = fan.spinsRemaining;
-  const serverSeedHash = await sha256Hex(serverSeed);
-  const rng = makeRng(serverSeed, nonce);
+  const serverSeedHash =
+    pass.nextServerSeed && pass.nextServerSeedHash
+      ? pass.nextServerSeedHash
+      : await sha256Hex(serverSeed);
+  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
+  pass.nextServerSeed = randomSeedHex();
+  pass.nextServerSeedHash = await sha256Hex(pass.nextServerSeed);
 
   const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(
     pickWheel,
@@ -974,6 +1006,7 @@ export async function mockSpin(token: string) {
       serverSeed,
       serverSeedHash,
       nonce,
+      clientSeed: clientSeed || null,
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -999,6 +1032,7 @@ export async function mockSpin(token: string) {
     spinsRemaining: pass.spinsRemaining,
     pityAwarded,
     shareId,
+    nextSpinHash: pass.nextServerSeedHash,
   };
 }
 
@@ -1120,6 +1154,7 @@ export function mockCreatePass(
       referredByFanId,
       referralCredited: false,
       ackedAt: null,
+      selfExcludedAt: null,
     };
     store.fans.set(id, newFan);
     store.tokens.set(token, id);
@@ -2105,6 +2140,7 @@ export async function mockGetSpinVerification(
       nonce: win.nonce ?? 0,
       hashOk,
       at: win.at,
+      clientSeed: win.clientSeed ?? null,
     };
   }
   return null;
@@ -2157,6 +2193,39 @@ export function mockAckFan(token: string): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   fan.ackedAt = new Date().toISOString();
+  return { ok: true };
+}
+
+/**
+ * A fan self-excludes (pauses) their own link. Unlike the old no-op, this now
+ * records the exclusion so mockSpin actually blocks subsequent spins — matching
+ * the Supabase path and giving the demo/tests a real guard to exercise.
+ */
+export function mockSelfExclude(token: string): { ok: true } | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  fan.selfExcludedAt = new Date().toISOString();
+  return { ok: true };
+}
+
+// In-memory record of fan→creator reports (demo only; mirrors creator_reports).
+const mockReports: { token: string; reason: string; detail: string | null; at: string }[] = [];
+
+/** A fan reports the creator behind their token (demo: store it, validate reason). */
+export function mockReportCreator(
+  token: string,
+  reason: string,
+  detail?: string
+): { ok: true } | { error: string } {
+  if (!reason.trim()) return { error: "empty" };
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  mockReports.push({
+    token,
+    reason: reason.slice(0, 120),
+    detail: detail?.slice(0, 2000) ?? null,
+    at: new Date().toISOString(),
+  });
   return { ok: true };
 }
 

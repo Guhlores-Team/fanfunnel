@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createPass } from "@/lib/data";
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
 
 const MAX_ROWS = 500;
 
@@ -12,6 +14,22 @@ interface ImportRow {
 
 // Bulk-create fan accounts from parsed CSV rows. Each row mints a fresh fan.
 export async function POST(req: Request) {
+  // Require an authenticated creator up front: this is a bulk (up to 500) write,
+  // so an unauthenticated caller must not be able to spin the loop at all. (Each
+  // createPass re-checks auth too, but we reject early to avoid the amplification.)
+  if (isSupabaseConfigured()) {
+    const sb = await createClient();
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
+    if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    const limited = rateLimitOr429("fan-import:" + user.id, 5, 60 * 1000);
+    if (limited) return limited;
+  } else {
+    const limited = rateLimitOr429("fan-import:" + clientIp(req), 5, 60 * 1000);
+    if (limited) return limited;
+  }
+
   let body: { rows?: ImportRow[] };
   try {
     body = await req.json();

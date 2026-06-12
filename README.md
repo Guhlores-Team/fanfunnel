@@ -51,10 +51,15 @@ store. Links you generate in the dashboard really work and really spin.
 ## Going live (Supabase + Vercel)
 
 1. **Create a Supabase project**, then run [`supabase/schema.sql`](supabase/schema.sql)
-   in the SQL Editor. It creates all tables, Row-Level-Security policies, the
-   `claim_spin` atomic function, and the auth trigger.
+   in the SQL Editor. This file is **complete and self-sufficient** — it creates
+   every table, all Row-Level-Security policies, the **hardened** `claim_spin`
+   atomic function (self-exclude/block guards + rate limit), the auth trigger,
+   and every later migration (self-exclusion, age-gate ack, provably-fair
+   seeds, webhooks, chat, reports) folded in. Running it alone is enough.
 2. **Copy `.env.example` → `.env.local`** and fill in the URL, anon key, and
-   service-role key from Supabase → Project Settings → API.
+   service-role key from Supabase → Project Settings → API. **All three are
+   required** — the app refuses to boot in production if any is missing (it will
+   not silently fall back to in-memory demo data).
 3. **Sign up** at `/login` (email + password). For the smoothest start, turn
    OFF "Confirm email" under Supabase → Authentication → Providers → Email
    (or leave it on and confirm via the emailed link).
