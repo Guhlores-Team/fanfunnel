@@ -1201,3 +1201,17 @@ $$;
 alter table public.fan_passes add column if not exists next_server_seed text;
 alter table public.fan_passes add column if not exists next_server_seed_hash text;
 alter table public.spins add column if not exists client_seed text;
+
+-- ============================================================
+-- 0023_chat_settings_rpc.sql
+-- ============================================================
+create or replace function public.set_chat_settings(p_intro text, p_outro text)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles
+     set chat_intro = nullif(trim(coalesce(p_intro, '')), ''),
+         chat_outro = nullif(trim(coalesce(p_outro, '')), '')
+   where id = auth.uid();
+$$;
+grant execute on function public.set_chat_settings(text, text) to authenticated;
+grant execute on function public.set_leaderboard_enabled(boolean) to authenticated;
+grant execute on function public.set_onboarding_dismissed(boolean) to authenticated;

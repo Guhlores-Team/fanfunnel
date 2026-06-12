@@ -91,11 +91,12 @@ export function newPrize(): Prize {
   };
 }
 
-/** Deep-copy a prize, giving it a fresh id and a " copy" label suffix. */
+/** Deep-copy a prize with a fresh id. The label is kept as-is — the new row
+ * appears right under the original, so a "copy" suffix is just noise to clean
+ * up; duplicating is almost always the first step of editing the label anyway. */
 export function duplicatePrize(p: Prize): Prize {
   const clone = structuredClone(p);
   clone.id = "p" + Math.random().toString(36).slice(2, 8);
-  clone.label = p.label + " copy";
   return clone;
 }
 

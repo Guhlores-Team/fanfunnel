@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { CSSProperties, Dispatch, SetStateAction } from "react";
 import dynamic from "next/dynamic";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
@@ -63,7 +63,7 @@ import {
   RARITY_DEFAULT_WEIGHT,
 } from "@/components/dashboard/editorHelpers";
 
-type Tab = "today" | "metrics" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
+type Tab = "today" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -222,12 +222,17 @@ export default function DashboardClient({
     ["boosts", "Boosts"],
     ["inbox", "Inbox"],
     ["analytics", "Analytics"],
-    ["metrics", "Metrics"],
   ];
 
   return (
     <ToastProvider>
-    <div className="mx-auto w-full max-w-5xl overflow-x-clip px-4 py-6 sm:px-6 sm:py-8">
+    <div
+      className="mx-auto w-full max-w-5xl overflow-x-clip px-4 py-6 sm:px-6 sm:py-8"
+      // Live brand theming: the page shell seeds --brand at request time, but
+      // binding it to the editor's wheel state here means picking a new brand
+      // color re-tints the whole dashboard instantly — no refresh needed.
+      style={{ "--brand": wheel.brandColor ?? "#ec4899" } as CSSProperties}
+    >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-tight text-ink sm:text-2xl">
@@ -349,13 +354,6 @@ export default function DashboardClient({
         aria-labelledby={`tab-${tab}`}
       >
         {tab === "today" && <TodayPanel onNavigate={(t) => setTab(t as Tab)} />}
-        {tab === "metrics" && (
-          <MetricsPanel
-            overview={overview.data}
-            loading={overview.loading}
-            onGoTo={setTab}
-          />
-        )}
         {tab === "prizes" && (
           <PrizesPanel
             data={overview.data}
@@ -373,7 +371,19 @@ export default function DashboardClient({
           />
         )}
         {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
-        {tab === "analytics" && <AnalyticsPanel />}
+        {tab === "analytics" && (
+          /* One consolidated view: live performance (pulse, trends, funnel,
+             prize mix) up top, strategic insights (CRM, heatmap, profit,
+             cohorts) below — was two separate Metrics/Analytics tabs. */
+          <div className="space-y-10">
+            <MetricsPanel
+              overview={overview.data}
+              loading={overview.loading}
+              onGoTo={setTab}
+            />
+            <AnalyticsPanel />
+          </div>
+        )}
         {tab === "editor" && (
           <WheelEditor
             wheel={wheel}
@@ -927,10 +937,15 @@ function FansPanel() {
   const [perSpin, setPerSpin] = useState<string>("");
   const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
   const [campaignId, setCampaignId] = useState<string>("");
+  // Until the creator picks a campaign themselves, new links default to the
+  // newest ACTIVE campaign rather than silently landing in "untracked".
+  const campaignTouched = useRef(false);
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
   const [packId, setPackId] = useState<string | null>(null);
-  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
+  const [campaigns, setCampaigns] = useState<
+    { id: string; name: string; isActive?: boolean }[]
+  >([]);
   const [wheels, setWheels] = useState<{ id: string; title: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [openFanId, setOpenFanId] = useState<string | null>(null);
@@ -949,7 +964,19 @@ function FansPanel() {
   }, []);
   const loadCampaigns = useCallback(async () => {
     const res = await fetch("/api/campaigns", { cache: "no-store" });
-    if (res.ok) setCampaigns((await res.json()).campaigns ?? []);
+    if (!res.ok) return;
+    const list = ((await res.json()).campaigns ?? []) as {
+      id: string;
+      name: string;
+      isActive?: boolean;
+    }[];
+    setCampaigns(list);
+    // Default the add-fan form to the newest active campaign so links are
+    // tracked by default — but never fight a choice the creator already made.
+    if (!campaignTouched.current) {
+      const def = list.find((c) => c.isActive !== false);
+      if (def) setCampaignId((cur) => (cur === "" ? def.id : cur));
+    }
   }, []);
   const loadTemplates = useCallback(async () => {
     const res = await fetch("/api/dm-templates", { cache: "no-store" });
@@ -1101,9 +1128,11 @@ function FansPanel() {
           </Field>
           <Field label="Campaign (optional)">
             <select
-              className="ff-input w-44"
+              className="ff-input w-44 max-w-full truncate"
+              title={campaigns.find((c) => c.id === campaignId)?.name}
               value={campaignId}
               onChange={(e) => {
+                campaignTouched.current = true;
                 setCampaignId(e.target.value);
                 setPackId(null);
               }}
@@ -1883,6 +1912,34 @@ function WheelEditor({
   }
 
   const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  // While a prize card is being dragged, auto-scroll the page when the pointer
+  // nears the top/bottom of the viewport — without this, long prize lists could
+  // only be reordered a couple of rows at a time. Speed ramps with proximity.
+  useEffect(() => {
+    if (dragIdx === null) return;
+    let y = -1;
+    let raf = 0;
+    const onDragOver = (e: DragEvent) => {
+      y = e.clientY;
+    };
+    const step = () => {
+      const EDGE = 90;
+      if (y >= 0) {
+        if (y < EDGE) window.scrollBy(0, -Math.ceil(((EDGE - y) / EDGE) * 18));
+        else if (y > window.innerHeight - EDGE)
+          window.scrollBy(0, Math.ceil(((y - (window.innerHeight - EDGE)) / EDGE) * 18));
+      }
+      raf = requestAnimationFrame(step);
+    };
+    window.addEventListener("dragover", onDragOver);
+    raf = requestAnimationFrame(step);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      cancelAnimationFrame(raf);
+    };
+  }, [dragIdx]);
 
   function updatePrize(id: string, patch: Partial<Prize>) {
     setWheel({ ...wheel, prizes: wheel.prizes.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
@@ -1999,16 +2056,15 @@ function WheelEditor({
     next.splice(index + 1, 0, duplicatePrize(wheel.prizes[index]));
     setWheel({ ...wheel, prizes: next });
   }
-  /** Update rarity, preserving a custom color but refreshing a default one. */
+  /** Update rarity: refresh a default color and always re-fill the weight from
+   *  the new rarity's default tickets, so moving common → legendary visibly
+   *  moves the odds too (the Tickets box stays editable to re-tune after). */
   function changeRarity(p: Prize, rarity: Rarity) {
     const wasDefaultColor = p.color == null || p.color === RARITY_COLORS[p.rarity];
-    // Auto-fill the weight from the new rarity's default tickets — unless the
-    // creator has already hand-tuned this prize's weight (then we leave it).
-    const wasDefaultWeight = p.weight === RARITY_DEFAULT_WEIGHT[p.rarity];
     updatePrize(p.id, {
       rarity,
       color: wasDefaultColor ? RARITY_COLORS[rarity] : p.color,
-      weight: wasDefaultWeight ? RARITY_DEFAULT_WEIGHT[rarity] : p.weight,
+      weight: RARITY_DEFAULT_WEIGHT[rarity],
     });
   }
   function removePrize(id: string) {
@@ -2119,14 +2175,28 @@ function WheelEditor({
                   key={p.id}
                   draggable
                   onDragStart={() => setDragIdx(index)}
-                  onDragOver={(e) => e.preventDefault()}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (dragIdx !== null && dragIdx !== index) setDragOverIdx(index);
+                  }}
+                  onDragLeave={() => setDragOverIdx((v) => (v === index ? null : v))}
                   onDrop={(e) => {
                     e.preventDefault();
                     if (dragIdx !== null) movePrize(dragIdx, index);
                     setDragIdx(null);
+                    setDragOverIdx(null);
                   }}
-                  onDragEnd={() => setDragIdx(null)}
-                  className={`card rounded-xl p-3 ${dragIdx === index ? "opacity-60" : ""}`}
+                  onDragEnd={() => {
+                    setDragIdx(null);
+                    setDragOverIdx(null);
+                  }}
+                  className={`card rounded-xl p-3 transition-[box-shadow,opacity,transform] duration-150 ${
+                    dragIdx === index ? "scale-[0.99] opacity-50" : ""
+                  } ${
+                    dragOverIdx === index
+                      ? "shadow-[0_0_0_2px_var(--brand)]"
+                      : ""
+                  }`}
                 >
                   <div className="flex items-center gap-2">
                     <span
@@ -2271,11 +2341,13 @@ function WheelEditor({
                         }
                       />
                     </Field>
-                    <div className="flex flex-col gap-1">
+                    <div className="flex min-w-0 flex-col gap-1">
                       <span className="text-xs font-semibold uppercase tracking-wider text-muted">
                         Odds
                       </span>
-                      <span className="tnum py-2 text-right font-mono font-semibold text-[var(--brand)]">
+                      {/* Match .ff-input's box (padding + border) so the % sits on
+                          the same baseline as the Rarity/Tickets/Stock inputs. */}
+                      <span className="tnum flex items-center justify-end border border-transparent px-[0.7rem] py-[0.5rem] text-[0.9rem] font-mono font-semibold text-[var(--brand)]">
                         {((odds.get(p.id) ?? 0) * 100).toFixed(1)}%
                       </span>
                     </div>

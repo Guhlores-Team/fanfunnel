@@ -29,9 +29,12 @@ const PREVIEW = 10;
 export default function FanLeaderboard({
   creatorId,
   youHandle,
+  refreshKey = 0,
 }: {
   creatorId: string;
   youHandle?: string | null;
+  /** Bump to refetch (e.g. after the fan spins) so their new rank shows live. */
+  refreshKey?: number;
 }) {
   const [view, setView] = useState<View | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -45,9 +48,24 @@ export default function FanLeaderboard({
     return () => {
       live = false;
     };
-  }, [creatorId]);
+  }, [creatorId, refreshKey]);
 
-  if (!view || !view.enabled || view.entries.length === 0) return null;
+  if (!view || !view.enabled) return null;
+
+  // Enabled but nobody on the board yet: invite instead of hiding — the fan
+  // shouldn't have to spin first to discover the leaderboard exists.
+  if (view.entries.length === 0) {
+    return (
+      <div className="w-full">
+        <p className="mb-2 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
+          🏆 Top spinners
+        </p>
+        <p className="rounded-xl border border-line bg-surface/60 px-3 py-5 text-center text-sm text-muted">
+          The board is empty — spin to claim the #1 spot! 👑
+        </p>
+      </div>
+    );
+  }
 
   // Find the viewing fan's own row (by their board handle) to highlight + chase.
   const you = youHandle
@@ -112,7 +130,11 @@ export default function FanLeaderboard({
             </span>
             <span className="shrink-0 text-right text-xs text-muted">
               {e.spins} spins
-              {e.rareWins > 0 && <> · {e.rareWins}✨</>}
+              {e.rareWins > 0 && (
+                <span title={`${e.rareWins} rare-or-better ${e.rareWins === 1 ? "win" : "wins"}`}>
+                  {" "}· {e.rareWins}✨
+                </span>
+              )}
               {e.spentCents > 0 && (
                 <span className="block text-[10px] text-muted/70">
                   {formatCents(e.spentCents)}

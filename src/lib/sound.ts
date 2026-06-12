@@ -7,13 +7,20 @@ let ctx: AudioContext | null = null;
 
 function audio(): AudioContext | null {
   if (typeof window === "undefined") return null;
+  // A context can end up "closed" (e.g. after an iOS interruption) — a closed
+  // context never plays again, so recreate instead of caching it forever.
+  if (ctx && ctx.state === "closed") ctx = null;
   if (!ctx) {
-    const AC =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext })
-        .webkitAudioContext;
-    if (!AC) return null;
-    ctx = new AC();
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+    } catch {
+      return null;
+    }
   }
   if (ctx.state === "suspended") void ctx.resume();
   return ctx;
@@ -22,16 +29,30 @@ function audio(): AudioContext | null {
 function blip(freq: number, duration: number, type: OscillatorType, gain: number) {
   const ac = audio();
   if (!ac) return;
-  const osc = ac.createOscillator();
-  const g = ac.createGain();
-  osc.type = type;
-  osc.frequency.value = freq;
-  g.gain.setValueAtTime(0.0001, ac.currentTime);
-  g.gain.exponentialRampToValueAtTime(gain, ac.currentTime + 0.005);
-  g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + duration);
-  osc.connect(g).connect(ac.destination);
-  osc.start();
-  osc.stop(ac.currentTime + duration + 0.02);
+  const schedule = () => {
+    try {
+      const osc = ac.createOscillator();
+      const g = ac.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(gain, ac.currentTime + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + duration);
+      osc.connect(g).connect(ac.destination);
+      osc.start();
+      osc.stop(ac.currentTime + duration + 0.02);
+    } catch {
+      /* never let a sound failure break the game */
+    }
+  };
+  // Notes scheduled against a still-suspended context get dropped on some
+  // browsers — wait for the resume to land, then schedule (the resume was
+  // already requested inside the user gesture, so this stays policy-legal).
+  if (ac.state === "suspended") {
+    ac.resume().then(schedule).catch(() => {});
+  } else {
+    schedule();
+  }
 }
 
 /** The "peg" click as a slice passes the pointer. */

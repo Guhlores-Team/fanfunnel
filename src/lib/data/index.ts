@@ -2192,7 +2192,7 @@ export async function duplicateWheel(
     .from("wheels")
     .insert({
       creator_id: user.id,
-      title: `${source.title} copy`.slice(0, 120),
+      title: source.title.slice(0, 120),
       subtitle: source.subtitle?.slice(0, 200) ?? null,
       brand_color: source.brandColor ?? "#ec4899",
       is_active: false,
@@ -2625,12 +2625,24 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
     "prize_templates",
     "wheel_templates",
     "happy_hours",
+    "webhooks",
     "autopilot_dismissals",
   ];
   for (const t of tables) {
     const { error } = await sb.from(t).delete().eq("creator_id", user.id);
     if (error) return { error: `db_error:${t}` };
   }
+
+  // A true fresh start also resets profile preferences (via the SECURITY
+  // DEFINER self-update RPCs — profiles_update RLS is admin-only): the
+  // Get-started checklist comes back, and the public leaderboard returns to
+  // its off default instead of silently staying live from before the reset.
+  // Best-effort: a pref that fails to reset shouldn't fail the whole wipe.
+  await Promise.allSettled([
+    sb.rpc("set_onboarding_dismissed", { p_dismissed: false }),
+    sb.rpc("set_leaderboard_enabled", { p_enabled: false }),
+    sb.rpc("set_chat_settings", { p_intro: "", p_outro: "" }),
+  ]);
   return { ok: true };
 }
 
@@ -5227,20 +5239,24 @@ export async function setChatSettings(input: {
 
   // These auto-send verbatim to fans, so cap them like DM templates (2000).
   const CHAT_MSG_MAX = 2000;
-  const upd: Record<string, unknown> = {};
-  if (input.intro !== undefined) {
-    const t = (input.intro ?? "").trim();
-    if (t.length > CHAT_MSG_MAX) return { error: "too_long" };
-    upd.chat_intro = t || null;
-  }
-  if (input.outro !== undefined) {
-    const t = (input.outro ?? "").trim();
-    if (t.length > CHAT_MSG_MAX) return { error: "too_long" };
-    upd.chat_outro = t || null;
-  }
-  if (Object.keys(upd).length === 0) return { ok: true };
+  if ((input.intro ?? "").trim().length > CHAT_MSG_MAX) return { error: "too_long" };
+  if ((input.outro ?? "").trim().length > CHAT_MSG_MAX) return { error: "too_long" };
+  if (input.intro === undefined && input.outro === undefined) return { ok: true };
 
-  const { error } = await sb.from("profiles").update(upd).eq("id", user.id);
+  // A direct profiles update silently no-ops here (profiles_update RLS is
+  // admin-only), so go through the SECURITY DEFINER self-update RPC. When one
+  // field is omitted from the patch, carry the current value through.
+  let intro = input.intro;
+  let outro = input.outro;
+  if (intro === undefined || outro === undefined) {
+    const current = await getChatSettings();
+    if (intro === undefined) intro = current.intro;
+    if (outro === undefined) outro = current.outro;
+  }
+  const { error } = await sb.rpc("set_chat_settings", {
+    p_intro: intro ?? "",
+    p_outro: outro ?? "",
+  });
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -5370,6 +5386,8 @@ export interface PublicProfile {
   creatorTitle: string;
   tagline: string | null;
   brandColor: string;
+  /** The creator's avatar — shown as the page's hero in place of the 🎡. */
+  avatarUrl: string | null;
   // SFW prize teaser: labels + rarities only (no explicit media), best first.
   prizes: { label: string; rarity: Rarity; emoji?: string }[];
   hasTipUrl: boolean;
@@ -5385,6 +5403,7 @@ export async function getPublicProfileBySlug(
         creatorTitle: "Demo Creator",
         tagline: "Spin my wheel — every spin wins 🎡",
         brandColor: "#ec4899",
+        avatarUrl: null,
         prizes: SAMPLE_WHEEL.prizes.slice(0, 6).map((p) => ({
           label: p.label,
           rarity: p.rarity,
@@ -5398,7 +5417,7 @@ export async function getPublicProfileBySlug(
   const sb = createServiceClient();
   const { data: prof } = await sb
     .from("profiles")
-    .select("id, display_name, public_tagline, tip_url")
+    .select("id, display_name, public_tagline, tip_url, avatar_url")
     .eq("public_slug", slug)
     .maybeSingle();
   const p = prof as {
@@ -5406,6 +5425,7 @@ export async function getPublicProfileBySlug(
     display_name: string | null;
     public_tagline: string | null;
     tip_url: string | null;
+    avatar_url: string | null;
   } | null;
   if (!p) return null;
 
@@ -5437,6 +5457,7 @@ export async function getPublicProfileBySlug(
       creatorTitle: p.display_name ?? "Creator",
       tagline: p.public_tagline,
       brandColor,
+      avatarUrl: p.avatar_url,
       prizes,
       hasTipUrl: !!p.tip_url,
     },
