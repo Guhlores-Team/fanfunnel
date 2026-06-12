@@ -1718,6 +1718,9 @@ export function mockClearMyData(): { ok: true } | { error: string } {
   store.wheels = seedWheels();
   // Parity with Supabase: a reset also restores profile prefs to defaults.
   store.leaderboardEnabled = false;
+  store.onboardingDismissed = false;
+  store.chatIntro = DEFAULT_CHAT_INTRO;
+  store.chatOutro = DEFAULT_CHAT_OUTRO;
   store.webhooks = [];
   return { ok: true };
 }
