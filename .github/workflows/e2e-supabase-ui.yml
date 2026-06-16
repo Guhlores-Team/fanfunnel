@@ -53,3 +53,11 @@ jobs:
           STATUS=$?
           kill $SERVER_PID 2>/dev/null || true
           exit $STATUS
+
+      - name: Upload login-UI artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: login-ui-artifacts
+          path: e2e/artifacts/
+          if-no-files-found: ignore

@@ -76,7 +76,17 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
   const jsErrors = [];
+  const consoleErrs = [];
+  const authResponses = [];
   page.on("pageerror", (e) => jsErrors.push(String(e)));
+  page.on("console", (m) => {
+    if (m.type() === "error") consoleErrs.push(m.text().slice(0, 200));
+  });
+  page.on("response", (r) => {
+    if (/\/auth\/v1\//.test(r.url())) {
+      authResponses.push(`${r.status()} ${r.url().replace(URL, "").split("?")[0]}`);
+    }
+  });
 
   await step("sign in through the real /login form", async () => {
     await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded", timeout: 45000 });
@@ -86,6 +96,9 @@ try {
     await emailInput.fill(email);
     await page.locator("input[aria-label='Password']").fill(password);
     await page.locator("button[type='submit']:has-text('Sign in')").first().click();
+    await page.waitForTimeout(3000); // let the auth request fire
+    log(`     auth requests: ${authResponses.join(", ") || "(none seen)"}`);
+    if (consoleErrs.length) log(`     console errors: ${consoleErrs.slice(0, 3).join(" | ")}`);
   });
 
   await step("session lands on a working dashboard", async () => {
@@ -99,7 +112,14 @@ try {
     // If still on /login the sign-in failed — surface the form's error.
     if (path === "/login") {
       const err = await page.locator("[role='alert']").first().innerText().catch(() => "");
-      assert(false, `still on /login — sign-in failed${err ? `: "${err.trim()}"` : ""}`);
+      try {
+        const { mkdirSync } = await import("node:fs");
+        mkdirSync(new globalThis.URL("./artifacts/", import.meta.url).pathname, { recursive: true });
+        await page.screenshot({ path: new globalThis.URL("./artifacts/login-failure.png", import.meta.url).pathname });
+      } catch {
+        /* ignore */
+      }
+      assert(false, `still on /login — sign-in failed${err ? `: "${err.trim()}"` : " (no form error shown)"}`);
     }
     assert(path !== "/pending", "approved creator must NOT be bounced to /pending");
     assert(path.startsWith("/dashboard"), `expected /dashboard, landed on ${path}`);
