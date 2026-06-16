@@ -16,7 +16,12 @@ import {
   log,
   BASE,
 } from "./harness.mjs";
-import { creatorJourney, fanJourney } from "./journeys.mjs";
+import {
+  creatorJourney,
+  fanJourney,
+  creatorExtras,
+  fanExtras,
+} from "./journeys.mjs";
 
 let server = null;
 let browser = null;
@@ -35,7 +40,9 @@ try {
 
   try {
     await creatorJourney(page, runner);
-    await fanJourney(page, runner, ctx);
+    await fanJourney(page, runner, ctx); // fan spins → creates a pending redemption
+    await creatorExtras(page, runner); // fulfil it + webhooks + happy hour
+    await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));
   }
