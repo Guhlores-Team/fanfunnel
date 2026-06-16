@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "for f in $(find src -name '*.test.ts' | sort); do echo \"# $f\"; npx tsx \"$f\" || exit 1; done",
+    "test": "node scripts/run-tests.mjs",
     "e2e": "node e2e/run.mjs",
     "e2e:supabase": "node e2e/supabase.mjs",
     "e2e:spin": "node e2e/spin-integrity.mjs",
