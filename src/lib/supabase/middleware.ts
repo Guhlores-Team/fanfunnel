@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { supabaseUrl } from "./url";
 
 // Refreshes the Supabase auth session on every request and guards the
 // dashboard. When Supabase isn't configured the app runs in demo mode, so this
@@ -11,7 +12,7 @@ export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
   if (!url || !anon) return response; // demo mode — no auth
 
-  const supabase = createServerClient(url, anon, {
+  const supabase = createServerClient(supabaseUrl(), anon, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
