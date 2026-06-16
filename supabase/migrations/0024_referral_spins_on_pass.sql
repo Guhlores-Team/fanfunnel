@@ -1,17 +1,88 @@
--- Fan-level spin bonuses must land on a SPENDABLE per-wheel pass, not just the
--- fan aggregate. Before this, referral bonuses were added to fans.spins_remaining
--- only. But spins are spent per-pass (claim_spin decrements a fan_pass), so those
--- bonus spins were (a) never actually spendable, and (b) inflated the balance the
--- fan/dashboard saw until the next spin resynced the aggregate back down to the
--- true sum of passes — i.e. "18 spins at the start that drop to 3 once you spin".
+-- 0024: Make per-wheel spin balances authoritative and heal drifted counts.
 --
--- This migration heals any already-drifted aggregates and adds a helper that
--- credits the fan's oldest active pass (matching the 0020 backfill convention)
--- while keeping the aggregate exactly equal to the sum of the fan's passes.
+-- Root cause of "the fan page shows 3 at load but they really have 2, and it
+-- only fixes itself after a spin": DBs initialised from schema.sql shipped a
+-- claim_spin that decremented the FAN aggregate (fans.spins_remaining) but never
+-- the per-wheel pass (fan_passes.spins_remaining) — even though the fan page and
+-- dashboard DISPLAY the pass. So every spin left the pass stale-high while the
+-- aggregate fell, the two disagreed (pass 3 vs aggregate 2), and the page only
+-- "corrected" once claim_spin returned the lower aggregate.
+--
+-- This migration (1) installs the correct pass-decrementing claim_spin, (2)
+-- reconciles existing pass balances from real spin history, (3) snaps each fan
+-- aggregate to the sum of its passes, and (4) adds a helper so fan-level bonuses
+-- (referrals) land on a spendable pass.
 
--- (a) One-time reconcile: snap every fan's aggregate to the true sum of their
---     active passes. Only touches fans that actually have passes, so any legacy
---     pre-0020 fan (balance only on the aggregate) is left untouched.
+-- 1. claim_spin: decrement THIS pass (per-wheel) and keep the fan aggregate in
+--    lockstep. `create or replace` overrides any older fan-only version that a
+--    schema.sql setup may have left in place.
+create or replace function public.claim_spin(p_token text)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid;
+  v_recent integer;
+  remaining integer;
+  p_max integer := 8;                       -- max spins per window
+  p_window interval := interval '10 seconds';
+begin
+  select fp.fan_id into v_fan
+    from public.fan_passes fp
+    join public.fans f on f.id = fp.fan_id
+   where fp.token = p_token
+     and fp.is_active = true
+     and fp.self_excluded_at is null
+     and f.blocked_at is null;
+  if v_fan is null then
+    return null; -- bad/inactive/blocked/self-excluded token
+  end if;
+
+  -- Rolling-window rate limit (this fan's recent spins across all wheels).
+  select count(*) into v_recent
+    from public.spins
+   where fan_id = v_fan and created_at > now() - p_window;
+  if v_recent >= p_max then
+    return -1; -- sentinel: rate limited (caller maps to HTTP 429)
+  end if;
+
+  -- Decrement THIS wheel's pass balance.
+  update public.fan_passes
+     set spins_remaining = spins_remaining - 1,
+         last_spin_at = now()
+   where token = p_token and spins_remaining > 0
+  returning spins_remaining into remaining;
+
+  if remaining is null then
+    return null; -- no spins left on this wheel's pass
+  end if;
+
+  -- Keep the fan-level aggregate (sum of passes) in lockstep.
+  update public.fans
+     set spins_remaining = greatest(0, spins_remaining - 1),
+         last_spin_at = now()
+   where id = v_fan;
+
+  return remaining; -- spins left ON THIS PASS
+end;
+$$;
+
+-- 2. Heal existing PASS balances from actual spin history: a pass's remaining =
+--    spins granted to it minus spins actually taken on it (never below 0). This
+--    repairs passes that never decremented under the old claim_spin.
+update public.fan_passes p
+   set spins_remaining = greatest(0, p.spins_granted_total - coalesce(s.cnt, 0))
+  from (
+    select fan_pass_id, count(*)::int as cnt
+      from public.spins
+     where fan_pass_id is not null
+     group by fan_pass_id
+  ) s
+ where s.fan_pass_id = p.id;
+
+-- 3. Snap every fan aggregate to the sum of its active passes (covers fans with
+--    no spins to reconcile above, e.g. drift from the old referral credit path).
 update public.fans f
    set spins_remaining = coalesce((
          select sum(p.spins_remaining) from public.fan_passes p
@@ -23,9 +94,9 @@ update public.fans f
    select 1 from public.fan_passes p where p.fan_id = f.id and p.is_active
  );
 
--- (b) Credit N spins to a fan's OLDEST active pass and resync the fan aggregate
---     to the sum of its passes. Used for referral bonuses so they're spendable
---     on a real link and never drift the displayed balance.
+-- 4. Credit N spins to a fan's OLDEST active pass (spendable) and resync the
+--    aggregate. Used for referral bonuses so they land somewhere spinnable
+--    instead of inflating the fan aggregate only.
 create or replace function public.credit_pass_spins(p_fan_id uuid, p_spins int)
 returns void
 language plpgsql

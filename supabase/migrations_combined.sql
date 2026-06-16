@@ -1219,10 +1219,73 @@ grant execute on function public.set_onboarding_dismissed(boolean) to authentica
 -- ============================================================
 -- 0024_referral_spins_on_pass.sql
 -- ============================================================
--- Heal any drifted fan aggregates (snap to the true sum of active passes) and
--- add a helper that credits a fan's oldest active pass for fan-level bonuses
--- (e.g. referrals), keeping the aggregate equal to the sum of passes. Fixes
--- "18 spins at the start that drop to 3 once you spin".
+-- Make per-wheel spin balances authoritative and heal drifted counts. Some DBs
+-- (set up from schema.sql) had a claim_spin that decremented the FAN aggregate
+-- but never the per-wheel PASS the fan page displays, so the pass over-counted
+-- (shows 3) while the aggregate was right (2), only "fixing itself" on a spin.
+-- Installs the correct pass-decrementing claim_spin, reconciles balances from
+-- real spin history, and credits referral bonuses onto a spendable pass.
+create or replace function public.claim_spin(p_token text)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid;
+  v_recent integer;
+  remaining integer;
+  p_max integer := 8;
+  p_window interval := interval '10 seconds';
+begin
+  select fp.fan_id into v_fan
+    from public.fan_passes fp
+    join public.fans f on f.id = fp.fan_id
+   where fp.token = p_token
+     and fp.is_active = true
+     and fp.self_excluded_at is null
+     and f.blocked_at is null;
+  if v_fan is null then
+    return null;
+  end if;
+
+  select count(*) into v_recent
+    from public.spins
+   where fan_id = v_fan and created_at > now() - p_window;
+  if v_recent >= p_max then
+    return -1;
+  end if;
+
+  update public.fan_passes
+     set spins_remaining = spins_remaining - 1,
+         last_spin_at = now()
+   where token = p_token and spins_remaining > 0
+  returning spins_remaining into remaining;
+
+  if remaining is null then
+    return null;
+  end if;
+
+  update public.fans
+     set spins_remaining = greatest(0, spins_remaining - 1),
+         last_spin_at = now()
+   where id = v_fan;
+
+  return remaining;
+end;
+$$;
+
+-- Heal existing pass balances from real spin history (granted minus taken).
+update public.fan_passes p
+   set spins_remaining = greatest(0, p.spins_granted_total - coalesce(s.cnt, 0))
+  from (
+    select fan_pass_id, count(*)::int as cnt
+      from public.spins
+     where fan_pass_id is not null
+     group by fan_pass_id
+  ) s
+ where s.fan_pass_id = p.id;
+
+-- Snap every fan aggregate to the sum of its active passes.
 update public.fans f
    set spins_remaining = coalesce((
          select sum(p.spins_remaining) from public.fan_passes p
