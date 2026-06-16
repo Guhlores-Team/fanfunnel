@@ -573,26 +573,23 @@ export async function spin(
     next_server_seed_hash: string | null;
   };
 
-  const wheelId = await resolveWheelId(sb, pass, new Date());
+  const now = new Date();
+  const wheelId = await resolveWheelId(sb, pass, now);
   if (!wheelId) return { error: "no_prizes" };
-  const { data: wheelData } = await sb
-    .from("wheels")
-    .select(WHEEL_SELECT)
-    .eq("id", wheelId)
-    .maybeSingle();
+
+  // The wheel config, the fan's pity counter, and the active happy-hour are
+  // independent reads — run them as ONE parallel group instead of three
+  // sequential round-trips. This is the bulk of spin latency (each query is a
+  // separate hop to Supabase), so parallelizing meaningfully speeds up the spin.
+  const [wheelRes, fanRow, hh] = await Promise.all([
+    sb.from("wheels").select(WHEEL_SELECT).eq("id", wheelId).maybeSingle(),
+    sb.from("fans").select("pity_counter").eq("id", pass.fan_id).maybeSingle(),
+    getActiveHappyHour(sb, wheelId, now),
+  ]);
+  const wheelData = wheelRes.data;
   if (!wheelData) return { error: "no_prizes" };
   const config = toWheelConfig(wheelData as unknown as DbWheelRow);
-
-  // Per-fan pity counter (guarantees a rare-or-better after a dry streak).
-  const { data: fanRow } = await sb
-    .from("fans")
-    .select("pity_counter")
-    .eq("id", pass.fan_id)
-    .maybeSingle();
-  const pityCounter = (fanRow as { pity_counter: number } | null)?.pity_counter ?? 0;
-
-  // Happy hour (if any) boosts rare-or-better weights for this spin only.
-  const hh = await getActiveHappyHour(sb, wheelId, new Date());
+  const pityCounter = (fanRow.data as { pity_counter: number } | null)?.pity_counter ?? 0;
   const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
 
   // Provably-fair commit-reveal: use the seed that was PRE-committed on the

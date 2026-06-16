@@ -12,6 +12,15 @@ export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
   if (!url || !anon) return response; // demo mode — no auth
 
+  // Only the auth-relevant routes need a Supabase round-trip. Landing, fan spin
+  // links, share/verify, and API routes must NEVER depend on auth here — that
+  // way a slow or paused Supabase can't 504 the whole site (esp. fans' spin
+  // pages). Everything else short-circuits before touching the network.
+  const path = request.nextUrl.pathname;
+  const needsAuth =
+    path.startsWith("/dashboard") || path === "/login" || path === "/signup";
+  if (!needsAuth) return response;
+
   const supabase = createServerClient(supabaseUrl(), anon, {
     cookies: {
       getAll() {
@@ -29,12 +38,23 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  // IMPORTANT: getUser() must run to refresh the token cookie.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getUser() refreshes the token cookie, but bound by a hard timeout: if
+  // Supabase is slow/unreachable we must NOT hang the middleware (that's what
+  // 504 MIDDLEWARE_INVOCATION_TIMEOUT is). On timeout/error we treat the user
+  // as unauthenticated and let the redirect logic below proceed normally.
+  let user: unknown = null;
+  try {
+    const result = await Promise.race([
+      supabase.auth.getUser(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("supabase getUser timeout")), 3000)
+      ),
+    ]);
+    user = (result as { data: { user: unknown } })?.data?.user ?? null;
+  } catch {
+    user = null; // fail-fast, never hang the edge
+  }
 
-  const path = request.nextUrl.pathname;
   if (!user && path.startsWith("/dashboard")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
