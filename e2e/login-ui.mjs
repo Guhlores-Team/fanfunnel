@@ -96,6 +96,11 @@ try {
       .catch(() => {});
     await page.waitForTimeout(1500);
     const path = new globalThis.URL(page.url()).pathname;
+    // If still on /login the sign-in failed — surface the form's error.
+    if (path === "/login") {
+      const err = await page.locator("[role='alert']").first().innerText().catch(() => "");
+      assert(false, `still on /login — sign-in failed${err ? `: "${err.trim()}"` : ""}`);
+    }
     assert(path !== "/pending", "approved creator must NOT be bounced to /pending");
     assert(path.startsWith("/dashboard"), `expected /dashboard, landed on ${path}`);
     const body = await page.locator("body").innerText();
