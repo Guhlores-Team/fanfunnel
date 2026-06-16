@@ -89,12 +89,17 @@ try {
   });
 
   await step("session lands on a working dashboard", async () => {
-    await page.waitForURL(/\/dashboard(\?|$)/, { timeout: 20000 });
+    // router.push() is client-side (App Router) so there's no fresh "load"
+    // event — poll the pathname instead of waitForURL(until:load).
+    await page
+      .waitForFunction(() => /^\/(dashboard|pending)/.test(location.pathname), { timeout: 20000 })
+      .catch(() => {});
     await page.waitForTimeout(1500);
+    const path = new globalThis.URL(page.url()).pathname;
+    assert(path !== "/pending", "approved creator must NOT be bounced to /pending");
+    assert(path.startsWith("/dashboard"), `expected /dashboard, landed on ${path}`);
     const body = await page.locator("body").innerText();
     assert(/creator dashboard|today|wheel|fans/i.test(body), "dashboard rendered for the signed-in creator");
-    // Not bounced to the approval-gate page.
-    assert(!/\/pending$/.test(new globalThis.URL(page.url()).pathname), "not redirected to /pending");
   });
 
   await step("authenticated API works for the new creator (no errors)", async () => {
