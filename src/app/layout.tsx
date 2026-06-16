@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import DebugConsole from "@/components/debug/DebugConsole";
+import DebugErrorBoundary from "@/components/debug/DebugErrorBoundary";
 
 // Display face with real character (not Inter, not Space Grotesk) for headlines;
 // Geist for clean body; Geist Mono powers tabular figures in metrics.
@@ -36,7 +38,11 @@ export default function RootLayout({
       className={`${display.variable} ${sans.variable} ${mono.variable} h-full antialiased`}
     >
       <body className="min-h-[100dvh] flex flex-col bg-base text-ink">
-        {children}
+        <DebugErrorBoundary>{children}</DebugErrorBoundary>
+        {/* In-app error console. Inert unless ?debug=1 (or the persisted flag);
+            see src/components/debug. Outside the boundary so it stays mounted
+            and visible even if the page subtree throws. */}
+        <DebugConsole />
       </body>
     </html>
   );
