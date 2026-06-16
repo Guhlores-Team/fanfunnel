@@ -18,9 +18,12 @@ import { writeSync } from "node:fs";
 
 const log = (s = "") => writeSync(1, s + "\n");
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Trim whitespace/newlines (mobile copy-paste often appends them) and drop any
+// trailing slash from the URL so admin endpoint paths are built correctly.
+const clean = (v) => (v || "").trim();
+const URL = clean(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL).replace(/\/+$/, "");
+const ANON = clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+const SERVICE = clean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 if (!URL || !ANON || !SERVICE) {
   log(
@@ -28,6 +31,28 @@ if (!URL || !ANON || !SERVICE) {
       "NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY to run them."
   );
   process.exit(0);
+}
+
+// Self-diagnosing config checks (these print booleans, never the secret values,
+// which GitHub masks anyway). "Invalid path specified in request URL" from the
+// admin API almost always means the URL secret is the dashboard URL or has a
+// stray path — catch that here with a clear message instead of an opaque error.
+{
+  const isApiUrl = /^https:\/\/[a-z0-9-]+\.supabase\.(co|in|net|io)$/i.test(URL);
+  const isDashboardUrl = /supabase\.com|\/dashboard\/|\/project\//i.test(URL);
+  const anonLooksJwt = ANON.startsWith("eyJ");
+  const serviceLooksJwt = SERVICE.startsWith("eyJ");
+  if (!isApiUrl || isDashboardUrl) {
+    log("❌ NEXT_PUBLIC_SUPABASE_URL doesn't look like a project API URL.");
+    log("   Expected exactly: https://<your-project-ref>.supabase.co");
+    log("   (Not the browser dashboard URL, and no trailing slash/path.)");
+    log(`   diagnostics → matchesApiPattern=${isApiUrl} looksLikeDashboardUrl=${isDashboardUrl}`);
+    process.exit(1);
+  }
+  if (!anonLooksJwt)
+    log("⚠  NEXT_PUBLIC_SUPABASE_ANON_KEY doesn't start with 'eyJ' — use the Legacy 'anon public' key.");
+  if (!serviceLooksJwt)
+    log("⚠  SUPABASE_SERVICE_ROLE_KEY doesn't start with 'eyJ' — use the Legacy 'service_role secret' key.");
 }
 
 // ---- tiny assert/report (self-contained; no playwright import) -------------
