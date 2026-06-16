@@ -1,0 +1,41 @@
+name: E2E (real Supabase)
+
+# Security-critical integration tests against a REAL Supabase project: RLS
+# tenant isolation + the SECURITY DEFINER self-update RPCs. These can't run in
+# mock mode, so they live in their own workflow gated on repo secrets.
+#
+# The test self-skips (exit 0) when the secrets are absent, so this workflow is
+# a harmless no-op until you add them. To enable, set these repo secrets to a
+# DEDICATED test/preview Supabase project (NOT production — the test creates and
+# deletes ephemeral users):
+#   NEXT_PUBLIC_SUPABASE_URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY
+#   SUPABASE_SERVICE_ROLE_KEY
+# and apply supabase/schema.sql (incl. migration 0023) to that project first.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: # lets you run it on demand from the Actions tab
+
+jobs:
+  supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Real-Supabase integration tests (skips if secrets unset)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run e2e:supabase
