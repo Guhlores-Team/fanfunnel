@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "for f in $(find src -name '*.test.ts' | sort); do echo \"# $f\"; npx tsx \"$f\" || exit 1; done"
+    "test": "for f in $(find src -name '*.test.ts' | sort); do echo \"# $f\"; npx tsx \"$f\" || exit 1; done",
+    "e2e": "node e2e/run.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
