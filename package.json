@@ -11,7 +11,8 @@
     "e2e": "node e2e/run.mjs",
     "e2e:supabase": "node e2e/supabase.mjs",
     "e2e:spin": "node e2e/spin-integrity.mjs",
-    "e2e:a11y": "node e2e/a11y.mjs"
+    "e2e:a11y": "node e2e/a11y.mjs",
+    "e2e:login": "node e2e/login-ui.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

@@ -138,6 +138,30 @@ try {
     assert((data?.length ?? 0) === 0, "B cannot see A's profile");
   });
 
+  // The creator-owned tables share one RLS pattern (creator_id = auth.uid() or
+  // can_act_for(...)). Prove the isolation holds beyond `wheels` by spot-checking
+  // a couple more tables: A inserts a row, B can neither see nor delete it.
+  for (const t of [
+    { table: "fans", row: () => ({ creator_id: A.id, display_name: "A's fan" }) },
+    { table: "dm_templates", row: () => ({ creator_id: A.id, title: "A's template", body: "secret {link}" }) },
+  ]) {
+    await step(`RLS isolation on '${t.table}' (B can't see or delete A's row)`, async () => {
+      const { data: ins, error: insErr } = await A.client
+        .from(t.table)
+        .insert(t.row())
+        .select("id")
+        .single();
+      assert(!insErr, `A insert into ${t.table} failed: ${insErr?.message}`);
+      const id = ins.id;
+      const { data: bSees } = await B.client.from(t.table).select("id").eq("id", id);
+      assert((bSees?.length ?? 0) === 0, `B must not read A's ${t.table} row`);
+      const { data: bDel } = await B.client.from(t.table).delete().eq("id", id).select("id");
+      assert((bDel?.length ?? 0) === 0, `B's delete on A's ${t.table} row affects 0 rows`);
+      const { data: aStill } = await A.client.from(t.table).select("id").eq("id", id);
+      assert((aStill?.length ?? 0) === 1, `A's ${t.table} row still exists`);
+    });
+  }
+
   await step("set_chat_settings RPC persists for the caller (prod-bug regression)", async () => {
     const { error } = await A.client.rpc("set_chat_settings", {
       p_intro: "Welcome, spin away!",
