@@ -51,6 +51,10 @@ create table if not exists public.wheels (
   subtitle     text,
   brand_color  text not null default '#ec4899',
   is_active    boolean not null default true,
+  -- archived_at lives in the base table (not just the Phase-2 migration below)
+  -- so functions defined further up — e.g. the admin overview, which counts
+  -- `archived_at is null` wheels — can reference it on a brand-new database.
+  archived_at  timestamptz,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
