@@ -658,6 +658,21 @@ function ensurePasses(fan: MockFan) {
   ];
 }
 
+/** Credit spins to a fan's OLDEST pass (their original link — matching the
+ *  Supabase 0020 backfill convention) so fan-level bonuses land somewhere
+ *  spendable, then resync the aggregate to the sum of passes. */
+function creditSpinsToOldestPass(fan: MockFan, n: number) {
+  if (n <= 0) return;
+  ensurePasses(fan);
+  const oldest = (fan.passes ?? [])
+    .slice()
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  if (!oldest) return;
+  oldest.spinsRemaining += n;
+  oldest.spinsGrantedTotal += n;
+  recomputeFanAggregate(fan);
+}
+
 /** Lifecycle fields a WheelSummary needs, normalized. */
 function toWheelSummary(w: WheelConfig): WheelSummary {
   const meta = wheelMeta.get(w.id);
@@ -1087,11 +1102,11 @@ export function mockCreatePass(
       (r) => r.referrerFanId === referrer.id && r.creditedAt !== null
     ).length;
     if (creditedForReferrer >= REFERRAL_CAP) return;
-    // Award both fans + mark credited.
-    referrer.spinsRemaining += REFERRAL_BONUS;
-    referrer.spinsGrantedTotal += REFERRAL_BONUS;
-    creditedFan.spinsRemaining += REFERRAL_BONUS;
-    creditedFan.spinsGrantedTotal += REFERRAL_BONUS;
+    // Award both fans + mark credited. The bonus lands on each fan's oldest
+    // pass (spendable) rather than only the aggregate — otherwise the aggregate
+    // would inflate above the true pass-sum and snap back down on the next spin.
+    creditSpinsToOldestPass(referrer, REFERRAL_BONUS);
+    creditSpinsToOldestPass(creditedFan, REFERRAL_BONUS);
     row.bonusSpins = REFERRAL_BONUS;
     row.creditedAt = new Date().toISOString();
     creditedFan.referralCredited = true;

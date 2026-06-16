@@ -945,14 +945,12 @@ export async function createPass(opts: {
   if (amountCents > 0) {
     const { data: meRow } = await sb
       .from("fans")
-      .select("referred_by_fan_id, referral_credited, spins_remaining, spins_granted_total")
+      .select("referred_by_fan_id, referral_credited")
       .eq("id", fanId)
       .maybeSingle();
     const me = meRow as {
       referred_by_fan_id: string | null;
       referral_credited: boolean;
-      spins_remaining: number;
-      spins_granted_total: number;
     } | null;
 
     if (me && me.referred_by_fan_id && !me.referral_credited) {
@@ -975,34 +973,20 @@ export async function createPass(opts: {
           .maybeSingle();
 
         if (claimed) {
-          // Bonus to the referred fan (this fan).
-          await sb
-            .from("fans")
-            .update({
-              spins_remaining: me.spins_remaining + REFERRAL_BONUS,
-              spins_granted_total: me.spins_granted_total + REFERRAL_BONUS,
-            })
-            .eq("id", fanId);
-
-          // Bonus to the referrer.
-          const { data: refFan } = await sb
-            .from("fans")
-            .select("spins_remaining, spins_granted_total")
-            .eq("id", me.referred_by_fan_id)
-            .maybeSingle();
-          const rf = refFan as {
-            spins_remaining: number;
-            spins_granted_total: number;
-          } | null;
-          if (rf) {
-            await sb
-              .from("fans")
-              .update({
-                spins_remaining: rf.spins_remaining + REFERRAL_BONUS,
-                spins_granted_total: rf.spins_granted_total + REFERRAL_BONUS,
-              })
-              .eq("id", me.referred_by_fan_id);
-          }
+          // Credit the bonus to a SPENDABLE pass (oldest active link) for BOTH
+          // the referred fan and the referrer, keeping each fan's aggregate
+          // equal to the sum of its passes. Adding to fans.spins_remaining alone
+          // (the old behavior) left the bonus unspendable — claim_spin
+          // decrements a PASS — and inflated the displayed balance until the
+          // next spin resynced it down.
+          await sb.rpc("credit_pass_spins", {
+            p_fan_id: fanId,
+            p_spins: REFERRAL_BONUS,
+          });
+          await sb.rpc("credit_pass_spins", {
+            p_fan_id: me.referred_by_fan_id,
+            p_spins: REFERRAL_BONUS,
+          });
 
           // Mark the referral row credited.
           await sb
