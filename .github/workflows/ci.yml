@@ -34,7 +34,7 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: E2E (mock mode)
+      - name: E2E + a11y (mock mode)
         run: |
           npx next start -p 3000 &
           SERVER_PID=$!
@@ -43,6 +43,10 @@ jobs:
           done
           E2E_BASE_URL=http://localhost:3000 npm run e2e
           STATUS=$?
+          if [ $STATUS -eq 0 ]; then
+            E2E_BASE_URL=http://localhost:3000 npm run e2e:a11y
+            STATUS=$?
+          fi
           kill $SERVER_PID 2>/dev/null || true
           exit $STATUS
 

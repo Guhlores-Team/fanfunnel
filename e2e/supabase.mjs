@@ -14,63 +14,10 @@
 // been applied.
 
 import { createClient } from "@supabase/supabase-js";
-import { writeSync } from "node:fs";
+import { log, requireSupabaseEnvOrExit } from "./supabase-env.mjs";
 
-const log = (s = "") => writeSync(1, s + "\n");
-
-// Trim whitespace/newlines (mobile copy-paste often appends them).
-const clean = (v) => (v || "").trim();
-const RAW_URL = clean(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL);
-const ANON = clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-const SERVICE = clean(process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-if (!RAW_URL || !ANON || !SERVICE) {
-  log(
-    "⏭  Supabase integration tests skipped — set NEXT_PUBLIC_SUPABASE_URL, " +
-      "NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY to run them."
-  );
-  process.exit(0);
-}
-
-// Normalize the URL to its origin so a stray trailing slash or path can't
-// break admin endpoint paths. Validate by parsing (forgiving) and emit precise,
-// NON-SECRET diagnostics so a misconfigured secret is obvious without leaking it.
-let URL = RAW_URL;
-{
-  const startsWithHttps = /^https:\/\//i.test(RAW_URL);
-  let parsed = null;
-  try {
-    parsed = new globalThis.URL(RAW_URL);
-  } catch {
-    /* not a URL */
-  }
-  const host = parsed?.hostname ?? "";
-  const hostIsSupabase = /\.supabase\.(co|in|net|io)$/i.test(host);
-  const looksLikeJwt = RAW_URL.startsWith("eyJ");
-  const looksLikeDashboard = /supabase\.com/i.test(RAW_URL) || /\/dashboard\/|\/project\//.test(RAW_URL);
-
-  if (parsed && hostIsSupabase) {
-    URL = parsed.origin; // drop any path/slash; e.g. https://<ref>.supabase.co
-  } else {
-    log("❌ NEXT_PUBLIC_SUPABASE_URL is not a valid Supabase project API URL.");
-    log("   It must be EXACTLY:  https://<your-project-ref>.supabase.co");
-    log("   Find it in Supabase → Settings → API → 'Project URL' (or 'Data API').");
-    log("   Common mistakes: missing https://, just the project ref, the browser");
-    log("   dashboard URL, a connection string, or the wrong value in this secret.");
-    log(
-      `   diagnostics (no secret shown) → length=${RAW_URL.length} ` +
-        `startsWithHttps=${startsWithHttps} parsesAsUrl=${!!parsed} ` +
-        `hostIsSupabase=${hostIsSupabase} looksLikeJwtKey=${looksLikeJwt} ` +
-        `looksLikeDashboard=${looksLikeDashboard}`
-    );
-    process.exit(1);
-  }
-
-  if (!ANON.startsWith("eyJ"))
-    log("⚠  NEXT_PUBLIC_SUPABASE_ANON_KEY doesn't start with 'eyJ' — use the Legacy 'anon public' key.");
-  if (!SERVICE.startsWith("eyJ"))
-    log("⚠  SUPABASE_SERVICE_ROLE_KEY doesn't start with 'eyJ' — use the Legacy 'service_role secret' key.");
-}
+// Resolve + validate config (skips/exits with clear diagnostics if missing/bad).
+const { URL, ANON, SERVICE } = requireSupabaseEnvOrExit();
 
 // ---- tiny assert/report (self-contained; no playwright import) -------------
 const results = [];

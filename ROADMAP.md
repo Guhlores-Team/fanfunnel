@@ -109,3 +109,33 @@ so demo mode works before the migration.
 ## Suggested order
 1 (quick wins) → 2 (monetization) → 3 (engagement/chat) → 4 (analytics) → 5 (trust/ops).
 Within each phase, foundational items first (#8 before #9/#11; #22 before #3).
+
+---
+
+## Testing & QA roadmap
+
+How automated coverage stands. Run docs: `e2e/README.md`. Human-only checks:
+`e2e/MANUAL-CHECKLIST.md`.
+
+**Shipped (gates every push in CI):**
+- In-app error console (`?debug=1`).
+- Mock E2E — 23 flows, `npm run e2e` (creator dashboard + fan journey).
+- Accessibility (axe) on key pages, folded into the mock E2E.
+- Real-Supabase security tests — `npm run e2e:supabase` (RLS tenant isolation +
+  the SECURITY DEFINER self-update RPCs). Gated on repo secrets.
+- Real-Supabase spin integrity — `npm run e2e:spin` (concurrent `claim_spin`
+  can't double-spend or go negative). Gated on repo secrets.
+
+**Planned:**
+- Login-UI E2E (real Supabase): drive the real `/login` page (sign in as a
+  pre-created user) + a creator action — closes the auth/session/cookie gap.
+
+**Deferred — revisit when ready (per product decision):**
+- **Agency / org integration + its E2E.** The org layer (orgs, members,
+  `can_act_for`, per-creator delegation) already exists in the schema + data
+  layer, but is intentionally **not** being finalized or auto-tested yet — it
+  waits until the platform has been used (a) personally, then (b) with
+  individual creators. When picked up, add an E2E mirroring the isolation
+  asserts in `e2e/supabase.mjs` but across the `can_act_for(creator_id,
+  capability)` boundary: an org member can act for their assigned creators and
+  ONLY those.
