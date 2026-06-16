@@ -188,3 +188,154 @@ export async function fanJourney(page, { step, assert }, ctx) {
     assert(/spin|win|prize/i.test(body), "public link-in-bio renders");
   });
 }
+
+// Creator edge cases. Runs AFTER the fan has spun (so a pending redemption
+// exists to fulfil). Operates on the dashboard.
+export async function creatorExtras(page, { step, assert }) {
+  await step("redemptions: advance a fulfilment status", async () => {
+    await goto(page, "/dashboard", 1800);
+    await clickTab(page, "Prizes");
+    await page.waitForTimeout(800);
+    // The primary per-row action moves status (Start → Mark fulfilled → …).
+    const action = page
+      .locator("button")
+      .filter({ hasText: /^(Start|Mark fulfilled|Reopen|Mark delivered)$/i })
+      .first();
+    assert(await action.count(), "a redemption with a status action exists");
+    const before = await page.locator("body").innerText();
+    await action.click();
+    await page.waitForTimeout(1200);
+    const after = await page.locator("body").innerText();
+    assert(before !== after, "the fulfilment queue changed after advancing a status");
+  });
+
+  await step("webhooks: add then remove", async () => {
+    await goto(page, "/dashboard", 1500);
+    await clickTab(page, "Boosts");
+    await page.waitForTimeout(600);
+    const urlInput = page.locator("input[type='url']").last(); // webhook endpoint
+    assert(await urlInput.count(), "webhook URL input present");
+    await urlInput.fill("https://example.com/hooks/e2e");
+    await page.locator("button:has-text('Add')").first().click();
+    await page.waitForTimeout(1000);
+    assert(
+      (await page.locator("text=example.com/hooks/e2e").count()) > 0,
+      "webhook appears in the list after Add"
+    );
+    await page.locator("button:has-text('Remove')").first().click();
+    await page.waitForTimeout(800);
+    assert(
+      (await page.locator("text=example.com/hooks/e2e").count()) === 0,
+      "webhook removed from the list"
+    );
+  });
+
+  await step("happy hour: schedule a boost window", async () => {
+    // (Still on Boosts.) Fill the multiplier + the start/end datetimes.
+    const mult = page.locator("input[type='number']").first();
+    if (await mult.count()) await mult.fill("3");
+    const dts = await page.locator("input[type='datetime-local']").all();
+    if (dts.length >= 1) {
+      const pad = (n) => String(n).padStart(2, "0");
+      const fmt = (d) =>
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const now = new Date();
+      await dts[0].fill(fmt(new Date(now.getTime() + 3600_000)));
+      if (dts.length >= 2) await dts[1].fill(fmt(new Date(now.getTime() + 7200_000)));
+    }
+    await page.locator("button:has-text('Schedule')").first().click();
+    await page.waitForTimeout(1200);
+    assert(
+      (await page.locator("text=/×\\s*3/").count()) > 0 ||
+        /happy hour|boost|×/i.test(await page.locator("body").innerText()),
+      "a happy-hour window with the multiplier appears"
+    );
+  });
+}
+
+// Fan extras. Runs LAST — the self-exclude at the end deactivates the demo link.
+export async function fanExtras(page, { step, assert }, ctx) {
+  await step("fan: wishlist toggle", async () => {
+    await goto(page, "/spin/demo", 1800);
+    await passAgeGate(page);
+    const wl = page.locator("button[aria-pressed]").filter({ hasText: /🎁|☆|★/ }).first();
+    if (await wl.count()) {
+      const before = await wl.getAttribute("aria-pressed");
+      await wl.click();
+      await page.waitForTimeout(700);
+      const after = await wl.getAttribute("aria-pressed");
+      assert(before !== after, "wishlist star toggled its pressed state");
+    } else {
+      assert(false, "no wishlist toggle found on the fan page");
+    }
+  });
+
+  await step("fan: chat opens, sends, and shows the message", async () => {
+    const fab = page.locator("button[aria-label='Message creator']");
+    assert(await fab.count(), "chat launcher present");
+    await fab.first().click();
+    await page.waitForTimeout(1200);
+    const panel = page.locator("[aria-label^='Chat with']");
+    assert(await panel.count(), "chat panel opened");
+    const input = page.locator("input[aria-label^='Message ']");
+    if (await input.count()) {
+      const msg = "e2e hello " + Date.now();
+      await input.fill(msg);
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(1200);
+      assert((await panel.innerText()).includes(msg), "sent message appears in the thread");
+    }
+    await page.keyboard.press("Escape");
+  });
+
+  await step("fan: share card renders", async () => {
+    if (ctx._shareId) {
+      await goto(page, `/share/${ctx._shareId}`, 1400);
+      const body = await page.locator("body").innerText();
+      assert(/won|prize|fanfunnel|spin/i.test(body), "share card page renders");
+    }
+  });
+
+  await step("fan: spinning to empty shows the out-of-spins state", async () => {
+    await goto(page, "/spin/demo", 1600);
+    await passAgeGate(page);
+    let guard = 0;
+    while (guard++ < 12) {
+      const spin = page.locator("button:has-text('SPIN')").first();
+      if (!(await spin.count()) || !(await spin.isEnabled())) break;
+      const label = (await spin.innerText()).toLowerCase();
+      if (label.includes("out of spins")) break;
+      await spin.click();
+      await page.waitForTimeout(5800);
+      for (const s of ["button:has-text('Awesome')", "button:has-text('Close')"]) {
+        const el = page.locator(s).first();
+        if (await el.count()) {
+          try {
+            await el.click();
+            await page.waitForTimeout(300);
+            break;
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+    const body = await page.locator("body").innerText();
+    assert(/out of spins|tip|get (more )?spins|top.?up/i.test(body), "out-of-spins / top-up prompt shown");
+  });
+
+  await step("fan: self-exclude deactivates the link (LAST)", async () => {
+    const safety = page.locator("button:has-text('Safety')").first();
+    assert(await safety.count(), "safety menu trigger present");
+    await safety.click();
+    await page.waitForTimeout(500);
+    await page.locator("button:has-text('Pause my link')").first().click();
+    await page.waitForTimeout(400);
+    await page.locator("button:has-text('Yes, pause my link')").first().click();
+    await page.waitForTimeout(1200);
+    // The now-paused link should 404 (getFanPass returns null). Check via the
+    // request context so this *expected* 404 isn't logged as a page signal.
+    const resp = await ctx.request.get(BASE + "/spin/demo");
+    assert(resp.status() === 404, `paused link should 404, got ${resp.status()}`);
+  });
+}

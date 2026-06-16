@@ -187,15 +187,25 @@ export async function clickTab(page, name) {
   return false;
 }
 
-/** Complete the fan age-gate if present (checks both boxes, clicks Enter). */
+/** Complete the fan age-gate if present (checks both boxes, clicks Enter).
+ *  Best-effort + tolerant: only acts on a dialog that actually has the gate's
+ *  checkboxes, uses short timeouts, and never throws (a missing/already-passed
+ *  gate must not fail the calling step). */
 export async function passAgeGate(page) {
-  if (await page.locator("[role='dialog'][aria-modal='true']").count()) {
-    for (const box of await page.locator("[role='dialog'] input[type='checkbox']").all()) {
-      await box.check();
+  try {
+    const dialog = page.locator("[role='dialog'][aria-modal='true']");
+    if (!(await dialog.count())) return;
+    const boxes = await page.locator("[role='dialog'] input[type='checkbox']").all();
+    if (boxes.length === 0) return; // some other modal, not the age gate
+    for (const box of boxes) {
+      await box.check({ timeout: 3000 }).catch(() => {});
       await page.waitForTimeout(100);
     }
-    await page.locator("[role='dialog'] button:has-text('Enter')").first().click();
-    await page.waitForTimeout(1200);
+    const enter = page.locator("[role='dialog'] button:has-text('Enter')").first();
+    await enter.click({ timeout: 4000 }).catch(() => {});
+    await page.waitForTimeout(1000);
+  } catch {
+    /* gate not blocking — proceed */
   }
 }
 
