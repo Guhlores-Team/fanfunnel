@@ -8,20 +8,27 @@ release.
 > Tip: enable the in-app error console while testing — add `?debug=1` to any
 > URL. If anything throws, hit **Copy errors** and paste the block into the bug.
 
-## Real-backend (Supabase) — do these on the live/preview deploy
+## Real-backend (Supabase)
+
+> **Automated:** RLS tenant isolation, the self-update RPCs
+> (`set_chat_settings` / `set_leaderboard_enabled` / `set_onboarding_dismissed`),
+> and "a creator can't self-promote to admin" are covered by
+> `npm run e2e:supabase` / the **E2E (real Supabase)** CI job once you wire the
+> secrets (see `e2e/README.md`). The items below still need a human.
+
 - [ ] **Schema is current** — ran `supabase/schema.sql` (or migration `0023`)
-      so `set_chat_settings` exists.
+      on the project so `set_chat_settings` exists.
 - [ ] **Env fail-closed** — production has all three vars
       (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
       `SUPABASE_SERVICE_ROLE_KEY`); a deploy missing one refuses to boot rather
       than serving demo data.
 - [ ] **Chat settings persist** — set intro/outro in Boosts, reload, confirm
-      they stuck (this silently failed in prod before the RPC fix).
-- [ ] **Leaderboard toggle persists** across reload.
+      they stuck (the automated test checks the RPC; confirm the UI round-trip).
 - [ ] **Account reset** is a true fresh start (onboarding checklist returns,
       leaderboard off, chat cleared) — and only wipes *your* data.
-- [ ] **Cross-tenant isolation** — a second creator can't see/modify the first
-      creator's wheels, fans, redemptions, or messages.
+- [ ] **Cross-tenant isolation via the UI** — sign in as a second creator and
+      confirm you can't reach the first creator's fans, redemptions, or
+      messages through the app (the automated test covers the DB layer).
 - [ ] **Agency** — an org member can act for their assigned creators (and only
       those). (Org features are no-ops in mock mode.)
 
