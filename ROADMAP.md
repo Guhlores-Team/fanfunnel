@@ -139,3 +139,13 @@ How automated coverage stands. Run docs: `e2e/README.md`. Human-only checks:
   asserts in `e2e/supabase.mjs` but across the `can_act_for(creator_id,
   capability)` boundary: an org member can act for their assigned creators and
   ONLY those.
+
+### Known a11y advisory (tracked)
+- **White-on-`--brand` small text** (e.g. the "Active" pill, the 14d/tag toggle
+  chips on the dashboard) is ~3.52:1 vs the WCAG AA 4.5:1 for small text — the
+  default brand `#ec4899` with white text, and `--brand` is creator-customizable
+  so it can't be guaranteed per-element. The a11y suite reports this as an
+  **advisory** on the authenticated dashboard (public/fan pages stay strict).
+  Fix options to weigh: a darker "brand-ink" token for small chips
+  (`color-mix(in oklab, var(--brand) ~70%, black)`), larger/bolder chip text, or
+  a computed readable foreground per brand color.

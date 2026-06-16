@@ -19,6 +19,9 @@ export function OddsBar({
         return (
           <div
             key={p.id}
+            // role="img" so the aria-label is permitted (a bare <div> has no
+            // role that supports a name → axe "aria-prohibited-attr").
+            role="img"
             style={{
               width: `${pct}%`,
               backgroundColor: p.color ?? RARITY_COLORS[p.rarity],
