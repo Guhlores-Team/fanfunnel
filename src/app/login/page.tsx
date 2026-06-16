@@ -31,7 +31,7 @@ export default function LoginPage() {
             </p>
             <Link
               href="/dashboard"
-              className="mt-4 inline-block rounded-xl bg-pink-500 px-5 py-2.5 font-bold text-white hover:bg-pink-400"
+              className="mt-4 inline-block rounded-xl bg-pink-600 px-5 py-2.5 font-bold text-white hover:bg-pink-500"
             >
               Open dashboard →
             </Link>
