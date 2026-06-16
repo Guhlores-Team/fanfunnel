@@ -159,7 +159,9 @@ export default function DebugConsole() {
   if (!active) return null;
 
   return (
-    <div className="fixed bottom-3 right-3 z-[100] font-sans">
+    // Bottom-LEFT so the launcher never sits on top of the app's bottom-right
+    // fixed UI (e.g. the fan chat FAB).
+    <div className="fixed bottom-3 left-3 z-[100] font-sans">
       {!open ? (
         <button
           onClick={() => setOpen(true)}
