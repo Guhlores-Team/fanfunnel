@@ -23,9 +23,11 @@ export const ARTIFACTS = new URL("./artifacts/", import.meta.url).pathname;
  *  provided, in which case we assume a server is already running). */
 export async function startServer() {
   if (process.env.E2E_BASE_URL) return null;
+  // shell:true so `npx` resolves to npx.cmd on Windows (otherwise spawn ENOENT).
   const child = spawn("npx", ["next", "start", "-p", String(PORT)], {
     stdio: "ignore",
     env: { ...process.env },
+    shell: true,
   });
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
