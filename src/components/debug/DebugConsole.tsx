@@ -250,6 +250,19 @@ export default function DebugConsole() {
               </ul>
             )}
           </div>
+
+          {/* Self-test: force a React render crash so you can watch the error
+              boundary catch it and log it here (kind: Render error). */}
+          <div className="border-t border-line px-3 py-2">
+            <button
+              onClick={() =>
+                window.dispatchEvent(new Event("ff:debug:crash"))
+              }
+              className="w-full rounded-lg border border-red-500/40 px-2 py-1.5 text-[11px] font-semibold text-red-400 transition hover:bg-red-500/10"
+            >
+              ⚠︎ Force a render crash (test the error boundary)
+            </button>
+          </div>
         </div>
       )}
     </div>
