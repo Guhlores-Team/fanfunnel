@@ -1215,3 +1215,58 @@ $$;
 grant execute on function public.set_chat_settings(text, text) to authenticated;
 grant execute on function public.set_leaderboard_enabled(boolean) to authenticated;
 grant execute on function public.set_onboarding_dismissed(boolean) to authenticated;
+
+-- ============================================================
+-- 0024_referral_spins_on_pass.sql
+-- ============================================================
+-- Heal any drifted fan aggregates (snap to the true sum of active passes) and
+-- add a helper that credits a fan's oldest active pass for fan-level bonuses
+-- (e.g. referrals), keeping the aggregate equal to the sum of passes. Fixes
+-- "18 spins at the start that drop to 3 once you spin".
+update public.fans f
+   set spins_remaining = coalesce((
+         select sum(p.spins_remaining) from public.fan_passes p
+          where p.fan_id = f.id and p.is_active), 0),
+       spins_granted_total = coalesce((
+         select sum(p.spins_granted_total) from public.fan_passes p
+          where p.fan_id = f.id and p.is_active), 0)
+ where exists (
+   select 1 from public.fan_passes p where p.fan_id = f.id and p.is_active
+ );
+
+create or replace function public.credit_pass_spins(p_fan_id uuid, p_spins int)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_pass uuid;
+begin
+  if p_spins is null or p_spins <= 0 then
+    return;
+  end if;
+
+  select id into v_pass
+    from public.fan_passes
+   where fan_id = p_fan_id and is_active = true
+   order by created_at asc
+   limit 1;
+  if v_pass is null then
+    return;
+  end if;
+
+  update public.fan_passes
+     set spins_remaining = spins_remaining + p_spins,
+         spins_granted_total = spins_granted_total + p_spins
+   where id = v_pass;
+
+  update public.fans f
+     set spins_remaining = coalesce((
+           select sum(p.spins_remaining) from public.fan_passes p
+            where p.fan_id = f.id and p.is_active), 0),
+         spins_granted_total = coalesce((
+           select sum(p.spins_granted_total) from public.fan_passes p
+            where p.fan_id = f.id and p.is_active), 0)
+   where f.id = p_fan_id;
+end;
+$$;
