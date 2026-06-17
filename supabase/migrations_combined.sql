@@ -1400,3 +1400,10 @@ end;
 $$;
 
 grant execute on function public.admin_reserve_account_deletion(uuid) to authenticated;
+
+-- 0027 Lock server-only balance RPCs to service_role (multi-review Audit 2): they
+-- were PUBLIC-executable (no grant), so anon could mint spins / bypass /api/spin.
+revoke execute on function public.claim_spin(text) from public, anon, authenticated;
+grant  execute on function public.claim_spin(text) to service_role;
+revoke execute on function public.credit_pass_spins(uuid, int) from public, anon, authenticated;
+grant  execute on function public.credit_pass_spins(uuid, int) to service_role;
