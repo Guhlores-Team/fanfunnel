@@ -90,18 +90,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "email_mismatch" }, { status: 400 });
   }
 
-  // (4) Never delete the last remaining admin.
-  if (target.role === "admin") {
-    const { count, error: countErr } = await svc
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .eq("role", "admin");
-    if (countErr) {
-      return NextResponse.json({ error: "db_error" }, { status: 500 });
-    }
-    if ((count ?? 0) <= 1) {
-      return NextResponse.json({ error: "last_admin" }, { status: 400 });
-    }
+  // (4) Atomically guard the last-admin invariant + RESERVE the deletion. The
+  // plain JS count above is TOCTOU (two concurrent deletes of the final two
+  // admins could both pass and leave zero admins). This SECURITY DEFINER RPC
+  // locks the admin rows and, for an admin target, refuses if it is the last
+  // admin or demotes it as an atomic reservation so a concurrent call sees one
+  // fewer admin. Runs as the caller (auth client) — auth.uid() is the admin.
+  const { data: reserve, error: reserveErr } = await sb.rpc(
+    "admin_reserve_account_deletion",
+    { p_target: id }
+  );
+  if (reserveErr) {
+    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  }
+  if (reserve === "last_admin") {
+    return NextResponse.json({ error: "last_admin" }, { status: 400 });
+  }
+  if (reserve !== "ok") {
+    // forbidden / not_found / cannot_delete_self — already checked above; fail
+    // closed on any unexpected status rather than deleting.
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   // Permanently remove the auth user; FK cascades wipe all tenant data.

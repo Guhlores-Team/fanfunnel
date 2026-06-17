@@ -117,8 +117,47 @@ export function findMatchingPack(
   list: readonly { label: string; spins: number; amountCents: number; bonusSpins: number }[],
   draft: DraftPack,
 ): number {
-  const key = packKey(draft);
-  return list.findIndex((p) => packKey(p) === key);
+  const label = draft.label.trim().toLowerCase();
+  // A saved pack matches `draft` when it shares the label AND its stored totals
+  // are a positive INTEGER multiple of the draft's per-unit economics — i.e. the
+  // saved pack is "k units of this bundle". This keeps stacking working after the
+  // saved totals have ALREADY grown (a 20-spin saved pack still matches a re-added
+  // 10-spin unit, so a 3rd/4th add keeps accumulating) while still treating a
+  // genuinely different per-unit price as a different pack. (Comparing the raw
+  // accumulated totals — the old behavior — broke on the 3rd add.)
+  return list.findIndex(
+    (p) => p.label.trim().toLowerCase() === label && stackMultiple(p, draft) !== null,
+  );
+}
+
+/**
+ * If `saved` equals a positive whole-number multiple `k` (k ≥ 1) of `draft`
+ * across every accumulable field, return `k`; otherwise null. A zero draft field
+ * requires the saved field to also be zero; all non-zero fields must agree on the
+ * same `k` (so 20 spins / $7 is NOT a multiple of 10 spins / $5).
+ */
+function stackMultiple(
+  saved: { spins: number; amountCents: number; bonusSpins: number },
+  draft: { spins: number; amountCents: number; bonusSpins: number },
+): number | null {
+  const pairs: Array<[number, number]> = [
+    [saved.spins, draft.spins],
+    [saved.amountCents, draft.amountCents],
+    [saved.bonusSpins, draft.bonusSpins],
+  ];
+  let k: number | null = null;
+  for (const [s, d] of pairs) {
+    if (d === 0) {
+      if (s !== 0) return null;
+      continue;
+    }
+    if (s % d !== 0) return null;
+    const ki = s / d;
+    if (ki < 1) return null;
+    if (k === null) k = ki;
+    else if (k !== ki) return null;
+  }
+  return k; // null only when every draft field is 0 (degenerate)
 }
 
 /**

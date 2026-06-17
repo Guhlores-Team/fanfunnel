@@ -1367,3 +1367,36 @@ $$;
 
 grant execute on function public.set_display_name(text) to authenticated;
 grant execute on function public.set_notification_prefs(boolean, boolean, boolean) to authenticated;
+
+-- 0026 Atomic admin account-deletion reservation (multi-review #2): make the
+-- last-admin guard atomic (lock admin rows; refuse if last, else demote target).
+create or replace function public.admin_reserve_account_deletion(p_target uuid)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_role text;
+  v_admins int;
+begin
+  if not exists (select 1 from public.profiles where id = auth.uid() and role = 'admin') then
+    return 'forbidden';
+  end if;
+  if p_target = auth.uid() then
+    return 'cannot_delete_self';
+  end if;
+  select role into v_role from public.profiles where id = p_target for update;
+  if v_role is null then
+    return 'not_found';
+  end if;
+  if v_role = 'admin' then
+    select count(*) into v_admins from (
+      select id from public.profiles where role = 'admin' for update
+    ) s;
+    if v_admins <= 1 then
+      return 'last_admin';
+    end if;
+    update public.profiles set role = 'creator' where id = p_target;
+  end if;
+  return 'ok';
+end;
+$$;
+
+grant execute on function public.admin_reserve_account_deletion(uuid) to authenticated;

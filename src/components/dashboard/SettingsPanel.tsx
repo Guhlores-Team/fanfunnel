@@ -207,6 +207,7 @@ function EmailRow({
 }) {
   const toast = useToast();
   const [email, setEmail] = useState("");
+  const [current, setCurrent] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
 
@@ -216,27 +217,34 @@ function EmailRow({
       toast("Enter a valid email address.", { tone: "error" });
       return;
     }
+    if (!current) {
+      toast("Enter your current password to confirm.", { tone: "error" });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/account/email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: next }),
+        body: JSON.stringify({ email: next, currentPassword: current }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast(
-          d.error === "same_email"
-            ? "That's already your email."
-            : d.error === "demo_mode"
-              ? "Email changes need Supabase configured (demo mode)."
-              : "Couldn't start the email change.",
+          d.error === "wrong_password"
+            ? "Your current password is incorrect."
+            : d.error === "same_email"
+              ? "That's already your email."
+              : d.error === "demo_mode"
+                ? "Email changes need Supabase configured (demo mode)."
+                : "Couldn't start the email change.",
           { tone: "error" }
         );
         return;
       }
       setPending(next);
       setEmail("");
+      setCurrent("");
       toast("Check your inbox to confirm the new email.", { tone: "success" });
     } catch {
       toast("Couldn't start the email change.", { tone: "error" });
@@ -269,10 +277,21 @@ function EmailRow({
             placeholder="you@example.com"
           />
         </Field>
+        <Field label="Current password">
+          <input
+            type="password"
+            autoComplete="current-password"
+            className="ff-input w-56 max-w-full"
+            value={current}
+            disabled={disabled}
+            onChange={(e) => setCurrent(e.target.value)}
+            placeholder="Confirm it's you"
+          />
+        </Field>
         <button
           type="button"
           onClick={save}
-          disabled={busy || disabled || !email.trim()}
+          disabled={busy || disabled || !email.trim() || !current}
           className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           {busy ? "Sending…" : "Change email"}

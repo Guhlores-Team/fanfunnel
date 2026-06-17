@@ -115,4 +115,19 @@ function check(label: string, cond: boolean) {
   check("addPackUnit does not mutate existing", JSON.stringify(before) === snap);
 }
 
+// --- findMatchingPack: 3rd-click accumulation (multi-add regression) -----
+{
+  // A saved pack that is already TWO units must still match the original 1-unit
+  // draft, so a 3rd/4th add keeps stacking instead of creating a duplicate.
+  const stacked = [{ label: "Starter", spins: 20, amountCents: 1000, bonusSpins: 2 }];
+  const unit = { label: "Starter", spins: 10, amountCents: 500, bonusSpins: 1 };
+  check("findMatchingPack matches an already-stacked saved pack", findMatchingPack(stacked, unit) === 0);
+  const t = addPackUnit(stacked[0], unit);
+  check("addPackUnit continues stacking (20 → 30 on the 3rd add)", t.spins === 30 && t.amountCents === 1500 && t.bonusSpins === 3);
+  // A non-multiple (different per-unit price) must still NOT match a stacked pack.
+  check("findMatchingPack rejects non-multiple totals", findMatchingPack(stacked, { label: "Starter", spins: 10, amountCents: 333, bonusSpins: 1 }) === -1);
+  // Bonus-only difference (20/1000/3 is not 2× of 10/500/1) must not match.
+  check("findMatchingPack requires a consistent multiple across fields", findMatchingPack([{ label: "Starter", spins: 20, amountCents: 1000, bonusSpins: 3 }], unit) === -1);
+}
+
 console.log(`packHelpers.test: ${passed} checks passed`);

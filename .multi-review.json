@@ -1,0 +1,37 @@
+{
+  "$comment": "Config for /multi-review (multi-model code reviewer). Validation matrix + protected paths for auto-apply. Security-critical paths here are NEVER auto-edited.",
+  "validation": {
+    "default": ["npm test", "npm run lint", "npm run build"],
+    "map": [
+      {
+        "match": [
+          "supabase/**",
+          "src/lib/security/**",
+          "src/lib/supabase/**",
+          "src/app/api/admin/**",
+          "src/app/api/account/**"
+        ],
+        "commands": ["node scripts/security/rls-runtime-test.mjs"]
+      },
+      {
+        "match": ["src/lib/games/wheel/**", "src/components/SpinClient.tsx", "src/app/api/spin/**"],
+        "commands": ["npm run e2e:spin"]
+      }
+    ]
+  },
+  "protectedPaths": [
+    "supabase/**",
+    "src/lib/security/**",
+    "src/lib/supabase/**",
+    "src/lib/games/wheel/**",
+    "src/app/api/admin/**",
+    "src/app/api/account/**",
+    "src/app/api/spin/**",
+    "src/lib/rateLimit.ts",
+    "src/lib/api/limit.ts",
+    ".env*",
+    "**/middleware.ts"
+  ],
+  "protectedImports": ["@/lib/supabase/server", "createServiceClient"],
+  "protectedSymbols": ["service_role", "SUPABASE_SERVICE_ROLE_KEY", "auth.admin"]
+}
