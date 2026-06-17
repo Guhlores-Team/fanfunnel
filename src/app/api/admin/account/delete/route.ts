@@ -119,6 +119,13 @@ export async function POST(req: Request) {
   // Permanently remove the auth user; FK cascades wipe all tenant data.
   const { error: delErr } = await svc.auth.admin.deleteUser(id);
   if (delErr) {
+    // The reservation above demoted an admin target (admin -> creator) to hold
+    // the last-admin invariant atomically. The delete failed, so compensate by
+    // restoring the role — otherwise the target is left permanently altered (and
+    // the admin count reduced) without ever being deleted.
+    if (target.role === "admin") {
+      await svc.from("profiles").update({ role: "admin" }).eq("id", id);
+    }
     return NextResponse.json({ error: "delete_failed" }, { status: 500 });
   }
 

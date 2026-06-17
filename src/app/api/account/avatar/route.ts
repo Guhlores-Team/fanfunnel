@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
 import { rateLimitOr429 } from "@/lib/api/limit";
+import { sniffImageMime, EXT_BY_MIME } from "@/lib/api/imageSniff";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
-const ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "gif", "webp"]);
 
 // Upload an avatar image to the public `avatars` bucket and return its URL.
 // Auth'd creator only; the upload itself uses the service key (bucket has no
@@ -30,20 +30,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
   if (!file) return NextResponse.json({ error: "no_file" }, { status: 400 });
-  if (!file.type.startsWith("image/"))
-    return NextResponse.json({ error: "not_image" }, { status: 400 });
   if (file.size > MAX_BYTES)
     return NextResponse.json({ error: "too_large" }, { status: 400 });
 
-  let ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!ALLOWED_EXT.has(ext)) ext = "jpg";
-  const path = `${user.id}/${Date.now()}.${ext}`;
   const bytes = new Uint8Array(await file.arrayBuffer());
+  // Decide the type from the file's magic bytes, never the client-declared MIME
+  // or extension. Rejects SVG (stored-XSS vector) and any spoofed upload.
+  const mime = sniffImageMime(bytes);
+  if (!mime) return NextResponse.json({ error: "not_image" }, { status: 400 });
+  const path = `${user.id}/${Date.now()}.${EXT_BY_MIME[mime]}`;
 
   const svc = createServiceClient();
   const { error } = await svc.storage
     .from("avatars")
-    .upload(path, bytes, { contentType: file.type, upsert: true });
+    .upload(path, bytes, { contentType: mime, upsert: true });
   if (error) return NextResponse.json({ error: "upload_failed" }, { status: 400 });
 
   const { data } = svc.storage.from("avatars").getPublicUrl(path);

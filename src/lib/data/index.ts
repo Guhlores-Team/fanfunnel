@@ -4428,8 +4428,12 @@ async function isBlockedWebhookHost(hostname: string): Promise<boolean> {
   }
   if (isIP(host)) return isPrivateIp(host);
   try {
-    const { address } = await lookup(host);
-    return isPrivateIp(address);
+    // Resolve ALL records and reject if ANY is private. `fetch` does its own DNS
+    // resolution, so checking only the first address lets a host with mixed
+    // public/private A-records pass here and then connect to the private one.
+    const addrs = await lookup(host, { all: true });
+    if (!addrs.length) return true;
+    return addrs.some(({ address }) => isPrivateIp(address));
   } catch {
     return true; // unresolvable host → treat as unsafe
   }

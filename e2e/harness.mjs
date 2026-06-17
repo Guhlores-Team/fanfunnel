@@ -8,6 +8,7 @@
 
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync, writeSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /** Synchronous stdout write — survives process.exit() even when stdout is a
  *  pipe (CI), unlike the async console.log buffer. */
@@ -17,7 +18,9 @@ export function log(s = "") {
 
 export const PORT = Number(process.env.E2E_PORT || 3100);
 export const BASE = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
-export const ARTIFACTS = new URL("./artifacts/", import.meta.url).pathname;
+// fileURLToPath (not .pathname) so Windows gets `C:\...\artifacts\` rather than
+// the broken `/C:/...` that .pathname yields, which breaks mkdir/writeFile.
+export const ARTIFACTS = fileURLToPath(new URL("./artifacts/", import.meta.url));
 
 /** Start `next start` and resolve once it answers 200 (unless E2E_BASE_URL is
  *  provided, in which case we assume a server is already running). */
