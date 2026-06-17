@@ -42,7 +42,7 @@ export async function updateSession(request: NextRequest) {
   // Supabase is slow/unreachable we must NOT hang the middleware (that's what
   // 504 MIDDLEWARE_INVOCATION_TIMEOUT is). On timeout/error we treat the user
   // as unauthenticated and let the redirect logic below proceed normally.
-  let user: unknown = null;
+  let user: { id?: string } | null = null;
   try {
     const result = await Promise.race([
       supabase.auth.getUser(),
@@ -50,7 +50,8 @@ export async function updateSession(request: NextRequest) {
         setTimeout(() => reject(new Error("supabase getUser timeout")), 3000)
       ),
     ]);
-    user = (result as { data: { user: unknown } })?.data?.user ?? null;
+    user =
+      (result as { data: { user: { id?: string } | null } })?.data?.user ?? null;
   } catch {
     user = null; // fail-fast, never hang the edge
   }
@@ -61,8 +62,38 @@ export async function updateSession(request: NextRequest) {
     redirect.searchParams.set("next", path);
     return NextResponse.redirect(redirect);
   }
-  // Already signed in? Skip the auth pages.
-  if (user && (path === "/login" || path === "/signup")) {
+
+  // Suspended accounts (profiles.is_active=false) lose dashboard access — RLS
+  // already blocks their writes; this is the matching UI gate. Bounded + fail
+  // OPEN: a slow/erroring read must never lock out every creator (RLS stays the
+  // hard backstop), so we only act on a definitive `false`.
+  let active = true;
+  if (user?.id) {
+    try {
+      const result = await Promise.race([
+        supabase.from("profiles").select("is_active").eq("id", user.id).maybeSingle(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("is_active timeout")), 2000)
+        ),
+      ]);
+      if ((result as { data: { is_active?: boolean } | null })?.data?.is_active === false) {
+        active = false;
+      }
+    } catch {
+      active = true; // never hang / lock out on a slow read
+    }
+  }
+
+  if (user && !active && path.startsWith("/dashboard")) {
+    const redirect = request.nextUrl.clone();
+    redirect.pathname = "/login";
+    redirect.search = "";
+    redirect.searchParams.set("suspended", "1");
+    return NextResponse.redirect(redirect);
+  }
+
+  // Already signed in (and active)? Skip the auth pages.
+  if (user && active && (path === "/login" || path === "/signup")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/dashboard";
     redirect.search = "";

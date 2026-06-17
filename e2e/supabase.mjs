@@ -202,6 +202,43 @@ try {
     assert(a.role === "creator", "A is still a creator");
   });
 
+  await step("suspended creator (is_active=false) cannot write own data (RLS)", async () => {
+    // Admin suspends A.
+    const { error: susErr } = await admin
+      .from("profiles")
+      .update({ is_active: false })
+      .eq("id", A.id);
+    assert(!susErr, `suspend failed: ${susErr?.message}`);
+
+    // A still holds a valid session, but every creator write must now fail
+    // closed (can_act_for denies write perms to a suspended caller).
+    const { data: ins } = await A.client
+      .from("wheels")
+      .insert({ creator_id: A.id, title: "while suspended", brand_color: "#ec4899" })
+      .select("id");
+    assert((ins?.length ?? 0) === 0, "suspended A cannot insert a wheel");
+
+    const { data: upd } = await A.client
+      .from("wheels")
+      .update({ title: "suspended edit" })
+      .eq("id", wheelId)
+      .select("id");
+    assert((upd?.length ?? 0) === 0, "suspended A cannot update its wheel");
+
+    // Reactivate and confirm write power returns (no over-broad lockout).
+    const { error: reErr } = await admin
+      .from("profiles")
+      .update({ is_active: true })
+      .eq("id", A.id);
+    assert(!reErr, `reactivate failed: ${reErr?.message}`);
+    const { data: upd2 } = await A.client
+      .from("wheels")
+      .update({ title: "A's secret wheel" })
+      .eq("id", wheelId)
+      .select("id");
+    assert((upd2?.length ?? 0) === 1, "reactivated A can write again");
+  });
+
   // ---- report ----
   const lines = ["\n================ SUPABASE INTEGRATION ================"];
   for (const [ok, name, note] of results)
