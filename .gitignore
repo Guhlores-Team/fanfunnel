@@ -45,3 +45,6 @@ next-env.d.ts
 # installed agent design skills (taste-skill, frontend-design, impeccable)
 .agents/
 skills-lock.json
+
+# multi-review loop artifacts (review logs, round JSON, PLAN.md)
+reviews/
