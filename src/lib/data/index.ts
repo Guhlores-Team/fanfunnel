@@ -3701,10 +3701,13 @@ async function requireAdmin(
   if (!user) return false;
   const { data } = await sb
     .from("profiles")
-    .select("role")
+    .select("role, is_active")
     .eq("id", user.id)
     .maybeSingle();
-  return data?.role === "admin";
+  // A suspended admin (is_active=false) must NOT retain admin power. This gate
+  // fronts service-role actions that bypass RLS (create/delete accounts), so the
+  // is_active check has to live here too — not only in the DB is_admin() policy.
+  return data?.role === "admin" && data?.is_active === true;
 }
 
 /** Whether the signed-in user is an admin. Server-only; used to gate admin-only

@@ -10,7 +10,8 @@ import {
  *
  * This is deliberately separate from the reversible "suspend" action in
  * `../route.ts`. It is guarded several ways (defense in depth):
- *   1. Caller must be an admin (verified server-side against `profiles.role`).
+ *   1. Caller must be an ACTIVE admin (verified server-side against
+ *      `profiles.role` AND `profiles.is_active` — a suspended admin is rejected).
  *   2. The target's email must be passed AND match the target exactly
  *      (case-insensitive) — a typed-confirmation echoed from the client.
  *   3. An admin may not delete themselves.
@@ -57,10 +58,13 @@ export async function POST(req: Request) {
   }
   const { data: callerProfile } = await sb
     .from("profiles")
-    .select("role")
+    .select("role, is_active")
     .eq("id", caller.id)
     .maybeSingle();
-  if (callerProfile?.role !== "admin") {
+  // A suspended admin (is_active=false) loses destructive power, mirroring the
+  // DB is_admin() policy. This route uses the service role (bypasses RLS), so the
+  // active-state check must be enforced here in code, not just at the RLS layer.
+  if (callerProfile?.role !== "admin" || callerProfile?.is_active !== true) {
     return NextResponse.json({ error: "unauthorized" }, { status: 403 });
   }
 
