@@ -277,8 +277,11 @@ function CreateOrg({ onCreate }: { onCreate: (name: string) => Promise<boolean> 
       <button
         onClick={async () => {
           setBusy(true);
-          await onCreate(name);
-          setBusy(false);
+          try {
+            await onCreate(name);
+          } finally {
+            setBusy(false); // always clear, even if the action rejects (else stuck disabled)
+          }
         }}
         disabled={busy || !name.trim()}
         className="mt-3 w-full rounded-xl bg-pink-500 py-2.5 font-bold hover:bg-pink-400 disabled:opacity-50"
@@ -331,9 +334,12 @@ function AddByEmail({
         onClick={async () => {
           if (!email.trim()) return;
           setBusy(true);
-          const ok = await onAdd(email.trim(), withRole ? role : undefined);
-          setBusy(false);
-          if (ok) setEmail("");
+          try {
+            const ok = await onAdd(email.trim(), withRole ? role : undefined);
+            if (ok) setEmail("");
+          } finally {
+            setBusy(false); // always clear, even if the action rejects (else stuck disabled)
+          }
         }}
         disabled={busy}
         className="rounded-lg bg-pink-500 px-3 py-1.5 text-sm font-bold hover:bg-pink-400 disabled:opacity-50"

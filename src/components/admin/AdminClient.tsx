@@ -56,13 +56,21 @@ function AdminPanel() {
   }, [refresh]);
 
   async function decideApp(profileId: string, decision: "approved" | "rejected") {
+    const removed = apps.find((a) => a.profileId === profileId);
     setApps((list) => list.filter((a) => a.profileId !== profileId));
-    await fetch("/api/admin/applications", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profileId, decision }),
-    });
-    refresh();
+    try {
+      const res = await fetch("/api/admin/applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId, decision }),
+      });
+      if (!res.ok) throw new Error("request_failed");
+      refresh();
+    } catch {
+      // Restore the row on a transient failure so a real pending request can't
+      // silently vanish from the admin UI until a full reload.
+      if (removed) setApps((list) => [removed, ...list]);
+    }
   }
 
   // Optimistically patch one account in place, then persist.
@@ -508,7 +516,8 @@ function InviteModal({
             onChange={(e) => setEmail(e.target.value)}
           />
           <input
-            type="text"
+            type="password"
+            autoComplete="new-password"
             required
             minLength={6}
             className="ff-input w-full"

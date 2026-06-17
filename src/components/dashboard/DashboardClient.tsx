@@ -90,12 +90,15 @@ const RARITY_LABEL: Record<Rarity, string> = {
 function useOverview() {
   const [data, setData] = useState<CreatorOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  const seq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++seq.current; // ignore stale overlapping responses (req-id guard)
     try {
       const res = await fetch("/api/overview", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
+      const json = res.ok ? await res.json() : null;
+      if (mine === seq.current && json) setData(json);
     } finally {
-      setLoading(false);
+      if (mine === seq.current) setLoading(false);
     }
   }, []);
   useEffect(() => {
@@ -116,12 +119,15 @@ function useOverview() {
 function useMetricsExtra(days: number) {
   const [data, setData] = useState<CreatorMetricsExtra | null>(null);
   const [loading, setLoading] = useState(true);
+  const seq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++seq.current; // ignore stale overlapping responses (req-id guard)
     try {
       const res = await fetch(`/api/metrics?days=${days}`, { cache: "no-store" });
-      if (res.ok) setData(await res.json());
+      const json = res.ok ? await res.json() : null;
+      if (mine === seq.current && json) setData(json);
     } finally {
-      setLoading(false);
+      if (mine === seq.current) setLoading(false);
     }
   }, [days]);
   useEffect(() => {
@@ -1486,6 +1492,7 @@ function AccountCard({
     account.passes[0]?.wheelId ?? wheels[0]?.id ?? ""
   );
   const [topUp, setTopUp] = useState(3);
+  const [toppingUp, setToppingUp] = useState(false);
   // Per-spin price as its own state (see FansPanel) so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
   const amount = perSpin && topUp > 0 ? (Number(perSpin) * topUp).toFixed(2) : "";
@@ -1713,21 +1720,28 @@ function AccountCard({
           </select>
         </Field>
         <button
-          onClick={() => {
-            onTopUp(
-              account.fanId,
-              topUp,
-              amount ? Number(amount) || undefined : undefined,
-              campaignId || undefined,
-              packId,
-              topUpWheelId || undefined
-            );
-            setPerSpin("");
-            setPackId(null);
+          disabled={toppingUp}
+          onClick={async () => {
+            if (toppingUp) return; // in-flight guard: a double-click must not double-grant spins/spend
+            setToppingUp(true);
+            try {
+              await onTopUp(
+                account.fanId,
+                topUp,
+                amount ? Number(amount) || undefined : undefined,
+                campaignId || undefined,
+                packId,
+                topUpWheelId || undefined
+              );
+              setPerSpin("");
+              setPackId(null);
+            } finally {
+              setToppingUp(false);
+            }
           }}
-          className="mt-5 rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+          className="mt-5 rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] disabled:opacity-50"
         >
-          Top up
+          {toppingUp ? "Topping up…" : "Top up"}
         </button>
       </div>
       {campaignId && (
