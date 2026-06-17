@@ -1,6 +1,6 @@
-import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { getSpinVerification } from "@/lib/data";
+import { brandVars } from "@/lib/theme";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +28,7 @@ export default async function VerifyPage({
     return (
       <main
         className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10"
-        style={{ "--brand": "#6366f1" } as CSSProperties}
+        style={brandVars("#6366f1")}
       >
         <div className="relative z-[1] w-full max-w-md">
           <div className="card rounded-[1.75rem] p-8 text-center">
@@ -55,7 +55,7 @@ export default async function VerifyPage({
   return (
     <main
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10"
-      style={{ "--brand": color } as CSSProperties}
+      style={brandVars(color)}
     >
       <div className="relative z-[1] w-full max-w-md">
         <div

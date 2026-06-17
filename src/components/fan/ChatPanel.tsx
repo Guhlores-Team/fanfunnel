@@ -3,6 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/data/types";
 
+/** A locally-tracked optimistic outbound message awaiting / failing its send. */
+interface PendingMessage {
+  localId: string;
+  body: string;
+  status: "pending" | "failed";
+}
+
 /**
  * Spin-gated DM thread with the creator. Fans with ≥1 spin (chatUnlocked) can
  * message; otherwise they see a top-up nudge. Polls every 3s while open, and
@@ -47,6 +54,7 @@ export default function ChatPanel({
   }, [openKey]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState<PendingMessage[]>([]);
   const [hasUnread, setHasUnread] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   // Guard so the auto-intro is only requested once per mount.
@@ -165,25 +173,55 @@ export default function ChatPanel({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [messages.length, pending.length]);
+
+  // Core send: append an optimistic message, POST, then reconcile. On failure
+  // the optimistic bubble flips to "failed" with a retry affordance.
+  const deliver = useCallback(
+    async (body: string, localId: string) => {
+      try {
+        const res = await fetch("/api/messages/fan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, body }),
+        });
+        if (res.ok) {
+          // Reload the canonical thread, then drop the optimistic copy so the
+          // now-persisted message isn't rendered twice.
+          await load();
+          setPending((p) => p.filter((m) => m.localId !== localId));
+          return true;
+        }
+      } catch {
+        /* fall through to failed */
+      }
+      setPending((p) =>
+        p.map((m) => (m.localId === localId ? { ...m, status: "failed" } : m))
+      );
+      return false;
+    },
+    [token, load]
+  );
 
   const send = async () => {
     const body = draft.trim();
     if (!body || sending) return;
     setSending(true);
+    const localId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    setPending((p) => [...p, { localId, body, status: "pending" }]);
+    setDraft("");
     try {
-      const res = await fetch("/api/messages/fan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, body }),
-      });
-      if (res.ok) {
-        setDraft("");
-        await load();
-      }
+      await deliver(body, localId);
     } finally {
       setSending(false);
     }
+  };
+
+  const retry = async (m: PendingMessage) => {
+    setPending((p) =>
+      p.map((x) => (x.localId === m.localId ? { ...x, status: "pending" } : x))
+    );
+    await deliver(m.body, m.localId);
   };
 
   return (
@@ -251,6 +289,34 @@ export default function ChatPanel({
                     >
                       {m.body}
                     </span>
+                  </div>
+                ))}
+                {/* Optimistic outbound bubbles (pending / failed), fan side. */}
+                {pending.map((m) => (
+                  <div key={m.localId} className="flex flex-col items-end">
+                    <span
+                      className="max-w-[80%] rounded-2xl px-3 py-2 text-sm"
+                      style={{
+                        background: "var(--brand)",
+                        color: "#fff",
+                        opacity: m.status === "failed" ? 0.55 : 0.7,
+                      }}
+                    >
+                      {m.body}
+                    </span>
+                    {m.status === "pending" ? (
+                      <span className="mt-0.5 text-[11px] text-muted">Sending…</span>
+                    ) : (
+                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#ef4444]">
+                        Failed
+                        <button
+                          onClick={() => retry(m)}
+                          className="font-semibold underline underline-offset-2 hover:no-underline"
+                        >
+                          Retry
+                        </button>
+                      </span>
+                    )}
                   </div>
                 ))}
                 <div ref={endRef} />

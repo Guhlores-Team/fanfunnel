@@ -112,6 +112,10 @@ import {
   mockSetLeaderboardEnabled,
   mockGetOnboardingDismissed,
   mockSetOnboardingDismissed,
+  mockGetMyAccount,
+  mockSetMyDisplayName,
+  mockSetMyNotificationPrefs,
+  mockSetActiveWheelBrandColor,
   mockSetFanLeaderboardOptIn,
   mockGetLeaderboard,
   mockGetRecentWins,
@@ -176,6 +180,8 @@ interface DbWheelRow {
   title: string;
   subtitle: string | null;
   brand_color: string | null;
+  /** Phase 9 (#11): creator-chosen prize-label color (migration 0025). */
+  label_color?: string | null;
   is_active?: boolean;
   active_from?: string | null;
   active_until?: string | null;
@@ -185,7 +191,7 @@ interface DbWheelRow {
 
 // The columns we select to load a wheel's full config (prizes joined).
 const WHEEL_SELECT =
-  `id, title, subtitle, brand_color, is_active, active_from, active_until, archived_at,
+  `id, title, subtitle, brand_color, label_color, is_active, active_from, active_until, archived_at,
    prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
@@ -1962,6 +1968,8 @@ export async function saveWheel(
     title: config.title.slice(0, 120),
     subtitle: config.subtitle?.slice(0, 200) ?? null,
     brand_color: config.brandColor ?? "#ec4899",
+    // #11: persist the per-wheel label color (null clears it → auto-pick).
+    label_color: config.labelColor ?? null,
     updated_at: new Date().toISOString(),
   };
   // Persist lifecycle/schedule fields only when present on the incoming config.
@@ -2088,8 +2096,10 @@ export async function listWheels(
 }
 
 /**
- * Create a new wheel, seeding prizes from a wheel template (if given) or from
- * the sample wheel. It becomes is_active only if it's the creator's first wheel.
+ * Create a new wheel. From a template it snapshots that template's prizes;
+ * otherwise (#7) it starts EMPTY — zero prizes — so the editor shows a friendly
+ * empty state + "Add your first prize" instead of pre-seeded sample prizes. It
+ * becomes is_active only if it's the creator's first wheel.
  */
 export async function createWheel(opts?: {
   fromTemplateId?: string;
@@ -2110,13 +2120,11 @@ export async function createWheel(opts?: {
     .eq("creator_id", user.id);
   const isFirst = (existing ?? 0) === 0;
 
-  // Seed: a template snapshot, else the sample wheel.
-  let title = SAMPLE_WHEEL.title;
-  let subtitle: string | null = SAMPLE_WHEEL.subtitle ?? null;
+  // Seed: a template snapshot, else a blank wheel with NO prizes (#7).
+  let title = "New wheel";
+  let subtitle: string | null = null;
   let brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
-  let seedPrizes: Omit<Prize, "id">[] = SAMPLE_WHEEL.prizes.map(
-    ({ id: _id, ...rest }) => rest
-  );
+  let seedPrizes: Omit<Prize, "id">[] = [];
 
   if (opts?.fromTemplateId) {
     const { data: tpl } = await sb
@@ -3697,6 +3705,14 @@ async function requireAdmin(
     .eq("id", user.id)
     .maybeSingle();
   return data?.role === "admin";
+}
+
+/** Whether the signed-in user is an admin. Server-only; used to gate admin-only
+ *  UI such as the in-app debug console. Returns false in demo mode (no Supabase). */
+export async function isCurrentUserAdmin(): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false;
+  const sb = await createClient();
+  return requireAdmin(sb);
 }
 
 /**
@@ -5530,6 +5546,121 @@ export async function setMyPublicProfile(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Account settings (Phase 9 #6): display name, email, notification prefs.
+// profiles_update is admin-only, so self-updates go through the narrow
+// SECURITY DEFINER RPCs added in migration 0025 (set_display_name,
+// set_notification_prefs) — same pattern as set_public_profile / set_creator_note.
+// ---------------------------------------------------------------------------
+
+export interface NotificationPrefs {
+  newSpin: boolean;
+  lowBalance: boolean;
+  messages: boolean;
+}
+
+export interface MyAccount {
+  email: string | null;
+  displayName: string | null;
+  notifications: NotificationPrefs;
+}
+
+const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  newSpin: true,
+  lowBalance: true,
+  messages: true,
+};
+
+/** The signed-in creator's account settings (display name, email, notify prefs). */
+export async function getMyAccount(): Promise<MyAccount> {
+  if (!isSupabaseConfigured()) return mockGetMyAccount();
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) {
+    return { email: null, displayName: null, notifications: { ...DEFAULT_NOTIFICATION_PREFS } };
+  }
+  const { data } = await sb
+    .from("profiles")
+    .select("display_name, notify_new_spin, notify_low_balance, notify_messages")
+    .eq("id", user.id)
+    .maybeSingle();
+  const row = data as {
+    display_name: string | null;
+    notify_new_spin: boolean | null;
+    notify_low_balance: boolean | null;
+    notify_messages: boolean | null;
+  } | null;
+  return {
+    email: user.email ?? null,
+    displayName: row?.display_name ?? null,
+    notifications: {
+      newSpin: row?.notify_new_spin ?? true,
+      lowBalance: row?.notify_low_balance ?? true,
+      messages: row?.notify_messages ?? true,
+    },
+  };
+}
+
+/** Update only the creator's display name (self-update RPC). Blank is ignored. */
+export async function setMyDisplayName(
+  name: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetMyDisplayName(name);
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { error } = await sb.rpc("set_display_name", { p_name: name });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** Update only the creator's notification preferences (self-update RPC). */
+export async function setMyNotificationPrefs(
+  prefs: NotificationPrefs
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetMyNotificationPrefs(prefs);
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { error } = await sb.rpc("set_notification_prefs", {
+    p_new_spin: prefs.newSpin,
+    p_low_balance: prefs.lowBalance,
+    p_messages: prefs.messages,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Set the brand color of the creator's currently-active wheel. The public
+ * /c/[slug] page derives its brand color from the active wheel, so this powers
+ * the Settings → Public profile brand-color control (with a live preview).
+ * wheels has a creator-scoped RW policy, so the auth client may write directly.
+ */
+export async function setActiveWheelBrandColor(
+  color: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetActiveWheelBrandColor(color);
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  await ensureWheelId(sb, user.id);
+  const wheelId = await resolveActiveWheelId(sb, user.id, new Date());
+  if (!wheelId) return { error: "no_wheel" };
+  const { error } = await sb
+    .from("wheels")
+    .update({ brand_color: color, updated_at: new Date().toISOString() })
+    .eq("id", wheelId)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 function toWheelConfig(wheel: DbWheelRow): WheelConfig {
   const prizes: Prize[] = (wheel.prizes ?? [])
     .slice()
@@ -5552,6 +5683,8 @@ function toWheelConfig(wheel: DbWheelRow): WheelConfig {
     title: wheel.title,
     subtitle: wheel.subtitle ?? undefined,
     brandColor: wheel.brand_color ?? "#ec4899",
+    // #11: undefined when unset so Wheel.tsx falls back to its auto-pick.
+    labelColor: wheel.label_color ?? undefined,
     prizes,
   };
 }

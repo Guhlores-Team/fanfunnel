@@ -1,7 +1,7 @@
-import type { CSSProperties } from "react";
 import { redirect } from "next/navigation";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { getMyApprovalStatus } from "@/lib/data";
+import { brandVars } from "@/lib/theme";
 import PendingClient from "@/components/PendingClient";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export default async function PendingPage() {
   return (
     <main
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10"
-      style={{ "--brand": "#ec4899" } as CSSProperties}
+      style={brandVars("#ec4899")}
     >
       <div className="relative z-[1] w-full max-w-md">
         <PendingClient

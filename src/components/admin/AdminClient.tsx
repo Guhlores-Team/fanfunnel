@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { FEATURES } from "@/lib/features";
+import { ToastProvider, useToast } from "@/components/ui/Toast";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 
 interface PendingApp {
@@ -17,7 +18,18 @@ interface PendingApp {
   createdAt: string;
 }
 
+// The /admin route renders this directly (no app-wide ToastProvider), so we
+// supply one here for the inner panel's success/error toasts.
 export default function AdminClient() {
+  return (
+    <ToastProvider>
+      <AdminPanel />
+    </ToastProvider>
+  );
+}
+
+function AdminPanel() {
+  const toast = useToast();
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
@@ -74,6 +86,36 @@ export default function AdminClient() {
       body: JSON.stringify({ id, ...patch }),
     });
     refresh();
+  }
+
+  // Irreversible hard-delete. The server re-verifies admin, the typed email,
+  // self-delete and last-admin guards; we only echo the email it confirmed.
+  async function deleteAccount(id: string, email: string) {
+    const res = await fetch("/api/admin/account/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, email }),
+    });
+    if (res.ok) {
+      setData((d) =>
+        d ? { ...d, accounts: d.accounts.filter((a) => a.id !== id) } : d
+      );
+      toast("Account permanently deleted", { tone: "success" });
+      return true;
+    }
+    const err = (await res.json().catch(() => null))?.error as string | undefined;
+    const message =
+      err === "cannot_delete_self"
+        ? "You can't delete your own admin account."
+        : err === "last_admin"
+          ? "Can't delete the last remaining admin."
+          : err === "email_mismatch"
+            ? "Email didn't match — deletion cancelled."
+            : err === "unauthorized"
+              ? "Admins only."
+              : "Couldn't delete account. Try again.";
+    toast(message, { tone: "error" });
+    return false;
   }
 
   if (forbidden) {
@@ -207,7 +249,12 @@ export default function AdminClient() {
         {loading && <p className="text-sm text-white/40">Loading…</p>}
         {!loading &&
           (data?.accounts ?? []).map((a) => (
-            <AccountRow key={a.id} account={a} onPatch={patchAccount} />
+            <AccountRow
+              key={a.id}
+              account={a}
+              onPatch={patchAccount}
+              onDelete={deleteAccount}
+            />
           ))}
       </div>
 
@@ -227,13 +274,37 @@ export default function AdminClient() {
 function AccountRow({
   account,
   onPatch,
+  onDelete,
 }: {
   account: AdminAccount;
   onPatch: (
     id: string,
     patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
   ) => void;
+  onDelete: (id: string, email: string) => Promise<boolean>;
 }) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [typedEmail, setTypedEmail] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  const emailMatches =
+    typedEmail.trim().toLowerCase() === account.email.trim().toLowerCase() &&
+    account.email.length > 0;
+
+  async function runDelete() {
+    setDeleting(true);
+    try {
+      const ok = await onDelete(account.id, typedEmail.trim());
+      if (ok) {
+        // Row unmounts on success; reset for safety if it lingers.
+        setConfirmingDelete(false);
+        setTypedEmail("");
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div
       className={`rounded-2xl border p-4 transition ${
@@ -321,6 +392,56 @@ function AccountRow({
             </button>
           );
         })}
+      </div>
+
+      {/* Danger zone — irreversible hard-delete, kept distinct from Suspend. */}
+      <div className="mt-4 border-t border-red-500/20 pt-3">
+        {!confirmingDelete ? (
+          <button
+            type="button"
+            onClick={() => setConfirmingDelete(true)}
+            className="rounded-lg border border-red-500/50 px-3 py-1.5 text-xs font-semibold text-red-300 transition hover:bg-red-500/10"
+          >
+            Delete permanently…
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-red-200">
+              This permanently deletes <strong>{account.displayName}</strong> and
+              all of their wheels, fans, spins, grants, campaigns and messages.
+              This <strong>cannot be undone</strong>. Type{" "}
+              <strong className="break-all">{account.email}</strong> to confirm:
+            </p>
+            <input
+              value={typedEmail}
+              onChange={(e) => setTypedEmail(e.target.value)}
+              placeholder={account.email}
+              autoComplete="off"
+              className="ff-input w-full text-xs"
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={runDelete}
+                disabled={!emailMatches || deleting}
+                className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-red-400 disabled:opacity-40"
+              >
+                {deleting ? "Deleting…" : "Permanently delete this account"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingDelete(false);
+                  setTypedEmail("");
+                }}
+                disabled={deleting}
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/5 disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

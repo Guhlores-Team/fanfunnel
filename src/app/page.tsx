@@ -1,6 +1,6 @@
 import Link from "next/link";
-import type { CSSProperties } from "react";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
+import { brandVars } from "@/lib/theme";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import Wheel from "@/components/Wheel";
 
@@ -13,7 +13,7 @@ export default function Home() {
   return (
     <main
       className="grain brand-glow relative flex min-h-[100dvh] flex-col"
-      style={{ "--brand": brand } as CSSProperties}
+      style={brandVars(brand)}
     >
       <nav className="relative z-[1] mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
         <span className="font-[family-name:var(--font-display)] text-lg font-extrabold tracking-tight text-ink">
@@ -29,7 +29,7 @@ export default function Home() {
 
       <section className="relative z-[1] mx-auto grid w-full max-w-6xl flex-1 items-center gap-12 px-6 pb-16 pt-6 lg:grid-cols-[1.1fr_0.9fr]">
         <div>
-          <p className="reveal text-sm font-medium text-[var(--brand)]" style={{ animationDelay: "0.05s" }}>
+          <p className="reveal text-sm font-medium text-brand" style={{ animationDelay: "0.05s" }}>
             Personalized prize games for creators
           </p>
           <h1 className="reveal mt-4 font-[family-name:var(--font-display)] text-[clamp(2.6rem,7vw,4.5rem)] font-extrabold leading-[0.98] tracking-[-0.03em] text-ink text-balance" style={{ animationDelay: "0.12s" }}>

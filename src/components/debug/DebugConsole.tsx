@@ -5,9 +5,11 @@ import {
   clearErrors,
   reportError,
   resolveDebug,
+  setDebugAdmin,
   subscribe,
   type CapturedError,
 } from "./debug";
+import { isSupabaseConfigured } from "@/lib/supabase/client";
 
 const KIND_LABEL: Record<CapturedError["kind"], string> = {
   error: "Error",
@@ -90,10 +92,38 @@ export default function DebugConsole() {
   const prevCount = useRef(0);
 
   useEffect(() => {
-    // Resolve on mount only: resolveDebug() reads window/localStorage, so it
-    // must run client-side after hydration (SSR + first paint both render null).
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only flag resolution
-    setActive(resolveDebug());
+    // Resolve on mount only (client-side; SSR + first paint render null). Debug is
+    // gated: it activates only if explicitly requested (?debug=1 / this session)
+    // AND the viewer is allowed — an admin in production (confirmed via /api/me),
+    // or anyone in local/demo dev (no Supabase backend). Normal production users
+    // never trigger the fetch (resolveDebug() is false) — zero overhead for them.
+    if (!resolveDebug()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only flag resolution
+      setActive(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      let ok = false;
+      if (!isSupabaseConfigured()) {
+        // Local/demo dev: no auth backend, so allow the dev tool. Still requires
+        // ?debug=1 (session opt-in), so it's never "always on".
+        ok = true;
+      } else {
+        try {
+          const res = await fetch("/api/me", { cache: "no-store" });
+          ok = res.ok && (await res.json())?.isAdmin === true;
+        } catch {
+          ok = false;
+        }
+      }
+      if (cancelled) return;
+      setDebugAdmin(ok);
+      setActive(ok);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Subscribe + register listeners only while active.

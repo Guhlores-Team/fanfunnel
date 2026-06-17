@@ -1333,3 +1333,37 @@ begin
    where f.id = p_fan_id;
 end;
 $$;
+
+-- ============================================================
+-- 0025_account_settings.sql
+-- ============================================================
+alter table public.wheels
+  add column if not exists label_color text;
+
+alter table public.profiles
+  add column if not exists notify_new_spin boolean not null default true;
+alter table public.profiles
+  add column if not exists notify_low_balance boolean not null default true;
+alter table public.profiles
+  add column if not exists notify_messages boolean not null default true;
+
+create or replace function public.set_display_name(p_name text)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles
+     set display_name = coalesce(nullif(trim(p_name), ''), display_name)
+   where id = auth.uid();
+$$;
+
+create or replace function public.set_notification_prefs(
+  p_new_spin boolean, p_low_balance boolean, p_messages boolean
+)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles
+     set notify_new_spin    = coalesce(p_new_spin, notify_new_spin),
+         notify_low_balance = coalesce(p_low_balance, notify_low_balance),
+         notify_messages    = coalesce(p_messages, notify_messages)
+   where id = auth.uid();
+$$;
+
+grant execute on function public.set_display_name(text) to authenticated;
+grant execute on function public.set_notification_prefs(boolean, boolean, boolean) to authenticated;

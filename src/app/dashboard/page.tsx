@@ -1,5 +1,5 @@
-import type { CSSProperties } from "react";
 import { redirect } from "next/navigation";
+import { brandVars } from "@/lib/theme";
 import DashboardClient from "@/components/dashboard/DashboardClient";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { getWheel, getMyApprovalStatus, getOnboardingDismissed } from "@/lib/data";
@@ -43,7 +43,7 @@ export default async function DashboardPage() {
   return (
     <main
       className="min-h-[100dvh] overflow-x-clip bg-base"
-      style={{ "--brand": initialWheel.brandColor ?? "#ec4899" } as CSSProperties}
+      style={brandVars(initialWheel.brandColor)}
     >
       <DashboardClient
         isAdmin={isAdmin}

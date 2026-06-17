@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PrizeTemplate, WheelTemplate } from "@/lib/data/types";
 import { RARITY_COLORS, type Rarity } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
@@ -32,11 +32,18 @@ export default function TemplateLibrary({
   onSaveCurrentWheelAsTemplate,
   onApplyPrizeTemplate,
   onSaveCurrentPrizesToLibrary,
+  refreshSignal,
 }: {
   onApplyWheelTemplate: (templateId: string) => void;
   onSaveCurrentWheelAsTemplate: (name: string) => void;
   onApplyPrizeTemplate: (t: PrizeTemplate) => void;
   onSaveCurrentPrizesToLibrary?: () => void | Promise<void>;
+  /**
+   * #9: bumped by the parent whenever a prize is favorited (★) elsewhere in the
+   * editor, so the library list refetches and the new prize appears immediately
+   * — no page refresh.
+   */
+  refreshSignal?: number;
 }) {
   const toast = useToast();
   const [wheelTemplates, setWheelTemplates] = useState<WheelTemplate[] | null>(null);
@@ -73,6 +80,18 @@ export default function TemplateLibrary({
     loadWheels();
     loadPrizes();
   }, [loadWheels, loadPrizes]);
+
+  // #9: when the parent signals a library change (e.g. a prize was favorited in
+  // the editor), refetch the prize library so it shows up immediately. Skips the
+  // initial render so it doesn't duplicate the mount fetch above.
+  const didMountRef = useRef(false);
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+    void loadPrizes();
+  }, [refreshSignal, loadPrizes]);
 
   function saveCurrentWheel() {
     const trimmed = name.trim();

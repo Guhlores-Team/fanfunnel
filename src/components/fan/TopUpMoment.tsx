@@ -58,12 +58,12 @@ export default function TopUpMoment({
           href={externalUrl(tipUrl)}
           target="_blank"
           rel="noopener noreferrer"
-          className="btn-brand mt-4 inline-block w-full rounded-2xl py-3 font-extrabold"
+          className="btn-brand mt-4 inline-block w-full rounded-2xl py-3.5 text-base font-extrabold tracking-wide"
         >
-          Top up with {creatorTitle} →
+          Tip {creatorTitle} to unlock more spins →
         </a>
       ) : (
-        <p className="mt-4 text-sm font-semibold text-[var(--brand)]">
+        <p className="mt-4 text-sm font-semibold text-brand">
           Tip {creatorTitle} to unlock more spins.
         </p>
       )}

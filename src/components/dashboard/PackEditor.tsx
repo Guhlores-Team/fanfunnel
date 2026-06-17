@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { CampaignPack } from "@/lib/data/types";
 import { formatCents } from "@/lib/format";
 import { useToast } from "@/components/ui/Toast";
+import { addPackUnit, findMatchingPack } from "./packHelpers";
 import { EmptyState, Field } from "./ui";
 
 /**
@@ -51,24 +52,40 @@ export default function PackEditor({ campaignId }: { campaignId: string | null }
       toast("Enter a label, spins, and amount.", { tone: "error" });
       return;
     }
+    const draft = {
+      label: trimmed,
+      spins: nSpins,
+      amountCents: nAmount,
+      bonusSpins: Number.isFinite(nBonus) ? nBonus : 0,
+    };
+    // Stacking (#4): re-adding the same bundle (label + economics) accumulates
+    // its quantity into the saved pack instead of creating a duplicate row.
+    const match = packs ? findMatchingPack(packs, draft) : -1;
     setBusy(true);
     try {
-      const res = await fetch("/api/campaign-packs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          campaignId,
-          label: trimmed,
-          spins: nSpins,
-          amountCents: nAmount,
-          bonusSpins: Number.isFinite(nBonus) ? nBonus : 0,
-        }),
-      });
+      let res: Response;
+      let stacked = false;
+      if (packs && match !== -1) {
+        const existing = packs[match];
+        const totals = addPackUnit(existing, draft);
+        res = await fetch(`/api/campaign-packs/${existing.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(totals),
+        });
+        stacked = true;
+      } else {
+        res = await fetch("/api/campaign-packs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ campaignId, ...draft }),
+        });
+      }
       if (!res.ok) {
-        toast("Couldn't create pack. Try again.", { tone: "error" });
+        toast(stacked ? "Couldn't update pack. Try again." : "Couldn't create pack. Try again.", { tone: "error" });
         return;
       }
-      toast("Pack added", { tone: "success" });
+      toast(stacked ? "Pack quantity increased" : "Pack added", { tone: "success" });
       setLabel("");
       setSpins("");
       setAmount("");

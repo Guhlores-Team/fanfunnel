@@ -7,6 +7,7 @@ import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { brandVars } from "@/lib/theme";
 import { playWin, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
 // Both beats pull in the motion library and only render briefly after a spin,
@@ -257,6 +258,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           <Wheel
             prizes={pass.wheel.prizes}
             brandColor={brand}
+            labelColor={pass.wheel.labelColor}
             result={result}
             onSpinEnd={handleSpinEnd}
             size={size}
@@ -269,7 +271,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         <div className="flex items-center gap-2">
           <div className="rounded-full border border-line bg-surface/70 px-4 py-1.5 text-sm font-medium text-ink">
             Spins left{" "}
-            <span className="tnum ml-1 font-bold text-[var(--brand)]">
+            <span className="tnum ml-1 font-bold text-brand">
               {spinsRemaining}
             </span>
           </div>
@@ -298,11 +300,16 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         )}
         {nextSpinHash && (
           <p
-            className="text-center text-[10px] tracking-wide text-muted/60"
+            className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 text-center text-[10px] tracking-wide text-muted/60"
             title="The server committed to your next spin's random seed before you spin — after spinning, the verify page proves the outcome matches this commitment."
           >
-            🔒 Provably fair · next-spin commitment{" "}
-            <span className="font-mono">{nextSpinHash.slice(0, 12)}…</span>
+            <span className="whitespace-nowrap">🔒 Provably fair · next-spin commitment</span>
+            <span
+              className="min-w-0 max-w-full break-all font-mono"
+              title={nextSpinHash}
+            >
+              {nextSpinHash.slice(0, 12)}…
+            </span>
           </p>
         )}
         {spinsRemaining === 0 && !reveal && (
@@ -625,7 +632,7 @@ function PrizeModal({
           ref={closeRef}
           onClick={onClose}
           className="btn-brand mt-3 w-full rounded-2xl py-3 font-bold"
-          style={{ ["--brand" as string]: color }}
+          style={brandVars(color)}
         >
           Awesome!
         </button>

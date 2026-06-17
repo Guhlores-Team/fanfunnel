@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { HappyHour, Webhook, WheelSummary, WishlistDemand } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
@@ -24,7 +25,6 @@ export default function BoostsPanel({
 }) {
   return (
     <div className="space-y-8">
-      <PublicProfileCard />
       <LeaderboardToggle enabled={leaderboardEnabled} onChange={onLeaderboardChange} />
       <HappyHourScheduler />
       <div className="grid gap-6 sm:grid-cols-2">
@@ -40,6 +40,7 @@ export default function BoostsPanel({
 /** Destructive account reset — wipes all wheels/fans/spins/campaigns. */
 function DangerZone() {
   const toast = useToast();
+  const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,7 +55,9 @@ function DangerZone() {
       });
       if (res.ok) {
         toast("Account reset — starting fresh.", { tone: "success" });
-        setTimeout(() => window.location.reload(), 700);
+        // #9: re-run the server components to reflect the wipe instead of a
+        // hard page reload. A short delay lets the toast register first.
+        setTimeout(() => router.refresh(), 700);
       } else {
         toast("Couldn't reset. Are you signed in?", { tone: "error" });
       }
@@ -112,164 +115,6 @@ function DangerZone() {
   );
 }
 
-function PublicProfileCard() {
-  const [slug, setSlug] = useState("");
-  const [tipUrl, setTipUrl] = useState("");
-  const [tagline, setTagline] = useState("");
-  const [note, setNote] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const toast = useToast();
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-
-  useEffect(() => {
-    let live = true;
-    fetch("/api/public-profile", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!live || !d) return;
-        setSlug(d.slug ?? "");
-        setTipUrl(d.tipUrl ?? "");
-        setTagline(d.tagline ?? "");
-        setNote(d.note ?? "");
-        setAvatarUrl(d.avatarUrl ?? "");
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      const res = await fetch("/api/public-profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, tipUrl, tagline, note, avatarUrl }),
-      });
-      if (!res.ok) throw new Error();
-      toast("Link-in-bio saved", { tone: "success" });
-      // Reflect any server-side slug normalization.
-      const fresh = await fetch("/api/public-profile", { cache: "no-store" }).then((r) => r.json());
-      setSlug(fresh.slug ?? "");
-    } catch {
-      toast("Couldn't save — that slug may be taken.", { tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const url = slug ? `${origin}/c/${slug}` : "";
-  const copy = async () => {
-    if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard blocked */
-    }
-  };
-
-  return (
-    <Section
-      title="Link-in-bio (SFW)"
-      hint="A clean, safe-for-work page you can post in your Instagram/TikTok bio. No explicit content — just your wheel + a way in."
-    >
-      <div className="space-y-3 rounded-xl border border-line p-4">
-        <label className="block text-xs text-muted">
-          Your public link
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="shrink-0 break-all text-sm text-muted">{origin}/c/</span>
-            <input
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              className="ff-input min-w-0 flex-1"
-              placeholder="your-name"
-            />
-          </div>
-        </label>
-        <label className="block text-xs text-muted">
-          Tagline
-          <input
-            value={tagline}
-            onChange={(e) => setTagline(e.target.value)}
-            className="ff-input mt-1 w-full"
-            placeholder="Spin my wheel — every spin wins 🎡"
-          />
-        </label>
-        <label className="block text-xs text-muted">
-          Tip / buy-spins link (where fans go to pay)
-          <input
-            value={tipUrl}
-            onChange={(e) => setTipUrl(e.target.value)}
-            className="ff-input mt-1 w-full"
-            placeholder="https://onlyfans.com/you  or your tip link"
-          />
-        </label>
-        <label className="block text-xs text-muted">
-          Personal note to fans (shown atop their spin page)
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className="ff-input mt-1 w-full"
-            placeholder="Hey you 😘 spin away — every spin wins!"
-          />
-        </label>
-        <label className="block text-xs text-muted">
-          Avatar (optional)
-          <div className="mt-1 flex items-center gap-3">
-            {avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={avatarUrl} alt="" className="h-12 w-12 shrink-0 rounded-full object-cover ring-1 ring-line" />
-            ) : (
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white/5 text-lg">📷</span>
-            )}
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <input
-                value={avatarUrl}
-                onChange={(e) => setAvatarUrl(e.target.value)}
-                className="ff-input w-full"
-                placeholder="Paste an image URL, or upload →"
-              />
-              <AvatarUpload onUploaded={setAvatarUrl} />
-            </div>
-          </div>
-        </label>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={save}
-            disabled={busy}
-            className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
-          >
-            Save
-          </button>
-          {url && (
-            <>
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
-              >
-                Preview ↗
-              </a>
-              <button
-                onClick={copy}
-                className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
-              >
-                {copied ? "Copied!" : "Copy link"}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </Section>
-  );
-}
-
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section>
@@ -277,51 +122,6 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
       {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
       <div className="mt-3">{children}</div>
     </section>
-  );
-}
-
-/** A file picker that uploads an avatar to Storage and returns its public URL. */
-function AvatarUpload({ onUploaded }: { onUploaded: (url: string) => void }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-
-  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast("Please choose an image file.", { tone: "error" });
-      return;
-    }
-    setBusy(true);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/account/avatar", { method: "POST", body: form });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok && d.url) {
-        onUploaded(d.url);
-        toast("Photo uploaded — Save to apply.", { tone: "success" });
-      } else {
-        toast(
-          d.error === "too_large"
-            ? "Image too large (max 5 MB)."
-            : d.error === "demo_mode"
-              ? "Upload needs Supabase configured (demo mode)."
-              : "Upload failed.",
-          { tone: "error" }
-        );
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <label className="inline-flex w-fit cursor-pointer items-center rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5">
-      {busy ? "Uploading…" : "⬆ Upload photo"}
-      <input type="file" accept="image/*" onChange={pick} disabled={busy} className="hidden" />
-    </label>
   );
 }
 

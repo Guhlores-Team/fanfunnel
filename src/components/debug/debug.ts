@@ -17,7 +17,14 @@ export interface CapturedError {
   timestamp: number;
 }
 
-const LS_KEY = "ff:debug";
+// Session-scoped so debug is NOT sticky across browser restarts (it previously
+// persisted in localStorage, which made it "always on" forever).
+const SS_KEY = "ff:debug";
+const LEGACY_LS_KEY = "ff:debug";
+
+// The in-app console only activates for admins. DebugConsole confirms admin via
+// /api/me and flips this; until then nothing activates, even with ?debug=1.
+let adminOk = false;
 
 /**
  * Resolve whether the in-app console is active, honoring (and persisting) the
@@ -29,6 +36,13 @@ const LS_KEY = "ff:debug";
  */
 export function resolveDebug(): boolean {
   if (typeof window === "undefined") return false;
+  // Migration: a previous build persisted this flag in localStorage, which made
+  // debug "always on" forever. Purge that legacy key so it can never re-activate.
+  try {
+    window.localStorage.removeItem(LEGACY_LS_KEY);
+  } catch {
+    /* ignore */
+  }
   let fromUrl: string | null = null;
   try {
     fromUrl = new URLSearchParams(window.location.search).get("debug");
@@ -37,7 +51,7 @@ export function resolveDebug(): boolean {
   }
   if (fromUrl === "1") {
     try {
-      window.localStorage.setItem(LS_KEY, "1");
+      window.sessionStorage.setItem(SS_KEY, "1");
     } catch {
       /* storage blocked — still active for this load */
     }
@@ -45,14 +59,14 @@ export function resolveDebug(): boolean {
   }
   if (fromUrl === "0") {
     try {
-      window.localStorage.removeItem(LS_KEY);
+      window.sessionStorage.removeItem(SS_KEY);
     } catch {
       /* ignore */
     }
     return false;
   }
   try {
-    return window.localStorage.getItem(LS_KEY) === "1";
+    return window.sessionStorage.getItem(SS_KEY) === "1";
   } catch {
     return false;
   }
@@ -63,7 +77,8 @@ export function resolveDebug(): boolean {
  * the console component has mounted. Reads the persisted flag / URL directly.
  */
 export function isDebugActive(): boolean {
-  return resolveDebug();
+  // Admin-gated: never active until DebugConsole confirms the user is an admin.
+  return adminOk && resolveDebug();
 }
 
 const errors: CapturedError[] = [];
@@ -72,6 +87,16 @@ let nextId = 1;
 
 function emit() {
   for (const l of listeners) l(errors.slice());
+}
+
+/**
+ * Admin gate setter. DebugConsole calls this after confirming admin via /api/me.
+ * Non-admins never flip this, so the console (and error capture) stays inert.
+ */
+export function setDebugAdmin(value: boolean): void {
+  if (adminOk === value) return;
+  adminOk = value;
+  emit();
 }
 
 /** Record one captured error (newest is kept at the front of the list). */

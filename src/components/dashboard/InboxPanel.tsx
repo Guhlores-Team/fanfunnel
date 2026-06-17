@@ -7,12 +7,21 @@ import { playPing } from "@/lib/sound";
 import { useToast } from "@/components/ui/Toast";
 import { EmptyState } from "./ui";
 
+/** A few one-tap canned replies the creator can drop into the composer. */
+const QUICK_REPLIES = [
+  "Thanks so much! 💖",
+  "On its way! 🚀",
+  "Spin again for another shot! 🎡",
+  "Sorry for the wait — sorting it now.",
+] as const;
+
 /**
  * The creator's chat inbox: a list of fan threads with unread counts, and a
  * conversation view for the selected fan. When Supabase is configured the
  * creator (authed) subscribes to real Supabase Realtime on the `messages`
  * table; otherwise (demo) it falls back to polling. New inbound fan messages
- * that aren't in the open thread trigger a ping + browser notification.
+ * that aren't in the open thread trigger a ping + browser notification — in
+ * both the realtime and the demo-poll paths.
  */
 export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
   const [threads, setThreads] = useState<FanThread[]>([]);
@@ -53,16 +62,6 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
     setNotifyPerm(Notification.permission);
   }, []);
 
-  const requestAlerts = async () => {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    try {
-      const perm = await Notification.requestPermission();
-      setNotifyPerm(perm);
-    } catch {
-      /* denied / unavailable */
-    }
-  };
-
   // Alert (ping + browser Notification) for a new inbound fan message that the
   // creator isn't currently looking at. Never alerts for the creator's own
   // sends. SSR-guarded.
@@ -83,6 +82,26 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
     }
   }, []);
 
+  const requestAlerts = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    try {
+      const perm = await Notification.requestPermission();
+      setNotifyPerm(perm);
+      // Confirmation/test notification so it's obvious the grant worked.
+      if (perm === "granted") {
+        try {
+          new Notification("Alerts on", {
+            body: "You'll be notified of new messages.",
+          });
+        } catch {
+          /* construction can throw on some platforms */
+        }
+      }
+    } catch {
+      /* denied / unavailable */
+    }
+  };
+
   useEffect(() => {
     loadThreads();
 
@@ -91,6 +110,18 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
       const supabase = createClient();
       let channelRef: ReturnType<typeof supabase.channel> | null = null;
       let cancelled = false;
+      // Polling fallback that runs ONLY if realtime never reaches SUBSCRIBED
+      // (or errors out), so a flaky socket still surfaces new threads.
+      let pollId: ReturnType<typeof setInterval> | null = null;
+      const startPoll = () => {
+        if (pollId === null) pollId = setInterval(loadThreads, 8000);
+      };
+      const stopPoll = () => {
+        if (pollId !== null) {
+          clearInterval(pollId);
+          pollId = null;
+        }
+      };
 
       (async () => {
         const {
@@ -126,19 +157,76 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
               }
             }
           )
-          .subscribe();
+          .subscribe((status) => {
+            // Keep the subscription robust: lean on the poll fallback whenever
+            // the socket isn't healthy, and drop it once realtime is live.
+            if (status === "SUBSCRIBED") stopPoll();
+            else if (
+              status === "CHANNEL_ERROR" ||
+              status === "TIMED_OUT" ||
+              status === "CLOSED"
+            )
+              startPoll();
+          });
         channelRef = channel;
       })();
 
       return () => {
         cancelled = true;
+        stopPoll();
         if (channelRef) supabase.removeChannel(channelRef);
       };
     }
 
-    // Demo fallback: poll the thread list.
-    const id = setInterval(loadThreads, 8000);
-    return () => clearInterval(id);
+    // Demo fallback: poll the thread list AND synthesize inbound alerts.
+    // We diff each poll against the previous snapshot so a genuinely-new
+    // inbound fan message (unread went up + latest activity moved) pings —
+    // without alerting on the creator's own sends or on the very first load.
+    let cancelled = false;
+    // fanId -> { lastAt, unread } from the previous poll. Seeded (without
+    // alerting) on the first successful poll so existing history is silent.
+    const seen = new Map<string, { lastAt: string; unread: number }>();
+    let seeded = false;
+
+    const pollDemo = async () => {
+      try {
+        const res = await fetch("/api/messages/inbox", { cache: "no-store" });
+        if (!res.ok) return;
+        const next: FanThread[] = (await res.json()).threads ?? [];
+        if (cancelled) return;
+        setThreads(next);
+
+        if (seeded) {
+          for (const t of next) {
+            const prev = seen.get(t.fanId);
+            const isNewInbound = prev
+              ? // Existing thread: a new inbound fan message bumps both the
+                // unread count and the last-activity timestamp. Requiring the
+                // unread increase excludes the creator's own outbound sends.
+                t.unread > prev.unread && t.lastAt > prev.lastAt
+              : // Brand-new thread that already has an unread fan message.
+                t.unread > 0;
+            if (isNewInbound && t.fanId !== openFanIdRef.current) {
+              alertInbound(t.fanName, t.lastBody);
+            }
+          }
+        }
+
+        // Refresh the snapshot for the next diff.
+        seen.clear();
+        for (const t of next) seen.set(t.fanId, { lastAt: t.lastAt, unread: t.unread });
+        seeded = true;
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    pollDemo();
+    const id = setInterval(pollDemo, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [loadThreads, alertInbound]);
 
   return (
@@ -169,6 +257,16 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
                 <button
                   onClick={() => {
                     setOpenFan(t);
+                    // Optimistically clear the badge the moment the thread is
+                    // opened; opening the Thread marks it read server-side and
+                    // a reload reconciles the authoritative count.
+                    if (t.unread > 0) {
+                      setThreads((prev) =>
+                        prev.map((x) =>
+                          x.fanId === t.fanId ? { ...x, unread: 0 } : x
+                        )
+                      );
+                    }
                   }}
                   className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
                     openFan?.fanId === t.fanId
@@ -313,8 +411,16 @@ function AutoMessagesCard() {
   );
 }
 
+/** A locally-tracked optimistic outbound message awaiting / failing its send. */
+interface PendingMessage {
+  localId: string;
+  body: string;
+  status: "pending" | "failed";
+}
+
 function Thread({ fan, onChanged }: { fan: FanThread; onChanged: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [pending, setPending] = useState<PendingMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -340,25 +446,59 @@ function Thread({ fan, onChanged }: { fan: FanThread; onChanged: () => void }) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [messages.length, pending.length]);
+
+  // Core send: append an optimistic message, POST, then reconcile. On failure
+  // the optimistic bubble flips to "failed" with a retry affordance.
+  const deliver = useCallback(
+    async (body: string, localId: string) => {
+      try {
+        const res = await fetch("/api/messages/creator", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fanId: fan.fanId, body }),
+        });
+        if (res.ok) {
+          // Reload the canonical thread, then drop the optimistic copy so we
+          // don't double-render the now-persisted message.
+          await load();
+          setPending((p) => p.filter((m) => m.localId !== localId));
+          return true;
+        }
+      } catch {
+        /* fall through to failed */
+      }
+      setPending((p) =>
+        p.map((m) => (m.localId === localId ? { ...m, status: "failed" } : m))
+      );
+      return false;
+    },
+    [fan.fanId, load]
+  );
 
   const send = async () => {
     const body = draft.trim();
     if (!body || sending) return;
     setSending(true);
+    const localId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    setPending((p) => [...p, { localId, body, status: "pending" }]);
+    setDraft("");
     try {
-      const res = await fetch("/api/messages/creator", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fanId: fan.fanId, body }),
-      });
-      if (res.ok) {
-        setDraft("");
-        await load();
-      }
+      await deliver(body, localId);
     } finally {
       setSending(false);
     }
+  };
+
+  const retry = async (m: PendingMessage) => {
+    setPending((p) =>
+      p.map((x) => (x.localId === m.localId ? { ...x, status: "pending" } : x))
+    );
+    await deliver(m.body, m.localId);
+  };
+
+  const insertQuickReply = (text: string) => {
+    setDraft((d) => (d.trim() ? `${d.trimEnd()} ${text}` : text));
   };
 
   return (
@@ -381,9 +521,51 @@ function Thread({ fan, onChanged }: { fan: FanThread; onChanged: () => void }) {
             </span>
           </div>
         ))}
+        {/* Optimistic outbound bubbles (pending / failed) render after the
+            persisted history, always right-aligned (creator side). */}
+        {pending.map((m) => (
+          <div key={m.localId} className="flex flex-col items-end">
+            <span
+              className="max-w-[80%] rounded-2xl px-3 py-2 text-sm"
+              style={{
+                background: "var(--brand)",
+                color: "#fff",
+                opacity: m.status === "failed" ? 0.55 : 0.7,
+              }}
+            >
+              {m.body}
+            </span>
+            {m.status === "pending" ? (
+              <span className="mt-0.5 text-[11px] text-muted">Sending…</span>
+            ) : (
+              <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#ef4444]">
+                Failed
+                <button
+                  onClick={() => retry(m)}
+                  className="font-semibold underline underline-offset-2 hover:no-underline"
+                >
+                  Retry
+                </button>
+              </span>
+            )}
+          </div>
+        ))}
         <div ref={endRef} />
       </div>
-      <div className="flex items-center gap-2 border-t border-line p-3">
+      {/* Quick replies: one-tap canned messages inserted into the composer. */}
+      <div className="flex flex-wrap gap-1.5 border-t border-line px-3 pt-2.5">
+        {QUICK_REPLIES.map((q) => (
+          <button
+            key={q}
+            type="button"
+            onClick={() => insertQuickReply(q)}
+            className="rounded-full border border-line px-2.5 py-1 text-xs text-muted transition hover:border-[var(--brand)] hover:text-ink"
+          >
+            {q}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 p-3 pt-2">
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 interface Invite {
   id: string;
@@ -14,6 +15,7 @@ interface Invite {
  * org on accept. Renders nothing when there are no pending invites.
  */
 export default function InvitesBanner() {
+  const router = useRouter();
   const [invites, setInvites] = useState<Invite[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -40,7 +42,9 @@ export default function InvitesBanner() {
         body: JSON.stringify({ inviteId, accept }),
       });
       setInvites((cur) => cur.filter((i) => i.id !== inviteId));
-      if (accept) window.location.reload();
+      // #9: re-run the server components (active creator context changes on
+      // accept) without a full-page reload.
+      if (accept) router.refresh();
     } finally {
       setBusy(null);
     }

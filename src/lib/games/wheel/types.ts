@@ -51,6 +51,11 @@ export interface WheelConfig {
   /** Short line shown under the title on the fan page. */
   subtitle?: string;
   brandColor?: string;
+  /**
+   * Phase 9 (#11): creator-chosen color for the prize labels rendered on the
+   * wheel. When unset, Wheel.tsx auto-picks a readable label color per segment.
+   */
+  labelColor?: string;
   prizes: Prize[];
   /** Phase 2: scheduling + lifecycle. All optional so existing callers are untouched. */
   isActive?: boolean;

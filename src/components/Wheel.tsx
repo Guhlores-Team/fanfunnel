@@ -13,6 +13,12 @@ export interface WheelResult {
 interface WheelProps {
   prizes: Prize[];
   brandColor?: string;
+  /**
+   * Phase 9 (#11): per-wheel color for the prize-label text rendered on the
+   * wheel. When provided (and a valid color), every slice label uses it;
+   * otherwise labels fall back to the default white-on-slice rendering.
+   */
+  labelColor?: string | null;
   /** Set by the parent after the server returns a result; triggers the spin. */
   result: WheelResult | null;
   onSpinEnd?: () => void;
@@ -122,6 +128,7 @@ function safeColor(hex: string): string {
 export default function Wheel({
   prizes,
   brandColor = "#ec4899",
+  labelColor,
   result,
   onSpinEnd,
   size = 380,
@@ -159,6 +166,11 @@ export default function Wheel({
     const cx = size / 2;
     const cy = size / 2;
     const radius = size / 2 - 8;
+
+    // Per-wheel label color (#11). Validate so a half-typed hex streaming in from
+    // the editor can't break the canvas draw; fall back to the default white.
+    const labelFill =
+      labelColor && parseHex(labelColor) ? labelColor : "#fff";
 
     // Outer rim
     ctx.beginPath();
@@ -223,7 +235,7 @@ export default function Wheel({
       ctx.rotate(start + seg / 2);
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = "#fff";
+      ctx.fillStyle = labelFill;
       ctx.shadowColor = "rgba(0,0,0,0.45)";
       ctx.shadowBlur = 3;
       setLabelFont(labelFont);
@@ -280,7 +292,7 @@ export default function Wheel({
   useEffect(() => {
     draw(rotationRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prizes, brandColor, size]);
+  }, [prizes, brandColor, labelColor, size]);
 
   useEffect(() => {
     if (!result || result.nonce === lastNonce.current) return;

@@ -185,6 +185,11 @@ interface Store {
   leaderboardEnabled: boolean;
   // Get-started checklist dismissal (account-level; survives reloads in demo).
   onboardingDismissed: boolean;
+  // Phase 9 #6: account settings (display name + notification prefs).
+  displayName: string;
+  notifyNewSpin: boolean;
+  notifyLowBalance: boolean;
+  notifyMessages: boolean;
   // Phase 5b
   webhooks: MockWebhook[];
   // Wave 3: editable auto intro/outro chat messages (creator-level).
@@ -392,6 +397,10 @@ const store: Store =
     messages: [],
     leaderboardEnabled: false,
     onboardingDismissed: false,
+    displayName: "Demo Creator",
+    notifyNewSpin: true,
+    notifyLowBalance: true,
+    notifyMessages: true,
     webhooks: [],
     chatIntro: DEFAULT_CHAT_INTRO,
     chatOutro: DEFAULT_CHAT_OUTRO,
@@ -414,6 +423,10 @@ store.referrals ??= [];
 store.messages ??= [];
 store.leaderboardEnabled ??= false;
 store.onboardingDismissed ??= false;
+store.displayName ??= "Demo Creator";
+store.notifyNewSpin ??= true;
+store.notifyLowBalance ??= true;
+store.notifyMessages ??= true;
 store.webhooks ??= [];
 // Wave 3: backfill auto-message defaults on stores pinned before they existed.
 if (store.chatIntro === undefined) store.chatIntro = DEFAULT_CHAT_INTRO;
@@ -779,11 +792,12 @@ export function mockCreateWheel(opts?: {
     brandColor = tpl.brandColor;
     prizes = tpl.prizes.map((p) => ({ ...structuredClone(p), id: genId("prize") }));
   } else {
-    const base = structuredClone(SAMPLE_WHEEL);
-    title = base.title;
-    subtitle = base.subtitle;
-    brandColor = base.brandColor ?? "#ec4899";
-    prizes = base.prizes.map((p) => ({ ...p, id: genId("prize") }));
+    // #7: a blank "New wheel" starts EMPTY (no prizes) → editor shows the empty
+    // state + "Add your first prize". Templates still seed their prizes above.
+    title = "New wheel";
+    subtitle = undefined;
+    brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
+    prizes = [];
   }
 
   const wheel: WheelConfig = {
@@ -2329,6 +2343,48 @@ export function mockGetOnboardingDismissed(): boolean {
 
 export function mockSetOnboardingDismissed(dismissed: boolean): { ok: true } {
   store.onboardingDismissed = !!dismissed;
+  return { ok: true };
+}
+
+// --- Phase 9 #6: account settings (display name + notification prefs) --------
+
+export function mockGetMyAccount(): {
+  email: string | null;
+  displayName: string | null;
+  notifications: { newSpin: boolean; lowBalance: boolean; messages: boolean };
+} {
+  return {
+    email: "demo@fanfunnel.app",
+    displayName: store.displayName,
+    notifications: {
+      newSpin: store.notifyNewSpin,
+      lowBalance: store.notifyLowBalance,
+      messages: store.notifyMessages,
+    },
+  };
+}
+
+export function mockSetMyDisplayName(name: string): { ok: true } {
+  const trimmed = name.trim();
+  if (trimmed) store.displayName = trimmed;
+  return { ok: true };
+}
+
+export function mockSetMyNotificationPrefs(prefs: {
+  newSpin: boolean;
+  lowBalance: boolean;
+  messages: boolean;
+}): { ok: true } {
+  store.notifyNewSpin = !!prefs.newSpin;
+  store.notifyLowBalance = !!prefs.lowBalance;
+  store.notifyMessages = !!prefs.messages;
+  return { ok: true };
+}
+
+export function mockSetActiveWheelBrandColor(color: string): { ok: true } {
+  const w = activeWheel();
+  w.brandColor = color;
+  store.wheels.set(w.id, w);
   return { ok: true };
 }
 

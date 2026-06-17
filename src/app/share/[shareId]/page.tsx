@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
-import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { getShareCard } from "@/lib/data";
+import { brandVars } from "@/lib/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +43,7 @@ export default async function SharePage({
   return (
     <main
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10"
-      style={{ "--brand": card.color } as CSSProperties}
+      style={brandVars(card.color)}
     >
       <div className="relative z-[1] w-full max-w-sm">
         <div

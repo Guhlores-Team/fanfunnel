@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { CSSProperties, Dispatch, SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import dynamic from "next/dynamic";
 import Wheel from "@/components/Wheel";
+import { brandVars } from "@/lib/theme";
 import { prizeOdds } from "@/lib/games/wheel/engine";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
 import {
@@ -54,6 +55,9 @@ const BoostsPanel = dynamic(() => import("@/components/dashboard/BoostsPanel"), 
 const AnalyticsPanel = dynamic(() => import("@/components/dashboard/AnalyticsPanel"), {
   loading: PanelFallback,
 });
+const SettingsPanel = dynamic(() => import("@/components/dashboard/SettingsPanel"), {
+  loading: PanelFallback,
+});
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -63,7 +67,16 @@ import {
   RARITY_DEFAULT_WEIGHT,
 } from "@/components/dashboard/editorHelpers";
 
-type Tab = "today" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
+type Tab =
+  | "today"
+  | "prizes"
+  | "fans"
+  | "campaigns"
+  | "editor"
+  | "inbox"
+  | "boosts"
+  | "analytics"
+  | "settings";
 
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common",
@@ -175,6 +188,20 @@ export default function DashboardClient({
     }).catch(() => {});
   }, []);
 
+  // #13: make completion STICKY. Onboarding "all done" is inferred from live
+  // metrics, so without this, deleting/archiving the wheel (or fans dropping to
+  // zero) would make the checklist reappear. The first time every step is
+  // genuinely complete, persist the dismissal to the account ONCE — after that
+  // it stays hidden permanently regardless of later data changes.
+  const persistedDoneRef = useRef(false);
+  useEffect(() => {
+    if (overview.loading) return;
+    if (onboardingAllDone && !onboardingDismissed && !persistedDoneRef.current) {
+      persistedDoneRef.current = true;
+      setOnboardingHidden(true);
+    }
+  }, [overview.loading, onboardingAllDone, onboardingDismissed, setOnboardingHidden]);
+
   // New creators should land on the Wheel editor (their first task), not the
   // empty "Today" feed. Switch once, on first data load, only if they haven't
   // already navigated somewhere themselves.
@@ -222,6 +249,7 @@ export default function DashboardClient({
     ["boosts", "Boosts"],
     ["inbox", "Inbox"],
     ["analytics", "Analytics"],
+    ["settings", "Settings"],
   ];
 
   return (
@@ -231,7 +259,9 @@ export default function DashboardClient({
       // Live brand theming: the page shell seeds --brand at request time, but
       // binding it to the editor's wheel state here means picking a new brand
       // color re-tints the whole dashboard instantly — no refresh needed.
-      style={{ "--brand": wheel.brandColor ?? "#ec4899" } as CSSProperties}
+      // brandVars also derives --brand-ink / --brand-text so text stays legible
+      // on ANY brand color (#1).
+      style={brandVars(wheel.brandColor)}
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
@@ -392,6 +422,16 @@ export default function DashboardClient({
             editingWheelId={editingWheelId}
             setEditingWheelId={setEditingWheelId}
             onWheelMutated={overview.refresh}
+          />
+        )}
+        {tab === "settings" && (
+          <SettingsPanel
+            // Re-tint the whole dashboard the instant a new brand color is saved
+            // in Settings (it persists to the active wheel; mirror it locally so
+            // --brand updates with no refresh — #9).
+            onBrandColorChange={(color) =>
+              setWheel((w) => ({ ...w, brandColor: color }))
+            }
           />
         )}
       </div>
@@ -1883,6 +1923,9 @@ function WheelEditor({
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  // #9: bumped after a prize is saved to the library (★) so TemplateLibrary
+  // refetches and the favorite shows up immediately — no page refresh.
+  const [librarySignal, setLibrarySignal] = useState(0);
   const dirty = JSON.stringify(wheel) !== savedJson;
 
   async function save() {
@@ -1913,6 +1956,11 @@ function WheelEditor({
 
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  // #8: a prize card is only `draggable` once the drag is armed from its corner
+  // grip handle. This keeps the prize text inputs fully selectable/editable —
+  // clicking into a field never starts a reorder drag. Armed on the grip's
+  // pointer-down, disarmed when the drag ends.
+  const [dragArmedIdx, setDragArmedIdx] = useState<number | null>(null);
 
   // While a prize card is being dragged, auto-scroll the page when the pointer
   // nears the top/bottom of the viewport — without this, long prize lists could
@@ -2010,8 +2058,11 @@ function WheelEditor({
       )
     );
     const saved = results.filter(Boolean).length;
-    if (saved > 0) toast(`Saved ${saved} ${saved === 1 ? "prize" : "prizes"} to library`, { tone: "success" });
-    else toast("Couldn't save prizes.", { tone: "error" });
+    if (saved > 0) {
+      // #9: surface the new prizes in the library immediately (no refresh).
+      setLibrarySignal((n) => n + 1);
+      toast(`Saved ${saved} ${saved === 1 ? "prize" : "prizes"} to library`, { tone: "success" });
+    } else toast("Couldn't save prizes.", { tone: "error" });
   }
   // Save a SINGLE prize to the reusable library (the ★ on each prize row).
   async function savePrizeToLibrary(p: Prize) {
@@ -2027,6 +2078,11 @@ function WheelEditor({
         emoji: p.emoji,
       }),
     });
+    if (res.ok) {
+      // #9: favoriting must appear in the Prize Library immediately — bump the
+      // signal so TemplateLibrary refetches without a page refresh.
+      setLibrarySignal((n) => n + 1);
+    }
     toast(
       res.ok ? `Saved "${p.label}" to library` : "Couldn't save prize.",
       { tone: res.ok ? "success" : "error" }
@@ -2149,6 +2205,39 @@ function WheelEditor({
                 />
               </div>
             </Field>
+            {/* #11: per-wheel prize-label text color. Empty = Auto (Wheel.tsx
+                picks a readable color per segment). Persists with the wheel. */}
+            <Field label="Label text color" full>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="h-9 w-12 shrink-0 rounded border border-line bg-transparent"
+                  value={wheel.labelColor ?? "#ffffff"}
+                  onChange={(e) => setWheel({ ...wheel, labelColor: e.target.value })}
+                  aria-label="Prize label color"
+                />
+                <input
+                  className="ff-input min-w-0 flex-1"
+                  value={wheel.labelColor ?? ""}
+                  placeholder="Auto (readable per slice)"
+                  onChange={(e) =>
+                    setWheel({
+                      ...wheel,
+                      labelColor: e.target.value ? e.target.value : undefined,
+                    })
+                  }
+                  aria-label="Prize label color hex"
+                />
+                <button
+                  type="button"
+                  onClick={() => setWheel({ ...wheel, labelColor: undefined })}
+                  disabled={wheel.labelColor == null}
+                  className="shrink-0 text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline disabled:opacity-40"
+                >
+                  Auto
+                </button>
+              </div>
+            </Field>
             <Field label="Subtitle" full>
               <input
                 className="ff-input w-full"
@@ -2167,13 +2256,37 @@ function WheelEditor({
             </div>
           </div>
 
+          {/* #7: brand-new wheels start with zero prizes — show a friendly
+              empty state + "Add your first prize" instead of a bare list. */}
+          {wheel.prizes.length === 0 && (
+            <div className="mt-4 rounded-xl border border-dashed border-line p-8 text-center">
+              <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-2xl">
+                🎁
+              </div>
+              <p className="mt-3 font-semibold text-ink">No prizes yet</p>
+              <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
+                Add your first prize to start building this wheel. You can set its
+                rarity, odds, and color — or pull one from your library below.
+              </p>
+              <button
+                type="button"
+                onClick={addPrize}
+                className="btn-brand mt-4 rounded-lg px-4 py-2 text-sm font-bold"
+              >
+                + Add your first prize
+              </button>
+            </div>
+          )}
+
           <div className="mt-4 space-y-3">
             {wheel.prizes.map((p, index) => {
               const swatch = p.color ?? RARITY_COLORS[p.rarity];
               return (
                 <div
                   key={p.id}
-                  draggable
+                  // #8: only draggable once armed via the grip handle below, so
+                  // the text fields stay selectable/editable the rest of the time.
+                  draggable={dragArmedIdx === index}
                   onDragStart={() => setDragIdx(index)}
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -2185,10 +2298,12 @@ function WheelEditor({
                     if (dragIdx !== null) movePrize(dragIdx, index);
                     setDragIdx(null);
                     setDragOverIdx(null);
+                    setDragArmedIdx(null);
                   }}
                   onDragEnd={() => {
                     setDragIdx(null);
                     setDragOverIdx(null);
+                    setDragArmedIdx(null);
                   }}
                   className={`card rounded-xl p-3 transition-[box-shadow,opacity,transform] duration-150 ${
                     dragIdx === index ? "scale-[0.99] opacity-50" : ""
@@ -2199,13 +2314,20 @@ function WheelEditor({
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span
-                      aria-hidden="true"
-                      className="shrink-0 cursor-grab select-none px-1 text-muted"
+                    <button
+                      type="button"
+                      // The ONLY drag affordance: arming on pointer-down lets the
+                      // native drag start from here, while leaving the prize
+                      // inputs non-draggable (text stays selectable). Disarm if
+                      // the press is released without a drag.
+                      onPointerDown={() => setDragArmedIdx(index)}
+                      onPointerUp={() => setDragArmedIdx((v) => (v === index ? null : v))}
+                      aria-label="Drag to reorder prize"
                       title="Drag to reorder (or use the ▲ ▼ buttons)"
+                      className="shrink-0 cursor-grab touch-none select-none rounded px-1 text-muted transition hover:text-ink active:cursor-grabbing"
                     >
-                      ☰
-                    </span>
+                      ⠿
+                    </button>
                     <div className="flex shrink-0 flex-col">
                       <button
                         type="button"
@@ -2398,19 +2520,27 @@ function WheelEditor({
             >
               + Add prize
             </button>
-            <button
-              type="button"
-              onClick={() => setWheel({ ...wheel, prizes: balanceOdds(wheel.prizes) })}
-              className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
-            >
-              Balance odds
-            </button>
+            {wheel.prizes.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setWheel({ ...wheel, prizes: balanceOdds(wheel.prizes) })}
+                className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
+              >
+                Balance odds
+              </button>
+            )}
           </div>
         </div>
 
         <div className="flex flex-col items-center gap-4 self-start rounded-2xl border border-line bg-surface p-6">
           <p className="text-xs font-medium uppercase tracking-wider text-muted">Live preview</p>
-          <Wheel prizes={wheel.prizes} brandColor={wheel.brandColor ?? "#ec4899"} result={null} size={280} />
+          <Wheel
+            prizes={wheel.prizes}
+            brandColor={wheel.brandColor ?? "#ec4899"}
+            labelColor={wheel.labelColor}
+            result={null}
+            size={280}
+          />
           <p className="text-center text-xs text-muted">
             Think of <strong>tickets</strong> like a raffle: a prize&rsquo;s chance is its
             tickets ÷ all tickets. The <span className="text-[var(--brand)]">%</span> next to
@@ -2441,6 +2571,7 @@ function WheelEditor({
               onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
               onApplyPrizeTemplate={applyPrizeTemplate}
               onSaveCurrentPrizesToLibrary={saveCurrentPrizesToLibrary}
+              refreshSignal={librarySignal}
             />
           </div>
         )}

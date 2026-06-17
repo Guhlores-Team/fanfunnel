@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getFanPass } from "@/lib/data";
 import SpinClient from "@/components/SpinClient";
 import SafetyMenu from "@/components/fan/SafetyMenu";
-import type { CSSProperties } from "react";
+import { brandVars } from "@/lib/theme";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export default async function SpinPage({
   return (
     <main
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 pt-10 pb-28"
-      style={{ "--brand": brand } as CSSProperties}
+      style={brandVars(brand)}
     >
       <div className="relative z-[1] flex w-full justify-center">
         <SpinClient pass={pass} />

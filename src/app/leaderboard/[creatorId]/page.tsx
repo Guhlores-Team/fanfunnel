@@ -1,5 +1,5 @@
 import { getLeaderboard } from "@/lib/data";
-import type { CSSProperties } from "react";
+import { brandVars } from "@/lib/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export default async function LeaderboardPage({
   return (
     <main
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center px-5 py-12"
-      style={{ "--brand": "#ec4899" } as CSSProperties}
+      style={brandVars("#ec4899")}
     >
       <div className="relative z-[1] w-full max-w-md">
         <header className="text-center">
@@ -40,8 +40,9 @@ export default async function LeaderboardPage({
                 className="card flex items-center gap-4 rounded-2xl px-4 py-3"
               >
                 <span
-                  className="tnum w-8 text-center text-lg font-extrabold"
-                  style={{ color: e.rank <= 3 ? "var(--brand)" : undefined }}
+                  className={`tnum w-8 text-center text-lg font-extrabold ${
+                    e.rank <= 3 ? "text-brand" : ""
+                  }`}
                 >
                   {e.rank}
                 </span>

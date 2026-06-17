@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
-import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { getPublicProfileBySlug } from "@/lib/data";
+import { brandVars } from "@/lib/theme";
 import { externalUrl } from "@/lib/format";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 
@@ -41,7 +41,7 @@ export default async function PublicProfilePage({
   return (
     <main
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-12"
-      style={{ "--brand": profile.brandColor } as CSSProperties}
+      style={brandVars(profile.brandColor)}
     >
       <div className="relative z-[1] w-full max-w-md text-center">
         {profile.avatarUrl ? (

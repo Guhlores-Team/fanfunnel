@@ -26,8 +26,13 @@
 }
 
 :root {
-  /* Default brand accent; pages override per-creator with style={{--brand}} */
+  /* Default brand accent; pages override per-creator with style={brandVars(color)} */
   --brand: #ec4899;
+  /* Companions derived by brandVars() (src/lib/theme.ts). Defaults match the pink
+     brand; pages that use brandVars override these per-creator so text stays
+     readable on ANY chosen color. */
+  --brand-ink: #ffffff; /* readable text ON the brand fill (e.g. button labels) */
+  --brand-text: var(--brand); /* brand color, legibility-adjusted, used AS text */
 }
 
 body {
@@ -97,7 +102,7 @@ input[type="time"] {
   background: linear-gradient(180deg,
     color-mix(in oklab, var(--brand) 88%, white 12%),
     var(--brand));
-  color: #fff;
+  color: var(--brand-ink);
   box-shadow:
     0 1px 0 color-mix(in oklab, white 35%, transparent) inset,
     0 12px 30px -10px color-mix(in oklab, var(--brand) 70%, transparent);
@@ -106,6 +111,11 @@ input[type="time"] {
 .btn-brand:hover { filter: brightness(1.06); }
 .btn-brand:active { transform: translateY(1px) scale(0.985); }
 .btn-brand:disabled { filter: grayscale(0.5) brightness(0.7); cursor: not-allowed; }
+
+/* Brand color used AS text — legibility-adjusted (--brand-text) so a dark brand
+   color stays readable on the dark app surface. Prefer this over text-[var(--brand)]
+   for things like odds/weight labels and the ×multiplier. */
+.text-brand { color: var(--brand-text); }
 
 /* Glassy elevated surface with a hairline + soft tinted shadow (not flat black). */
 .card {
