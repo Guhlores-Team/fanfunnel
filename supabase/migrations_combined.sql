@@ -1407,3 +1407,100 @@ revoke execute on function public.claim_spin(text) from public, anon, authentica
 grant  execute on function public.claim_spin(text) to service_role;
 revoke execute on function public.credit_pass_spins(uuid, int) from public, anon, authenticated;
 grant  execute on function public.credit_pass_spins(uuid, int) to service_role;
+
+-- 0028 Atomic per-fan spin rate limit (multi-review #1): in-row fixed-window
+-- counter under FOR UPDATE replaces the race-prone spins-table count in claim_spin.
+alter table public.fans
+  add column if not exists rl_window_start timestamptz,
+  add column if not exists rl_count int not null default 0;
+
+create or replace function public.claim_spin(p_token text)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid;
+  v_win_start timestamptz;
+  v_win_count int;
+  remaining integer;
+  p_max integer := 8;
+  p_window interval := interval '10 seconds';
+begin
+  select fp.fan_id into v_fan
+    from public.fan_passes fp
+    join public.fans f on f.id = fp.fan_id
+   where fp.token = p_token
+     and fp.is_active = true
+     and fp.self_excluded_at is null
+     and f.blocked_at is null;
+  if v_fan is null then
+    return null;
+  end if;
+
+  select rl_window_start, rl_count into v_win_start, v_win_count
+    from public.fans where id = v_fan for update;
+  if v_win_start is null or now() - v_win_start > p_window then
+    update public.fans set rl_window_start = now(), rl_count = 1 where id = v_fan;
+  elsif v_win_count >= p_max then
+    return -1;
+  else
+    update public.fans set rl_count = rl_count + 1 where id = v_fan;
+  end if;
+
+  update public.fan_passes
+     set spins_remaining = spins_remaining - 1,
+         last_spin_at = now()
+   where token = p_token and spins_remaining > 0
+  returning spins_remaining into remaining;
+
+  if remaining is null then
+    return null;
+  end if;
+
+  update public.fans
+     set spins_remaining = greatest(0, spins_remaining - 1),
+         last_spin_at = now()
+   where id = v_fan;
+
+  return remaining;
+end;
+$$;
+
+revoke execute on function public.claim_spin(text) from public, anon, authenticated;
+grant  execute on function public.claim_spin(text) to service_role;
+
+-- 0029 Block suspended creators (is_active=false) from self-updating public fields.
+create or replace function public.set_public_profile(
+  p_slug text, p_tip_url text, p_tagline text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.profiles
+     set public_slug = nullif(trim(p_slug), ''),
+         tip_url = nullif(trim(p_tip_url), ''),
+         public_tagline = nullif(trim(p_tagline), '')
+   where id = auth.uid() and is_active = true;
+end;
+$$;
+create or replace function public.set_creator_note(p_note text, p_avatar text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.profiles
+     set creator_note = nullif(trim(p_note), ''),
+         avatar_url = nullif(trim(p_avatar), '')
+   where id = auth.uid() and is_active = true;
+end;
+$$;
+create or replace function public.set_chat_settings(p_intro text, p_outro text)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles
+     set chat_intro = nullif(trim(coalesce(p_intro, '')), ''),
+         chat_outro = nullif(trim(coalesce(p_outro, '')), '')
+   where id = auth.uid() and is_active = true;
+$$;
+grant execute on function public.set_chat_settings(text, text) to authenticated;
+
+-- 0030 Close the org_add_creator consent-bypass: the app uses the invite flow;
+-- lock the legacy force-add RPC to service_role only.
+revoke execute on function public.org_add_creator(uuid, text) from public, anon, authenticated;
+grant  execute on function public.org_add_creator(uuid, text) to service_role;
