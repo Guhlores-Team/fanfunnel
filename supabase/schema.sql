@@ -1815,3 +1815,102 @@ $$;
 grant execute on function public.set_chat_settings(text, text) to authenticated;
 grant execute on function public.set_leaderboard_enabled(boolean) to authenticated;
 grant execute on function public.set_onboarding_dismissed(boolean) to authenticated;
+
+-- ============================================================
+-- 0024_referral_spins_on_pass.sql
+-- ============================================================
+-- The 0020 section above adds the per-wheel pass balance columns but (in this
+-- consolidated file) left claim_spin decrementing the FAN aggregate instead of
+-- the PASS the fan page displays — so a fresh schema.sql setup would show a
+-- pass balance that never decrements. Install the correct pass-decrementing
+-- claim_spin (overrides the earlier definition) and the referral-credit helper.
+create or replace function public.claim_spin(p_token text)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid;
+  v_recent integer;
+  remaining integer;
+  p_max integer := 8;                       -- max spins per window
+  p_window interval := interval '10 seconds';
+begin
+  select fp.fan_id into v_fan
+    from public.fan_passes fp
+    join public.fans f on f.id = fp.fan_id
+   where fp.token = p_token
+     and fp.is_active = true
+     and fp.self_excluded_at is null
+     and f.blocked_at is null;
+  if v_fan is null then
+    return null; -- bad/inactive/blocked/self-excluded token
+  end if;
+
+  -- Rolling-window rate limit (this fan's recent spins across all wheels).
+  select count(*) into v_recent
+    from public.spins
+   where fan_id = v_fan and created_at > now() - p_window;
+  if v_recent >= p_max then
+    return -1; -- sentinel: rate limited (caller maps to HTTP 429)
+  end if;
+
+  -- Decrement THIS wheel's pass balance.
+  update public.fan_passes
+     set spins_remaining = spins_remaining - 1,
+         last_spin_at = now()
+   where token = p_token and spins_remaining > 0
+  returning spins_remaining into remaining;
+
+  if remaining is null then
+    return null; -- no spins left on this wheel's pass
+  end if;
+
+  -- Keep the fan-level aggregate (sum of passes) in lockstep.
+  update public.fans
+     set spins_remaining = greatest(0, spins_remaining - 1),
+         last_spin_at = now()
+   where id = v_fan;
+
+  return remaining; -- spins left ON THIS PASS
+end;
+$$;
+
+-- Credit N spins to a fan's oldest active pass (spendable) and resync the
+-- aggregate. Used for referral bonuses so they land somewhere spinnable.
+create or replace function public.credit_pass_spins(p_fan_id uuid, p_spins int)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_pass uuid;
+begin
+  if p_spins is null or p_spins <= 0 then
+    return;
+  end if;
+
+  select id into v_pass
+    from public.fan_passes
+   where fan_id = p_fan_id and is_active = true
+   order by created_at asc
+   limit 1;
+  if v_pass is null then
+    return;
+  end if;
+
+  update public.fan_passes
+     set spins_remaining = spins_remaining + p_spins,
+         spins_granted_total = spins_granted_total + p_spins
+   where id = v_pass;
+
+  update public.fans f
+     set spins_remaining = coalesce((
+           select sum(p.spins_remaining) from public.fan_passes p
+            where p.fan_id = f.id and p.is_active), 0),
+         spins_granted_total = coalesce((
+           select sum(p.spins_granted_total) from public.fan_passes p
+            where p.fan_id = f.id and p.is_active), 0)
+   where f.id = p_fan_id;
+end;
+$$;
