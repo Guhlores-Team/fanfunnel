@@ -50,12 +50,13 @@ store. Links you generate in the dashboard really work and really spin.
 
 ## Going live (Supabase + Vercel)
 
-1. **Create a Supabase project**, then run [`supabase/schema.sql`](supabase/schema.sql)
-   in the SQL Editor. This file is **complete and self-sufficient** — it creates
-   every table, all Row-Level-Security policies, the **hardened** `claim_spin`
-   atomic function (self-exclude/block guards + rate limit), the auth trigger,
-   and every later migration (self-exclusion, age-gate ack, provably-fair
-   seeds, webhooks, chat, reports) folded in. Running it alone is enough.
+1. **Create a Supabase project**, then in the SQL Editor run two files **in
+   order**: [`supabase/schema.sql`](supabase/schema.sql) (base tables, RLS, the
+   **hardened** `claim_spin`, the auth trigger) **then**
+   [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql) (every
+   migration on top). Both are idempotent, so together they always produce a
+   complete, current schema. ⚠ `schema.sql` alone omits the later migrations and
+   brings up a weaker DB.
 2. **Copy `.env.example` → `.env.local`** and fill in the URL, anon key, and
    service-role key from Supabase → Project Settings → API. **All three are
    required** — the app refuses to boot in production if any is missing (it will
@@ -94,7 +95,7 @@ src/
   app/spin/[token]/      Fan page.
   app/api/spin/          Server-authoritative spin endpoint.
   app/api/passes/        Create a unique fan link.
-supabase/schema.sql      Full multi-tenant schema + RLS.
+supabase/schema.sql      Base multi-tenant schema + RLS (run migrations_combined.sql after).
 ```
 
 ### Why config-driven
@@ -124,9 +125,9 @@ the Supabase SQL Editor. It truncates all app data (wheels, prizes, fans,
 links, spins, redemptions) but keeps your tables and logins. Optional blocks at
 the bottom let you also delete creator accounts or reset roles/features.
 
-To rebuild the schema from scratch, re-run
-[`supabase/schema.sql`](supabase/schema.sql) — it's idempotent (safe to run
-repeatedly).
+To rebuild from scratch, re-run [`supabase/schema.sql`](supabase/schema.sql)
+**then** [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql)
+— both are idempotent (safe to run repeatedly).
 
 ## Tests
 

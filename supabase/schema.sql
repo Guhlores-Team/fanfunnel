@@ -1,6 +1,11 @@
 -- ============================================================================
--- FanFunnel — database schema
--- Run this in the Supabase SQL Editor (or via `supabase db push`).
+-- FanFunnel — BASE database schema (base tables, RLS, auth trigger, base RPCs).
+--
+-- ⚠ NOT COMPLETE ON ITS OWN. For a brand-new database run this file FIRST, then
+--   run `supabase/migrations_combined.sql` (every migration, idempotent) on top.
+--   This file omits later migrations (org seats / can_act_for, account settings,
+--   locked server-only RPCs, atomic spin rate-limit, is_active enforcement, …);
+--   applying it alone brings up a weaker, out-of-date schema.
 --
 -- Multi-tenant model with three effective roles:
 --   * admin   — you / the agency. A SUPERSET of creator: owns its own wheels,

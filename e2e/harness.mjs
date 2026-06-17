@@ -68,9 +68,16 @@ const EXPECTED_4XX = [
   ["/api/spin", 403], // blocked / needs ack
   ["/api/spin", 429], // rate limited
 ];
-function benignResponse(url, status) {
+function benignResponse(url, status, method = "GET") {
   const path = url.replace(BASE, "").split("?")[0];
-  if (status === 401 && path.startsWith("/api/")) return true; // unauth reads
+  // Unauthenticated READS (GET) of /api endpoints are expected during pre-login
+  // navigation, so a GET 401 there is benign. But a 401 on a MUTATION
+  // (POST/PUT/DELETE/PATCH) — or on any non-/api path — is a genuine signal of a
+  // real auth regression and must NOT be hidden (the old blanket rule swallowed
+  // every /api 401, mutations included).
+  if (status === 401 && path.startsWith("/api/") && method.toUpperCase() === "GET") {
+    return true;
+  }
   return EXPECTED_4XX.some(([p, s]) => p === path && s === status);
 }
 const benignConsole = (text) => {
@@ -95,8 +102,8 @@ export function attachSink(page) {
       push("requestfailed", `${r.method()} ${r.url()} — ${r.failure()?.errorText}`);
   });
   page.on("response", (r) => {
-    if (r.status() >= 400 && !benignResponse(r.url(), r.status()))
-      push("http", `${r.status()} ${r.url().replace(BASE, "")}`);
+    if (r.status() >= 400 && !benignResponse(r.url(), r.status(), r.request().method()))
+      push("http", `${r.status()} ${r.request().method()} ${r.url().replace(BASE, "")}`);
   });
   return sink;
 }

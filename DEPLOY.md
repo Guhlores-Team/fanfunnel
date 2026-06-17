@@ -9,12 +9,12 @@ Three connections: **GitHub→Vercel**, **Vercel→Supabase env vars**, **schema
 
 ---
 
-## STEP 1 — Supabase: load the schema (one paste)
+## STEP 1 — Supabase: load the schema (two pastes, in order)
 
 1. Go to **supabase.com → your project** (the one you've been running SQL on).
 2. Left sidebar → **SQL Editor** → **New query**.
-3. **Brand-new project (recommended):** open `supabase/schema.sql`, paste it, **Run**. This one file is now **complete** — base tables + every migration (self-exclusion, age-gate ack, provably-fair seeds, webhooks, chat, reports, in-progress status) and the hardened `claim_spin`. Nothing else to run.
-4. **Existing project that pre-dates these migrations:** new query → open **`supabase/migrations_combined.sql`**, paste it, **Run** to bring an older DB up to date. Idempotent (safe to re-run). Not needed if you ran `schema.sql` in step 3.
+3. **Brand-new project (recommended):** run **two** files in order — first `supabase/schema.sql` (base tables + RLS + hardened `claim_spin`), then `supabase/migrations_combined.sql` (every migration on top). Both are idempotent, so this always yields a complete, current schema. ⚠ `schema.sql` alone is NOT complete — it omits the later migrations (org seats, account settings, locked RPCs, atomic spin rate-limit, is_active enforcement) and would bring up a weaker DB.
+4. **Existing project that pre-dates these migrations:** new query → open **`supabase/migrations_combined.sql`**, paste it, **Run** to bring an older DB up to date. Idempotent (safe to re-run).
 5. (Optional) Authentication → Providers → Email → turn **OFF "Confirm email"** so you can sign in instantly while testing.
 
 **Get your 3 keys:** Supabase → **Project Settings → API**:
