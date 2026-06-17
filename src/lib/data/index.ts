@@ -332,6 +332,12 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .eq("is_active", true)
     .maybeSingle();
   let data: unknown = primary.data;
+  // Did the select that succeeded actually include the per-wheel balance column?
+  // Only the pre-0020 legacy fallback omits it. When it's present we MUST trust
+  // it (even when 0) and never fall back to the fan-level aggregate, which is a
+  // SUM across every link the fan holds and would show an inflated count
+  // (e.g. 18 instead of this wheel's 3).
+  let hasPerPass = !primary.error;
   if (primary.error) {
     // DB has 0020 (per-wheel balances) but not 0022 (commit-reveal) yet.
     const mid = await sb
@@ -341,6 +347,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       .eq("is_active", true)
       .maybeSingle();
     data = mid.data;
+    hasPerPass = !mid.error;
     if (mid.error) {
       const legacy = await sb
         .from("fan_passes")
@@ -349,6 +356,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
         .eq("is_active", true)
         .maybeSingle();
       data = legacy.data;
+      hasPerPass = false; // pre-0020 schema: only the aggregate exists
     }
   }
 
@@ -465,9 +473,14 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
     fanHandle: pass.fan.handle ?? null,
     creatorTitle: pass.creator?.display_name ?? "Creator",
-    // Per-wheel: the balance the fan can spin on THIS wheel's link (falls back
-    // to the fan-level aggregate pre-0020).
-    spinsRemaining: pass.spins_remaining ?? pass.fan.spins_remaining,
+    // Per-wheel: the balance the fan can spin on THIS wheel's link. When the
+    // per-pass column exists it's authoritative (even 0) — this is the same
+    // value claim_spin decrements and returns, so the displayed count matches
+    // before and after a spin. Only a pre-0020 DB falls back to the fan-level
+    // aggregate (the sum across all the fan's links).
+    spinsRemaining: hasPerPass
+      ? pass.spins_remaining ?? 0
+      : pass.fan.spins_remaining,
     wheel: toWheelConfig(wheel),
     recentWins: winRows.map((w) => ({
       label: w.prize_label,
