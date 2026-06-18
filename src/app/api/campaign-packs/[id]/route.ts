@@ -42,7 +42,11 @@ export async function PATCH(
   };
 
   if ("campaignId" in body) patch.campaignId = body.campaignId ?? null;
-  if (body.label !== undefined) patch.label = String(body.label);
+  if (body.label !== undefined) {
+    const label = String(body.label).trim();
+    if (!label) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    patch.label = label;
+  }
   if (body.spins !== undefined) {
     const spins = validNumber(body.spins);
     if (spins === null) return NextResponse.json({ error: "bad_request" }, { status: 400 });
