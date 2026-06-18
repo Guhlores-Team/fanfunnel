@@ -927,7 +927,15 @@ export async function createPass(opts: {
           ...(campaignId ? { campaign_id: campaignId } : {}),
         })
         .eq("id", ex.id);
-      if (topUpErr) return { error: "db_error" };
+      if (topUpErr) return fail("db_error");
+      // Undo the top-up (restore the pre-top-up balance) if a later write fails.
+      const exId = ex.id, exRem = ex.spins_remaining, exGr = ex.spins_granted_total;
+      rollbacks.push(async () => {
+        await sb
+          .from("fan_passes")
+          .update({ spins_remaining: exRem, spins_granted_total: exGr })
+          .eq("id", exId);
+      });
     } else {
       token = randomToken();
       const { data: np, error: npErr } = await sb
@@ -943,8 +951,12 @@ export async function createPass(opts: {
         })
         .select("id")
         .single();
-      if (npErr || !np) return { error: "db_error" };
+      if (npErr || !np) return fail("db_error");
       passId = np.id;
+      const newPassId = np.id;
+      rollbacks.push(async () => {
+        await sb.from("fan_passes").delete().eq("id", newPassId);
+      });
     }
 
     // Keep the fan-level aggregate (sum of passes) in sync.
@@ -953,7 +965,7 @@ export async function createPass(opts: {
       .select("spins_remaining, spins_granted_total")
       .eq("id", fanId)
       .maybeSingle();
-    if (!fan) return { error: "fan_not_found" };
+    if (!fan) return fail("fan_not_found");
     const { error: fanBalErr } = await sb
       .from("fans")
       .update({
@@ -961,7 +973,15 @@ export async function createPass(opts: {
         spins_granted_total: fan.spins_granted_total + balanceAdd,
       })
       .eq("id", fanId);
-    if (fanBalErr) return { error: "db_error" };
+    if (fanBalErr) return fail("db_error");
+    // Undo the aggregate bump if a later write fails.
+    const fanRem = fan.spins_remaining, fanGr = fan.spins_granted_total;
+    rollbacks.push(async () => {
+      await sb
+        .from("fans")
+        .update({ spins_remaining: fanRem, spins_granted_total: fanGr })
+        .eq("id", fanId);
+    });
   } else {
     const { data: fan, error } = await sb
       .from("fans")
@@ -973,8 +993,13 @@ export async function createPass(opts: {
       })
       .select("id")
       .single();
-    if (error || !fan) return { error: "db_error" };
+    if (error || !fan) return fail("db_error");
     fanId = fan.id;
+    // Undo the new fan (cascades to its pass/grant) if a later write fails.
+    const newFanId = fan.id;
+    rollbacks.push(async () => {
+      await sb.from("fans").delete().eq("id", newFanId);
+    });
 
     // Referral linking (dormant feature; credit awarded on first paid grant).
     if (opts.referralCode) {
@@ -1011,10 +1036,14 @@ export async function createPass(opts: {
       })
       .select("id")
       .single();
-    if (passErr || !np) return { error: "db_error" };
+    if (passErr || !np) return fail("db_error");
     passId = np.id;
+    const newPassId2 = np.id;
+    rollbacks.push(async () => {
+      await sb.from("fan_passes").delete().eq("id", newPassId2);
+    });
   }
-  if (!fanId) return { error: "db_error" };
+  if (!fanId) return fail("db_error");
 
   // Record the grant for revenue, attributed to this pass (= wheel/campaign).
   const { error: grantErr } = await sb.from("grants").insert({
@@ -1026,7 +1055,10 @@ export async function createPass(opts: {
     amount_cents: amountCents,
     bonus_spins: bonusSpins,
   });
-  if (grantErr) return { error: "db_error" };
+  // Grant failing after the fan/pass/balance writes is the exact gap the
+  // rollbacks guard against: undo them so we never leave spendable spins or a
+  // pass without a matching grant/revenue row.
+  if (grantErr) return fail("db_error");
 
   // Referral crediting (idempotent): the FIRST time this fan makes a PAID
   // grant, if they were referred and haven't been credited yet, award the bonus
@@ -1320,14 +1352,36 @@ export async function editGrant(
 
   const { data: gRow } = await sb
     .from("grants")
-    .select("id, fan_id, fan_pass_id, spins")
+    .select("id, fan_id, fan_pass_id, spins, amount_cents, campaign_id")
     .eq("id", grantId)
     .eq("creator_id", user.id)
     .maybeSingle();
   const grant = gRow as
-    | { id: string; fan_id: string; fan_pass_id: string | null; spins: number }
+    | {
+        id: string;
+        fan_id: string;
+        fan_pass_id: string | null;
+        spins: number;
+        amount_cents: number;
+        campaign_id: string | null;
+      }
     | null;
   if (!grant) return { error: "not_found" };
+
+  // The grant update and the two aggregate updates below are separate
+  // statements; wire a best-effort compensation so a later failure can't leave
+  // the grant changed while the fan/pass balances stay stale.
+  const rollbacks: Array<() => Promise<void>> = [];
+  const fail = async (error: string): Promise<{ error: string }> => {
+    for (const undo of rollbacks.reverse()) {
+      try {
+        await undo();
+      } catch {
+        /* best-effort */
+      }
+    }
+    return { error };
+  };
 
   // Validate finite, int4-bounded integers up front so a non-finite patch or an
   // overflowing balance can't be silently written and desync the aggregates.
@@ -1355,6 +1409,15 @@ export async function editGrant(
   // adjustments below only run once the edit itself has persisted.
   const { error: grantErr } = await sb.from("grants").update(update).eq("id", grantId);
   if (grantErr) return { error: "db_error" };
+  // Restore the grant's pre-edit values if an aggregate update below fails.
+  const oldGrant = {
+    spins: grant.spins,
+    amount_cents: grant.amount_cents,
+    campaign_id: grant.campaign_id,
+  };
+  rollbacks.push(async () => {
+    await sb.from("grants").update(oldGrant).eq("id", grantId);
+  });
 
   if (delta !== 0) {
     // Adjust the fan-level aggregate.
@@ -1372,7 +1435,14 @@ export async function editGrant(
           spins_granted_total: clampInt(fan.spins_granted_total + delta, 0),
         })
         .eq("id", grant.fan_id);
-      if (fanErr) return { error: "db_error" };
+      if (fanErr) return fail("db_error");
+      const fanRem = fan.spins_remaining, fanGr = fan.spins_granted_total;
+      rollbacks.push(async () => {
+        await sb
+          .from("fans")
+          .update({ spins_remaining: fanRem, spins_granted_total: fanGr })
+          .eq("id", grant.fan_id);
+      });
     }
     // And the specific wheel's pass balance this grant landed on.
     if (grant.fan_pass_id) {
@@ -1390,7 +1460,7 @@ export async function editGrant(
             spins_granted_total: clampInt(p.spins_granted_total + delta, 0),
           })
           .eq("id", grant.fan_pass_id);
-        if (pErr) return { error: "db_error" };
+        if (pErr) return fail("db_error");
       }
     }
   }
