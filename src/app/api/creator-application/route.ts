@@ -14,6 +14,19 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  const limits: Record<string, number> = {
+    displayName: 80,
+    socials: 500,
+    audienceSize: 80,
+    note: 2000,
+  };
+  for (const [field, max] of Object.entries(limits)) {
+    const value = (body as Record<string, unknown>)[field];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string" || value.length > max) {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
+  }
   const result = await submitCreatorApplication(body);
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;

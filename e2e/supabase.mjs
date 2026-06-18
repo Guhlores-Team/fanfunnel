@@ -162,6 +162,53 @@ try {
     });
   }
 
+  // Consolidated from the former scripts/security/rls-runtime-test.mjs: the
+  // revenue-bearing creator tables (prizes, grants, spins) share the same tenant
+  // RLS pattern but aren't covered by the generic loop above. Seed A's full
+  // prize→pass→grant→spin chain via the service role, then prove B (anon, signed
+  // in) reads ZERO of it.
+  await step("RLS isolation on prizes/grants/spins (B reads 0 of A's revenue rows)", async () => {
+    const { data: prize, error: pErr } = await admin
+      .from("prizes")
+      .insert({ wheel_id: wheelId, label: "A's prize", rarity: "common", weight: 10 })
+      .select("id")
+      .single();
+    assert(!pErr, `seed prize failed: ${pErr?.message}`);
+    const { data: fan, error: fErr } = await admin
+      .from("fans")
+      .insert({ creator_id: A.id, display_name: "A's spin fan", spins_remaining: 5 })
+      .select("id")
+      .single();
+    assert(!fErr, `seed fan failed: ${fErr?.message}`);
+    const { data: pass, error: passErr } = await admin
+      .from("fan_passes")
+      .insert({ token: `e2e-rls-${rand}`, creator_id: A.id, wheel_id: wheelId, fan_id: fan.id })
+      .select("id")
+      .single();
+    assert(!passErr, `seed fan_pass failed: ${passErr?.message}`);
+    const { error: gErr } = await admin
+      .from("grants")
+      .insert({ creator_id: A.id, fan_id: fan.id, spins: 5, amount_cents: 1000 });
+    assert(!gErr, `seed grant failed: ${gErr?.message}`);
+    const { error: sErr } = await admin.from("spins").insert({
+      fan_pass_id: pass.id,
+      creator_id: A.id,
+      wheel_id: wheelId,
+      fan_id: fan.id,
+      prize_id: prize.id,
+      prize_label: "A's prize",
+      prize_rarity: "common",
+    });
+    assert(!sErr, `seed spin failed: ${sErr?.message}`);
+
+    const { data: bGrants } = await B.client.from("grants").select("id").eq("creator_id", A.id);
+    assert((bGrants?.length ?? 0) === 0, "B reads 0 of A's grants");
+    const { data: bSpins } = await B.client.from("spins").select("id").eq("creator_id", A.id);
+    assert((bSpins?.length ?? 0) === 0, "B reads 0 of A's spins");
+    const { data: bPrizes } = await B.client.from("prizes").select("id").eq("wheel_id", wheelId);
+    assert((bPrizes?.length ?? 0) === 0, "B reads 0 of A's prizes");
+  });
+
   await step("set_chat_settings RPC persists for the caller (prod-bug regression)", async () => {
     const { error } = await A.client.rpc("set_chat_settings", {
       p_intro: "Welcome, spin away!",

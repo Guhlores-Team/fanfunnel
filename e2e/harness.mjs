@@ -68,14 +68,26 @@ const EXPECTED_4XX = [
   ["/api/spin", 403], // blocked / needs ack
   ["/api/spin", 429], // rate limited
 ];
+// Read-only endpoints reachable BEFORE login — the public-page reads plus the
+// identity probe. A GET 401 on one of these is expected during pre-login
+// navigation. Trailing "/" marks a prefix so dynamic [param] segments match.
+const PRELOGIN_READS = [
+  "/api/me",
+  "/api/public-profile",
+  "/api/public/wheel/",
+  "/api/recent-wins/",
+  "/api/leaderboard/",
+  "/api/share-cards/",
+];
+const isPreloginRead = (path) =>
+  PRELOGIN_READS.some((p) => (p.endsWith("/") ? path.startsWith(p) : path === p));
 function benignResponse(url, status, method = "GET") {
   const path = url.replace(BASE, "").split("?")[0];
-  // Unauthenticated READS (GET) of /api endpoints are expected during pre-login
-  // navigation, so a GET 401 there is benign. But a 401 on a MUTATION
-  // (POST/PUT/DELETE/PATCH) — or on any non-/api path — is a genuine signal of a
-  // real auth regression and must NOT be hidden (the old blanket rule swallowed
-  // every /api 401, mutations included).
-  if (status === 401 && path.startsWith("/api/") && method.toUpperCase() === "GET") {
+  // A GET 401 is benign ONLY on a known pre-login read endpoint. Restricting to
+  // PRELOGIN_READS (instead of every /api/* path) means a 401 on a GET endpoint
+  // that should be authenticated still surfaces as a genuine auth regression —
+  // as does any 401 on a MUTATION (POST/PUT/DELETE/PATCH) or non-/api path.
+  if (status === 401 && method.toUpperCase() === "GET" && isPreloginRead(path)) {
     return true;
   }
   return EXPECTED_4XX.some(([p, s]) => p === path && s === status);
@@ -189,7 +201,12 @@ export async function clickTab(page, name) {
     try {
       if ((await t.innerText()).trim().toLowerCase().includes(name.toLowerCase())) {
         await t.click();
-        await page.waitForTimeout(1000);
+        // Web-first wait: the clicked tab reflects its selected state once the
+        // panel has switched — wait for that instead of a fixed pause.
+        await t
+          .and(page.locator("[aria-selected='true']"))
+          .waitFor({ timeout: 4000 })
+          .catch(() => {});
         return true;
       }
     } catch {
@@ -210,12 +227,14 @@ export async function passAgeGate(page) {
     const boxes = await page.locator("[role='dialog'] input[type='checkbox']").all();
     if (boxes.length === 0) return; // some other modal, not the age gate
     for (const box of boxes) {
+      // check() auto-waits for and verifies the checked state — no fixed pause.
       await box.check({ timeout: 3000 }).catch(() => {});
-      await page.waitForTimeout(100);
     }
     const enter = page.locator("[role='dialog'] button:has-text('Enter')").first();
     await enter.click({ timeout: 4000 }).catch(() => {});
-    await page.waitForTimeout(1000);
+    // Web-first wait: the gate is done once its dialog is gone, not after a fixed
+    // pause.
+    await dialog.first().waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
   } catch {
     /* gate not blocking — proceed */
   }

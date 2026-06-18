@@ -29,11 +29,16 @@ export async function creatorJourney(page, { step, assert }) {
     const before = (await page.locator("body").innerText()).match(/[\d.]+%/g)?.slice(0, 8) ?? [];
     const sel = page.locator("select.ff-input").first();
     await sel.selectOption("legendary");
-    await page.waitForTimeout(500);
+    // Web-first wait: poll until the rendered odds actually change, not a fixed sleep.
+    await page
+      .waitForFunction(
+        (b) => JSON.stringify((document.body.innerText.match(/[\d.]+%/g) ?? []).slice(0, 8)) !== b,
+        JSON.stringify(before)
+      )
+      .catch(() => {});
     const after = (await page.locator("body").innerText()).match(/[\d.]+%/g)?.slice(0, 8) ?? [];
     assert(JSON.stringify(before) !== JSON.stringify(after), "odds recomputed on rarity change");
     await sel.selectOption("common");
-    await page.waitForTimeout(300);
   });
 
   await step("wheel editor: edit title + save persists", async () => {
@@ -53,9 +58,11 @@ export async function creatorJourney(page, { step, assert }) {
     }
     assert(title, "found the wheel title input");
     await title.fill("E2E Wheel " + Date.now());
-    await page.waitForTimeout(200);
     await page.locator("button:has-text('Save wheel')").first().click();
-    await page.waitForTimeout(1300);
+    // Web-first wait for the save confirmation rather than a fixed sleep.
+    await page
+      .waitForFunction(() => /saved|all changes saved/i.test(document.body.innerText))
+      .catch(() => {});
     const body = await page.locator("body").innerText();
     assert(/saved|all changes saved/i.test(body), "save confirmed in the UI");
   });
@@ -64,11 +71,11 @@ export async function creatorJourney(page, { step, assert }) {
     await clickTab(page, "Fans");
     const name = page.locator("input.ff-input").first();
     if (await name.isEditable()) await name.fill("E2E Fan");
-    await page.waitForTimeout(150);
     const btn = page.locator("button:has-text('Create account')").first();
     if ((await btn.count()) && (await btn.isEnabled())) {
       await btn.click();
-      await page.waitForTimeout(1300);
+      // Web-first wait for post-create content instead of a fixed sleep.
+      await page.waitForFunction(() => /fan|link|spin/i.test(document.body.innerText)).catch(() => {});
     }
     // A fan link / token should now be present somewhere on the page.
     const body = await page.locator("body").innerText();
@@ -77,7 +84,16 @@ export async function creatorJourney(page, { step, assert }) {
 
   await step("analytics tab merges performance + deep insights", async () => {
     await clickTab(page, "Analytics");
-    await page.waitForTimeout(1500);
+    // Web-first wait until the analytics content has rendered, instead of a fixed sleep.
+    await page
+      .waitForFunction(() => {
+        const t = document.body.innerText;
+        return (
+          /spins played|spins trend|conversion|what.?s landing/i.test(t) &&
+          /heatmap|cohort|profit|prize cost/i.test(t)
+        );
+      })
+      .catch(() => {});
     const body = await page.locator("body").innerText();
     const pulse = /spins played|spins trend|conversion|what.?s landing/i.test(body);
     const deep = /heatmap|cohort|profit|prize cost/i.test(body);
@@ -89,8 +105,13 @@ export async function creatorJourney(page, { step, assert }) {
     await clickTab(page, "Boosts");
     const toggle = page.locator("button[aria-pressed]").first();
     if (await toggle.count()) {
+      const before = await toggle.getAttribute("aria-pressed");
+      const handle = await toggle.elementHandle();
       await toggle.click();
-      await page.waitForTimeout(1000);
+      // Web-first wait for the toggle to reflect its new state instead of a fixed sleep.
+      await page
+        .waitForFunction(([el, b]) => el.getAttribute("aria-pressed") !== b, [handle, before])
+        .catch(() => {});
       const body = await page.locator("body").innerText();
       assert(!/couldn.?t update leaderboard/i.test(body), "no leaderboard error toast");
     }
@@ -100,11 +121,12 @@ export async function creatorJourney(page, { step, assert }) {
     const launcher = page.locator("button[aria-label='Open debug console']");
     assert(await launcher.count(), "debug launcher present with ?debug=1");
     await launcher.click();
-    await page.waitForTimeout(400);
+    // Auto-wait for the console panel to open instead of a fixed sleep.
+    await page.locator("[aria-label='Debug error console']").waitFor().catch(() => {});
     const entries = await page.locator("[aria-label='Debug error console'] ul > li").count();
     assert(entries === 0, `debug console captured ${entries} error(s) during creator flow`);
     await page.locator("button[aria-label='Close debug console']").click();
-    await page.waitForTimeout(200);
+    await page.locator("[aria-label='Debug error console']").waitFor({ state: "hidden" }).catch(() => {});
   });
 }
 
@@ -151,7 +173,14 @@ export async function fanJourney(page, { step, assert }, ctx) {
     };
     page.on("response", onResp);
     await page.locator("button:has-text('SPIN')").first().click();
-    await page.waitForTimeout(6500);
+    // Wait for the spin's POST to land (captures shareId), then for the win UI to
+    // render — instead of a fixed sleep timed to the wheel animation.
+    await page
+      .waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST")
+      .catch(() => {});
+    await page
+      .waitForFunction(() => /you won|won a|congrat|prize|🎉|awesome/i.test(document.body.innerText))
+      .catch(() => {});
     page.off("response", onResp);
 
     const body = await page.locator("body").innerText();
@@ -166,7 +195,7 @@ export async function fanJourney(page, { step, assert }, ctx) {
       if (await el.count()) {
         try {
           await el.click();
-          await page.waitForTimeout(400);
+          await el.waitFor({ state: "hidden" }).catch(() => {});
           break;
         } catch {
           /* ignore */
@@ -195,16 +224,17 @@ export async function creatorExtras(page, { step, assert }) {
   await step("redemptions: advance a fulfilment status", async () => {
     await goto(page, "/dashboard", 1800);
     await clickTab(page, "Prizes");
-    await page.waitForTimeout(800);
     // The primary per-row action moves status (Start → Mark fulfilled → …).
     const action = page
       .locator("button")
       .filter({ hasText: /^(Start|Mark fulfilled|Reopen|Mark delivered)$/i })
       .first();
+    await action.waitFor().catch(() => {});
     assert(await action.count(), "a redemption with a status action exists");
     const before = await page.locator("body").innerText();
     await action.click();
-    await page.waitForTimeout(1200);
+    // Web-first wait for the fulfilment queue to change instead of a fixed sleep.
+    await page.waitForFunction((b) => document.body.innerText !== b, before).catch(() => {});
     const after = await page.locator("body").innerText();
     assert(before !== after, "the fulfilment queue changed after advancing a status");
   });
@@ -212,18 +242,20 @@ export async function creatorExtras(page, { step, assert }) {
   await step("webhooks: add then remove", async () => {
     await goto(page, "/dashboard", 1500);
     await clickTab(page, "Boosts");
-    await page.waitForTimeout(600);
     const urlInput = page.locator("input[type='url']").last(); // webhook endpoint
+    await urlInput.waitFor().catch(() => {});
     assert(await urlInput.count(), "webhook URL input present");
     await urlInput.fill("https://example.com/hooks/e2e");
     await page.locator("button:has-text('Add')").first().click();
-    await page.waitForTimeout(1000);
+    // Auto-wait for the new webhook row to appear instead of a fixed sleep.
+    await page.locator("text=example.com/hooks/e2e").first().waitFor().catch(() => {});
     assert(
       (await page.locator("text=example.com/hooks/e2e").count()) > 0,
       "webhook appears in the list after Add"
     );
     await page.locator("button:has-text('Remove')").first().click();
-    await page.waitForTimeout(800);
+    // Auto-wait for the webhook row to disappear instead of a fixed sleep.
+    await page.locator("text=example.com/hooks/e2e").first().waitFor({ state: "hidden" }).catch(() => {});
     assert(
       (await page.locator("text=example.com/hooks/e2e").count()) === 0,
       "webhook removed from the list"
@@ -244,7 +276,13 @@ export async function creatorExtras(page, { step, assert }) {
       if (dts.length >= 2) await dts[1].fill(fmt(new Date(now.getTime() + 7200_000)));
     }
     await page.locator("button:has-text('Schedule')").first().click();
-    await page.waitForTimeout(1200);
+    // Web-first wait for the scheduled window to render instead of a fixed sleep.
+    await page
+      .waitForFunction(() => {
+        const t = document.body.innerText;
+        return /×\s*3/.test(t) || /happy hour|boost|×/i.test(t);
+      })
+      .catch(() => {});
     assert(
       (await page.locator("text=/×\\s*3/").count()) > 0 ||
         /happy hour|boost|×/i.test(await page.locator("body").innerText()),
@@ -261,8 +299,12 @@ export async function fanExtras(page, { step, assert }, ctx) {
     const wl = page.locator("button[aria-pressed]").filter({ hasText: /🎁|☆|★/ }).first();
     if (await wl.count()) {
       const before = await wl.getAttribute("aria-pressed");
+      const handle = await wl.elementHandle();
       await wl.click();
-      await page.waitForTimeout(700);
+      // Web-first wait for the star's pressed state to flip instead of a fixed sleep.
+      await page
+        .waitForFunction(([el, b]) => el.getAttribute("aria-pressed") !== b, [handle, before])
+        .catch(() => {});
       const after = await wl.getAttribute("aria-pressed");
       assert(before !== after, "wishlist star toggled its pressed state");
     } else {
@@ -274,15 +316,17 @@ export async function fanExtras(page, { step, assert }, ctx) {
     const fab = page.locator("button[aria-label='Message creator']");
     assert(await fab.count(), "chat launcher present");
     await fab.first().click();
-    await page.waitForTimeout(1200);
     const panel = page.locator("[aria-label^='Chat with']");
+    // Auto-wait for the chat panel to open instead of a fixed sleep.
+    await panel.first().waitFor().catch(() => {});
     assert(await panel.count(), "chat panel opened");
     const input = page.locator("input[aria-label^='Message ']");
     if (await input.count()) {
       const msg = "e2e hello " + Date.now();
       await input.fill(msg);
       await page.keyboard.press("Enter");
-      await page.waitForTimeout(1200);
+      // Auto-wait for the sent message to appear in the thread instead of a fixed sleep.
+      await panel.filter({ hasText: msg }).first().waitFor().catch(() => {});
       assert((await panel.innerText()).includes(msg), "sent message appears in the thread");
     }
     await page.keyboard.press("Escape");
@@ -306,13 +350,19 @@ export async function fanExtras(page, { step, assert }, ctx) {
       const label = (await spin.innerText()).toLowerCase();
       if (label.includes("out of spins")) break;
       await spin.click();
-      await page.waitForTimeout(5800);
+      // Wait for the spin result (prize modal) instead of a fixed sleep for the animation.
+      await page
+        .locator("button:has-text('Awesome')")
+        .or(page.locator("button:has-text('Close')"))
+        .first()
+        .waitFor()
+        .catch(() => {});
       for (const s of ["button:has-text('Awesome')", "button:has-text('Close')"]) {
         const el = page.locator(s).first();
         if (await el.count()) {
           try {
             await el.click();
-            await page.waitForTimeout(300);
+            await el.waitFor({ state: "hidden" }).catch(() => {});
             break;
           } catch {
             /* ignore */
@@ -328,11 +378,15 @@ export async function fanExtras(page, { step, assert }, ctx) {
     const safety = page.locator("button:has-text('Safety')").first();
     assert(await safety.count(), "safety menu trigger present");
     await safety.click();
-    await page.waitForTimeout(500);
+    // Each click below auto-waits for its target to become actionable.
     await page.locator("button:has-text('Pause my link')").first().click();
-    await page.waitForTimeout(400);
+    // Arm the pause-mutation wait before confirming, so the link is actually
+    // deactivated server-side before we probe it — instead of a fixed sleep.
+    const paused = page
+      .waitForResponse((r) => r.request().method() === "POST" && r.status() < 400)
+      .catch(() => null);
     await page.locator("button:has-text('Yes, pause my link')").first().click();
-    await page.waitForTimeout(1200);
+    await paused;
     // The now-paused link should 404 (getFanPass returns null). Check via the
     // request context so this *expected* 404 isn't logged as a page signal.
     const resp = await ctx.request.get(BASE + "/spin/demo");

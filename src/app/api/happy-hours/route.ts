@@ -21,9 +21,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  const multiplier = Number(body.multiplier ?? 2);
+  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
+  const startsAt = new Date(body.startsAt);
+  const endsAt = new Date(body.endsAt);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || endsAt.getTime() <= startsAt.getTime()) {
+    return NextResponse.json({ error: "invalid_window" }, { status: 400 });
+  }
+
   const result = await createHappyHour({
     wheelId: body.wheelId,
-    multiplier: Number(body.multiplier ?? 2),
+    multiplier,
     startsAt: body.startsAt,
     endsAt: body.endsAt,
   });

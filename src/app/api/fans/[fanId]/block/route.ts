@@ -13,7 +13,10 @@ export async function POST(
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
-  const result = await setFanBlocked(fanId, Boolean(body.blocked));
+  if (typeof body.blocked !== "boolean") {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+  const result = await setFanBlocked(fanId, body.blocked);
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;
     return NextResponse.json({ error: result.error }, { status });

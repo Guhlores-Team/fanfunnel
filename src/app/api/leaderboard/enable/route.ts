@@ -9,7 +9,10 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
-  const result = await setLeaderboardEnabled(Boolean(body.enabled));
+  if (typeof body.enabled !== "boolean") {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+  const result = await setLeaderboardEnabled(body.enabled);
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;
     return NextResponse.json({ error: result.error }, { status });

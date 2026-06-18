@@ -8,10 +8,12 @@
  *   SUPABASE_SERVICE_ROLE_KEY   (server-only key; bypasses RLS)
  *
  * Idempotent: re-running re-uses existing auth users and rebuilds sample data.
- * Every account's password is:  FanFunnel123!
+ * A fresh strong random password is generated for every account on each run and
+ * printed to the console at the end — use those credentials to sign in.
  */
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 
 // --- Tiny .env.local loader (no extra deps) ---------------------------------
 try {
@@ -31,7 +33,9 @@ if (!URL_ || !KEY) {
 }
 const sb = createClient(URL_, KEY, { auth: { autoRefreshToken: false, persistSession: false } });
 
-const PASSWORD = "FanFunnel123!";
+// Generate a strong, random password (no hardcoded credentials). 24 url-safe
+// chars from 18 random bytes (~144 bits of entropy).
+const generatePassword = () => randomBytes(18).toString("base64url");
 const PEOPLE = [
   { key: "owner", email: "owner@fanfunnel.test", name: "Agency Owner" },
   { key: "aria", email: "aria@fanfunnel.test", name: "Aria Rose" },
@@ -49,15 +53,25 @@ async function findUserByEmail(email) {
     if (hit) return hit;
     if (data.users.length < 200) return null;
   }
+  // Reached the page cap with the last page still full: more users may exist
+  // beyond what we scanned, so a "not found" result here is not authoritative
+  // and could lead to creating a duplicate user.
+  console.warn(
+    `  ⚠ user scan for ${email} hit the 20-page limit (4000 users) without exhausting the list; ` +
+      `an existing user may have been missed and a duplicate could be created.`,
+  );
   return null;
 }
 
 async function ensureUser(p) {
+  // Fresh strong password for this account; recorded on the person for the
+  // end-of-run summary so the developer can sign in.
+  p.password = generatePassword();
   let user = await findUserByEmail(p.email);
   if (!user) {
     const { data, error } = await sb.auth.admin.createUser({
       email: p.email,
-      password: PASSWORD,
+      password: p.password,
       email_confirm: true,
       user_metadata: { display_name: p.name },
     });
@@ -65,7 +79,10 @@ async function ensureUser(p) {
     user = data.user;
     console.log(`  + created ${p.email}`);
   } else {
-    console.log(`  · exists  ${p.email}`);
+    // Reset the existing user's password so the logged credentials are valid.
+    const { error } = await sb.auth.admin.updateUserById(user.id, { password: p.password });
+    if (error) throw error;
+    console.log(`  · exists  ${p.email} (password reset)`);
   }
   // Ensure the profile is approved/active with a display name (the trigger
   // creates it as pending). Service-role bypasses RLS.
@@ -203,13 +220,14 @@ async function main() {
       .upsert({ member_id: m.id, creator_id: ids.aria }, { onConflict: "member_id,creator_id" });
   }
 
-  console.log("\n✓ Done. All passwords: " + PASSWORD + "\n");
+  const pw = (key) => PEOPLE.find((p) => p.key === key).password;
+  console.log("\n✓ Done. Generated passwords (copy now — not stored anywhere):\n");
   console.table([
-    { role: "Agency owner", email: "owner@fanfunnel.test", note: "→ /agency (roster, seats, invites)" },
-    { role: "Creator (in org)", email: "aria@fanfunnel.test", note: "has wheel/fans/revenue; rolls up to agency" },
-    { role: "Creator (invited)", email: "mia@fanfunnel.test", note: "→ /dashboard shows Accept/Decline banner" },
-    { role: "Staff · chatter", email: "chatter@fanfunnel.test", note: "scoped to Aria (chat only)" },
-    { role: "Staff · fulfiller", email: "fulfiller@fanfunnel.test", note: "scoped to Aria (fulfil only)" },
+    { role: "Agency owner", email: "owner@fanfunnel.test", password: pw("owner"), note: "→ /agency (roster, seats, invites)" },
+    { role: "Creator (in org)", email: "aria@fanfunnel.test", password: pw("aria"), note: "has wheel/fans/revenue; rolls up to agency" },
+    { role: "Creator (invited)", email: "mia@fanfunnel.test", password: pw("mia"), note: "→ /dashboard shows Accept/Decline banner" },
+    { role: "Staff · chatter", email: "chatter@fanfunnel.test", password: pw("chatter"), note: "scoped to Aria (chat only)" },
+    { role: "Staff · fulfiller", email: "fulfiller@fanfunnel.test", password: pw("fulfiller"), note: "scoped to Aria (fulfil only)" },
   ]);
 }
 

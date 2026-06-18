@@ -1,6 +1,28 @@
 import { NextResponse } from "next/server";
 import { listWheelTemplates, createWheelTemplate } from "@/lib/data";
 import type { WheelConfig } from "@/lib/games/wheel/types";
+import { RARITY_ORDER } from "@/lib/games/wheel/types";
+
+// Full prize validation, mirroring the wheel save route (src/app/api/wheel
+// /route.ts): rarity drives the odds defaults and imageUrl is rendered, so a
+// malformed rarity/weight/imageUrl must be rejected here rather than stored on
+// the template and later producing failed/missing prize inserts when a wheel is
+// created from it.
+function prizesValid(prizes: WheelConfig["prizes"]): boolean {
+  if (prizes.length > 24) return false;
+  return prizes.every(
+    (p) =>
+      p != null &&
+      typeof p.label === "string" &&
+      p.label.length <= 120 &&
+      RARITY_ORDER.includes(p.rarity) &&
+      Number.isFinite(p.weight) &&
+      p.weight >= 0 &&
+      p.weight <= 1e6 &&
+      (p.imageUrl == null ||
+        (typeof p.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl))),
+  );
+}
 
 // The creator's saved wheel presets.
 export async function GET() {
@@ -25,7 +47,11 @@ export async function POST(req: Request) {
   // its shape so a malformed payload returns 400 rather than throwing a TypeError.
   if (body.config && !body.fromWheelId) {
     const c = body.config;
-    if (typeof c.title !== "string" || !Array.isArray(c.prizes)) {
+    if (
+      typeof c.title !== "string" ||
+      !Array.isArray(c.prizes) ||
+      !prizesValid(c.prizes)
+    ) {
       return NextResponse.json({ error: "bad_config" }, { status: 400 });
     }
   }

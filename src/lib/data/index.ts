@@ -156,6 +156,28 @@ function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
+/**
+ * True when `campaignId` belongs to the authenticated creator. A null/undefined
+ * id means "no campaign" and is always allowed; a non-null id the creator does
+ * not own (or that does not exist) is rejected so a client-supplied value can't
+ * create a cross-tenant campaign reference or an FK failure on later writes.
+ * Callers MUST verify before persisting any client-supplied campaign id.
+ */
+async function creatorOwnsCampaign(
+  sb: AnyClient,
+  userId: string,
+  campaignId: string | null | undefined
+): Promise<boolean> {
+  if (campaignId == null) return true;
+  const { data } = await sb
+    .from("campaigns")
+    .select("id")
+    .eq("id", campaignId)
+    .eq("creator_id", userId)
+    .maybeSingle();
+  return !!data;
+}
+
 // Phase 3 referral economy: how many referrals a fan can be credited for, and
 // how many bonus spins each credited referral grants to BOTH parties.
 const REFERRAL_CAP = 3;
@@ -793,9 +815,28 @@ export async function createPass(opts: {
 
   const campaignId = opts.campaignId ?? null;
 
+  // A client-supplied campaign id must belong to THIS creator before any write
+  // references it; reject an unowned/unknown id up front so we never persist a
+  // cross-tenant reference (or hit an FK failure after earlier writes land).
+  if (!(await creatorOwnsCampaign(sb, user.id, campaignId)))
+    return { error: "campaign_not_found" };
+
   // Resolve which wheel these spins are for (spins are per-wheel):
   //   explicit wheelId > the campaign's pinned wheel > the active wheel > oldest.
   let wheelId = opts.wheelId;
+  // A client-supplied wheelId must belong to THIS creator. The fallback paths
+  // below are already creator-scoped; this guards the explicit path so a foreign
+  // wheel id is rejected up front rather than minting a pass that references
+  // another tenant's wheel (defense in depth on top of RLS).
+  if (wheelId) {
+    const { data: ownWheel } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("id", wheelId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownWheel) return { error: "no_wheel" };
+  }
   if (!wheelId && campaignId) {
     const { data: camp } = await sb
       .from("campaigns")
@@ -828,12 +869,40 @@ export async function createPass(opts: {
   }
   if (!wheelId) return { error: "no_wheel" };
 
+  // createPass is not a single DB transaction: the fan/pass/top-up, grant, and
+  // referral writes land as separate statements. If a later write fails we must
+  // undo the ones that already succeeded — otherwise a usable link or a changed
+  // balance would persist even though the API reports failure. Each successful
+  // write pushes an inverse here; `fail()` runs them newest-first (so child rows
+  // are removed before their parents) before returning the error.
+  const rollbacks: Array<() => Promise<void>> = [];
+  const fail = async (error: string): Promise<{ error: string }> => {
+    for (const undo of rollbacks.reverse()) {
+      try {
+        await undo();
+      } catch {
+        // Best-effort: a failed compensation must not mask the original error.
+      }
+    }
+    return { error };
+  };
+
   // Reuse the existing fan account (top-up) or create a new one.
   let fanId = opts.fanId;
   let token: string;
   let passId: string;
 
   if (fanId) {
+    // The fan must belong to THIS creator before we mint or top up a pass for it:
+    // reject a foreign fan id up front so we never insert a fan_pass under our own
+    // creator_id that points at another tenant's fan (defense in depth on top of RLS).
+    const { data: ownFan } = await sb
+      .from("fans")
+      .select("id")
+      .eq("id", fanId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownFan) return { error: "fan_not_found" };
     // Existing fan: find this fan's pass FOR THIS WHEEL. Top it up if it exists,
     // otherwise mint a new per-wheel link. Spins live on the pass, not the fan.
     const { data: existing } = await sb
@@ -850,7 +919,7 @@ export async function createPass(opts: {
     if (ex) {
       passId = ex.id;
       token = ex.token;
-      await sb
+      const { error: topUpErr } = await sb
         .from("fan_passes")
         .update({
           spins_remaining: ex.spins_remaining + balanceAdd,
@@ -858,6 +927,7 @@ export async function createPass(opts: {
           ...(campaignId ? { campaign_id: campaignId } : {}),
         })
         .eq("id", ex.id);
+      if (topUpErr) return { error: "db_error" };
     } else {
       token = randomToken();
       const { data: np, error: npErr } = await sb
@@ -884,13 +954,14 @@ export async function createPass(opts: {
       .eq("id", fanId)
       .maybeSingle();
     if (!fan) return { error: "fan_not_found" };
-    await sb
+    const { error: fanBalErr } = await sb
       .from("fans")
       .update({
         spins_remaining: fan.spins_remaining + balanceAdd,
         spins_granted_total: fan.spins_granted_total + balanceAdd,
       })
       .eq("id", fanId);
+    if (fanBalErr) return { error: "db_error" };
   } else {
     const { data: fan, error } = await sb
       .from("fans")
@@ -1245,54 +1316,73 @@ export async function editGrant(
     | null;
   if (!grant) return { error: "not_found" };
 
+  // Validate finite, int4-bounded integers up front so a non-finite patch or an
+  // overflowing balance can't be silently written and desync the aggregates.
   const update: Record<string, unknown> = {};
-  if (patch.amountCents != null) update.amount_cents = Math.max(0, Math.round(patch.amountCents));
-  if (patch.campaignId !== undefined) update.campaign_id = patch.campaignId;
+  if (patch.amountCents != null) {
+    if (!Number.isFinite(patch.amountCents)) return { error: "invalid" };
+    update.amount_cents = clampInt(Math.round(patch.amountCents), 0);
+  }
+  if (patch.campaignId !== undefined) {
+    // Re-tagging to another campaign must stay within this creator's tenant.
+    if (!(await creatorOwnsCampaign(sb, user.id, patch.campaignId)))
+      return { error: "campaign_not_found" };
+    update.campaign_id = patch.campaignId;
+  }
 
+  let delta = 0;
   if (patch.spins != null) {
-    const newSpins = Math.max(0, Math.floor(patch.spins));
-    const delta = newSpins - grant.spins;
+    if (!Number.isFinite(patch.spins)) return { error: "invalid" };
+    const newSpins = clampInt(Math.floor(patch.spins), 0);
+    delta = newSpins - grant.spins;
     update.spins = newSpins;
-    if (delta !== 0) {
-      // Adjust the fan-level aggregate.
-      const { data: fanRow } = await sb
+  }
+
+  // Update the grant row first and abort on failure, so the aggregate
+  // adjustments below only run once the edit itself has persisted.
+  const { error: grantErr } = await sb.from("grants").update(update).eq("id", grantId);
+  if (grantErr) return { error: "db_error" };
+
+  if (delta !== 0) {
+    // Adjust the fan-level aggregate.
+    const { data: fanRow } = await sb
+      .from("fans")
+      .select("spins_remaining, spins_granted_total")
+      .eq("id", grant.fan_id)
+      .maybeSingle();
+    const fan = fanRow as { spins_remaining: number; spins_granted_total: number } | null;
+    if (fan) {
+      const { error: fanErr } = await sb
         .from("fans")
+        .update({
+          spins_remaining: clampInt(fan.spins_remaining + delta, 0),
+          spins_granted_total: clampInt(fan.spins_granted_total + delta, 0),
+        })
+        .eq("id", grant.fan_id);
+      if (fanErr) return { error: "db_error" };
+    }
+    // And the specific wheel's pass balance this grant landed on.
+    if (grant.fan_pass_id) {
+      const { data: pRow } = await sb
+        .from("fan_passes")
         .select("spins_remaining, spins_granted_total")
-        .eq("id", grant.fan_id)
+        .eq("id", grant.fan_pass_id)
         .maybeSingle();
-      const fan = fanRow as { spins_remaining: number; spins_granted_total: number } | null;
-      if (fan) {
-        await sb
-          .from("fans")
-          .update({
-            spins_remaining: Math.max(0, fan.spins_remaining + delta),
-            spins_granted_total: Math.max(0, fan.spins_granted_total + delta),
-          })
-          .eq("id", grant.fan_id);
-      }
-      // And the specific wheel's pass balance this grant landed on.
-      if (grant.fan_pass_id) {
-        const { data: pRow } = await sb
+      const p = pRow as { spins_remaining: number; spins_granted_total: number } | null;
+      if (p) {
+        const { error: pErr } = await sb
           .from("fan_passes")
-          .select("spins_remaining, spins_granted_total")
-          .eq("id", grant.fan_pass_id)
-          .maybeSingle();
-        const p = pRow as { spins_remaining: number; spins_granted_total: number } | null;
-        if (p) {
-          await sb
-            .from("fan_passes")
-            .update({
-              spins_remaining: Math.max(0, p.spins_remaining + delta),
-              spins_granted_total: Math.max(0, p.spins_granted_total + delta),
-            })
-            .eq("id", grant.fan_pass_id);
-        }
+          .update({
+            spins_remaining: clampInt(p.spins_remaining + delta, 0),
+            spins_granted_total: clampInt(p.spins_granted_total + delta, 0),
+          })
+          .eq("id", grant.fan_pass_id);
+        if (pErr) return { error: "db_error" };
       }
     }
   }
 
-  const { error } = await sb.from("grants").update(update).eq("id", grantId);
-  return error ? { error: "db_error" } : { ok: true };
+  return { ok: true };
 }
 
 /** Top up spins on the fan account behind a token (e.g. after another tip). */
@@ -1991,17 +2081,44 @@ export async function saveWheel(
 
   // Replace prizes wholesale. Spin history is safe because spins snapshot the
   // prize label/rarity and prizes.prize_id is ON DELETE SET NULL.
-  await sb.from("prizes").delete().eq("wheel_id", wheelId);
+  //
+  // Build + validate the replacement rows BEFORE deleting anything. prizeRow
+  // caps the integer columns (weight/cost_cents/stock) to Postgres' int4 range,
+  // so an oversized value can no longer make the INSERT fail. As a final guard,
+  // we snapshot the existing prizes and re-insert them if the INSERT still
+  // fails — so a DB rejection never leaves the wheel with zero prizes.
   const rows = config.prizes
     .slice(0, 24)
     .map((p, i) => prizeRow(wheelId, p, i));
+
+  const { data: prevPrizes } = await sb
+    .from("prizes")
+    .select("*")
+    .eq("wheel_id", wheelId);
+
+  await sb.from("prizes").delete().eq("wheel_id", wheelId);
   if (rows.length > 0) {
     const { error: pErr } = await sb.from("prizes").insert(rows);
-    if (pErr) return { error: "db_error" };
+    if (pErr) {
+      // Roll back to the pre-delete state so the wheel keeps its prizes.
+      if (prevPrizes && prevPrizes.length > 0) {
+        await sb.from("prizes").insert(prevPrizes);
+      }
+      return { error: "db_error" };
+    }
   }
 
   const saved = await getWheelById(wheelId);
   return saved ? { wheel: saved } : { error: "db_error" };
+}
+
+// Postgres `integer` (int4) bounds. weight/cost_cents/stock are int4 columns,
+// so values outside this range are rejected by the DB. Clamp instead of letting
+// the INSERT fail (see saveWheel).
+const PG_INT4_MAX = 2147483647;
+const PG_INT4_MIN = -2147483648;
+function clampInt(n: number, min = PG_INT4_MIN, max = PG_INT4_MAX): number {
+  return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
 function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
@@ -2010,12 +2127,14 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     label: p.label.slice(0, 80) || "Prize",
     description: p.description?.slice(0, 280) ?? null,
     rarity: p.rarity,
-    weight: Number.isFinite(p.weight) ? Math.max(0, Math.floor(p.weight) || 0) : 0,
+    weight: Number.isFinite(p.weight) ? clampInt(Math.floor(p.weight) || 0, 0) : 0,
     color: p.color ?? null,
     emoji: p.emoji ?? null,
     image_url: p.imageUrl ?? null,
-    cost_cents: p.cost ?? null,
-    stock: p.stock ?? null,
+    cost_cents:
+      p.cost != null && Number.isFinite(p.cost) ? clampInt(p.cost, 0) : null,
+    stock:
+      p.stock != null && Number.isFinite(p.stock) ? clampInt(p.stock, 0) : null,
     sort_order: sortOrder,
   };
 }
@@ -2489,6 +2608,10 @@ export async function createCampaignPack(input: {
   } = await sb.auth.getUser();
   if (!user) throw new Error("unauthorized");
 
+  // Only attach the pack to a campaign this creator actually owns.
+  if (!(await creatorOwnsCampaign(sb, user.id, input.campaignId)))
+    throw new Error("campaign_not_found");
+
   const { data, error } = await sb
     .from("campaign_packs")
     .insert({
@@ -2526,7 +2649,12 @@ export async function updateCampaignPack(
   if (!user) return { error: "unauthorized" };
 
   const upd: Record<string, unknown> = {};
-  if ("campaignId" in patch) upd.campaign_id = patch.campaignId ?? null;
+  if ("campaignId" in patch) {
+    // Re-tagging the pack must stay within this creator's own campaigns.
+    if (!(await creatorOwnsCampaign(sb, user.id, patch.campaignId)))
+      return { error: "campaign_not_found" };
+    upd.campaign_id = patch.campaignId ?? null;
+  }
   if (patch.label !== undefined) upd.label = patch.label;
   if (patch.spins !== undefined) upd.spins = Math.max(0, Math.floor(patch.spins) || 0);
   if (patch.amountCents !== undefined)
@@ -3647,15 +3775,18 @@ export async function setRedemptionStatus(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb
+  const { data, error } = await sb
     .from("redemptions")
     .update({
       status,
       fulfilled_at: status === "fulfilled" ? new Date().toISOString() : null,
     })
     .eq("id", id)
-    .eq("creator_id", user.id);
-  return error ? { error: "db_error" } : { ok: true };
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  return data ? { ok: true } : { error: "not_found" };
 }
 
 // Update a redemption's notes and/or due date, leaving its status untouched.
@@ -3680,12 +3811,15 @@ export async function setRedemptionMeta(
   if ("dueAt" in patch) update.due_at = patch.dueAt ?? null;
   if (Object.keys(update).length === 0) return { ok: true };
 
-  const { error } = await sb
+  const { data, error } = await sb
     .from("redemptions")
     .update(update)
     .eq("id", id)
-    .eq("creator_id", user.id);
-  return error ? { error: "db_error" } : { ok: true };
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  return data ? { ok: true } : { error: "not_found" };
 }
 
 // ---------------------------------------------------------------------------
@@ -4412,6 +4546,11 @@ function isPrivateIp(ip: string): boolean {
     );
   }
   const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) tunnels an IPv4 target through an
+  // IPv6 literal; normalize the embedded IPv4 and apply the IPv4 range checks so
+  // these can't bypass the loopback/link-local/RFC1918 guards above.
+  const mapped = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mapped && isIP(mapped[1]) === 4) return isPrivateIp(mapped[1]);
   return (
     lower === "::1" ||
     lower === "::" ||
@@ -4512,31 +4651,39 @@ export async function fireWebhooks(
       .eq("creator_id", creatorId);
     const hooks = (data ?? []) as { url: string }[];
     const body = JSON.stringify(payload);
-    await Promise.allSettled(
-      hooks.map(async (h) => {
-        // Re-validate at fire time too (guards against a host that has since
-        // been re-pointed at an internal IP via DNS).
-        let parsed: URL;
-        try {
-          parsed = new URL(h.url);
-        } catch {
-          return;
-        }
-        if (await isBlockedWebhookHost(parsed.hostname)) return;
-        // `redirect: "manual"` is critical: without it `fetch` would follow a
-        // 3xx from an allowed public host to an internal target (e.g. the cloud
-        // metadata IP 169.254.169.254), defeating the SSRF host check above.
-        const res = await fetch(h.url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          redirect: "manual",
-        });
-        // A redirected response means the endpoint tried to bounce us elsewhere;
-        // drop it rather than chase the Location to a possibly-internal host.
-        if (res.status >= 300 && res.status < 400) return;
-      })
-    );
+    const deliver = async (h: { url: string }) => {
+      // Re-validate at fire time too (guards against a host that has since
+      // been re-pointed at an internal IP via DNS).
+      let parsed: URL;
+      try {
+        parsed = new URL(h.url);
+      } catch {
+        return;
+      }
+      if (await isBlockedWebhookHost(parsed.hostname)) return;
+      // `redirect: "manual"` is critical: without it `fetch` would follow a
+      // 3xx from an allowed public host to an internal target (e.g. the cloud
+      // metadata IP 169.254.169.254), defeating the SSRF host check above.
+      const res = await fetch(h.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        redirect: "manual",
+        // Cap how long a single endpoint can hold a socket open — without this
+        // a slow-loris webhook could pin server sockets indefinitely (the
+        // fan-out is fire-and-forget, so nothing else reaps it).
+        signal: AbortSignal.timeout(5000),
+      });
+      // A redirected response means the endpoint tried to bounce us elsewhere;
+      // drop it rather than chase the Location to a possibly-internal host.
+      if (res.status >= 300 && res.status < 400) return;
+    };
+    // Cap concurrency so a creator with many (slow) webhooks can't open an
+    // unbounded number of sockets at once.
+    const CONCURRENCY = 5;
+    for (let i = 0; i < hooks.length; i += CONCURRENCY) {
+      await Promise.allSettled(hooks.slice(i, i + CONCURRENCY).map(deliver));
+    }
   } catch {
     /* never throws */
   }
@@ -5518,6 +5665,9 @@ export async function getMyPublicProfile(): Promise<{
   };
 }
 
+// Cap stored avatar URLs so a multi-KB string can't be persisted via the note RPC.
+const MAX_AVATAR_URL_LEN = 2048;
+
 /** Creator updates their SFW link-in-bio fields + fan-page personal note. */
 export async function setMyPublicProfile(input: {
   slug: string;
@@ -5544,10 +5694,27 @@ export async function setMyPublicProfile(input: {
   });
   if (error) return { error: "db_error" };
   if (input.note !== undefined || input.avatarUrl !== undefined) {
-    await sb.rpc("set_creator_note", {
+    // Defense in depth: never persist an avatar URL with a non-http(s) scheme
+    // (blocks data:/javascript:) or an oversized value, even if a caller skips
+    // the validated upload path. An empty string clears the avatar.
+    const avatar = input.avatarUrl ?? "";
+    if (avatar !== "") {
+      if (avatar.length > MAX_AVATAR_URL_LEN) return { error: "invalid_avatar_url" };
+      let protocol: string;
+      try {
+        protocol = new URL(avatar).protocol;
+      } catch {
+        return { error: "invalid_avatar_url" };
+      }
+      if (protocol !== "http:" && protocol !== "https:") {
+        return { error: "invalid_avatar_url" };
+      }
+    }
+    const { error: noteError } = await sb.rpc("set_creator_note", {
       p_note: input.note ?? "",
-      p_avatar: input.avatarUrl ?? "",
+      p_avatar: avatar,
     });
+    if (noteError) return { error: "db_error" };
   }
   return { ok: true };
 }

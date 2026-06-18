@@ -15,7 +15,10 @@ export async function POST(req: Request) {
   }
   const limited = rateLimitOr429("lb-optin:" + body.token, 10, 60_000);
   if (limited) return limited;
-  const handle = typeof body.handle === "string" ? body.handle.slice(0, 40) : undefined;
+  const handle =
+    typeof body.handle === "string"
+      ? body.handle.trim().replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40)
+      : undefined;
   const result = await setFanLeaderboardOptIn(body.token, Boolean(body.optIn), handle);
   if ("error" in result) {
     const status = result.error === "not_found" ? 404 : 400;

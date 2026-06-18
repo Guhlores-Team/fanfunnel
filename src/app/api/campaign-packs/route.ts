@@ -30,14 +30,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  // Require finite, non-negative integers within explicit max bounds.
+  const asBoundedInt = (value: unknown, max: number): number | null => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0 || n > max) return null;
+    return n;
+  };
+
+  const spins = asBoundedInt(body.spins, 1_000_000);
+  const amountCents = asBoundedInt(body.amountCents, 100_000_000);
+  const bonusSpins = body.bonusSpins != null ? asBoundedInt(body.bonusSpins, 1_000_000) : undefined;
+  const sortOrder = body.sortOrder != null ? asBoundedInt(body.sortOrder, 1_000_000) : undefined;
+
+  if (spins == null || amountCents == null || bonusSpins === null || sortOrder === null) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
   try {
     const pack = await createCampaignPack({
       campaignId: body.campaignId ?? null,
       label,
-      spins: Number(body.spins),
-      amountCents: Number(body.amountCents),
-      bonusSpins: body.bonusSpins != null ? Number(body.bonusSpins) : undefined,
-      sortOrder: body.sortOrder != null ? Number(body.sortOrder) : undefined,
+      spins,
+      amountCents,
+      bonusSpins,
+      sortOrder,
     });
     return NextResponse.json({ pack });
   } catch (err) {

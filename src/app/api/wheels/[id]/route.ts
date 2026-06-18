@@ -58,6 +58,30 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  // The writes below run as separate calls, so a failure partway through could
+  // otherwise leave the wheel half-updated (e.g. unarchived but never made
+  // active). Lacking a DB transaction at this layer, we make the operation
+  // effectively atomic by running every check that can fail *before* any write:
+  // resolve the wheel once (getWheelById is creator-scoped, so a null result is
+  // not-found/unauthorized) and validate the schedule window up front. After
+  // these guards the remaining calls only fail on transient DB errors.
+  const existing = await getWheelById(id);
+  if (!existing) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+
+  const scheduleChanged = "activeFrom" in body || "activeUntil" in body;
+  const nextFrom = body.activeFrom ?? null;
+  const nextUntil = body.activeUntil ?? null;
+  if (
+    scheduleChanged &&
+    nextFrom &&
+    nextUntil &&
+    new Date(nextUntil).getTime() <= new Date(nextFrom).getTime()
+  ) {
+    return NextResponse.json({ error: "invalid_window" }, { status: 400 });
+  }
+
   // Restore an archived wheel.
   if (body.archived === false) {
     const result = await unarchiveWheel(id);
@@ -73,10 +97,10 @@ export async function PATCH(
     }
   }
 
-  if ("activeFrom" in body || "activeUntil" in body) {
+  if (scheduleChanged) {
     const result = await setWheelSchedule(id, {
-      activeFrom: body.activeFrom ?? null,
-      activeUntil: body.activeUntil ?? null,
+      activeFrom: nextFrom,
+      activeUntil: nextUntil,
     });
     if ("error" in result) {
       return NextResponse.json(result, { status: statusForError(result.error) });

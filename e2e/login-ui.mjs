@@ -8,6 +8,7 @@
 // browser was built against (the CI workflow handles build + start). Skips
 // cleanly when secrets are absent.
 
+import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { chromium } from "playwright";
 import { log, requireSupabaseEnvOrExit } from "./supabase-env.mjs";
@@ -114,8 +115,8 @@ try {
       const err = await page.locator("[role='alert']").first().innerText().catch(() => "");
       try {
         const { mkdirSync } = await import("node:fs");
-        mkdirSync(new globalThis.URL("./artifacts/", import.meta.url).pathname, { recursive: true });
-        await page.screenshot({ path: new globalThis.URL("./artifacts/login-failure.png", import.meta.url).pathname });
+        mkdirSync(fileURLToPath(new globalThis.URL("./artifacts/", import.meta.url)), { recursive: true });
+        await page.screenshot({ path: fileURLToPath(new globalThis.URL("./artifacts/login-failure.png", import.meta.url)) });
       } catch {
         /* ignore */
       }
