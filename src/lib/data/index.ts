@@ -1991,17 +1991,44 @@ export async function saveWheel(
 
   // Replace prizes wholesale. Spin history is safe because spins snapshot the
   // prize label/rarity and prizes.prize_id is ON DELETE SET NULL.
-  await sb.from("prizes").delete().eq("wheel_id", wheelId);
+  //
+  // Build + validate the replacement rows BEFORE deleting anything. prizeRow
+  // caps the integer columns (weight/cost_cents/stock) to Postgres' int4 range,
+  // so an oversized value can no longer make the INSERT fail. As a final guard,
+  // we snapshot the existing prizes and re-insert them if the INSERT still
+  // fails — so a DB rejection never leaves the wheel with zero prizes.
   const rows = config.prizes
     .slice(0, 24)
     .map((p, i) => prizeRow(wheelId, p, i));
+
+  const { data: prevPrizes } = await sb
+    .from("prizes")
+    .select("*")
+    .eq("wheel_id", wheelId);
+
+  await sb.from("prizes").delete().eq("wheel_id", wheelId);
   if (rows.length > 0) {
     const { error: pErr } = await sb.from("prizes").insert(rows);
-    if (pErr) return { error: "db_error" };
+    if (pErr) {
+      // Roll back to the pre-delete state so the wheel keeps its prizes.
+      if (prevPrizes && prevPrizes.length > 0) {
+        await sb.from("prizes").insert(prevPrizes);
+      }
+      return { error: "db_error" };
+    }
   }
 
   const saved = await getWheelById(wheelId);
   return saved ? { wheel: saved } : { error: "db_error" };
+}
+
+// Postgres `integer` (int4) bounds. weight/cost_cents/stock are int4 columns,
+// so values outside this range are rejected by the DB. Clamp instead of letting
+// the INSERT fail (see saveWheel).
+const PG_INT4_MAX = 2147483647;
+const PG_INT4_MIN = -2147483648;
+function clampInt(n: number, min = PG_INT4_MIN, max = PG_INT4_MAX): number {
+  return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
 function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
@@ -2010,12 +2037,14 @@ function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     label: p.label.slice(0, 80) || "Prize",
     description: p.description?.slice(0, 280) ?? null,
     rarity: p.rarity,
-    weight: Number.isFinite(p.weight) ? Math.max(0, Math.floor(p.weight) || 0) : 0,
+    weight: Number.isFinite(p.weight) ? clampInt(Math.floor(p.weight) || 0, 0) : 0,
     color: p.color ?? null,
     emoji: p.emoji ?? null,
     image_url: p.imageUrl ?? null,
-    cost_cents: p.cost ?? null,
-    stock: p.stock ?? null,
+    cost_cents:
+      p.cost != null && Number.isFinite(p.cost) ? clampInt(p.cost, 0) : null,
+    stock:
+      p.stock != null && Number.isFinite(p.stock) ? clampInt(p.stock, 0) : null,
     sort_order: sortOrder,
   };
 }
