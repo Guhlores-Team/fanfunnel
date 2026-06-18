@@ -41,6 +41,14 @@ export async function PATCH(
 
   const hasMeta = "notes" in body || "dueAt" in body;
   if (hasMeta) {
+    // Reject non-string, non-null notes/dueAt so a stray number/object can't
+    // slip past the length/date checks and corrupt the stored meta.
+    if ("notes" in body && body.notes !== null && typeof body.notes !== "string") {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
+    if ("dueAt" in body && body.dueAt !== null && typeof body.dueAt !== "string") {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
     // Cap notes and require dueAt (when present) to be a valid date.
     if (typeof body.notes === "string" && body.notes.length > 2000) {
       return NextResponse.json({ error: "notes_too_long" }, { status: 400 });
