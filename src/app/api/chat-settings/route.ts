@@ -14,6 +14,11 @@ export async function PUT(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  const isValid = (v: unknown) =>
+    v === null || v === undefined || (typeof v === "string" && v.length <= 2000);
+  if (!isValid(body.intro) || !isValid(body.outro)) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
   const result = await setChatSettings({ intro: body.intro, outro: body.outro });
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;
