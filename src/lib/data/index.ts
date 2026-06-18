@@ -856,6 +856,24 @@ export async function createPass(opts: {
   }
   if (!wheelId) return { error: "no_wheel" };
 
+  // createPass is not a single DB transaction: the fan/pass/top-up, grant, and
+  // referral writes land as separate statements. If a later write fails we must
+  // undo the ones that already succeeded — otherwise a usable link or a changed
+  // balance would persist even though the API reports failure. Each successful
+  // write pushes an inverse here; `fail()` runs them newest-first (so child rows
+  // are removed before their parents) before returning the error.
+  const rollbacks: Array<() => Promise<void>> = [];
+  const fail = async (error: string): Promise<{ error: string }> => {
+    for (const undo of rollbacks.reverse()) {
+      try {
+        await undo();
+      } catch {
+        // Best-effort: a failed compensation must not mask the original error.
+      }
+    }
+    return { error };
+  };
+
   // Reuse the existing fan account (top-up) or create a new one.
   let fanId = opts.fanId;
   let token: string;
