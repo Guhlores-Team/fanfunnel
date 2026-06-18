@@ -3734,15 +3734,18 @@ export async function setRedemptionStatus(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb
+  const { data, error } = await sb
     .from("redemptions")
     .update({
       status,
       fulfilled_at: status === "fulfilled" ? new Date().toISOString() : null,
     })
     .eq("id", id)
-    .eq("creator_id", user.id);
-  return error ? { error: "db_error" } : { ok: true };
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  return data ? { ok: true } : { error: "not_found" };
 }
 
 // Update a redemption's notes and/or due date, leaving its status untouched.
@@ -3767,12 +3770,15 @@ export async function setRedemptionMeta(
   if ("dueAt" in patch) update.due_at = patch.dueAt ?? null;
   if (Object.keys(update).length === 0) return { ok: true };
 
-  const { error } = await sb
+  const { data, error } = await sb
     .from("redemptions")
     .update(update)
     .eq("id", id)
-    .eq("creator_id", user.id);
-  return error ? { error: "db_error" } : { ok: true };
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  return data ? { ok: true } : { error: "not_found" };
 }
 
 // ---------------------------------------------------------------------------
