@@ -58,11 +58,18 @@ export async function POST(req: Request) {
       continue;
     }
 
+    let amountCents: number | undefined;
+    if (row?.amountCents != null) {
+      const n = Number(row.amountCents);
+      amountCents = Number.isFinite(n)
+        ? Math.min(100_000_000, Math.max(0, Math.floor(n)))
+        : undefined;
+    }
+
     const result = await createPass({
       name,
       spins,
-      amountCents:
-        row?.amountCents != null ? Math.max(0, Math.floor(row.amountCents)) : undefined,
+      amountCents,
       campaignId: row?.campaignId || undefined,
     });
 
