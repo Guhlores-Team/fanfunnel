@@ -165,10 +165,20 @@ export async function POST(req: Request) {
 
     const buildable = pending.filter((s) => !s.error);
     if (buildable.length > 0) {
+      // Generate the primary keys client-side so fans, passes, and grants are
+      // correlated by an explicit id rather than by the positional order of
+      // INSERT ... RETURNING rows (which Postgres does not guarantee to match
+      // the inserted order). The read-backs below are used only to confirm the
+      // row counts, never to join the three tables together.
+      const fanIds = buildable.map(() => crypto.randomUUID());
+      const passIds = buildable.map(() => crypto.randomUUID());
+      const tokens = buildable.map(() => randomToken());
+
       const { data: fansData, error: fansErr } = await sb
         .from("fans")
         .insert(
-          buildable.map((s) => ({
+          buildable.map((s, i) => ({
+            id: fanIds[i],
             creator_id: userId,
             display_name: s.name || "Fan",
             spins_remaining: s.spins,
@@ -176,40 +186,38 @@ export async function POST(req: Request) {
           }))
         )
         .select("id");
-      const fanIds = (fansData as { id: string }[] | null) ?? [];
 
-      if (fansErr || fanIds.length !== buildable.length) {
+      if (fansErr || ((fansData as { id: string }[] | null)?.length ?? 0) !== buildable.length) {
         for (const s of buildable) s.error = "db_error";
       } else {
-        const tokens = buildable.map(() => randomToken());
         const { data: passData, error: passErr } = await sb
           .from("fan_passes")
           .insert(
             buildable.map((s, i) => ({
+              id: passIds[i],
               token: tokens[i],
               creator_id: userId,
               wheel_id: s.wheelId,
-              fan_id: fanIds[i].id,
+              fan_id: fanIds[i],
               campaign_id: s.campaignId ?? null,
               spins_remaining: s.spins,
               spins_granted_total: s.spins,
             }))
           )
           .select("id");
-        const passIds = (passData as { id: string }[] | null) ?? [];
 
-        if (passErr || passIds.length !== buildable.length) {
+        if (passErr || ((passData as { id: string }[] | null)?.length ?? 0) !== buildable.length) {
           // Roll back the fans we just inserted so a failed pass insert does
           // not leave orphaned fan accounts behind. Without this the client is
           // told the rows failed while the fans already exist in the DB.
-          await sb.from("fans").delete().in("id", fanIds.map((f) => f.id));
+          await sb.from("fans").delete().in("id", fanIds);
           for (const s of buildable) s.error = "db_error";
         } else {
           const { error: grantErr } = await sb.from("grants").insert(
             buildable.map((s, i) => ({
               creator_id: userId,
-              fan_id: fanIds[i].id,
-              fan_pass_id: passIds[i].id,
+              fan_id: fanIds[i],
+              fan_pass_id: passIds[i],
               campaign_id: s.campaignId ?? null,
               spins: s.spins,
               amount_cents: s.amountCents,
@@ -219,8 +227,8 @@ export async function POST(req: Request) {
           if (grantErr) {
             // Roll back the passes and fans we just inserted so a failed grant
             // insert does not leave spin links with no grant/revenue record.
-            await sb.from("fan_passes").delete().in("id", passIds.map((p) => p.id));
-            await sb.from("fans").delete().in("id", fanIds.map((f) => f.id));
+            await sb.from("fan_passes").delete().in("id", passIds);
+            await sb.from("fans").delete().in("id", fanIds);
             for (const s of buildable) s.error = "db_error";
           } else {
             buildable.forEach((s, i) => {
