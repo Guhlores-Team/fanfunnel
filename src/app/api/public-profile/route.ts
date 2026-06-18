@@ -94,10 +94,15 @@ export async function PUT(req: Request) {
   ) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
   }
+  // Partial updates must not wipe omitted fields: load current values and fall
+  // back to them when slug/tipUrl/tagline are absent from the request body.
+  // (note/avatarUrl are already preserved in the data layer, which only writes
+  // them when at least one is provided.)
+  const current = await getMyPublicProfile();
   const result = await setMyPublicProfile({
-    slug: body.slug ?? "",
-    tipUrl: body.tipUrl ?? "",
-    tagline: body.tagline ?? "",
+    slug: body.slug ?? current.slug ?? "",
+    tipUrl: body.tipUrl ?? current.tipUrl ?? "",
+    tagline: body.tagline ?? current.tagline ?? "",
     note: body.note,
     avatarUrl: body.avatarUrl,
   });
