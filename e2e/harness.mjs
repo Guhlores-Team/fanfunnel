@@ -68,14 +68,26 @@ const EXPECTED_4XX = [
   ["/api/spin", 403], // blocked / needs ack
   ["/api/spin", 429], // rate limited
 ];
+// Read-only endpoints reachable BEFORE login — the public-page reads plus the
+// identity probe. A GET 401 on one of these is expected during pre-login
+// navigation. Trailing "/" marks a prefix so dynamic [param] segments match.
+const PRELOGIN_READS = [
+  "/api/me",
+  "/api/public-profile",
+  "/api/public/wheel/",
+  "/api/recent-wins/",
+  "/api/leaderboard/",
+  "/api/share-cards/",
+];
+const isPreloginRead = (path) =>
+  PRELOGIN_READS.some((p) => (p.endsWith("/") ? path.startsWith(p) : path === p));
 function benignResponse(url, status, method = "GET") {
   const path = url.replace(BASE, "").split("?")[0];
-  // Unauthenticated READS (GET) of /api endpoints are expected during pre-login
-  // navigation, so a GET 401 there is benign. But a 401 on a MUTATION
-  // (POST/PUT/DELETE/PATCH) — or on any non-/api path — is a genuine signal of a
-  // real auth regression and must NOT be hidden (the old blanket rule swallowed
-  // every /api 401, mutations included).
-  if (status === 401 && path.startsWith("/api/") && method.toUpperCase() === "GET") {
+  // A GET 401 is benign ONLY on a known pre-login read endpoint. Restricting to
+  // PRELOGIN_READS (instead of every /api/* path) means a 401 on a GET endpoint
+  // that should be authenticated still surfaces as a genuine auth regression —
+  // as does any 401 on a MUTATION (POST/PUT/DELETE/PATCH) or non-/api path.
+  if (status === 401 && method.toUpperCase() === "GET" && isPreloginRead(path)) {
     return true;
   }
   return EXPECTED_4XX.some(([p, s]) => p === path && s === status);
