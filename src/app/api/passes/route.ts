@@ -20,15 +20,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  const spins = Number(body.spins ?? 0);
+  if (!Number.isInteger(spins) || spins < 0 || spins > 1_000_000) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
+  const amountDollars = body.amountDollars != null ? Number(body.amountDollars) : 0;
+  if (!Number.isFinite(amountDollars) || amountDollars < 0 || amountDollars > 1_000_000) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
+  let bonusSpins: number | undefined;
+  if (body.bonusSpins != null) {
+    bonusSpins = Number(body.bonusSpins);
+    if (!Number.isInteger(bonusSpins) || bonusSpins < 0 || bonusSpins > 1_000_000) {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
+  }
+
   const result = await createPass({
     name: String(body.name ?? "").slice(0, 80),
-    spins: Number(body.spins ?? 0),
+    spins,
     fanId: body.fanId,
     wheelId: body.wheelId,
     campaignId: body.campaignId,
-    amountCents: Math.round(Math.max(0, body.amountDollars || 0) * 100),
+    amountCents: Math.round(amountDollars * 100),
     packId: body.packId,
-    bonusSpins: body.bonusSpins != null ? Number(body.bonusSpins) : undefined,
+    bonusSpins,
   });
 
   if ("error" in result) {
