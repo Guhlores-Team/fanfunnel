@@ -26,12 +26,33 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  const MAX_NOTES_LEN = 2000;
+  const MAX_TAGS = 50;
+  const MAX_TAG_LEN = 64;
+
   const patch: { notes?: string | null; tags?: string[] } = {};
   if ("notes" in body) {
-    patch.notes = body.notes == null ? null : String(body.notes);
+    if (body.notes == null) {
+      patch.notes = null;
+    } else {
+      const notes = String(body.notes);
+      if (notes.length > MAX_NOTES_LEN) {
+        return NextResponse.json({ error: "bad_request" }, { status: 400 });
+      }
+      patch.notes = notes;
+    }
   }
   if (Array.isArray(body.tags)) {
-    patch.tags = body.tags.map((t) => String(t)).filter(Boolean);
+    if (body.tags.length > MAX_TAGS) {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
+    const tags = body.tags
+      .map((t) => String(t).trim())
+      .filter(Boolean);
+    if (tags.some((t) => t.length > MAX_TAG_LEN)) {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
+    patch.tags = tags;
   }
 
   const result = await updateFanMeta(fanId, patch);
