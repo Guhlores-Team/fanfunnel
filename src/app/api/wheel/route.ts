@@ -13,6 +13,7 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
     (p) =>
       p != null &&
       typeof p.label === "string" &&
+      p.label.length <= 120 &&
       RARITY_ORDER.includes(p.rarity) &&
       Number.isFinite(p.weight) &&
       p.weight >= 0 &&
