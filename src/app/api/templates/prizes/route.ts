@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_rarity" }, { status: 400 });
   }
   const weight = Number(body.weight);
-  if (!Number.isFinite(weight) || weight < 0) {
+  if (!Number.isFinite(weight) || weight < 0 || weight > 1e6) {
     return NextResponse.json({ error: "bad_weight" }, { status: 400 });
   }
 
