@@ -16,11 +16,15 @@ interface ImportRow {
   campaignId?: string;
 }
 
-// Safe, consistent parse for numeric fields (spins, amountCents). Non-numeric or
-// negative values become 0 instead of leaking NaN into the data layer.
-function safeCount(val: unknown): number {
-  const n = parseInt(String(val), 10);
-  return !Number.isNaN(n) && n > 0 ? n : 0;
+// Safe, consistent parse for numeric fields (spins, amountCents). Empty/missing
+// values become 0 and negatives are floored to 0, but a non-integer input
+// (e.g. "5.9", NaN) returns null so the caller can reject the row instead of
+// silently truncating it, mirroring the Number.isInteger checks in /api/passes.
+function safeCount(val: unknown): number | null {
+  if (val == null || val === "") return 0;
+  const n = Number(val);
+  if (!Number.isInteger(n)) return null;
+  return n > 0 ? n : 0;
 }
 
 // URL-safe, unguessable token for a fan link (mirrors @/lib/data randomToken).
@@ -87,10 +91,16 @@ export async function POST(req: Request) {
     if (!name) {
       return { name: "(blank)", spins: 0, amountCents: 0, error: "missing_name" };
     }
+    if (spins === null) {
+      return { name, spins: 0, amountCents: 0, error: "invalid_spins" };
+    }
     if (spins > MAX_SPINS) {
       return { name, spins: 0, amountCents: 0, error: "spins_too_large" };
     }
     const amountCents = safeCount(row?.amountCents);
+    if (amountCents === null) {
+      return { name, spins: 0, amountCents: 0, error: "invalid_amount" };
+    }
     if (amountCents > MAX_AMOUNT_CENTS) {
       return { name, spins: 0, amountCents: 0, error: "amount_too_large" };
     }
