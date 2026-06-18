@@ -31,8 +31,22 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  // Validate every field up front, before any write, so an invalid input
+  // can never persist one part of the patch while rejecting another (the
+  // partial-update / inconsistent-state failure mode this guards against).
   if (body.status !== undefined && !VALID.includes(body.status)) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
+  const hasMeta = "notes" in body || "dueAt" in body;
+  if (hasMeta) {
+    // Cap notes and require dueAt (when present) to be a valid date.
+    if (typeof body.notes === "string" && body.notes.length > 2000) {
+      return NextResponse.json({ error: "notes_too_long" }, { status: 400 });
+    }
+    if (typeof body.dueAt === "string" && Number.isNaN(new Date(body.dueAt).getTime())) {
+      return NextResponse.json({ error: "bad_due_date" }, { status: 400 });
+    }
   }
 
   if (body.status !== undefined) {
@@ -42,14 +56,7 @@ export async function PATCH(
     }
   }
 
-  if ("notes" in body || "dueAt" in body) {
-    // Cap notes and require dueAt (when present) to be a valid date.
-    if (typeof body.notes === "string" && body.notes.length > 2000) {
-      return NextResponse.json({ error: "notes_too_long" }, { status: 400 });
-    }
-    if (typeof body.dueAt === "string" && Number.isNaN(new Date(body.dueAt).getTime())) {
-      return NextResponse.json({ error: "bad_due_date" }, { status: 400 });
-    }
+  if (hasMeta) {
     const patch: { notes?: string | null; dueAt?: string | null } = {};
     if ("notes" in body) patch.notes = body.notes ?? null;
     if ("dueAt" in body) patch.dueAt = body.dueAt ?? null;
