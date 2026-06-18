@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
-  if (!body.fanId || typeof body.body !== "string") {
+  if (typeof body.fanId !== "string" || !body.fanId || typeof body.body !== "string") {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
   // Cap message length to prevent storage bloat and expensive reads (matches fan messages).
