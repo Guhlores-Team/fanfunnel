@@ -18,7 +18,9 @@ export async function POST(req: Request) {
     typeof body.reason !== "string" ||
     !body.token ||
     !body.reason ||
-    (body.detail !== undefined && typeof body.detail !== "string")
+    body.reason.length > 200 ||
+    (body.detail !== undefined &&
+      (typeof body.detail !== "string" || body.detail.length > 2000))
   ) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
