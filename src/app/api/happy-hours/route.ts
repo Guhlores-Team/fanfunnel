@@ -21,9 +21,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  const multiplier = Number(body.multiplier ?? 2);
+  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+
   const result = await createHappyHour({
     wheelId: body.wheelId,
-    multiplier: Number(body.multiplier ?? 2),
+    multiplier,
     startsAt: body.startsAt,
     endsAt: body.endsAt,
   });
