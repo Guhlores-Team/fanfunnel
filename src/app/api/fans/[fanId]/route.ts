@@ -35,7 +35,10 @@ export async function PATCH(
     if (body.notes == null) {
       patch.notes = null;
     } else {
-      const notes = String(body.notes);
+      if (typeof body.notes !== "string") {
+        return NextResponse.json({ error: "bad_request" }, { status: 400 });
+      }
+      const notes = body.notes;
       if (notes.length > MAX_NOTES_LEN) {
         return NextResponse.json({ error: "bad_request" }, { status: 400 });
       }
