@@ -156,6 +156,28 @@ function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
+/**
+ * True when `campaignId` belongs to the authenticated creator. A null/undefined
+ * id means "no campaign" and is always allowed; a non-null id the creator does
+ * not own (or that does not exist) is rejected so a client-supplied value can't
+ * create a cross-tenant campaign reference or an FK failure on later writes.
+ * Callers MUST verify before persisting any client-supplied campaign id.
+ */
+async function creatorOwnsCampaign(
+  sb: AnyClient,
+  userId: string,
+  campaignId: string | null | undefined
+): Promise<boolean> {
+  if (campaignId == null) return true;
+  const { data } = await sb
+    .from("campaigns")
+    .select("id")
+    .eq("id", campaignId)
+    .eq("creator_id", userId)
+    .maybeSingle();
+  return !!data;
+}
+
 // Phase 3 referral economy: how many referrals a fan can be credited for, and
 // how many bonus spins each credited referral grants to BOTH parties.
 const REFERRAL_CAP = 3;
@@ -793,6 +815,12 @@ export async function createPass(opts: {
 
   const campaignId = opts.campaignId ?? null;
 
+  // A client-supplied campaign id must belong to THIS creator before any write
+  // references it; reject an unowned/unknown id up front so we never persist a
+  // cross-tenant reference (or hit an FK failure after earlier writes land).
+  if (!(await creatorOwnsCampaign(sb, user.id, campaignId)))
+    return { error: "campaign_not_found" };
+
   // Resolve which wheel these spins are for (spins are per-wheel):
   //   explicit wheelId > the campaign's pinned wheel > the active wheel > oldest.
   let wheelId = opts.wheelId;
@@ -1254,7 +1282,12 @@ export async function editGrant(
     if (!Number.isFinite(patch.amountCents)) return { error: "invalid" };
     update.amount_cents = clampInt(Math.round(patch.amountCents), 0);
   }
-  if (patch.campaignId !== undefined) update.campaign_id = patch.campaignId;
+  if (patch.campaignId !== undefined) {
+    // Re-tagging to another campaign must stay within this creator's tenant.
+    if (!(await creatorOwnsCampaign(sb, user.id, patch.campaignId)))
+      return { error: "campaign_not_found" };
+    update.campaign_id = patch.campaignId;
+  }
 
   let delta = 0;
   if (patch.spins != null) {
@@ -2534,6 +2567,10 @@ export async function createCampaignPack(input: {
   } = await sb.auth.getUser();
   if (!user) throw new Error("unauthorized");
 
+  // Only attach the pack to a campaign this creator actually owns.
+  if (!(await creatorOwnsCampaign(sb, user.id, input.campaignId)))
+    throw new Error("campaign_not_found");
+
   const { data, error } = await sb
     .from("campaign_packs")
     .insert({
@@ -2571,7 +2608,12 @@ export async function updateCampaignPack(
   if (!user) return { error: "unauthorized" };
 
   const upd: Record<string, unknown> = {};
-  if ("campaignId" in patch) upd.campaign_id = patch.campaignId ?? null;
+  if ("campaignId" in patch) {
+    // Re-tagging the pack must stay within this creator's own campaigns.
+    if (!(await creatorOwnsCampaign(sb, user.id, patch.campaignId)))
+      return { error: "campaign_not_found" };
+    upd.campaign_id = patch.campaignId ?? null;
+  }
   if (patch.label !== undefined) upd.label = patch.label;
   if (patch.spins !== undefined) upd.spins = Math.max(0, Math.floor(patch.spins) || 0);
   if (patch.amountCents !== undefined)
