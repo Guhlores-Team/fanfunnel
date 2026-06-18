@@ -4412,6 +4412,11 @@ function isPrivateIp(ip: string): boolean {
     );
   }
   const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) tunnels an IPv4 target through an
+  // IPv6 literal; normalize the embedded IPv4 and apply the IPv4 range checks so
+  // these can't bypass the loopback/link-local/RFC1918 guards above.
+  const mapped = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mapped && isIP(mapped[1]) === 4) return isPrivateIp(mapped[1]);
   return (
     lower === "::1" ||
     lower === "::" ||
