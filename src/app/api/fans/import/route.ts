@@ -117,6 +117,11 @@ export async function POST(req: Request) {
     // each row's target wheel (cached per campaign), then bulk-insert fans,
     // passes, and grants.
     const wheelCache = new Map<string, string | null>();
+    // Tracks, per provided campaignId, whether it resolved to a campaign owned
+    // by this creator. Rows referencing an unknown/non-owned campaign have their
+    // campaignId dropped below so we never persist a cross-tenant/invalid
+    // campaign_id to fan_passes/grants.
+    const campaignOwned = new Map<string, boolean>();
     const resolveWheel = async (campaignId?: string): Promise<string | null> => {
       const key = campaignId ?? "";
       const cached = wheelCache.get(key);
@@ -129,6 +134,7 @@ export async function POST(req: Request) {
           .eq("id", campaignId)
           .eq("creator_id", userId!)
           .maybeSingle();
+        campaignOwned.set(key, camp != null);
         wheelId = (camp as { pinned_wheel_id: string | null } | null)?.pinned_wheel_id ?? undefined;
       }
       if (!wheelId) {
@@ -159,6 +165,11 @@ export async function POST(req: Request) {
 
     for (const s of pending) {
       const wheelId = await resolveWheel(s.campaignId);
+      // Never persist a campaign reference the caller does not own: drop it so
+      // the row inserts with campaign_id = null instead of an unvalidated id.
+      if (s.campaignId && !campaignOwned.get(s.campaignId)) {
+        s.campaignId = undefined;
+      }
       if (!wheelId) s.error = "no_wheel";
       else s.wheelId = wheelId;
     }
