@@ -16,6 +16,7 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
       RARITY_ORDER.includes(p.rarity) &&
       Number.isFinite(p.weight) &&
       p.weight >= 0 &&
+      p.weight <= 1e6 &&
       (p.imageUrl == null ||
         (typeof p.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl))),
   );
