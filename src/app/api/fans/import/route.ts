@@ -4,6 +4,10 @@ import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
 
 const MAX_ROWS = 500;
+// Match the per-pass caps enforced by /api/passes so a single import row cannot
+// grant an absurd spin count or amount.
+const MAX_SPINS = 1_000_000;
+const MAX_AMOUNT_CENTS = 100_000_000;
 
 interface ImportRow {
   name: string;
@@ -76,10 +80,16 @@ export async function POST(req: Request) {
     if (!name) {
       return { name: "(blank)", spins: 0, amountCents: 0, error: "missing_name" };
     }
+    if (spins > MAX_SPINS) {
+      return { name, spins: 0, amountCents: 0, error: "spins_too_large" };
+    }
     let amountCents = 0;
     if (row?.amountCents != null) {
       const n = Number(row.amountCents);
-      if (Number.isFinite(n)) amountCents = Math.min(100_000_000, Math.max(0, Math.floor(n)));
+      if (Number.isFinite(n)) amountCents = Math.max(0, Math.floor(n));
+    }
+    if (amountCents > MAX_AMOUNT_CENTS) {
+      return { name, spins: 0, amountCents: 0, error: "amount_too_large" };
     }
     return { name, spins, amountCents, campaignId: row?.campaignId || undefined };
   });
