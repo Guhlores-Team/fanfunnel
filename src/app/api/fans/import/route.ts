@@ -199,6 +199,10 @@ export async function POST(req: Request) {
         const passIds = (passData as { id: string }[] | null) ?? [];
 
         if (passErr || passIds.length !== buildable.length) {
+          // Roll back the fans we just inserted so a failed pass insert does
+          // not leave orphaned fan accounts behind. Without this the client is
+          // told the rows failed while the fans already exist in the DB.
+          await sb.from("fans").delete().in("id", fanIds.map((f) => f.id));
           for (const s of buildable) s.error = "db_error";
         } else {
           const { error: grantErr } = await sb.from("grants").insert(
@@ -213,6 +217,10 @@ export async function POST(req: Request) {
             }))
           );
           if (grantErr) {
+            // Roll back the passes and fans we just inserted so a failed grant
+            // insert does not leave spin links with no grant/revenue record.
+            await sb.from("fan_passes").delete().in("id", passIds.map((p) => p.id));
+            await sb.from("fans").delete().in("id", fanIds.map((f) => f.id));
             for (const s of buildable) s.error = "db_error";
           } else {
             buildable.forEach((s, i) => {
