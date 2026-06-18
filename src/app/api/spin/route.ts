@@ -19,6 +19,11 @@ export async function POST(req: Request) {
   if (!token || typeof token !== "string") {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  // clientSeed is optional, but when present it must be a bounded string before
+  // it reaches the provably-fair spin logic.
+  if (clientSeed != null && (typeof clientSeed !== "string" || clientSeed.length > 256)) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
 
   const key = token + ":" + clientIp(req);
   const { ok, retryAfter } = rateLimit(key, 10, 10000);
