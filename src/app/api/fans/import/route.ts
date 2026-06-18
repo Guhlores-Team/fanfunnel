@@ -16,6 +16,13 @@ interface ImportRow {
   campaignId?: string;
 }
 
+// Safe, consistent parse for numeric fields (spins, amountCents). Non-numeric or
+// negative values become 0 instead of leaking NaN into the data layer.
+function safeCount(val: unknown): number {
+  const n = parseInt(String(val), 10);
+  return !Number.isNaN(n) && n > 0 ? n : 0;
+}
+
 // URL-safe, unguessable token for a fan link (mirrors @/lib/data randomToken).
 function randomToken(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -76,18 +83,14 @@ export async function POST(req: Request) {
   // immediately exactly as before; the rest become insertable slots.
   const slots: Slot[] = rows.map((row) => {
     const name = typeof row?.name === "string" ? row.name.trim().slice(0, 80) : "";
-    const spins = Math.max(0, Math.floor(Number(row?.spins)) || 0);
+    const spins = safeCount(row?.spins);
     if (!name) {
       return { name: "(blank)", spins: 0, amountCents: 0, error: "missing_name" };
     }
     if (spins > MAX_SPINS) {
       return { name, spins: 0, amountCents: 0, error: "spins_too_large" };
     }
-    let amountCents = 0;
-    if (row?.amountCents != null) {
-      const n = Number(row.amountCents);
-      if (Number.isFinite(n)) amountCents = Math.max(0, Math.floor(n));
-    }
+    const amountCents = safeCount(row?.amountCents);
     if (amountCents > MAX_AMOUNT_CENTS) {
       return { name, spins: 0, amountCents: 0, error: "amount_too_large" };
     }
