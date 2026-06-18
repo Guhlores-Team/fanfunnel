@@ -50,7 +50,7 @@ export async function POST(req: Request) {
   let failed = 0;
 
   for (const row of rows) {
-    const name = typeof row?.name === "string" ? row.name.trim() : "";
+    const name = typeof row?.name === "string" ? row.name.trim().slice(0, 80) : "";
     const spins = Math.max(0, Math.floor(Number(row?.spins)) || 0);
     if (!name) {
       failed += 1;
