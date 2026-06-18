@@ -19,8 +19,20 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
       p.weight >= 0 &&
       p.weight <= 1e6 &&
       (p.imageUrl == null ||
-        (typeof p.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl))),
+        (typeof p.imageUrl === "string" && isValidHttpUrl(p.imageUrl))),
   );
+}
+
+// Validate that a string is a well-formed http(s) URL. A weak regex can be
+// bypassed or admit malformed URLs, so parse with the URL constructor and
+// require an explicit http:/https: protocol.
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 // Read the signed-in creator's wheel configuration.
