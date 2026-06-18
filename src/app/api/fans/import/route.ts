@@ -186,77 +186,35 @@ export async function POST(req: Request) {
 
     const buildable = pending.filter((s) => !s.error);
     if (buildable.length > 0) {
-      // Generate the primary keys client-side so fans, passes, and grants are
-      // correlated by an explicit id rather than by the positional order of
-      // INSERT ... RETURNING rows (which Postgres does not guarantee to match
-      // the inserted order). The read-backs below are used only to confirm the
-      // row counts, never to join the three tables together.
+      // Generate the primary keys client-side so fans, passes, and grants stay
+      // correlated by explicit id. The import_fans RPC (migration 0034) inserts
+      // all three tables in a single transaction, so any failure rolls the whole
+      // batch back atomically — no orphaned fans/passes — and it re-verifies that
+      // the caller owns every referenced wheel/campaign (SECURITY DEFINER bypasses
+      // RLS).
       const fanIds = buildable.map(() => crypto.randomUUID());
       const passIds = buildable.map(() => crypto.randomUUID());
       const tokens = buildable.map(() => randomToken());
 
-      const { data: fansData, error: fansErr } = await sb
-        .from("fans")
-        .insert(
-          buildable.map((s, i) => ({
-            id: fanIds[i],
-            creator_id: userId,
-            display_name: s.name || "Fan",
-            spins_remaining: s.spins,
-            spins_granted_total: s.spins,
-          }))
-        )
-        .select("id");
+      const { error: importErr } = await sb.rpc("import_fans", {
+        p_rows: buildable.map((s, i) => ({
+          fan_id: fanIds[i],
+          pass_id: passIds[i],
+          token: tokens[i],
+          wheel_id: s.wheelId,
+          campaign_id: s.campaignId ?? null,
+          name: s.name,
+          spins: s.spins,
+          amount_cents: s.amountCents,
+        })),
+      });
 
-      if (fansErr || ((fansData as { id: string }[] | null)?.length ?? 0) !== buildable.length) {
+      if (importErr) {
         for (const s of buildable) s.error = "db_error";
       } else {
-        const { data: passData, error: passErr } = await sb
-          .from("fan_passes")
-          .insert(
-            buildable.map((s, i) => ({
-              id: passIds[i],
-              token: tokens[i],
-              creator_id: userId,
-              wheel_id: s.wheelId,
-              fan_id: fanIds[i],
-              campaign_id: s.campaignId ?? null,
-              spins_remaining: s.spins,
-              spins_granted_total: s.spins,
-            }))
-          )
-          .select("id");
-
-        if (passErr || ((passData as { id: string }[] | null)?.length ?? 0) !== buildable.length) {
-          // Roll back the fans we just inserted so a failed pass insert does
-          // not leave orphaned fan accounts behind. Without this the client is
-          // told the rows failed while the fans already exist in the DB.
-          await sb.from("fans").delete().in("id", fanIds);
-          for (const s of buildable) s.error = "db_error";
-        } else {
-          const { error: grantErr } = await sb.from("grants").insert(
-            buildable.map((s, i) => ({
-              creator_id: userId,
-              fan_id: fanIds[i],
-              fan_pass_id: passIds[i],
-              campaign_id: s.campaignId ?? null,
-              spins: s.spins,
-              amount_cents: s.amountCents,
-              bonus_spins: 0,
-            }))
-          );
-          if (grantErr) {
-            // Roll back the passes and fans we just inserted so a failed grant
-            // insert does not leave spin links with no grant/revenue record.
-            await sb.from("fan_passes").delete().in("id", passIds);
-            await sb.from("fans").delete().in("id", fanIds);
-            for (const s of buildable) s.error = "db_error";
-          } else {
-            buildable.forEach((s, i) => {
-              s.token = tokens[i];
-            });
-          }
-        }
+        buildable.forEach((s, i) => {
+          s.token = tokens[i];
+        });
       }
     }
   }
