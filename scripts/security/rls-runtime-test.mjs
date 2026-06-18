@@ -49,6 +49,15 @@ async function makeCreator(tag) {
   });
   if (error) throw error;
   const id = data.user.id;
+  // The profiles row is created by a database trigger that may not have completed
+  // yet; poll until it exists before updating to avoid flaky failures.
+  let profileExists = false;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const { data: profile } = await admin.from("profiles").select("id").eq("id", id).maybeSingle();
+    if (profile) { profileExists = true; break; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!profileExists) throw new Error(`profiles row for ${id} was not created by trigger in time`);
   await admin.from("profiles").update({ approval_status: "approved", is_active: true }).eq("id", id);
   // Seed one wheel + prize + fan + pass + grant + spin for this creator.
   const { data: wheel } = await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single();
