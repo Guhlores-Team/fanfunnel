@@ -38,7 +38,9 @@ export async function POST(req: Request) {
   // or extension. Rejects SVG (stored-XSS vector) and any spoofed upload.
   const mime = sniffImageMime(bytes);
   if (!mime) return NextResponse.json({ error: "not_image" }, { status: 400 });
-  const path = `${user.id}/${Date.now()}.${EXT_BY_MIME[mime]}`;
+  // Random, collision-free object name (Date.now() could collide on same-ms
+  // uploads and overwrite via upsert:true).
+  const path = `${user.id}/${crypto.randomUUID()}.${EXT_BY_MIME[mime]}`;
 
   const svc = createServiceClient();
   const { error } = await svc.storage

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createCreatorAccount } from "@/lib/data";
+import { isAcceptablePassword } from "@/lib/api/password";
 
 // Admin creates a creator account directly (no public sign-up needed).
 export async function POST(req: Request) {
@@ -11,9 +12,9 @@ export async function POST(req: Request) {
   }
   const email = (body.email ?? "").trim();
   const password = body.password ?? "";
-  if (!email || password.length < 6) {
+  if (!email || !isAcceptablePassword(password)) {
     return NextResponse.json(
-      { error: "Email and a 6+ char password are required." },
+      { error: "Email and an 8+ char password containing a letter and a number are required." },
       { status: 400 }
     );
   }

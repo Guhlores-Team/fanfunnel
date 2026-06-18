@@ -94,17 +94,15 @@ export async function PUT(req: Request) {
   ) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
   }
-  // Partial updates must not wipe omitted fields: load current values and fall
-  // back to them when slug/tipUrl/tagline are absent from the request body.
-  // (note/avatarUrl are already preserved in the data layer, which only writes
-  // them when at least one is provided.)
-  const current = await getMyPublicProfile();
+  // Pass only the fields present in the request; the data layer (migration 0033)
+  // updates exactly those atomically and leaves omitted fields unchanged — no
+  // read-modify-write, so concurrent partial updates can't clobber each other.
   const result = await setMyPublicProfile({
-    slug: body.slug ?? current.slug ?? "",
-    tipUrl: body.tipUrl ?? current.tipUrl ?? "",
-    tagline: body.tagline ?? current.tagline ?? "",
-    note: body.note,
-    avatarUrl: body.avatarUrl,
+    ...(body.slug !== undefined ? { slug: body.slug } : {}),
+    ...(body.tipUrl !== undefined ? { tipUrl: body.tipUrl } : {}),
+    ...(body.tagline !== undefined ? { tagline: body.tagline } : {}),
+    ...(body.note !== undefined ? { note: body.note } : {}),
+    ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
   });
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;

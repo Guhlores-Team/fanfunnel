@@ -1111,6 +1111,19 @@ export async function createCampaign(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
+  // Verify the pinned wheel belongs to this creator before referencing it, so a
+  // campaign can't be created pointing at another creator's wheel id (mirrors the
+  // check in setCampaignPinnedWheel).
+  if (pinnedWheelId) {
+    const { data: ownWheel } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("id", pinnedWheelId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownWheel) return { error: "not_found" };
+  }
+
   const { data, error } = await sb
     .from("campaigns")
     .insert({ creator_id: user.id, name, pinned_wheel_id: pinnedWheelId ?? null })
@@ -5670,9 +5683,9 @@ const MAX_AVATAR_URL_LEN = 2048;
 
 /** Creator updates their SFW link-in-bio fields + fan-page personal note. */
 export async function setMyPublicProfile(input: {
-  slug: string;
-  tipUrl: string;
-  tagline: string;
+  slug?: string;
+  tipUrl?: string;
+  tagline?: string;
   note?: string;
   avatarUrl?: string;
 }): Promise<{ ok: true } | { error: string }> {
@@ -5682,36 +5695,45 @@ export async function setMyPublicProfile(input: {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
-  // Normalize the slug to URL-safe lowercase.
-  const slug = input.slug
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const { error } = await sb.rpc("set_public_profile", {
-    p_slug: slug,
-    p_tip_url: externalUrl(input.tipUrl),
-    p_tagline: input.tagline,
-  });
-  if (error) return { error: "db_error" };
+  // Atomic partial update: pass NULL for any field omitted from the request so
+  // the RPC leaves that column unchanged (migration 0033). This replaces the
+  // route's old read-modify-write, which raced concurrent partial updates
+  // (TOCTOU) and could wipe an omitted note/avatar.
+  if (input.slug !== undefined || input.tipUrl !== undefined || input.tagline !== undefined) {
+    const slug =
+      input.slug !== undefined
+        ? input.slug.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+        : null;
+    const { error } = await sb.rpc("set_public_profile", {
+      p_slug: slug,
+      p_tip_url: input.tipUrl !== undefined ? externalUrl(input.tipUrl) : null,
+      p_tagline: input.tagline !== undefined ? input.tagline : null,
+    });
+    if (error) return { error: "db_error" };
+  }
   if (input.note !== undefined || input.avatarUrl !== undefined) {
     // Defense in depth: never persist an avatar URL with a non-http(s) scheme
     // (blocks data:/javascript:) or an oversized value, even if a caller skips
-    // the validated upload path. An empty string clears the avatar.
-    const avatar = input.avatarUrl ?? "";
-    if (avatar !== "") {
-      if (avatar.length > MAX_AVATAR_URL_LEN) return { error: "invalid_avatar_url" };
-      let protocol: string;
-      try {
-        protocol = new URL(avatar).protocol;
-      } catch {
-        return { error: "invalid_avatar_url" };
-      }
-      if (protocol !== "http:" && protocol !== "https:") {
-        return { error: "invalid_avatar_url" };
+    // the validated upload path. An empty string clears the avatar; an omitted
+    // avatar (null) leaves the current one unchanged.
+    let avatar: string | null = null;
+    if (input.avatarUrl !== undefined) {
+      avatar = input.avatarUrl;
+      if (avatar !== "") {
+        if (avatar.length > MAX_AVATAR_URL_LEN) return { error: "invalid_avatar_url" };
+        let protocol: string;
+        try {
+          protocol = new URL(avatar).protocol;
+        } catch {
+          return { error: "invalid_avatar_url" };
+        }
+        if (protocol !== "http:" && protocol !== "https:") {
+          return { error: "invalid_avatar_url" };
+        }
       }
     }
     const { error: noteError } = await sb.rpc("set_creator_note", {
-      p_note: input.note ?? "",
+      p_note: input.note !== undefined ? input.note : null,
       p_avatar: avatar,
     });
     if (noteError) return { error: "db_error" };

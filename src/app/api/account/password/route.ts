@@ -3,6 +3,7 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { rateLimitOr429 } from "@/lib/api/limit";
+import { isAcceptablePassword } from "@/lib/api/password";
 
 // Change the signed-in creator's password via Supabase Auth.
 // Security:
@@ -39,11 +40,9 @@ export async function POST(req: Request) {
     typeof body.currentPassword === "string" ? body.currentPassword : "";
   const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
 
-  if (newPassword.length < 8) {
+  // Shared policy: length floor + letter/digit mix (admin invite uses the same).
+  if (!isAcceptablePassword(newPassword)) {
     return NextResponse.json({ error: "weak_password" }, { status: 400 });
-  }
-  if (newPassword.length > 200) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
   // Re-auth with the current password on a throwaway client (persistSession:false
