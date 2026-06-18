@@ -5552,6 +5552,9 @@ export async function getMyPublicProfile(): Promise<{
   };
 }
 
+// Cap stored avatar URLs so a multi-KB string can't be persisted via the note RPC.
+const MAX_AVATAR_URL_LEN = 2048;
+
 /** Creator updates their SFW link-in-bio fields + fan-page personal note. */
 export async function setMyPublicProfile(input: {
   slug: string;
@@ -5578,9 +5581,25 @@ export async function setMyPublicProfile(input: {
   });
   if (error) return { error: "db_error" };
   if (input.note !== undefined || input.avatarUrl !== undefined) {
+    // Defense in depth: never persist an avatar URL with a non-http(s) scheme
+    // (blocks data:/javascript:) or an oversized value, even if a caller skips
+    // the validated upload path. An empty string clears the avatar.
+    const avatar = input.avatarUrl ?? "";
+    if (avatar !== "") {
+      if (avatar.length > MAX_AVATAR_URL_LEN) return { error: "invalid_avatar_url" };
+      let protocol: string;
+      try {
+        protocol = new URL(avatar).protocol;
+      } catch {
+        return { error: "invalid_avatar_url" };
+      }
+      if (protocol !== "http:" && protocol !== "https:") {
+        return { error: "invalid_avatar_url" };
+      }
+    }
     await sb.rpc("set_creator_note", {
       p_note: input.note ?? "",
-      p_avatar: input.avatarUrl ?? "",
+      p_avatar: avatar,
     });
   }
   return { ok: true };
