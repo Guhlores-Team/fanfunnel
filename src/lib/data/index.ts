@@ -1111,6 +1111,19 @@ export async function createCampaign(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
+  // Verify the pinned wheel belongs to this creator before referencing it, so a
+  // campaign can't be created pointing at another creator's wheel id (mirrors the
+  // check in setCampaignPinnedWheel).
+  if (pinnedWheelId) {
+    const { data: ownWheel } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("id", pinnedWheelId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownWheel) return { error: "not_found" };
+  }
+
   const { data, error } = await sb
     .from("campaigns")
     .insert({ creator_id: user.id, name, pinned_wheel_id: pinnedWheelId ?? null })
