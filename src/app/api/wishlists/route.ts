@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { addWishlist, removeWishlist } from "@/lib/data";
+import { rateLimitOr429 } from "@/lib/api/limit";
 
 // A fan flags / un-flags a prize they're chasing. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
@@ -23,6 +24,8 @@ async function mutate(
   if (!body.token || !body.prizeLabel) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  const limited = rateLimitOr429("wishlist:" + body.token, 20, 60_000);
+  if (limited) return limited;
   const result = await fn(body.token, body.prizeLabel);
   if ("error" in result) {
     const status = result.error === "not_found" ? 404 : 400;
