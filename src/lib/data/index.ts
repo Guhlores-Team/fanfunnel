@@ -4562,31 +4562,39 @@ export async function fireWebhooks(
       .eq("creator_id", creatorId);
     const hooks = (data ?? []) as { url: string }[];
     const body = JSON.stringify(payload);
-    await Promise.allSettled(
-      hooks.map(async (h) => {
-        // Re-validate at fire time too (guards against a host that has since
-        // been re-pointed at an internal IP via DNS).
-        let parsed: URL;
-        try {
-          parsed = new URL(h.url);
-        } catch {
-          return;
-        }
-        if (await isBlockedWebhookHost(parsed.hostname)) return;
-        // `redirect: "manual"` is critical: without it `fetch` would follow a
-        // 3xx from an allowed public host to an internal target (e.g. the cloud
-        // metadata IP 169.254.169.254), defeating the SSRF host check above.
-        const res = await fetch(h.url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          redirect: "manual",
-        });
-        // A redirected response means the endpoint tried to bounce us elsewhere;
-        // drop it rather than chase the Location to a possibly-internal host.
-        if (res.status >= 300 && res.status < 400) return;
-      })
-    );
+    const deliver = async (h: { url: string }) => {
+      // Re-validate at fire time too (guards against a host that has since
+      // been re-pointed at an internal IP via DNS).
+      let parsed: URL;
+      try {
+        parsed = new URL(h.url);
+      } catch {
+        return;
+      }
+      if (await isBlockedWebhookHost(parsed.hostname)) return;
+      // `redirect: "manual"` is critical: without it `fetch` would follow a
+      // 3xx from an allowed public host to an internal target (e.g. the cloud
+      // metadata IP 169.254.169.254), defeating the SSRF host check above.
+      const res = await fetch(h.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        redirect: "manual",
+        // Cap how long a single endpoint can hold a socket open — without this
+        // a slow-loris webhook could pin server sockets indefinitely (the
+        // fan-out is fire-and-forget, so nothing else reaps it).
+        signal: AbortSignal.timeout(5000),
+      });
+      // A redirected response means the endpoint tried to bounce us elsewhere;
+      // drop it rather than chase the Location to a possibly-internal host.
+      if (res.status >= 300 && res.status < 400) return;
+    };
+    // Cap concurrency so a creator with many (slow) webhooks can't open an
+    // unbounded number of sockets at once.
+    const CONCURRENCY = 5;
+    for (let i = 0; i < hooks.length; i += CONCURRENCY) {
+      await Promise.allSettled(hooks.slice(i, i + CONCURRENCY).map(deliver));
+    }
   } catch {
     /* never throws */
   }
