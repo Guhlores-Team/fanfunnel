@@ -13,6 +13,14 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  const validBoundedInt = (n: unknown, max: number) =>
+    typeof n === "number" && Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= max;
+  if (body.spins !== undefined && !validBoundedInt(body.spins, 1_000_000)) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
+  if (body.amountCents !== undefined && !validBoundedInt(body.amountCents, 100_000_000)) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
   const result = await editGrant(id, body);
   if ("error" in result) {
     const status =
