@@ -46,6 +46,9 @@ export async function PATCH(
     if (body.tags.length > MAX_TAGS) {
       return NextResponse.json({ error: "bad_request" }, { status: 400 });
     }
+    if (body.tags.some((t) => typeof t !== "string")) {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
     const tags = body.tags
       .map((t) => String(t).trim())
       .filter(Boolean);
