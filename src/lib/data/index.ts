@@ -1247,54 +1247,68 @@ export async function editGrant(
     | null;
   if (!grant) return { error: "not_found" };
 
+  // Validate finite, int4-bounded integers up front so a non-finite patch or an
+  // overflowing balance can't be silently written and desync the aggregates.
   const update: Record<string, unknown> = {};
-  if (patch.amountCents != null) update.amount_cents = Math.max(0, Math.round(patch.amountCents));
+  if (patch.amountCents != null) {
+    if (!Number.isFinite(patch.amountCents)) return { error: "invalid" };
+    update.amount_cents = clampInt(Math.round(patch.amountCents), 0);
+  }
   if (patch.campaignId !== undefined) update.campaign_id = patch.campaignId;
 
+  let delta = 0;
   if (patch.spins != null) {
-    const newSpins = Math.max(0, Math.floor(patch.spins));
-    const delta = newSpins - grant.spins;
+    if (!Number.isFinite(patch.spins)) return { error: "invalid" };
+    const newSpins = clampInt(Math.floor(patch.spins), 0);
+    delta = newSpins - grant.spins;
     update.spins = newSpins;
-    if (delta !== 0) {
-      // Adjust the fan-level aggregate.
-      const { data: fanRow } = await sb
+  }
+
+  // Update the grant row first and abort on failure, so the aggregate
+  // adjustments below only run once the edit itself has persisted.
+  const { error: grantErr } = await sb.from("grants").update(update).eq("id", grantId);
+  if (grantErr) return { error: "db_error" };
+
+  if (delta !== 0) {
+    // Adjust the fan-level aggregate.
+    const { data: fanRow } = await sb
+      .from("fans")
+      .select("spins_remaining, spins_granted_total")
+      .eq("id", grant.fan_id)
+      .maybeSingle();
+    const fan = fanRow as { spins_remaining: number; spins_granted_total: number } | null;
+    if (fan) {
+      const { error: fanErr } = await sb
         .from("fans")
+        .update({
+          spins_remaining: clampInt(fan.spins_remaining + delta, 0),
+          spins_granted_total: clampInt(fan.spins_granted_total + delta, 0),
+        })
+        .eq("id", grant.fan_id);
+      if (fanErr) return { error: "db_error" };
+    }
+    // And the specific wheel's pass balance this grant landed on.
+    if (grant.fan_pass_id) {
+      const { data: pRow } = await sb
+        .from("fan_passes")
         .select("spins_remaining, spins_granted_total")
-        .eq("id", grant.fan_id)
+        .eq("id", grant.fan_pass_id)
         .maybeSingle();
-      const fan = fanRow as { spins_remaining: number; spins_granted_total: number } | null;
-      if (fan) {
-        await sb
-          .from("fans")
-          .update({
-            spins_remaining: Math.max(0, fan.spins_remaining + delta),
-            spins_granted_total: Math.max(0, fan.spins_granted_total + delta),
-          })
-          .eq("id", grant.fan_id);
-      }
-      // And the specific wheel's pass balance this grant landed on.
-      if (grant.fan_pass_id) {
-        const { data: pRow } = await sb
+      const p = pRow as { spins_remaining: number; spins_granted_total: number } | null;
+      if (p) {
+        const { error: pErr } = await sb
           .from("fan_passes")
-          .select("spins_remaining, spins_granted_total")
-          .eq("id", grant.fan_pass_id)
-          .maybeSingle();
-        const p = pRow as { spins_remaining: number; spins_granted_total: number } | null;
-        if (p) {
-          await sb
-            .from("fan_passes")
-            .update({
-              spins_remaining: Math.max(0, p.spins_remaining + delta),
-              spins_granted_total: Math.max(0, p.spins_granted_total + delta),
-            })
-            .eq("id", grant.fan_pass_id);
-        }
+          .update({
+            spins_remaining: clampInt(p.spins_remaining + delta, 0),
+            spins_granted_total: clampInt(p.spins_granted_total + delta, 0),
+          })
+          .eq("id", grant.fan_pass_id);
+        if (pErr) return { error: "db_error" };
       }
     }
   }
 
-  const { error } = await sb.from("grants").update(update).eq("id", grantId);
-  return error ? { error: "db_error" } : { ok: true };
+  return { ok: true };
 }
 
 /** Top up spins on the fan account behind a token (e.g. after another tip). */
