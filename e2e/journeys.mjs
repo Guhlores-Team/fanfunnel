@@ -42,21 +42,10 @@ export async function creatorJourney(page, { step, assert }) {
   });
 
   await step("wheel editor: edit title + save persists", async () => {
-    // The title is the first text-ish ff-input that isn't a hex color.
-    let title = null;
-    for (const c of await page.locator("input.ff-input").all()) {
-      try {
-        const v = await c.inputValue();
-        const type = await c.getAttribute("type");
-        if (!v.startsWith("#") && (type === null || type === "text") && (await c.isEditable())) {
-          title = c;
-          break;
-        }
-      } catch {
-        /* skip */
-      }
-    }
-    assert(title, "found the wheel title input");
+    // Stable selector: the wheel title input carries data-testid="wheel-title-input"
+    // (replaces the old "first text-ish ff-input that isn't a hex color" heuristic).
+    const title = page.getByTestId("wheel-title-input");
+    assert(await title.count(), "found the wheel title input");
     await title.fill("E2E Wheel " + Date.now());
     await page.locator("button:has-text('Save wheel')").first().click();
     // Web-first wait for the save confirmation rather than a fixed sleep.

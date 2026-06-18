@@ -2200,6 +2200,7 @@ function WheelEditor({
             <Field label="Title">
               <input
                 className="ff-input w-full"
+                data-testid="wheel-title-input"
                 value={wheel.title}
                 onChange={(e) => setWheel({ ...wheel, title: e.target.value })}
               />
