@@ -68,39 +68,50 @@ async function signedClient(email) {
 }
 
 async function main() {
-  console.log("Creating two throwaway creators…");
-  const A = await makeCreator("a");
-  const B = await makeCreator("b");
+  const createdUserIds = [];
+  try {
+    console.log("Creating two throwaway creators…");
+    const A = await makeCreator("a");
+    createdUserIds.push(A.id);
+    const B = await makeCreator("b");
+    createdUserIds.push(B.id);
 
-  const a = await signedClient(A.email);
-  console.log("\nActing as Creator A — asserting isolation from B:");
+    const a = await signedClient(A.email);
+    console.log("\nActing as Creator A — asserting isolation from B:");
 
-  // A sees its own rows.
-  const ownFans = await a.from("fans").select("id").eq("creator_id", A.id);
-  check((ownFans.data?.length ?? 0) === 1, "A can read its OWN fan");
+    // A sees its own rows.
+    const ownFans = await a.from("fans").select("id").eq("creator_id", A.id);
+    check((ownFans.data?.length ?? 0) === 1, "A can read its OWN fan");
 
-  // A sees none of B's, across every tenant table.
-  for (const [table] of [["fans"], ["wheels"], ["grants"], ["spins"]]) {
-    const r = await a.from(table).select("id").eq("creator_id", B.id);
-    check((r.data?.length ?? 0) === 0, `A reads 0 of B's ${table} (got ${r.data?.length ?? 0})`);
+    // A sees none of B's, across every tenant table.
+    for (const [table] of [["fans"], ["wheels"], ["grants"], ["spins"]]) {
+      const r = await a.from(table).select("id").eq("creator_id", B.id);
+      check((r.data?.length ?? 0) === 0, `A reads 0 of B's ${table} (got ${r.data?.length ?? 0})`);
+    }
+    // Prizes are scoped via their wheel.
+    const bPrizes = await a.from("prizes").select("id").eq("wheel_id", B.wheelId);
+    check((bPrizes.data?.length ?? 0) === 0, `A reads 0 of B's prizes (got ${bPrizes.data?.length ?? 0})`);
+    // Profiles: A must not read B's profile row.
+    const bProfile = await a.from("profiles").select("id").eq("id", B.id);
+    check((bProfile.data?.length ?? 0) === 0, `A reads 0 of B's profile (got ${bProfile.data?.length ?? 0})`);
+
+    // A cannot mutate B's rows (RLS should match zero rows → no-op, never error-leak).
+    const upd = await a.from("fans").update({ display_name: "HACKED" }).eq("id", B.fanId).select("id");
+    check((upd.data?.length ?? 0) === 0, "A cannot UPDATE B's fan");
+    const del = await a.from("wheels").delete().eq("id", B.wheelId).select("id");
+    check((del.data?.length ?? 0) === 0, "A cannot DELETE B's wheel");
+  } finally {
+    // Always clean up, even if an error was thrown above, so no disposable
+    // users or seeded tenant data are left behind in the live project.
+    console.log("\nCleaning up test users…");
+    for (const id of createdUserIds) {
+      try {
+        await admin.auth.admin.deleteUser(id);
+      } catch (e) {
+        console.error("  ✗ Failed to delete test user", id, "—", e.message ?? e);
+      }
+    }
   }
-  // Prizes are scoped via their wheel.
-  const bPrizes = await a.from("prizes").select("id").eq("wheel_id", B.wheelId);
-  check((bPrizes.data?.length ?? 0) === 0, `A reads 0 of B's prizes (got ${bPrizes.data?.length ?? 0})`);
-  // Profiles: A must not read B's profile row.
-  const bProfile = await a.from("profiles").select("id").eq("id", B.id);
-  check((bProfile.data?.length ?? 0) === 0, `A reads 0 of B's profile (got ${bProfile.data?.length ?? 0})`);
-
-  // A cannot mutate B's rows (RLS should match zero rows → no-op, never error-leak).
-  const upd = await a.from("fans").update({ display_name: "HACKED" }).eq("id", B.fanId).select("id");
-  check((upd.data?.length ?? 0) === 0, "A cannot UPDATE B's fan");
-  const del = await a.from("wheels").delete().eq("id", B.wheelId).select("id");
-  check((del.data?.length ?? 0) === 0, "A cannot DELETE B's wheel");
-
-  // Cleanup.
-  console.log("\nCleaning up test users…");
-  await admin.auth.admin.deleteUser(A.id);
-  await admin.auth.admin.deleteUser(B.id);
 
   if (failures > 0) {
     console.error(`\n✗ RLS RUNTIME TEST FAILED — ${failures} leak(s). Do not ship.`);
