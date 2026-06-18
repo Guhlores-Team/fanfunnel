@@ -22,10 +22,15 @@ export async function POST(req: Request) {
   if (typeof body.token !== "string" || typeof body.body !== "string" || !body.token || !body.body) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  // Cap message length to prevent storage bloat and expensive reads.
+  const text = body.body.trim();
+  if (!text || text.length > 2000) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
   // Per-fan send cap to stop inbox flooding.
   const limited = rateLimitOr429("msg:" + body.token, 10, 60_000);
   if (limited) return limited;
-  const result = await sendFanMessage(body.token, body.body);
+  const result = await sendFanMessage(body.token, text);
   if ("error" in result) {
     const status =
       result.error === "not_found" ? 404 : result.error === "locked" ? 403 : 400;
