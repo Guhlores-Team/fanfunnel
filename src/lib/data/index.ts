@@ -850,7 +850,7 @@ export async function createPass(opts: {
     if (ex) {
       passId = ex.id;
       token = ex.token;
-      await sb
+      const { error: topUpErr } = await sb
         .from("fan_passes")
         .update({
           spins_remaining: ex.spins_remaining + balanceAdd,
@@ -858,6 +858,7 @@ export async function createPass(opts: {
           ...(campaignId ? { campaign_id: campaignId } : {}),
         })
         .eq("id", ex.id);
+      if (topUpErr) return { error: "db_error" };
     } else {
       token = randomToken();
       const { data: np, error: npErr } = await sb
@@ -884,13 +885,14 @@ export async function createPass(opts: {
       .eq("id", fanId)
       .maybeSingle();
     if (!fan) return { error: "fan_not_found" };
-    await sb
+    const { error: fanBalErr } = await sb
       .from("fans")
       .update({
         spins_remaining: fan.spins_remaining + balanceAdd,
         spins_granted_total: fan.spins_granted_total + balanceAdd,
       })
       .eq("id", fanId);
+    if (fanBalErr) return { error: "db_error" };
   } else {
     const { data: fan, error } = await sb
       .from("fans")
