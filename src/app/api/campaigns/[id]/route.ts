@@ -19,7 +19,11 @@ export async function PATCH(
   }
 
   if (typeof body.name === "string") {
-    const result = await renameCampaign(id, body.name);
+    const name = body.name.trim();
+    if (!name || name.length > 120) {
+      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    }
+    const result = await renameCampaign(id, name);
     if ("error" in result) {
       return NextResponse.json(result, { status: statusFor(result.error) });
     }
