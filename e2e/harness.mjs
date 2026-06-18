@@ -201,7 +201,12 @@ export async function clickTab(page, name) {
     try {
       if ((await t.innerText()).trim().toLowerCase().includes(name.toLowerCase())) {
         await t.click();
-        await page.waitForTimeout(1000);
+        // Web-first wait: the clicked tab reflects its selected state once the
+        // panel has switched — wait for that instead of a fixed pause.
+        await t
+          .and(page.locator("[aria-selected='true']"))
+          .waitFor({ timeout: 4000 })
+          .catch(() => {});
         return true;
       }
     } catch {
@@ -222,12 +227,14 @@ export async function passAgeGate(page) {
     const boxes = await page.locator("[role='dialog'] input[type='checkbox']").all();
     if (boxes.length === 0) return; // some other modal, not the age gate
     for (const box of boxes) {
+      // check() auto-waits for and verifies the checked state — no fixed pause.
       await box.check({ timeout: 3000 }).catch(() => {});
-      await page.waitForTimeout(100);
     }
     const enter = page.locator("[role='dialog'] button:has-text('Enter')").first();
     await enter.click({ timeout: 4000 }).catch(() => {});
-    await page.waitForTimeout(1000);
+    // Web-first wait: the gate is done once its dialog is gone, not after a fixed
+    // pause.
+    await dialog.first().waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
   } catch {
     /* gate not blocking — proceed */
   }
