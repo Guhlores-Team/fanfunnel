@@ -53,6 +53,13 @@ async function findUserByEmail(email) {
     if (hit) return hit;
     if (data.users.length < 200) return null;
   }
+  // Reached the page cap with the last page still full: more users may exist
+  // beyond what we scanned, so a "not found" result here is not authoritative
+  // and could lead to creating a duplicate user.
+  console.warn(
+    `  ⚠ user scan for ${email} hit the 20-page limit (4000 users) without exhausting the list; ` +
+      `an existing user may have been missed and a duplicate could be created.`,
+  );
   return null;
 }
 
