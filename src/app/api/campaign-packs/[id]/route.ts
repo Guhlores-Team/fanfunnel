@@ -30,12 +30,39 @@ export async function PATCH(
     bonusSpins: number;
     sortOrder: number;
   }> = {};
+  // Validate a supplied numeric field: must be a finite, non-negative,
+  // whole number within range. Returns the number, or null if invalid.
+  const MAX_VALUE = 1_000_000_000;
+  const validNumber = (value: unknown): number | null => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > MAX_VALUE) {
+      return null;
+    }
+    return n;
+  };
+
   if ("campaignId" in body) patch.campaignId = body.campaignId ?? null;
   if (body.label !== undefined) patch.label = String(body.label);
-  if (body.spins !== undefined) patch.spins = Number(body.spins);
-  if (body.amountCents !== undefined) patch.amountCents = Number(body.amountCents);
-  if (body.bonusSpins !== undefined) patch.bonusSpins = Number(body.bonusSpins);
-  if (body.sortOrder !== undefined) patch.sortOrder = Number(body.sortOrder);
+  if (body.spins !== undefined) {
+    const spins = validNumber(body.spins);
+    if (spins === null) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    patch.spins = spins;
+  }
+  if (body.amountCents !== undefined) {
+    const amountCents = validNumber(body.amountCents);
+    if (amountCents === null) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    patch.amountCents = amountCents;
+  }
+  if (body.bonusSpins !== undefined) {
+    const bonusSpins = validNumber(body.bonusSpins);
+    if (bonusSpins === null) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    patch.bonusSpins = bonusSpins;
+  }
+  if (body.sortOrder !== undefined) {
+    const sortOrder = validNumber(body.sortOrder);
+    if (sortOrder === null) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    patch.sortOrder = sortOrder;
+  }
 
   const result = await updateCampaignPack(id, patch);
   if ("error" in result) {
