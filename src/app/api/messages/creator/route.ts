@@ -11,11 +11,14 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
-  if (!body.fanId || !body.body) {
+  if (!body.fanId || typeof body.body !== "string") {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
   // Cap message length to prevent storage bloat and expensive reads (matches fan messages).
-  if (typeof body.body !== "string" || body.body.length > 2000) {
+  // Validate the trimmed length up front so a whitespace-only or non-string body
+  // can't reach sendCreatorMessage and throw on body.trim().
+  const trimmed = body.body.trim();
+  if (trimmed.length < 1 || trimmed.length > 2000) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
   // Per-creator send cap to stop a creator session from flooding replies
