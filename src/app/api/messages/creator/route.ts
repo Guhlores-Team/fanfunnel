@@ -12,6 +12,10 @@ export async function POST(req: Request) {
   if (!body.fanId || !body.body) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+  // Cap message length to prevent storage bloat and expensive reads (matches fan messages).
+  if (typeof body.body !== "string" || body.body.length > 2000) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  }
   const result = await sendCreatorMessage(body.fanId, body.body);
   if ("error" in result) {
     const status = result.error === "unauthorized" ? 401 : 400;
