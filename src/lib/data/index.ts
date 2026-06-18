@@ -824,6 +824,19 @@ export async function createPass(opts: {
   // Resolve which wheel these spins are for (spins are per-wheel):
   //   explicit wheelId > the campaign's pinned wheel > the active wheel > oldest.
   let wheelId = opts.wheelId;
+  // A client-supplied wheelId must belong to THIS creator. The fallback paths
+  // below are already creator-scoped; this guards the explicit path so a foreign
+  // wheel id is rejected up front rather than minting a pass that references
+  // another tenant's wheel (defense in depth on top of RLS).
+  if (wheelId) {
+    const { data: ownWheel } = await sb
+      .from("wheels")
+      .select("id")
+      .eq("id", wheelId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownWheel) return { error: "no_wheel" };
+  }
   if (!wheelId && campaignId) {
     const { data: camp } = await sb
       .from("campaigns")
@@ -880,6 +893,16 @@ export async function createPass(opts: {
   let passId: string;
 
   if (fanId) {
+    // The fan must belong to THIS creator before we mint or top up a pass for it:
+    // reject a foreign fan id up front so we never insert a fan_pass under our own
+    // creator_id that points at another tenant's fan (defense in depth on top of RLS).
+    const { data: ownFan } = await sb
+      .from("fans")
+      .select("id")
+      .eq("id", fanId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!ownFan) return { error: "fan_not_found" };
     // Existing fan: find this fan's pass FOR THIS WHEEL. Top it up if it exists,
     // otherwise mint a new per-wheel link. Spins live on the pass, not the fan.
     const { data: existing } = await sb
