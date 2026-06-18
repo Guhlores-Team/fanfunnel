@@ -5663,10 +5663,11 @@ export async function setMyPublicProfile(input: {
         return { error: "invalid_avatar_url" };
       }
     }
-    await sb.rpc("set_creator_note", {
+    const { error: noteError } = await sb.rpc("set_creator_note", {
       p_note: input.note ?? "",
       p_avatar: avatar,
     });
+    if (noteError) return { error: "db_error" };
   }
   return { ok: true };
 }
