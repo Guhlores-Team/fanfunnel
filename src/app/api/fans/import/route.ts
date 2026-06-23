@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createPass } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 
 const MAX_ROWS = 500;
 // Match the per-pass caps enforced by /api/passes so a single import row cannot
@@ -68,19 +69,15 @@ export async function POST(req: Request) {
     if (limited) return limited;
   }
 
-  let body: { rows?: ImportRow[] };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ rows?: ImportRow[] }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const rows = body.rows;
   if (!Array.isArray(rows) || rows.length === 0) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
   if (rows.length > MAX_ROWS) {
-    return NextResponse.json({ error: "too_many_rows" }, { status: 400 });
+    return badRequest("too_many_rows");
   }
 
   // Normalize/validate every row once, preserving order. Blank-name rows fail

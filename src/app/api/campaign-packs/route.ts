@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { listCampaignPacks, createCampaignPack } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // The creator's spin packs. `?campaignId=` scopes to one campaign (plus globals).
 export async function GET(req: Request) {
@@ -11,23 +12,19 @@ export async function GET(req: Request) {
 
 // Create a spin pack.
 export async function POST(req: Request) {
-  let body: {
+  const body = await parseJsonBody<{
     campaignId?: string | null;
     label?: string;
     spins?: number;
     amountCents?: number;
     bonusSpins?: number;
     sortOrder?: number;
-  };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const label = String(body.label ?? "").trim();
   if (!label || body.spins == null || body.amountCents == null) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
 
   // Require finite, non-negative integers within explicit max bounds.
@@ -58,7 +55,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ pack });
   } catch (err) {
     const message = err instanceof Error ? err.message : "db_error";
-    const status = message === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: message }, { status });
+    return errorResponse(message);
   }
 }

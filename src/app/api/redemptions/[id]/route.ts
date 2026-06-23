@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { setRedemptionStatus, setRedemptionMeta } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import type { RedemptionStatus } from "@/lib/data/types";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 
 const VALID: RedemptionStatus[] = [
   "pending",
@@ -21,22 +22,18 @@ export async function PATCH(
 ) {
   const { id } = await params;
 
-  let body: {
+  const body = await parseJsonBody<{
     status?: RedemptionStatus;
     notes?: string | null;
     dueAt?: string | null;
-  };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   // Validate every field up front, before any write, so an invalid input
   // can never persist one part of the patch while rejecting another (the
   // partial-update / inconsistent-state failure mode this guards against).
   if (body.status !== undefined && !VALID.includes(body.status)) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
 
   const hasMeta = "notes" in body || "dueAt" in body;
@@ -44,17 +41,17 @@ export async function PATCH(
     // Reject non-string, non-null notes/dueAt so a stray number/object can't
     // slip past the length/date checks and corrupt the stored meta.
     if ("notes" in body && body.notes !== null && typeof body.notes !== "string") {
-      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+      return badRequest();
     }
     if ("dueAt" in body && body.dueAt !== null && typeof body.dueAt !== "string") {
-      return NextResponse.json({ error: "bad_request" }, { status: 400 });
+      return badRequest();
     }
     // Cap notes and require dueAt (when present) to be a valid date.
     if (typeof body.notes === "string" && body.notes.length > 2000) {
-      return NextResponse.json({ error: "notes_too_long" }, { status: 400 });
+      return badRequest("notes_too_long");
     }
     if (typeof body.dueAt === "string" && Number.isNaN(new Date(body.dueAt).getTime())) {
-      return NextResponse.json({ error: "bad_due_date" }, { status: 400 });
+      return badRequest("bad_due_date");
     }
   }
 

@@ -2,25 +2,24 @@ import { NextResponse } from "next/server";
 import { sendCreatorMessage } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { ValidationError, str } from "@/lib/api/validate";
 
 // The creator replies to a fan in the drawer/inbox (RLS-scoped).
 export async function POST(req: Request) {
-  let body: { fanId?: string; body?: string };
+  const body = await parseJsonBody<{ fanId?: string; body?: string }>(req);
+  if (body === BAD_REQUEST) return badRequest();
+
+  let fanId: string;
+  let text: string;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    fanId = str(body.fanId, { max: 200, required: true })!;
+    text = str(body.body, { max: 2000, required: true })!;
+  } catch (e) {
+    if (e instanceof ValidationError) return badRequest(e.code);
+    throw e;
   }
-  if (typeof body.fanId !== "string" || !body.fanId || typeof body.body !== "string") {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
-  // Cap message length to prevent storage bloat and expensive reads (matches fan messages).
-  // Validate the trimmed length up front so a whitespace-only or non-string body
-  // can't reach sendCreatorMessage and throw on body.trim().
-  const trimmed = body.body.trim();
-  if (trimmed.length < 1 || trimmed.length > 2000) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+
   // Per-creator send cap to stop a creator session from flooding replies
   // (matches the fan route). Keyed on the authenticated creator id when the
   // real backend is configured; falls back to the client IP in demo/mock mode.
@@ -34,10 +33,8 @@ export async function POST(req: Request) {
   }
   const limited = rateLimitOr429("creatormsg:" + rlKey, 10, 60_000);
   if (limited) return limited;
-  const result = await sendCreatorMessage(body.fanId, body.body);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+
+  const result = await sendCreatorMessage(fanId, text);
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }
