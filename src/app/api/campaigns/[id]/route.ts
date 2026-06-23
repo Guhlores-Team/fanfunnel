@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { setCampaignPinnedWheel, renameCampaign, deleteCampaign } from "@/lib/data";
-
-const statusFor = (e: string) =>
-  e === "unauthorized" ? 401 : e === "not_found" ? 404 : 400;
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Rename a campaign and/or pin (or unpin) its default wheel.
 export async function PATCH(
@@ -11,25 +9,17 @@ export async function PATCH(
 ) {
   const { id } = await params;
 
-  let body: { pinnedWheelId?: string | null; name?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ pinnedWheelId?: string | null; name?: string }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   if (typeof body.name === "string") {
     const result = await renameCampaign(id, body.name);
-    if ("error" in result) {
-      return NextResponse.json(result, { status: statusFor(result.error) });
-    }
+    if ("error" in result) return errorResponse(result.error);
   }
 
   if ("pinnedWheelId" in body) {
     const result = await setCampaignPinnedWheel(id, body.pinnedWheelId ?? null);
-    if ("error" in result) {
-      return NextResponse.json(result, { status: statusFor(result.error) });
-    }
+    if ("error" in result) return errorResponse(result.error);
   }
   return NextResponse.json({ ok: true });
 }
@@ -41,8 +31,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const result = await deleteCampaign(id);
-  if ("error" in result) {
-    return NextResponse.json(result, { status: statusFor(result.error) });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }

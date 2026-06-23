@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { updateCampaignPack, deleteCampaignPack } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Patch a spin pack's fields.
 export async function PATCH(
@@ -8,19 +9,15 @@ export async function PATCH(
 ) {
   const { id } = await params;
 
-  let body: Partial<{
+  const body = await parseJsonBody<Partial<{
     campaignId: string | null;
     label: string;
     spins: number;
     amountCents: number;
     bonusSpins: number;
     sortOrder: number;
-  }>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  }>>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const patch: Partial<{
     campaignId: string | null;
@@ -38,10 +35,7 @@ export async function PATCH(
   if (body.sortOrder !== undefined) patch.sortOrder = Number(body.sortOrder);
 
   const result = await updateCampaignPack(id, patch);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }
 
@@ -52,9 +46,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const result = await deleteCampaignPack(id);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }

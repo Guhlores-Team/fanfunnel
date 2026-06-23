@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMyPublicProfile, setMyPublicProfile } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // The signed-in creator's link-in-bio settings.
 export async function GET() {
@@ -8,12 +9,14 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  let body: { slug?: string; tipUrl?: string; tagline?: string; note?: string; avatarUrl?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{
+    slug?: string;
+    tipUrl?: string;
+    tagline?: string;
+    note?: string;
+    avatarUrl?: string;
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   const result = await setMyPublicProfile({
     slug: body.slug ?? "",
     tipUrl: body.tipUrl ?? "",
@@ -21,9 +24,6 @@ export async function PUT(req: Request) {
     note: body.note,
     avatarUrl: body.avatarUrl,
   });
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

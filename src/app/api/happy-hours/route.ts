@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { listHappyHours, createHappyHour } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Happy-hour windows for the creator. `?wheelId=` filters to one wheel.
 export async function GET(req: Request) {
@@ -11,14 +12,15 @@ export async function GET(req: Request) {
 
 // Schedule a rare-boost window.
 export async function POST(req: Request) {
-  let body: { wheelId?: string; multiplier?: number; startsAt?: string; endsAt?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{
+    wheelId?: string;
+    multiplier?: number;
+    startsAt?: string;
+    endsAt?: string;
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   if (!body.wheelId || !body.startsAt || !body.endsAt) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
 
   const result = await createHappyHour({
@@ -27,9 +29,6 @@ export async function POST(req: Request) {
     startsAt: body.startsAt,
     endsAt: body.endsAt,
   });
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : result.error === "not_found" ? 404 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

@@ -1,23 +1,39 @@
 import { NextResponse } from "next/server";
 import { submitCreatorApplication } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { ValidationError, str } from "@/lib/api/validate";
 
 // A signed-in, pending user submits their creator details for vetting.
 export async function POST(req: Request) {
-  let body: {
+  const body = await parseJsonBody<{
+    displayName?: string;
+    socials?: string;
+    audienceSize?: string;
+    note?: string;
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
+
+  // Reject over-long free-text instead of silently truncating (caps mirror the
+  // data layer's column limits).
+  let input: {
     displayName?: string;
     socials?: string;
     audienceSize?: string;
     note?: string;
   };
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    input = {
+      displayName: str(body.displayName, { max: 120 }),
+      socials: str(body.socials, { max: 600 }),
+      audienceSize: str(body.audienceSize, { max: 120 }),
+      note: str(body.note, { max: 1000 }),
+    };
+  } catch (e) {
+    if (e instanceof ValidationError) return badRequest(e.code);
+    throw e;
   }
-  const result = await submitCreatorApplication(body);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+
+  const result = await submitCreatorApplication(input);
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }
