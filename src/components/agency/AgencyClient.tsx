@@ -47,18 +47,26 @@ async function manage(body: Record<string, unknown>): Promise<string | null> {
   return d.error ?? "error";
 }
 
+// Map each known status the agency RPC can return to a specific, actionable
+// message (mirrors how SpinClient maps spin error codes) rather than falling
+// back to one generic line.
 const errLabel = (e: string) =>
   ({
     no_such_user: "No account with that email.",
     already_in_org: "That creator is already in another agency.",
     not_owner: "Only the agency owner can do that.",
-    db_error: "Something went wrong.",
-  })[e] ?? "Couldn't complete that.";
+    not_found: "That item no longer exists — refresh and try again.",
+    invalid_role: "Pick a valid staff role.",
+    db_error: "Something went wrong on our end — please try again.",
+  })[e] ?? "Couldn't complete that — please try again.";
 
 export default function AgencyClient() {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
+  // Stable keys for in-flight destructive actions so each button can disable
+  // itself while its request is pending (prevents double-submits).
+  const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     try {
@@ -82,6 +90,22 @@ export default function AgencyClient() {
     }
     await refresh();
     return true;
+  };
+
+  // Guarded variant for destructive actions: no-ops while the same `key` is
+  // already in flight, and toggles `busyKeys` so the triggering button disables.
+  const runGuarded = async (key: string, body: Record<string, unknown>) => {
+    if (busyKeys.has(key)) return false;
+    setBusyKeys((s) => new Set(s).add(key));
+    try {
+      return await run(body);
+    } finally {
+      setBusyKeys((s) => {
+        const next = new Set(s);
+        next.delete(key);
+        return next;
+      });
+    }
   };
 
   if (loading) return <p className="p-8 text-sm text-white/40">Loading…</p>;
@@ -156,8 +180,11 @@ export default function AgencyClient() {
                 <p className="text-xs text-amber-300/80">Invited · awaiting acceptance</p>
               </div>
               <button
-                onClick={() => run({ action: "revoke_invite", inviteId: inv.id })}
-                className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white"
+                onClick={() =>
+                  runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })
+                }
+                disabled={busyKeys.has(`revoke:${inv.id}`)}
+                className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white disabled:opacity-50"
               >
                 Revoke
               </button>
@@ -182,8 +209,15 @@ export default function AgencyClient() {
               <span className="font-bold text-pink-300">{formatCents(c.revenue)}</span>
               {isOwner && (
                 <button
-                  onClick={() => run({ action: "remove_creator", orgId: org.id, creatorId: c.id })}
-                  className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white"
+                  onClick={() =>
+                    runGuarded(`creator:${c.id}`, {
+                      action: "remove_creator",
+                      orgId: org.id,
+                      creatorId: c.id,
+                    })
+                  }
+                  disabled={busyKeys.has(`creator:${c.id}`)}
+                  className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white disabled:opacity-50"
                 >
                   Remove
                 </button>
@@ -222,8 +256,11 @@ export default function AgencyClient() {
                 </span>
                 {isOwner && (
                   <button
-                    onClick={() => run({ action: "remove_member", memberId: m.id })}
-                    className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white"
+                    onClick={() =>
+                      runGuarded(`member:${m.id}`, { action: "remove_member", memberId: m.id })
+                    }
+                    disabled={busyKeys.has(`member:${m.id}`)}
+                    className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white disabled:opacity-50"
                   >
                     Remove
                   </button>

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { FEATURES } from "@/lib/features";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
+import { ToastProvider, useToast } from "@/components/ui/Toast";
+import Modal from "@/components/ui/Modal";
 
 interface PendingApp {
   id: string;
@@ -18,11 +20,24 @@ interface PendingApp {
 }
 
 export default function AdminClient() {
+  return (
+    <ToastProvider>
+      <AdminPanel />
+    </ToastProvider>
+  );
+}
+
+function AdminPanel() {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [apps, setApps] = useState<PendingApp[]>([]);
+  // In-flight ids so action buttons disable while their request is pending
+  // (no double-submits / racing optimistic updates).
+  const [busyApps, setBusyApps] = useState<Set<string>>(new Set());
+  const [busyAccounts, setBusyAccounts] = useState<Set<string>>(new Set());
+  const toast = useToast();
 
   const refresh = useCallback(async () => {
     try {
@@ -44,20 +59,38 @@ export default function AdminClient() {
   }, [refresh]);
 
   async function decideApp(profileId: string, decision: "approved" | "rejected") {
+    if (busyApps.has(profileId)) return;
+    const snapshot = apps;
+    setBusyApps((s) => new Set(s).add(profileId));
     setApps((list) => list.filter((a) => a.profileId !== profileId));
-    await fetch("/api/admin/applications", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profileId, decision }),
-    });
-    refresh();
+    try {
+      const res = await fetch("/api/admin/applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId, decision }),
+      });
+      if (!res.ok) throw new Error();
+      refresh();
+    } catch {
+      setApps(snapshot);
+      toast("Couldn't update the request — try again.", { tone: "error" });
+    } finally {
+      setBusyApps((s) => {
+        const next = new Set(s);
+        next.delete(profileId);
+        return next;
+      });
+    }
   }
 
-  // Optimistically patch one account in place, then persist.
+  // Optimistically patch one account in place, then persist; roll back on failure.
   async function patchAccount(
     id: string,
     patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
   ) {
+    if (busyAccounts.has(id)) return;
+    const snapshot = data;
+    setBusyAccounts((s) => new Set(s).add(id));
     setData((d) =>
       d
         ? {
@@ -68,12 +101,24 @@ export default function AdminClient() {
           }
         : d
     );
-    await fetch("/api/admin/account", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...patch }),
-    });
-    refresh();
+    try {
+      const res = await fetch("/api/admin/account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...patch }),
+      });
+      if (!res.ok) throw new Error();
+      refresh();
+    } catch {
+      setData(snapshot);
+      toast("Couldn't update the account — try again.", { tone: "error" });
+    } finally {
+      setBusyAccounts((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
   }
 
   if (forbidden) {
@@ -184,13 +229,15 @@ export default function AdminClient() {
                     <div className="flex shrink-0 gap-2">
                       <button
                         onClick={() => decideApp(a.profileId, "approved")}
-                        className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold hover:bg-emerald-400"
+                        disabled={busyApps.has(a.profileId)}
+                        className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold hover:bg-emerald-400 disabled:opacity-50"
                       >
                         Approve
                       </button>
                       <button
                         onClick={() => decideApp(a.profileId, "rejected")}
-                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/5"
+                        disabled={busyApps.has(a.profileId)}
+                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/5 disabled:opacity-50"
                       >
                         Reject
                       </button>
@@ -207,7 +254,12 @@ export default function AdminClient() {
         {loading && <p className="text-sm text-white/40">Loading…</p>}
         {!loading &&
           (data?.accounts ?? []).map((a) => (
-            <AccountRow key={a.id} account={a} onPatch={patchAccount} />
+            <AccountRow
+              key={a.id}
+              account={a}
+              onPatch={patchAccount}
+              busy={busyAccounts.has(a.id)}
+            />
           ))}
       </div>
 
@@ -227,12 +279,14 @@ export default function AdminClient() {
 function AccountRow({
   account,
   onPatch,
+  busy,
 }: {
   account: AdminAccount;
   onPatch: (
     id: string,
     patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
   ) => void;
+  busy: boolean;
 }) {
   return (
     <div
@@ -261,8 +315,9 @@ function AccountRow({
         </div>
         <div className="flex items-center gap-2">
           <select
-            className="ff-input text-xs"
+            className="ff-input text-xs disabled:opacity-50"
             value={account.role}
+            disabled={busy}
             onChange={(e) =>
               onPatch(account.id, { role: e.target.value as AppRole })
             }
@@ -272,7 +327,8 @@ function AccountRow({
           </select>
           <button
             onClick={() => onPatch(account.id, { isActive: !account.isActive })}
-            className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
+            disabled={busy}
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50 ${
               account.isActive
                 ? "border border-white/15 text-white/70 hover:bg-white/5"
                 : "bg-green-500/90 text-white hover:bg-green-400"
@@ -296,7 +352,7 @@ function AccountRow({
           return (
             <button
               key={f.key}
-              disabled={f.base}
+              disabled={f.base || busy}
               onClick={() =>
                 onPatch(account.id, {
                   features: { [f.key]: !account.features[f.key] },
@@ -358,15 +414,12 @@ function InviteModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      label="Create a creator account"
+      className="w-full max-w-sm rounded-2xl border border-white/10 bg-zinc-900 p-6 text-white"
     >
-      <form
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={submit}
-        className="w-full max-w-sm rounded-2xl border border-white/10 bg-zinc-900 p-6 text-white"
-      >
+      <form onSubmit={submit}>
         <h2 className="text-lg font-bold">Create a creator account</h2>
         <p className="mt-1 text-sm text-white/50">
           You set their login. Share the credentials with the creator.
@@ -414,6 +467,6 @@ function InviteModal({
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
