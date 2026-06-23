@@ -46,6 +46,15 @@ Project → **Settings → Environment Variables**. Add each for **Production, P
 
 > If they're already there from before, confirm all three exist and are spelled exactly.
 
+### Optional environment variables
+
+These aren't required to boot, but you'll want them for a real deployment:
+
+| Name | Value | What it does |
+|---|---|---|
+| `ADMIN_EMAILS` | comma-separated email allowlist | Gates the one-time admin-claim bootstrap (`claimAdmin` in `src/lib/data/index.ts`). A signed-in user whose email is on this list can promote themselves to admin via the in-app "claim admin" action — no SQL needed. **If it's unset, no one can self-promote** (you'd fall back to the manual `update profiles set role='admin'` in STEP 5). |
+| `FF_REQUIRE_SUPABASE` | `1` | Self-hosted opt-in to **fail closed** instead of mock mode (`src/lib/supabase/server.ts`). On Vercel, `VERCEL_ENV=production` already forces real-Supabase mode; set this where `VERCEL_ENV` isn't present (e.g. a non-Vercel host) so a missing Supabase key throws instead of silently serving in-memory demo data. |
+
 ---
 
 ## STEP 4 — Merge to main (gets you the auto-deploy)
