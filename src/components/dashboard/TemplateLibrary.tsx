@@ -2,17 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { PrizeTemplate, WheelTemplate } from "@/lib/data/types";
-import { RARITY_COLORS, type Rarity } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
 import { EmptyState } from "./ui";
-
-const RARITY_LABEL: Record<Rarity, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
 
 /**
  * Reusable template + prize library. Self-fetches the creator's saved wheel

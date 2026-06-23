@@ -142,15 +142,17 @@ export default function ChatPanel({
       // One quick retry shortly after open: if the first load raced the
       // auto-intro insert (or hit a transient error), history still appears
       // immediately instead of waiting for the next poll tick.
-      setTimeout(() => {
+      retry = setTimeout(() => {
         if (live) void load();
       }, 800);
     };
+    let retry: ReturnType<typeof setTimeout> | null = null;
     run();
     const id = setInterval(load, 3000);
     return () => {
       live = false;
       clearInterval(id);
+      if (retry) clearTimeout(retry);
     };
   }, [open, unlocked, load, token]);
 
@@ -260,7 +262,14 @@ export default function ChatPanel({
                   aria-label={`Message ${creatorTitle}`}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && send()}
+                  onKeyDown={(e) => {
+                    // Enter sends; Shift+Enter is left for a newline. `send`
+                    // already no-ops while a message is in flight.
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void send();
+                    }
+                  }}
                   maxLength={2000}
                   placeholder="Message…"
                   className="flex-1 rounded-full border border-line bg-base px-4 py-2 text-sm text-ink outline-none focus:border-[var(--brand)]"

@@ -6,7 +6,9 @@ import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
-import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
+import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { playWin, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
 // Both beats pull in the motion library and only render briefly after a spin,
@@ -35,14 +37,6 @@ function useWheelSize() {
   }, []);
   return size;
 }
-
-const RARITY_LABEL: Record<string, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
 
 export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [spinsRemaining, setSpinsRemaining] = useState(pass.spinsRemaining);
@@ -388,33 +382,13 @@ function AgeGate({
   const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const ready = adult && terms && !busy;
-  const dialogRef = useRef<HTMLDivElement>(null);
   const firstRef = useRef<HTMLInputElement>(null);
 
   // A11y: this gate is blocking, so move focus into it on open and trap Tab so
   // keyboard users can't step *past* it onto the page behind (which would let
-  // them bypass age verification). Intentionally no Escape-to-close.
-  useEffect(() => {
-    firstRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !dialogRef.current) return;
-      const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input, [href], [tabindex]:not([tabindex="-1"])'
-      );
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  // them bypass age verification). Intentionally non-dismissable: no
+  // Escape-to-close, so the gate can't be bypassed.
+  const dialogRef = useFocusTrap<HTMLDivElement>({ active: true, initialFocus: firstRef });
 
   const confirm = async () => {
     if (!ready) return;
@@ -508,40 +482,15 @@ function PrizeModal({
   const color = prize.color ?? RARITY_COLORS[prize.rarity];
   const isBig = prize.rarity === "epic" || prize.rarity === "legendary";
   const [shared, setShared] = useState(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   // A11y: focus the primary action on open, close on Escape, and trap Tab
   // within the dialog so keyboard/screen-reader users aren't stranded behind it.
-  useEffect(() => {
-    const prevFocus = document.activeElement as HTMLElement | null;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab" || !dialogRef.current) return;
-      const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
-        'button, [href], input, [tabindex]:not([tabindex="-1"])'
-      );
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      prevFocus?.focus?.();
-    };
-  }, [onClose]);
+  const dialogRef = useFocusTrap<HTMLDivElement>({
+    active: true,
+    onEscape: onClose,
+    initialFocus: closeRef,
+  });
 
   const share = async () => {
     if (!shareId) return;
@@ -550,8 +499,7 @@ function PrizeModal({
     try {
       if (navigator.share) {
         await navigator.share({ title: prize.label, text, url });
-      } else {
-        await navigator.clipboard.writeText(url);
+      } else if (await copyToClipboard(url)) {
         setShared(true);
         setTimeout(() => setShared(false), 1500);
       }

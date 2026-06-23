@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { ReferralOverview } from "@/lib/data/types";
+import { useFetch } from "@/lib/hooks/useFetch";
+import { useClipboard } from "@/lib/hooks/useClipboard";
 
 /**
  * A fan's referral panel: share a code, watch credited referrals roll in. Both
@@ -18,34 +19,22 @@ export default function ReferralWidget({
   code: string;
   bonusPerReferral: number;
 }) {
-  const [overview, setOverview] = useState<ReferralOverview | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    fetch(`/api/referrals/overview?token=${encodeURIComponent(token)}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => live && d && setOverview(d))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [token]);
+  // A failed read just leaves the defaults below (no error UI on this panel);
+  // the hook owns the error instead of a bare catch. No ToastProvider on the
+  // fan page, so a clipboard failure stays silent — the code is visible to copy
+  // by hand and the "Copied!" flash simply won't show.
+  const { data: overview } = useFetch<ReferralOverview>(
+    `/api/referrals/overview?token=${encodeURIComponent(token)}`,
+    { refreshOnVisible: false }
+  );
+  const { copy: copyToClipboard, copied } = useClipboard();
 
   if (!code) return null;
   const credited = overview?.creditedCount ?? 0;
   const cap = overview?.cap ?? 3;
   const bonus = overview?.bonusPerReferral ?? bonusPerReferral;
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard blocked — the code is visible to copy by hand */
-    }
-  };
+  const copy = () => void copyToClipboard(code);
 
   return (
     <div className="card w-full rounded-2xl p-5">
