@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { formatCents } from "@/lib/format";
+import { useFetch } from "@/lib/hooks/useFetch";
 
 interface Entry {
   rank: number;
@@ -36,19 +37,15 @@ export default function FanLeaderboard({
   /** Bump to refetch (e.g. after the fan spins) so their new rank shows live. */
   refreshKey?: number;
 }) {
-  const [view, setView] = useState<View | null>(null);
   const [expanded, setExpanded] = useState(false);
 
-  useEffect(() => {
-    let live = true;
-    fetch(`/api/leaderboard/${creatorId}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => live && d && setView(d))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [creatorId, refreshKey]);
+  // `refreshKey` is folded into the URL so a spin forces a refetch. A failed
+  // read leaves `data` null and the board hides (same as before) — but the
+  // error is now owned by the hook instead of swallowed in a bare catch.
+  const { data: view } = useFetch<View>(
+    `/api/leaderboard/${creatorId}?k=${refreshKey}`,
+    { refreshOnVisible: false }
+  );
 
   if (!view || !view.enabled) return null;
 
