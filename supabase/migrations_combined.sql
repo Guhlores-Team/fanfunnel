@@ -1635,3 +1635,20 @@ drop policy if exists autopilot_dismissals_rw on public.autopilot_dismissals;
 create policy autopilot_dismissals_rw on public.autopilot_dismissals for all
   using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
   with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+-- ============================================================
+-- 0033_resync_fan_spin_aggregate.sql
+-- ============================================================
+-- One-time, idempotent heal: snap each fan's spins_remaining / spins_granted_total
+-- back to the sum of their active passes, repairing any historical drift. Safe to
+-- re-run; claim_spin and the grant/credit RPCs keep them in sync going forward.
+update public.fans f
+   set spins_remaining = coalesce((
+         select sum(p.spins_remaining) from public.fan_passes p
+          where p.fan_id = f.id and p.is_active), 0),
+       spins_granted_total = coalesce((
+         select sum(p.spins_granted_total) from public.fan_passes p
+          where p.fan_id = f.id and p.is_active), 0)
+ where exists (
+   select 1 from public.fan_passes p where p.fan_id = f.id and p.is_active
+ );
