@@ -22,6 +22,17 @@ export const RARITY_COLORS: Record<Rarity, string> = {
   legendary: "#f59e0b", // gold
 };
 
+// Human-readable label per rarity. Lives next to RARITY_COLORS so the wheel,
+// dashboard, and fan widgets all share one source of truth instead of each
+// re-declaring the same map.
+export const RARITY_LABEL: Record<Rarity, string> = {
+  common: "Common",
+  uncommon: "Uncommon",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
+};
+
 export interface Prize {
   id: string;
   label: string;
