@@ -8,6 +8,7 @@ import { prizeOdds } from "@/lib/games/wheel/engine";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
 import {
   RARITY_COLORS,
+  RARITY_LABEL,
   RARITY_ORDER,
   type Prize,
   type Rarity,
@@ -25,6 +26,10 @@ import type {
 } from "@/lib/data/types";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { formatCents } from "@/lib/format";
+import { useFetch } from "@/lib/hooks/useFetch";
+import { useClipboard, copyToClipboard } from "@/lib/hooks/useClipboard";
+import { useOrigin } from "@/lib/hooks/useOrigin";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { OddsBar } from "@/components/dashboard/OddsBar";
 import Sparkline from "@/components/dashboard/Sparkline";
 import Funnel from "@/components/dashboard/Funnel";
@@ -65,64 +70,23 @@ import {
 
 type Tab = "today" | "prizes" | "fans" | "campaigns" | "editor" | "inbox" | "boosts" | "analytics";
 
-const RARITY_LABEL: Record<Rarity, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
-
-// Shared overview, polled so metrics + the pending badge stay live.
+// Shared overview, polled (12s) + refreshed on tab focus so metrics + the
+// pending badge stay live. `setData` is exposed for optimistic account edits.
 function useOverview() {
-  const [data, setData] = useState<CreatorOverview | null>(null);
-  const [loading, setLoading] = useState(true);
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch("/api/overview", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 12000);
-    const onVis = () => document.visibilityState === "visible" && refresh();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [refresh]);
-  return { data, loading, refresh, setData };
+  const { data, loading, reload, setData } = useFetch<CreatorOverview>(
+    "/api/overview",
+    { pollMs: 12000 }
+  );
+  return { data, loading, refresh: reload, setData };
 }
 
 // Enhanced metrics (spin trend + conversion funnel), polled like the overview
 // and refetched whenever the selected window (`days`) changes.
 function useMetricsExtra(days: number) {
-  const [data, setData] = useState<CreatorMetricsExtra | null>(null);
-  const [loading, setLoading] = useState(true);
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/metrics?days=${days}`, { cache: "no-store" });
-      if (res.ok) setData(await res.json());
-    } finally {
-      setLoading(false);
-    }
-  }, [days]);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading when the window (`days`) changes, then refetch
-    setLoading(true);
-    refresh();
-    const id = setInterval(refresh, 12000);
-    const onVis = () => document.visibilityState === "visible" && refresh();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [refresh]);
+  const { data, loading } = useFetch<CreatorMetricsExtra>(
+    `/api/metrics?days=${days}`,
+    { pollMs: 12000 }
+  );
   return { data, loading };
 }
 
@@ -955,7 +919,7 @@ function FansPanel() {
   const [templates, setTemplates] = useState<DmTemplate[]>([]);
   const [managingMessages, setManagingMessages] = useState(false);
   const toast = useToast();
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const origin = useOrigin();
 
   const load = useCallback(async () => {
     const res = await fetch("/api/fans", { cache: "no-store" });
@@ -1285,14 +1249,9 @@ function ManageMessages({
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const toast = useToast();
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Focus-trap the dialog: focus in on open, cycle Tab, Escape to close, restore
+  // focus on close.
+  const dialogRef = useFocusTrap<HTMLDivElement>({ active: true, onEscape: onClose });
 
   async function add() {
     if (!title.trim() || !body.trim()) return;
@@ -1330,6 +1289,7 @@ function ManageMessages({
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Manage DM templates"
@@ -1492,10 +1452,9 @@ function AccountCard({
       return;
     }
     const text = template.body.split("{link}").join(primaryUrl);
-    try {
-      await navigator.clipboard?.writeText(text);
+    if (await copyToClipboard(text)) {
       toast("DM copied", { tone: "success" });
-    } catch {
+    } else {
       toast("Couldn't copy DM.", { tone: "error" });
     }
   }
@@ -1817,7 +1776,7 @@ function CopyDmMenu({
 }
 
 function LinkRow({ url, latest }: { url: string; latest: boolean }) {
-  const [copied, setCopied] = useState(false);
+  const { copy, copied } = useClipboard();
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-base/40 p-2.5">
       <p className="min-w-0 flex-1 truncate text-xs text-muted">
@@ -1830,11 +1789,7 @@ function LinkRow({ url, latest }: { url: string; latest: boolean }) {
       </p>
       <div className="flex shrink-0 items-center gap-2">
         <button
-          onClick={() => {
-            navigator.clipboard?.writeText(url);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
+          onClick={() => void copy(url)}
           className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
         >
           {copied ? "Copied" : "Copy"}
