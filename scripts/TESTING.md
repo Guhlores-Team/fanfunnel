@@ -1,7 +1,7 @@
 # Testing the agency flow with seeded accounts
 
 ## 1. Apply migrations
-Make sure migrations through `0018` are applied (paste
+Make sure all migrations (through the latest) are applied (paste
 `supabase/migrations_combined.sql` into Supabase → SQL Editor → Run).
 
 ## 2. Seed test accounts + sample data
