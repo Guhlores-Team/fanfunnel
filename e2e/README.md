@@ -58,7 +58,7 @@ npm run e2e:supabase   # skips unless the three env vars below are set
 ```
 
 Point it at a **dedicated test/preview** Supabase project (NOT production — it
-creates and deletes users) whose `schema.sql` (incl. migration `0023`) is
+creates and deletes users) whose `schema.sql` (incl. the latest migration) is
 applied, and set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 and `SUPABASE_SERVICE_ROLE_KEY`. In CI it runs as the **`E2E (real Supabase)`**
 workflow, gated on repo secrets of the same names (a no-op until you add them;
