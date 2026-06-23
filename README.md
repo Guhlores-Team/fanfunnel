@@ -63,12 +63,15 @@ store. Links you generate in the dashboard really work and really spin.
 3. **Sign up** at `/login` (email + password). For the smoothest start, turn
    OFF "Confirm email" under Supabase → Authentication → Providers → Email
    (or leave it on and confirm via the emailed link).
-4. **Make yourself admin** (you're a creator + admin) once your row exists:
+4. **Make yourself admin** (you're a creator + admin) once your row exists,
+   either by setting `ADMIN_EMAILS` (comma-separated allowlist) and using the
+   in-app admin-claim action, or directly in SQL:
    ```sql
    update public.profiles set role = 'admin' where email = 'you@example.com';
    ```
 5. **Deploy to Vercel** and add the same env vars in the Vercel project
-   settings. Done.
+   settings. Done. (Optional vars — `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE` — are
+   documented in [`DEPLOY.md`](DEPLOY.md).)
 
 ### Auth & access
 - Creators/admins sign in at `/login`; middleware (`src/middleware.ts`)

@@ -62,6 +62,11 @@ export function requireSupabaseEnvOrExit() {
   const r = resolveSupabaseEnv();
   if (r.status === "skip") {
     log(SKIP_MSG);
+    // Surface the no-op in the CI checks UI so a green run isn't mistaken for a
+    // run that actually exercised a live Supabase project. (Outside Actions the
+    // ::warning:: line is just an extra log line; we still exit 0.)
+    if (process.env.GITHUB_ACTIONS === "true")
+      log("::warning title=Real-Supabase tests skipped::Supabase secrets unset — these security tests did NOT run.");
     process.exit(0);
   }
   if (r.status === "bad") process.exit(1);
