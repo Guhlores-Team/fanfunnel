@@ -8,6 +8,26 @@ Legend: ✅ safe to fix now · ⏸ wait (needs decision / careful change / verif
 
 ---
 
+## 📊 Status (last updated this session)
+
+**Done — 24 of 29 items**, delivered across 4 parallel worktree streams + a final wave, each verified green (`lint` · `tsc` · `test` · `build`):
+
+- **Critical:** D1 ✅ (aggregate trigger) · D4 ✅ · D5 ✅ · D2 ✅ (SQL-sync guard test)
+- **Medium:** M1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M7 ✅ · M8 ✅ · M10 ✅ · M12 ✅
+- **Nice:** N1 ✅ · N2 ✅ · N3 ✅ · N4 ✅ · N5 ✅ · N6 ✅ · N7 ✅ · N8 ✅ · N9 ✅ · N10 ✅ · N12 ✅
+
+**Deferred — 5 items** (genuinely need a decision, DB access, or a dedicated isolated change):
+
+| ID | Why deferred | What it needs |
+|----|--------------|---------------|
+| **D3** — shared rate-limit store | The in-memory→shared swap doesn't help without an actual store; provisioning is a product/infra decision | Pick a store (Upstash/Redis), then implement behind the existing `rateLimitOr429` interface |
+| **M6** — `middleware`→`proxy` rename | Deprecated-but-working; this file gates auth — a wrong rename logs everyone out | A dedicated change with a real auth/deploy smoke-test |
+| **M9** — generate Supabase row types | The durable fix is `supabase gen types` against the live DB | DB credentials + the Supabase CLI |
+| **M11** — split god-modules (`index.ts` 5.5k lines) | Large mechanical refactor, low bug-value, high churn | A focused dedicated PR, not a drive-by |
+| **N11** — unify data-layer error convention | Best done alongside M11's refactor | Tie to M11 |
+
+---
+
 ## 1. CRITICAL — correctness / data-integrity / security time-bombs
 
 ### D1 — Spin balances are a dual source of truth, kept in sync by hand, non-atomically ⏸
