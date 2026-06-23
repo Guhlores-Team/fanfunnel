@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import type { HappyHour, Webhook, WheelSummary, WishlistDemand } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
+import { copyToClipboard } from "@/lib/hooks/useClipboard";
+import { useOrigin } from "@/lib/hooks/useOrigin";
 
 interface ReferralStats {
   referredCount: number;
@@ -130,7 +132,7 @@ function LeaderboardToggle({ enabled, onChange }: { enabled: boolean; onChange?:
   const [busy, setBusy] = useState(false);
   const [slug, setSlug] = useState<string | null>(null);
   const toast = useToast();
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const origin = useOrigin();
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror the persisted flag when the overview refreshes
   useEffect(() => setOn(enabled), [enabled]);
@@ -200,11 +202,8 @@ function LeaderboardToggle({ enabled, onChange }: { enabled: boolean; onChange?:
             </a>
             <button
               onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(`${origin}/leaderboard/${slug}`);
+                if (await copyToClipboard(`${origin}/leaderboard/${slug}`)) {
                   toast("Leaderboard link copied", { tone: "success" });
-                } catch {
-                  /* clipboard blocked */
                 }
               }}
               className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
@@ -483,8 +482,23 @@ function WebhooksCard() {
   };
 
   const remove = async (id: string) => {
+    // Optimistically drop the row, then roll it back to its original position
+    // if the delete fails so the UI never silently diverges from the server.
+    const index = hooks.findIndex((x) => x.id === id);
+    if (index === -1) return;
+    const removed = hooks[index];
     setHooks((h) => h.filter((x) => x.id !== id));
-    await fetch(`/api/webhooks/${id}`, { method: "DELETE" }).catch(() => {});
+    try {
+      const res = await fetch(`/api/webhooks/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+    } catch {
+      setHooks((h) => {
+        const next = [...h];
+        next.splice(Math.min(index, next.length), 0, removed);
+        return next;
+      });
+      toast("Couldn't remove webhook");
+    }
   };
 
   return (
