@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   // Cap upload frequency per creator to protect storage/compute budget.
-  const limited = rateLimitOr429("avatar:" + user.id, 10, 60_000);
+  const limited = await rateLimitOr429("avatar:" + user.id, 10, 60_000);
   if (limited) return limited;
 
   let file: File | null = null;

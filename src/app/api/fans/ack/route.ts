@@ -5,7 +5,7 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 
 // A fan acknowledges the age-gate / ToS. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
-  const limited = rateLimitOr429("ack:" + clientIp(req), 20, 60_000);
+  const limited = await rateLimitOr429("ack:" + clientIp(req), 20, 60_000);
   if (limited) return limited;
 
   const body = await parseJsonBody<{ token?: string }>(req);

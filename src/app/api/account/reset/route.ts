@@ -20,7 +20,7 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     limitKey = "reset:user:" + user.id;
   }
-  const limited = rateLimitOr429(limitKey, 3, 60 * 60 * 1000);
+  const limited = await rateLimitOr429(limitKey, 3, 60 * 60 * 1000);
   if (limited) return limited;
 
   const parsed = await parseJsonBody<{ confirm?: string }>(req);

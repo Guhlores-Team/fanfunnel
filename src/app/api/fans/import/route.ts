@@ -62,10 +62,10 @@ export async function POST(req: Request) {
     } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     userId = user.id;
-    const limited = rateLimitOr429("fan-import:" + user.id, 5, 60 * 1000);
+    const limited = await rateLimitOr429("fan-import:" + user.id, 5, 60 * 1000);
     if (limited) return limited;
   } else {
-    const limited = rateLimitOr429("fan-import:" + clientIp(req), 5, 60 * 1000);
+    const limited = await rateLimitOr429("fan-import:" + clientIp(req), 5, 60 * 1000);
     if (limited) return limited;
   }
 

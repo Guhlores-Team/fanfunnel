@@ -5,7 +5,7 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 
 // A fan pauses their own spin link. Body: { token }.
 export async function POST(req: Request) {
-  const limited = rateLimitOr429("selfexclude:" + clientIp(req), 10, 60_000);
+  const limited = await rateLimitOr429("selfexclude:" + clientIp(req), 10, 60_000);
   if (limited) return limited;
 
   const body = await parseJsonBody<{ token?: string }>(req);

@@ -5,7 +5,7 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 
 // A fan reports the creator behind their token (predatory / rule-breaking).
 export async function POST(req: Request) {
-  const limited = rateLimitOr429("report:" + clientIp(req), 5, 60_000);
+  const limited = await rateLimitOr429("report:" + clientIp(req), 5, 60_000);
   if (limited) return limited;
 
   const body = await parseJsonBody<{ token?: string; reason?: string; detail?: string }>(req);

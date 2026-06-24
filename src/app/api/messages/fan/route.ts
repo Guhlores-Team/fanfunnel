@@ -11,7 +11,7 @@ export async function GET(req: Request) {
   const token = searchParams.get("token");
   if (!token) return badRequest();
   // Throttle thread reads (enumeration / polling) on client IP.
-  const limited = rateLimitOr429("msgread:" + clientIp(req), 60, 60_000);
+  const limited = await rateLimitOr429("msgread:" + clientIp(req), 60, 60_000);
   if (limited) return limited;
   const messages = await getFanMessages(token);
   return NextResponse.json({ messages });
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   }
 
   // Per-fan send cap to stop inbox flooding.
-  const limited = rateLimitOr429("msg:" + token, 10, 60_000);
+  const limited = await rateLimitOr429("msg:" + token, 10, 60_000);
   if (limited) return limited;
   const result = await sendFanMessage(token, text);
   if ("error" in result) return errorResponse(result.error);

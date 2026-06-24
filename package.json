@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "gen:types": "supabase gen types typescript --linked > src/lib/data/db.types.ts",
     "test": "node scripts/run-tests.mjs",
     "e2e": "node e2e/run.mjs",
     "e2e:supabase": "node e2e/supabase.mjs",

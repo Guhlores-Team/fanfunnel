@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     } = await sb.auth.getUser();
     if (user) rlKey = user.id;
   }
-  const limited = rateLimitOr429("creatormsg:" + rlKey, 10, 60_000);
+  const limited = await rateLimitOr429("creatormsg:" + rlKey, 10, 60_000);
   if (limited) return limited;
 
   const result = await sendCreatorMessage(fanId, text);

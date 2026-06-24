@@ -31,7 +31,7 @@ async function mutate(
   }
 
   // Per-fan write cap to stop unbounded wishlist churn (key on the fan token).
-  const limited = rateLimitOr429("wish:" + token + ":" + clientIp(req), 30, 60_000);
+  const limited = await rateLimitOr429("wish:" + token + ":" + clientIp(req), 30, 60_000);
   if (limited) return limited;
 
   const result = await fn(token, prizeLabel);

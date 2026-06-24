@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { spin } from "@/lib/data";
-import { rateLimit } from "@/lib/rateLimit";
-import { clientIp } from "@/lib/api/clientIp";
+import { rateLimitShared } from "@/lib/rateLimit";
 
 // The ONLY place a spin outcome is decided. The browser sends just a token;
 // the server validates spins remaining, picks the weighted prize, logs it,
@@ -25,8 +24,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const key = token + ":" + clientIp(req);
-  const { ok, retryAfter } = rateLimit(key, 10, 10000);
+  const key =
+    token + ":" + (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local");
+  const { ok, retryAfter } = await rateLimitShared(key, 10, 10000);
   if (!ok) {
     return NextResponse.json(
       { error: "rate_limited" },

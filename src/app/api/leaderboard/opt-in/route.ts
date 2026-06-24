@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   if (typeof body.token !== "string" || !body.token) {
     return badRequest();
   }
-  const limited = rateLimitOr429("lb-optin:" + body.token, 10, 60_000);
+  const limited = await rateLimitOr429("lb-optin:" + body.token, 10, 60_000);
   if (limited) return limited;
   const handle =
     typeof body.handle === "string"
