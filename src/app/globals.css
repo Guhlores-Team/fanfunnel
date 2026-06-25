@@ -30,9 +30,19 @@
   --brand: #ec4899;
   /* Companions derived by brandVars() (src/lib/theme.ts). Defaults match the pink
      brand; pages that use brandVars override these per-creator so text stays
-     readable on ANY chosen color. */
-  --brand-ink: #ffffff; /* readable text ON the brand fill (e.g. button labels) */
+     readable on ANY chosen color. --brand-ink defaults to the dark ink readableInk()
+     computes for the default pink (white-on-pink is the tracked 3.52:1 defect). */
+  --brand-ink: #160d12; /* readable text ON the brand fill (e.g. button labels) */
   --brand-text: var(--brand); /* brand color, legibility-adjusted, used AS text */
+
+  /* --- Elevation system (redesign command-center) -------------------------
+     Surfaces read as RAISED via an inset top-highlight + soft drop shadow, not
+     a flat fill. Primary cards use --s1 + --lift; nested wells use --s2 (no
+     shadow). --hair is the card hairline; inputs sit on the --color-base well. */
+  --s1: linear-gradient(180deg, #1c1825, #16131d); /* raised card */
+  --s2: #100d16; /* recessed well / nested block */
+  --hair: #241f2e; /* card hairline border */
+  --lift: 0 1px 0 rgba(255, 255, 255, 0.045) inset, 0 14px 34px -26px rgba(0, 0, 0, 0.9);
 }
 
 body {
@@ -122,6 +132,28 @@ input[type="time"] {
   background: color-mix(in oklab, var(--color-surface) 92%, transparent);
   border: 1px solid var(--color-line);
   box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.7);
+}
+
+/* Redesign elevation helpers. Primary cards read as RAISED (inset top-highlight
+   + soft drop shadow over the brand-tinted gradient); nested blocks are RECESSED
+   wells with no shadow. The redesign's panels migrate onto these in later phases;
+   .card stays for not-yet-ported surfaces. */
+.surface-raised {
+  background: var(--s1);
+  border: 1px solid var(--hair);
+  box-shadow: var(--lift);
+}
+.surface-recessed {
+  background: var(--s2);
+  border: 1px solid var(--hair);
+}
+
+/* Keyboard-only focus ring (pointer clicks don't trigger :focus-visible). The
+   outline follows each element's border-radius in modern browsers. Brand-tinted
+   so it's visible on every surface. */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 /* ---------------------------------------------------------------------------
