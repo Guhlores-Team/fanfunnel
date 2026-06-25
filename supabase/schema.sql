@@ -1919,3 +1919,302 @@ begin
    where f.id = p_fan_id;
 end;
 $$;
+
+
+-- ============================================================
+-- Synced from migrations/ (effective definitions) so the SQL-sync
+-- guard holds after rebasing onto the latest migrations.
+-- ============================================================
+
+create or replace function public.set_public_profile(
+  p_slug text, p_tip_url text, p_tagline text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.profiles
+     set public_slug    = case when p_slug    is null then public_slug    else nullif(trim(p_slug), '')    end,
+         tip_url        = case when p_tip_url  is null then tip_url        else nullif(trim(p_tip_url), '')  end,
+         public_tagline = case when p_tagline  is null then public_tagline else nullif(trim(p_tagline), '') end
+   where id = auth.uid() and is_active = true;
+end;
+$$;
+
+create or replace function public.claim_spin(p_token text)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid;
+  v_win_start timestamptz;
+  v_win_count int;
+  remaining integer;
+  p_max integer := 8;                       -- max spins per window
+  p_window interval := interval '10 seconds';
+begin
+  select fp.fan_id into v_fan
+    from public.fan_passes fp
+    join public.fans f on f.id = fp.fan_id
+   where fp.token = p_token
+     and fp.is_active = true
+     and fp.self_excluded_at is null
+     and f.blocked_at is null;
+  if v_fan is null then
+    return null; -- bad/inactive/blocked/self-excluded token
+  end if;
+
+  -- Atomic rate limit: lock the fan row so concurrent claims serialize, then
+  -- enforce a fixed-window counter held IN-ROW (independent of the post-hoc
+  -- public.spins insert that made the old rolling count race-prone).
+  select rl_window_start, rl_count into v_win_start, v_win_count
+    from public.fans where id = v_fan for update;
+  if v_win_start is null or now() - v_win_start > p_window then
+    update public.fans set rl_window_start = now(), rl_count = 1 where id = v_fan;
+  elsif v_win_count >= p_max then
+    return -1; -- sentinel: rate limited (caller maps to HTTP 429)
+  else
+    update public.fans set rl_count = rl_count + 1 where id = v_fan;
+  end if;
+
+  -- Decrement THIS wheel's pass balance (row-locked; can't go below 0).
+  update public.fan_passes
+     set spins_remaining = spins_remaining - 1,
+         last_spin_at = now()
+   where token = p_token and spins_remaining > 0
+  returning spins_remaining into remaining;
+
+  if remaining is null then
+    return null; -- no spins left on this wheel's pass
+  end if;
+
+  -- Keep the fan-level aggregate (sum of passes) in lockstep.
+  update public.fans
+     set spins_remaining = greatest(0, spins_remaining - 1),
+         last_spin_at = now()
+   where id = v_fan;
+
+  return remaining; -- spins left ON THIS PASS
+end;
+$$;
+
+create or replace function public.can_act_for(target_creator uuid, perm text)
+returns boolean
+language plpgsql
+stable
+security definer set search_path = public
+as $$
+declare
+  v_role org_role;
+  v_member uuid;
+  v_scoped boolean;
+begin
+  -- A suspended caller loses every write/act permission. 'view' is still allowed
+  -- so a suspended creator can load a read-only dashboard (the auth gate then
+  -- shows the suspension notice); every mutating perm fails closed.
+  if perm <> 'view' and not exists (
+    select 1 from public.profiles where id = auth.uid() and is_active
+  ) then
+    return false;
+  end if;
+
+  -- The creator themselves always has full power over their own account.
+  if target_creator = auth.uid() then
+    return true;
+  end if;
+
+  -- Find the caller's org membership that covers the target creator's org.
+  select m.id, m.role into v_member, v_role
+    from public.org_members m
+    join public.orgs o on o.id = m.org_id
+    join public.profiles p on p.id = target_creator
+   where m.profile_id = auth.uid()
+     and p.org_id = o.id
+   limit 1;
+  if v_member is null then
+    return false;
+  end if;
+
+  -- Owners and managers act for every creator in their org.
+  -- Other roles must be explicitly scoped to this creator.
+  if v_role in ('owner','manager') then
+    v_scoped := true;
+  else
+    select exists(
+      select 1 from public.org_member_creators mc
+       where mc.member_id = v_member and mc.creator_id = target_creator
+    ) into v_scoped;
+  end if;
+  if not v_scoped then
+    return false;
+  end if;
+
+  -- Role → permission matrix.
+  return case perm
+    when 'view'       then true
+    when 'chat'       then v_role in ('owner','manager','chatter')
+    when 'fulfil'     then v_role in ('owner','manager','fulfiller')
+    when 'grant'      then v_role in ('owner','manager')
+    when 'edit_wheel' then v_role in ('owner','manager')
+    when 'manage'     then v_role in ('owner','manager')
+    else false
+  end case;
+end;
+$$;
+
+create or replace function public.set_creator_note(p_note text, p_avatar text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.profiles
+     set creator_note = case when p_note   is null then creator_note else nullif(trim(p_note), '')   end,
+         avatar_url   = case when p_avatar is null then avatar_url   else nullif(trim(p_avatar), '') end
+   where id = auth.uid() and is_active = true;
+end;
+$$;
+
+create or replace function public.set_chat_settings(p_intro text, p_outro text)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles
+     set chat_intro = nullif(trim(coalesce(p_intro, '')), ''),
+         chat_outro = nullif(trim(coalesce(p_outro, '')), '')
+   where id = auth.uid() and is_active = true;
+$$;
+
+create or replace function public.set_display_name(p_name text)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles
+     set display_name = coalesce(nullif(trim(p_name), ''), display_name)
+   where id = auth.uid();
+$$;
+
+create or replace function public.set_notification_prefs(
+  p_new_spin boolean, p_low_balance boolean, p_messages boolean
+)
+returns void language sql security definer set search_path = public as $$
+  update public.profiles
+     set notify_new_spin    = coalesce(p_new_spin, notify_new_spin),
+         notify_low_balance = coalesce(p_low_balance, notify_low_balance),
+         notify_messages    = coalesce(p_messages, notify_messages)
+   where id = auth.uid();
+$$;
+
+create or replace function public.sync_fan_spin_aggregate()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid := coalesce(new.fan_id, old.fan_id);
+begin
+  if v_fan is null then
+    return null;
+  end if;
+  update public.fans f
+     set spins_remaining = coalesce((
+           select sum(p.spins_remaining) from public.fan_passes p
+            where p.fan_id = v_fan and p.is_active), 0),
+         spins_granted_total = coalesce((
+           select sum(p.spins_granted_total) from public.fan_passes p
+            where p.fan_id = v_fan and p.is_active), 0)
+   where f.id = v_fan;
+  return null; -- AFTER trigger; updates fans (not fan_passes) so no recursion
+end;
+$$;
+
+create or replace function public.admin_reserve_account_deletion(p_target uuid)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_role text;
+  v_admins int;
+begin
+  -- Caller must be an ACTIVE admin (defense in depth; the route checks too).
+  if not exists (
+    select 1 from public.profiles
+    where id = auth.uid() and role = 'admin' and is_active
+  ) then
+    return 'forbidden';
+  end if;
+  if p_target = auth.uid() then
+    return 'cannot_delete_self';
+  end if;
+  -- Lock the target row; missing => not found.
+  select role into v_role from public.profiles where id = p_target for update;
+  if v_role is null then
+    return 'not_found';
+  end if;
+  if v_role = 'admin' then
+    -- Lock ALL admin rows so concurrent reservations serialize here.
+    select count(*) into v_admins from (
+      select id from public.profiles where role = 'admin' for update
+    ) s;
+    if v_admins <= 1 then
+      return 'last_admin';
+    end if;
+    -- Atomic reservation: demote so a concurrent call sees one fewer admin.
+    update public.profiles set role = 'creator' where id = p_target;
+  end if;
+  return 'ok';
+end;
+$$;
+
+create or replace function public.current_user_active()
+returns boolean
+language sql
+stable
+security definer set search_path = public
+as $$
+  select exists(
+    select 1 from public.profiles where id = auth.uid() and is_active
+  );
+$$;
+
+create or replace function public.import_fans(p_rows jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_creator uuid := auth.uid();
+begin
+  if v_creator is null then
+    raise exception 'unauthorized';
+  end if;
+
+  -- SECURITY DEFINER bypasses RLS, so verify the caller owns every referenced
+  -- wheel and campaign before inserting anything that points at them.
+  if exists (
+    select 1 from jsonb_array_elements(p_rows) r
+    where not exists (
+      select 1 from public.wheels w
+       where w.id = (r->>'wheel_id')::uuid and w.creator_id = v_creator
+    )
+  ) then
+    raise exception 'wheel_not_owned';
+  end if;
+
+  if exists (
+    select 1 from jsonb_array_elements(p_rows) r
+    where (r->>'campaign_id') is not null
+      and not exists (
+        select 1 from public.campaigns c
+         where c.id = (r->>'campaign_id')::uuid and c.creator_id = v_creator
+      )
+  ) then
+    raise exception 'campaign_not_owned';
+  end if;
+
+  insert into public.fans (id, creator_id, display_name, spins_remaining, spins_granted_total)
+  select (r->>'fan_id')::uuid, v_creator,
+         coalesce(nullif(r->>'name', ''), 'Fan'),
+         (r->>'spins')::int, (r->>'spins')::int
+    from jsonb_array_elements(p_rows) r;
+
+  insert into public.fan_passes
+         (id, token, creator_id, wheel_id, fan_id, campaign_id, spins_remaining, spins_granted_total)
+  select (r->>'pass_id')::uuid, r->>'token', v_creator,
+         (r->>'wheel_id')::uuid, (r->>'fan_id')::uuid, (r->>'campaign_id')::uuid,
+         (r->>'spins')::int, (r->>'spins')::int
+    from jsonb_array_elements(p_rows) r;
+
+  insert into public.grants
+         (creator_id, fan_id, fan_pass_id, campaign_id, spins, amount_cents, bonus_spins)
+  select v_creator, (r->>'fan_id')::uuid, (r->>'pass_id')::uuid, (r->>'campaign_id')::uuid,
+         (r->>'spins')::int, (r->>'amount_cents')::int, 0
+    from jsonb_array_elements(p_rows) r;
+end;
+$$;
