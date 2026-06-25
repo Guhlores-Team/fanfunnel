@@ -70,14 +70,30 @@ The redesign mostly re-skins existing screens, but the **behavior-spec** items (
 - [ ] **Admin role** for the Admin section + debug-console gating (item 4): confirm the admin
       mechanism (`ADMIN_EMAILS` env and/or a role column) is set in every environment.
 
-## 2. Env vars / secrets (per environment: local, preview, prod)
+## 2. Env vars / secrets (browser only — no terminal)
 
-- [ ] Supabase trio above — set distinctly for **prod** vs **preview/test** in Vercel.
-- [ ] **Web-push VAPID keypair** (only if web-push lands): generate, then set public key
-      (client) + private key (server) env vars.
-- [ ] `ADMIN_EMAILS` / `FF_REQUIRE_SUPABASE` confirmed per environment (see repo docs).
-- [ ] Fonts need **no** keys — Geist + Bricolage Grotesque are already wired via `next/font`
-      (`--ff-display` = Bricolage *brand surfaces only*, `--ff-sans` = Geist for all data).
+### 2a. Migration automation — Option A (the fix for "Supabase never updated")
+The workflow `.github/workflows/supabase-migrations.yml` now auto-applies `supabase/migrations/`
+to the **test** project on every PR and to **production** on merge to `main`. Add these as
+**GitHub repo secrets** (Settings → Secrets and variables → Actions → New repository secret):
+- [ ] `SUPABASE_ACCESS_TOKEN` — Supabase dashboard → Account → Access Tokens → generate.
+- [ ] `SUPABASE_TEST_PROJECT_REF` — the `xxxx` in your test project's `xxxx.supabase.co`.
+- [ ] `SUPABASE_TEST_DB_PASSWORD` — test project → Settings → Database → password.
+- [ ] `SUPABASE_PROD_PROJECT_REF` — production project ref.
+- [ ] `SUPABASE_PROD_DB_PASSWORD` — production project database password.
+- [ ] *(optional hardening)* Settings → Environments → create `production` with a **required
+      reviewer** so prod migrations need one human click before they run.
+> First merge to `main` puts this workflow on `main`; from then on every merge auto-migrates prod.
+> Phase 1 has no migrations, so nothing runs until a later phase adds one.
+
+### 2b. App runtime env (Vercel dashboard — Preview vs Production scope)
+- [ ] **Preview** scope → **test** Supabase trio (`NEXT_PUBLIC_SUPABASE_URL`,
+      `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) + `ADMIN_EMAILS` +
+      `FF_REQUIRE_SUPABASE=1`.
+- [ ] **Production** scope → **prod** Supabase trio + same `ADMIN_EMAILS` + `FF_REQUIRE_SUPABASE=1`.
+- [ ] Also add the **test** trio as GitHub secrets (same names) so the `e2e:supabase` CI job runs.
+- [ ] **Web-push VAPID keypair** (only if web-push lands): public key (client) + private (server).
+- [ ] Fonts need **no** keys — Geist + Bricolage Grotesque already wired via `next/font`.
 
 ## 3. Product / design decisions Claude needs from you
 
@@ -93,6 +109,11 @@ The redesign mostly re-skins existing screens, but the **behavior-spec** items (
 
 ## 4. QA / release ops
 
+- [ ] **Enforce the pre-prod gate (branch protection).** GitHub → Settings → Branches → add a
+      rule for `main`: require a PR, require status checks to pass (CI + `E2E (real Supabase)` +
+      `Supabase migrations`), require 1 approval. This hard-blocks anything reaching prod until
+      checks are green and you've signed off the preview. Every phase PR also gets a desloppify
+      pass + a `/multi-review` report before merge.
 - [ ] Add the **test-Supabase secrets** so the `e2e:supabase` CI workflow stops no-opping.
 - [ ] Devices/browsers for the responsive sweep (360 → 1440px) and who runs manual QA.
 - [ ] Decide on a **visual-regression baseline** (the handoff screenshots) and who approves diffs.
