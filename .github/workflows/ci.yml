@@ -11,6 +11,12 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # The in-app debug console is only compiled in when NEXT_PUBLIC_ENABLE_DEBUG=1
+    # (N9 keeps it out of prod). The mock e2e drives it to assert zero console
+    # errors across the creator flow, so enable it for this test build — otherwise
+    # the launcher never mounts and "debug launcher present with ?debug=1" fails.
+    env:
+      NEXT_PUBLIC_ENABLE_DEBUG: "1"
     steps:
       - uses: actions/checkout@v4
 
