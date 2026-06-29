@@ -1767,3 +1767,78 @@ begin
     from jsonb_array_elements(p_rows) r;
 end;
 $$;
+
+
+-- ============================================================
+-- Synced from migrations/ (effective definitions) so the SQL-sync
+-- guard holds after rebasing onto the latest migrations.
+-- ============================================================
+
+create or replace function public.claim_spin(p_token text)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid;
+  v_win_start timestamptz;
+  v_win_count int;
+  remaining integer;
+  p_max integer := 8;                       -- max spins per window
+  p_window interval := interval '10 seconds';
+begin
+  select fp.fan_id into v_fan
+    from public.fan_passes fp
+    join public.fans f on f.id = fp.fan_id
+   where fp.token = p_token
+     and fp.is_active = true
+     and fp.self_excluded_at is null
+     and f.blocked_at is null;
+  if v_fan is null then
+    return null; -- bad/inactive/blocked/self-excluded token
+  end if;
+
+  -- Atomic rate limit: lock the fan row so concurrent claims serialize, then
+  -- enforce a fixed-window counter held IN-ROW (independent of the post-hoc
+  -- public.spins insert that made the old rolling count race-prone).
+  select rl_window_start, rl_count into v_win_start, v_win_count
+    from public.fans where id = v_fan for update;
+  if v_win_start is null or now() - v_win_start > p_window then
+    update public.fans set rl_window_start = now(), rl_count = 1 where id = v_fan;
+  elsif v_win_count >= p_max then
+    return -1; -- sentinel: rate limited (caller maps to HTTP 429)
+  else
+    update public.fans set rl_count = rl_count + 1 where id = v_fan;
+  end if;
+
+  -- Decrement THIS wheel's pass balance (row-locked; can't go below 0).
+  update public.fan_passes
+     set spins_remaining = spins_remaining - 1,
+         last_spin_at = now()
+   where token = p_token and spins_remaining > 0
+  returning spins_remaining into remaining;
+
+  if remaining is null then
+    return null; -- no spins left on this wheel's pass
+  end if;
+
+  -- Touch ONLY last_spin_at here. trg_sync_fan_spin_aggregate (0025) already set
+  -- fans.spins_remaining to the new sum of passes after the decrement above;
+  -- decrementing it again would double-count.
+  update public.fans set last_spin_at = now() where id = v_fan;
+
+  return remaining; -- spins left ON THIS PASS
+end;
+$$;
+
+-- ============================================================
+-- Wire the fan-spin aggregate trigger (0025). The function above is inert
+-- without this; a fresh DB must create the trigger too, or fans.spins_remaining
+-- never auto-syncs (and the migrated DB would behave differently).
+-- ============================================================
+drop trigger if exists trg_sync_fan_spin_aggregate on public.fan_passes;
+create trigger trg_sync_fan_spin_aggregate
+  after insert or delete
+     or update of spins_remaining, spins_granted_total, is_active, fan_id
+  on public.fan_passes
+  for each row execute function public.sync_fan_spin_aggregate();

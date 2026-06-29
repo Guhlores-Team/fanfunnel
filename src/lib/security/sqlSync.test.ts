@@ -74,10 +74,31 @@ for (const [name, def] of mig) {
   }
 }
 
+// Trigger parity: a `create or replace function` that's mirrored but whose
+// `create trigger` is NOT means a fresh DB has the function but never fires it —
+// the function/trigger split that hid the fan-spin aggregate drift. Assert every
+// trigger created in migrations/ is also created in BOTH snapshots (by name).
+function triggerNames(sql: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of sql.matchAll(/create\s+trigger\s+(\w+)/gi)) out.add(m[1].toLowerCase());
+  return out;
+}
+const migTriggers = triggerNames(migrationsSql);
+const schemaTriggers = triggerNames(schemaSql);
+const combinedTriggers = triggerNames(combinedSql);
+for (const name of migTriggers) {
+  if (!combinedTriggers.has(name)) {
+    fail(`trigger "${name}" is created in migrations/ but missing from migrations_combined.sql`);
+  }
+  if (!schemaTriggers.has(name)) {
+    fail(`trigger "${name}" is created in migrations/ but missing from schema.sql`);
+  }
+}
+
 if (failures > 0) {
   console.error(`\nSQL sync guard FAILED with ${failures} issue(s).`);
   process.exit(1);
 }
 console.log(
-  `sqlSync.test: ${mig.size} migration functions match schema.sql + migrations_combined.sql`,
+  `sqlSync.test: ${mig.size} migration functions + ${migTriggers.size} trigger(s) match schema.sql + migrations_combined.sql`,
 );
