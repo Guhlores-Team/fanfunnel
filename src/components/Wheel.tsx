@@ -204,8 +204,17 @@ export default function Wheel({
     // every label fits that cap on width.
     const linesThatFit = (lh: number) =>
       Math.max(1, Math.min(2, Math.floor(angularRoom / lh)));
-    let labelFont = Math.min(size * 0.05, 22);
-    for (; labelFont >= 9; labelFont -= 0.5) {
+    // The size control sets the font CEILING; the loop then shrinks from there
+    // until every label fits on at most two lines within its slice. So a bigger
+    // size shows bigger text where the geometry allows, but a long name still
+    // WRAPS to show in full rather than being cut to "…". (Ellipsis below is a
+    // last resort only for a single word too wide even at the minimum size.)
+    const SIZE_CEIL: Record<string, number> = { s: 16, l: 26, xl: 32 };
+    const ceiling = labelSize
+      ? SIZE_CEIL[labelSize] ?? Math.min(size * 0.05, 22)
+      : Math.min(size * 0.05, 22);
+    let labelFont = ceiling;
+    for (; labelFont >= 8; labelFont -= 0.5) {
       setLabelFont(labelFont);
       const cap = linesThatFit(labelFont * 1.08);
       const allFit = prizes.every((p) => {
@@ -215,15 +224,6 @@ export default function Wheel({
         );
       });
       if (allFit) break;
-    }
-    // Per-wheel size preference biases the auto-fit font up or down. An enlarged
-    // font is capped so a single line still fits between neighbors, so "Large"
-    // trades wrapping/length (ellipsis) for readability without overlapping.
-    const SIZE_SCALE: Record<string, number> = { s: 0.82, l: 1.18, xl: 1.4 };
-    const sizeScale = labelSize ? SIZE_SCALE[labelSize] ?? 1 : 1;
-    if (sizeScale !== 1) {
-      const maxOneLine = angularRoom / 1.08;
-      labelFont = Math.max(8, Math.min(labelFont * sizeScale, maxOneLine, 30));
     }
     const lineH = labelFont * 1.08;
     const maxLines = linesThatFit(lineH);
