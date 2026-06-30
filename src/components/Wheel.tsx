@@ -19,6 +19,8 @@ interface WheelProps {
    * otherwise labels fall back to the default white-on-slice rendering.
    */
   labelColor?: string | null;
+  /** Per-wheel label text size ('s' | 'l' | 'xl'); undefined = Auto (smart fit). */
+  labelSize?: string | null;
   /** Set by the parent after the server returns a result; triggers the spin. */
   result: WheelResult | null;
   onSpinEnd?: () => void;
@@ -129,6 +131,7 @@ export default function Wheel({
   prizes,
   brandColor = "#ec4899",
   labelColor,
+  labelSize,
   result,
   onSpinEnd,
   size = 380,
@@ -195,21 +198,35 @@ export default function Wheel({
     (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing =
       "0.01em";
 
+    // Tangential room shrinks as the slice count grows; cap the stack at the
+    // number of lines that actually fit between neighbors (1 or 2) so a label
+    // never bleeds into the adjacent slice. Then pick the largest font where
+    // every label fits that cap on width.
+    const linesThatFit = (lh: number) =>
+      Math.max(1, Math.min(2, Math.floor(angularRoom / lh)));
     let labelFont = Math.min(size * 0.05, 22);
     for (; labelFont >= 9; labelFont -= 0.5) {
       setLabelFont(labelFont);
-      const lineH = labelFont * 1.08;
+      const cap = linesThatFit(labelFont * 1.08);
       const allFit = prizes.every((p) => {
         const ls = wrapLines(ctx, labelFor(p), maxLen);
         return (
-          ls.length <= 2 &&
-          ls.every((l) => ctx.measureText(l).width <= maxLen) &&
-          ls.length * lineH <= angularRoom
+          ls.length <= cap && ls.every((l) => ctx.measureText(l).width <= maxLen)
         );
       });
       if (allFit) break;
     }
+    // Per-wheel size preference biases the auto-fit font up or down. An enlarged
+    // font is capped so a single line still fits between neighbors, so "Large"
+    // trades wrapping/length (ellipsis) for readability without overlapping.
+    const SIZE_SCALE: Record<string, number> = { s: 0.82, l: 1.18, xl: 1.4 };
+    const sizeScale = labelSize ? SIZE_SCALE[labelSize] ?? 1 : 1;
+    if (sizeScale !== 1) {
+      const maxOneLine = angularRoom / 1.08;
+      labelFont = Math.max(8, Math.min(labelFont * sizeScale, maxOneLine, 30));
+    }
     const lineH = labelFont * 1.08;
+    const maxLines = linesThatFit(lineH);
 
     prizes.forEach((prize, i) => {
       const start = i * seg;
@@ -241,10 +258,10 @@ export default function Wheel({
       setLabelFont(labelFont);
 
       const all = wrapLines(ctx, labelFor(prize), maxLen);
-      const dropped = all.length > 2;
-      const lines = all.slice(0, 2).map((l, idx) => {
+      const dropped = all.length > maxLines;
+      const lines = all.slice(0, maxLines).map((l, idx) => {
         const overflow = ctx.measureText(l).width > maxLen;
-        if (!overflow && !(idx === 1 && dropped)) return l;
+        if (!overflow && !(idx === maxLines - 1 && dropped)) return l;
         let s = l;
         while (s.length > 1 && ctx.measureText(s + "…").width > maxLen) {
           s = s.slice(0, -1);
@@ -292,7 +309,7 @@ export default function Wheel({
   useEffect(() => {
     draw(rotationRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prizes, brandColor, labelColor, size]);
+  }, [prizes, brandColor, labelColor, labelSize, size]);
 
   useEffect(() => {
     if (!result || result.nonce === lastNonce.current) return;

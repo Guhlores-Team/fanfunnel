@@ -204,6 +204,8 @@ interface DbWheelRow {
   brand_color: string | null;
   /** Phase 9 (#11): creator-chosen prize-label color (migration 0025). */
   label_color?: string | null;
+  /** Per-wheel prize-label text size (migration 0037). */
+  label_size?: string | null;
   is_active?: boolean;
   active_from?: string | null;
   active_until?: string | null;
@@ -213,7 +215,7 @@ interface DbWheelRow {
 
 // The columns we select to load a wheel's full config (prizes joined).
 const WHEEL_SELECT =
-  `id, title, subtitle, brand_color, label_color, is_active, active_from, active_until, archived_at,
+  `id, title, subtitle, brand_color, label_color, label_size, is_active, active_from, active_until, archived_at,
    prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
@@ -2166,6 +2168,11 @@ export async function saveWheel(
     brand_color: config.brandColor ?? "#ec4899",
     // #11: persist the per-wheel label color (null clears it → auto-pick).
     label_color: config.labelColor ?? null,
+    // Per-wheel label text size; only persist known values (else Auto/null).
+    label_size:
+      config.labelSize && ["s", "l", "xl"].includes(config.labelSize)
+        ? config.labelSize
+        : null,
     updated_at: new Date().toISOString(),
   };
   // Persist lifecycle/schedule fields only when present on the incoming config.
@@ -5367,14 +5374,23 @@ export async function getFanMessages(token: string): Promise<ChatMessage[]> {
     .order("created_at", { ascending: true });
   const rows = (data ?? []) as Parameters<typeof toChatMessage>[0][];
 
-  // Mark creator→fan messages as read by the fan.
-  await sb
-    .from("messages")
-    .update({ read_at: new Date().toISOString() })
-    .eq("creator_id", pass.creator_id)
-    .eq("fan_id", pass.fan_id)
-    .eq("sender", "creator")
-    .is("read_at", null);
+  // Mark creator→fan messages as read by the fan — but ONLY when there is
+  // actually something unread. The fan chat polls this endpoint, so an
+  // unconditional UPDATE on every GET turned every read into a write (the bulk
+  // of the messages-table write load). The rows we just fetched carry read_at,
+  // so we can skip the write entirely on the common "nothing new" poll.
+  const hasUnreadFromCreator = rows.some(
+    (r) => r.sender === "creator" && r.read_at === null
+  );
+  if (hasUnreadFromCreator) {
+    await sb
+      .from("messages")
+      .update({ read_at: new Date().toISOString() })
+      .eq("creator_id", pass.creator_id)
+      .eq("fan_id", pass.fan_id)
+      .eq("sender", "creator")
+      .is("read_at", null);
+  }
 
   return rows.map(toChatMessage);
 }
@@ -5990,6 +6006,7 @@ function toWheelConfig(wheel: DbWheelRow): WheelConfig {
     brandColor: wheel.brand_color ?? "#ec4899",
     // #11: undefined when unset so Wheel.tsx falls back to its auto-pick.
     labelColor: wheel.label_color ?? undefined,
+    labelSize: (wheel.label_size as WheelConfig["labelSize"]) ?? undefined,
     prizes,
   };
 }
