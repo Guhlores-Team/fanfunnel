@@ -253,6 +253,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             prizes={pass.wheel.prizes}
             brandColor={brand}
             labelColor={pass.wheel.labelColor}
+            labelSize={pass.wheel.labelSize}
             result={result}
             onSpinEnd={handleSpinEnd}
             size={size}

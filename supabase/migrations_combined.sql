@@ -1842,3 +1842,9 @@ create trigger trg_sync_fan_spin_aggregate
      or update of spins_remaining, spins_granted_total, is_active, fan_id
   on public.fan_passes
   for each row execute function public.sync_fan_spin_aggregate();
+
+-- ============================================================
+-- 0037_wheel_label_size.sql
+-- ============================================================
+alter table public.wheels add column if not exists label_color text;
+alter table public.wheels add column if not exists label_size text;

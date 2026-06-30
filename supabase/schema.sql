@@ -55,6 +55,8 @@ create table if not exists public.wheels (
   title        text not null default 'My Prize Wheel',
   subtitle     text,
   brand_color  text not null default '#ec4899',
+  label_color  text,                 -- migration 0025 (per-wheel prize-label color)
+  label_size   text,                 -- migration 0037 (per-wheel prize-label size)
   is_active    boolean not null default true,
   -- archived_at lives in the base table (not just the Phase-2 migration below)
   -- so functions defined further up — e.g. the admin overview, which counts

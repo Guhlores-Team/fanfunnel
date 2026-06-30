@@ -62,6 +62,9 @@ export interface Prize {
   stock?: number | null;
 }
 
+/** Per-wheel prize-label text size; undefined = Auto (smart fit). */
+export type WheelLabelSize = "s" | "l" | "xl";
+
 export interface WheelConfig {
   id: string;
   title: string;
@@ -73,6 +76,12 @@ export interface WheelConfig {
    * wheel. When unset, Wheel.tsx auto-picks a readable label color per segment.
    */
   labelColor?: string;
+  /**
+   * Per-wheel prize-label text size. Undefined = Auto (Wheel.tsx fits the font
+   * to the slices). Explicit values bias it smaller/larger; an enlarged font is
+   * still capped so a single line fits its slice (no overlap).
+   */
+  labelSize?: WheelLabelSize;
   prizes: Prize[];
   /** Phase 2: scheduling + lifecycle. All optional so existing callers are untouched. */
   isActive?: boolean;
