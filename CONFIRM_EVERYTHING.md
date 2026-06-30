@@ -125,24 +125,25 @@ Captured this session:
 
 ---
 
-## Phase 7 — Migration pipeline dry-run ⬜
+## Phase 7 — Migration pipeline dry-run ⚠️ prep done, run after rotation
 Proves code+DB ship together. Workflow: `.github/workflows/supabase-migrations.yml`.
 
-**Config prep (safe to do now):**
-- [ ] On a new branch off `main`, add `supabase/migrations/0036_pipeline_probe.sql`:
-```sql
--- pipeline probe: reversible no-op to prove auto-migrate fires
-create table if not exists public._migrate_probe (id int primary key);
-```
-- [ ] Commit + push the branch (do NOT merge yet)
+**Config prep — ✅ DONE:**
+- [x] Probe branch `claude/migration-pipeline-probe` pushed with
+      `supabase/migrations/0036_pipeline_probe.sql` (comment-only no-op; passes
+      RLS + sqlSync CI guards; `npm test` 13/13 green with it present).
 
-**Runtime (later batch, needs awake DBs from Phase 4):**
-- [ ] Open PR → `Supabase migrations` **test** job runs → green
+**Runtime (after secret rotation; needs awake DBs):**
+- [ ] Open PR from `claude/migration-pipeline-probe` → `Supabase migrations` **test** job green
 - [ ] TEST DB: `select max(version) from supabase_migrations.schema_migrations;` = `0036…`
 - [ ] Merge to `main` → **production** job applies `0036` to PROD + Vercel deploys
 - [ ] PROD DB: max version = `0036…`
-- [ ] Cleanup follow-up `0037_drop_probe.sql`: `drop table if exists public._migrate_probe;`
-→ Pass = DB + code shipped by one merge, no manual psql.
+→ Pass = DB + code shipped by one merge, no manual psql. No cleanup needed
+  (probe is a harmless schema comment).
+
+> Note: `import "server-only"` hardening (Phase 6 optional) was SKIPPED — the
+> `server-only` package isn't installed; adding it is a new dependency. Contract
+> already passes without it.
 
 ---
 
