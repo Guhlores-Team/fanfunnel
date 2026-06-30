@@ -1,38 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RARITY_COLORS, type Rarity } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import type { FanDetail, Grant } from "@/lib/data/types";
-import { formatCents } from "@/lib/format";
+import { formatCents, timeAgo } from "@/lib/format";
+import { useClipboard } from "@/lib/hooks/useClipboard";
+import { useOrigin } from "@/lib/hooks/useOrigin";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { TagEditor } from "./ui";
 import { useToast } from "@/components/ui/Toast";
-
-const RARITY_LABEL: Record<Rarity, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
-
-/** Compact relative time, e.g. "just now", "2h ago", "3d ago". */
-function timeAgo(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "—";
-  const secs = Math.round((Date.now() - then) / 1000);
-  if (secs < 45) return "just now";
-  const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  const weeks = Math.round(days / 7);
-  if (weeks < 5) return `${weeks}w ago`;
-  const months = Math.round(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.round(days / 365)}y ago`;
-}
 
 export default function FanDetailDrawer({
   fanId,
@@ -51,10 +27,15 @@ export default function FanDetailDrawer({
   const [savingTags, setSavingTags] = useState(false);
   const [blocking, setBlocking] = useState(false);
   const [blocked, setBlocked] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const restoreRef = useRef<HTMLElement | null>(null);
   const toast = useToast();
+  // Focus-trap the drawer while a fan is open: focus the close button, cycle Tab
+  // within the panel, Escape to close, and restore focus on close.
+  const panelRef = useFocusTrap<HTMLDivElement>({
+    active: !!fanId,
+    onEscape: onClose,
+    initialFocus: closeRef,
+  });
 
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
 
@@ -171,21 +152,6 @@ export default function FanDetailDrawer({
       setBlocking(false);
     }
   }
-
-  // Escape-to-close + basic focus management (move in on open, restore on close).
-  useEffect(() => {
-    if (!fanId) return;
-    restoreRef.current = document.activeElement as HTMLElement | null;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      restoreRef.current?.focus?.();
-    };
-  }, [fanId, onClose]);
 
   if (!fanId) return null;
 
@@ -485,18 +451,14 @@ export default function FanDetailDrawer({
 }
 
 function LinkRow({ token }: { token: string }) {
-  const [copied, setCopied] = useState(false);
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const { copy, copied } = useClipboard();
+  const origin = useOrigin();
   const url = `${origin}/spin/${token}`;
   return (
     <li className="flex items-center justify-between gap-2 rounded-lg border border-line bg-base/40 p-2.5">
       <p className="min-w-0 flex-1 truncate text-xs text-muted">{url}</p>
       <button
-        onClick={() => {
-          navigator.clipboard?.writeText(url);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
+        onClick={() => void copy(url)}
         className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
       >
         {copied ? "Copied" : "Copy"}

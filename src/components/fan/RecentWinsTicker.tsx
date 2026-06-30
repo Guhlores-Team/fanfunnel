@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { Rarity } from "@/lib/games/wheel/types";
+import { useFetch } from "@/lib/hooks/useFetch";
 
 interface Win {
   handle: string;
@@ -24,26 +24,20 @@ export default function RecentWinsTicker({
   /** Bump to refetch immediately (e.g. right after the fan's own spin). */
   refreshKey?: number;
 }) {
-  const [wins, setWins] = useState<Win[]>([]);
-
-  // Fetch on mount + refreshKey, then keep polling so other fans' wins appear
-  // without a reload — the ticker is social proof, it should feel alive.
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      fetch(`/api/recent-wins/${creatorId}`, { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (live && d?.wins) setWins(d.wins);
-        })
-        .catch(() => {});
-    load();
-    const id = setInterval(load, 20000);
-    return () => {
-      live = false;
-      clearInterval(id);
-    };
-  }, [creatorId, refreshKey]);
+  // Polls so other fans' wins appear without a reload — the ticker is social
+  // proof, it should feel alive. `refreshKey` is folded into the URL so a spin
+  // forces an immediate refetch. This is a decorative read: on failure we simply
+  // render nothing (no jarring error UI at the top of the spin page), but the
+  // error is owned by the hook rather than swallowed in a bare catch.
+  const { data } = useFetch<Win[]>(
+    `/api/recent-wins/${creatorId}?k=${refreshKey}`,
+    {
+      pollMs: 20000,
+      refreshOnVisible: false,
+      select: (raw) => (raw as { wins?: Win[] }).wins ?? [],
+    }
+  );
+  const wins = data ?? [];
 
   if (wins.length === 0) return null;
 

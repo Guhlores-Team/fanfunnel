@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { duplicateWheel } from "@/lib/data";
+import { errorResponse } from "@/lib/api/handler";
 
 // Deep-copy a wheel + its prizes into a new inactive, unscheduled wheel.
 export async function POST(
@@ -12,8 +13,6 @@ export async function POST(
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "db_error";
-    const status =
-      message === "unauthorized" ? 401 : message === "not_found" ? 404 : 400;
-    return NextResponse.json({ error: message }, { status });
+    return errorResponse(message);
   }
 }

@@ -60,7 +60,15 @@ export function stopServer(child) {
 
 // `?_rsc=` route prefetches get aborted when we navigate before they finish —
 // that's normal App Router behavior, not an error.
-const benignRequestFail = (url) => /[?&]_rsc=/.test(url);
+//
+// `net::ERR_ABORTED` is a BROWSER cancellation, not a server failure: a
+// fire-and-forget mutation (optimistic UI) whose page unmounts/navigates before
+// the request resolves reports exactly this. Real backend failures surface as a
+// 4xx/5xx response (caught by benignResponse below) or a different net error
+// (ERR_FAILED / ERR_CONNECTION_*), so filtering ERR_ABORTED removes the
+// teardown-timing flake without hiding genuine signals.
+const benignRequestFail = (url, errorText = "") =>
+  /[?&]_rsc=/.test(url) || errorText === "net::ERR_ABORTED";
 
 // Expected, non-bug HTTP statuses from the app's own endpoints.
 const EXPECTED_4XX = [
@@ -110,8 +118,9 @@ export function attachSink(page) {
       push("console." + m.type(), m.text());
   });
   page.on("requestfailed", (r) => {
-    if (!benignRequestFail(r.url()))
-      push("requestfailed", `${r.method()} ${r.url()} — ${r.failure()?.errorText}`);
+    const errorText = r.failure()?.errorText ?? "";
+    if (!benignRequestFail(r.url(), errorText))
+      push("requestfailed", `${r.method()} ${r.url()} — ${errorText}`);
   });
   page.on("response", (r) => {
     if (r.status() >= 400 && !benignResponse(r.url(), r.status(), r.request().method()))

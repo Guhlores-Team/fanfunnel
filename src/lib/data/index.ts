@@ -697,10 +697,13 @@ export async function spin(
   // Persist the fan's next pity counter. Spinning also auto-opts the fan into
   // the leaderboard (handle-only; the board only shows when the CREATOR enables
   // it, so this never leaks anything until the creator turns it on).
-  await sb
+  const { error: pityErr } = await sb
     .from("fans")
     .update({ pity_counter: chosen.nextPityCounter, leaderboard_opt_in: true })
     .eq("id", pass.fan_id);
+  if (pityErr) {
+    console.error("spin: pity/leaderboard update failed", pityErr.message);
+  }
 
   // 3b. Per-wheel attribution: the spin belongs to THIS pass's campaign (the
   //     link the fan is spinning), so spins land on the right campaign directly.
@@ -729,11 +732,20 @@ export async function spin(
     .single();
 
   if (spinRow) {
-    await sb.from("redemptions").insert({
+    const { error: redemptionErr } = await sb.from("redemptions").insert({
       spin_id: spinRow.id,
       creator_id: pass.creator_id,
       status: "pending",
     });
+    if (redemptionErr) {
+      // The won prize is safely recorded in `spins`, but its fulfilment-queue
+      // row failed to insert — log loudly so a won prize can't silently fall out
+      // of the creator's redemptions list with no trace.
+      console.error("spin: redemption insert failed", {
+        spinId: spinRow.id,
+        error: redemptionErr.message,
+      });
+    }
     // Best-effort fan-out to the creator's webhooks. Never blocks/throws — a
     // slow or failing endpoint must not break the spin.
     void fireWebhooks(pass.creator_id, {
@@ -1507,13 +1519,19 @@ export async function grantSpins(
     .select("spins_remaining")
     .single();
   if (error || !updated) return { error: "db_error" };
-  await sb
+  // The fan aggregate is also kept in sync by the 0025 DB trigger; this explicit
+  // write keeps it correct on a pre-0025 DB. Surface a failure instead of letting
+  // the two balances drift silently.
+  const { error: fanErr } = await sb
     .from("fans")
     .update({
       spins_remaining: p.fan.spins_remaining + add,
       spins_granted_total: p.fan.spins_granted_total + add,
     })
     .eq("id", p.fan.id);
+  if (fanErr) {
+    console.error("grantSpins: fan aggregate update failed", fanErr.message);
+  }
   return { spinsRemaining: updated.spins_remaining };
 }
 
@@ -2115,8 +2133,13 @@ export async function getWheel(): Promise<WheelConfig | null> {
     .from("wheels")
     .select(WHEEL_SELECT)
     .eq("id", wheelId)
-    .single();
+    .maybeSingle();
 
+  // The row can be absent (e.g. resolved id not readable, or removed between
+  // resolve and fetch). getWheel is declared `WheelConfig | null` and the
+  // dashboard falls back to a sample wheel, so return null instead of passing
+  // null into toWheelConfig (which dereferences `.prizes` and crashes the render).
+  if (!data) return null;
   return toWheelConfig(data as unknown as DbWheelRow);
 }
 

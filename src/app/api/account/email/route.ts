@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const limited = rateLimitOr429("emailchange:" + user.id, 5, 60 * 60 * 1000);
+  const limited = await rateLimitOr429("emailchange:" + user.id, 5, 60 * 60 * 1000);
   if (limited) return limited;
 
   let body: { email?: unknown; currentPassword?: unknown };

@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { createCreatorAccount } from "@/lib/data";
 import { isAcceptablePassword } from "@/lib/api/password";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Admin creates a creator account directly (no public sign-up needed).
 export async function POST(req: Request) {
-  let body: { email?: string; password?: string; displayName?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{
+    email?: string;
+    password?: string;
+    displayName?: string;
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   const email = (body.email ?? "").trim();
   const password = body.password ?? "";
   if (!email || !isAcceptablePassword(password)) {
@@ -24,9 +25,6 @@ export async function POST(req: Request) {
     password,
     (body.displayName ?? "").trim()
   );
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 403 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

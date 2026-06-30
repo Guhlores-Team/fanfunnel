@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getMyPublicProfile, setMyPublicProfile } from "@/lib/data";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Field limits and slug shape enforced before persistence. The slug is further
 // normalized in the data layer, so we only need to reject oversized/illegal
@@ -59,12 +60,14 @@ function isTrustedAvatarUrl(url: string): boolean {
 }
 
 export async function PUT(req: Request) {
-  let body: { slug?: string; tipUrl?: string; tagline?: string; note?: string; avatarUrl?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{
+    slug?: string;
+    tipUrl?: string;
+    tagline?: string;
+    note?: string;
+    avatarUrl?: string;
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   if (body.avatarUrl !== undefined && !isTrustedAvatarUrl(body.avatarUrl)) {
     return NextResponse.json({ error: "invalid_avatar_url" }, { status: 400 });
   }
@@ -104,9 +107,6 @@ export async function PUT(req: Request) {
     ...(body.note !== undefined ? { note: body.note } : {}),
     ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
   });
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

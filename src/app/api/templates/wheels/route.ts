@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { listWheelTemplates, createWheelTemplate } from "@/lib/data";
 import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER } from "@/lib/games/wheel/types";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Full prize validation, mirroring the wheel save route (src/app/api/wheel
 // /route.ts): rarity drives the odds defaults and imageUrl is rendered, so a
@@ -32,16 +33,16 @@ export async function GET() {
 
 // Save a wheel preset, sourced from an existing wheel or a provided config.
 export async function POST(req: Request) {
-  let body: { name?: string; fromWheelId?: string; config?: WheelConfig };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{
+    name?: string;
+    fromWheelId?: string;
+    config?: WheelConfig;
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const name = String(body.name ?? "").trim();
   if (!name || (!body.fromWheelId && !body.config)) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
   // If a raw config is supplied (not sourced from an existing wheel), validate
   // its shape so a malformed payload returns 400 rather than throwing a TypeError.
@@ -52,7 +53,7 @@ export async function POST(req: Request) {
       !Array.isArray(c.prizes) ||
       !prizesValid(c.prizes)
     ) {
-      return NextResponse.json({ error: "bad_config" }, { status: 400 });
+      return badRequest("bad_config");
     }
   }
 
@@ -65,8 +66,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ template });
   } catch (err) {
     const message = err instanceof Error ? err.message : "db_error";
-    const status =
-      message === "unauthorized" ? 401 : message === "no_source" ? 400 : 400;
-    return NextResponse.json({ error: message }, { status });
+    return errorResponse(message);
   }
 }

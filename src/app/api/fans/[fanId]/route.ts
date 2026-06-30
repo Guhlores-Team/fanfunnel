@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getFanDetail, deleteFan, updateFanMeta } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // A single fan account's full detail, for the creator's fan drill-in.
 export async function GET(
@@ -19,12 +20,8 @@ export async function PATCH(
 ) {
   const { fanId } = await params;
 
-  let body: { notes?: string | null; tags?: string[] };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ notes?: string | null; tags?: string[] }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const MAX_NOTES_LEN = 2000;
   const MAX_TAGS = 50;
@@ -62,10 +59,7 @@ export async function PATCH(
   }
 
   const result = await updateFanMeta(fanId, patch);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }
 
@@ -76,9 +70,6 @@ export async function DELETE(
 ) {
   const { fanId } = await params;
   const result = await deleteFan(fanId);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }

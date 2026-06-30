@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteHappyHour } from "@/lib/data";
+import { errorResponse } from "@/lib/api/handler";
 
 export async function DELETE(
   _req: Request,
@@ -7,9 +8,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const result = await deleteHappyHour(id);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

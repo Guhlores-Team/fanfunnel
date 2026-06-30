@@ -1,25 +1,22 @@
 import { NextResponse } from "next/server";
 import { updateAccount } from "@/lib/data";
 import type { AppRole } from "@/lib/data/types";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Update a creator account: role, active status, or feature flags.
 export async function POST(req: Request) {
-  let body: {
+  const body = await parseJsonBody<{
     id?: string;
     role?: AppRole;
     isActive?: boolean;
     features?: Record<string, boolean>;
-  };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   if (!body.id) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
   if (body.role && body.role !== "admin" && body.role !== "creator") {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
 
   const result = await updateAccount(body.id, {
@@ -27,9 +24,6 @@ export async function POST(req: Request) {
     isActive: body.isActive,
     features: body.features,
   });
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 403 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

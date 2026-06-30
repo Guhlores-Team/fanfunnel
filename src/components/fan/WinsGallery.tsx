@@ -1,28 +1,11 @@
 "use client";
 
-import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_LABEL, RARITY_ORDER } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
+import { timeAgo } from "@/lib/format";
 
-const RARITY_LABEL: Record<string, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
-
-function ago(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return d < 7 ? `${d}d ago` : new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+// Relative time for a win; older than a week falls back to an absolute date.
+const ago = (iso: string) => timeAgo(iso, { invalid: "", absoluteAfterDays: 7 });
 
 interface Grouped {
   label: string;

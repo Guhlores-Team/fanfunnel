@@ -1635,3 +1635,210 @@ drop policy if exists autopilot_dismissals_rw on public.autopilot_dismissals;
 create policy autopilot_dismissals_rw on public.autopilot_dismissals for all
   using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
   with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+-- ============================================================
+-- 0033_resync_fan_spin_aggregate.sql
+-- ============================================================
+-- One-time, idempotent heal: snap each fan's spins_remaining / spins_granted_total
+-- back to the sum of their active passes, repairing any historical drift. Safe to
+-- re-run; claim_spin and the grant/credit RPCs keep them in sync going forward.
+update public.fans f
+   set spins_remaining = coalesce((
+         select sum(p.spins_remaining) from public.fan_passes p
+          where p.fan_id = f.id and p.is_active), 0),
+       spins_granted_total = coalesce((
+         select sum(p.spins_granted_total) from public.fan_passes p
+          where p.fan_id = f.id and p.is_active), 0)
+ where exists (
+   select 1 from public.fan_passes p where p.fan_id = f.id and p.is_active
+ );
+
+
+-- ============================================================
+-- Synced from migrations/ (effective definitions) so the SQL-sync
+-- guard holds after rebasing onto the latest migrations.
+-- ============================================================
+
+create or replace function public.set_public_profile(
+  p_slug text, p_tip_url text, p_tagline text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.profiles
+     set public_slug    = case when p_slug    is null then public_slug    else nullif(trim(p_slug), '')    end,
+         tip_url        = case when p_tip_url  is null then tip_url        else nullif(trim(p_tip_url), '')  end,
+         public_tagline = case when p_tagline  is null then public_tagline else nullif(trim(p_tagline), '') end
+   where id = auth.uid() and is_active = true;
+end;
+$$;
+
+create or replace function public.set_creator_note(p_note text, p_avatar text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.profiles
+     set creator_note = case when p_note   is null then creator_note else nullif(trim(p_note), '')   end,
+         avatar_url   = case when p_avatar is null then avatar_url   else nullif(trim(p_avatar), '') end
+   where id = auth.uid() and is_active = true;
+end;
+$$;
+
+create or replace function public.sync_fan_spin_aggregate()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid := coalesce(new.fan_id, old.fan_id);
+begin
+  if v_fan is null then
+    return null;
+  end if;
+  update public.fans f
+     set spins_remaining = coalesce((
+           select sum(p.spins_remaining) from public.fan_passes p
+            where p.fan_id = v_fan and p.is_active), 0),
+         spins_granted_total = coalesce((
+           select sum(p.spins_granted_total) from public.fan_passes p
+            where p.fan_id = v_fan and p.is_active), 0)
+   where f.id = v_fan;
+  return null; -- AFTER trigger; updates fans (not fan_passes) so no recursion
+end;
+$$;
+
+create or replace function public.current_user_active()
+returns boolean
+language sql
+stable
+security definer set search_path = public
+as $$
+  select exists(
+    select 1 from public.profiles where id = auth.uid() and is_active
+  );
+$$;
+
+create or replace function public.import_fans(p_rows jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_creator uuid := auth.uid();
+begin
+  if v_creator is null then
+    raise exception 'unauthorized';
+  end if;
+
+  -- SECURITY DEFINER bypasses RLS, so verify the caller owns every referenced
+  -- wheel and campaign before inserting anything that points at them.
+  if exists (
+    select 1 from jsonb_array_elements(p_rows) r
+    where not exists (
+      select 1 from public.wheels w
+       where w.id = (r->>'wheel_id')::uuid and w.creator_id = v_creator
+    )
+  ) then
+    raise exception 'wheel_not_owned';
+  end if;
+
+  if exists (
+    select 1 from jsonb_array_elements(p_rows) r
+    where (r->>'campaign_id') is not null
+      and not exists (
+        select 1 from public.campaigns c
+         where c.id = (r->>'campaign_id')::uuid and c.creator_id = v_creator
+      )
+  ) then
+    raise exception 'campaign_not_owned';
+  end if;
+
+  insert into public.fans (id, creator_id, display_name, spins_remaining, spins_granted_total)
+  select (r->>'fan_id')::uuid, v_creator,
+         coalesce(nullif(r->>'name', ''), 'Fan'),
+         (r->>'spins')::int, (r->>'spins')::int
+    from jsonb_array_elements(p_rows) r;
+
+  insert into public.fan_passes
+         (id, token, creator_id, wheel_id, fan_id, campaign_id, spins_remaining, spins_granted_total)
+  select (r->>'pass_id')::uuid, r->>'token', v_creator,
+         (r->>'wheel_id')::uuid, (r->>'fan_id')::uuid, (r->>'campaign_id')::uuid,
+         (r->>'spins')::int, (r->>'spins')::int
+    from jsonb_array_elements(p_rows) r;
+
+  insert into public.grants
+         (creator_id, fan_id, fan_pass_id, campaign_id, spins, amount_cents, bonus_spins)
+  select v_creator, (r->>'fan_id')::uuid, (r->>'pass_id')::uuid, (r->>'campaign_id')::uuid,
+         (r->>'spins')::int, (r->>'amount_cents')::int, 0
+    from jsonb_array_elements(p_rows) r;
+end;
+$$;
+
+
+-- ============================================================
+-- Synced from migrations/ (effective definitions) so the SQL-sync
+-- guard holds after rebasing onto the latest migrations.
+-- ============================================================
+
+create or replace function public.claim_spin(p_token text)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_fan uuid;
+  v_win_start timestamptz;
+  v_win_count int;
+  remaining integer;
+  p_max integer := 8;                       -- max spins per window
+  p_window interval := interval '10 seconds';
+begin
+  select fp.fan_id into v_fan
+    from public.fan_passes fp
+    join public.fans f on f.id = fp.fan_id
+   where fp.token = p_token
+     and fp.is_active = true
+     and fp.self_excluded_at is null
+     and f.blocked_at is null;
+  if v_fan is null then
+    return null; -- bad/inactive/blocked/self-excluded token
+  end if;
+
+  -- Atomic rate limit: lock the fan row so concurrent claims serialize, then
+  -- enforce a fixed-window counter held IN-ROW (independent of the post-hoc
+  -- public.spins insert that made the old rolling count race-prone).
+  select rl_window_start, rl_count into v_win_start, v_win_count
+    from public.fans where id = v_fan for update;
+  if v_win_start is null or now() - v_win_start > p_window then
+    update public.fans set rl_window_start = now(), rl_count = 1 where id = v_fan;
+  elsif v_win_count >= p_max then
+    return -1; -- sentinel: rate limited (caller maps to HTTP 429)
+  else
+    update public.fans set rl_count = rl_count + 1 where id = v_fan;
+  end if;
+
+  -- Decrement THIS wheel's pass balance (row-locked; can't go below 0).
+  update public.fan_passes
+     set spins_remaining = spins_remaining - 1,
+         last_spin_at = now()
+   where token = p_token and spins_remaining > 0
+  returning spins_remaining into remaining;
+
+  if remaining is null then
+    return null; -- no spins left on this wheel's pass
+  end if;
+
+  -- Touch ONLY last_spin_at here. trg_sync_fan_spin_aggregate (0025) already set
+  -- fans.spins_remaining to the new sum of passes after the decrement above;
+  -- decrementing it again would double-count.
+  update public.fans set last_spin_at = now() where id = v_fan;
+
+  return remaining; -- spins left ON THIS PASS
+end;
+$$;
+
+-- ============================================================
+-- Wire the fan-spin aggregate trigger (0025). The function above is inert
+-- without this; a fresh DB must create the trigger too, or fans.spins_remaining
+-- never auto-syncs (and the migrated DB would behave differently).
+-- ============================================================
+drop trigger if exists trg_sync_fan_spin_aggregate on public.fan_passes;
+create trigger trg_sync_fan_spin_aggregate
+  after insert or delete
+     or update of spins_remaining, spins_granted_total, is_active, fan_id
+  on public.fan_passes
+  for each row execute function public.sync_fan_spin_aggregate();

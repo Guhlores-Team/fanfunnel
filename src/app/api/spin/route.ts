@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { spin } from "@/lib/data";
-import { rateLimit } from "@/lib/rateLimit";
+import { rateLimitShared } from "@/lib/rateLimit";
 import { clientIp } from "@/lib/api/clientIp";
 
 // The ONLY place a spin outcome is decided. The browser sends just a token;
@@ -25,8 +25,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
+  // Key on the trusted-proxy client IP (clientIp prefers x-real-ip /
+  // cf-connecting-ip over the spoofable x-forwarded-for) so the per-IP spin
+  // limit on this abuse-sensitive endpoint can't be rotated away by a header.
   const key = token + ":" + clientIp(req);
-  const { ok, retryAfter } = rateLimit(key, 10, 10000);
+  const { ok, retryAfter } = await rateLimitShared(key, 10, 10000);
   if (!ok) {
     return NextResponse.json(
       { error: "rate_limited" },
