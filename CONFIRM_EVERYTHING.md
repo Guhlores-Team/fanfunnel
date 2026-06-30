@@ -1,227 +1,191 @@
-# FanFunnel — "Confirm Everything Works" Checklist
+# FanFunnel — "Confirm Everything Works" Checklist (in depth)
 
-End-to-end verification that the deploy machine **and** the live system actually
-work. Go top to bottom — each phase gates the next. Legend:
+Go top to bottom. Each phase has **steps**, the **exact action**, and a **pass
+criterion**. Do every checkbox. Legend:
 
-- `[x]` = verified this session (evidence noted)
-- `[ ]` = needs you (dashboard / clicks / live creds I don't have)
-- `⏭️` = covered by CI on `main` (authoritative), not re-run locally
+- `[x]` done/verified · `[ ]` to do · `⏭️` covered by CI on `main`
 
-**Reference values** (compare against these exactly):
+**Reference values**
 - Prod Supabase ref: `ttlogfmogcccwiraaoae`
 - Test Supabase ref: `snmcrmhgevfqggxdiomu`
-- Default branch / production: `main`
-- Dev branch this session: `claude/fanfunnel-handoff-dwgt2m`
-- Required CI checks: `verify` (CI) · `supabase` (E2E real Supabase) · `login-ui` (E2E login UI)
+- Production branch: `main` · dev branch: `claude/fanfunnel-handoff-dwgt2m`
+- Required CI checks: `verify` · `supabase` · `login-ui`
+
+**Status at a glance**
+| Phase | What | Status |
+|---|---|---|
+| 0 | Repo baseline | ✅ done |
+| 1 | GitHub secrets | ✅ done |
+| 2 | Branch protection | ✅ config (live-push test pending) |
+| 3 | Vercel | ✅ config (deploy/URL test pending) |
+| 4 | Supabase health | ⬜ **next** |
+| 5 | Local verification | ✅ done (E2E ⏭️ CI) |
+| 6 | Auth contract | ✅ done |
+| 7 | Migration dry-run | ⬜ config prep doable now; runtime later |
+| 8 | Live smoke test | ⬜ runtime batch |
+| 9 | Safety/rollback | ⬜ knowledge check |
 
 ---
 
-## Phase 0 — Repo baseline  ✅ verified
-- [x] `main` is at `df7a1d9` = PR #37; working tree clean.
-- [x] PRs #34, #35, #36, #37 all present in `main` history.
-- [x] `dashboard-redesign` exists as its own branch and is **not** merged to `main`.
-- [x] Latest `main` push CI all green: `CI` + `E2E (real Supabase)` + `E2E (real Supabase — login UI)` → `completed/success` (14:57Z).
+## Phase 0 — Repo baseline ✅
+**How to re-verify:** `git fetch origin main && git log --oneline -1 origin/main`
+- [x] `origin/main` tip = `df7a1d9` (PR #37)
+- [x] PRs #34–#37 all merged into `main`
+- [x] `dashboard-redesign` exists but is **not** merged to `main`
+- [x] Latest `main` CI green: `CI` + `E2E (real Supabase)` + `login-ui`
 
 ---
 
-## Phase 1 — GitHub repository secrets  ✅ verified
-Page: `https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions`
+## Phase 1 — GitHub repository secrets ✅
+**Where:** `https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions`
 
-Migration pipeline (5) — all present, set ~1h ago:
+Presence (8 repo secrets):
 - [x] `SUPABASE_ACCESS_TOKEN`
-- [x] `SUPABASE_TEST_PROJECT_REF`
-- [x] `SUPABASE_TEST_DB_PASSWORD`
-- [x] `SUPABASE_PROD_PROJECT_REF`
-- [x] `SUPABASE_PROD_DB_PASSWORD`
-
-CI real-Supabase suite (3) — all present, set ~2w ago:
-- [x] `NEXT_PUBLIC_SUPABASE_URL`
-- [x] `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- [x] `SUPABASE_SERVICE_ROLE_KEY`
-
-Values confirmed by user:
 - [x] `SUPABASE_TEST_PROJECT_REF` = `snmcrmhgevfqggxdiomu`
+- [x] `SUPABASE_TEST_DB_PASSWORD`
 - [x] `SUPABASE_PROD_PROJECT_REF` = `ttlogfmogcccwiraaoae`
-- [x] CI `NEXT_PUBLIC_SUPABASE_URL` = test project
-- [x] CI `SUPABASE_SERVICE_ROLE_KEY` = test project's key
+- [x] `SUPABASE_PROD_DB_PASSWORD`
+- [x] `NEXT_PUBLIC_SUPABASE_URL` (CI → **test** project)
+- [x] `NEXT_PUBLIC_SUPABASE_ANON_KEY` (CI → test)
+- [x] `SUPABASE_SERVICE_ROLE_KEY` (CI → test key)
 - [x] Org-level secrets page empty — fine; workflows read repo-level.
 
-> If unsure on any value, click the pencil and re-enter it — cheaper than a prod incident.
+---
+
+## Phase 2 — Branch protection on `main` ✅
+**Where:** `https://github.com/Guhlores-Team/fanfunnel/settings/branches`
+- [x] Rule targets `main`
+- [x] Require a pull request before merging
+- [x] Required approvals = **0** (per user — solo self-merge OK; CI still gates)
+- [x] Require status checks to pass — all three: `verify`, `supabase`, `login-ui`
+- [x] Require branches up to date before merging
+- [x] Do not allow bypassing the above settings
+- [x] Allow force pushes OFF · Allow deletions OFF
+- [ ] **Live test (later):** direct `git push origin main` → must be **rejected**
 
 ---
 
-## Phase 2 — Branch protection on `main`  ✅ verified (rule created this session)
-Page: `https://github.com/Guhlores-Team/fanfunnel/settings/branches`
-
-- [x] Rule targets `main`.
-- [x] **Require a pull request before merging** ON (+ 1 required approval).
-- [x] **Require status checks to pass** ON, with all three required: `verify`, `supabase`, `login-ui`.
-- [x] **Require branches to be up to date before merging** ON.
-- [x] **Do not allow bypassing the above settings** ON (applies to admins).
-- [x] Allow force pushes OFF; Allow deletions OFF.
-- [ ] (Pending live test) `git push origin main` directly → should be **rejected**.
-
-> Required approvals set to **0** (per user) so solo self-merge is possible;
-> status checks + up-to-date + no-bypass still gate every merge. Acceptable.
+## Phase 3 — Vercel ✅ config
+**Where:** Vercel dashboard → FanFunnel project.
+- [x] Git connection = `Guhlores-Team/fanfunnel` ("Connected"), webhook events on
+- [x] **Production** env vars → prod Supabase (`ttlogfmogcccwiraaoae`):
+  - [x] `NEXT_PUBLIC_SUPABASE_URL` = `https://ttlogfmogcccwiraaoae.supabase.co`
+  - [x] `NEXT_PUBLIC_SUPABASE_ANON_KEY` = prod anon
+  - [x] `SUPABASE_SERVICE_ROLE_KEY` = prod key, **server-scoped, NOT `NEXT_PUBLIC_`**
+- [x] **Preview** env vars → test Supabase (`snmcrmhgevfqggxdiomu`)
+- [ ] **Later (runtime batch):** Deployments → ⋯ → Redeploy → wait **Ready** from `main`
+- [ ] **Later:** open live URL → loads, no console errors
 
 ---
 
-## Phase 3 — Vercel  ✅ config complete (runtime deploy/URL test deferred to batch)
-Vercel dashboard → FanFunnel project.
+## Phase 4 — Supabase health ⬜ (do BOTH projects)
+First each time: confirm the **ref in the dashboard URL** (prod `ttlogfmogcccwiraaoae`
+/ test `snmcrmhgevfqggxdiomu`) so you're on the right DB.
 
-- [x] Project is linked to `Guhlores-Team/fanfunnel` ("Connected 2m ago"; org-transfer re-auth fixed). Webhook events on.
-- [x] Production env vars set → prod Supabase (`ttlogfmogcccwiraaoae`); `SUPABASE_SERVICE_ROLE_KEY` server-scoped, not `NEXT_PUBLIC_`.
-- [x] Preview env vars set → test Supabase (`snmcrmhgevfqggxdiomu`).
-- [ ] (Deferred to runtime batch) Redeploy → **Ready** Production build from `main`.
-- [ ] (Deferred to runtime batch) Live URL loads, no console errors.
+### 4a — Project awake?
+Dashboard **Home** → status badge.
+- [ ] PROD reads **Active/Healthy** (not Paused). If Paused → **Restore project**.
+- [ ] TEST reads **Active/Healthy**. If Paused → Restore.
+⚠️ Paused TEST fails every migration PR; paused PROD errors the live site.
 
----
-
-## Phase 4 — Supabase health (both projects)  [ ] needs you
-Do every step for **BOTH** projects. Confirm the ref in the dashboard URL first:
-prod `ttlogfmogcccwiraaoae`, test `snmcrmhgevfqggxdiomu`.
-
-### 4a — Project is awake (not paused)
-- [ ] Dashboard Home → status reads **Active/Healthy** (free tier auto-pauses after
-      ~7 days idle). If "Paused" → **Restore project** and wait for green.
-      ⚠️ A paused TEST project makes every migration-PR job fail; a paused PROD
-      project makes the live site error.
-
-### 4b — Migration history reconciled (0001–0035)  ← SQL Editor → New query
+### 4b — Migration history reconciled (SQL Editor → New query)
 ```sql
-select count(*) as applied,
-       min(version) as first, max(version) as last
+select count(*) as applied, min(version) as first, max(version) as last
 from supabase_migrations.schema_migrations;
 ```
-- [ ] `applied` = **35**, `first` = `0001…`, `last` = `0035…`.
-  (This is what lets `supabase db push` skip them instead of re-running. If this
-  table is empty/short, the next migration PR will try to replay old migrations.)
+- [ ] PROD: `applied = 35`, first `0001…`, last `0035…`
+- [ ] TEST: `applied = 35`, first `0001…`, last `0035…`
+Why: this is what `db push` reads to skip already-applied migrations. Empty/short
+→ the next migration PR replays old SQL and likely fails.
 
-### 4c — Schema actually present  ← SQL Editor
+### 4c — Schema present + RLS on
 ```sql
-select tablename, rowsecurity
-from pg_tables
-where schemaname = 'public'
-order by tablename;
+select tablename, rowsecurity from pg_tables
+where schemaname = 'public' order by tablename;
 ```
-- [ ] Core tables exist with `rowsecurity = true`: `profiles, wheels, prizes, fans,
-      fan_passes, campaigns, spins, redemptions` (+ org/agency tables). No app
-      table should show `rowsecurity = false`.
+- [ ] PROD: `profiles, wheels, prizes, fans, fan_passes, campaigns, spins, redemptions`
+      (+ org tables) all exist, all `rowsecurity = true`
+- [ ] TEST: same
+- [ ] **No** app table with `rowsecurity = false` (would be an RLS hole — flag it)
 
-### 4d — At least 2 active admins  ← SQL Editor
+### 4d — ≥2 active admins
 ```sql
-select email, role, is_active
-from public.profiles
-where role = 'admin';
+select email, role, is_active from public.profiles where role = 'admin';
 ```
-- [ ] ≥ **2 rows**, all `is_active = true`. (Admins are the only accounts that pass
-      `is_admin()`; lose them and no one can reach admin paths.)
-
-> Run 4a–4d on PROD first, then TEST. Test also needs ≥1 pre-approved creator for
-> the login-ui E2E, but that's exercised by CI, not this phase.
+- [ ] PROD: ≥2 rows, all `is_active = true`
+- [ ] TEST: ≥2 rows, all `is_active = true`
 
 ---
 
-## Phase 5 — Local verification  ✅ verified (no-secret checks)
-Run from repo root. Results captured this session:
+## Phase 5 — Local verification ✅ (no-secret) / ⏭️ E2E in CI
+Captured this session:
+- [x] `npm run lint` clean
+- [x] `npm run typecheck` clean
+- [x] `npm test` → 13/13 files; RLS lint: 25 tables RLS, 0 wide-open policies, 79 SECURITY DEFINER fns search_path-pinned
+- [x] `npm run build` succeeds
+- [⏭️] `e2e` / `e2e:a11y` / `e2e:supabase` / `e2e:spin` / `e2e:login` green in CI on `main`
+- [ ] (optional, against TEST) `node scripts/security/rls-runtime-test.mjs`
 
-```bash
-npm ci            # deps installed
-npm run lint      # [x] clean (exit 0)
-npm run typecheck # [x] clean (exit 0)
-npm test          # [x] 13/13 files — incl. rls.test.ts:
-                  #     25 tables RLS+policy · 0 wide-open policies · 79 SECURITY DEFINER fns search_path-pinned
-npm run build     # [x] succeeds
+---
+
+## Phase 6 — Auth-contract acceptance ✅ (AGENTS.md, 4 answers w/ evidence)
+- [x] **Authz where:** RLS gated by `is_admin()`/`can_act_for()` (`schema.sql:293,300-302`; owner-or-admin `:304-502`); privileged ops via server routes (`api/admin/account/delete/route.ts:78`)
+- [x] **Role source server-controlled:** `is_admin()` = `profiles.role+is_active` (`schema.sql:197-207`); zero `user_metadata`/`app_metadata` in `src/`
+- [x] **Service key contained:** only `src/lib/supabase/server.ts:90`; never `NEXT_PUBLIC`; no `"use client"` importer
+- [x] **Negative test:** static `rls.test.ts` passed (profiles UPDATE admin-only)
+- [ ] (optional) runtime self-promote test `rls-runtime-test.mjs:113-124` against TEST
+- [ ] (optional hardening) add `import "server-only";` atop `server.ts`
+
+---
+
+## Phase 7 — Migration pipeline dry-run ⬜
+Proves code+DB ship together. Workflow: `.github/workflows/supabase-migrations.yml`.
+
+**Config prep (safe to do now):**
+- [ ] On a new branch off `main`, add `supabase/migrations/0036_pipeline_probe.sql`:
+```sql
+-- pipeline probe: reversible no-op to prove auto-migrate fires
+create table if not exists public._migrate_probe (id int primary key);
 ```
+- [ ] Commit + push the branch (do NOT merge yet)
 
-Browser / real-Supabase E2E — **not re-run locally** (headless-shell build 1223
-missing; proxy blocks download). These are **CI-authoritative and green on `main`**:
-- ⏭️ `npm run e2e` (mock creator flow + zero console errors) — CI `verify`
-- ⏭️ `npm run e2e:a11y` — CI `verify`
-- ⏭️ `npm run e2e:supabase` (RLS tenant isolation + SECURITY DEFINER RPCs) — CI `supabase`
-- ⏭️ `npm run e2e:spin` (double-spend / spin integrity) — CI `supabase`
-- ⏭️ `npm run e2e:login` (real /login → dashboard) — CI `login-ui`
-
-Optional — run against the **test** project yourself (don't paste creds in chat):
-- [ ] `export NEXT_PUBLIC_SUPABASE_URL=… ANON_KEY=… SERVICE_ROLE_KEY=… && node scripts/security/rls-runtime-test.mjs`
-  → expect "A cannot self-UPDATE its profile" + cross-tenant isolation all pass.
+**Runtime (later batch, needs awake DBs from Phase 4):**
+- [ ] Open PR → `Supabase migrations` **test** job runs → green
+- [ ] TEST DB: `select max(version) from supabase_migrations.schema_migrations;` = `0036…`
+- [ ] Merge to `main` → **production** job applies `0036` to PROD + Vercel deploys
+- [ ] PROD DB: max version = `0036…`
+- [ ] Cleanup follow-up `0037_drop_probe.sql`: `drop table if exists public._migrate_probe;`
+→ Pass = DB + code shipped by one merge, no manual psql.
 
 ---
 
-## Phase 6 — Auth-contract acceptance (AGENTS.md)  ✅ verified
-All four mandatory answers, with file:line evidence:
-
-- [x] **Where authz happens** — RLS gated by `is_admin()`/`can_act_for()`
-  (`supabase/schema.sql:293,300-302` for profiles; owner-or-admin on every creator
-  table `:304-502`). Privileged ops go through server routes using
-  `createServiceClient()` (e.g. `src/app/api/admin/account/delete/route.ts:78`),
-  never a client calling a privileged RPC.
-- [x] **Role source is server-controlled** — `is_admin()` = `profiles.role='admin' AND is_active`
-  (`schema.sql:197-207`); `can_act_for()` reads org membership, `SECURITY DEFINER`
-  (`supabase/migrations/0032_*.sql:33-37`). **Zero `user_metadata`/`app_metadata`
-  reads in `src/`.**
-- [x] **Service key can't reach client** — defined only in `src/lib/supabase/server.ts:90`,
-  reads `SUPABASE_SERVICE_ROLE_KEY` (`:93`); **never `NEXT_PUBLIC_*`**; of the 17
-  modules importing `supabase/server`, **none is `"use client"`**.
-- [x] **Negative test** — static `src/lib/security/rls.test.ts` passed (profiles
-  UPDATE is admin-only, `schema.sql:299-302`; no wide-open policies). Runtime
-  equivalent: `scripts/security/rls-runtime-test.mjs:113-124` ("A cannot self-UPDATE
-  its profile") — run it against the test project (Phase 5 optional) to tick the
-  live box.
-
-Optional hardening (not a contract violation):
-- [ ] Add `import "server-only";` to the top of `src/lib/supabase/server.ts` — a
-  build-time tripwire if the service module is ever pulled into a client bundle.
+## Phase 8 — Live production smoke test ⬜ (real clicks on prod URL)
+- [ ] Creator signs in at `/login` → working dashboard
+- [ ] Create/save a wheel with **20+ prizes** → reload → all prizes persist
+      (old mock-mode loss; `saveWheel` hardened, `MAX_WHEEL_PRIZES=50`)
+- [ ] Fan `/spin/[token]` → age-gate → spin works → remaining count accurate
+- [ ] Spin repeatedly → decrements correctly, no double-spend
+- [ ] `/verify/[shareId]` → fairness page renders
+- [ ] Bad link (`/spin/badtoken`) → 404 (branded 404 still open in RELEASE_CHECKLIST.md)
+- [ ] DevTools: no `SUPABASE_SERVICE_ROLE_KEY`/secret in bundle or network; no console errors
 
 ---
 
-## Phase 7 — Migration pipeline dry-run  [ ] needs you (proves auto-migrate fires)
-Do this **once** to trust the machine. Workflow: `.github/workflows/supabase-migrations.yml`.
-
-- [ ] Branch off `main`; add a trivial reversible migration `supabase/migrations/0036_noop.sql`
-      (e.g. a comment-only statement or a `create table if not exists _migrate_probe(...)` you drop next).
-- [ ] Open a PR → the **`Supabase migrations` → test** job runs and goes green.
-- [ ] Confirm in the **test** DB that history now includes `0036`.
-- [ ] (If you defined a `production` Environment with a required reviewer, note the prod job will wait for approval.)
-- [ ] Merge to `main` → the **production** job runs, applies `0036` to **prod**, and the Vercel prod deploy succeeds.
-- [ ] Confirm in the **prod** DB that history now includes `0036`.
-- [ ] Clean up the probe in a follow-up migration if you used a real object.
-  → Pass = code and DB shipped together with no manual psql.
+## Phase 9 — Safety / rollback knowledge ⬜
+- [ ] Vercel rollback: Deployments → pick previous good → "Promote to Production"
+- [ ] Bad migration is **forward-fix only** — write `0037_*` to correct, no auto-revert
+- [ ] `dashboard-redesign` stays OFF `main` until explicitly approved post-preview
+- [ ] Never merge to `main` without: all CI green **AND** verified on the Preview URL
 
 ---
 
-## Phase 8 — Live production smoke test (real clicks on the prod URL)  [ ] needs you
-- [ ] Creator signs in at `/login` → reaches a working dashboard.
-- [ ] **20+ prize wheel persistence:** create/save a wheel with **20+ prizes** → reload →
-      all prizes persist. (This is the old mock-mode data-loss; `saveWheel` is now
-      hardened, `MAX_WHEEL_PRIZES=50`, so a prod rebuild persists.)
-- [ ] Fan opens a `/spin/[token]` link → age-gate appears → spin works → remaining-spin count is accurate.
-- [ ] Spin a few times → counts decrement correctly; no double-spend.
-- [ ] Open `/verify/[shareId]` for a spin → fairness/verify page renders.
-- [ ] Expired/bad link (`/spin/badtoken`, `/c/badslug`) → currently bare Next.js 404
-      (branded 404 is still an **open Tier-1** item in `RELEASE_CHECKLIST.md`).
-- [ ] DevTools → Network/Sources: **no** `SUPABASE_SERVICE_ROLE_KEY` or any secret in
-      the client bundle or responses.
-- [ ] DevTools console: no errors across creator + fan flows.
-
----
-
-## Phase 9 — Safety / rollback knowledge  [ ] confirm you know these
-- [ ] You can roll back a bad prod deploy in Vercel (Deployments → previous → "Promote to Production").
-- [ ] A bad migration is **forward-fix only** (write `0037_*` to correct it) — `db push` doesn't auto-revert.
-- [ ] `dashboard-redesign` stays OFF `main` until explicitly approved after full preview testing (pink-ink change needs sign-off).
-- [ ] Never merge to `main` without: all CI green **AND** verified on the branch's Preview URL.
-
----
-
-## Open backlog (not blocking "works", but track)
+## Open backlog (track, not blocking "works")
 From `RELEASE_CHECKLIST.md`:
-- [ ] Tier-1: fan-chat poll flood (`ChatPanel.tsx`) + branded 404/error pages.
-- [ ] Deferred: wheel slice-label overlap (`src/components/Wheel.tsx`).
+- [ ] Tier-1: fan-chat poll flood (`ChatPanel.tsx`) + branded 404/error pages
+- [ ] Deferred: wheel slice-label overlap (`src/components/Wheel.tsx`)
 
 ---
 
-### Summary of progress
-Config-complete: Phase 0 ✅ · 1 ✅ · 2 ✅ · 3 ✅ (config) · 5 ✅ · 6 ✅
-Runtime tests deferred to one batch: Phase 2 live-push, Phase 3 deploy/URL, Phase 7, Phase 8.
-Up next (config): Phase 4 Supabase health. Then 7 config (migration dry-run), 9 (knowledge).
+### Progress
+Config-complete: 0, 1, 2, 3, 5, 6. Next config: **Phase 4** (then Phase 7 prep).
+Runtime batch (later): Phase 2 live-push · Phase 3 deploy/URL · Phase 7 PR→merge · Phase 8.
