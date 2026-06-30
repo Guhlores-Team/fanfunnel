@@ -5367,14 +5367,23 @@ export async function getFanMessages(token: string): Promise<ChatMessage[]> {
     .order("created_at", { ascending: true });
   const rows = (data ?? []) as Parameters<typeof toChatMessage>[0][];
 
-  // Mark creator→fan messages as read by the fan.
-  await sb
-    .from("messages")
-    .update({ read_at: new Date().toISOString() })
-    .eq("creator_id", pass.creator_id)
-    .eq("fan_id", pass.fan_id)
-    .eq("sender", "creator")
-    .is("read_at", null);
+  // Mark creator→fan messages as read by the fan — but ONLY when there is
+  // actually something unread. The fan chat polls this endpoint, so an
+  // unconditional UPDATE on every GET turned every read into a write (the bulk
+  // of the messages-table write load). The rows we just fetched carry read_at,
+  // so we can skip the write entirely on the common "nothing new" poll.
+  const hasUnreadFromCreator = rows.some(
+    (r) => r.sender === "creator" && r.read_at === null
+  );
+  if (hasUnreadFromCreator) {
+    await sb
+      .from("messages")
+      .update({ read_at: new Date().toISOString() })
+      .eq("creator_id", pass.creator_id)
+      .eq("fan_id", pass.fan_id)
+      .eq("sender", "creator")
+      .is("read_at", null);
+  }
 
   return rows.map(toChatMessage);
 }

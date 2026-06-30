@@ -12,9 +12,10 @@ interface PendingMessage {
 
 /**
  * Spin-gated DM thread with the creator. Fans with ≥1 spin (chatUnlocked) can
- * message; otherwise they see a top-up nudge. Polls every 3s while open, and
- * every 12s while closed so a creator reply surfaces an unread dot on the 💬
- * button. Fans aren't authed, so this stays HTTP polling (no realtime).
+ * message; otherwise they see a top-up nudge. Polls every 10s while open, and
+ * every 30s while closed so a creator reply surfaces an unread dot on the 💬
+ * button — both paused while the tab is hidden. Fans aren't authed, so this
+ * stays HTTP polling (no realtime).
  */
 export default function ChatPanel({
   token,
@@ -129,7 +130,7 @@ export default function ChatPanel({
   }, [token, readSeen]);
 
   // When the panel OPENS and is unlocked: request the auto-intro once (so the
-  // greeting is waiting), then load + poll fast (3s).
+  // greeting is waiting), then load + poll (10s, visible tab only).
   useEffect(() => {
     if (!open || !unlocked) return;
     let live = true;
@@ -156,21 +157,42 @@ export default function ChatPanel({
     };
     let retry: ReturnType<typeof setTimeout> | null = null;
     run();
-    const id = setInterval(load, 3000);
+    // Poll while open, but only when the tab is visible — a backgrounded tab
+    // shouldn't keep hitting the endpoint. Re-sync immediately on refocus.
+    const tick = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    const id = setInterval(tick, 10000);
+    const onVisible = () => {
+      if (live && document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       live = false;
       clearInterval(id);
       if (retry) clearTimeout(retry);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [open, unlocked, load, token]);
 
-  // While the panel is CLOSED (and unlocked): poll slowly (12s) for unread.
+  // While the panel is CLOSED (and unlocked): poll slowly (30s) for unread.
   useEffect(() => {
     if (open || !unlocked) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- poll for unread, then poll
     checkUnread();
-    const id = setInterval(checkUnread, 12000);
-    return () => clearInterval(id);
+    // Slow background poll, paused while the tab is hidden; re-check on refocus.
+    const tick = () => {
+      if (document.visibilityState === "visible") void checkUnread();
+    };
+    const id = setInterval(tick, 30000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void checkUnread();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [open, unlocked, checkUnread]);
 
   useEffect(() => {
