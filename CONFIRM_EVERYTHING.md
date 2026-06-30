@@ -50,27 +50,28 @@ Values you must confirm by trust (GitHub never shows secret values):
 
 ---
 
-## Phase 2 — Branch protection on `main`  [ ] needs you
+## Phase 2 — Branch protection on `main`  ✅ verified (rule created this session)
 Page: `https://github.com/Guhlores-Team/fanfunnel/settings/branches`
-(or the new **Rules → Rulesets**: `.../settings/rules`)
 
-> ⚠️ The API currently reports `main` as `"protected": false`. Confirm whether
-> that's just the classic-flag-vs-ruleset quirk or a genuinely unprotected branch.
+- [x] Rule targets `main`.
+- [x] **Require a pull request before merging** ON (+ 1 required approval).
+- [x] **Require status checks to pass** ON, with all three required: `verify`, `supabase`, `login-ui`.
+- [x] **Require branches to be up to date before merging** ON.
+- [x] **Do not allow bypassing the above settings** ON (applies to admins).
+- [x] Allow force pushes OFF; Allow deletions OFF.
+- [ ] (Optional live test) `git push origin main` directly → should be **rejected**.
 
-- [ ] A rule/ruleset targets `main`.
-- [ ] **Require a pull request before merging** is ON (blocks direct push).
-- [ ] **Require status checks to pass** is ON, and the required checks include **all three**: `verify`, `supabase`, `login-ui`.
-- [ ] **Require branches to be up to date before merging** is ON.
-- [ ] **Do not allow bypassing** / "include administrators" is honored (no bypass actors that defeat the gate).
-- [ ] Live test: `git push origin main` directly → **rejected**. (Pass = rejected.)
+> Note: "1 approval + no bypassing" means every PR (even your own) needs the
+> *other* admin to approve. Fine with 2 admins; drop approvals to 0 only if it
+> ever blocks solo work (status checks still gate the merge).
 
 ---
 
-## Phase 3 — Vercel  [ ] needs you (no Vercel access from this session)
+## Phase 3 — Vercel  ⚠️ partial — Git link confirmed, env+deploy pending
 Vercel dashboard → FanFunnel project.
 
-- [ ] Project is linked to `Guhlores-Team/fanfunnel` (re-authorize if the org transfer broke the GitHub connection — a broken link silently stops all deploys).
-- [ ] A **Production** deployment exists, built from `main` @ `df7a1d9` (or newer), status **Ready**.
+- [x] Project is linked to `Guhlores-Team/fanfunnel` ("Connected 2m ago"; org-transfer re-auth fixed). Webhook events on (`deployment_status`, `repository_dispatch`, Commit Status).
+- [ ] A **Production** deployment exists, built from `main` @ `df7a1d9` (or newer), status **Ready**. (Re-linking does NOT auto-build — trigger Deployments → ⋯ → Redeploy.)
 - [ ] Production env vars point at **prod** Supabase:
   - [ ] `NEXT_PUBLIC_SUPABASE_URL` = `https://ttlogfmogcccwiraaoae.supabase.co`
   - [ ] `NEXT_PUBLIC_SUPABASE_ANON_KEY` = prod anon key
@@ -195,6 +196,7 @@ From `RELEASE_CHECKLIST.md`:
 
 ---
 
-### Summary of what's already green (this session)
-Phase 0 ✅ · Phase 1 ✅ (presence) · Phase 5 ✅ (lint/typecheck/test/build; E2E green in CI) · Phase 6 ✅
-Remaining = your dashboard work: Phases 2, 3, 4, 7, 8, 9 (+ secret-value confirmations in 1).
+### Summary of progress
+Done: Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ (rule created) · Phase 5 ✅ · Phase 6 ✅
+Partial: Phase 3 ⚠️ (Git linked; env vars + a Ready prod deploy still to confirm).
+Remaining: Phase 3 (finish), 4, 7, 8, 9 (+ secret-value confirmations in 1).
