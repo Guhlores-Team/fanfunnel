@@ -27,7 +27,7 @@ flows are already covered by CI's real-Supabase E2E).
 | 4 | Supabase health | ✅ done |
 | 5 | Local verification | ✅ done (E2E ⏭️ CI) |
 | 6 | Auth contract | ✅ done |
-| 7 | Migration dry-run | ⬜ config prep doable now; runtime later |
+| 7 | Migration dry-run | ✅ proven (test + prod, PR #38) |
 | 8 | Live smoke test | ⬜ runtime batch |
 | 9 | Safety/rollback | ⬜ knowledge check |
 
@@ -125,21 +125,17 @@ Captured this session:
 
 ---
 
-## Phase 7 — Migration pipeline dry-run ⚠️ prep done, run after rotation
-Proves code+DB ship together. Workflow: `.github/workflows/supabase-migrations.yml`.
+## Phase 7 — Migration pipeline dry-run ✅ PROVEN end-to-end
+Workflow: `.github/workflows/supabase-migrations.yml`. PR #38 (squash `425c255`).
 
-**Config prep — ✅ DONE:**
-- [x] Probe branch `claude/migration-pipeline-probe` pushed with
-      `supabase/migrations/0036_pipeline_probe.sql` (comment-only no-op; passes
-      RLS + sqlSync CI guards; `npm test` 13/13 green with it present).
-
-**Runtime (after secret rotation; needs awake DBs):**
-- [ ] Open PR from `claude/migration-pipeline-probe` → `Supabase migrations` **test** job green
-- [ ] TEST DB: `select max(version) from supabase_migrations.schema_migrations;` = `0036…`
-- [ ] Merge to `main` → **production** job applies `0036` to PROD + Vercel deploys
-- [ ] PROD DB: max version = `0036…`
-→ Pass = DB + code shipped by one merge, no manual psql. No cleanup needed
-  (probe is a harmless schema comment).
+- [x] Probe `0036_pipeline_probe.sql` (comment-only; passes RLS + sqlSync guards)
+- [x] PR #38 `Supabase migrations` **test** job ✅ → applied `0036` to TEST
+      (also proved rotated `SUPABASE_ACCESS_TOKEN` + `SUPABASE_TEST_DB_PASSWORD`)
+- [x] Merged to `main` → **production** job ✅ ("Apply migrations to PRODUCTION")
+      → applied `0036` to PROD (proved rotated `SUPABASE_PROD_DB_PASSWORD`)
+- [ ] Optional confirm: PROD SQL editor `select max(version) …` = `0036`
+→ Pipeline works: one merge ships code + DB together, no manual psql. The probe
+  is a harmless schema comment — no cleanup needed.
 
 > Note: `import "server-only"` hardening (Phase 6 optional) was SKIPPED — the
 > `server-only` package isn't installed; adding it is a new dependency. Contract
