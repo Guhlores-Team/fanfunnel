@@ -13,6 +13,11 @@ create table if not exists supabase_migrations.schema_migrations (
   statements text[],
   name text
 );
+-- Deny client access. The migration CLI uses the direct DB connection (which
+-- bypasses RLS), and this internal schema isn't exposed to the API anyway — but
+-- this satisfies the SQL advisor and matches the "RLS on every table" rule.
+-- No policy = no client access.
+alter table supabase_migrations.schema_migrations enable row level security;
 
 insert into supabase_migrations.schema_migrations (version) values
   ('0001'),
