@@ -38,3 +38,31 @@ Answer all four with file:line evidence; if you can't, the task is NOT done:
   - `npm test` → `rls.test.ts` (static: RLS on every table, no wide-open policies)
   - `node scripts/security/rls-runtime-test.mjs` (runtime: cross-tenant isolation
     + a normal user cannot promote itself to admin) against a configured project.
+
+# Deploy / release workflow (test on preview before prod — non-negotiable)
+
+`main` IS production. Merging to `main` auto-deploys the live Vercel site (and,
+once the migration workflow is on `main`, auto-applies DB migrations). Nothing
+reaches prod except by an explicit merge to `main`.
+
+**Environments:** Production (Vercel) → **prod** Supabase. Preview (every branch)
+→ **test** Supabase. So a branch preview can be exercised hard without touching
+real data.
+
+**Pipeline for every change:**
+1. Work on a branch off `main`. Never commit or push straight to `main`.
+2. Push → Vercel builds a Preview backed by the **test** project. Verify the
+   change FULLY on that Preview URL (real clicks), not just CI.
+3. Only after it's verified on Preview **and** CI is green
+   (`verify` / `supabase` / `login-ui`) → merge to `main` → prod deploys.
+
+**Rules the agent MUST follow:**
+- **Never merge to `main`** without (a) all CI checks green AND (b) explicit user
+  confirmation the change was tested on its Preview. CI passing is necessary but
+  NOT sufficient — "tested on preview before prod" is mandatory.
+- **`dashboard-redesign` (and any large/experimental work) stays OFF `main`**
+  until the user explicitly says it is fully verified and approved. Never merge
+  it on your own initiative — it must live on its branch / preview until then.
+- **DB before code:** a migration must reach the target database BEFORE the code
+  that needs it goes live — apply to **test** before previewing, to **prod**
+  before (or exactly at) the merge to `main`.
