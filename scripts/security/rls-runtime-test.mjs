@@ -109,6 +109,19 @@ async function main() {
     check((upd.data?.length ?? 0) === 0, "A cannot UPDATE B's fan");
     const del = await a.from("wheels").delete().eq("id", B.wheelId).select("id");
     check((del.data?.length ?? 0) === 0, "A cannot DELETE B's wheel");
+
+    // A cannot PROMOTE itself. The profiles UPDATE policy is admin-only, so a
+    // creator setting its own role must match zero rows (RLS no-op), and the
+    // role must remain unchanged when re-read with the service role. This pins
+    // the auth contract's "a normal user cannot promote themselves" rule.
+    const selfPromote = await a
+      .from("profiles")
+      .update({ role: "admin", is_active: true })
+      .eq("id", A.id)
+      .select("id");
+    check((selfPromote.data?.length ?? 0) === 0, "A cannot self-UPDATE its profile (admin-only)");
+    const { data: aRole } = await admin.from("profiles").select("role").eq("id", A.id).maybeSingle();
+    check(aRole?.role !== "admin", `A's role is still not admin after self-promote attempt (got ${aRole?.role})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data are left behind in the live project.
