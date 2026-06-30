@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -128,6 +129,16 @@ export default function LoginForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+        {mode === "signin" && (
+          <div className="text-right">
+            <Link
+              href="/forgot-password"
+              className="text-xs text-white/50 hover:text-white"
+            >
+              Forgot password?
+            </Link>
+          </div>
+        )}
       </div>
 
       {error && (
