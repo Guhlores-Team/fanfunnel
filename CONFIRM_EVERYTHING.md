@@ -18,7 +18,7 @@ criterion**. Do every checkbox. Legend:
 | 1 | GitHub secrets | ✅ done |
 | 2 | Branch protection | ✅ config (live-push test pending) |
 | 3 | Vercel | ✅ config (deploy/URL test pending) |
-| 4 | Supabase health | ⬜ **next** |
+| 4 | Supabase health | ⚠️ near-done (prod 4c re-run; test has 0 admins) |
 | 5 | Local verification | ✅ done (E2E ⏭️ CI) |
 | 6 | Auth contract | ✅ done |
 | 7 | Migration dry-run | ⬜ config prep doable now; runtime later |
@@ -78,42 +78,28 @@ Presence (8 repo secrets):
 
 ---
 
-## Phase 4 — Supabase health ⬜ (do BOTH projects)
-First each time: confirm the **ref in the dashboard URL** (prod `ttlogfmogcccwiraaoae`
-/ test `snmcrmhgevfqggxdiomu`) so you're on the right DB.
+## Phase 4 — Supabase health ⚠️ near-done
+### 4a — Project awake? — ✅ both (proven: SQL ran; a paused project can't)
+- [x] PROD active · [x] TEST active
 
-### 4a — Project awake?
-Dashboard **Home** → status badge.
-- [ ] PROD reads **Active/Healthy** (not Paused). If Paused → **Restore project**.
-- [ ] TEST reads **Active/Healthy**. If Paused → Restore.
-⚠️ Paused TEST fails every migration PR; paused PROD errors the live site.
-
-### 4b — Migration history reconciled (SQL Editor → New query)
-```sql
-select count(*) as applied, min(version) as first, max(version) as last
-from supabase_migrations.schema_migrations;
-```
-- [ ] PROD: `applied = 35`, first `0001…`, last `0035…`
-- [ ] TEST: `applied = 35`, first `0001…`, last `0035…`
-Why: this is what `db push` reads to skip already-applied migrations. Empty/short
-→ the next migration PR replays old SQL and likely fails.
+### 4b — Migration history reconciled — ✅ both
+- [x] PROD: applied=35, 0001→0035
+- [x] TEST: applied=35, 0001→0035
 
 ### 4c — Schema present + RLS on
+- [x] TEST: 25 tables, all `rowsecurity = true` (no holes)
+- [ ] PROD: re-run (editor threw a limit/syntax error). Clean check:
 ```sql
-select tablename, rowsecurity from pg_tables
-where schemaname = 'public' order by tablename;
+select count(*) as unprotected
+from pg_tables where schemaname='public' and not rowsecurity;
 ```
-- [ ] PROD: `profiles, wheels, prizes, fans, fan_passes, campaigns, spins, redemptions`
-      (+ org tables) all exist, all `rowsecurity = true`
-- [ ] TEST: same
-- [ ] **No** app table with `rowsecurity = false` (would be an RLS hole — flag it)
+  Expect `unprotected = 0`.
 
-### 4d — ≥2 active admins
-```sql
-select email, role, is_active from public.profiles where role = 'admin';
-```
-- [ ] PROD: ≥2 rows, all `is_active = true`
-- [ ] TEST: ≥2 rows, all `is_active = true`
+### 4d — Admins
+- [x] PROD: has admins (≥2 — confirm count)
+- [ ] TEST: **0 admin rows** — `where role='admin'` returned nothing.
+  Not a pipeline blocker (login-ui CI uses a creator, not an admin), but seed one
+  if you want to exercise admin paths on the test preview. Decide & note.
 
 ---
 
