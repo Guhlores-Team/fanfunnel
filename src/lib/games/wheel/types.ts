@@ -4,6 +4,12 @@
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
+// Max prizes (slices) a single wheel may persist. The render + engine handle any
+// count; this is a sanity ceiling so a wheel stays spinnable/readable. CRUCIAL:
+// callers must REJECT a payload over this limit, never silently truncate it —
+// silent truncation is how prize data gets lost on save (see saveWheel).
+export const MAX_WHEEL_PRIZES = 50;
+
 export const RARITY_ORDER: Rarity[] = [
   "common",
   "uncommon",

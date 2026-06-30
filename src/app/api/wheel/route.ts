@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getWheel, saveWheel } from "@/lib/data";
 import type { WheelConfig } from "@/lib/games/wheel/types";
-import { RARITY_ORDER } from "@/lib/games/wheel/types";
+import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { badRequest, errorResponse } from "@/lib/api/handler";
 
 // Reject prize fields the data layer forwards without sanitizing. rarity drives
@@ -9,7 +9,7 @@ import { badRequest, errorResponse } from "@/lib/api/handler";
 // target). Color is intentionally not constrained here — it's freeform and the
 // wheel renderer already guards invalid values safely.
 function prizesValid(prizes: WheelConfig["prizes"]): boolean {
-  if (prizes.length > 24) return false;
+  if (prizes.length > MAX_WHEEL_PRIZES) return false;
   return prizes.every(
     (p) =>
       p != null &&
