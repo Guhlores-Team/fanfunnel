@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { listWheelTemplates, createWheelTemplate } from "@/lib/data";
 import type { WheelConfig } from "@/lib/games/wheel/types";
-import { RARITY_ORDER } from "@/lib/games/wheel/types";
+import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Full prize validation, mirroring the wheel save route (src/app/api/wheel
@@ -10,7 +10,7 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 // the template and later producing failed/missing prize inserts when a wheel is
 // created from it.
 function prizesValid(prizes: WheelConfig["prizes"]): boolean {
-  if (prizes.length > 24) return false;
+  if (prizes.length > MAX_WHEEL_PRIZES) return false;
   return prizes.every(
     (p) =>
       p != null &&

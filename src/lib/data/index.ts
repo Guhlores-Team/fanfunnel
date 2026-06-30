@@ -10,7 +10,7 @@ import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
 import { randomSeedHex, sha256Hex, makeFairRng, normalizeClientSeed } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
-import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import type {
   AdminAccount,
   AdminOverview,
@@ -2188,30 +2188,46 @@ export async function saveWheel(
   // Replace prizes wholesale. Spin history is safe because spins snapshot the
   // prize label/rarity and prizes.prize_id is ON DELETE SET NULL.
   //
-  // Build + validate the replacement rows BEFORE deleting anything. prizeRow
-  // caps the integer columns (weight/cost_cents/stock) to Postgres' int4 range,
-  // so an oversized value can no longer make the INSERT fail. As a final guard,
-  // we snapshot the existing prizes and re-insert them if the INSERT still
-  // fails — so a DB rejection never leaves the wheel with zero prizes.
-  const rows = config.prizes
-    .slice(0, 24)
-    .map((p, i) => prizeRow(wheelId, p, i));
+  // Build the replacement rows BEFORE deleting anything. prizeRow caps the
+  // integer columns (weight/cost_cents/stock) to Postgres' int4 range so an
+  // oversized value can't make the INSERT fail.
+  //
+  // NEVER silently truncate: reject an over-limit payload so the caller can
+  // surface it instead of dropping prizes (the old `.slice(0, 24)` lost any
+  // prize past 24 with no warning).
+  if (config.prizes.length > MAX_WHEEL_PRIZES) return { error: "too_many_prizes" };
+  const rows = config.prizes.map((p, i) => prizeRow(wheelId, p, i));
+
+  // Refuse to wipe a wheel down to nothing. An empty incoming set is almost
+  // always a failed editor load, not a real intent — and the delete below would
+  // destroy the real prizes.
+  if (rows.length === 0) return { error: "no_prizes" };
 
   const { data: prevPrizes } = await sb
     .from("prizes")
     .select("*")
     .eq("wheel_id", wheelId);
 
+  // Guard the catastrophic case: the editor showed the built-in SAMPLE set
+  // (e.g. a failed load fell back to it) and a save would overwrite the
+  // creator's real, larger prize list with the 7 defaults. If the incoming
+  // labels are EXACTLY the sample set and the wheel currently has more prizes,
+  // treat it as a stale editor and refuse rather than destroy data.
+  const SEP = " ";
+  const sampleLabels = SAMPLE_WHEEL.prizes.map((p) => p.label).join(SEP);
+  const incomingLabels = config.prizes.map((p) => p.label).join(SEP);
+  if (incomingLabels === sampleLabels && (prevPrizes?.length ?? 0) > rows.length) {
+    return { error: "stale_editor" };
+  }
+
   await sb.from("prizes").delete().eq("wheel_id", wheelId);
-  if (rows.length > 0) {
-    const { error: pErr } = await sb.from("prizes").insert(rows);
-    if (pErr) {
-      // Roll back to the pre-delete state so the wheel keeps its prizes.
-      if (prevPrizes && prevPrizes.length > 0) {
-        await sb.from("prizes").insert(prevPrizes);
-      }
-      return { error: "db_error" };
+  const { error: pErr } = await sb.from("prizes").insert(rows);
+  if (pErr) {
+    // Roll back to the pre-delete state so the wheel keeps its prizes.
+    if (prevPrizes && prevPrizes.length > 0) {
+      await sb.from("prizes").insert(prevPrizes);
     }
+    return { error: "db_error" };
   }
 
   const saved = await getWheelById(wheelId);
@@ -2390,7 +2406,7 @@ export async function createWheel(opts?: {
   if (seedPrizes.length > 0) {
     await sb.from("prizes").insert(
       seedPrizes
-        .slice(0, 24)
+        .slice(0, MAX_WHEEL_PRIZES)
         .map((p, i) => prizeRow(wheel.id, p as Prize, i))
     );
   }
@@ -2432,7 +2448,7 @@ export async function duplicateWheel(
 
   if (source.prizes.length > 0) {
     await sb.from("prizes").insert(
-      source.prizes.slice(0, 24).map((p, i) => prizeRow(wheel.id, p, i))
+      source.prizes.slice(0, MAX_WHEEL_PRIZES).map((p, i) => prizeRow(wheel.id, p, i))
     );
   }
 
@@ -3105,7 +3121,7 @@ export async function createWheelTemplate(input: {
 
   // Strip ids off the prize snapshot.
   const prizes: Omit<Prize, "id">[] = source.prizes
-    .slice(0, 24)
+    .slice(0, MAX_WHEEL_PRIZES)
     .map(({ id: _id, ...rest }) => rest);
 
   const { data, error } = await sb
