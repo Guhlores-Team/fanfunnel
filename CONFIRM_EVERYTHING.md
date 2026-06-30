@@ -39,12 +39,12 @@ CI real-Supabase suite (3) — all present, set ~2w ago:
 - [x] `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - [x] `SUPABASE_SERVICE_ROLE_KEY`
 
-Values you must confirm by trust (GitHub never shows secret values):
-- [ ] `SUPABASE_TEST_PROJECT_REF` = `snmcrmhgevfqggxdiomu`
-- [ ] `SUPABASE_PROD_PROJECT_REF` = `ttlogfmogcccwiraaoae`
-- [ ] CI `NEXT_PUBLIC_SUPABASE_URL` = `https://snmcrmhgevfqggxdiomu.supabase.co` (**TEST**, not prod — the suite creates/deletes ephemeral users).
-- [ ] CI `SUPABASE_SERVICE_ROLE_KEY` is the **test** project's key, not prod's.
-- [ ] Org-level secrets page is empty — that's fine; the workflows read repo-level (confirmed) and these are not needed at the org.
+Values confirmed by user:
+- [x] `SUPABASE_TEST_PROJECT_REF` = `snmcrmhgevfqggxdiomu`
+- [x] `SUPABASE_PROD_PROJECT_REF` = `ttlogfmogcccwiraaoae`
+- [x] CI `NEXT_PUBLIC_SUPABASE_URL` = test project
+- [x] CI `SUPABASE_SERVICE_ROLE_KEY` = test project's key
+- [x] Org-level secrets page empty — fine; workflows read repo-level.
 
 > If unsure on any value, click the pencil and re-enter it — cheaper than a prod incident.
 
@@ -59,41 +59,66 @@ Page: `https://github.com/Guhlores-Team/fanfunnel/settings/branches`
 - [x] **Require branches to be up to date before merging** ON.
 - [x] **Do not allow bypassing the above settings** ON (applies to admins).
 - [x] Allow force pushes OFF; Allow deletions OFF.
-- [ ] (Optional live test) `git push origin main` directly → should be **rejected**.
+- [ ] (Pending live test) `git push origin main` directly → should be **rejected**.
 
-> Note: "1 approval + no bypassing" means every PR (even your own) needs the
-> *other* admin to approve. Fine with 2 admins; drop approvals to 0 only if it
-> ever blocks solo work (status checks still gate the merge).
+> Required approvals set to **0** (per user) so solo self-merge is possible;
+> status checks + up-to-date + no-bypass still gate every merge. Acceptable.
 
 ---
 
-## Phase 3 — Vercel  ⚠️ partial — Git link confirmed, env+deploy pending
+## Phase 3 — Vercel  ✅ config complete (runtime deploy/URL test deferred to batch)
 Vercel dashboard → FanFunnel project.
 
-- [x] Project is linked to `Guhlores-Team/fanfunnel` ("Connected 2m ago"; org-transfer re-auth fixed). Webhook events on (`deployment_status`, `repository_dispatch`, Commit Status).
-- [ ] A **Production** deployment exists, built from `main` @ `df7a1d9` (or newer), status **Ready**. (Re-linking does NOT auto-build — trigger Deployments → ⋯ → Redeploy.)
-- [ ] Production env vars point at **prod** Supabase:
-  - [ ] `NEXT_PUBLIC_SUPABASE_URL` = `https://ttlogfmogcccwiraaoae.supabase.co`
-  - [ ] `NEXT_PUBLIC_SUPABASE_ANON_KEY` = prod anon key
-  - [ ] `SUPABASE_SERVICE_ROLE_KEY` = prod service-role key, scoped to **server** (NOT a `NEXT_PUBLIC_*` var)
-- [ ] Preview env vars point at **test** Supabase (`snmcrmhgevfqggxdiomu`).
-- [ ] Open the live production URL → page loads, no console errors, no infinite spinner.
-- [ ] Trigger a fresh deploy (push a no-op or "Redeploy") and confirm it builds & goes live — proves the pipeline, not just an old artifact.
+- [x] Project is linked to `Guhlores-Team/fanfunnel` ("Connected 2m ago"; org-transfer re-auth fixed). Webhook events on.
+- [x] Production env vars set → prod Supabase (`ttlogfmogcccwiraaoae`); `SUPABASE_SERVICE_ROLE_KEY` server-scoped, not `NEXT_PUBLIC_`.
+- [x] Preview env vars set → test Supabase (`snmcrmhgevfqggxdiomu`).
+- [ ] (Deferred to runtime batch) Redeploy → **Ready** Production build from `main`.
+- [ ] (Deferred to runtime batch) Live URL loads, no console errors.
 
 ---
 
 ## Phase 4 — Supabase health (both projects)  [ ] needs you
-Supabase dashboard.
+Do every step for **BOTH** projects. Confirm the ref in the dashboard URL first:
+prod `ttlogfmogcccwiraaoae`, test `snmcrmhgevfqggxdiomu`.
 
-Prod `ttlogfmogcccwiraaoae`:
-- [ ] Project status **Active / healthy** (NOT paused/unhealthy — handoff flagged a prior risk; restart if needed).
-- [ ] Migration history shows `0001`–`0035` applied (reconciled), **no pending/drift**.
-- [ ] At least **2 admin** rows in `profiles` (`role='admin'`, `is_active=true`).
+### 4a — Project is awake (not paused)
+- [ ] Dashboard Home → status reads **Active/Healthy** (free tier auto-pauses after
+      ~7 days idle). If "Paused" → **Restore project** and wait for green.
+      ⚠️ A paused TEST project makes every migration-PR job fail; a paused PROD
+      project makes the live site error.
 
-Test `snmcrmhgevfqggxdiomu`:
-- [ ] Project status **Active / healthy**.
-- [ ] Migration history shows `0001`–`0035` applied (reconciled).
-- [ ] At least 2 admin rows in `profiles` (for the runtime self-promote test).
+### 4b — Migration history reconciled (0001–0035)  ← SQL Editor → New query
+```sql
+select count(*) as applied,
+       min(version) as first, max(version) as last
+from supabase_migrations.schema_migrations;
+```
+- [ ] `applied` = **35**, `first` = `0001…`, `last` = `0035…`.
+  (This is what lets `supabase db push` skip them instead of re-running. If this
+  table is empty/short, the next migration PR will try to replay old migrations.)
+
+### 4c — Schema actually present  ← SQL Editor
+```sql
+select tablename, rowsecurity
+from pg_tables
+where schemaname = 'public'
+order by tablename;
+```
+- [ ] Core tables exist with `rowsecurity = true`: `profiles, wheels, prizes, fans,
+      fan_passes, campaigns, spins, redemptions` (+ org/agency tables). No app
+      table should show `rowsecurity = false`.
+
+### 4d — At least 2 active admins  ← SQL Editor
+```sql
+select email, role, is_active
+from public.profiles
+where role = 'admin';
+```
+- [ ] ≥ **2 rows**, all `is_active = true`. (Admins are the only accounts that pass
+      `is_admin()`; lose them and no one can reach admin paths.)
+
+> Run 4a–4d on PROD first, then TEST. Test also needs ≥1 pre-approved creator for
+> the login-ui E2E, but that's exercised by CI, not this phase.
 
 ---
 
@@ -197,6 +222,6 @@ From `RELEASE_CHECKLIST.md`:
 ---
 
 ### Summary of progress
-Done: Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ (rule created) · Phase 5 ✅ · Phase 6 ✅
-Partial: Phase 3 ⚠️ (Git linked; env vars + a Ready prod deploy still to confirm).
-Remaining: Phase 3 (finish), 4, 7, 8, 9 (+ secret-value confirmations in 1).
+Config-complete: Phase 0 ✅ · 1 ✅ · 2 ✅ · 3 ✅ (config) · 5 ✅ · 6 ✅
+Runtime tests deferred to one batch: Phase 2 live-push, Phase 3 deploy/URL, Phase 7, Phase 8.
+Up next (config): Phase 4 Supabase health. Then 7 config (migration dry-run), 9 (knowledge).
