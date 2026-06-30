@@ -27,7 +27,13 @@ export async function creatorJourney(page, { step, assert }) {
   await step("wheel editor: rarity change moves the odds", async () => {
     await clickTab(page, "Wheel");
     const before = (await page.locator("body").innerText()).match(/[\d.]+%/g)?.slice(0, 8) ?? [];
-    const sel = page.locator("select.ff-input").first();
+    // Target the rarity dropdown specifically (the select that has a 'legendary'
+    // option) — the editor has other `select.ff-input` controls (e.g. label size),
+    // so `.first()` alone is ambiguous.
+    const sel = page
+      .locator("select.ff-input")
+      .filter({ has: page.locator('option[value="legendary"]') })
+      .first();
     await sel.selectOption("legendary");
     // Web-first wait: poll until the rendered odds actually change, not a fixed sleep.
     await page
