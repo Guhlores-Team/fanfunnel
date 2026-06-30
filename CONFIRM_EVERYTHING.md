@@ -11,6 +11,12 @@ criterion**. Do every checkbox. Legend:
 - Production branch: `main` · dev branch: `claude/fanfunnel-handoff-dwgt2m`
 - Required CI checks: `verify` · `supabase` · `login-ui`
 
+**Automated vs one-time:** Phases 5, 6, and the migration *apply* (7) + Vercel deploy
+run automatically on every push/PR via CI + workflows — hands-off once wired. Phases
+1–4 are **one-time setup confirmations** (re-checked here because the org transfer can
+break the wiring). Phase 8 is the only inherently-manual judgment check (and its core
+flows are already covered by CI's real-Supabase E2E).
+
 **Status at a glance**
 | Phase | What | Status |
 |---|---|---|
@@ -18,7 +24,7 @@ criterion**. Do every checkbox. Legend:
 | 1 | GitHub secrets | ✅ done |
 | 2 | Branch protection | ✅ config (live-push test pending) |
 | 3 | Vercel | ✅ config (deploy/URL test pending) |
-| 4 | Supabase health | ⚠️ near-done (prod 4c re-run; test has 0 admins) |
+| 4 | Supabase health | ✅ done |
 | 5 | Local verification | ✅ done (E2E ⏭️ CI) |
 | 6 | Auth contract | ✅ done |
 | 7 | Migration dry-run | ⬜ config prep doable now; runtime later |
@@ -88,12 +94,7 @@ Presence (8 repo secrets):
 
 ### 4c — Schema present + RLS on
 - [x] TEST: 25 tables, all `rowsecurity = true` (no holes)
-- [ ] PROD: re-run (editor threw a limit/syntax error). Clean check:
-```sql
-select count(*) as unprotected
-from pg_tables where schemaname='public' and not rowsecurity;
-```
-  Expect `unprotected = 0`.
+- [x] PROD: `unprotected = 0` (re-run confirmed every public table has RLS)
 
 ### 4d — Admins
 - [x] PROD: has admins (≥2 — confirm count)
