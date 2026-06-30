@@ -2133,8 +2133,13 @@ export async function getWheel(): Promise<WheelConfig | null> {
     .from("wheels")
     .select(WHEEL_SELECT)
     .eq("id", wheelId)
-    .single();
+    .maybeSingle();
 
+  // The row can be absent (e.g. resolved id not readable, or removed between
+  // resolve and fetch). getWheel is declared `WheelConfig | null` and the
+  // dashboard falls back to a sample wheel, so return null instead of passing
+  // null into toWheelConfig (which dereferences `.prizes` and crashes the render).
+  if (!data) return null;
   return toWheelConfig(data as unknown as DbWheelRow);
 }
 
