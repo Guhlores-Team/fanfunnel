@@ -71,7 +71,7 @@ Presence (8 repo secrets):
 
 ---
 
-## Phase 3 — Vercel ✅ config
+## Phase 3 — Vercel ✅ done
 **Where:** Vercel dashboard → FanFunnel project.
 - [x] Git connection = `Guhlores-Team/fanfunnel` ("Connected"), webhook events on
 - [x] **Production** env vars → prod Supabase (`ttlogfmogcccwiraaoae`):
@@ -79,8 +79,8 @@ Presence (8 repo secrets):
   - [x] `NEXT_PUBLIC_SUPABASE_ANON_KEY` = prod anon
   - [x] `SUPABASE_SERVICE_ROLE_KEY` = prod key, **server-scoped, NOT `NEXT_PUBLIC_`**
 - [x] **Preview** env vars → test Supabase (`snmcrmhgevfqggxdiomu`)
-- [ ] **Later (runtime batch):** Deployments → ⋯ → Redeploy → wait **Ready** from `main`
-- [ ] **Later:** open live URL → loads, no console errors
+- [x] Production deploy `425c255` from `main` → **Ready** (triggered by PR #38 merge)
+- [x] Live URL opens (Preview deploys also Ready — confirmed on handoff branch)
 
 ---
 
