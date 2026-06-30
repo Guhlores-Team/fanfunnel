@@ -195,21 +195,26 @@ export default function Wheel({
     (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing =
       "0.01em";
 
+    // Tangential room shrinks as the slice count grows; cap the stack at the
+    // number of lines that actually fit between neighbors (1 or 2) so a label
+    // never bleeds into the adjacent slice. Then pick the largest font where
+    // every label fits that cap on width.
+    const linesThatFit = (lh: number) =>
+      Math.max(1, Math.min(2, Math.floor(angularRoom / lh)));
     let labelFont = Math.min(size * 0.05, 22);
     for (; labelFont >= 9; labelFont -= 0.5) {
       setLabelFont(labelFont);
-      const lineH = labelFont * 1.08;
+      const cap = linesThatFit(labelFont * 1.08);
       const allFit = prizes.every((p) => {
         const ls = wrapLines(ctx, labelFor(p), maxLen);
         return (
-          ls.length <= 2 &&
-          ls.every((l) => ctx.measureText(l).width <= maxLen) &&
-          ls.length * lineH <= angularRoom
+          ls.length <= cap && ls.every((l) => ctx.measureText(l).width <= maxLen)
         );
       });
       if (allFit) break;
     }
     const lineH = labelFont * 1.08;
+    const maxLines = linesThatFit(lineH);
 
     prizes.forEach((prize, i) => {
       const start = i * seg;
@@ -241,10 +246,10 @@ export default function Wheel({
       setLabelFont(labelFont);
 
       const all = wrapLines(ctx, labelFor(prize), maxLen);
-      const dropped = all.length > 2;
-      const lines = all.slice(0, 2).map((l, idx) => {
+      const dropped = all.length > maxLines;
+      const lines = all.slice(0, maxLines).map((l, idx) => {
         const overflow = ctx.measureText(l).width > maxLen;
-        if (!overflow && !(idx === 1 && dropped)) return l;
+        if (!overflow && !(idx === maxLines - 1 && dropped)) return l;
         let s = l;
         while (s.length > 1 && ctx.measureText(s + "…").width > maxLen) {
           s = s.slice(0, -1);
