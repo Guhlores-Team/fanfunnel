@@ -2202,6 +2202,27 @@ function WheelEditor({
                 </button>
               </div>
             </Field>
+            {/* Per-wheel prize-label text size. Empty = Auto (fit to slices).
+                Larger sizes stay inside each slice (single line + ellipsis). */}
+            <Field label="Label text size" full>
+              <select
+                className="ff-input w-full"
+                value={wheel.labelSize ?? ""}
+                onChange={(e) =>
+                  setWheel({
+                    ...wheel,
+                    labelSize:
+                      (e.target.value || undefined) as WheelConfig["labelSize"],
+                  })
+                }
+                aria-label="Prize label text size"
+              >
+                <option value="">Auto (fit to slices)</option>
+                <option value="s">Small</option>
+                <option value="l">Large</option>
+                <option value="xl">Extra large</option>
+              </select>
+            </Field>
             <Field label="Subtitle" full>
               <input
                 className="ff-input w-full"
@@ -2502,6 +2523,7 @@ function WheelEditor({
             prizes={wheel.prizes}
             brandColor={wheel.brandColor ?? "#ec4899"}
             labelColor={wheel.labelColor}
+            labelSize={wheel.labelSize}
             result={null}
             size={280}
           />

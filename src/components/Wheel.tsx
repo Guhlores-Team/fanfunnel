@@ -19,6 +19,8 @@ interface WheelProps {
    * otherwise labels fall back to the default white-on-slice rendering.
    */
   labelColor?: string | null;
+  /** Per-wheel label text size ('s' | 'l' | 'xl'); undefined = Auto (smart fit). */
+  labelSize?: string | null;
   /** Set by the parent after the server returns a result; triggers the spin. */
   result: WheelResult | null;
   onSpinEnd?: () => void;
@@ -129,6 +131,7 @@ export default function Wheel({
   prizes,
   brandColor = "#ec4899",
   labelColor,
+  labelSize,
   result,
   onSpinEnd,
   size = 380,
@@ -212,6 +215,15 @@ export default function Wheel({
         );
       });
       if (allFit) break;
+    }
+    // Per-wheel size preference biases the auto-fit font up or down. An enlarged
+    // font is capped so a single line still fits between neighbors, so "Large"
+    // trades wrapping/length (ellipsis) for readability without overlapping.
+    const SIZE_SCALE: Record<string, number> = { s: 0.82, l: 1.18, xl: 1.4 };
+    const sizeScale = labelSize ? SIZE_SCALE[labelSize] ?? 1 : 1;
+    if (sizeScale !== 1) {
+      const maxOneLine = angularRoom / 1.08;
+      labelFont = Math.max(8, Math.min(labelFont * sizeScale, maxOneLine, 30));
     }
     const lineH = labelFont * 1.08;
     const maxLines = linesThatFit(lineH);
@@ -297,7 +309,7 @@ export default function Wheel({
   useEffect(() => {
     draw(rotationRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prizes, brandColor, labelColor, size]);
+  }, [prizes, brandColor, labelColor, labelSize, size]);
 
   useEffect(() => {
     if (!result || result.nonce === lastNonce.current) return;
