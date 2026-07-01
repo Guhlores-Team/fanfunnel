@@ -191,7 +191,10 @@ export default function Wheel({
     const maxLen = radius - hubR - 18; // radial room per line
     const textR = hubR + (radius - hubR) * 0.55; // mid radius text sits at
     const angularRoom = seg * textR * 0.82; // tangential room (with edge margin)
-    const labelFor = (p: Prize) => `${p.emoji ? p.emoji + " " : ""}${p.label}`;
+    // Guard the label: a prize mid-edit can have an empty/undefined label, and
+    // template-literal coercion would paint the string "undefined" on the slice.
+    const labelFor = (p: Prize) =>
+      `${p.emoji ? p.emoji + " " : ""}${p.label ?? ""}`.trim();
     const setLabelFont = (f: number) => {
       ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
     };
