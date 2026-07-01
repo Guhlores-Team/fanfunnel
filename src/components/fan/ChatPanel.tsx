@@ -93,13 +93,18 @@ export default function ChatPanel({
     return latest;
   };
 
+  // Monotonic request id: overlapping loads (poll tick + refocus + post-send)
+  // can resolve out of order; only the newest response may write state.
+  const loadReq = useRef(0);
   const load = useCallback(async () => {
+    const id = ++loadReq.current;
     try {
       const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
         cache: "no-store",
       });
       if (res.ok) {
         const d = await res.json();
+        if (id !== loadReq.current) return; // superseded by a newer load
         const list: ChatMessage[] = d.messages ?? [];
         setMessages(list);
         // While the panel is open the fan is "seeing" everything; mark read.
