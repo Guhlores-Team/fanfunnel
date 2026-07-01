@@ -2295,3 +2295,20 @@ create trigger trg_sync_fan_spin_aggregate
      or update of spins_remaining, spins_granted_total, is_active, fan_id
   on public.fan_passes
   for each row execute function public.sync_fan_spin_aggregate();
+
+-- Compensating rollback for a claimed-but-unrecorded spin (migration 0038).
+create or replace function public.rollback_claimed_spin(p_token text, p_prize_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.fan_passes
+     set spins_remaining = spins_remaining + 1
+   where token = p_token;
+  if p_prize_id is not null then
+    update public.prizes
+       set stock = stock + 1
+     where id = p_prize_id and stock is not null;
+  end if;
+end;
+$$;
+
+revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated;

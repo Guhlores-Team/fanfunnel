@@ -1848,3 +1848,22 @@ create trigger trg_sync_fan_spin_aggregate
 -- ============================================================
 alter table public.wheels add column if not exists label_color text;
 alter table public.wheels add column if not exists label_size text;
+
+-- ============================================================
+-- 0038_rollback_claimed_spin.sql
+-- ============================================================
+create or replace function public.rollback_claimed_spin(p_token text, p_prize_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.fan_passes
+     set spins_remaining = spins_remaining + 1
+   where token = p_token;
+  if p_prize_id is not null then
+    update public.prizes
+       set stock = stock + 1
+     where id = p_prize_id and stock is not null;
+  end if;
+end;
+$$;
+
+revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated;
