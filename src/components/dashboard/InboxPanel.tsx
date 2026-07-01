@@ -425,17 +425,33 @@ function Thread({ fan, onChanged }: { fan: FanThread; onChanged: () => void }) {
   const [sending, setSending] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Hold onChanged in a ref so `load`'s identity doesn't change when the parent
+  // passes a fresh inline callback each render — otherwise the poll effect below
+  // ([load]) tears down and re-fires load() on every parent re-render, and since
+  // load() calls onChanged() → parent setState → re-render, it becomes a runaway
+  // request loop the moment a conversation is opened.
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => {
+    onChangedRef.current = onChanged;
+  });
+  // Ignore a stale response: if a newer load has started, don't let this older
+  // one overwrite messages (e.g. an in-flight poll clobbering a just-sent message).
+  const reqId = useRef(0);
+
   const load = useCallback(async () => {
+    const id = ++reqId.current;
     try {
       const res = await fetch(`/api/messages/thread/${fan.fanId}`, { cache: "no-store" });
       if (res.ok) {
-        setMessages((await res.json()).messages ?? []);
-        onChanged();
+        const list = (await res.json()).messages ?? [];
+        if (id !== reqId.current) return;
+        setMessages(list);
+        onChangedRef.current();
       }
     } catch {
       /* transient */
     }
-  }, [fan.fanId, onChanged]);
+  }, [fan.fanId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load thread for the selected fan, then poll

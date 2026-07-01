@@ -109,7 +109,12 @@ export function useFetch<T>(
 
     const cleanups: Array<() => void> = [];
     if (pollMs > 0) {
-      const interval = setInterval(() => void load(), pollMs);
+      // Only poll while the tab is visible — a backgrounded dashboard shouldn't
+      // keep hitting the API every pollMs for hours (matches the hook's doc
+      // contract and refreshOnVisible re-fetches on return).
+      const interval = setInterval(() => {
+        if (document.visibilityState === "visible") void load();
+      }, pollMs);
       cleanups.push(() => clearInterval(interval));
     }
     if (refreshOnVisible) {
