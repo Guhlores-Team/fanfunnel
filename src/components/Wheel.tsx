@@ -204,52 +204,45 @@ export default function Wheel({
     // every label fits that cap on width.
     const linesThatFit = (lh: number) =>
       Math.max(1, Math.min(2, Math.floor(angularRoom / lh)));
-    // Per-label fit: size EACH label to its own slice, so short names render big
-    // and long names shrink just enough to still show in full — one long name no
-    // longer shrinks every label, and the size control actually varies the text.
-    // The size setting is the per-label ceiling; a bigger name still WRAPS to two
-    // lines rather than being cut to "…" (ellipsis is a last resort only for a
-    // single word too wide even at the minimum size).
+    // Label layout — the model polished spinner wheels use: ONE line running
+    // along the (long) radius, auto-shrunk per label to fit. Single-line avoids
+    // the tangential clipping that stacked lines cause on many-slice wheels, and
+    // per-label sizing lets short names render big while long names stay full.
+    // The size control raises/lowers the per-label ceiling. Two lines + ellipsis
+    // are only a fallback for a name too long to fit one radial line even small.
     const SIZE_CEIL: Record<string, number> = { s: 16, l: 26, xl: 32 };
     const ceiling = labelSize
       ? SIZE_CEIL[labelSize] ?? Math.min(size * 0.05, 22)
       : Math.min(size * 0.05, 22);
-    const fitLabel = (text: string) => {
-      for (let f = ceiling; f >= 8; f -= 0.5) {
+    const MIN_FONT = 8;
+    const layoutLabel = (text: string) => {
+      // Prefer a single radial line: largest font ≤ ceiling that fits the width.
+      for (let f = ceiling; f >= MIN_FONT; f -= 0.5) {
         setLabelFont(f);
-        const cap = linesThatFit(f * 1.08);
-        const ls = wrapLines(ctx, text, maxLen);
-        if (
-          ls.length <= cap &&
-          ls.every((l) => ctx.measureText(l).width <= maxLen)
-        ) {
-          return f;
+        if (ctx.measureText(text).width <= maxLen) {
+          return { font: f, lineH: f * 1.08, lines: [text] };
         }
       }
-      return 8;
-    };
-    // Precompute each label's font + wrapped/elided lines once per draw (they
-    // depend on the text + geometry, not the spin rotation); the loop below just
-    // positions them.
-    const labelLayouts = prizes.map((prize) => {
-      const text = labelFor(prize);
-      const font = fitLabel(text);
-      const lineH = font * 1.08;
-      const cap = linesThatFit(lineH);
-      setLabelFont(font);
+      // Fallback: at the min font, wrap to the lines that fit between neighbors,
+      // eliding a single over-wide word only as a last resort.
+      setLabelFont(MIN_FONT);
+      const cap = linesThatFit(MIN_FONT * 1.08);
       const all = wrapLines(ctx, text, maxLen);
       const dropped = all.length > cap;
       const lines = all.slice(0, cap).map((l, idx) => {
-        const overflow = ctx.measureText(l).width > maxLen;
-        if (!overflow && !(idx === cap - 1 && dropped)) return l;
+        if (ctx.measureText(l).width <= maxLen && !(idx === cap - 1 && dropped)) {
+          return l;
+        }
         let s = l;
         while (s.length > 1 && ctx.measureText(s + "…").width > maxLen) {
           s = s.slice(0, -1);
         }
         return s.replace(/\s+$/, "") + "…";
       });
-      return { font, lineH, lines };
-    });
+      return { font: MIN_FONT, lineH: MIN_FONT * 1.08, lines };
+    };
+    // Precompute once per draw (depends on text + geometry, not spin rotation).
+    const labelLayouts = prizes.map((p) => layoutLabel(labelFor(p)));
 
     prizes.forEach((prize, i) => {
       const start = i * seg;
