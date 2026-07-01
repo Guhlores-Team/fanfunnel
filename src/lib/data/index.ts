@@ -5490,13 +5490,19 @@ export async function getThread(fanId: string): Promise<ChatMessage[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
+  // Bound the read: fetch the most recent messages (newest-first + limit), then
+  // present oldest-first. An unbounded thread read grows without limit as a
+  // conversation ages; the UI only needs recent history.
   const { data } = await sb
     .from("messages")
     .select(MESSAGE_SELECT)
     .eq("creator_id", user.id)
     .eq("fan_id", fanId)
-    .order("created_at", { ascending: true });
-  const rows = (data ?? []) as Parameters<typeof toChatMessage>[0][];
+    .order("created_at", { ascending: false })
+    .limit(500);
+  const rows = ((data ?? []) as Parameters<typeof toChatMessage>[0][])
+    .slice()
+    .reverse();
 
   // Mark fan→creator messages as read by the creator.
   await sb

@@ -95,13 +95,15 @@ export default function ResetPasswordPage() {
                 minLength={6}
                 autoComplete="new-password"
                 aria-label="New password"
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? "reset-error" : undefined}
                 className="ff-input mt-5 w-full"
                 placeholder="New password (min 6 chars)"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
               {error && (
-                <p role="alert" className="mt-3 text-sm text-amber-300">
+                <p id="reset-error" role="alert" className="mt-3 text-sm text-amber-300">
                   {error}
                 </p>
               )}
