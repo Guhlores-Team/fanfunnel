@@ -250,7 +250,14 @@ export default function Wheel({
       // Label — uniform size across every slice, wrapped to at most two lines.
       ctx.save();
       ctx.rotate(start + seg / 2);
-      ctx.textAlign = "right";
+      // Flip labels whose slice points to the LEFT half of the wheel 180° so they
+      // read upright instead of upside-down. Uses the absolute angle (includes the
+      // live spin `rotation`), so labels rotate with the wheel and settle upright
+      // at rest.
+      const absAngle =
+        (((rotation + start + seg / 2) % TWO_PI) + TWO_PI) % TWO_PI;
+      const flip = absAngle > Math.PI / 2 && absAngle < (3 * Math.PI) / 2;
+      if (flip) ctx.rotate(Math.PI);
       ctx.textBaseline = "middle";
       ctx.fillStyle = labelFill;
       ctx.shadowColor = "rgba(0,0,0,0.45)";
@@ -270,14 +277,19 @@ export default function Wheel({
       });
 
       const offset = ((lines.length - 1) * lineH) / 2;
+      const rim = radius - 14;
       if (lines.length > 1) {
-        // Center the two lines relative to each other, anchored at the rim.
+        // Center the two lines relative to each other, anchored at the rim. On a
+        // flipped label the rim sits on the -x side, so mirror the anchor.
         ctx.textAlign = "center";
         const longest = Math.max(...lines.map((l) => ctx.measureText(l).width));
-        const cxText = radius - 14 - longest / 2;
-        lines.forEach((l, idx) => ctx.fillText(l, cxText, -offset + idx * lineH));
+        const cxText = rim - longest / 2;
+        lines.forEach((l, idx) =>
+          ctx.fillText(l, flip ? -cxText : cxText, -offset + idx * lineH)
+        );
       } else {
-        ctx.fillText(lines[0], radius - 14, 0);
+        ctx.textAlign = flip ? "left" : "right";
+        ctx.fillText(lines[0], flip ? -rim : rim, 0);
       }
       ctx.restore();
     });
