@@ -231,6 +231,7 @@ export interface FanAccountSummary {
 
 export interface FanDetail {
   fanId: string; name: string;
+  blocked: boolean; // fan is currently blocked (fans.blocked_at set)
   notes: string | null; // free-form creator notes about the fan
   tags: string[]; // creator-applied labels (VIP, whale, …)
   spinsRemaining: number; grantedTotal: number; totalSpins: number;

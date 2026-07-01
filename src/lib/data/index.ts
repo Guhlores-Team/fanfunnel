@@ -1743,7 +1743,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   const { data: fan } = await sb
     .from("fans")
-    .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags")
+    .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags, blocked_at")
     .eq("id", fanId)
     .eq("creator_id", user.id)
     .maybeSingle();
@@ -1890,6 +1890,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   return {
     fanId: fan.id,
     name: fan.display_name ?? fan.handle ?? "Fan",
+    blocked: !!(fan as { blocked_at?: string | null }).blocked_at,
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spins_remaining,
@@ -3216,6 +3217,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     { count: unreadMessages },
     { data: prof },
     { data: wheelRows },
+    { count: pendingCount },
+    { count: fulfilledCount },
   ] = await Promise.all([
     sb
       .from("redemptions")
@@ -3240,6 +3243,18 @@ export async function getOverview(): Promise<CreatorOverview> {
       .from("wheels")
       .select("created_at, updated_at, archived_at")
       .eq("creator_id", user.id),
+    // Count queries so pending/fulfilled headline totals are exact, not derived
+    // from the display-capped (200-row) redemptions slice above.
+    sb
+      .from("redemptions")
+      .select("id", head)
+      .eq("creator_id", user.id)
+      .eq("status", "pending"),
+    sb
+      .from("redemptions")
+      .select("id", head)
+      .eq("creator_id", user.id)
+      .eq("status", "fulfilled"),
   ]);
 
   const rows = (reds ?? []) as unknown as {
@@ -3291,8 +3306,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     metrics: {
       fans: fans ?? 0,
       spinsPlayed: spinsPlayed ?? 0,
-      pending: redemptions.filter((r) => r.status === "pending").length,
-      fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
+      pending: pendingCount ?? 0,
+      fulfilled: fulfilledCount ?? 0,
       revenue,
       unreadMessages: unreadMessages ?? 0,
       leaderboardEnabled: (prof as { leaderboard_enabled: boolean } | null)?.leaderboard_enabled ?? false,
