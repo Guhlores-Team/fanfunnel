@@ -587,6 +587,7 @@ function Thread({ fan, onChanged }: { fan: FanThread; onChanged: () => void }) {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
           maxLength={2000}
+          aria-label="Reply to this fan"
           placeholder="Reply…"
           className="flex-1 rounded-full border border-line bg-base px-4 py-2 text-sm text-ink outline-none focus:border-[var(--brand)]"
         />
