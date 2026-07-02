@@ -94,6 +94,14 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   // forever and the SPIN button would be dead until reload. The watchdog clears
   // it well after any normal spin should have finished.
   const spinWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Clear a pending watchdog on unmount so it can't setBusy() after the
+  // component is gone (avoids a state-update-on-unmounted-component warning).
+  useEffect(
+    () => () => {
+      if (spinWatchdog.current) clearTimeout(spinWatchdog.current);
+    },
+    []
+  );
 
   // Canvas needs a real color string (it can't read the --brand CSS var).
   const brand = pass.wheel.brandColor ?? "#ec4899";

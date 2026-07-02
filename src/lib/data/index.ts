@@ -149,7 +149,7 @@ function randomToken(): string {
 }
 
 export type { FanPassView } from "./types";
-export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" | "needs_ack" };
+export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" | "needs_ack" | "db_error" };
 
 /** True if `s` is a canonical UUID — used to keep raw ids out of filter strings. */
 function isUuid(s: string): boolean {
@@ -668,33 +668,44 @@ export async function spin(
   //    limited prize sold out between our read and write, exclude it + re-pick.
   let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
   const excluded = new Set<string>();
-  for (let attempt = 0; attempt < pool0.prizes.length + 1; attempt++) {
-    const pool: WheelConfig = {
-      ...pool0,
-      prizes: pool0.prizes.map((p) =>
-        excluded.has(p.id) ? { ...p, stock: 0 } : p
-      ),
-    };
-    const pick = pickPrizeWithPity(pool, { pityCounter }, rng);
-    if (pick.prize.stock === null || pick.prize.stock === undefined) {
-      chosen = pick;
-      break;
+  try {
+    for (let attempt = 0; attempt < pool0.prizes.length + 1; attempt++) {
+      const pool: WheelConfig = {
+        ...pool0,
+        prizes: pool0.prizes.map((p) =>
+          excluded.has(p.id) ? { ...p, stock: 0 } : p
+        ),
+      };
+      const pick = pickPrizeWithPity(pool, { pityCounter }, rng);
+      if (pick.prize.stock === null || pick.prize.stock === undefined) {
+        chosen = pick;
+        break;
+      }
+      const { data: updated } = await sb
+        .from("prizes")
+        .update({ stock: pick.prize.stock - 1 })
+        .eq("id", pick.prize.id)
+        .gt("stock", 0)
+        .select("id")
+        .maybeSingle();
+      if (updated) {
+        chosen = pick;
+        break;
+      }
+      excluded.add(pick.prize.id);
     }
-    const { data: updated } = await sb
-      .from("prizes")
-      .update({ stock: pick.prize.stock - 1 })
-      .eq("id", pick.prize.id)
-      .gt("stock", 0)
-      .select("id")
-      .maybeSingle();
-    if (updated) {
-      chosen = pick;
-      break;
-    }
-    excluded.add(pick.prize.id);
+  } catch {
+    // pickPrizeWithPity throws when the pool has no available prize (every prize
+    // is limited-stock and already sold out). Fall through to the refund below
+    // rather than letting a 500 propagate after the spin was already claimed.
   }
 
-  if (!chosen) return { error: "no_prizes" };
+  if (!chosen) {
+    // The spin was already claimed (balance decremented). Refund it so a
+    // sold-out wheel doesn't burn the fan's spin for nothing.
+    await sb.rpc("rollback_claimed_spin", { p_token: token, p_prize_id: null });
+    return { error: "no_prizes" };
+  }
 
   // Persist the fan's next pity counter. Spinning also auto-opts the fan into
   // the leaderboard (handle-only; the board only shows when the CREATOR enables
@@ -712,7 +723,7 @@ export async function spin(
   const spinCampaignId: string | null = pass.campaign_id;
 
   // 4. Log the spin (against the fan account) + a pending redemption.
-  const { data: spinRow } = await sb
+  const { data: spinRow, error: spinErr } = await sb
     .from("spins")
     .insert({
       fan_pass_id: pass.id,
@@ -733,37 +744,51 @@ export async function spin(
     .select("id, share_id")
     .single();
 
-  if (spinRow) {
-    const { error: redemptionErr } = await sb.from("redemptions").insert({
-      spin_id: spinRow.id,
-      creator_id: pass.creator_id,
-      status: "pending",
+  // CRITICAL (revenue path): if the win couldn't be durably recorded, DON'T
+  // return a "you won" the creator never sees and can't fulfil. Roll back the
+  // claimed spin (and restore the limited prize's decremented stock) so the fan
+  // isn't charged for a phantom prize, then fail cleanly.
+  if (spinErr || !spinRow) {
+    await sb.rpc("rollback_claimed_spin", {
+      p_token: token,
+      p_prize_id:
+        chosen.prize.stock !== null && chosen.prize.stock !== undefined
+          ? chosen.prize.id
+          : null,
     });
-    if (redemptionErr) {
-      // The won prize is safely recorded in `spins`, but its fulfilment-queue
-      // row failed to insert — log loudly so a won prize can't silently fall out
-      // of the creator's redemptions list with no trace.
-      console.error("spin: redemption insert failed", {
-        spinId: spinRow.id,
-        error: redemptionErr.message,
-      });
-    }
-    // Best-effort fan-out to the creator's webhooks. Never blocks/throws — a
-    // slow or failing endpoint must not break the spin.
-    void fireWebhooks(pass.creator_id, {
-      event: "prize_pending",
-      prize: chosen.prize.label,
-      rarity: chosen.prize.rarity,
-      at: new Date().toISOString(),
-    }).catch(() => {});
+    console.error("spin: spins insert failed — rolled back claim", spinErr?.message);
+    return { error: "db_error" };
   }
+
+  const { error: redemptionErr } = await sb.from("redemptions").insert({
+    spin_id: spinRow.id,
+    creator_id: pass.creator_id,
+    status: "pending",
+  });
+  if (redemptionErr) {
+    // The won prize is safely recorded in `spins`, but its fulfilment-queue row
+    // failed to insert — log loudly so a won prize can't silently fall out of the
+    // creator's redemptions list with no trace.
+    console.error("spin: redemption insert failed", {
+      spinId: spinRow.id,
+      error: redemptionErr.message,
+    });
+  }
+  // Best-effort fan-out to the creator's webhooks. Never blocks/throws — a slow
+  // or failing endpoint must not break the spin.
+  void fireWebhooks(pass.creator_id, {
+    event: "prize_pending",
+    prize: chosen.prize.label,
+    rarity: chosen.prize.rarity,
+    at: new Date().toISOString(),
+  }).catch(() => {});
 
   return {
     prize: chosen.prize,
     prizeIndex: chosen.index,
     spinsRemaining,
     pityAwarded: chosen.pityAwarded,
-    shareId: (spinRow as { id: string; share_id: string | null } | null)?.share_id ?? undefined,
+    shareId: spinRow.share_id ?? undefined,
     nextSpinHash: nextServerSeedHash,
   };
 }
@@ -1718,7 +1743,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   const { data: fan } = await sb
     .from("fans")
-    .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags")
+    .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags, blocked_at")
     .eq("id", fanId)
     .eq("creator_id", user.id)
     .maybeSingle();
@@ -1865,6 +1890,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   return {
     fanId: fan.id,
     name: fan.display_name ?? fan.handle ?? "Fan",
+    blocked: !!(fan as { blocked_at?: string | null }).blocked_at,
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spins_remaining,
@@ -3191,6 +3217,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     { count: unreadMessages },
     { data: prof },
     { data: wheelRows },
+    { count: pendingCount },
+    { count: fulfilledCount },
   ] = await Promise.all([
     sb
       .from("redemptions")
@@ -3215,6 +3243,18 @@ export async function getOverview(): Promise<CreatorOverview> {
       .from("wheels")
       .select("created_at, updated_at, archived_at")
       .eq("creator_id", user.id),
+    // Count queries so pending/fulfilled headline totals are exact, not derived
+    // from the display-capped (200-row) redemptions slice above.
+    sb
+      .from("redemptions")
+      .select("id", head)
+      .eq("creator_id", user.id)
+      .eq("status", "pending"),
+    sb
+      .from("redemptions")
+      .select("id", head)
+      .eq("creator_id", user.id)
+      .eq("status", "fulfilled"),
   ]);
 
   const rows = (reds ?? []) as unknown as {
@@ -3266,8 +3306,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     metrics: {
       fans: fans ?? 0,
       spinsPlayed: spinsPlayed ?? 0,
-      pending: redemptions.filter((r) => r.status === "pending").length,
-      fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
+      pending: pendingCount ?? 0,
+      fulfilled: fulfilledCount ?? 0,
       revenue,
       unreadMessages: unreadMessages ?? 0,
       leaderboardEnabled: (prof as { leaderboard_enabled: boolean } | null)?.leaderboard_enabled ?? false,
@@ -5450,13 +5490,19 @@ export async function getThread(fanId: string): Promise<ChatMessage[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
+  // Bound the read: fetch the most recent messages (newest-first + limit), then
+  // present oldest-first. An unbounded thread read grows without limit as a
+  // conversation ages; the UI only needs recent history.
   const { data } = await sb
     .from("messages")
     .select(MESSAGE_SELECT)
     .eq("creator_id", user.id)
     .eq("fan_id", fanId)
-    .order("created_at", { ascending: true });
-  const rows = (data ?? []) as Parameters<typeof toChatMessage>[0][];
+    .order("created_at", { ascending: false })
+    .limit(500);
+  const rows = ((data ?? []) as Parameters<typeof toChatMessage>[0][])
+    .slice()
+    .reverse();
 
   // Mark fan→creator messages as read by the creator.
   await sb
