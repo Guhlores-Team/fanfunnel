@@ -113,6 +113,8 @@ export default function LoginForm() {
           required
           autoComplete="email"
           aria-label="Email address"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? "login-error" : undefined}
           className="ff-input w-full"
           placeholder="you@example.com"
           value={email}
@@ -124,6 +126,8 @@ export default function LoginForm() {
           minLength={6}
           autoComplete={mode === "signin" ? "current-password" : "new-password"}
           aria-label="Password"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? "login-error" : undefined}
           className="ff-input w-full"
           placeholder="Password (min 6 chars)"
           value={password}
@@ -142,7 +146,7 @@ export default function LoginForm() {
       </div>
 
       {error && (
-        <p role="alert" className="mt-3 text-sm text-amber-300">
+        <p id="login-error" role="alert" className="mt-3 text-sm text-amber-300">
           {error}
         </p>
       )}

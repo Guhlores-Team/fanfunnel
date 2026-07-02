@@ -55,6 +55,7 @@ export default function FanDetailDrawer({
     setDetail(null);
     setNotFound(false);
     setNotes("");
+    setBlocked(false);
     (async () => {
       try {
         const [res, cRes] = await Promise.all([
@@ -66,6 +67,7 @@ export default function FanDetailDrawer({
           const data: FanDetail = await res.json();
           setDetail(data);
           setNotes(data.notes ?? "");
+          setBlocked(!!data.blocked);
         } else setNotFound(true);
         if (cRes.ok) {
           const cd = await cRes.json();

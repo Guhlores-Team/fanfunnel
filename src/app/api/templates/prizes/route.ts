@@ -44,7 +44,9 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ template });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "db_error";
-    return errorResponse(message);
+    // Only surface controlled error codes (lowercase_snake). Never reflect an
+    // unexpected error's raw message — it can leak internals to the client.
+    const raw = err instanceof Error ? err.message : "";
+    return errorResponse(/^[a-z][a-z0-9_]*$/.test(raw) ? raw : "db_error");
   }
 }

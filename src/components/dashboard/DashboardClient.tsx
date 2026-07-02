@@ -183,6 +183,24 @@ export default function DashboardClient({
     setTab(t);
   };
 
+  // ARIA tabs keyboard pattern: Arrow keys move between tabs (wrapping), Home/End
+  // jump to the ends, and focus follows selection. `tabs` is defined below but is
+  // stable per render, so reading it here in the handler is safe.
+  const onTabKeyDown = (e: React.KeyboardEvent, id: Tab) => {
+    const ids = tabs.map(([t]) => t);
+    const i = ids.indexOf(id);
+    let next: Tab | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = ids[(i + 1) % ids.length];
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = ids[(i - 1 + ids.length) % ids.length];
+    else if (e.key === "Home") next = ids[0];
+    else if (e.key === "End") next = ids[ids.length - 1];
+    if (next) {
+      e.preventDefault();
+      goTab(next);
+      tabRefs.current[next]?.focus();
+    }
+  };
+
   // Keep the active tab visible in the horizontally-scrolling tab bar on mobile
   // (otherwise an earlier/later tab can sit clipped off-screen after switching).
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
@@ -318,7 +336,9 @@ export default function DashboardClient({
             aria-selected={tab === id}
             aria-controls={`panel-${id}`}
             id={`tab-${id}`}
+            tabIndex={tab === id ? 0 : -1}
             onClick={() => goTab(id)}
+            onKeyDown={(e) => onTabKeyDown(e, id)}
             className={`-mb-px flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] font-semibold transition sm:text-sm ${
               tab === id
                 ? "border-[var(--brand)] text-ink"

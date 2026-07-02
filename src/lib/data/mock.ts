@@ -1410,6 +1410,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
   return {
     fanId: fan.id,
     name: fan.name,
+    blocked: !!(fan as { blockedAt?: string | null }).blockedAt,
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spinsRemaining,
