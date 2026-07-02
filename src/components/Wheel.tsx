@@ -190,8 +190,11 @@ export default function Wheel({
     const hubR = radius * 0.15;
     const maxLen = radius - hubR - 18; // radial room per line
     const textR = hubR + (radius - hubR) * 0.55; // mid radius text sits at
-    const angularRoom = seg * textR * 0.9; // tangential room for the line stack
-    const labelFor = (p: Prize) => `${p.emoji ? p.emoji + " " : ""}${p.label}`;
+    const angularRoom = seg * textR * 0.82; // tangential room (with edge margin)
+    // Guard the label: a prize mid-edit can have an empty/undefined label, and
+    // template-literal coercion would paint the string "undefined" on the slice.
+    const labelFor = (p: Prize) =>
+      `${p.emoji ? p.emoji + " " : ""}${p.label ?? ""}`.trim();
     const setLabelFont = (f: number) => {
       ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
     };
@@ -204,29 +207,45 @@ export default function Wheel({
     // every label fits that cap on width.
     const linesThatFit = (lh: number) =>
       Math.max(1, Math.min(2, Math.floor(angularRoom / lh)));
-    let labelFont = Math.min(size * 0.05, 22);
-    for (; labelFont >= 9; labelFont -= 0.5) {
-      setLabelFont(labelFont);
-      const cap = linesThatFit(labelFont * 1.08);
-      const allFit = prizes.every((p) => {
-        const ls = wrapLines(ctx, labelFor(p), maxLen);
-        return (
-          ls.length <= cap && ls.every((l) => ctx.measureText(l).width <= maxLen)
-        );
+    // Label layout — the model polished spinner wheels use: ONE line running
+    // along the (long) radius, auto-shrunk per label to fit. Single-line avoids
+    // the tangential clipping that stacked lines cause on many-slice wheels, and
+    // per-label sizing lets short names render big while long names stay full.
+    // The size control raises/lowers the per-label ceiling. Two lines + ellipsis
+    // are only a fallback for a name too long to fit one radial line even small.
+    const SIZE_CEIL: Record<string, number> = { s: 16, l: 26, xl: 32 };
+    const ceiling = labelSize
+      ? SIZE_CEIL[labelSize] ?? Math.min(size * 0.05, 22)
+      : Math.min(size * 0.05, 22);
+    const MIN_FONT = 8;
+    const layoutLabel = (text: string) => {
+      // Prefer a single radial line: largest font ≤ ceiling that fits the width.
+      for (let f = ceiling; f >= MIN_FONT; f -= 0.5) {
+        setLabelFont(f);
+        if (ctx.measureText(text).width <= maxLen) {
+          return { font: f, lineH: f * 1.08, lines: [text] };
+        }
+      }
+      // Fallback: at the min font, wrap to the lines that fit between neighbors,
+      // eliding a single over-wide word only as a last resort.
+      setLabelFont(MIN_FONT);
+      const cap = linesThatFit(MIN_FONT * 1.08);
+      const all = wrapLines(ctx, text, maxLen);
+      const dropped = all.length > cap;
+      const lines = all.slice(0, cap).map((l, idx) => {
+        if (ctx.measureText(l).width <= maxLen && !(idx === cap - 1 && dropped)) {
+          return l;
+        }
+        let s = l;
+        while (s.length > 1 && ctx.measureText(s + "…").width > maxLen) {
+          s = s.slice(0, -1);
+        }
+        return s.replace(/\s+$/, "") + "…";
       });
-      if (allFit) break;
-    }
-    // Per-wheel size preference biases the auto-fit font up or down. An enlarged
-    // font is capped so a single line still fits between neighbors, so "Large"
-    // trades wrapping/length (ellipsis) for readability without overlapping.
-    const SIZE_SCALE: Record<string, number> = { s: 0.82, l: 1.18, xl: 1.4 };
-    const sizeScale = labelSize ? SIZE_SCALE[labelSize] ?? 1 : 1;
-    if (sizeScale !== 1) {
-      const maxOneLine = angularRoom / 1.08;
-      labelFont = Math.max(8, Math.min(labelFont * sizeScale, maxOneLine, 30));
-    }
-    const lineH = labelFont * 1.08;
-    const maxLines = linesThatFit(lineH);
+      return { font: MIN_FONT, lineH: MIN_FONT * 1.08, lines };
+    };
+    // Precompute once per draw (depends on text + geometry, not spin rotation).
+    const labelLayouts = prizes.map((p) => layoutLabel(labelFor(p)));
 
     prizes.forEach((prize, i) => {
       const start = i * seg;
@@ -247,37 +266,38 @@ export default function Wheel({
       ctx.strokeStyle = "rgba(255,255,255,0.5)";
       ctx.stroke();
 
-      // Label — uniform size across every slice, wrapped to at most two lines.
+      // Label — per-label size (precomputed), wrapped to at most two lines.
+      const { font, lineH, lines } = labelLayouts[i];
       ctx.save();
       ctx.rotate(start + seg / 2);
-      ctx.textAlign = "right";
+      // Flip labels whose slice points to the LEFT half of the wheel 180° so they
+      // read upright instead of upside-down. Uses the absolute angle (includes the
+      // live spin `rotation`), so labels rotate with the wheel and settle upright
+      // at rest.
+      const absAngle =
+        (((rotation + start + seg / 2) % TWO_PI) + TWO_PI) % TWO_PI;
+      const flip = absAngle > Math.PI / 2 && absAngle < (3 * Math.PI) / 2;
+      if (flip) ctx.rotate(Math.PI);
       ctx.textBaseline = "middle";
       ctx.fillStyle = labelFill;
       ctx.shadowColor = "rgba(0,0,0,0.45)";
       ctx.shadowBlur = 3;
-      setLabelFont(labelFont);
-
-      const all = wrapLines(ctx, labelFor(prize), maxLen);
-      const dropped = all.length > maxLines;
-      const lines = all.slice(0, maxLines).map((l, idx) => {
-        const overflow = ctx.measureText(l).width > maxLen;
-        if (!overflow && !(idx === maxLines - 1 && dropped)) return l;
-        let s = l;
-        while (s.length > 1 && ctx.measureText(s + "…").width > maxLen) {
-          s = s.slice(0, -1);
-        }
-        return s.replace(/\s+$/, "") + "…";
-      });
+      setLabelFont(font);
 
       const offset = ((lines.length - 1) * lineH) / 2;
+      const rim = radius - 14;
       if (lines.length > 1) {
-        // Center the two lines relative to each other, anchored at the rim.
+        // Center the two lines relative to each other, anchored at the rim. On a
+        // flipped label the rim sits on the -x side, so mirror the anchor.
         ctx.textAlign = "center";
         const longest = Math.max(...lines.map((l) => ctx.measureText(l).width));
-        const cxText = radius - 14 - longest / 2;
-        lines.forEach((l, idx) => ctx.fillText(l, cxText, -offset + idx * lineH));
+        const cxText = rim - longest / 2;
+        lines.forEach((l, idx) =>
+          ctx.fillText(l, flip ? -cxText : cxText, -offset + idx * lineH)
+        );
       } else {
-        ctx.fillText(lines[0], radius - 14, 0);
+        ctx.textAlign = flip ? "left" : "right";
+        ctx.fillText(lines[0], flip ? -rim : rim, 0);
       }
       ctx.restore();
     });
