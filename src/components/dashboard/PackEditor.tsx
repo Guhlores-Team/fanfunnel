@@ -7,6 +7,9 @@ import { useToast } from "@/components/ui/Toast";
 import { addPackUnit, findMatchingPack } from "./packHelpers";
 import { EmptyState, Field } from "./ui";
 
+const ghostBtn =
+  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--color-line))] hover:text-ink disabled:opacity-50";
+
 /**
  * Manage spin-pack presets for a campaign. Self-fetches the packs scoped to the
  * given campaign (or the creator's global packs when none is selected), and
@@ -132,9 +135,15 @@ export default function PackEditor({ campaignId }: { campaignId: string | null }
   }
 
   return (
-    <section className="card rounded-xl p-5" aria-label="Spin pack presets">
-      <h3 className="font-bold text-ink">Spin packs</h3>
-      <p className="mt-1 text-sm text-muted">
+    <section
+      className="lift-in rounded-xl border border-[var(--hair)] p-4 [background:var(--s2)] sm:p-5"
+      aria-label="Spin pack presets"
+    >
+      <h3 className="flex items-center gap-[9px] text-sm font-bold text-ink">
+        <span aria-hidden="true" className="h-3.5 w-[3px] rounded-sm bg-[var(--brand)]" />
+        Spin packs
+      </h3>
+      <p className="mt-1 text-[13px] text-muted">
         Presets for the grant and top-up flow. Each pack bundles a number of
         spins at a price, with optional bonus spins.
       </p>
@@ -189,7 +198,7 @@ export default function PackEditor({ campaignId }: { campaignId: string | null }
         type="button"
         onClick={addPack}
         disabled={busy}
-        className="btn-brand mt-3 rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
+        className="btn-brand mt-3 min-h-10 rounded-[10px] px-4 text-sm font-bold disabled:opacity-50"
       >
         Add pack
       </button>
@@ -199,7 +208,7 @@ export default function PackEditor({ campaignId }: { campaignId: string | null }
         {packs === null ? (
           <div className="space-y-2">
             {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="skeleton h-14 rounded-lg" />
+              <div key={i} className="skeleton h-14 rounded-xl" />
             ))}
           </div>
         ) : packs.length === 0 ? (
@@ -276,7 +285,7 @@ function PackRow({
 
   if (editing) {
     return (
-      <li className="rounded-lg border border-line bg-base/40 p-3">
+      <li className="rounded-xl border border-[var(--hair)] bg-base p-3">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <input
             className="ff-input"
@@ -316,7 +325,7 @@ function PackRow({
             type="button"
             onClick={save}
             disabled={busy}
-            className="btn-brand rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
+            className="btn-brand min-h-9 rounded-[9px] px-3.5 text-[12.5px] font-bold disabled:opacity-50"
           >
             Save
           </button>
@@ -326,7 +335,7 @@ function PackRow({
               reset();
               setEditing(false);
             }}
-            className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
+            className={ghostBtn}
           >
             Cancel
           </button>
@@ -336,9 +345,9 @@ function PackRow({
   }
 
   return (
-    <li className="flex items-center gap-3 rounded-lg border border-line bg-base/40 px-3 py-2.5">
-      <div className="min-w-0 flex-1">
-        <span className="truncate font-semibold text-ink">{pack.label}</span>
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[var(--hair)] bg-base px-3 py-2.5">
+      <div className="min-w-0 flex-1 basis-40">
+        <span className="block truncate font-semibold text-ink">{pack.label}</span>
         <p className="tnum mt-0.5 text-xs text-muted">
           {pack.spins} spins · {formatCents(pack.amountCents)}
           {pack.bonusSpins > 0 ? ` · +${pack.bonusSpins} bonus` : ""}
@@ -347,7 +356,7 @@ function PackRow({
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5"
+        className={`${ghostBtn} shrink-0 !text-ink`}
       >
         Edit
       </button>
@@ -357,14 +366,14 @@ function PackRow({
             type="button"
             onClick={onDelete}
             disabled={busy}
-            className="shrink-0 rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
+            className="inline-flex min-h-9 shrink-0 items-center rounded-[9px] border border-[#ef4444] px-3 text-[12.5px] font-semibold text-[#f87171] transition-colors hover:bg-[#ef4444]/10 disabled:opacity-50"
           >
             Confirm
           </button>
           <button
             type="button"
             onClick={() => setConfirmDelete(false)}
-            className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+            className={`${ghostBtn} shrink-0`}
           >
             Cancel
           </button>
@@ -373,7 +382,7 @@ function PackRow({
         <button
           type="button"
           onClick={() => setConfirmDelete(true)}
-          className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+          className={`${ghostBtn} shrink-0`}
         >
           Delete
         </button>
