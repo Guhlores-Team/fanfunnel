@@ -2,7 +2,7 @@
 // outcome; the harness records pass/fail and attributes any browser signal.
 // Runs against MOCK mode, so data is deterministic per fresh server.
 
-import { goto, clickTab, passAgeGate, BASE } from "./harness.mjs";
+import { goto, clickTab, passAgeGate, BASE, NAV_ITEMS } from "./harness.mjs";
 
 export async function creatorJourney(page, { step, assert }) {
   await step("landing renders with a CTA", async () => {
@@ -18,10 +18,10 @@ export async function creatorJourney(page, { step, assert }) {
   });
 
   // Enable the in-app debug console for the rest of the run.
-  await step("dashboard loads with all tabs (?debug=1)", async () => {
+  await step("dashboard loads with all sections (?debug=1)", async () => {
     await goto(page, "/dashboard?debug=1", 2200);
-    const tabs = await page.locator("[role='tab']").count();
-    assert(tabs >= 7, `expected the dashboard tab bar, saw ${tabs} tabs`);
+    const tabs = await page.locator(NAV_ITEMS).count();
+    assert(tabs >= 7, `expected the dashboard section nav, saw ${tabs} sections`);
   });
 
   await step("wheel editor: rarity change moves the odds", async () => {
@@ -223,7 +223,7 @@ export async function fanJourney(page, { step, assert }, ctx) {
 export async function creatorExtras(page, { step, assert }) {
   await step("redemptions: advance a fulfilment status", async () => {
     await goto(page, "/dashboard", 1800);
-    await clickTab(page, "Prizes");
+    await clickTab(page, "Fulfilment");
     // The primary per-row action moves status (Start → Mark fulfilled → …).
     const action = page
       .locator("button")

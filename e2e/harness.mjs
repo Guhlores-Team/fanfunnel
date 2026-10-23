@@ -204,22 +204,26 @@ export async function goto(page, path, settle = 1400) {
   await page.waitForTimeout(settle);
 }
 
+// Dashboard section nav (Command Center sidebar). Items are buttons inside the
+// "Dashboard sections" <nav>; the active one carries aria-current="page".
+export const NAV_ITEMS = "nav[aria-label='Dashboard sections'] button";
+
 export async function clickTab(page, name) {
-  const tabs = await page.locator("[role='tab']").all();
-  for (const t of tabs) {
+  const items = await page.locator(NAV_ITEMS).all();
+  for (const t of items) {
     try {
       if ((await t.innerText()).trim().toLowerCase().includes(name.toLowerCase())) {
         await t.click();
-        // Web-first wait: the clicked tab reflects its selected state once the
+        // Web-first wait: the clicked item reflects its current state once the
         // panel has switched — wait for that instead of a fixed pause.
         await t
-          .and(page.locator("[aria-selected='true']"))
+          .and(page.locator("[aria-current='page']"))
           .waitFor({ timeout: 4000 })
           .catch(() => {});
         return true;
       }
     } catch {
-      /* tab detached — skip */
+      /* item detached — skip */
     }
   }
   return false;
