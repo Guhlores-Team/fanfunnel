@@ -1477,6 +1477,11 @@ export function mockGetOverview(): CreatorOverview {
       unreadMessages,
       leaderboardEnabled: store.leaderboardEnabled,
       wheelBuilt,
+      // Oldest pending across ALL redemptions, not just the 200-row display slice.
+      oldestPendingAt:
+        redemptions
+          .filter((r) => r.status === "pending")
+          .reduce<string | null>((min, r) => (min === null || r.at < min ? r.at : min), null),
     },
     redemptions: structuredClone(items),
   };

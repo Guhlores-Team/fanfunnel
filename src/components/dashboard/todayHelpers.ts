@@ -31,7 +31,18 @@ export function trendVsYesterday(series: number[]): Trend {
 export const spinSeries = (t: DailyCount[] | undefined) => (t ?? []).map((d) => d.spins);
 export const centSeries = (t: RevenueDaily[] | undefined) => (t ?? []).map((d) => d.cents);
 
-/** "4h", "2d", "15m": how long the oldest still-pending win has waited. */
+/** "4h", "2d", "15m": time elapsed since an ISO timestamp. null if unparseable. */
+export function ageLabel(iso: string | null | undefined, now: number = Date.now()): string | null {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return null;
+  const mins = Math.max(0, Math.floor((now - t) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** "4h", "2d", "15m": how long the oldest still-pending win in a list has waited. */
 export function oldestPendingAge(
   redemptions: RedemptionItem[] | undefined,
   now: number = Date.now()

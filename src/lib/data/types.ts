@@ -264,6 +264,11 @@ export interface CreatorMetrics {
    * compile.
    */
   wheelBuilt?: boolean;
+  /**
+   * ISO timestamp of the oldest still-pending redemption across ALL rows (the
+   * overview's redemptions list is capped at the newest 200). null when none.
+   */
+  oldestPendingAt?: string | null;
 }
 
 /** Everything the creator dashboard's metrics + inbox need. */

@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import type { RedemptionItem } from "@/lib/data/types";
 import {
+  ageLabel,
   impactTag,
   lastValue,
   oldestPendingAge,
@@ -56,6 +57,9 @@ check(
 check("minutes under an hour", oldestPendingAge([r("pending", "2026-10-23T11:45:00Z")], now) === "15m");
 check("days past 48h", oldestPendingAge([r("pending", "2026-10-20T12:00:00Z")], now) === "3d");
 check("unparseable timestamps are skipped", oldestPendingAge([r("pending", "nope")], now) === null);
+
+check("ageLabel hours", ageLabel("2026-10-23T08:00:00Z", now) === "4h");
+check("ageLabel null/garbage", ageLabel(null, now) === null && ageLabel("x", now) === null);
 
 // --- sparkPoints -------------------------------------------------------------
 check("sparkPoints needs two points", sparkPoints([3]) === "");

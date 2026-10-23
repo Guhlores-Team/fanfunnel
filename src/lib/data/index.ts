@@ -3219,6 +3219,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     { data: wheelRows },
     { count: pendingCount },
     { count: fulfilledCount },
+    { data: oldestPendingRow },
   ] = await Promise.all([
     sb
       .from("redemptions")
@@ -3255,6 +3256,16 @@ export async function getOverview(): Promise<CreatorOverview> {
       .select("id", head)
       .eq("creator_id", user.id)
       .eq("status", "fulfilled"),
+    // Oldest pending win, read directly: the redemptions slice above is capped
+    // at the 200 NEWEST rows, so the oldest wait can fall outside it.
+    sb
+      .from("redemptions")
+      .select("created_at")
+      .eq("creator_id", user.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   const rows = (reds ?? []) as unknown as {
@@ -3312,6 +3323,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       unreadMessages: unreadMessages ?? 0,
       leaderboardEnabled: (prof as { leaderboard_enabled: boolean } | null)?.leaderboard_enabled ?? false,
       wheelBuilt,
+      oldestPendingAt: (oldestPendingRow as { created_at: string } | null)?.created_at ?? null,
     },
     redemptions,
   };

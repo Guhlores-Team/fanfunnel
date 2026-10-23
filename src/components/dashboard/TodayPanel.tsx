@@ -9,6 +9,7 @@ import { useFetch } from "@/lib/hooks/useFetch";
 import { formatCents } from "@/lib/format";
 import type { CreatorMetricsExtra, CreatorOverview } from "@/lib/data/types";
 import {
+  ageLabel,
   centSeries,
   impactTag,
   lastValue,
@@ -275,7 +276,14 @@ export default function TodayPanel({
   const spins = spinSeries(extra?.trend);
   const cents = centSeries(extra?.revenueTrend);
   const pending = m?.pending ?? 0;
-  const waiting = pending > 0 ? oldestPendingAge(overview?.redemptions) : null;
+  // Prefer the server's oldest-pending timestamp (covers ALL rows); the list
+  // fallback only matters for an older API that doesn't send it.
+  const waiting =
+    pending > 0
+      ? m?.oldestPendingAt !== undefined
+        ? ageLabel(m.oldestPendingAt)
+        : oldestPendingAge(overview?.redemptions)
+      : null;
   const dash = <span className="text-muted">—</span>;
 
   return (
