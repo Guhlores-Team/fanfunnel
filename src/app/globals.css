@@ -182,6 +182,13 @@ input[type="time"] {
 }
 
 .reveal { animation: ff-rise 0.62s cubic-bezier(0.16, 1, 0.3, 1) both; }
+/* Dashboard entrance: transform-only, so content is never stuck invisible if
+   the animation doesn't run (base opacity stays 1). */
+@keyframes ff-lift {
+  from { transform: translateY(10px); }
+  to { transform: none; }
+}
+.lift-in { animation: ff-lift 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
 .reveal-scale { animation: ff-scale-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .ambient-glow { animation: ff-glow-pulse 6s ease-in-out infinite; }
 .ambient-float { animation: ff-float 7s ease-in-out infinite; }
