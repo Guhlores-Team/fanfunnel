@@ -935,13 +935,18 @@ export async function createPass(opts: {
     // The fan must belong to THIS creator before we mint or top up a pass for it:
     // reject a foreign fan id up front so we never insert a fan_pass under our own
     // creator_id that points at another tenant's fan (defense in depth on top of RLS).
+    // Read the fan-level aggregate HERE, before the pass is written: the 0035
+    // trigger resyncs fans.spins_remaining to SUM(passes) as soon as the pass
+    // changes, so a read after that write already contains the new spins and
+    // adding balanceAdd again credited them twice (mirrors grantSpins).
     const { data: ownFan } = await sb
       .from("fans")
-      .select("id")
+      .select("id, spins_remaining, spins_granted_total")
       .eq("id", fanId)
       .eq("creator_id", user.id)
       .maybeSingle();
-    if (!ownFan) return { error: "fan_not_found" };
+    const fan = ownFan as { id: string; spins_remaining: number; spins_granted_total: number } | null;
+    if (!fan) return { error: "fan_not_found" };
     // Existing fan: find this fan's pass FOR THIS WHEEL. Top it up if it exists,
     // otherwise mint a new per-wheel link. Spins live on the pass, not the fan.
     const { data: existing } = await sb
@@ -998,13 +1003,8 @@ export async function createPass(opts: {
       });
     }
 
-    // Keep the fan-level aggregate (sum of passes) in sync.
-    const { data: fan } = await sb
-      .from("fans")
-      .select("spins_remaining, spins_granted_total")
-      .eq("id", fanId)
-      .maybeSingle();
-    if (!fan) return fail("fan_not_found");
+    // Keep the fan-level aggregate (sum of passes) in sync, from the balance
+    // read BEFORE the pass write above (idempotent with the 0035 trigger).
     const { error: fanBalErr } = await sb
       .from("fans")
       .update({
