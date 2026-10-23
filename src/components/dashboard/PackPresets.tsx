@@ -78,10 +78,10 @@ export default function PackPresets({
             onClick={() => handlePick(p)}
             aria-pressed={active}
             className={
-              "rounded-lg border px-3 py-1.5 text-xs font-semibold text-ink transition " +
+              "inline-flex min-h-8 items-center rounded-[9px] border px-3 text-xs font-semibold text-ink transition-colors " +
               (active
-                ? "border-[var(--brand)]/60 bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
-                : "border-line hover:bg-white/5")
+                ? "border-[color-mix(in_oklab,var(--brand)_60%,transparent)] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+                : "border-line hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]")
             }
           >
             <span className="font-bold">{p.label}</span>
@@ -91,7 +91,7 @@ export default function PackPresets({
               {p.bonusSpins > 0 ? ` (+${p.bonusSpins})` : ""}
             </span>
             {count > 1 && (
-              <span className="tnum ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--brand-ink,#fff)]">
+              <span className="tnum ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--brand-ink)]">
                 ×{count}
               </span>
             )}

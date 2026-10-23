@@ -1,25 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { CampaignPack, DmTemplate, FanAccountSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
 import { formatCents } from "@/lib/format";
-import { useClipboard, copyToClipboard } from "@/lib/hooks/useClipboard";
+import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
-import { EmptyState, Field, TagEditor } from "./ui";
+import { CloseButton, Field, initialsOf } from "./ui";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import PackPresets from "@/components/dashboard/PackPresets";
 import ImportFans from "@/components/dashboard/ImportFans";
 import { prefersReducedMotion } from "@/lib/sound";
 
-// Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
-const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
+const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
+const ghostBtn =
+  "inline-flex min-h-9 items-center justify-center rounded-[9px] border border-line px-[13px] text-[12.5px] font-semibold text-muted transition-colors hover:text-ink";
+const FANS_ICON =
+  "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87";
+const COPY_ICON = "M9 9h11v11H9zM5 15H4V4h11v1";
 
 // ---------------------------------------------------------------------------
-// Fans & links — now loaded from the server so they persist across refreshes.
+// Fans & links — loaded from the server so they persist across refreshes. Rows
+// stay lean (open → drawer); every per-fan power tool lives in the drawer.
 // ---------------------------------------------------------------------------
 export default function FansPanel({
   initialSearch = "",
@@ -53,6 +57,7 @@ export default function FansPanel({
   const [tagFilter, setTagFilter] = useState<string>("");
   const [templates, setTemplates] = useState<DmTemplate[]>([]);
   const [managingMessages, setManagingMessages] = useState(false);
+  const [importing, setImporting] = useState(false);
   const toast = useToast();
   const origin = useOrigin();
 
@@ -176,6 +181,19 @@ export default function FansPanel({
     if (data) await load();
   }
 
+  async function copyLink(acc: FanAccountSummary) {
+    const token = acc.primaryToken ?? acc.links[0]?.token;
+    if (!token) {
+      toast("No link yet — top up this fan to mint one.", { tone: "error" });
+      return;
+    }
+    if (await copyToClipboard(`${origin}/spin/${token}`)) {
+      toast("Spin link copied", { tone: "success" });
+    } else {
+      toast("Couldn't copy link.", { tone: "error" });
+    }
+  }
+
   // Client-side filtering over the loaded accounts. NOTE: once accounts
   // paginate, this must move server-side so search/filter cover all fans.
   const filtered = (accounts ?? []).filter((a) => {
@@ -186,30 +204,36 @@ export default function FansPanel({
     const matchesTag = !tagFilter || a.tags.includes(tagFilter);
     return matchesSearch && matchesCampaign && matchesTag;
   });
+  const openAccount = accounts?.find((a) => a.fanId === openFanId) ?? null;
 
   return (
-    <div className="max-w-2xl">
-      <div className="card rounded-xl p-5">
-        <h3 className="font-bold text-ink">Create a fan account</h3>
-        <p className="mt-1 text-sm text-muted">
+    <div className="flex flex-col gap-[18px]">
+      {/* Mint form — the name input must stay the FIRST `input.ff-input` on
+          this view (e2e selector) and keeps the top-bar focus target. */}
+      <section aria-labelledby="mint-fan-link" className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
+        <h3 id="mint-fan-link" className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
+          <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+          Mint a fan link
+        </h3>
+        <p className="mt-1 text-[13px] text-muted text-pretty">
           You create the account; the fan never signs up. Balance and win history
           live on the account, so you can mint fresh links anytime.
         </p>
-        <div className="mt-4 flex flex-wrap items-start gap-3">
-          <Field label="Fan name / handle">
+        <div className="mt-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1.5fr_auto]">
+          <Field label="Fan handle">
             <input
               ref={nameRef}
-              className="ff-input w-44"
-              placeholder="@bigfan"
+              className="ff-input w-full"
+              placeholder="@username"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
           </Field>
-          <Field label="Spins to grant">
+          <Field label="Spins">
             <input
               type="number"
               min={1}
-              className="ff-input tnum w-24"
+              className="ff-input tnum w-full"
               value={spins}
               onChange={(e) => {
                 setSpins(Math.max(1, Number(e.target.value)));
@@ -217,12 +241,12 @@ export default function FansPanel({
               }}
             />
           </Field>
-          <Field label="$ per spin (optional)">
+          <Field label="$/spin">
             <input
               type="number"
               min={0}
               step={0.01}
-              className="ff-input tnum w-28"
+              className="ff-input tnum w-full"
               placeholder="0.00"
               value={perSpin}
               onChange={(e) => {
@@ -230,16 +254,11 @@ export default function FansPanel({
                 setPackId(null);
               }}
             />
-            {amount && Number(amount) > 0 && spins > 0 && (
-              <p className="mt-1 text-[11px] text-muted">
-                {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
-                {formatCents(Math.round(Number(amount) * 100))} total
-              </p>
-            )}
           </Field>
-          <Field label="Campaign (optional)">
+          {/* Without this select new links silently become "untracked". */}
+          <Field label="Campaign">
             <select
-              className="ff-input w-44 max-w-full truncate"
+              className="ff-input w-full truncate"
               title={campaigns.find((c) => c.id === campaignId)?.name}
               value={campaignId}
               onChange={(e) => {
@@ -257,13 +276,20 @@ export default function FansPanel({
             </select>
           </Field>
           <button
+            type="button"
             onClick={createAccount}
             disabled={creating}
-            className="btn-brand mt-5 rounded-lg px-5 py-2 text-sm font-bold"
+            className="btn-brand min-h-10 rounded-[10px] px-[18px] text-sm font-bold sm:col-span-2 lg:col-span-1"
           >
-            {creating ? "Creating…" : "Create account"}
+            {creating ? "Creating…" : "Create"}
           </button>
         </div>
+        {amount && Number(amount) > 0 && spins > 0 && (
+          <p className="tnum mt-2 text-[11.5px] text-muted">
+            {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
+            {formatCents(Math.round(Number(amount) * 100))} total
+          </p>
+        )}
         {campaignId && (
           <div className="mt-3">
             <PackPresets
@@ -276,14 +302,15 @@ export default function FansPanel({
             />
           </div>
         )}
-      </div>
+      </section>
 
-      <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
+      {/* List controls: filters (only once there are fans) + bulk tools. */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
         {accounts && accounts.length > 0 ? (
-          <div className="flex flex-wrap items-end gap-3">
-            <Field label="Search fans">
+          <div className="flex flex-wrap items-end gap-2.5">
+            <Field label="Search">
               <input
-                className="ff-input w-56"
+                className="ff-input w-full sm:w-[190px]"
                 placeholder="Name or handle"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -291,7 +318,7 @@ export default function FansPanel({
             </Field>
             <Field label="Campaign">
               <select
-                className="ff-input w-44"
+                className="ff-input w-full sm:w-40"
                 value={campaignFilter}
                 onChange={(e) => setCampaignFilter(e.target.value)}
               >
@@ -305,7 +332,7 @@ export default function FansPanel({
             </Field>
             <Field label="Tag">
               <select
-                className="ff-input w-40"
+                className="ff-input w-full sm:w-36"
                 value={tagFilter}
                 onChange={(e) => setTagFilter(e.target.value)}
               >
@@ -321,52 +348,71 @@ export default function FansPanel({
         ) : (
           <span />
         )}
-        <button
-          type="button"
-          onClick={() => setManagingMessages(true)}
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-        >
-          Manage messages
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setImporting((v) => !v)}
+            aria-expanded={importing}
+            className={ghostBtn}
+          >
+            Import fans
+          </button>
+          <button type="button" onClick={() => setManagingMessages(true)} className={ghostBtn}>
+            Manage messages
+          </button>
+        </div>
       </div>
 
-      <div className="mt-4">
-        <ImportFans campaignId={campaignId || undefined} onImported={load} />
-      </div>
+      {importing && (
+        <ImportFans
+          campaignId={campaignId || undefined}
+          onImported={load}
+          onClose={() => setImporting(false)}
+        />
+      )}
 
-      <div className="mt-6 space-y-4">
-        {accounts === null && (
-          <>
-            {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="skeleton h-24 rounded-xl" />
-            ))}
-          </>
-        )}
-        {accounts?.length === 0 && (
-          <EmptyState title="No fans yet" body="Create your first fan account above to mint a link." />
-        )}
-        {accounts && accounts.length > 0 && filtered.length === 0 && (
-          <EmptyState title="No matches" body="No fans match your search or campaign filter." />
-        )}
-        {filtered.map((acc) => (
-          <AccountCard
-            key={acc.fanId}
-            account={acc}
-            origin={origin}
-            campaigns={campaigns}
-            wheels={wheels}
-            templates={templates}
-            onTopUp={topUp}
-            onOpen={setOpenFanId}
-            onDeleted={load}
-            refresh={load}
-          />
-        ))}
-      </div>
+      {accounts === null && (
+        <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading fans">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skeleton h-[66px] rounded-[13px]" />
+          ))}
+        </div>
+      )}
+      {accounts?.length === 0 && (
+        <FansEmpty
+          title="No fans yet"
+          body="Mint your first fan link above — the account and its balance live here."
+        />
+      )}
+      {accounts && accounts.length > 0 && filtered.length === 0 && (
+        <FansEmpty
+          title="No fans match"
+          body="Nothing matches your search or filters. Clear them, or mint a fresh link above."
+        />
+      )}
+      {filtered.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {filtered.map((acc) => (
+            <FanRow
+              key={acc.fanId}
+              account={acc}
+              onOpen={() => setOpenFanId(acc.fanId)}
+              onCopy={() => copyLink(acc)}
+            />
+          ))}
+        </ul>
+      )}
+
       <FanDetailDrawer
         fanId={openFanId}
+        summary={openAccount}
+        campaigns={campaigns}
+        wheels={wheels}
+        templates={templates}
         onClose={() => setOpenFanId(null)}
         onSaved={load}
+        onTopUp={topUp}
+        onDeleted={load}
       />
       {managingMessages && (
         <ManageMessages
@@ -379,9 +425,102 @@ export default function FansPanel({
   );
 }
 
+function FansEmpty({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-8 py-12 text-center">
+      <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+          <path d={FANS_ICON} />
+        </svg>
+      </span>
+      <p className="text-[15px] font-bold text-ink">{title}</p>
+      <p className="max-w-xs text-[13px] text-muted text-pretty">{body}</p>
+    </div>
+  );
+}
+
+/** One fan row: avatar, name + meta, tag pills, balance, copy-link. The name
+ *  block is a stretched button, so Enter/Space (and a click anywhere outside
+ *  the copy button) opens the drawer. */
+function FanRow({
+  account,
+  onOpen,
+  onCopy,
+}: {
+  account: FanAccountSummary;
+  onOpen: () => void;
+  onCopy: () => void;
+}) {
+  const links = account.links.length;
+  return (
+    <li
+      className={`relative flex items-center gap-3 rounded-[13px] px-3.5 py-[13px] transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] sm:gap-3.5 sm:px-4 ${raised}`}
+    >
+      <span
+        aria-hidden="true"
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-sm font-bold text-brand"
+      >
+        {initialsOf(account.name)}
+      </span>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={"View " + account.name}
+        className="min-w-0 flex-1 rounded-lg text-left after:absolute after:inset-0 after:rounded-[13px] after:content-['']"
+      >
+        <p className="truncate text-sm font-semibold text-ink">{account.name}</p>
+        <p className="tnum truncate text-[12.5px] text-muted">
+          {account.grantedTotal} granted · {links} link{links === 1 ? "" : "s"} ·{" "}
+          {formatCents(account.totalSpent)} spent
+          {account.lastWin && (
+            <>
+              {" "}
+              · last won{" "}
+              <span style={{ color: RARITY_COLORS[account.lastWin.rarity] }}>
+                {account.lastWin.label}
+              </span>
+            </>
+          )}
+        </p>
+      </button>
+      {account.tags.length > 0 && (
+        <span className="hidden shrink-0 gap-1.5 sm:flex" aria-label={"Tags: " + account.tags.join(", ")}>
+          {account.tags.slice(0, 3).map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] px-2.5 py-[3px] text-[11.5px] font-semibold text-brand"
+            >
+              {t}
+            </span>
+          ))}
+          {account.tags.length > 3 && (
+            <span className="tnum rounded-full border border-line px-2 py-[3px] text-[11px] font-semibold text-muted">
+              +{account.tags.length - 3}
+            </span>
+          )}
+        </span>
+      )}
+      <span className="tnum shrink-0 text-[13.5px] font-semibold text-muted">
+        <span className="text-ink">{account.spinsRemaining}</span> spins
+      </span>
+      <button
+        type="button"
+        onClick={onCopy}
+        aria-label={"Copy spin link for " + account.name}
+        title="Copy spin link"
+        className="relative z-10 grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] border border-line text-muted transition-colors hover:text-ink"
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+          <path d={COPY_ICON} />
+        </svg>
+      </button>
+    </li>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Saved DM templates: list / add / delete. `{link}` is the placeholder swapped
-// for a fan's full spin URL when the "Copy DM" control on a card is used.
+// for a fan's full spin URL when the drawer's "Copy DM" control is used.
 // ---------------------------------------------------------------------------
 function ManageMessages({
   templates,
@@ -433,30 +572,24 @@ function ManageMessages({
   }
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+    <div className="fixed inset-0 z-50 lg:flex lg:items-center lg:justify-center lg:p-4">
+      <div className="fade-in absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Manage DM templates"
-        className="absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col overflow-y-auto rounded-t-2xl border border-line bg-surface shadow-2xl sm:inset-x-auto sm:left-1/2 sm:top-1/2 sm:max-h-[80vh] sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl"
+        className="modal-in absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col overflow-y-auto rounded-t-[28px] border-t border-[#2a2533] bg-surface shadow-2xl lg:relative lg:inset-auto lg:max-h-[80vh] lg:w-full lg:max-w-lg lg:rounded-2xl lg:border lg:border-[var(--hair)] lg:shadow-[var(--lift)]"
       >
-        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-line bg-surface px-5 py-4">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-[#1f1b27] bg-surface px-5 py-4">
           <div>
-            <h2 className="text-lg font-bold text-ink">DM templates</h2>
+            <h2 className="text-[17px] font-bold text-ink">DM templates</h2>
             <p className="mt-0.5 text-xs text-muted">
               Use <code className="rounded bg-base px-1">{"{link}"}</code> where the
               fan&rsquo;s spin link should go.
             </p>
           </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-lg border border-line px-2.5 py-1.5 text-sm font-semibold text-muted transition hover:text-ink"
-          >
-            ✕
-          </button>
+          <CloseButton onClick={onClose} />
         </div>
 
         <div className="space-y-5 px-5 py-5">
@@ -465,7 +598,7 @@ function ManageMessages({
               <p className="text-sm text-muted">No templates yet. Add one below.</p>
             )}
             {templates.map((t) => (
-              <div key={t.id} className="rounded-lg border border-line bg-base/40 p-3">
+              <div key={t.id} className="rounded-[10px] border border-[var(--hair)] p-3 [background:var(--s2)]">
                 <div className="flex items-start justify-between gap-2">
                   <p className="min-w-0 truncate text-sm font-semibold text-ink">
                     {t.title}
@@ -474,7 +607,7 @@ function ManageMessages({
                     type="button"
                     onClick={() => remove(t.id)}
                     aria-label={`Delete template ${t.title}`}
-                    className="shrink-0 rounded-lg px-2 py-0.5 text-xs font-semibold text-muted transition hover:text-red-500"
+                    className="shrink-0 rounded-lg px-2 py-0.5 text-xs font-semibold text-muted transition-colors hover:text-[#f87171]"
                   >
                     Delete
                   </button>
@@ -486,7 +619,7 @@ function ManageMessages({
             ))}
           </div>
 
-          <div className="space-y-3 border-t border-line pt-4">
+          <div className="space-y-3 border-t border-[#1f1b27] pt-4">
             <Field label="Title">
               <input
                 className="ff-input w-full"
@@ -508,455 +641,12 @@ function ManageMessages({
               type="button"
               onClick={add}
               disabled={saving || !title.trim() || !body.trim()}
-              className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
+              className="btn-brand min-h-10 rounded-[10px] px-4 text-sm font-bold disabled:opacity-50"
             >
               {saving ? "Saving…" : "Add template"}
             </button>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function AccountCard({
-  account,
-  origin,
-  campaigns,
-  wheels,
-  templates,
-  onTopUp,
-  onOpen,
-  onDeleted,
-  refresh,
-}: {
-  account: FanAccountSummary;
-  origin: string;
-  campaigns: { id: string; name: string }[];
-  wheels: { id: string; title: string }[];
-  templates: DmTemplate[];
-  onTopUp: (
-    fanId: string,
-    addSpins: number,
-    amountDollars?: number,
-    campaignId?: string,
-    packId?: string | null,
-    wheelId?: string
-  ) => void;
-  onOpen: (fanId: string) => void;
-  onDeleted: () => void;
-  refresh: () => void;
-}) {
-  // Which wheel the top-up targets (per-wheel spins). Default to the fan's
-  // first existing wheel-pass, else the first wheel.
-  const [topUpWheelId, setTopUpWheelId] = useState<string>(
-    account.passes[0]?.wheelId ?? wheels[0]?.id ?? ""
-  );
-  const [topUp, setTopUp] = useState(3);
-  const [toppingUp, setToppingUp] = useState(false);
-  // Per-spin price as its own state (see FansPanel) so typing two digits works.
-  const [perSpin, setPerSpin] = useState<string>("");
-  const amount = perSpin && topUp > 0 ? (Number(perSpin) * topUp).toFixed(2) : "";
-  // Default the top-up to a campaign this fan already belongs to, so revenue
-  // doesn't silently fall into "untracked" (a top-up = more spins on a wheel).
-  const [campaignId, setCampaignId] = useState<string>(() => {
-    const match = campaigns.find((c) => account.campaignNames.includes(c.name));
-    return match?.id ?? "";
-  });
-  // The pack a preset filled in, if any. Sent to the server which resolves it
-  // authoritatively; cleared on any manual override so we don't mis-attribute.
-  const [packId, setPackId] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [savingTags, setSavingTags] = useState(false);
-  const toast = useToast();
-
-  // Surface only the primary link by default; the rest are revealed on demand.
-  const primaryToken = account.primaryToken ?? account.links[0]?.token ?? null;
-  const primaryUrl = primaryToken ? `${origin}/spin/${primaryToken}` : null;
-
-  // Persist a new tag set, then refresh the list so chips/filters stay in sync.
-  async function saveTags(next: string[]) {
-    setSavingTags(true);
-    try {
-      const res = await fetch("/api/fans/" + account.fanId, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: next }),
-      });
-      if (res.ok) refresh();
-      else toast("Couldn't save tags.", { tone: "error" });
-    } catch {
-      toast("Couldn't save tags.", { tone: "error" });
-    } finally {
-      setSavingTags(false);
-    }
-  }
-
-  // Fill {link} with the fan's full spin URL and copy the message.
-  async function copyDm(template: DmTemplate) {
-    if (!primaryUrl) {
-      toast("No link to insert yet.", { tone: "error" });
-      return;
-    }
-    const text = template.body.split("{link}").join(primaryUrl);
-    if (await copyToClipboard(text)) {
-      toast("DM copied", { tone: "success" });
-    } else {
-      toast("Couldn't copy DM.", { tone: "error" });
-    }
-  }
-
-  async function handleDelete() {
-    setDeleting(true);
-    try {
-      const res = await fetch("/api/fans/" + account.fanId, { method: "DELETE" });
-      if (res.ok) {
-        toast("Fan deleted", { tone: "success" });
-        onDeleted();
-      } else {
-        toast("Couldn't delete fan. Are you signed in?", { tone: "error" });
-        setConfirmDelete(false);
-      }
-    } catch {
-      toast("Couldn't delete fan. Are you signed in?", { tone: "error" });
-      setConfirmDelete(false);
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-
-  return (
-    <div className="card rounded-xl p-4">
-      <div className="flex items-start justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => onOpen(account.fanId)}
-          aria-label={"View " + account.name}
-          className="min-w-0 flex-1 rounded-lg text-left transition hover:opacity-80"
-        >
-          <p className="truncate font-bold text-ink">{account.name}</p>
-          <p className="text-xs text-muted">
-            <span className="tnum font-semibold text-ink">{account.spinsRemaining}</span> spins left
-            · {account.grantedTotal} granted · {account.links.length} link
-            {account.links.length === 1 ? "" : "s"}
-            {account.lastWin && (
-              <>
-                {" "}
-                · last won{" "}
-                <span style={{ color: RARITY_COLORS[account.lastWin.rarity] }}>
-                  {account.lastWin.label}
-                </span>
-              </>
-            )}
-          </p>
-        </button>
-
-        {confirmDelete ? (
-          <div className="flex shrink-0 items-center gap-1.5 text-xs">
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={deleting}
-              aria-label={"Confirm delete " + account.name}
-              className="rounded-full border border-red-500/60 px-3 py-1 font-bold text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
-            >
-              {deleting ? "Deleting…" : "Delete?"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(false)}
-              disabled={deleting}
-              aria-label="Cancel delete"
-              className="rounded-full border border-line px-3 py-1 font-semibold text-muted transition hover:text-ink disabled:opacity-50"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            aria-label={"Delete " + account.name}
-            className="shrink-0 rounded-full border border-line px-3 py-1 text-xs font-semibold text-muted transition hover:border-red-500/60 hover:text-red-500"
-          >
-            Delete
-          </button>
-        )}
-      </div>
-
-      {/* Spend + campaign chips */}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-        <span className="text-muted">
-          <span className="tnum font-semibold text-ink">{formatCents(account.totalSpent)}</span> spent
-        </span>
-        {account.campaignNames.map((c) => (
-          <span
-            key={c}
-            className="rounded-full border border-line px-2 py-0.5 font-semibold text-muted"
-          >
-            {c}
-          </span>
-        ))}
-      </div>
-
-      {/* Tags: chips + quick editor (presets + free-text). */}
-      <div className="mt-3">
-        <TagEditor tags={account.tags} onChange={saveTags} disabled={savingTags} compact />
-      </div>
-
-      {/* Share actions: QR for the primary link + copy a DM from a template. */}
-      {primaryUrl && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <QrButton url={primaryUrl} label={`${account.name} spin link`} />
-          <CopyDmMenu templates={templates} onPick={copyDm} />
-        </div>
-      )}
-
-      {/* Top-up row: spins + optional $ + optional campaign tag. Align to the
-          top so the "$X total" helper under $/spin doesn't shove Spins down. */}
-      <div className="mt-3 flex flex-wrap items-start gap-2">
-        <Field label="Spins">
-          <input
-            type="number"
-            min={1}
-            className="ff-input tnum w-16 text-right"
-            value={topUp}
-            onChange={(e) => {
-              setTopUp(Math.max(1, Number(e.target.value)));
-              setPackId(null);
-            }}
-          />
-        </Field>
-        <Field label="$ per spin">
-          <input
-            type="number"
-            min={0}
-            step={0.01}
-            className="ff-input tnum w-24"
-            placeholder="0.00"
-            value={perSpin}
-            onChange={(e) => {
-              setPerSpin(e.target.value);
-              setPackId(null);
-            }}
-          />
-          {amount && Number(amount) > 0 && topUp > 0 && (
-            <p className="mt-1 text-[11px] text-muted">
-              {formatCents(Math.round(Number(amount) * 100))} total
-            </p>
-          )}
-        </Field>
-        <Field label="Wheel">
-          <select
-            className="ff-input w-40"
-            value={topUpWheelId}
-            onChange={(e) => setTopUpWheelId(e.target.value)}
-          >
-            {wheels.length === 0 && <option value="">Active wheel</option>}
-            {wheels.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Campaign">
-          <select
-            className="ff-input w-40"
-            value={campaignId}
-            onChange={(e) => {
-              setCampaignId(e.target.value);
-              setPackId(null);
-            }}
-          >
-            <option value="">No campaign (untracked)</option>
-            {campaigns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <button
-          disabled={toppingUp}
-          onClick={async () => {
-            if (toppingUp) return; // in-flight guard: a double-click must not double-grant spins/spend
-            setToppingUp(true);
-            try {
-              await onTopUp(
-                account.fanId,
-                topUp,
-                amount ? Number(amount) || undefined : undefined,
-                campaignId || undefined,
-                packId,
-                topUpWheelId || undefined
-              );
-              setPerSpin("");
-              setPackId(null);
-            } finally {
-              setToppingUp(false);
-            }
-          }}
-          className="mt-5 rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] disabled:opacity-50"
-        >
-          {toppingUp ? "Topping up…" : "Top up"}
-        </button>
-      </div>
-      {campaignId && (
-        <div className="mt-3">
-          <PackPresets
-            campaignId={campaignId}
-            onPick={(p: CampaignPack) => {
-              setTopUp(p.spins);
-              setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
-              setPackId(p.id);
-            }}
-          />
-        </div>
-      )}
-
-      {/* Per-wheel links: each wheel the fan plays has its OWN link + spin
-          balance, so a Spooky top-up and a Summer top-up are separate. */}
-      {account.passes.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          {account.passes.map((p) => (
-            <div key={p.token} className="rounded-lg border border-line bg-base/40 p-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold text-ink">
-                  🎡 {p.wheelTitle}
-                </span>
-                <span className="tnum shrink-0 text-xs font-bold text-[var(--brand)]">
-                  {p.spinsRemaining} spins
-                </span>
-              </div>
-              {p.campaignName && (
-                <span className="mt-0.5 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-muted">
-                  {p.campaignName}
-                </span>
-              )}
-              <div className="mt-2">
-                <LinkRow url={`${origin}/spin/${p.token}`} latest={false} />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        primaryToken && (
-          <div className="mt-3">
-            <LinkRow url={`${origin}/spin/${primaryToken}`} latest />
-          </div>
-        )
-      )}
-    </div>
-  );
-}
-
-// A small dropdown of saved DM templates. Picking one fills {link} and copies.
-function CopyDmMenu({
-  templates,
-  onPick,
-}: {
-  templates: DmTemplate[];
-  onPick: (t: DmTemplate) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const menuId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  return (
-    <div ref={wrapRef} className="relative inline-block">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        aria-haspopup="menu"
-        className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
-      >
-        Copy DM
-      </button>
-      {open && (
-        <div
-          id={menuId}
-          role="menu"
-          className="absolute left-0 z-30 mt-2 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-2xl"
-        >
-          {templates.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted">
-              No templates yet. Add one in &ldquo;Manage messages&rdquo;.
-            </p>
-          ) : (
-            templates.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onPick(t);
-                  setOpen(false);
-                }}
-                className="block w-full px-3 py-2 text-left transition hover:bg-white/5"
-              >
-                <span className="block truncate text-sm font-semibold text-ink">
-                  {t.title}
-                </span>
-                <span className="block truncate text-xs text-muted">{t.body}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LinkRow({ url, latest }: { url: string; latest: boolean }) {
-  const { copy, copied } = useClipboard();
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-base/40 p-2.5">
-      <p className="min-w-0 flex-1 truncate text-xs text-muted">
-        {url}
-        {latest && (
-          <span className="ml-2 rounded bg-[color-mix(in_oklab,var(--brand)_20%,transparent)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--brand)]">
-            NEWEST
-          </span>
-        )}
-      </p>
-      <div className="flex shrink-0 items-center gap-2">
-        <button
-          onClick={() => void copy(url)}
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
-        >
-          Open
-        </a>
       </div>
     </div>
   );
