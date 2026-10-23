@@ -277,24 +277,6 @@ export default function DashboardClient({
       )}
       </div>
 
-      {pending > 0 && tab !== "prizes" && (
-        <button
-          onClick={() => setTab("prizes")}
-          className="mb-6 flex w-full items-center gap-3 rounded-xl border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] px-4 py-3 text-left transition hover:bg-[color-mix(in_oklab,var(--brand)_18%,transparent)]"
-        >
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--brand)] text-sm font-bold text-[var(--brand-ink)] tnum">
-            {pending}
-          </span>
-          <span className="text-sm text-ink">
-            {pending === 1 ? "1 prize is" : `${pending} prizes are`} waiting to be
-            fulfilled
-          </span>
-          <span className="ml-auto text-sm font-semibold text-brand">
-            Open →
-          </span>
-        </button>
-      )}
-
       <div
         ref={panelRef}
         className="scroll-mt-24"
@@ -302,7 +284,9 @@ export default function DashboardClient({
         role="region"
         aria-label={title}
       >
-        {tab === "today" && <TodayPanel onNavigate={(t) => setTab(t as Tab)} />}
+        {tab === "today" && (
+          <TodayPanel onNavigate={(t) => setTab(t as Tab)} overview={overview.data} />
+        )}
         {tab === "prizes" && (
           <PrizesPanel
             data={overview.data}

@@ -66,7 +66,7 @@ export default function GetStartedChecklist({
   if (dismissed || allDone) return null;
 
   return (
-    <div className="card mt-5 rounded-2xl border-[var(--brand)]/30 p-5">
+    <div className="card mb-6 rounded-2xl border-[var(--brand)]/30 p-5">
       <div className="flex items-center justify-between">
         <h2 className="font-bold text-ink">🚀 Get started</h2>
         <span className="text-sm text-muted tnum">{doneCount} of {steps.length}</span>
