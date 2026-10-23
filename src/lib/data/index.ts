@@ -795,12 +795,14 @@ export async function spin(
 
 /**
  * Credit `n` spins to a fan's OLDEST active pass (their original link, the same
- * convention as the `credit_pass_spins` RPC and the mock), then resync the fan
- * aggregate to the sum of its active passes. Runs on the creator's RLS-scoped
- * session: `credit_pass_spins` is service-role only since 0027, so calling it
- * from this client was denied and the bonus silently never landed. The update
- * is a compare-and-swap on the balance just read, so a concurrent spin's
- * decrement is retried rather than overwritten. Returns whether it credited.
+ * convention as the `credit_pass_spins` RPC and the mock). Runs on the creator's
+ * RLS-scoped session: `credit_pass_spins` is service-role only since 0027, so
+ * calling it from this client was denied and the bonus silently never landed.
+ * The update is a compare-and-swap on the balance just read, so a concurrent
+ * spin's decrement is retried rather than overwritten. The fan aggregate is not
+ * written here: the 0035 trg_sync_fan_spin_aggregate trigger recomputes it in
+ * the same statement, and a separate read-sum-write would race concurrent spins.
+ * Returns whether it credited.
  */
 async function creditOldestActivePass(
   sb: Awaited<ReturnType<typeof createClient>>,
@@ -834,25 +836,8 @@ async function creditOldestActivePass(
       .eq("spins_granted_total", o.spins_granted_total)
       .select("id")
       .maybeSingle();
-    if (error) return false;
-    if (!updated) continue; // balance moved under us; re-read and retry
-
-    // Keep fans.spins_remaining == SUM(active passes). The 0035 trigger does this
-    // too; recomputing (not adding a delta) is correct with or without it.
-    const { data: passes } = await sb
-      .from("fan_passes")
-      .select("spins_remaining, spins_granted_total")
-      .eq("fan_id", fanId)
-      .eq("creator_id", creatorId)
-      .eq("is_active", true);
-    const rows = (passes ?? []) as { spins_remaining: number; spins_granted_total: number }[];
-    await sb
-      .from("fans")
-      .update({
-        spins_remaining: rows.reduce((s, p) => s + p.spins_remaining, 0),
-        spins_granted_total: rows.reduce((s, p) => s + p.spins_granted_total, 0),
-      })
-      .eq("id", fanId);
+    // Transient error or the balance moved under us: re-read and retry.
+    if (error || !updated) continue;
     return true;
   }
   return false;
