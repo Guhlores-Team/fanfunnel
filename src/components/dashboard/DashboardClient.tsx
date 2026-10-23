@@ -183,6 +183,7 @@ export default function DashboardClient({
   // Onboarding CTAs: switch to the relevant tab AND scroll its panel into view,
   // so a creator on a phone is actually taken to the section to act on it.
   const panelRef = useRef<HTMLDivElement>(null);
+  const checklistRef = useRef<HTMLDivElement>(null);
   const goToSection = (t: Tab) => {
     goTab(t);
     requestAnimationFrame(() => {
@@ -233,7 +234,13 @@ export default function DashboardClient({
             <SetupChecklistButton
               onClick={() => {
                 setOnboardingHidden(false);
-                goToSection(tab);
+                // The checklist renders above the panel, so bring it (not the panel) into view.
+                requestAnimationFrame(() => {
+                  checklistRef.current?.scrollIntoView({
+                    behavior: prefersReducedMotion() ? "auto" : "smooth",
+                    block: "start",
+                  });
+                });
               }}
             />
           ) : null
@@ -257,6 +264,7 @@ export default function DashboardClient({
         <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
       {email && <InvitesBanner />}
 
+      <div ref={checklistRef} className="scroll-mt-24">
       {!overview.loading && (
         <GetStartedChecklist
           wheelSaved={wheelSaved}
@@ -267,6 +275,7 @@ export default function DashboardClient({
           onGoTo={(t) => goToSection(t as Tab)}
         />
       )}
+      </div>
 
       {pending > 0 && tab !== "prizes" && (
         <button
