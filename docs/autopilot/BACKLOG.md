@@ -21,6 +21,10 @@ Status: `[ ]` open · `[~]` PR open (link it) · `[x]` merged/verified (cite PR 
 Spec: `docs/design/command-center/` · parity: `docs/design/command-center/PARITY_MAP.md`.
 Every current feature, edit control, animation, and bug fix must land in its
 mapped spot (owner requirement). Each phase = one PR, reviewed on Preview before the next.
+Port the prototype's **markup**, keep the app's **logic** (the prototype's wheel/odds/balance
+code would bring back fixed bugs). 78 parity rows are `needs placement`: propose a home in
+the phase's PR and get owner sign-off; never drop one silently. The e2e `[role=tab]` /
+`clickTab` helpers break in RD-2, so update them in that PR (that's not weakening the tests).
 - [ ] **RD-1** Phase 1 tokens + `readableInk()` contrast fix: port `dashboard-redesign` onto current `main` (only conflict: keep `main`'s `supabase-migrations.yml`). `human` approval to bring that branch in.
 - [ ] **RD-2** Phase 2 shell: sidebar + top bar in `DashboardClient.tsx`, keeping tablist keyboard a11y semantics. `after:RD-1`
 - [ ] **RD-3** Phase 3 Today: pulse strip + "Needs you now". `after:RD-2`

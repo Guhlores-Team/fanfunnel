@@ -43,9 +43,17 @@ your Claude Code permission settings, or just approve each time.
       QR scan, real sign-up email, webhook to a real endpoint.
 
 ## 4. Decisions (the autopilot will skip these until you decide)
-- [ ] **4a. Redesign behavior spec** (`docs/design/command-center/README.md` → "Mocked"):
-      notifications in-app only or web-push too? Realtime subscriptions or optimistic
-      updates? Confirm the onboarding/pack-quantity/stock→odds behavior.
+- [ ] **4a. Redesign gaps.** The [parity map](../design/command-center/PARITY_MAP.md) found **78
+      current features the design doesn't show** (about half of Analytics: funnel, CRM, heatmap,
+      ROI, cohorts; wheel archive/schedule/duplicate; label color/size; fulfilment cancel/notes;
+      fan QR + campaign picker; webhooks; admin roles/flags; the agency link). Each needs a home,
+      or your explicit OK to drop it. The autopilot will propose placements in each phase PR for
+      you to approve. Skim §2 when convenient.
+- [ ] **4a-2. Notifications.** Of the design's "mocked" behaviors, only notifications/web-push
+      is genuinely new work (the rest already exists). In-app only, or web-push too?
+- [ ] **4a-3. Safety steps the design simplifies.** Keep the current friction: password to
+      change email, typed email to delete an account, typed RESET to clear data, Unblock after
+      Block. Recommended: keep all four.
 - [ ] **4b. Upstash Redis for rate limiting** (shared limits across Vercel instances). It costs
       money; the code already supports it via env vars.
 - [ ] **4c. Terms + Privacy pages.** The fan age gate makes fans agree to Terms that don't exist.

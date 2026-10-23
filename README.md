@@ -24,7 +24,7 @@ React 19 · Tailwind v4 · Supabase (Postgres + Auth + RLS) · Vercel
 | | |
 |---|---|
 | **Production** | Live on `main`. Last shipped 2026-07-02 (security audit + wheel-label fixes); CI green. |
-| **In progress** | **Creator Command Center redesign** — sidebar + top-bar dashboard replacing the 8-tab layout. Design handoff: [`docs/design/command-center/`](docs/design/command-center/). Phase 1 (tokens + contrast fix) exists on `dashboard-redesign`; phases 2–8 not started. |
+| **In progress** | **Creator Command Center redesign** — sidebar + top-bar dashboard replacing the 9-tab layout. Design handoff: [`docs/design/command-center/`](docs/design/command-center/). Phase 1 (tokens + contrast fix) exists on `dashboard-redesign`; phases 2–8 not started. |
 | **Before the next prod release** | Live smoke test on prod (see [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)); as of 2026-06-30 the test DB had no admin user. |
 
 ## How it works
