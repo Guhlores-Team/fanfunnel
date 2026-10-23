@@ -15,31 +15,31 @@ export default function Funnel({ funnel }: { funnel: ConversionFunnel }) {
   ];
 
   return (
-    <div className="space-y-2.5">
+    <ol className="flex flex-col gap-3">
       {stages.map((s) => {
         const widthPct = Math.round((s.count / max) * 100);
         const convPct =
           s.prev && s.prev > 0 ? Math.round((s.count / s.prev) * 100) : null;
         return (
-          <div key={s.label}>
-            <div className="flex items-baseline justify-between text-xs">
+          <li key={s.label}>
+            <div className="flex items-baseline justify-between gap-3 text-[13px]">
               <span className="font-medium text-ink">{s.label}</span>
               <span className="text-muted">
                 <span className="tnum font-semibold text-ink">{s.count}</span>
                 {convPct !== null && (
-                  <span className="ml-1.5 text-[10px]">({convPct}%)</span>
+                  <span className="tnum ml-1.5 text-[11px]">({convPct}%)</span>
                 )}
               </span>
             </div>
-            <div className="mt-1 h-2 rounded-full bg-white/5">
+            <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
               <div
-                className="h-2 rounded-full bg-[var(--brand)]"
+                className="h-full rounded-full bg-[var(--brand)]"
                 style={{ width: `${widthPct}%` }}
               />
             </div>
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }

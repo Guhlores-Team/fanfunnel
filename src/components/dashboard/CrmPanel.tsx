@@ -1,10 +1,12 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { formatCents } from "@/lib/format";
 import { useToast } from "@/components/ui/Toast";
 import { useFetch } from "@/lib/hooks/useFetch";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
+import { CardHeader, Glyph, ICON, LoadError, StatCell, hairGrid, raised } from "./analyticsUi";
 
 interface CrmFan {
   fanId: string;
@@ -26,13 +28,18 @@ interface CreatorCrm {
  * Fan intelligence: lifetime value, your top spenders (whales) to nurture, and
  * fans who spent before but went quiet (win-back worklist). One tap copies that
  * fan's spin link so you can drop it in a DM.
+ *
+ * Renders as a 2-column card grid (single column on phones); `leading` takes
+ * the first slot so the Audience group reads Conversion | LTV, Whales | Win-back.
  */
-export default function CrmPanel() {
+export default function CrmPanel({ leading }: { leading?: ReactNode }) {
   const toast = useToast();
   const origin = useOrigin();
-  // A failed read leaves `crm` null and the panel renders its empty sections —
-  // same as before, but the error is owned by the hook, not silently swallowed.
-  const { data: crm } = useFetch<CreatorCrm>("/api/crm", { refreshOnVisible: false });
+  // A failed read leaves `crm` null; the hook owns the error and the cards
+  // show fixed retry copy instead of a misleading "no fans" empty state.
+  const { data: crm, error, reload } = useFetch<CreatorCrm>("/api/crm", { refreshOnVisible: false });
+  const failed = !!error && !crm;
+  const retry = () => void reload();
 
   const copyLink = async (token: string | null) => {
     if (!token) {
@@ -47,32 +54,47 @@ export default function CrmPanel() {
   };
 
   return (
-    <div className="space-y-8">
-      <section>
-        <h3 className="text-sm font-bold text-ink">Lifetime value</h3>
-        <p className="mt-0.5 text-xs text-muted">
-          Total and average spend across fans who&rsquo;ve paid.
-        </p>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <Stat label="Total LTV" value={formatCents(crm?.totalLtv ?? 0)} />
-          <Stat label="Avg LTV / fan" value={formatCents(crm?.avgLtv ?? 0)} />
+    <div className="grid gap-[18px] lg:grid-cols-2">
+      {leading}
+
+      <section className={`rounded-2xl p-5 ${raised}`}>
+        <CardHeader
+          icon={ICON.dollar}
+          title="Lifetime value"
+          hint={<>Total and average spend across fans who&rsquo;ve paid.</>}
+        />
+        <div className="mt-4">
+          {failed ? (
+            <LoadError what="lifetime value" onRetry={retry} />
+          ) : (
+            <dl className={`${hairGrid} grid-cols-2`}>
+              <StatCell label="Total LTV" value={formatCents(crm?.totalLtv ?? 0)} />
+              <StatCell label="Avg LTV / fan" value={formatCents(crm?.avgLtv ?? 0)} />
+            </dl>
+          )}
         </div>
       </section>
 
       <FanList
-        title="🐳 Whales — your top spenders"
+        icon={ICON.crown}
+        title="Whales — your top spenders"
         hint="Nurture these relationships: VIP perks, personal attention, first dibs on rare drops."
         fans={crm?.whales ?? []}
         empty="No paid fans yet."
         onCopy={copyLink}
+        failed={failed}
+        onRetry={retry}
       />
 
       <FanList
-        title="💤 Win-back — spent before, quiet 14+ days"
+        icon={ICON.moon}
+        title="Win-back — spent before, quiet 14+ days"
         hint="The cheapest revenue is a fan you already converted. Send them a fresh link."
         fans={crm?.dormant ?? []}
         empty="No dormant spenders — nice."
         onCopy={copyLink}
+        failed={failed}
+        onRetry={retry}
         showDays
       />
     </div>
@@ -80,44 +102,51 @@ export default function CrmPanel() {
 }
 
 function FanList({
+  icon,
   title,
   hint,
   fans,
   empty,
   onCopy,
+  failed,
+  onRetry,
   showDays,
 }: {
+  icon: string;
   title: string;
   hint: string;
   fans: CrmFan[];
   empty: string;
   onCopy: (token: string | null) => void;
+  failed: boolean;
+  onRetry: () => void;
   showDays?: boolean;
 }) {
   return (
-    <section>
-      <h3 className="text-sm font-bold text-ink">{title}</h3>
-      <p className="mt-0.5 text-xs text-muted">{hint}</p>
-      {fans.length === 0 ? (
-        <p className="mt-3 text-sm text-muted">{empty}</p>
+    <section className={`rounded-2xl p-5 ${raised}`}>
+      <CardHeader icon={icon} title={title} hint={hint} />
+      {failed ? (
+        <div className="mt-4">
+          <LoadError what="this list" onRetry={onRetry} />
+        </div>
+      ) : fans.length === 0 ? (
+        <p className="mt-4 text-sm text-muted">{empty}</p>
       ) : (
-        <ul className="mt-3 space-y-1.5">
+        <ul className="mt-4 divide-y divide-[var(--hair)] overflow-hidden rounded-xl border border-[var(--hair)] [background:var(--s2)]">
           {fans.map((f) => (
-            <li
-              key={f.fanId}
-              className="flex items-center gap-3 rounded-lg border border-line px-3 py-2 text-sm"
-            >
+            <li key={f.fanId} className="flex items-center gap-3 px-3 py-2.5 text-sm">
               <span className="min-w-0 flex-1 truncate text-ink">{f.name}</span>
               {showDays && f.daysSince !== null && (
-                <span className="shrink-0 text-xs text-muted">{f.daysSince}d quiet</span>
+                <span className="tnum shrink-0 text-xs text-muted">{f.daysSince}d quiet</span>
               )}
-              <span className="tnum shrink-0 font-bold text-ink">
-                {formatCents(f.totalSpent)}
-              </span>
+              <span className="tnum shrink-0 font-bold text-ink">{formatCents(f.totalSpent)}</span>
               <button
+                type="button"
                 onClick={() => onCopy(f.primaryToken)}
-                className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:border-[var(--brand)]"
+                aria-label={`Copy link for ${f.name}`}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand)]"
               >
+                <Glyph d={ICON.link} size={13} className="text-muted" />
                 Copy link
               </button>
             </li>
@@ -125,14 +154,5 @@ function FanList({
         </ul>
       )}
     </section>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-line px-3 py-2.5 text-center">
-      <p className="tnum text-xl font-extrabold text-ink">{value}</p>
-      <p className="text-[11px] text-muted">{label}</p>
-    </div>
   );
 }

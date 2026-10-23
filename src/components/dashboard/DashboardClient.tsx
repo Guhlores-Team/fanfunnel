@@ -264,17 +264,16 @@ export default function DashboardClient({
         )}
         {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
         {tab === "analytics" && (
-          /* One consolidated view: live performance (pulse, trends, funnel,
-             prize mix) up top, strategic insights (CRM, heatmap, profit,
-             cohorts) below — was two separate Metrics/Analytics tabs. */
-          <div className="space-y-10">
-            <MetricsPanel
-              overview={overview.data}
-              loading={overview.loading}
-              onGoTo={setTab}
-            />
-            <AnalyticsPanel />
-          </div>
+          /* One consolidated view: the Command Center's designed cards (stat
+             strip, trends, what's landing, rarity mix) up top, then profit &
+             prize costs, Audience (conversion, CRM, cohorts) and Timing
+             (heatmap) below. MetricsPanel hands its polled funnel down. */
+          <MetricsPanel
+            overview={overview.data}
+            loading={overview.loading}
+            onGoTo={setTab}
+            renderDeep={(conversion) => <AnalyticsPanel conversion={conversion} />}
+          />
         )}
         {tab === "editor" && (
           <WheelEditor

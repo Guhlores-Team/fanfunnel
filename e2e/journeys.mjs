@@ -94,6 +94,23 @@ export async function creatorJourney(page, { step, assert }) {
     const deep = /heatmap|cohort|profit|prize cost/i.test(body);
     assert(pulse, "analytics shows performance metrics");
     assert(deep, "analytics shows deep analytics (CRM/heatmap/profit/cohorts)");
+
+    // The loose checks above pass on "Prize cost" alone, so they'd miss whole
+    // sections being dropped. Each section must render its own heading.
+    const sections = [
+      ["conversion funnel", /^conversion$/i],
+      ["CRM lifetime value", /^lifetime value$/i],
+      ["CRM whales", /^whales/i],
+      ["CRM win-back", /^win-back/i],
+      ["best-time heatmap", /^best-time heatmap$/i],
+      ["cohort retention", /^cohort retention$/i],
+      ["profit & prize costs", /^profit & prize costs/i],
+    ];
+    for (const [what, name] of sections) {
+      const heading = page.getByRole("heading", { name });
+      await heading.first().waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+      assert((await heading.count()) > 0, `analytics renders the ${what} section (heading)`);
+    }
   });
 
   await step("boosts: leaderboard toggle succeeds (no error toast)", async () => {
