@@ -1,84 +1,86 @@
 # 🎡 FanFunnel
 
+[![CI](https://github.com/Guhlores-Team/fanfunnel/actions/workflows/ci.yml/badge.svg)](https://github.com/Guhlores-Team/fanfunnel/actions/workflows/ci.yml)
+[![E2E (real Supabase)](https://github.com/Guhlores-Team/fanfunnel/actions/workflows/e2e-supabase.yml/badge.svg)](https://github.com/Guhlores-Team/fanfunnel/actions/workflows/e2e-supabase.yml)
+
 Personalized prize-wheel games for creators. A creator sends each fan a
 **unique link**; the fan spins and **always wins something** — but the rare
-drops are what keep them coming back. Built to run on a creator's OnlyFans
-audience (link-in-DM), with the wheel being game #1 of a planned suite
-(scratch tickets, bingo, …).
+drops are what keep them coming back. Built for a creator's existing audience
+(link-in-DM), with the wheel as game #1 of a planned suite (scratch tickets,
+bingo, …).
 
 > **No gambling, no payment processing in-app.** Fans tip the creator on their
 > existing platform; the creator grants spins. Every spin yields a guaranteed
 > reward, which keeps this out of lottery/gambling regulation and away from
 > payment-processor bans.
 
+**Live:** <https://fanfunnel.vercel.app> · **Stack:** Next.js 16 (App Router) ·
+React 19 · Tailwind v4 · Supabase (Postgres + Auth + RLS) · Vercel
+
 ---
+
+## Where things stand
+
+| | |
+|---|---|
+| **Production** | Live on `main`. Last shipped 2026-07-02 (security audit + wheel-label fixes); CI green. |
+| **In progress** | **Creator Command Center redesign** — sidebar + top-bar dashboard replacing the 8-tab layout. Design handoff: [`docs/design/command-center/`](docs/design/command-center/). Phase 1 (tokens + contrast fix) exists on `dashboard-redesign`; phases 2–8 not started. |
+| **Before the next prod release** | Live smoke test on prod (see [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)); as of 2026-06-30 the test DB had no admin user. |
 
 ## How it works
 
 | Role | What they do | What they see |
 | --- | --- | --- |
-| **Admin** (you) | Manage every account, grant features, see all metrics. Also a full creator. | Everything |
-| **Creator** (your clients) | Build wheels, set prizes + rarity + stock, create fan links, grant spins, track redemptions. | Their own workspace |
-| **Fan** | Open their link, spin, claim prizes. **No account, no login, no settings.** | Only their own spins + win history |
+| **Admin** | Manage every account, grant features, see all metrics. Also a full creator. | Everything |
+| **Creator** | Build wheels, set prizes + rarity + stock, mint fan links, grant spins, fulfil wins, chat with fans. | Their own workspace |
+| **Fan** | Open their link, spin, claim prizes. **No account, no login.** | Only their own spins + wins |
 
-The fan's link *is* their whole world — a token-based personal "spins page".
-The creator creates it and holds all the power and visibility.
-
-### The core safety rule
-**Spin outcomes are decided on the server**, weighted by each prize's rarity
-and limited stock. The browser only animates the wheel to the result the
-server already chose — so a fan can't rig a win with dev tools.
+**Spin outcomes are decided on the server**, weighted by rarity and limited
+stock, and are provably fair (commit-reveal; fans can verify at `/verify/…`).
+The browser only animates the wheel to the result the server already chose.
 
 ---
 
 ## Quick start (zero config)
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000>:
-- **/** — landing page
-- **/spin/demo** — a fully working demo wheel (try it!)
-- **/dashboard** — the creator dashboard (wheel editor, fan links, metrics)
+Open <http://localhost:3000> — `/spin/demo` is a working demo wheel, `/dashboard`
+is the creator dashboard, `/admin` the admin panel. With no env vars set,
+everything runs against an in-memory store that re-seeds on restart; links you
+mint really spin.
 
-With no environment variables set, everything runs against an in-memory demo
-store. Links you generate in the dashboard really work and really spin.
+To run against a real database, copy `.env.example` → `.env.local` and point it
+at the **test** Supabase project (never prod).
 
----
+## Commands
 
-## Going live (Supabase + Vercel)
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dev server (mock mode unless `.env.local` is set) |
+| `npm run lint` · `npm run typecheck` | ESLint · `tsc --noEmit` |
+| `npm test` | Unit tests + **RLS security lint** + SQL-sync guard (13 files) |
+| `npm run build` | Production build |
+| `npm run e2e` · `npm run e2e:a11y` | Playwright creator/fan journeys · axe a11y (needs a running server; set `E2E_BASE_URL`) |
+| `npm run e2e:supabase` · `npm run e2e:spin` · `npm run e2e:login` | Real-Supabase RLS isolation · concurrent spin integrity · real `/login` (need test-DB env) |
+| `node scripts/security/rls-runtime-test.mjs` | Runtime proof a normal user can't self-promote or cross tenants (test DB) |
 
-1. **Create a Supabase project**, then in the SQL Editor run two files **in
-   order**: [`supabase/schema.sql`](supabase/schema.sql) (base tables, RLS, the
-   **hardened** `claim_spin`, the auth trigger) **then**
-   [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql) (every
-   migration on top). Both are idempotent, so together they always produce a
-   complete, current schema. ⚠ `schema.sql` alone omits the later migrations and
-   brings up a weaker DB.
-2. **Copy `.env.example` → `.env.local`** and fill in the URL, anon key, and
-   service-role key from Supabase → Project Settings → API. **All three are
-   required** — the app refuses to boot in production if any is missing (it will
-   not silently fall back to in-memory demo data).
-3. **Sign up** at `/login` (email + password). For the smoothest start, turn
-   OFF "Confirm email" under Supabase → Authentication → Providers → Email
-   (or leave it on and confirm via the emailed link).
-4. **Make yourself admin** (you're a creator + admin) once your row exists,
-   either by setting `ADMIN_EMAILS` (comma-separated allowlist) and using the
-   in-app admin-claim action, or directly in SQL:
-   ```sql
-   update public.profiles set role = 'admin' where email = 'you@example.com';
-   ```
-5. **Deploy to Vercel** and add the same env vars in the Vercel project
-   settings. Done. (Optional vars — `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE` — are
-   documented in [`DEPLOY.md`](DEPLOY.md).)
+## Shipping: test on Preview before prod
 
-### Auth & access
-- Creators/admins sign in at `/login`; middleware (`src/middleware.ts`)
-  refreshes sessions and guards `/dashboard`.
-- In demo mode (no env vars) auth is skipped and the dashboard is open.
-- Fans never authenticate — their secret link is their whole experience.
+```
+branch off main ──► PR ──► CI (verify · supabase · login-ui) + Vercel Preview on the TEST database
+                                   │
+                    click through it on the Preview URL
+                                   │
+                    merge to main ──► Vercel production + migrations applied to PROD
+```
+
+`main` is production — nothing reaches it without green CI **and** a verified
+Preview. Full wiring (env scoping, secrets, migrations, rollback):
+[`docs/DEPLOY.md`](docs/DEPLOY.md). Rules for coding agents: [`AGENTS.md`](AGENTS.md).
 
 ---
 
@@ -86,62 +88,50 @@ store. Links you generate in the dashboard really work and really spin.
 
 ```
 src/
-  lib/games/wheel/      Pure, framework-free wheel engine (weighted picks,
-                        stock, odds). Unit-tested — single source of truth.
-  lib/sound.ts          Procedural tick/win sounds + haptics (no audio files).
-  lib/data/             Data access. Transparently uses Supabase when
-                        configured, else an in-memory demo store.
-  lib/supabase/         Browser + server + service-role clients.
-  components/Wheel.tsx   Canvas wheel: animation, ticker peg, sound.
-  components/SpinClient  Fan-facing spin experience.
-  components/dashboard/  Creator dashboard (editor, links, metrics).
-  app/spin/[token]/      Fan page.
-  app/api/spin/          Server-authoritative spin endpoint.
-  app/api/passes/        Create a unique fan link.
-supabase/schema.sql      Base multi-tenant schema + RLS (run migrations_combined.sql after).
+  app/                    App Router
+    spin/[token]/         Fan spin page (the fan's whole world)
+    c/[slug]/ share/ verify/ leaderboard/   Public creator page, share cards, fairness proof, leaderboard
+    dashboard/ admin/ agency/ pending/      Creator dashboard, admin panel, agency view, approval gate
+    login/ forgot-password/ reset-password/ auth/   Auth flows
+    api/                  ~77 route handlers (spin, wheels, passes, fans, messages, admin, account…)
+  proxy.ts                Session refresh + /dashboard guard (Next 16's renamed middleware)
+  components/             Wheel.tsx (canvas), SpinClient (fan UX), dashboard/* panels, ui/ primitives
+  lib/
+    games/wheel/          Framework-free wheel engine + provably-fair (heavily unit-tested)
+    data/                 Data access — Supabase when configured, in-memory mock otherwise
+    supabase/             Browser / server / service-role clients (service key is server-only)
+    api/  hooks/  security/  rateLimit.ts  theme.ts  sound.ts
+supabase/
+  migrations/             0001–0038, auto-applied by CI (test on PR, prod on merge)
+  schema.sql              Base schema + RLS (fresh projects: run this, then migrations_combined.sql)
+  migrations_combined.sql Every migration, idempotent
+  reset.sql               Wipe app data, keep tables + logins
 ```
 
-### Why config-driven
-Each wheel is just data (`WheelConfig`: prizes, weights, colors, stock). The
-same engine powers the hosted app today and can power future games and exports
-tomorrow without rewrites.
+Security model: every table has RLS; roles live in `profiles` and are read via
+SECURITY DEFINER `is_admin()` / `can_act_for()`; the service-role key never
+reaches the browser. Details: [`SECURITY.md`](SECURITY.md) ·
+[`docs/SUPABASE_AUTH_CONTRACT.md`](docs/SUPABASE_AUTH_CONTRACT.md).
 
-## Admin panel
+## Docs
 
-Visit `/admin` (admin role required in production; open in demo mode). From
-there you can:
-- See cross-account metrics (accounts, total fans, spins, prizes pending)
-- Suspend / reactivate any creator account
-- Promote a creator to admin (or back)
-- Toggle per-account feature flags (Prize Wheel is the base; Scratch / Bingo
-  unlock as we ship them)
-- Create a new creator account directly — you set their login and hand it over
+| Doc | For |
+|---|---|
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Environments, CI, migrations, secrets, rollback |
+| [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | Pre-release review findings + checklist |
+| [`docs/design/command-center/`](docs/design/command-center/) | Dashboard redesign handoff (spec, porting plan, prototypes, screenshots) |
+| [`docs/BRANCHES.md`](docs/BRANCHES.md) | Branch audit (Oct 2026) and what's kept / archived |
+| [`SECURITY.md`](SECURITY.md) · [`docs/SUPABASE_AUTH_CONTRACT.md`](docs/SUPABASE_AUTH_CONTRACT.md) | Security model, auth rules |
+| [`PRODUCT.md`](PRODUCT.md) · [`DESIGN.md`](DESIGN.md) | Product context + current design system (read by design tooling) |
+| [`e2e/README.md`](e2e/README.md) · [`scripts/TESTING.md`](scripts/TESTING.md) | Test suites |
+| [`docs/archive/`](docs/archive/) | Shipped plans, past audits — historical only |
 
-## Resetting everything
+## Known open items
 
-**Demo mode (no Supabase):** all data lives in memory. Just restart the dev
-server — stop it, then `npm run dev` — and the store re-seeds fresh (the
-`demo` wheel, the demo fan link, and the sample admin accounts).
-
-**Production (Supabase):** run [`supabase/reset.sql`](supabase/reset.sql) in
-the Supabase SQL Editor. It truncates all app data (wheels, prizes, fans,
-links, spins, redemptions) but keeps your tables and logins. Optional blocks at
-the bottom let you also delete creator accounts or reset roles/features.
-
-To rebuild from scratch, re-run [`supabase/schema.sql`](supabase/schema.sql)
-**then** [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql)
-— both are idempotent (safe to run repeatedly).
-
-## Tests
-
-```bash
-npx tsx src/lib/games/wheel/engine.test.ts
-```
-
-## Roadmap
-- ✅ Creator/admin auth + middleware (sign-in)
-- ✅ Persisted wheel editor (saves wheel + prizes to Supabase)
-- ✅ Redemption fulfilment inbox + live metrics
-- ✅ Admin panel: manage creator accounts + cross-account metrics
-- Per-creator theming (fonts, background, photo-hub) — premium feel
-- More games: scratch tickets, bingo (same prize/fan/account system)
+- **Redesign port** — phases 2–8 of the [porting checklist](docs/design/command-center/PORTING_CHECKLIST.md).
+- **Prod smoke test + test-DB admin** — never completed after the June infra setup.
+- **Generated DB types** — `npm run gen:types` exists but `src/lib/data/db.types.ts` was never generated.
+- **Split `src/lib/data/index.ts`** (~6k lines) and unify its error convention.
+- **`rls-runtime-test.mjs` isn't in CI** — runs only by hand today.
+- Small cleanups: unused `src/components/fan/ReferralWidget.tsx`; two `clientIp` helpers
+  (`src/lib/api/limit.ts`, `src/lib/api/clientIp.ts`) with different header precedence.

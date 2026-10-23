@@ -1,7 +1,7 @@
 name: CI
 
 # Gate every push and PR on a clean typecheck/build, the unit + RLS-lint tests,
-# and lint. This is the safety net DEPLOY.md's "merge to main" step relied on a
+# and lint. This is the safety net docs/DEPLOY.md's "merge to main" step relied on a
 # human to run manually.
 on:
   push:
