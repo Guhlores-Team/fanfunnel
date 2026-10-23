@@ -242,31 +242,36 @@ export async function creatorExtras(page, { step, assert }) {
   await step("webhooks: add then remove", async () => {
     await goto(page, "/dashboard", 1500);
     await clickTab(page, "Boosts");
-    const urlInput = page.locator("input[type='url']").last(); // webhook endpoint
+    // Scope to the Webhooks card (a named region) so an earlier url input,
+    // "Add" or "Remove" elsewhere on Boosts can't be picked up by mistake.
+    const hooks = page.getByRole("region", { name: /webhooks/i });
+    const urlInput = hooks.locator("input[type='url']").last(); // webhook endpoint
     await urlInput.waitFor().catch(() => {});
     assert(await urlInput.count(), "webhook URL input present");
     await urlInput.fill("https://example.com/hooks/e2e");
-    await page.locator("button:has-text('Add')").first().click();
+    await hooks.locator("button:has-text('Add')").first().click();
     // Auto-wait for the new webhook row to appear instead of a fixed sleep.
-    await page.locator("text=example.com/hooks/e2e").first().waitFor().catch(() => {});
+    await hooks.locator("text=example.com/hooks/e2e").first().waitFor().catch(() => {});
     assert(
-      (await page.locator("text=example.com/hooks/e2e").count()) > 0,
+      (await hooks.locator("text=example.com/hooks/e2e").count()) > 0,
       "webhook appears in the list after Add"
     );
-    await page.locator("button:has-text('Remove')").first().click();
+    await hooks.locator("button:has-text('Remove')").first().click();
     // Auto-wait for the webhook row to disappear instead of a fixed sleep.
-    await page.locator("text=example.com/hooks/e2e").first().waitFor({ state: "hidden" }).catch(() => {});
+    await hooks.locator("text=example.com/hooks/e2e").first().waitFor({ state: "hidden" }).catch(() => {});
     assert(
-      (await page.locator("text=example.com/hooks/e2e").count()) === 0,
+      (await hooks.locator("text=example.com/hooks/e2e").count()) === 0,
       "webhook removed from the list"
     );
   });
 
   await step("happy hour: schedule a boost window", async () => {
-    // (Still on Boosts.) Fill the multiplier + the start/end datetimes.
-    const mult = page.locator("input[type='number']").first();
+    // (Still on Boosts.) Fill the multiplier + the start/end datetimes, scoped
+    // to the Happy hours card so other number inputs on Boosts can't interfere.
+    const hh = page.getByRole("region", { name: /happy hours/i });
+    const mult = hh.locator("input[type='number']").first();
     if (await mult.count()) await mult.fill("3");
-    const dts = await page.locator("input[type='datetime-local']").all();
+    const dts = await hh.locator("input[type='datetime-local']").all();
     if (dts.length >= 1) {
       const pad = (n) => String(n).padStart(2, "0");
       const fmt = (d) =>
@@ -275,7 +280,7 @@ export async function creatorExtras(page, { step, assert }) {
       await dts[0].fill(fmt(new Date(now.getTime() + 3600_000)));
       if (dts.length >= 2) await dts[1].fill(fmt(new Date(now.getTime() + 7200_000)));
     }
-    await page.locator("button:has-text('Schedule')").first().click();
+    await hh.locator("button:has-text('Schedule')").first().click();
     // Web-first wait for the scheduled window to render instead of a fixed sleep.
     await page
       .waitForFunction(() => {
