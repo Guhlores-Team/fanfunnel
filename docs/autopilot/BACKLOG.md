@@ -30,7 +30,7 @@ code would bring back fixed bugs). 78 parity rows are `needs placement`: propose
 the phase's PR and get owner sign-off; never drop one silently. The e2e `[role=tab]` /
 `clickTab` helpers break in RD-2, so update them in that PR (that's not weakening the tests).
 - [x] **RD-1** Phase 1 tokens + `readableInk()` contrast fix, refreshed onto current `main` (`dashboard-redesign` @ `911ee3e`; lint/tsc/tests/build, e2e 23/23, a11y green).
-- [ ] **RD-2** Phase 2 shell: sidebar + top bar in `DashboardClient.tsx`, keeping tablist keyboard a11y semantics. `after:RD-1`
+- [~] **RD-2** Phase 2 shell: sidebar + top bar in `DashboardClient.tsx`, keeping tablist keyboard a11y semantics. `after:RD-1`. In progress since 2026-10-23 on branch `redesign/rd-2-shell`.
 - [ ] **RD-3** Phase 3 Today: pulse strip + "Needs you now". `after:RD-2`
 - [ ] **RD-4** Phase 4 panels: Analytics, Wheels editor, Fulfilment, Fans + drawer, Campaigns, Boosts, Inbox, Settings/Admin (one PR per panel). `after:RD-3`
 - [ ] **RD-5** Phase 5 empty + first-run states. `after:RD-4`

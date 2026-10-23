@@ -14,9 +14,17 @@ gets removed until you've done it.
       wired correctly. Its still-useful facts are now in `docs/DEPLOY.md` and this log, and the
       file itself is preserved in the branch archive.
 - [~] **1c. Branch cleanup**: half done (see 1 below).
-- [x] **1d. Cleanup PR**: opened (link in the session).
+- [x] **1d. Cleanup PR**: opened as Guhlores-Team/fanfunnel#42 (docs + tooling only, no app
+      code). To merge: open its Preview, confirm the site behaves as before, check CI is green, merge.
 - [x] **2a. Supabase resumed**: confirmed both **ACTIVE_HEALTHY**, both at migration 0038
       (in sync with the code). Prod pages now load in 0.5–1.7s (were 6–21s while paused).
+
+## Running now
+- **RD-2: redesign shell (sidebar + top bar)**, started 2026-10-23 in its own cloud session
+  ("FanFunnel redesign RD-2" in your Claude Code sessions list). It opens a PR into
+  `dashboard-redesign` (never `main`) titled `[autopilot] RD-2: …`. When you're home, open
+  that PR's Vercel Preview, click through every section, and check the "needs placement"
+  proposals in its description. It stops after RD-2. Nothing merges without you.
 
 ## 1. Finish the branch cleanup (5 min, at a computer)
 All 21 old branches are **already preserved** in one branch, `archive/branches-2026-10`
