@@ -49,6 +49,7 @@ import type {
   Webhook,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { consumeCommittedSeed, freshSeed } from "./spinSeed";
 import {
   mockGetFanPass,
   mockSpin,
@@ -635,34 +636,55 @@ export async function spin(
   const pityCounter = (fanRow.data as { pity_counter: number } | null)?.pity_counter ?? 0;
   const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
 
-  // Provably-fair commit-reveal: use the seed that was PRE-committed on the
+  // Provably-fair commit-reveal: consume the seed that was PRE-committed on the
   // pass (its hash was published to the fan before this spin, so the server
-  // can't grind seeds after seeing the request). Legacy passes without a
-  // committed seed fall back to a fresh one for this spin only — the rotation
-  // below ensures every subsequent spin is fully pre-committed. The fan's
-  // clientSeed is mixed into the RNG so the server can't dictate the outcome.
-  const serverSeed = pass.next_server_seed ?? randomSeedHex();
+  // can't grind seeds after seeing the request) and, in the same guarded
+  // update, commit the NEXT spin's seed so the fan always holds a commitment
+  // that predates their spin. The swap is a compare-and-swap on the seed we
+  // read: claim_spin only serializes the balance, so two in-flight spins on a
+  // pass with balance >= 2 would otherwise both reveal one committed seed. A
+  // legacy pass without a committed seed gets a fresh one for this spin only.
+  // (On a pre-0022 DB that lacks the columns nothing is committed or rotated.)
   const nonce = spinsRemaining;
-  const serverSeedHash =
-    pass.next_server_seed && pass.next_server_seed_hash
-      ? pass.next_server_seed_hash
-      : await sha256Hex(serverSeed);
-  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
-
-  // Rotate: commit the NEXT spin's seed now and publish its hash with the
-  // result, so the fan always holds a commitment that predates their spin.
-  // (Skipped on a pre-0022 DB that lacks the columns.)
-  const nextServerSeed = randomSeedHex();
-  const nextServerSeedHash = await sha256Hex(nextServerSeed);
-  if (hasCommitRevealCols) {
-    await sb
-      .from("fan_passes")
-      .update({
-        next_server_seed: nextServerSeed,
-        next_server_seed_hash: nextServerSeedHash,
-      })
-      .eq("id", pass.id);
+  const seeds = hasCommitRevealCols
+    ? await consumeCommittedSeed(
+        {
+          read: async () => {
+            const { data } = await sb
+              .from("fan_passes")
+              .select("next_server_seed, next_server_seed_hash")
+              .eq("id", pass.id)
+              .maybeSingle();
+            const row = data as { next_server_seed: string | null; next_server_seed_hash: string | null } | null;
+            return { seed: row?.next_server_seed ?? null, hash: row?.next_server_seed_hash ?? null };
+          },
+          swap: async (expected, next) => {
+            const q = sb
+              .from("fan_passes")
+              .update({ next_server_seed: next.seed, next_server_seed_hash: next.hash })
+              .eq("id", pass.id);
+            const { data } = await (expected.seed
+              ? q.eq("next_server_seed", expected.seed)
+              : q.is("next_server_seed", null)
+            )
+              .select("id")
+              .maybeSingle();
+            return !!data;
+          },
+        },
+        { seed: pass.next_server_seed, hash: pass.next_server_seed_hash },
+      )
+    : await freshSeed();
+  if (!seeds) {
+    // Lost the seed swap repeatedly (pathological contention or a DB fault):
+    // refund the claimed spin rather than spin on an unverifiable seed.
+    await sb.rpc("rollback_claimed_spin", { p_token: token, p_prize_id: null });
+    console.error("spin: could not consume committed seed — rolled back claim");
+    return { error: "db_error" };
   }
+  const { serverSeed, serverSeedHash, nextServerSeedHash } = seeds;
+  // The fan's clientSeed is mixed into the RNG so the server can't dictate the outcome.
+  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
 
   // 3. Pick a prize in TS (single source of truth), honouring pity. If a
   //    limited prize sold out between our read and write, exclude it + re-pick.

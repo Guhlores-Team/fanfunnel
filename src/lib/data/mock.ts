@@ -960,8 +960,28 @@ export async function mockSpin(token: string, clientSeed = "") {
   // first (the client modal is not the enforcement boundary).
   if (fan.selfExcludedAt) return { error: "blocked" as const };
   if (fan.ackedAt == null) return { error: "needs_ack" as const };
+
+  // Pre-generate the NEXT commitment before touching shared state, so the
+  // claim + seed consumption below has no `await` inside it: in single-threaded
+  // JS that makes it atomic, mirroring claim_spin's row lock + the guarded seed
+  // swap on the Supabase path. (Awaiting between the read and the rotation let
+  // two concurrent spins consume the same committed seed.)
+  const nextServerSeed = randomSeedHex();
+  const nextServerSeedHash = await sha256Hex(nextServerSeed);
+
   // Per-wheel: spend only THIS pass's balance, on THIS pass's wheel.
   if (pass.spinsRemaining <= 0) return { error: "no_spins" as const };
+  // Provably-fair commit-reveal: consume the seed pre-committed on this pass
+  // (its hash was already shown to the fan) and rotate so the next spin is
+  // committed too — mirroring the Supabase path.
+  const committedSeed = pass.nextServerSeed;
+  const committedHash = pass.nextServerSeedHash;
+  const serverSeed = committedSeed ?? randomSeedHex();
+  const nonce = fan.spinsRemaining;
+  pass.nextServerSeed = nextServerSeed;
+  pass.nextServerSeedHash = nextServerSeedHash;
+  pass.spinsRemaining -= 1; // spend from this wheel's pass
+  recomputeFanAggregate(fan); // keep the fan-level total in sync
 
   const wheelId = pass.wheelId;
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
@@ -971,30 +991,27 @@ export async function mockSpin(token: string, clientSeed = "") {
   const hh = mockGetActiveHappyHour(wheel.id);
   const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
 
-  // Provably-fair commit-reveal: use the seed pre-committed on this pass (its
-  // hash was already shown to the fan), mix in the fan's clientSeed, then
-  // rotate so the next spin is committed too — mirroring the Supabase path.
-  const serverSeed = pass.nextServerSeed ?? randomSeedHex();
-  const nonce = fan.spinsRemaining;
+  // The fan's clientSeed is mixed into the RNG so the server can't dictate the
+  // outcome.
   const serverSeedHash =
-    pass.nextServerSeed && pass.nextServerSeedHash
-      ? pass.nextServerSeedHash
-      : await sha256Hex(serverSeed);
+    committedSeed && committedHash ? committedHash : await sha256Hex(serverSeed);
   const rng = await makeFairRng(serverSeed, clientSeed, nonce);
-  pass.nextServerSeed = randomSeedHex();
-  pass.nextServerSeedHash = await sha256Hex(pass.nextServerSeed);
 
-  const { prize, index, pityAwarded, nextPityCounter } = pickPrizeWithPity(
-    pickWheel,
-    { pityCounter: fan.pityCounter },
-    rng
-  );
+  let picked: ReturnType<typeof pickPrizeWithPity>;
+  try {
+    picked = pickPrizeWithPity(pickWheel, { pityCounter: fan.pityCounter }, rng);
+  } catch {
+    // Every prize sold out: refund the claimed spin (parity with the Supabase
+    // path's rollback_claimed_spin) instead of charging the fan for nothing.
+    pass.spinsRemaining += 1;
+    recomputeFanAggregate(fan);
+    return { error: "no_prizes" as const };
+  }
+  const { prize, index, pityAwarded, nextPityCounter } = picked;
 
   // Per-wheel: the spin belongs to THIS pass's campaign directly.
   const campaignId = pass.campaignId;
 
-  pass.spinsRemaining -= 1; // spend from this wheel's pass
-  recomputeFanAggregate(fan); // keep the fan-level total in sync
   fan.pityCounter = nextPityCounter;
   // Spinning auto-opts the fan into the leaderboard (handle-only; the board only
   // renders when the creator enables it, so nothing is exposed until then).
@@ -1046,7 +1063,8 @@ export async function mockSpin(token: string, clientSeed = "") {
     spinsRemaining: pass.spinsRemaining,
     pityAwarded,
     shareId,
-    nextSpinHash: pass.nextServerSeedHash,
+    // THIS spin's rotation (not whatever a concurrent spin left on the pass).
+    nextSpinHash: nextServerSeedHash,
   };
 }
 
