@@ -43,6 +43,14 @@ import TodayPanel from "@/components/dashboard/TodayPanel";
 import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
 import ImportFans from "@/components/dashboard/ImportFans";
+import {
+  Sidebar,
+  SetupChecklistButton,
+  TopBar,
+  SECTION_META,
+  type Tab,
+} from "@/components/dashboard/DashboardShell";
+import { prefersReducedMotion } from "@/lib/sound";
 
 // Code-split the tab-gated panels (and the qrcode-pulling QrButton) so the
 // initial dashboard bundle doesn't carry every tab a creator may never open.
@@ -71,17 +79,6 @@ import {
   reorder,
   RARITY_DEFAULT_WEIGHT,
 } from "@/components/dashboard/editorHelpers";
-
-type Tab =
-  | "today"
-  | "prizes"
-  | "fans"
-  | "campaigns"
-  | "editor"
-  | "inbox"
-  | "boosts"
-  | "analytics"
-  | "settings";
 
 // Shared overview, polled (12s) + refreshed on tab focus so metrics + the
 // pending badge stay live. `setData` is exposed for optimistic account edits.
@@ -183,61 +180,37 @@ export default function DashboardClient({
     setTab(t);
   };
 
-  // ARIA tabs keyboard pattern: Arrow keys move between tabs (wrapping), Home/End
-  // jump to the ends, and focus follows selection. `tabs` is defined below but is
-  // stable per render, so reading it here in the handler is safe.
-  const onTabKeyDown = (e: React.KeyboardEvent, id: Tab) => {
-    const ids = tabs.map(([t]) => t);
-    const i = ids.indexOf(id);
-    let next: Tab | null = null;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = ids[(i + 1) % ids.length];
-    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = ids[(i - 1 + ids.length) % ids.length];
-    else if (e.key === "Home") next = ids[0];
-    else if (e.key === "End") next = ids[ids.length - 1];
-    if (next) {
-      e.preventDefault();
-      goTab(next);
-      tabRefs.current[next]?.focus();
-    }
-  };
-
-  // Keep the active tab visible in the horizontally-scrolling tab bar on mobile
-  // (otherwise an earlier/later tab can sit clipped off-screen after switching).
-  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
-  useEffect(() => {
-    tabRefs.current[tab]?.scrollIntoView({
-      behavior: "smooth",
-      inline: "center",
-      block: "nearest",
-    });
-  }, [tab]);
-
   // Onboarding CTAs: switch to the relevant tab AND scroll its panel into view,
   // so a creator on a phone is actually taken to the section to act on it.
   const panelRef = useRef<HTMLDivElement>(null);
   const goToSection = (t: Tab) => {
     goTab(t);
     requestAnimationFrame(() => {
-      panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      panelRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
     });
   };
 
-  const tabs: [Tab, string][] = [
-    ["today", "Today"],
-    ["editor", "Wheel"],
-    ["fans", "Fans"],
-    ["prizes", "Prizes"],
-    ["campaigns", "Campaigns"],
-    ["boosts", "Boosts"],
-    ["inbox", "Inbox"],
-    ["analytics", "Analytics"],
-    ["settings", "Settings"],
-  ];
+  // Display name for the sidebar workspace pill (no polling — it rarely changes).
+  const account = useFetch<{ displayName: string | null }>(email ? "/api/account" : null);
+  const accountName =
+    account.data?.displayName?.trim() || (email ? email.split("@")[0] : "Demo creator");
+
+  // Top-bar search routes the query to the Fans panel's existing name filter.
+  // The nonce remounts FansPanel so a repeat search re-applies the query.
+  const [fanSearch, setFanSearch] = useState({ q: "", nonce: 0 });
+  // "New fan link" → Fans, focus the mint form's name field.
+  const [mintFocus, setMintFocus] = useState(0);
+
+  const [title, subtitleText] = SECTION_META[tab];
+  const subtitle =
+    tab === "today"
+      ? `${new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })} · ${subtitleText}`
+      : subtitleText;
 
   return (
     <ToastProvider>
     <div
-      className="mx-auto w-full max-w-5xl overflow-x-clip px-4 py-6 sm:px-6 sm:py-8"
+      className="flex min-h-[100dvh] flex-col lg:flex-row"
       // Live brand theming: the page shell seeds --brand at request time, but
       // binding it to the editor's wheel state here means picking a new brand
       // color re-tints the whole dashboard instantly — no refresh needed.
@@ -245,52 +218,44 @@ export default function DashboardClient({
       // on ANY brand color (#1).
       style={brandVars(wheel.brandColor)}
     >
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight text-ink sm:text-2xl">
-            Creator dashboard
-          </h1>
-          <p className="truncate text-sm text-muted">
-            {email ?? "Demo workspace — connect Supabase to go live"}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {!overview.loading && onboardingDismissed && !onboardingAllDone && (
-            <button
-              type="button"
-              onClick={() => setOnboardingHidden(false)}
-              className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-semibold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
-              title="Show the setup checklist again"
-            >
-              🚀 Get started
-            </button>
-          )}
-          {(isAdmin || !email) && (
-            <a
-              href="/admin"
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-            >
-              Admin
-            </a>
-          )}
-          {email && (
-            <form action="/auth/signout" method="post">
-              <button
-                type="submit"
-                className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-              >
-                Sign out
-              </button>
-            </form>
-          )}
-        </div>
-      </header>
+      <Sidebar
+        active={tab}
+        onSelect={goTab}
+        badges={{ prizes: pending, inbox: unread }}
+        // Same gate as before the redesign: isAdmin comes from profiles.role on
+        // the server (dashboard/page.tsx); no email = demo mode.
+        showAdmin={isAdmin || !email}
+        accountName={accountName}
+        accountSub={email ?? "Demo workspace — connect Supabase to go live"}
+        showSignOut={!!email}
+        footerExtra={
+          !overview.loading && onboardingDismissed && !onboardingAllDone ? (
+            <SetupChecklistButton
+              onClick={() => {
+                setOnboardingHidden(false);
+                goToSection(tab);
+              }}
+            />
+          ) : null
+        }
+      />
 
-      {email && (
-        <div className="mt-5">
-          <InvitesBanner />
-        </div>
-      )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar
+          title={title}
+          subtitle={subtitle}
+          onSearch={(q) => {
+            setFanSearch((s) => ({ q, nonce: s.nonce + 1 }));
+            goToSection("fans");
+          }}
+          onNewFanLink={() => {
+            goTab("fans");
+            setMintFocus((n) => n + 1);
+          }}
+        />
+
+        <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
+      {email && <InvitesBanner />}
 
       {!overview.loading && (
         <GetStartedChecklist
@@ -306,66 +271,27 @@ export default function DashboardClient({
       {pending > 0 && tab !== "prizes" && (
         <button
           onClick={() => setTab("prizes")}
-          className="mt-5 flex w-full items-center gap-3 rounded-xl border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] px-4 py-3 text-left transition hover:bg-[color-mix(in_oklab,var(--brand)_18%,transparent)]"
+          className="mb-6 flex w-full items-center gap-3 rounded-xl border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] px-4 py-3 text-left transition hover:bg-[color-mix(in_oklab,var(--brand)_18%,transparent)]"
         >
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--brand)] text-sm font-bold text-white tnum">
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--brand)] text-sm font-bold text-[var(--brand-ink)] tnum">
             {pending}
           </span>
           <span className="text-sm text-ink">
             {pending === 1 ? "1 prize is" : `${pending} prizes are`} waiting to be
             fulfilled
           </span>
-          <span className="ml-auto text-sm font-semibold text-[var(--brand)]">
+          <span className="ml-auto text-sm font-semibold text-brand">
             Open →
           </span>
         </button>
       )}
 
-      <nav
-        role="tablist"
-        aria-label="Dashboard sections"
-        className="-mx-4 mt-6 flex flex-nowrap gap-0.5 overflow-x-auto overflow-y-hidden border-b border-line px-4 [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain] [scrollbar-width:none] [touch-action:pan-x] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"
-      >
-        {tabs.map(([id, label]) => (
-          <button
-            key={id}
-            ref={(el) => {
-              tabRefs.current[id] = el;
-            }}
-            role="tab"
-            aria-selected={tab === id}
-            aria-controls={`panel-${id}`}
-            id={`tab-${id}`}
-            tabIndex={tab === id ? 0 : -1}
-            onClick={() => goTab(id)}
-            onKeyDown={(e) => onTabKeyDown(e, id)}
-            className={`-mb-px flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] font-semibold transition sm:text-sm ${
-              tab === id
-                ? "border-[var(--brand)] text-ink"
-                : "border-transparent text-muted hover:text-ink"
-            }`}
-          >
-            {label}
-            {id === "prizes" && pending > 0 && (
-              <span className="tnum grid h-5 min-w-5 place-items-center rounded-full bg-[var(--brand)] px-1 text-[11px] font-bold text-white">
-                {pending}
-              </span>
-            )}
-            {id === "inbox" && unread > 0 && (
-              <span className="tnum grid h-5 min-w-5 place-items-center rounded-full bg-[var(--brand)] px-1 text-[11px] font-bold text-white">
-                {unread}
-              </span>
-            )}
-          </button>
-        ))}
-      </nav>
-
       <div
         ref={panelRef}
-        className="scroll-mt-4 mt-7"
-        role="tabpanel"
+        className="scroll-mt-24"
         id={`panel-${tab}`}
-        aria-labelledby={`tab-${tab}`}
+        role="region"
+        aria-label={title}
       >
         {tab === "today" && <TodayPanel onNavigate={(t) => setTab(t as Tab)} />}
         {tab === "prizes" && (
@@ -376,7 +302,13 @@ export default function DashboardClient({
             setData={overview.setData}
           />
         )}
-        {tab === "fans" && <FansPanel />}
+        {tab === "fans" && (
+          <FansPanel
+            key={fanSearch.nonce}
+            initialSearch={fanSearch.q}
+            focusMintNonce={mintFocus}
+          />
+        )}
         {tab === "campaigns" && <CampaignsPanel />}
         {tab === "boosts" && (
           <BoostsPanel
@@ -418,6 +350,8 @@ export default function DashboardClient({
             }
           />
         )}
+      </div>
+        </div>
       </div>
     </div>
     </ToastProvider>
@@ -952,7 +886,13 @@ function RedemptionRow({
 // ---------------------------------------------------------------------------
 // Fans & links — now loaded from the server so they persist across refreshes.
 // ---------------------------------------------------------------------------
-function FansPanel() {
+function FansPanel({
+  initialSearch = "",
+  focusMintNonce = 0,
+}: {
+  initialSearch?: string;
+  focusMintNonce?: number;
+}) {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [name, setName] = useState("");
   const [spins, setSpins] = useState(3);
@@ -973,13 +913,24 @@ function FansPanel() {
   const [wheels, setWheels] = useState<{ id: string; title: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [openFanId, setOpenFanId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch);
   const [campaignFilter, setCampaignFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
   const [templates, setTemplates] = useState<DmTemplate[]>([]);
   const [managingMessages, setManagingMessages] = useState(false);
   const toast = useToast();
   const origin = useOrigin();
+
+  // Top-bar "New fan link" lands here: focus the mint form's name field.
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (focusMintNonce === 0) return;
+    nameRef.current?.focus({ preventScroll: true });
+    nameRef.current?.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "center",
+    });
+  }, [focusMintNonce]);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/fans", { cache: "no-store" });
@@ -1112,6 +1063,7 @@ function FansPanel() {
         <div className="mt-4 flex flex-wrap items-start gap-3">
           <Field label="Fan name / handle">
             <input
+              ref={nameRef}
               className="ff-input w-44"
               placeholder="@bigfan"
               value={name}
