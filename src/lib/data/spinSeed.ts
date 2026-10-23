@@ -51,9 +51,15 @@ export async function freshSeed(): Promise<ConsumedSeed> {
  * same `next_server_seed`, both reveal it, and the loser's rotation overwrites
  * the commitment the winner just published — one commitment, two spins. The
  * swap is guarded on the seed we read, so exactly one spin wins each
- * commitment; the loser re-reads and consumes the winner's freshly committed
- * seed instead (a commitment the server stored before it was consumed, and
- * whose hash the winner's response already published).
+ * commitment.
+ *
+ * The loser re-reads and consumes the seed the winner just committed. That seed
+ * was stored (and its hash fixed) before this spin consumed it, so the server
+ * still cannot grind it, but its hash reached the fan only in the winner's
+ * response — not necessarily before the loser's request was sent. This is a
+ * deliberate trade: availability (a fast double-tap still spins) over strict
+ * "hash shown before every request"; the alternative is to 409 and refund the
+ * loser.
  *
  * A pass with no commitment yet (legacy row) gets a fresh seed for this spin
  * only; the swap guarantees no other spin shares it.
@@ -69,10 +75,15 @@ export async function consumeCommittedSeed(
       current.seed && current.hash ? current.hash : await sha256Hex(serverSeed);
     const nextServerSeed = randomSeedHex();
     const nextServerSeedHash = await sha256Hex(nextServerSeed);
+    const consumed = { serverSeed, serverSeedHash, nextServerSeed, nextServerSeedHash };
     if (await store.swap(current, { seed: nextServerSeed, hash: nextServerSeedHash })) {
-      return { serverSeed, serverSeedHash, nextServerSeed, nextServerSeedHash };
+      return consumed;
     }
     current = await store.read();
+    // The UPDATE can commit while its response is lost. If the row now holds
+    // OUR next seed the swap did win: reveal the seed the fan was shown rather
+    // than consuming our own fresh commitment (which would burn the shown one).
+    if (current.seed === nextServerSeed) return consumed;
   }
   return null;
 }

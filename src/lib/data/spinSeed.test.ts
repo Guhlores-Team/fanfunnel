@@ -83,6 +83,33 @@ async function main() {
     check("legacy: row is committed afterwards", r.row.seed !== null && r.row.hash === loser.nextServerSeedHash);
   }
 
+  // --- Swap committed but its response was lost ------------------------------
+  // The UPDATE landed, yet the client saw no row back (data null → false). The
+  // consumer must recognise its own next seed on re-read and reveal the seed the
+  // fan was shown — not consume its own fresh commitment and burn the shown one.
+  {
+    const seed0 = "c".repeat(64);
+    const hash0 = await sha256Hex(seed0);
+    const r = fakeRow({ seed: seed0, hash: hash0 });
+    let lostResponses = 0;
+    const flaky: SeedStore = {
+      read: r.store.read,
+      swap: async (expected, next) => {
+        const won = await r.store.swap(expected, next);
+        if (won && lostResponses === 0) {
+          lostResponses++;
+          return false; // committed, but the caller never heard
+        }
+        return won;
+      },
+    };
+    const out = await consumeCommittedSeed(flaky);
+    assert.ok(out, "consumer gets a seed");
+    check("lost response: reveals the seed the fan was shown", out.serverSeed === seed0 && out.serverSeedHash === hash0);
+    check("lost response: the row holds THIS spin's next commitment", r.row.seed === out.nextServerSeed && r.row.hash === out.nextServerSeedHash);
+    check("lost response: the row was swapped exactly once", r.swaps === 1 && lostResponses === 1);
+  }
+
   // --- Unwinnable contention gives up (caller refunds the claim) --------------
   {
     let swapCalls = 0;
