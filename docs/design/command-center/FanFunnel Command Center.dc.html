@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Geist:wght@400..700&family=Geist+Mono:wght@500..600&display=swap" rel="stylesheet">
+<style>
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:#0c0a0e; }
+  .tnum{ font-variant-numeric: tabular-nums; font-feature-settings:"tnum"; }
+  .disp{ font-family:'Bricolage Grotesque',sans-serif; }
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb{ background:#2a2533; border-radius:99px; }
+  input,select,textarea,button{ font-family:inherit; }
+  :focus-visible{ outline:2px solid var(--brand); outline-offset:2px; border-radius:8px; }
+  input:focus-visible,select:focus-visible,textarea:focus-visible{ outline-offset:0; border-color:var(--brand) !important; }
+  @keyframes ff-rise{ from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:none;} }
+  @keyframes ff-lift{ from{transform:translateY(10px);} to{transform:none;} }
+  .reveal{ opacity:1; animation: ff-lift .5s cubic-bezier(.16,1,.3,1); }
+  @keyframes ff-slide{ from{transform:translateX(100%);} to{transform:none;} }
+  @keyframes ff-fade{ from{opacity:0;} to{opacity:1;} }
+  @media (prefers-reduced-motion: reduce){ *{ animation-duration:.01ms !important; } }
+</style>
+</helmet>
+<div ref="{{ rootRef }}" style="--brand:#ec4899; --s1:linear-gradient(180deg,#1c1825,#16131d); --s2:#100d16; --hair:#241f2e; --lift:0 1px 0 rgba(255,255,255,.045) inset, 0 14px 34px -26px rgba(0,0,0,.9); position:relative; display:flex; min-height:100%; background:#0c0a0e; color:#f4f1f6; font-family:'Geist',ui-sans-serif,system-ui,sans-serif; -webkit-font-smoothing:antialiased;">
+
+  <div style="position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.04; background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E&quot;);"></div>
+
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside style="position:sticky; top:0; z-index:2; display:flex; flex-direction:column; gap:18px; width:252px; flex-shrink:0; align-self:flex-start; height:100dvh; padding:22px 16px; border-right:1px solid #1f1b27; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 8%, #0c0a0e), #0c0a0e 38%);">
+    <!-- Wordmark -->
+    <div style="display:flex; align-items:center; gap:10px; padding:0 8px;">
+      <span style="display:grid; height:32px; width:32px; place-items:center; border-radius:9px; background:var(--brand); box-shadow:0 6px 18px -6px color-mix(in oklab, var(--brand) 70%, transparent);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{ brandInk }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM12 12.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1Z"></path></svg>
+      </span>
+      <div style="line-height:1;">
+        <p class="disp" style="margin:0; font-size:18px; font-weight:700; letter-spacing:-.02em; color:#f4f1f6;">FanFunnel</p>
+        <p style="margin:3px 0 0; font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#a09aa8;">Creator console</p>
+      </div>
+    </div>
+
+    <!-- Workspace -->
+    <div style="display:flex; align-items:center; gap:10px; border-radius:12px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:10px;">
+      <span style="display:grid; height:36px; width:36px; flex-shrink:0; place-items:center; border-radius:999px; background:color-mix(in oklab, var(--brand) 18%, transparent); font-size:14px; font-weight:700; color:var(--brand);">LX</span>
+      <div style="min-width:0; flex:1;">
+        <p style="margin:0; font-size:13px; font-weight:600; color:#f4f1f6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ handle }}</p>
+        <p style="margin:1px 0 0; font-size:11px; color:#a09aa8;">Pro workspace</p>
+      </div>
+      <span style="height:8px; width:8px; flex-shrink:0; border-radius:999px; background:#22c55e;" title="Live"></span>
+    </div>
+
+    <!-- Nav -->
+    <nav style="display:flex; flex-direction:column; gap:14px; flex:1; overflow-y:auto;">
+      <sc-for list="{{ navGroups }}" as="g" hint-placeholder-count="4">
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          <p style="margin:0 0 4px; padding:0 10px; font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#6b6472;">{{ g.title }}</p>
+          <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="3">
+            <button onClick="{{ it.onClick }}" aria-current="{{ it.current }}" style="position:relative; display:flex; align-items:center; gap:11px; width:100%; min-height:40px; border:none; border-radius:10px; background:{{ it.bg }}; padding:0 10px; text-align:left; cursor:pointer; transition:background .14s;">
+              <span style="position:absolute; left:0; top:9px; bottom:9px; width:3px; border-radius:0 3px 3px 0; background:{{ it.accent }};"></span>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="{{ it.icolor }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="{{ it.icon }}"></path></svg>
+              <span style="flex:1; font-size:13.5px; font-weight:{{ it.weight }}; color:{{ it.color }};">{{ it.label }}</span>
+              <sc-if value="{{ it.badge }}" hint-placeholder-val="{{ false }}">
+                <span class="tnum" style="display:grid; height:19px; min-width:19px; place-items:center; border-radius:999px; background:var(--brand); padding:0 5px; font-size:11px; font-weight:700; color:{{ brandInk }};">{{ it.badge }}</span>
+              </sc-if>
+            </button>
+          </sc-for>
+        </div>
+      </sc-for>
+    </nav>
+
+    <!-- Footer -->
+    <div style="display:flex; flex-direction:column; gap:2px; border-top:1px solid #1f1b27; padding-top:12px;">
+      <button style="display:flex; align-items:center; gap:11px; min-height:38px; border:none; border-radius:10px; background:transparent; padding:0 10px; cursor:pointer;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a09aa8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"></path></svg>
+        <span style="font-size:13px; font-weight:600; color:#a09aa8;">Sign out</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ===================== MAIN ===================== -->
+  <main style="position:relative; z-index:1; flex:1; min-width:0; display:flex; flex-direction:column; height:100dvh; overflow-y:auto;">
+    <!-- Top bar -->
+    <header style="position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:16px; padding:18px 28px; border-bottom:1px solid #1f1b27; background:color-mix(in oklab, #0c0a0e 86%, transparent); backdrop-filter:blur(12px);">
+      <div style="min-width:0; flex:1;">
+        <h1 style="margin:0; font-size:22px; font-weight:700; letter-spacing:-.02em; color:#f4f1f6;">{{ title }}</h1>
+        <p style="margin:3px 0 0; font-size:13px; color:#a09aa8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ subtitle }}</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+        <div style="display:flex; align-items:center; gap:8px; width:220px; border-radius:10px; border:1px solid #2a2533; background:#16131c; padding:8px 11px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a09aa8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-3.5-3.5"></path></svg>
+          <input placeholder="Search fans, prizes…" style="flex:1; min-width:0; border:none; background:transparent; font-size:13px; color:#f4f1f6;">
+        </div>
+        <button onClick="{{ bellClick }}" aria-label="Notifications" style="position:relative; display:grid; height:40px; width:40px; place-items:center; border-radius:10px; border:1px solid #2a2533; background:#16131c; cursor:pointer;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f4f1f6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"></path></svg>
+          <span style="position:absolute; top:9px; right:10px; height:7px; width:7px; border-radius:999px; background:var(--brand); border:1.5px solid #16131c;"></span>
+        </button>
+        <button onClick="{{ goFans }}" style="display:flex; align-items:center; gap:7px; min-height:40px; border:none; border-radius:10px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset, 0 10px 26px -10px color-mix(in oklab, var(--brand) 70%, transparent); padding:0 16px; font-size:13.5px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{{ brandInk }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+          New fan link
+        </button>
+      </div>
+    </header>
+
+    <div style="flex:1; padding:28px; max-width:1140px; width:100%;">
+
+      <!-- ============ TODAY ============ -->
+      <sc-if value="{{ isToday }}" hint-placeholder-val="{{ true }}">
+        <div style="position:relative; display:flex; flex-direction:column; gap:24px;">
+          <div aria-hidden="true" style="position:absolute; left:-40px; right:-40px; top:-80px; height:240px; pointer-events:none; z-index:0; background:radial-gradient(60% 100% at 30% 0%, color-mix(in oklab, var(--brand) 22%, transparent), transparent 70%); filter:blur(8px);"></div>
+          <!-- Pulse strip -->
+          <div style="position:relative; z-index:1; display:grid; grid-template-columns:repeat(4,1fr); gap:14px;">
+            <sc-for list="{{ pulse }}" as="p" hint-placeholder-count="4">
+              <div class="reveal" style="position:relative; overflow:hidden; border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:16px 18px;">
+                <svg viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true" style="position:absolute; left:0; right:0; bottom:0; width:100%; height:38px; opacity:.45;">
+                  <polyline points="{{ p.spark }}" fill="none" stroke="{{ p.sparkColor }}" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"></polyline>
+                </svg>
+                <div style="position:relative; z-index:1;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{ p.icolor }}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{ p.icon }}"></path></svg>
+                    <span style="font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:#a09aa8;">{{ p.label }}</span>
+                  </div>
+                  <p class="tnum" style="margin:12px 0 0; font-size:27px; font-weight:700; letter-spacing:-.02em; color:#f4f1f6;">{{ p.value }}</p>
+                  <div style="margin-top:7px; display:flex; align-items:center; gap:7px;">
+                    <span class="tnum" style="display:inline-flex; align-items:center; gap:3px; border-radius:999px; background:{{ p.chipBg }}; color:{{ p.chipColor }}; padding:2px 8px; font-size:11px; font-weight:700;">{{ p.chip }}</span>
+                    <span style="font-size:11.5px; color:#8b8494;">{{ p.note }}</span>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <!-- Get Started checklist (first-run) -->
+          <sc-if value="{{ isNew }}" hint-placeholder-val="{{ false }}">
+            <div style="position:relative; z-index:1;">
+              <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px;">
+                <h2 style="margin:0; display:flex; align-items:center; gap:9px; font-size:16px; font-weight:700; letter-spacing:-.01em; color:#f4f1f6;"><span style="width:3px; height:16px; border-radius:2px; background:var(--brand);"></span>Your first steps</h2>
+                <span class="tnum" style="font-size:12px; color:#a09aa8;">{{ gsDone }} of {{ gsTotal }} done</span>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:10px;">
+                <sc-for list="{{ getStarted }}" as="s" hint-placeholder-count="5">
+                  <div style="display:flex; align-items:center; gap:14px; border-radius:14px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:14px 18px;">
+                    <span style="display:grid; height:24px; width:24px; flex-shrink:0; place-items:center; border-radius:999px; border:2px solid {{ s.ring }}; background:{{ s.fill }};"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="{{ s.check }}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                    <div style="min-width:0; flex:1;">
+                      <p style="margin:0; font-size:14px; font-weight:600; color:{{ s.titleColor }};">{{ s.title }}</p>
+                      <p style="margin:2px 0 0; font-size:12.5px; color:#8b8494; text-wrap:pretty;">{{ s.body }}</p>
+                    </div>
+                    <sc-if value="{{ s.hasCta }}" hint-placeholder-val="{{ true }}">
+                      <button onClick="{{ s.onCta }}" style="flex-shrink:0; min-height:34px; border:none; border-radius:9px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 14px; font-size:12.5px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">{{ s.cta }}</button>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- Priorities -->
+          <sc-if value="{{ showPriorities }}" hint-placeholder-val="{{ true }}">
+          <div style="position:relative; z-index:1;">
+            <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px;">
+              <h2 style="margin:0; display:flex; align-items:center; gap:9px; font-size:16px; font-weight:700; letter-spacing:-.01em; color:#f4f1f6;"><span style="width:3px; height:16px; border-radius:2px; background:var(--brand);"></span>Needs you now</h2>
+              <span style="font-size:12px; color:#a09aa8;">{{ todayCount }} ranked by impact</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <sc-for list="{{ todayCards }}" as="c" hint-placeholder-count="4">
+                <div class="reveal" style="display:flex; align-items:flex-start; gap:14px; border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:16px 18px; transition:transform .16s ease, border-color .16s ease;" style-hover="transform:translateY(-2px); border-color:color-mix(in oklab, var(--brand) 35%, var(--hair))">
+                  <span style="display:grid; height:40px; width:40px; flex-shrink:0; place-items:center; border-radius:11px; background:{{ c.tint }};">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="{{ c.icolor }}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{ c.icon }}"></path></svg>
+                  </span>
+                  <div style="min-width:0; flex:1;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <p style="margin:0; font-size:14.5px; font-weight:700; color:#f4f1f6;">{{ c.title }}</p>
+                      <span style="border-radius:999px; padding:2px 8px; font-size:10px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; background:{{ c.tagBg }}; color:{{ c.tagColor }};">{{ c.tag }}</span>
+                    </div>
+                    <p style="margin:4px 0 0; font-size:13.5px; color:#a09aa8; text-wrap:pretty;">{{ c.body }}</p>
+                  </div>
+                  <div style="display:flex; flex-shrink:0; align-items:center; gap:6px;">
+                    <button onClick="{{ c.onCta }}" style="min-width:128px; min-height:36px; border:none; border-radius:9px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 15px; font-size:13px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">{{ c.cta }}</button>
+                    <button onClick="{{ c.onDismiss }}" aria-label="Dismiss" style="display:grid; height:36px; width:36px; place-items:center; border:1px solid #2a2533; border-radius:9px; background:transparent; cursor:pointer;">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a09aa8" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                    </button>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- ============ ANALYTICS ============ -->
+      <sc-if value="{{ isAnalytics }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:28px;">
+          <dl style="margin:0; display:grid; grid-template-columns:repeat(5,1fr); gap:1px; overflow:hidden; border-radius:14px; border:1px solid #1f1b27; background:#1f1b27;">
+            <sc-for list="{{ stats }}" as="s" hint-placeholder-count="5">
+              <div style="background:#0c0a0e; padding:18px;">
+                <dd class="tnum" style="margin:0; font-size:24px; font-weight:700; color:#f4f1f6;">{{ s.value }}</dd>
+                <dt style="margin-top:3px; font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.04em; color:#a09aa8;">{{ s.label }}</dt>
+              </div>
+            </sc-for>
+          </dl>
+          <div style="display:grid; gap:18px; grid-template-columns:repeat(2,1fr);">
+            <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <h3 style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">Spins trend</h3>
+                <div style="display:flex; gap:4px;">
+                  <span style="border-radius:8px; background:color-mix(in oklab, var(--brand) 16%, transparent); padding:4px 10px; font-size:12px; font-weight:600; color:var(--brand);">14d</span>
+                  <span style="border-radius:8px; border:1px solid #2a2533; padding:4px 10px; font-size:12px; font-weight:600; color:#a09aa8;">30d</span>
+                </div>
+              </div>
+              <svg viewBox="0 0 320 56" preserveAspectRatio="none" style="margin-top:16px; width:100%; height:56px; display:block;"><polyline points="{{ spinsSpark }}" fill="none" stroke="var(--brand)" stroke-width="2" vector-effect="non-scaling-stroke"></polyline></svg>
+            </section>
+            <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <h3 style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">Revenue trend</h3>
+                <span class="tnum" style="font-size:14px; font-weight:700; color:#f4f1f6;">$4,820</span>
+              </div>
+              <svg viewBox="0 0 320 56" preserveAspectRatio="none" style="margin-top:16px; width:100%; height:56px; display:block;"><polyline points="{{ revSpark }}" fill="none" stroke="#22c55e" stroke-width="2" vector-effect="non-scaling-stroke"></polyline></svg>
+            </section>
+          </div>
+          <div style="display:grid; gap:18px; grid-template-columns:repeat(2,1fr);">
+            <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+              <h3 style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">What's landing</h3>
+              <p style="margin:2px 0 0; font-size:12px; color:#a09aa8;">Most-won prizes across recent spins.</p>
+              <div style="margin-top:16px; display:flex; flex-direction:column; gap:11px;">
+                <sc-for list="{{ topPrizes }}" as="p" hint-placeholder-count="5">
+                  <div style="display:flex; align-items:center; gap:12px;">
+                    <span style="width:120px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px; color:#f4f1f6;">{{ p.emoji }} {{ p.label }}</span>
+                    <div style="height:8px; flex:1; overflow:hidden; border-radius:999px; background:#1f1b27;"><div style="height:100%; border-radius:999px; width:{{ p.pct }}; background:{{ p.color }};"></div></div>
+                    <span class="tnum" style="width:22px; flex-shrink:0; text-align:right; font-size:13.5px; font-weight:600; color:#a09aa8;">{{ p.count }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </section>
+            <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+              <h3 style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">Rarity mix</h3>
+              <p style="margin:2px 0 0; font-size:12px; color:#a09aa8;">How rare the wins skew.</p>
+              <div style="margin-top:16px; display:flex; height:12px; overflow:hidden; border-radius:999px;">
+                <sc-for list="{{ rarityMix }}" as="r" hint-placeholder-count="5"><div style="width:{{ r.pct }}; background:{{ r.color }};"></div></sc-for>
+              </div>
+              <div style="margin-top:16px; display:grid; grid-template-columns:repeat(2,1fr); gap:10px;">
+                <sc-for list="{{ rarityMix }}" as="r" hint-placeholder-count="5">
+                  <div style="display:flex; align-items:center; gap:8px; font-size:13.5px;">
+                    <span style="height:10px; width:10px; border-radius:999px; background:{{ r.color }};"></span>
+                    <span style="color:#a09aa8;">{{ r.label }}</span>
+                    <span class="tnum" style="margin-left:auto; font-weight:600; color:#f4f1f6;">{{ r.count }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </section>
+          </div>
+          <section>
+            <h3 style="margin:0 0 12px; font-size:14px; font-weight:700; color:#f4f1f6;">Profit &amp; prize costs · 90 days</h3>
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1px; overflow:hidden; border-radius:14px; border:1px solid #1f1b27; background:#1f1b27;">
+              <sc-for list="{{ profit }}" as="c" hint-placeholder-count="4">
+                <div style="background:#0c0a0e; padding:16px 18px;">
+                  <p class="tnum" style="margin:0; font-size:20px; font-weight:700; color:#f4f1f6;">{{ c.value }}</p>
+                  <p style="margin:2px 0 0; font-size:12px; color:#a09aa8;">{{ c.label }}</p>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- ============ WHEELS ============ -->
+      <sc-if value="{{ isWheels }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="margin-bottom:20px; display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+            <sc-for list="{{ wheels }}" as="w" hint-placeholder-count="3">
+              <button onClick="{{ w.onClick }}" style="display:flex; align-items:center; gap:8px; min-height:34px; border-radius:999px; border:1px solid {{ w.border }}; background:{{ w.bg }}; padding:0 14px; font-size:13px; font-weight:600; color:{{ w.color }}; cursor:pointer;"><span style="height:8px; width:8px; border-radius:999px; background:{{ w.dot }};"></span>{{ w.title }}</button>
+            </sc-for>
+            <button onClick="{{ newWheel }}" style="display:flex; align-items:center; gap:6px; min-height:34px; border-radius:999px; border:1px dashed #2a2533; background:transparent; padding:0 14px; font-size:13px; font-weight:600; color:#a09aa8; cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>New wheel</button>
+          </div>
+          <div style="margin-bottom:20px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; border-radius:12px; border:1px solid color-mix(in oklab, #f59e0b 30%, #1f1b27); background:color-mix(in oklab, #f59e0b 6%, #16131c); padding:12px 16px;">
+            <span style="display:flex; align-items:center; gap:8px; font-size:13.5px; color:#fcd34d;"><span style="height:8px; width:8px; border-radius:999px; background:#f59e0b;"></span>Unsaved changes</span>
+            <button onClick="{{ saveWheel }}" style="min-height:38px; border:none; border-radius:9px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 20px; font-size:13.5px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">Save wheel</button>
+          </div>
+          <div style="display:grid; gap:28px; grid-template-columns:1fr 340px;">
+            <div style="min-width:0;">
+              <div style="display:grid; gap:14px; grid-template-columns:1fr 1fr;">
+                <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Title</span><input value="Lola's Lucky Wheel" onChange="{{ noop }}" style="width:100%; border-radius:10px; border:1px solid #2a2533; background:#16131c; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+                <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Brand color</span><div style="display:flex; align-items:center; gap:8px;"><span style="height:38px; width:46px; flex-shrink:0; border-radius:8px; border:1px solid #2a2533; background:var(--brand);"></span><input value="{{ brandHex }}" onChange="{{ noop }}" class="tnum" style="width:100%; border-radius:10px; border:1px solid #2a2533; background:#16131c; padding:9px 12px; font-size:14px; color:#f4f1f6;"></div></label>
+              </div>
+              <div style="margin-top:20px; border-radius:12px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:12px;">
+                <span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:#a09aa8;">Odds</span>
+                <div style="margin-top:8px; display:flex; height:14px; overflow:hidden; border-radius:6px;">
+                  <sc-for list="{{ editorPrizes }}" as="p" hint-placeholder-count="6"><div title="{{ p.label }}" style="width:{{ p.oddsPct }}; background:{{ p.color }};"></div></sc-for>
+                </div>
+              </div>
+              <sc-if value="{{ noPrizes }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:16px; display:flex; flex-direction:column; align-items:center; gap:10px; border-radius:14px; border:1px dashed var(--hair); padding:36px 24px; text-align:center;">
+                  <span style="display:grid; height:44px; width:44px; place-items:center; border-radius:12px; background:color-mix(in oklab, var(--brand) 12%, transparent);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7ZM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7Z"></path></svg></span>
+                  <p style="margin:0; font-size:14.5px; font-weight:700; color:#f4f1f6;">No prizes yet</p>
+                  <p style="margin:0; max-width:300px; font-size:13px; color:#a09aa8; text-wrap:pretty;">Add your first prize to start building the wheel. Set its rarity, tickets and odds.</p>
+                  <button onClick="{{ addPrize }}" style="margin-top:4px; display:flex; align-items:center; gap:6px; min-height:38px; border:none; border-radius:10px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 16px; font-size:13.5px; font-weight:700; color:{{ brandInk }}; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{ brandInk }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>Add your first prize</button>
+                </div>
+              </sc-if>
+              <div style="margin-top:16px; display:flex; flex-direction:column; gap:10px;">
+                <sc-for list="{{ editorPrizes }}" as="p" hint-placeholder-count="6">
+                  <div style="position:relative; border-radius:13px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:14px;">
+                    <button aria-label="Drag to reorder" title="Drag here to reorder" style="position:absolute; top:10px; right:10px; z-index:1; display:grid; height:26px; width:26px; place-items:center; border:none; border-radius:7px; background:#1f1b27; cursor:grab;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b8494" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01"></path></svg></button>
+                    <div style="display:flex; align-items:center; gap:8px; padding-right:32px;">
+                      <input aria-label="Emoji" value="{{ p.emoji }}" onChange="{{ p.onEmoji }}" style="width:42px; flex-shrink:0; text-align:center; border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 4px; font-size:16px; color:#f4f1f6;">
+                      <input aria-label="Prize name" value="{{ p.label }}" onChange="{{ p.onName }}" style="min-width:0; flex:1; border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;">
+                      <button onClick="{{ p.onRarity }}" title="Click to change rarity" style="display:inline-flex; align-items:center; gap:5px; border:none; border-radius:999px; padding:4px 10px; font-size:11px; font-weight:600; text-transform:capitalize; background:color-mix(in oklab, {{ p.rarityColor }} 16%, transparent); color:{{ p.rarityColor }}; cursor:pointer;"><span style="height:7px; width:7px; border-radius:999px; background:{{ p.rarityColor }};"></span>{{ p.rarity }}</button>
+                      <button aria-label="Save prize to library" title="Save to library" style="display:grid; height:34px; width:34px; flex-shrink:0; place-items:center; border:none; border-radius:9px; background:transparent; cursor:pointer;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a09aa8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 17l-5.2 2.6 1-5.8L3.5 9.7l5.9-.9Z"></path></svg></button>
+                      <button onClick="{{ p.onRemove }}" aria-label="Remove prize" style="display:grid; height:34px; width:34px; flex-shrink:0; place-items:center; border:none; border-radius:9px; background:transparent; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a09aa8" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>
+                    </div>
+                    <div style="margin-top:10px; display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
+                      <label style="display:flex; min-width:0; flex-direction:column; gap:5px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Tickets</span><input class="tnum" value="{{ p.tickets }}" onChange="{{ p.onTickets }}" style="text-align:right; border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:8px 11px; font-size:13px; color:#f4f1f6;"></label>
+                      <label style="display:flex; min-width:0; flex-direction:column; gap:5px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Stock</span><input class="tnum" value="{{ p.stock }}" placeholder="∞" onChange="{{ p.onStock }}" style="text-align:right; border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:8px 11px; font-size:13px; color:#f4f1f6;"></label>
+                      <label style="display:flex; min-width:0; flex-direction:column; gap:5px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Cost</span><input class="tnum" value="{{ p.cost }}" placeholder="0.00" onChange="{{ p.onCost }}" style="text-align:right; border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:8px 11px; font-size:13px; color:#f4f1f6;"></label>
+                      <div style="display:flex; min-width:0; flex-direction:column; gap:5px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Odds</span><span class="tnum" style="display:flex; align-items:center; justify-content:flex-end; padding:8px 0; font-size:13px; font-weight:600; font-family:'Geist Mono',monospace; color:#f4f1f6;">{{ p.oddsPct }}</span></div>
+                    </div>
+                    <label style="margin-top:8px; display:flex; align-items:center; gap:10px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Color</span><span style="height:28px; width:40px; flex-shrink:0; border-radius:7px; border:1px solid #2a2533; background:{{ p.color }};"></span><input class="tnum" value="{{ p.color }}" onChange="{{ p.onColor }}" style="min-width:0; flex:1; border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:7px 11px; font-size:13px; color:#f4f1f6;"><button style="flex-shrink:0; border:none; background:transparent; font-size:11px; font-weight:600; color:#8b8494; cursor:pointer;">Reset to rarity</button></label>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="margin-top:12px; display:flex; gap:8px;">
+                <button onClick="{{ addPrize }}" style="display:flex; align-items:center; gap:6px; min-height:38px; border-radius:10px; border:1px solid #2a2533; background:transparent; padding:0 16px; font-size:13.5px; font-weight:600; color:#f4f1f6; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>Add prize</button>
+                <button onClick="{{ balanceOdds }}" style="min-height:38px; border-radius:10px; border:1px solid #2a2533; background:transparent; padding:0 16px; font-size:13.5px; font-weight:600; color:#f4f1f6; cursor:pointer;">Balance odds</button>
+              </div>
+              <button onClick="{{ saveLibrary }}" style="margin-top:16px; display:flex; width:100%; text-align:left; align-items:center; justify-content:space-between; gap:12px; border-radius:12px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:14px 16px; cursor:pointer;">
+                <span style="display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; color:#f4f1f6;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"></path></svg>Prize &amp; wheel library</span>
+                <span style="font-size:13px; font-weight:600; color:#8b8494;">Save / reuse prizes &amp; templates ▾</span>
+              </button>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:16px; align-self:start; position:sticky; top:20px; border-radius:18px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:24px;">
+              <p style="margin:0; font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.06em; color:#a09aa8;">Live preview</p>
+              <div style="position:relative; width:264px; height:264px;">
+                <div style="position:absolute; left:50%; top:-4px; z-index:10; transform:translateX(-50%); width:0; height:0; border-left:13px solid transparent; border-right:13px solid transparent; border-top:24px solid var(--brand); filter:drop-shadow(0 2px 3px rgba(0,0,0,.4));"></div>
+                <canvas ref="{{ wheelRef }}" width="264" height="264" style="width:264px; height:264px; border-radius:999px; box-shadow:0 24px 60px -20px rgba(0,0,0,.8);"></canvas>
+              </div>
+              <p style="margin:0; text-align:center; font-size:12px; color:#a09aa8; text-wrap:pretty;">A prize's chance is its <strong style="color:#f4f1f6;">tickets ÷ all tickets</strong>. The <span style="color:var(--brand);">%</span> updates live.</p>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ PRIZES (fulfilment) ============ -->
+      <sc-if value="{{ isPrizes }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width:780px;">
+          <div style="display:flex; gap:8px; margin-bottom:14px;">
+            <sc-for list="{{ prizeFilters }}" as="pf" hint-placeholder-count="5">
+              <button onClick="{{ pf.onClick }}" style="min-height:34px; border-radius:999px; border:1px solid {{ pf.border }}; background:{{ pf.bg }}; padding:0 14px; font-size:12.5px; font-weight:600; color:{{ pf.color }}; cursor:pointer;">{{ pf.label }}</button>
+            </sc-for>
+          </div>
+          <sc-if value="{{ noRedemptions }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px; border-radius:16px; border:1px dashed var(--hair); padding:48px 32px; text-align:center;">
+              <span style="display:grid; height:48px; width:48px; place-items:center; border-radius:13px; background:color-mix(in oklab, var(--brand) 12%, transparent);"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+              <p style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">All clear here</p>
+              <p style="margin:0; max-width:320px; font-size:13px; color:#a09aa8; text-wrap:pretty;">No prizes in this status. Switch filters to see the rest of the queue.</p>
+            </div>
+          </sc-if>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <sc-for list="{{ redemptions }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; border-radius:13px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:13px 16px; transition:border-color .14s ease;" style-hover="border-color:color-mix(in oklab, var(--brand) 30%, var(--hair))">
+                <div style="display:flex; min-width:0; align-items:center; gap:12px;">
+                  <div style="display:grid; height:40px; width:40px; flex-shrink:0; place-items:center; border-radius:10px; font-size:20px; background:{{ r.tint }};">{{ r.emoji }}</div>
+                  <div style="min-width:0;">
+                    <p style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">{{ r.prizeLabel }}</p>
+                    <p style="margin:2px 0 0; font-size:12.5px; color:#a09aa8;"><span style="color:{{ r.color }};">{{ r.rarity }}</span> · {{ r.fanName }} · {{ r.at }}</p>
+                  </div>
+                </div>
+                <div style="display:flex; flex-shrink:0; align-items:center; gap:8px;">
+                  <span style="border-radius:999px; padding:4px 11px; font-size:12px; font-weight:700; background:{{ r.pillBg }}; color:{{ r.pillColor }};">{{ r.statusLabel }}</span>
+                  <button onClick="{{ r.onCycle }}" style="min-height:34px; border:none; border-radius:9px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); padding:0 14px; font-size:12.5px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">{{ r.cta }}</button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ FANS ============ -->
+      <sc-if value="{{ isFans }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Mint a fan link</h3>
+            <div style="margin-top:16px; display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:12px; align-items:end;">
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Fan handle</span><input value="{{ mintName }}" onChange="{{ onMintName }}" placeholder="@username" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Spins</span><input value="{{ mintSpins }}" class="tnum" onChange="{{ onMintSpins }}" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">$/spin</span><input value="{{ mintPer }}" onChange="{{ onMintPer }}" placeholder="0.00" class="tnum" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <button onClick="{{ mintFan }}" style="min-height:40px; border:none; border-radius:10px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 18px; font-size:14px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">Create</button>
+            </div>
+          </section>
+          <div style="display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px;">
+            <div style="display:flex; flex-wrap:wrap; gap:10px;">
+              <label style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Search</span><input value="{{ fanQuery }}" onChange="{{ onFanQuery }}" placeholder="Name or handle" style="width:190px; border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:8px 11px; font-size:13px; color:#f4f1f6;"></label>
+              <label style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Campaign</span><select onChange="{{ noop }}" style="border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:8px 11px; font-size:13px; color:#f4f1f6;"><option>All campaigns</option><option>VIP launch</option><option>Summer drop</option></select></label>
+              <label style="display:flex; flex-direction:column; gap:5px;"><span style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Tag</span><select onChange="{{ noop }}" style="border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:8px 11px; font-size:13px; color:#f4f1f6;"><option>All tags</option><option>VIP</option><option>whale</option><option>new</option></select></label>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button onClick="{{ importFans }}" style="min-height:36px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 13px; font-size:12.5px; font-weight:600; color:#a09aa8; cursor:pointer;">Import fans</button>
+              <button style="min-height:36px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 13px; font-size:12.5px; font-weight:600; color:#a09aa8; cursor:pointer;">Manage messages</button>
+            </div>
+          </div>
+          <sc-if value="{{ noFans }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px; border-radius:16px; border:1px dashed var(--hair); padding:48px 32px; text-align:center;">
+              <span style="display:grid; height:48px; width:48px; place-items:center; border-radius:13px; background:color-mix(in oklab, var(--brand) 12%, transparent);"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87"></path></svg></span>
+              <p style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">No fans match</p>
+              <p style="margin:0; max-width:320px; font-size:13px; color:#a09aa8; text-wrap:pretty;">Nothing matches your search or filters. Clear them, or mint a fresh link above.</p>
+            </div>
+          </sc-if>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <sc-for list="{{ fans }}" as="f" hint-placeholder-count="6">
+              <div onClick="{{ f.onOpen }}" style="display:flex; align-items:center; gap:14px; border-radius:13px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:13px 16px; cursor:pointer; transition:transform .14s ease, border-color .14s ease;" style-hover="transform:translateY(-2px); border-color:color-mix(in oklab, var(--brand) 45%, transparent)">
+                <span style="display:grid; height:40px; width:40px; flex-shrink:0; place-items:center; border-radius:999px; background:color-mix(in oklab, var(--brand) 16%, transparent); font-size:14px; font-weight:700; color:var(--brand);">{{ f.initials }}</span>
+                <div style="min-width:0; flex:1;">
+                  <p style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">{{ f.name }}</p>
+                  <p style="margin:2px 0 0; font-size:12.5px; color:#a09aa8;">{{ f.meta }}</p>
+                </div>
+                <div style="display:flex; flex-shrink:0; gap:6px;">
+                  <sc-for list="{{ f.tags }}" as="tag" hint-placeholder-count="2">
+                    <span style="border-radius:999px; padding:3px 10px; font-size:11.5px; font-weight:600; background:color-mix(in oklab, var(--brand) 14%, transparent); color:var(--brand);">{{ tag }}</span>
+                  </sc-for>
+                </div>
+                <span class="tnum" style="flex-shrink:0; font-size:13.5px; font-weight:600; color:#a09aa8;">{{ f.spins }} spins</span>
+                <button onClick="{{ f.onCopy }}" aria-label="Copy link" style="display:grid; height:34px; width:34px; flex-shrink:0; place-items:center; border:1px solid #2a2533; border-radius:9px; background:transparent; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a09aa8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9h11v11H9zM5 15H4V4h11v1"></path></svg></button>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ CAMPAIGNS ============ -->
+      <sc-if value="{{ isCampaigns }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width:820px; display:flex; flex-direction:column; gap:18px;">
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Create a campaign</h3>
+            <p style="margin:3px 0 0; font-size:13px; color:#a09aa8;">Name a promotion, then attach it to the links you mint to compare performance.</p>
+            <div style="margin-top:14px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px;">
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Campaign name</span><input value="{{ newCampaign }}" onChange="{{ onNewCampaign }}" placeholder="Spring promo" style="width:240px; border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <button onClick="{{ createCampaign }}" style="min-height:40px; border:none; border-radius:10px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 18px; font-size:14px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">Create campaign</button>
+            </div>
+          </section>
+          <sc-if value="{{ noCampaigns }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px; border-radius:16px; border:1px dashed var(--hair); padding:48px 32px; text-align:center;">
+              <span style="display:grid; height:48px; width:48px; place-items:center; border-radius:13px; background:color-mix(in oklab, var(--brand) 12%, transparent);"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h1.5L10 18V6L5.5 10H4a1 1 0 0 0-1 1ZM14 8a5 5 0 0 1 0 8"></path></svg></span>
+              <p style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">No campaigns yet</p>
+              <p style="margin:0; max-width:340px; font-size:13px; color:#a09aa8; text-wrap:pretty;">Name your first promotion above, then attach it to the links you mint to track what converts.</p>
+            </div>
+          </sc-if>
+          <sc-for list="{{ campaigns }}" as="c" hint-placeholder-count="2">
+            <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <h3 style="margin:0; font-size:16px; font-weight:700; color:#f4f1f6;">{{ c.name }}</h3>
+                <span style="display:flex; align-items:center; gap:6px; font-size:13px; color:#a09aa8;"><span style="height:8px; width:8px; border-radius:999px; background:{{ c.topColor }};"></span>Top: {{ c.topPrize }} ×{{ c.topCount }}</span>
+              </div>
+              <dl style="margin:16px 0 0; display:grid; grid-template-columns:repeat(4,1fr); gap:1px; overflow:hidden; border-radius:12px; border:1px solid #1f1b27; background:#1f1b27;">
+                <sc-for list="{{ c.cells }}" as="cell" hint-placeholder-count="8">
+                  <div style="background:#0c0a0e; padding:13px 15px;"><dd class="tnum" style="margin:0; font-size:18px; font-weight:700; color:#f4f1f6;">{{ cell.value }}</dd><dt style="margin-top:2px; font-size:10px; font-weight:500; text-transform:uppercase; letter-spacing:.04em; color:#a09aa8;">{{ cell.label }}</dt></div>
+                </sc-for>
+              </dl>
+              <div style="margin-top:14px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid #1f1b27; padding-top:14px;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#a09aa8;">Pinned wheel
+                  <select onChange="{{ noop }}" style="border-radius:9px; border:1px solid #2a2533; background:#0c0a0e; padding:7px 10px; font-size:13px; color:#f4f1f6;"><option>No pin · active wheel</option><option>Lola's Lucky Wheel</option><option>VIP Vault</option></select>
+                </label>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <button style="min-height:34px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 12px; font-size:12.5px; font-weight:600; color:#a09aa8; cursor:pointer;">Spin packs</button>
+                  <button style="min-height:34px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 12px; font-size:12.5px; font-weight:600; color:#a09aa8; cursor:pointer;">Rename</button>
+                  <button onClick="{{ c.onDelete }}" style="min-height:34px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 12px; font-size:12.5px; font-weight:600; color:#f87171; cursor:pointer;">Delete</button>
+                </div>
+              </div>
+            </section>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- ============ BOOSTS ============ -->
+      <sc-if value="{{ isBoosts }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px; max-width:880px;">
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:18px 20px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+              <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Link-in-bio (SFW)</h3>
+              <a href="#" style="font-size:12px; font-weight:600; color:var(--brand); text-decoration:none;">Preview page ↗</a>
+            </div>
+            <p style="margin:3px 0 0; font-size:13px; color:#a09aa8;">A clean, safe-for-work page for your IG/TikTok bio — your wheel and a way in.</p>
+            <div style="margin-top:14px; display:flex; flex-direction:column; gap:12px;">
+              <label style="display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Your public link
+                <div style="margin-top:6px; display:flex; align-items:center; gap:8px;"><span style="font-size:14px; color:#a09aa8;">fanfunnel.app/c/</span><input value="lola" onChange="{{ noop }}" style="flex:1; min-width:0; border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"><button onClick="{{ copyPublic }}" style="min-height:38px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 13px; font-size:12.5px; font-weight:600; color:#a09aa8; cursor:pointer;">Copy</button></div>
+              </label>
+              <label style="display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Tip / buy-spins link <span style="text-transform:none; font-weight:500; color:#6b6472;">— where fans go to pay</span>
+                <input value="https://onlyfans.com/lolalynx" onChange="{{ noop }}" style="margin-top:6px; width:100%; border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;">
+                <button onClick="{{ copyTip }}" style="margin-top:8px; min-height:34px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 13px; font-size:12.5px; font-weight:600; color:#a09aa8; cursor:pointer;">Copy tip link</button>
+              </label>
+              <label style="display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Tagline <span style="text-transform:none; font-weight:500; color:#6b6472;">— the line shown on your public spin page</span>
+                <input value="Spin my wheel — every spin wins 🎡" onChange="{{ noop }}" style="margin-top:6px; width:100%; border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;">
+              </label>
+            </div>
+          </section>
+          <section style="display:flex; align-items:center; justify-content:space-between; gap:16px; border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:18px 20px;">
+            <div><h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Public leaderboard</h3><p style="margin:3px 0 0; font-size:13px; color:#a09aa8;">Rank top spenders on your fan page — fuels competitive tipping.</p></div>
+            <button onClick="{{ toggleLeader }}" aria-label="Toggle leaderboard" style="display:inline-flex; height:28px; width:48px; flex-shrink:0; align-items:center; justify-content:{{ leaderJustify }}; border:none; border-radius:999px; background:{{ leaderBg }}; padding:0 3px; cursor:pointer; transition:background .15s;"><span style="height:22px; width:22px; border-radius:999px; background:#fff;"></span></button>
+          </section>
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:18px 20px;">
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Happy hours</h3>
+            <div style="margin-top:14px; display:flex; flex-direction:column; gap:8px;">
+              <sc-for list="{{ happyHours }}" as="h" hint-placeholder-count="2">
+                <div style="display:flex; align-items:center; gap:12px; border-radius:11px; border:1px solid #1f1b27; background:#0c0a0e; padding:12px 14px;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2"></path></svg>
+                  <div style="min-width:0; flex:1;"><p style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">{{ h.when }}</p><p style="margin:2px 0 0; font-size:12.5px; color:#a09aa8;">{{ h.detail }}</p></div>
+                  <span style="flex-shrink:0; border-radius:999px; padding:3px 10px; font-size:11px; font-weight:700; background:{{ h.pillBg }}; color:{{ h.pillColor }};">{{ h.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+          <div style="display:grid; gap:18px; grid-template-columns:1fr 1fr;">
+            <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:18px 20px;">
+              <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Wishlist demand</h3>
+              <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+                <sc-for list="{{ wishlist }}" as="w" hint-placeholder-count="3">
+                  <div style="display:flex; align-items:center; gap:10px;"><span style="flex:1; font-size:13px; color:#f4f1f6;">{{ w.label }}</span><div style="height:6px; width:90px; overflow:hidden; border-radius:999px; background:#1f1b27;"><div style="height:100%; width:{{ w.pct }}; background:var(--brand);"></div></div><span class="tnum" style="width:22px; text-align:right; font-size:13px; font-weight:600; color:#a09aa8;">{{ w.votes }}</span></div>
+                </sc-for>
+              </div>
+            </section>
+            <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:18px 20px;">
+              <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Referrals</h3>
+              <p style="margin:3px 0 0; font-size:13px; color:#a09aa8;">Fans who brought friends earn bonus spins.</p>
+              <dl style="margin:14px 0 0; display:grid; grid-template-columns:repeat(3,1fr); gap:1px; overflow:hidden; border-radius:12px; border:1px solid #1f1b27; background:#1f1b27;">
+                <sc-for list="{{ referrals }}" as="r" hint-placeholder-count="3"><div style="background:#0c0a0e; padding:12px 14px;"><dd class="tnum" style="margin:0; font-size:18px; font-weight:700; color:#f4f1f6;">{{ r.value }}</dd><dt style="margin-top:2px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#a09aa8;">{{ r.label }}</dt></div></sc-for>
+              </dl>
+            </section>
+          </div>
+          <section style="border-radius:14px; border:1px solid color-mix(in oklab, #ef4444 28%, #1f1b27); background:color-mix(in oklab, #ef4444 5%, #16131c); padding:18px 20px;">
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Danger zone</h3>
+            <p style="margin:3px 0 0; font-size:13px; color:#a09aa8;">Clear all wheels, fans, spins &amp; campaigns. Cannot be undone.</p>
+            <button style="margin-top:12px; min-height:36px; border-radius:9px; border:1px solid color-mix(in oklab, #ef4444 55%, transparent); background:transparent; padding:0 14px; font-size:13px; font-weight:600; color:#f87171; cursor:pointer;" onClick="{{ clearData }}">Clear all data</button>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- ============ INBOX ============ -->
+      <sc-if value="{{ isInbox }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div style="display:flex; flex-wrap:wrap; align-items:stretch; gap:10px;">
+            <div style="flex:1; min-width:260px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-radius:12px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:12px 16px;">
+              <span style="display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; color:#f4f1f6;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z"></path></svg>Auto-messages</span>
+              <span style="font-size:12px; color:#8b8494;">Greeting &amp; out-of-spins ▾</span>
+            </div>
+            <button onClick="{{ importFans }}" style="display:flex; align-items:center; gap:7px; border-radius:12px; border:1px solid #2a2533; background:#16131c; padding:0 16px; font-size:13px; font-weight:600; color:#f4f1f6; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"></path></svg>Enable alerts</button>
+          </div>
+          <sc-if value="{{ noThreads }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px; border-radius:16px; border:1px dashed var(--hair); padding:56px 32px; text-align:center;">
+              <span style="display:grid; height:48px; width:48px; place-items:center; border-radius:13px; background:color-mix(in oklab, var(--brand) 12%, transparent);"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z"></path></svg></span>
+              <p style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">No conversations yet</p>
+              <p style="margin:0; max-width:340px; font-size:13px; color:#a09aa8; text-wrap:pretty;">When a fan spins or replies, the thread lands here. Set up an auto-greeting above so every new fan gets a warm welcome.</p>
+            </div>
+          </sc-if>
+          <sc-if value="{{ hasThreads }}" hint-placeholder-val="{{ true }}">
+          <div style="display:grid; gap:16px; grid-template-columns:300px 1fr;">
+          <ul style="margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:6px;">
+            <sc-for list="{{ threads }}" as="t" hint-placeholder-count="4">
+              <li><button onClick="{{ t.onClick }}" style="display:flex; width:100%; align-items:center; gap:12px; border-radius:12px; border:1px solid {{ t.border }}; background:{{ t.bg }}; padding:11px 13px; text-align:left; cursor:pointer;">
+                <span style="display:grid; height:36px; width:36px; flex-shrink:0; place-items:center; border-radius:999px; background:color-mix(in oklab, var(--brand) 16%, transparent); font-size:12px; font-weight:700; color:var(--brand);">{{ t.initials }}</span>
+                <div style="min-width:0; flex:1;"><p style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ t.name }}</p><p style="margin:2px 0 0; font-size:12.5px; color:#a09aa8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ t.last }}</p></div>
+                <sc-if value="{{ t.unread }}" hint-placeholder-val="{{ false }}"><span class="tnum" style="display:grid; height:19px; min-width:19px; place-items:center; border-radius:999px; background:var(--brand); padding:0 5px; font-size:11px; font-weight:700; color:{{ brandInk }};">{{ t.unread }}</span></sc-if>
+              </button></li>
+            </sc-for>
+          </ul>
+          <div style="display:flex; flex-direction:column; min-height:420px; border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift);">
+            <div style="border-bottom:1px solid #1f1b27; padding:14px 18px;"><p style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">{{ activeName }}</p><p style="margin:2px 0 0; font-size:12px; color:#a09aa8;">{{ activeMeta }}</p></div>
+            <div style="flex:1; display:flex; flex-direction:column; gap:8px; padding:18px;">
+              <sc-for list="{{ messages }}" as="m" hint-placeholder-count="4">
+                <div style="display:flex; justify-content:{{ m.justify }};"><span style="max-width:78%; border-radius:16px; padding:9px 13px; font-size:13.5px; background:{{ m.bg }}; color:{{ m.color }};">{{ m.body }}</span></div>
+              </sc-for>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; border-top:1px solid #1f1b27; padding:12px;">
+              <input value="{{ reply }}" onChange="{{ onReply }}" onKeyDown="{{ onReplyKey }}" placeholder="Reply…" style="flex:1; border-radius:999px; border:1px solid #2a2533; background:#0c0a0e; padding:10px 16px; font-size:14px; color:#f4f1f6;">
+              <button onClick="{{ sendMsg }}" style="min-height:40px; border:none; border-radius:999px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); padding:0 18px; font-size:13.5px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">Send</button>
+            </div>
+          </div>
+          </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- ============ SETTINGS ============ -->
+      <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width:680px; display:flex; flex-direction:column; gap:18px;">
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Profile</h3>
+            <div style="margin-top:16px; display:flex; align-items:center; gap:14px;">
+              <span style="display:grid; height:56px; width:56px; place-items:center; border-radius:999px; background:color-mix(in oklab, var(--brand) 18%, transparent); font-size:18px; font-weight:700; color:var(--brand);">LX</span>
+              <button style="min-height:36px; border-radius:9px; border:1px solid #2a2533; background:transparent; padding:0 14px; font-size:13px; font-weight:600; color:#f4f1f6; cursor:pointer;">Change avatar</button>
+            </div>
+            <div style="margin-top:16px; display:grid; gap:14px; grid-template-columns:1fr 1fr;">
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Display name</span><input value="Lola Lynx" onChange="{{ noop }}" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Handle</span><input value="@lola_lynx" onChange="{{ noop }}" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <label style="display:flex; flex-direction:column; gap:6px; grid-column:span 2;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Email</span><input value="lola@studio.co" onChange="{{ noop }}" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+            </div>
+            <button onClick="{{ saveProfile }}" style="margin-top:16px; min-height:40px; border:none; border-radius:10px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 18px; font-size:14px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">Save profile</button>
+          </section>
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Security</h3>
+            <div style="margin-top:16px; display:grid; gap:14px; grid-template-columns:1fr 1fr;">
+              <label style="display:flex; flex-direction:column; gap:6px; grid-column:span 2;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Current password</span><input type="password" value="••••••••" onChange="{{ noop }}" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">New password</span><input type="password" placeholder="••••••••" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+              <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#a09aa8;">Confirm new</span><input type="password" placeholder="••••••••" style="border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:14px; color:#f4f1f6;"></label>
+            </div>
+            <button onClick="{{ updatePassword }}" style="margin-top:16px; min-height:38px; border-radius:10px; border:1px solid #2a2533; background:transparent; padding:0 16px; font-size:13.5px; font-weight:600; color:#f4f1f6; cursor:pointer;">Update password</button>
+          </section>
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); padding:20px;">
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Notifications</h3>
+            <div style="margin-top:14px; display:flex; flex-direction:column; gap:2px;">
+              <sc-for list="{{ notifPrefs }}" as="n" hint-placeholder-count="3">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 0; border-bottom:1px solid #1f1b27;">
+                  <span style="font-size:14px; color:#f4f1f6;">{{ n.label }}</span>
+                  <button onClick="{{ n.onToggle }}" aria-label="Toggle setting" style="display:inline-flex; height:26px; width:46px; flex-shrink:0; align-items:center; border:none; border-radius:999px; background:{{ n.bg }}; padding:0 3px; justify-content:{{ n.justify }}; cursor:pointer; transition:background .15s;"><span style="height:20px; width:20px; border-radius:999px; background:#fff;"></span></button>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- ============ ADMIN ============ -->
+      <sc-if value="{{ isAdmin }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width:960px; display:flex; flex-direction:column; gap:18px;">
+          <dl style="margin:0; display:grid; grid-template-columns:repeat(4,1fr); gap:1px; overflow:hidden; border-radius:14px; border:1px solid #1f1b27; background:#1f1b27;">
+            <sc-for list="{{ adminStats }}" as="s" hint-placeholder-count="4">
+              <div style="background:#0c0a0e; padding:16px 18px;"><dd class="tnum" style="margin:0; font-size:22px; font-weight:700; color:#f4f1f6;">{{ s.value }}</dd><dt style="margin-top:2px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#a09aa8;">{{ s.label }}</dt></div>
+            </sc-for>
+          </dl>
+          <section style="border-radius:16px; border:1px solid var(--hair); background:var(--s1); box-shadow:var(--lift); overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid #1f1b27;">
+              <h3 style="margin:0; font-size:15px; font-weight:700; color:#f4f1f6;">Creator accounts</h3>
+              <button onClick="{{ newAccount }}" style="display:flex; align-items:center; gap:6px; min-height:36px; border:none; border-radius:9px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); padding:0 14px; font-size:13px; font-weight:700; color:{{ brandInk }}; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{ brandInk }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>New account</button>
+            </div>
+            <sc-for list="{{ adminAccounts }}" as="a" hint-placeholder-count="4">
+              <div style="display:flex; align-items:center; gap:14px; padding:14px 18px; border-bottom:1px solid #1f1b27;">
+                <span style="display:grid; height:38px; width:38px; flex-shrink:0; place-items:center; border-radius:999px; background:color-mix(in oklab, var(--brand) 16%, transparent); font-size:13px; font-weight:700; color:var(--brand);">{{ a.initials }}</span>
+                <div style="min-width:0; flex:1;"><p style="margin:0; font-size:14px; font-weight:600; color:#f4f1f6;">{{ a.name }}</p><p style="margin:2px 0 0; font-size:12.5px; color:#a09aa8;">{{ a.email }} · {{ a.plan }} · {{ a.fans }} fans</p></div>
+                <span style="flex-shrink:0; border-radius:999px; padding:3px 10px; font-size:11px; font-weight:700; background:{{ a.statusBg }}; color:{{ a.statusColor }};">{{ a.status }}</span>
+                <button onClick="{{ a.onSuspend }}" style="flex-shrink:0; min-height:32px; border-radius:8px; border:1px solid #2a2533; background:transparent; padding:0 11px; font-size:12px; font-weight:600; color:#a09aa8; cursor:pointer;">{{ a.suspendLabel }}</button>
+                <button onClick="{{ a.onDelete }}" aria-label="Delete account" style="flex-shrink:0; min-height:32px; border-radius:8px; border:1px solid color-mix(in oklab, #ef4444 50%, transparent); background:transparent; padding:0 11px; font-size:12px; font-weight:600; color:#f87171; cursor:pointer;">Delete</button>
+              </div>
+            </sc-for>
+          </section>
+        </div>
+      </sc-if>
+
+    </div>
+  </main>
+
+  <!-- ===================== TOAST ===================== -->
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; left:50%; bottom:28px; z-index:80; transform:translateX(-50%); display:flex; align-items:center; gap:10px; border-radius:12px; border:1px solid #2a2533; background:#1f1b27; padding:12px 18px; box-shadow:0 20px 50px -16px rgba(0,0,0,.8); animation:ff-rise .26s cubic-bezier(.16,1,.3,1) both;">
+      <span style="height:8px; width:8px; border-radius:999px; background:var(--brand);"></span>
+      <span style="font-size:13.5px; font-weight:600; color:#f4f1f6;">{{ toastMsg }}</span>
+    </div>
+  </sc-if>
+
+  <!-- ===================== FAN DETAIL DRAWER ===================== -->
+  <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; inset:0; z-index:60;">
+      <div onClick="{{ closeDrawer }}" style="position:absolute; inset:0; background:rgba(0,0,0,.62); animation:ff-fade .2s ease both;"></div>
+      <div role="dialog" aria-modal="true" aria-label="Fan details" style="position:absolute; right:0; top:0; height:100%; width:444px; max-width:100%; display:flex; flex-direction:column; overflow-y:auto; border-left:1px solid #2a2533; background:#16131c; box-shadow:-30px 0 70px -20px rgba(0,0,0,.75); animation:ff-slide .34s cubic-bezier(.16,1,.3,1) both;">
+        <div style="position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid #1f1b27; background:#16131c; padding:18px 20px;">
+          <div style="display:flex; align-items:center; gap:12px; min-width:0;">
+            <span style="display:grid; height:44px; width:44px; flex-shrink:0; place-items:center; border-radius:999px; background:color-mix(in oklab, var(--brand) 18%, transparent); font-size:15px; font-weight:700; color:var(--brand);">{{ drawer.initials }}</span>
+            <div style="min-width:0;"><h2 style="margin:0; font-size:17px; font-weight:700; color:#f4f1f6;">{{ drawer.name }}</h2><p style="margin:2px 0 0; font-size:12px; color:#a09aa8;">Fan details</p></div>
+          </div>
+          <button onClick="{{ closeDrawer }}" aria-label="Close" style="display:grid; height:34px; width:34px; flex-shrink:0; place-items:center; border:1px solid #2a2533; border-radius:9px; background:transparent; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a09aa8" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:22px; padding:20px;">
+          <dl style="margin:0; display:grid; grid-template-columns:repeat(2,1fr); gap:1px; overflow:hidden; border-radius:12px; border:1px solid #1f1b27; background:#1f1b27;">
+            <sc-for list="{{ drawer.stats }}" as="s" hint-placeholder-count="4"><div style="background:#0c0a0e; padding:13px 15px;"><dd class="tnum" style="margin:0; font-size:19px; font-weight:700; color:#f4f1f6;">{{ s.value }}</dd><dt style="margin-top:2px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:#a09aa8;">{{ s.label }}</dt></div></sc-for>
+          </dl>
+          <div style="display:flex; gap:8px;">
+            <button onClick="{{ drawer.onTopUp }}" style="flex:1; min-height:40px; border:none; border-radius:10px; background:linear-gradient(180deg, color-mix(in oklab, var(--brand) 90%, white 10%), var(--brand)); box-shadow:0 1px 0 color-mix(in oklab, white 30%, transparent) inset; padding:0 14px; font-size:13.5px; font-weight:700; color:{{ brandInk }}; cursor:pointer;">Top up spins</button>
+            <button onClick="{{ drawer.onCopyLink }}" style="min-height:40px; border-radius:10px; border:1px solid #2a2533; background:transparent; padding:0 13px; font-size:13.5px; font-weight:600; color:#f4f1f6; cursor:pointer;">Copy link</button>
+            <button onClick="{{ drawerMessage }}" style="min-height:40px; border-radius:10px; border:1px solid #2a2533; background:transparent; padding:0 13px; font-size:13.5px; font-weight:600; color:#f4f1f6; cursor:pointer;">Message</button>
+          </div>
+          <section>
+            <h3 style="margin:0 0 10px; font-size:13px; font-weight:700; color:#f4f1f6;">Tags</h3>
+            <sc-if value="{{ drawer.hasTags }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+                <sc-for list="{{ drawer.tags }}" as="tag" hint-placeholder-count="2"><span style="display:inline-flex; align-items:center; gap:6px; border-radius:999px; border:1px solid color-mix(in oklab, var(--brand) 40%, transparent); background:color-mix(in oklab, var(--brand) 12%, transparent); padding:3px 6px 3px 11px; font-size:12px; font-weight:600; color:var(--brand);">{{ tag.label }}<button onClick="{{ tag.onRemove }}" aria-label="Remove tag" style="display:grid; height:16px; width:16px; place-items:center; border:none; border-radius:999px; background:transparent; color:#a09aa8; cursor:pointer; font-size:13px; line-height:1;">×</button></span></sc-for>
+              </div>
+            </sc-if>
+            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px;">
+              <sc-for list="{{ drawer.tagToggles }}" as="tt" hint-placeholder-count="3"><button onClick="{{ tt.onToggle }}" style="border-radius:999px; border:1px solid {{ tt.border }}; background:{{ tt.bg }}; padding:3px 12px; font-size:12px; font-weight:600; color:{{ tt.color }}; cursor:pointer;">{{ tt.label }}</button></sc-for>
+              <input placeholder="Add tag" style="width:96px; border-radius:999px; border:1px solid #2a2533; background:#0c0a0e; padding:4px 11px; font-size:12px; color:#f4f1f6;">
+              <button style="border-radius:8px; border:1px solid #2a2533; background:transparent; padding:4px 10px; font-size:12px; font-weight:600; color:#f4f1f6; cursor:pointer;">Add</button>
+            </div>
+          </section>
+          <section>
+            <h3 style="margin:0 0 10px; font-size:13px; font-weight:700; color:#f4f1f6;">Notes</h3>
+            <textarea onChange="{{ noop }}" placeholder="Private notes about this fan…" rows="3" style="width:100%; border-radius:10px; border:1px solid #2a2533; background:#0c0a0e; padding:9px 12px; font-size:13.5px; color:#f4f1f6; resize:vertical;">{{ drawer.notes }}</textarea>
+            <p style="margin:6px 0 0; font-size:11px; color:#6b6472;">Saved when you click away.</p>
+          </section>
+          <section>
+            <h3 style="margin:0 0 10px; font-size:13px; font-weight:700; color:#f4f1f6;">Wins by rarity</h3>
+            <div style="display:flex; height:12px; overflow:hidden; border-radius:999px;">
+              <sc-for list="{{ drawer.wins }}" as="w" hint-placeholder-count="4"><div style="width:{{ w.pct }}; background:{{ w.color }};"></div></sc-for>
+            </div>
+            <div style="margin-top:12px; display:grid; grid-template-columns:repeat(2,1fr); gap:8px;">
+              <sc-for list="{{ drawer.wins }}" as="w" hint-placeholder-count="4"><div style="display:flex; align-items:center; gap:8px; font-size:13px;"><span style="height:9px; width:9px; border-radius:999px; background:{{ w.color }};"></span><span style="color:#a09aa8;">{{ w.label }}</span><span class="tnum" style="margin-left:auto; font-weight:600; color:#f4f1f6;">{{ w.count }}</span></div></sc-for>
+            </div>
+          </section>
+          <section>
+            <h3 style="margin:0 0 10px; font-size:13px; font-weight:700; color:#f4f1f6;">By campaign</h3>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <sc-for list="{{ drawer.byCampaign }}" as="c" hint-placeholder-count="1">
+                <div style="border-radius:10px; border:1px solid #1f1b27; background:#0c0a0e; padding:11px 13px;">
+                  <div style="display:flex; align-items:baseline; justify-content:space-between; gap:8px;"><span style="min-width:0; font-size:13.5px; font-weight:600; color:#f4f1f6;">{{ c.name }}</span><span class="tnum" style="flex-shrink:0; font-size:13px; font-weight:600; color:#f4f1f6;">{{ c.spent }}</span></div>
+                  <p class="tnum" style="margin:3px 0 0; font-size:12px; color:#a09aa8;">{{ c.bought }} bought · {{ c.played }} played</p>
+                  <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+                    <sc-for list="{{ c.prizes }}" as="pz" hint-placeholder-count="2"><span style="display:inline-flex; align-items:center; gap:6px; border-radius:999px; border:1px solid #2a2533; padding:2px 9px; font-size:11.5px; color:#f4f1f6;"><span style="height:7px; width:7px; border-radius:999px; background:{{ pz.color }};"></span>{{ pz.label }}<span class="tnum" style="color:#a09aa8;">×{{ pz.count }}</span></span></sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+          <section>
+            <h3 style="margin:0 0 10px; font-size:13px; font-weight:700; color:#f4f1f6;">Grant history</h3>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <sc-for list="{{ drawer.grants }}" as="g" hint-placeholder-count="2"><div style="display:flex; align-items:center; gap:10px; border-radius:10px; border:1px solid #1f1b27; background:#0c0a0e; padding:9px 13px;"><span class="tnum" style="flex-shrink:0; font-size:14px; font-weight:700; color:#f4f1f6;">{{ g.spins }}</span><span style="flex:1; min-width:0; font-size:13px; color:#a09aa8;"><span class="tnum" style="font-weight:600; color:#f4f1f6;">{{ g.amount }}</span> · {{ g.campaign }}</span><button style="flex-shrink:0; border-radius:7px; border:1px solid #2a2533; background:transparent; padding:3px 9px; font-size:11.5px; font-weight:600; color:#8b8494; cursor:pointer;">Edit</button></div></sc-for>
+            </div>
+          </section>
+          <section>
+            <h3 style="margin:0 0 10px; font-size:13px; font-weight:700; color:#f4f1f6;">Pending prizes</h3>
+            <sc-if value="{{ drawer.hasPending }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <sc-for list="{{ drawer.pending }}" as="p" hint-placeholder-count="1"><div style="display:flex; align-items:center; gap:10px; border-radius:10px; border:1px solid #1f1b27; background:#0c0a0e; padding:9px 13px;"><span style="height:9px; width:9px; flex-shrink:0; border-radius:999px; background:{{ p.color }};"></span><span style="flex:1; min-width:0; font-size:13.5px; color:#f4f1f6;">{{ p.emoji }} {{ p.label }}</span><span class="tnum" style="flex-shrink:0; font-size:12px; color:#a09aa8;">{{ p.ago }}</span></div></sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ drawer.noPending }}" hint-placeholder-val="{{ false }}"><p style="margin:0; font-size:13px; color:#8b8494;">None pending.</p></sc-if>
+          </section>
+          <section>
+            <h3 style="margin:0 0 10px; font-size:13px; font-weight:700; color:#f4f1f6;">Links</h3>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <sc-for list="{{ drawer.links }}" as="l" hint-placeholder-count="1"><div style="display:flex; align-items:center; gap:8px; border-radius:10px; border:1px solid #1f1b27; background:#0c0a0e; padding:8px 12px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:#a09aa8;">{{ l.url }}</span><button onClick="{{ l.onCopy }}" style="flex-shrink:0; border-radius:7px; border:1px solid #2a2533; background:transparent; padding:4px 11px; font-size:11.5px; font-weight:600; color:#f4f1f6; cursor:pointer;">Copy</button></div></sc-for>
+            </div>
+          </section>
+          <section style="border-top:1px solid #1f1b27; padding-top:16px;">
+            <h3 style="margin:0; font-size:13px; font-weight:700; color:#f4f1f6;">Safety</h3>
+            <p style="margin:5px 0 0; font-size:12px; color:#a09aa8;">Blocking disables every link this fan has until you unblock them.</p>
+            <button onClick="{{ blockFan }}" style="margin-top:12px; min-height:34px; border-radius:9px; border:1px solid color-mix(in oklab, #ef4444 55%, transparent); background:transparent; padding:0 13px; font-size:12.5px; font-weight:600; color:#f87171; cursor:pointer;">Block fan</button>
+          </section>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1200,&quot;height&quot;:860},&quot;brandColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#ec4899&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;handle&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;@lola_lynx&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;accountState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;populated&quot;,&quot;new&quot;],&quot;default&quot;:&quot;populated&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = {
+    section: "today", openFanId: null,
+    activeThread: "mia", reply: "",
+    threadMsgs: {
+      mia: [ {s:"fan",body:"hey lola! just spun and won the custom video 🥹"}, {s:"me",body:"ahh congrats babe! filming it tonight 💋"}, {s:"fan",body:"omg thank you 😭 can't wait"}, {s:"me",body:"want a few more spins while you're here? 😏"} ],
+      jordan: [ {s:"fan",body:"hey! did my exclusive set send through?"}, {s:"fan",body:"did my set send through?"} ],
+      sasha: [ {s:"fan",body:"spinning again tonight 🔥"}, {s:"me",body:"can't wait to see it babe 💕"} ],
+      devon: [ {s:"fan",body:"you're the best 💕"}, {s:"me",body:"aww thank you love 🥰"} ],
+    },
+    prizeFilter: "pending", activeWheel: 0, dismissed: [],
+    leaderboard: true, notifs: [true, true, false], fanQuery: "",
+    prizes: [
+      { emoji:"🎬", label:"Custom video", rarity:"rare", color:"#3b82f6", tickets:10, stock:"", cost:"18.00" },
+      { emoji:"💋", label:"Voice note", rarity:"uncommon", color:"#22c55e", tickets:30, stock:"", cost:"4.00" },
+      { emoji:"📸", label:"Exclusive set", rarity:"epic", color:"#a855f7", tickets:6, stock:20, cost:"12.00" },
+      { emoji:"💬", label:"1:1 chat", rarity:"common", color:"#6b7280", tickets:50, stock:"", cost:"6.00" },
+      { emoji:"👑", label:"VIP month", rarity:"legendary", color:"#f59e0b", tickets:2, stock:5, cost:"40.00" },
+      { emoji:"🎁", label:"Free spin", rarity:"common", color:"#6b7280", tickets:40, stock:"", cost:"0.00" },
+      { emoji:"🔥", label:"Shoutout", rarity:"uncommon", color:"#22c55e", tickets:20, stock:"", cost:"2.00" },
+      { emoji:"🧦", label:"Worn item", rarity:"rare", color:"#3b82f6", tickets:8, stock:10, cost:"25.00" },
+    ],
+    campaignList: [
+      { id:"summer", name:"Summer drop", topPrize:"Custom video", topColor:"#3b82f6", topCount:18, cells:[ {label:"Revenue",value:"$2,140"},{label:"ARPU",value:"$36"},{label:"Spins bought",value:"320"},{label:"Spins played",value:"291"},{label:"Play-through",value:"91%"},{label:"Unique fans",value:"59"},{label:"Fulfilled",value:"44"},{label:"Pending",value:"2"} ] },
+      { id:"vip", name:"VIP launch", topPrize:"VIP month", topColor:"#f59e0b", topCount:6, cells:[ {label:"Revenue",value:"$1,680"},{label:"ARPU",value:"$84"},{label:"Spins bought",value:"140"},{label:"Spins played",value:"128"},{label:"Play-through",value:"91%"},{label:"Unique fans",value:"20"},{label:"Fulfilled",value:"31"},{label:"Pending",value:"1"} ] },
+    ],
+    newCampaign: "",
+    redemptionStatus: {},
+    suspended: {}, deletedAccounts: [],
+    mintName: "", mintSpins: "3", mintPer: "",
+    extraFans: [], fanOverrides: {}, toast: null,
+  };
+
+  toast(msg) {
+    this._toastN = (this._toastN || 0) + 1;
+    const id = this._toastN;
+    this.setState({ toast: msg });
+    clearTimeout(this._toastT);
+    this._toastT = setTimeout(() => { if (this._toastN === id) this.setState({ toast: null }); }, 2400);
+  }
+  copy(text, label) {
+    try { navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) {}
+    this.toast((label || "Copied") + " ✓");
+  }
+
+  componentDidMount() { this.applyBrand(); this.drawWheel(); }
+  componentDidUpdate() { this.applyBrand(); this.drawWheel(); }
+  applyBrand() { if (this._root) this._root.style.setProperty("--brand", this.props.brandColor || "#ec4899"); }
+
+  // --- color / accessibility helpers ---
+  parseHex(hex) {
+    let m = (hex || "").trim().replace(/^#/, "");
+    if (m.length === 3) m = m[0]+m[0]+m[1]+m[1]+m[2]+m[2];
+    if (!/^[0-9a-fA-F]{6}$/.test(m)) return null;
+    const n = parseInt(m, 16);
+    return [(n>>16)&255, (n>>8)&255, n&255];
+  }
+  _lin(c){ c/=255; return c<=0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); }
+  luminance(rgb){ return 0.2126*this._lin(rgb[0]) + 0.7152*this._lin(rgb[1]) + 0.0722*this._lin(rgb[2]); }
+  contrast(a, b){ const L1=this.luminance(a), L2=this.luminance(b); const hi=Math.max(L1,L2), lo=Math.min(L1,L2); return (hi+0.05)/(lo+0.05); }
+  // Pick a foreground (white or near-black ink) that maximizes WCAG contrast on the brand —
+  // this is what fixes the documented 3.52:1 white-on-brand advisory: dark ink rides on hot pink.
+  readableInk(hex) {
+    const rgb = this.parseHex(hex) || [236,72,153];
+    const dark = [22,13,18];
+    return this.contrast(rgb, [255,255,255]) >= this.contrast(rgb, dark) ? "#ffffff" : "#160d12";
+  }
+  shade(hex, amt) {
+    const rgb = this.parseHex(hex) || [107,114,128];
+    const c = (v) => Math.max(0, Math.min(255, v + amt));
+    return `rgb(${c(rgb[0])},${c(rgb[1])},${c(rgb[2])})`;
+  }
+  drawWheel() {
+    const canvas = this._wheel;
+    if (!canvas || this.state.section !== "wheels") return;
+    const prizes = this._wheelPrizes || [];
+    const brand = this.props.brandColor || "#ec4899";
+    const size = 264, dpr = window.devicePixelRatio || 1, px = Math.round(size*dpr);
+    if (canvas.width !== px) { canvas.width = px; canvas.height = px; }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,size,size);
+    const cx=size/2, cy=size/2, radius=size/2-8, TWO_PI=Math.PI*2, seg=prizes.length?TWO_PI/prizes.length:TWO_PI;
+    ctx.beginPath(); ctx.arc(cx,cy,radius+4,0,TWO_PI); ctx.fillStyle="rgba(0,0,0,0.35)"; ctx.fill();
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(-Math.PI/2);
+    prizes.forEach((p, i) => {
+      const start=i*seg, end=start+seg, base=p.color||"#6b7280";
+      const grad=ctx.createRadialGradient(0,0,radius*0.15,0,0,radius);
+      grad.addColorStop(0,this.shade(base,28)); grad.addColorStop(1,this.shade(base,-22));
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,radius,start,end); ctx.closePath();
+      ctx.fillStyle=grad; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle="rgba(255,255,255,0.5)"; ctx.stroke();
+      ctx.save(); ctx.rotate(start+seg/2);
+      ctx.textAlign="right"; ctx.textBaseline="middle"; ctx.fillStyle="#fff";
+      ctx.shadowColor="rgba(0,0,0,0.45)"; ctx.shadowBlur=3; ctx.font="600 12px ui-sans-serif, system-ui, sans-serif";
+      const full = `${p.emoji?p.emoji+" ":""}${p.label}`; let label=full;
+      const maxLen = radius - radius*0.15 - 16;
+      while (label.length>1 && ctx.measureText(label+"…").width>maxLen) label=label.slice(0,-1);
+      if (label!==full) label+="…";
+      ctx.fillText(label, radius-12, 0); ctx.restore();
+    });
+    ctx.restore();
+    const hub = this.parseHex(brand) ? brand : "#ec4899";
+    ctx.beginPath(); ctx.arc(cx,cy,radius*0.15,0,TWO_PI); ctx.fillStyle="#fff"; ctx.fill();
+    ctx.lineWidth=4; ctx.strokeStyle=hub; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx,cy,radius*0.05,0,TWO_PI); ctx.fillStyle=hub; ctx.fill();
+  }
+
+  renderVals() {
+    const RC = { Common:"#6b7280", Uncommon:"#22c55e", Rare:"#3b82f6", Epic:"#a855f7", Legendary:"#f59e0b" };
+    const brand = this.props.brandColor || "#ec4899";
+    const brandInk = this.readableInk(brand);
+    const isNew = (this.props.accountState || "populated") === "new";
+    const sec = this.state.section;
+    const go = (s) => () => this.setState({ section: s });
+    const noop = () => {};
+
+    // Icon paths (24x24, stroke)
+    const ICON = {
+      today:"M3 10.6 12 3l9 7.6M5 9.2V21h14V9.2",
+      inbox:"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z",
+      prizes:"M20 8v13H4V8M2 4h20v4H2zM12 4v17M12 4S10.5 1 8.3 1.6 6 4 6.5 4.6 9 5 12 4Z",
+      wheels:"M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM12 12.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1Z",
+      campaigns:"M3 11v2a1 1 0 0 0 1 1h1.5L10 18V6L5.5 10H4a1 1 0 0 0-1 1ZM14 8a5 5 0 0 1 0 8M17.5 5a9 9 0 0 1 0 14",
+      fans:"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87",
+      boosts:"M13 2 4 14h7l-2 8 9-12h-7l2-8Z",
+      analytics:"M3 3v18h18M7 16v-5M12 16V8M17 16v-3",
+      clock:"M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2",
+      target:"M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z",
+      dollar:"M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
+      settings:"M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 1 1 4 0a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-1.1 2.7H21a2 2 0 1 1 0 4a1.6 1.6 0 0 0-1.6 1Z",
+      shield:"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10ZM9.5 12l2 2 3.5-4",
+    };
+
+    const item = (id, label, icon, badge) => {
+      const on = sec === id;
+      return { onClick: go(id), current: on ? "page" : "false", label, icon, badge: badge||null,
+        bg: on ? "color-mix(in oklab, var(--brand) 13%, transparent)" : "transparent",
+        accent: on ? "var(--brand)" : "transparent",
+        color: on ? "#f4f1f6" : "#b8b2c0",
+        icolor: on ? "var(--brand)" : "#8b8494",
+        weight: on ? 650 : 550 };
+    };
+    const navGroups = [
+      { title:"Run", items:[ item("today","Today",ICON.today), item("inbox","Inbox",ICON.inbox,isNew?null:2), item("prizes","Fulfilment",ICON.prizes,isNew?null:3) ] },
+      { title:"Build", items:[ item("wheels","Wheels",ICON.wheels), item("campaigns","Campaigns",ICON.campaigns) ] },
+      { title:"Grow", items:[ item("fans","Fans",ICON.fans), item("boosts","Boosts",ICON.boosts) ] },
+      { title:"Measure", items:[ item("analytics","Analytics",ICON.analytics) ] },
+      { title:"Account", items:[ item("settings","Settings",ICON.settings), item("admin","Admin",ICON.shield) ] },
+    ];
+
+    const meta = {
+      today:["Today","Tuesday, June 16 · what moves the needle"],
+      inbox:["Inbox","Fan conversations — spin-gated, real-time"],
+      prizes:["Fulfilment","Deliver wins, then mark them done"],
+      wheels:["Wheels","Build prizes, rarity, tickets & stock"],
+      campaigns:["Campaigns","Compare promotions side by side"],
+      fans:["Fans","Your audience, links & lifetime value"],
+      boosts:["Boosts","Happy hours, leaderboard & referrals"],
+      analytics:["Analytics","What's working, in numbers"],
+      settings:["Settings","Profile, security & workspace"],
+      admin:["Admin","Manage every creator account"],
+    };
+
+    // editor wheel — prizes live in state, fully editable
+    const RARITY_NEXT = { common:"uncommon", uncommon:"rare", rare:"epic", epic:"legendary", legendary:"common" };
+    const RARITY_HEX = { common:RC.Common, uncommon:RC.Uncommon, rare:RC.Rare, epic:RC.Epic, legendary:RC.Legendary };
+    const editPrize = (i, field) => (e) => { const v = (e && e.target) ? e.target.value : e; const prizes = this.state.prizes.map((p,j)=> j===i ? { ...p, [field]: field==="tickets" ? (parseInt(v,10)||0) : v } : p); this.setState({ prizes }); };
+    const cycleRarity = (i) => () => { const prizes = this.state.prizes.map((p,j)=>{ if(j!==i) return p; const nr = RARITY_NEXT[p.rarity]||"common"; const wasDefault = !p.color || Object.values(RARITY_HEX).includes(p.color); return { ...p, rarity:nr, color: wasDefault ? RARITY_HEX[nr] : p.color }; }); this.setState({ prizes }); };
+    const removePrize = (i) => () => { if (this.state.prizes.length<=2) return; this.setState({ prizes: this.state.prizes.filter((_,j)=>j!==i) }); };
+    const addPrize = () => this.setState({ prizes: [...this.state.prizes, { emoji:"🎁", label:"New prize", rarity:"common", color:RC.Common, tickets:10, stock:"", cost:"0.00" }] });
+    const balanceOdds = () => { const n=this.state.prizes.length; this.setState({ prizes: this.state.prizes.map(p=>({ ...p, tickets: Math.max(1, Math.round(100/n)) })) }); };
+    const _prizes = isNew ? [] : this.state.prizes;
+    const totalT = _prizes.reduce((s,p)=>s+(parseInt(p.tickets,10)||0),0) || 1;
+    const editorPrizes = _prizes.map((p,i) => ({ ...p, rarityColor: RARITY_HEX[p.rarity]||RC.Common, oddsPct: (((parseInt(p.tickets,10)||0)/totalT)*100).toFixed(1)+"%",
+      onEmoji: editPrize(i,"emoji"), onName: editPrize(i,"label"), onTickets: editPrize(i,"tickets"), onStock: editPrize(i,"stock"), onCost: editPrize(i,"cost"), onColor: editPrize(i,"color"), onRarity: cycleRarity(i), onRemove: removePrize(i) }));
+    this._wheelPrizes = editorPrizes;
+
+    const chip = (label, active) => ({ label, bg: active?"color-mix(in oklab, var(--brand) 16%, transparent)":"transparent", color: active?"var(--brand)":"#a09aa8", border: active?"color-mix(in oklab, var(--brand) 45%, transparent)":"#2a2533" });
+
+    // --- Fans + slide-out detail drawer ---
+    const openFan = (id) => () => this.setState({ openFanId: id });
+    const fanData = [
+      { id:"mia", initials:"MI", name:"@mia_rose", meta:"Joined 3 days ago · VIP campaign", tags:["VIP","whale"], spins:28,
+        stats:[{label:"Spins left",value:"4"},{label:"Granted",value:"32"},{label:"Total spins",value:"28"},{label:"Total spent",value:"$184"}],
+        last:"2h ago",
+        wins:[{label:"Common",color:RC.Common,count:9},{label:"Uncommon",color:RC.Uncommon,count:11},{label:"Rare",color:RC.Rare,count:6},{label:"Epic",color:RC.Epic,count:2}],
+        grants:[{spins:"+10",amount:"$60",campaign:"VIP launch"},{spins:"+12",amount:"$72",campaign:"Summer drop"},{spins:"+10",amount:"$52",campaign:"VIP launch"}],
+        pending:[{emoji:"🎬",label:"Custom video",color:RC.Rare,ago:"2h ago"}],
+        links:["fanfunnel.app/spin/9f2a-mia-7c"], notes:"Big spender, loves BTS content. Reply fast." },
+      { id:"jordan", initials:"JO", name:"@jordan.x", meta:"Joined 1 week ago · Direct link", tags:["new"], spins:12,
+        stats:[{label:"Spins left",value:"1"},{label:"Granted",value:"13"},{label:"Total spins",value:"12"},{label:"Total spent",value:"$72"}],
+        last:"5h ago",
+        wins:[{label:"Common",color:RC.Common,count:6},{label:"Uncommon",color:RC.Uncommon,count:4},{label:"Epic",color:RC.Epic,count:1}],
+        grants:[{spins:"+8",amount:"$48",campaign:"No campaign"},{spins:"+5",amount:"$24",campaign:"Summer drop"}],
+        pending:[{emoji:"📸",label:"Exclusive set",color:RC.Epic,ago:"5h ago"}],
+        links:["fanfunnel.app/spin/3b81-jdn-2a"], notes:"" },
+      { id:"sasha", initials:"SA", name:"@sasha_k", meta:"Joined 2 weeks ago · Spring promo", tags:["whale"], spins:34,
+        stats:[{label:"Spins left",value:"0"},{label:"Granted",value:"34"},{label:"Total spins",value:"34"},{label:"Total spent",value:"$246"}],
+        last:"6d ago",
+        wins:[{label:"Common",color:RC.Common,count:12},{label:"Uncommon",color:RC.Uncommon,count:13},{label:"Rare",color:RC.Rare,count:7},{label:"Legendary",color:RC.Legendary,count:2}],
+        grants:[{spins:"+20",amount:"$140",campaign:"Spring promo"},{spins:"+14",amount:"$106",campaign:"Spring promo"}],
+        pending:[{emoji:"👑",label:"VIP month",color:RC.Legendary,ago:"1d ago"}],
+        links:["fanfunnel.app/spin/77c0-ska-9f"], notes:"Out of spins — nudge to top up. Hot streak." },
+      { id:"devon", initials:"DE", name:"@devon", meta:"Joined 5 days ago · VIP campaign", tags:["VIP"], spins:9,
+        stats:[{label:"Spins left",value:"3"},{label:"Granted",value:"12"},{label:"Total spins",value:"9"},{label:"Total spent",value:"$54"}],
+        last:"1d ago",
+        wins:[{label:"Common",color:RC.Common,count:5},{label:"Uncommon",color:RC.Uncommon,count:3},{label:"Rare",color:RC.Rare,count:1}],
+        grants:[{spins:"+12",amount:"$54",campaign:"VIP launch"}],
+        pending:[], links:["fanfunnel.app/spin/12de-dvn-4b"], notes:"" },
+      { id:"riley", initials:"RI", name:"@riley_b", meta:"Joined yesterday · Direct link", tags:["new"], spins:3,
+        stats:[{label:"Spins left",value:"2"},{label:"Granted",value:"5"},{label:"Total spins",value:"3"},{label:"Total spent",value:"$20"}],
+        last:"just now",
+        wins:[{label:"Common",color:RC.Common,count:2},{label:"Uncommon",color:RC.Uncommon,count:1}],
+        grants:[{spins:"+5",amount:"$20",campaign:"No campaign"}],
+        pending:[], links:["fanfunnel.app/spin/9a31-rly-1c"], notes:"" },
+      { id:"nova", initials:"NO", name:"@nova", meta:"Joined 3 weeks ago · Spring promo", tags:[], spins:21,
+        stats:[{label:"Spins left",value:"6"},{label:"Granted",value:"27"},{label:"Total spins",value:"21"},{label:"Total spent",value:"$132"}],
+        last:"3d ago",
+        wins:[{label:"Common",color:RC.Common,count:8},{label:"Uncommon",color:RC.Uncommon,count:9},{label:"Rare",color:RC.Rare,count:4}],
+        grants:[{spins:"+15",amount:"$90",campaign:"Spring promo"},{spins:"+12",amount:"$42",campaign:"Spring promo"}],
+        pending:[], links:["fanfunnel.app/spin/55no-nva-8d"], notes:"" },
+    ];
+    const _q = (this.state.fanQuery||"").trim().toLowerCase();
+    const fanRows = [ ...this.state.extraFans.map(f=>({ ...f, onOpen: noop, onCopy: () => this.copy("fanfunnel.app/spin/"+f.name.replace("@",""), "Spin link copied") })), ...fanData.map(f=>({ initials:f.initials, name:f.name, meta:f.meta, tags:f.tags, spins:f.spins, onOpen: openFan(f.id), onCopy: () => this.copy(f.links[0], "Spin link copied") })) ];
+    const fans = isNew ? [] : fanRows.filter(f => !_q || f.name.toLowerCase().includes(_q) || f.tags.some(t=>t.toLowerCase().includes(_q)));
+    const fanCamps = {
+      mia:[ {name:"VIP launch", spent:"$112", bought:20, played:18, prizes:[{label:"Custom video",color:RC.Rare,count:2},{label:"Voice note",color:RC.Uncommon,count:5}]}, {name:"Summer drop", spent:"$72", bought:12, played:10, prizes:[{label:"1:1 chat",color:RC.Common,count:3}]} ],
+      jordan:[ {name:"Uncategorized", spent:"$72", bought:13, played:12, prizes:[{label:"Exclusive set",color:RC.Epic,count:1}]} ],
+      sasha:[ {name:"Spring promo", spent:"$246", bought:34, played:34, prizes:[{label:"VIP month",color:RC.Legendary,count:2},{label:"Custom video",color:RC.Rare,count:3}]} ],
+      devon:[ {name:"VIP launch", spent:"$54", bought:12, played:9, prizes:[{label:"Voice note",color:RC.Uncommon,count:1}]} ],
+      riley:[ {name:"Uncategorized", spent:"$20", bought:5, played:3, prizes:[]} ],
+      nova:[ {name:"Spring promo", spent:"$132", bought:27, played:21, prizes:[{label:"Shoutout",color:RC.Uncommon,count:2}]} ],
+    };
+    const presetTags = ["VIP","whale","new"];
+    const sel = fanData.find(f => f.id === this.state.openFanId);
+    const camps = sel ? (fanCamps[sel.id] || []) : [];
+    const fo = (sel && this.state.fanOverrides[sel.id]) || {};
+    const effTags = sel ? (fo.tags || sel.tags) : [];
+    const effGrants = sel ? (fo.grants || sel.grants) : [];
+    const toggleTag = (tag) => () => { if(!sel) return; const cur = this.state.fanOverrides[sel.id]||{}; const base = cur.tags || sel.tags; const has = base.some(t=>t.toLowerCase()===tag.toLowerCase()); const next = has ? base.filter(t=>t.toLowerCase()!==tag.toLowerCase()) : [...base, tag]; this.setState({ fanOverrides: { ...this.state.fanOverrides, [sel.id]: { ...cur, tags: next } } }); };
+    const topUpFan = () => { if(!sel) return; const cur = this.state.fanOverrides[sel.id]||{}; const grants = cur.grants || sel.grants; this.setState({ fanOverrides: { ...this.state.fanOverrides, [sel.id]: { ...cur, addSpins:(cur.addSpins||0)+5, grants:[{spins:"+5",amount:"$30",campaign:"Top-up"}, ...grants] } } }); };
+    const drawer = sel ? {
+      name: sel.name, initials: sel.initials, notes: sel.notes, last: sel.last, onTopUp: topUpFan,
+      tags: effTags.map(t => ({ label:t, onRemove: toggleTag(t) })),
+      tagToggles: presetTags.map(t => { const a = effTags.some(x => x.toLowerCase()===t.toLowerCase()); return { label:t, onToggle: toggleTag(t), bg: a?"var(--brand)":"transparent", color: a?brandInk:"#a09aa8", border: a?"var(--brand)":"#2a2533" }; }),
+      stats: [...sel.stats.map(s => s.label==="Spins left" && fo.addSpins ? { ...s, value:String((parseInt(s.value,10)||0)+fo.addSpins) } : s), { label:"Last active", value: sel.last }],
+      wins: sel.wins.map(w => ({ ...w, pct: ((w.count / sel.wins.reduce((s,x)=>s+x.count,0)) * 100).toFixed(0) + "%" })),
+      byCampaign: camps, hasCampaigns: camps.length > 0, hasTags: effTags.length > 0,
+      grants: effGrants, pending: sel.pending, links: sel.links.map(u => ({ url: u, onCopy: () => this.copy(u, "Spin link copied") })),
+      onCopyLink: () => this.copy(sel.links[0], "Spin link copied"),
+      hasPending: sel.pending.length > 0, noPending: sel.pending.length === 0,
+    } : { stats:[], wins:[], grants:[], pending:[], links:[], tags:[], tagToggles:[], byCampaign:[], hasPending:false, noPending:false, hasCampaigns:false };
+
+    // ---- interactive wiring ----
+    const st = this.state;
+    const selectThread = (id) => () => this.setState({ activeThread: id });
+    const setFilter = (f) => () => this.setState({ prizeFilter: f });
+    const setWheelIdx = (i) => () => this.setState({ activeWheel: i });
+    const dismissCard = (k) => () => this.setState({ dismissed: [...st.dismissed, k] });
+    const toggleNotif = (i) => () => this.setState({ notifs: st.notifs.map((v,j)=> j===i ? !v : v) });
+    const onReply = (e) => this.setState({ reply: e.target.value });
+    const sendMsg = () => { const b = (st.reply||"").trim(); if(!b) return; const tm = { ...st.threadMsgs }; tm[st.activeThread] = [ ...(tm[st.activeThread]||[]), {s:"me", body:b} ]; this.setState({ threadMsgs: tm, reply: "" }); };
+    const onReplyKey = (e) => { if (e.key === "Enter") { e.preventDefault(); sendMsg(); } };
+    const onFanQuery = (e) => this.setState({ fanQuery: e.target.value });
+    const toggleLeader = () => this.setState({ leaderboard: !st.leaderboard });
+    const onNewCampaign = (e) => this.setState({ newCampaign: e.target.value });
+    const createCampaign = () => { const name=(st.newCampaign||"").trim(); if(!name) return; const id="c"+Date.now(); const blank = { id, name, topPrize:"—", topColor:"#6b7280", topCount:0, cells:[ {label:"Revenue",value:"$0"},{label:"ARPU",value:"$0"},{label:"Spins bought",value:"0"},{label:"Spins played",value:"0"},{label:"Play-through",value:"0%"},{label:"Unique fans",value:"0"},{label:"Fulfilled",value:"0"},{label:"Pending",value:"0"} ] }; this.setState({ campaignList:[blank, ...st.campaignList], newCampaign:"" }); };
+    const deleteCampaign = (id) => () => this.setState({ campaignList: st.campaignList.filter(c=>c.id!==id) });
+    const campaignCards = isNew ? [] : st.campaignList.map(c => ({ ...c, onDelete: deleteCampaign(c.id) }));
+    // Fulfilment status cycle
+    const STATUS_NEXT = { pending:"in_progress", in_progress:"fulfilled", fulfilled:"pending" };
+    const STATUS_VIS = { pending:{label:"Pending",cta:"Start",pillBg:"rgba(255,255,255,.08)",pillColor:"#a09aa8"}, in_progress:{label:"In progress",cta:"Fulfil",pillBg:"rgba(245,158,11,.15)",pillColor:"#fcd34d"}, fulfilled:{label:"Fulfilled",cta:"Reopen",pillBg:"rgba(16,185,129,.15)",pillColor:"#6ee7b7"} };
+    const cycleStatus = (id, cur) => () => this.setState({ redemptionStatus: { ...st.redemptionStatus, [id]: STATUS_NEXT[cur] } });
+    // Admin
+    const suspendAcct = (id) => () => this.setState({ suspended: { ...st.suspended, [id]: !st.suspended[id] } });
+    const deleteAcct = (id) => () => this.setState({ deletedAccounts: [...st.deletedAccounts, id] });
+    // Mint fan link
+    const onMint = (field) => (e) => this.setState({ [field]: e.target.value });
+    const mintFan = () => { const nm=(st.mintName||"").trim(); if(!nm) return; const name = nm.startsWith("@")?nm:("@"+nm); const inits = name.replace(/[@._]/g,"").slice(0,2).toUpperCase(); const spins = parseInt(st.mintSpins,10)||0; const nf = { initials:inits, name, meta:"Just now · Direct link", tags:["new"], spins }; this.setState({ extraFans:[nf, ...st.extraFans], mintName:"", mintPer:"" }); };
+
+    const threadMeta = {
+      mia:{initials:"MI",name:"@mia_rose",meta:"28 spins · VIP · whale",last:"omg thank you 😭 can't wait",unread:0},
+      jordan:{initials:"JO",name:"@jordan.x",meta:"12 spins · new",last:"did my set send through?",unread:2},
+      sasha:{initials:"SA",name:"@sasha_k",meta:"34 spins · whale",last:"spinning again tonight 🔥",unread:0},
+      devon:{initials:"DE",name:"@devon",meta:"9 spins · VIP",last:"you're the best 💕",unread:0},
+    };
+    const threads = isNew ? [] : ["mia","jordan","sasha","devon"].map(id => { const t=threadMeta[id]; const on=st.activeThread===id; return { initials:t.initials, name:t.name, last:t.last, unread: on?0:t.unread, onClick:selectThread(id), bg:on?"color-mix(in oklab, var(--brand) 10%, transparent)":"#16131c", border:on?"color-mix(in oklab, var(--brand) 45%, transparent)":"#1f1b27" }; });
+    const activeT = threadMeta[st.activeThread] || { name:"", meta:"" };
+    const messages = isNew ? [] : (st.threadMsgs[st.activeThread]||[]).map(m => m.s==="me" ? { body:m.body, justify:"flex-end", bg:"var(--brand)", color:brandInk } : { body:m.body, justify:"flex-start", bg:"color-mix(in oklab, #f4f1f6 8%, transparent)", color:"#f4f1f6" });
+
+    // Get Started onboarding checklist (first-run)
+    const gsSteps = [
+      { done:true, title:"Create your account", body:"You're in — welcome to FanFunnel." },
+      { done:false, title:"Build your first wheel", body:"Add prizes, set rarity and odds.", cta:"Open wheel editor", target:"wheels" },
+      { done:false, title:"Mint your first fan link", body:"Generate a per-fan spin link to share.", cta:"Mint a link", target:"fans" },
+      { done:false, title:"Share it in your bio", body:"Drop your link-in-bio on IG or TikTok.", cta:"Set up link-in-bio", target:"boosts" },
+      { done:false, title:"Fulfil your first win", body:"Deliver a prize and mark it done.", cta:"Open fulfilment", target:"prizes" },
+    ];
+    const gsDone = gsSteps.filter(s=>s.done).length;
+    const getStarted = gsSteps.map(s => ({ ...s, onCta: s.target ? go(s.target) : noop, hasCta: !!s.cta,
+      ring: s.done ? "var(--brand)" : "#2a2533", fill: s.done ? "var(--brand)" : "transparent", check: s.done ? brandInk : "transparent",
+      titleColor: s.done ? "#8b8494" : "#f4f1f6" }));
+
+    const filterDefs = [["pending","Pending · 3"],["in_progress","In progress"],["fulfilled","Fulfilled"],["cancelled","Cancelled"],["all","All"]];
+    const prizeFilters = filterDefs.map(([k,label]) => ({ ...chip(label, st.prizeFilter===k), onClick:setFilter(k) }));
+    const baseRedemptions = [
+      { id:"r1", base:"pending", emoji:"🎬", prizeLabel:"Custom video", rarity:"Rare", color:RC.Rare, tint:"color-mix(in oklab, #3b82f6 18%, transparent)", fanName:"@mia_rose", at:"Today 2:14 PM" },
+      { id:"r2", base:"in_progress", emoji:"📸", prizeLabel:"Exclusive set", rarity:"Epic", color:RC.Epic, tint:"color-mix(in oklab, #a855f7 18%, transparent)", fanName:"@jordan.x", at:"Today 11:02 AM" },
+      { id:"r3", base:"pending", emoji:"👑", prizeLabel:"VIP month", rarity:"Legendary", color:RC.Legendary, tint:"color-mix(in oklab, #f59e0b 18%, transparent)", fanName:"@sasha_k", at:"Yesterday 9:40 PM" },
+      { id:"r4", base:"fulfilled", emoji:"💋", prizeLabel:"Voice note", rarity:"Uncommon", color:RC.Uncommon, tint:"color-mix(in oklab, #22c55e 18%, transparent)", fanName:"@devon", at:"2 days ago" },
+    ];
+    const redemptions = isNew ? [] : baseRedemptions.map(r => { const status = st.redemptionStatus[r.id] || r.base; const v = STATUS_VIS[status]; return { ...r, status, statusLabel:v.label, cta:v.cta, pillBg:v.pillBg, pillColor:v.pillColor, onCycle: cycleStatus(r.id, status) }; }).filter(r => st.prizeFilter==="all" || r.status===st.prizeFilter);
+    const adminBase = [
+      { id:"lola", initials:"LX", name:"Lola Lynx", email:"lola@studio.co", plan:"Pro", fans:"142" },
+      { id:"vera", initials:"VR", name:"Vera Noir", email:"vera@agency.io", plan:"Pro", fans:"88" },
+      { id:"kira", initials:"KI", name:"Kira Vale", email:"kira@mail.com", plan:"Free", fans:"31", baseSusp:true },
+      { id:"romy", initials:"RO", name:"Romy Dash", email:"romy@studio.co", plan:"Pro", fans:"54" },
+    ];
+    const adminAccounts = adminBase.filter(a=>!st.deletedAccounts.includes(a.id)).map(a => { const susp = (a.id in st.suspended) ? st.suspended[a.id] : !!a.baseSusp; return { ...a, status: susp?"Suspended":"Active", statusBg: susp?"rgba(255,255,255,.08)":"rgba(16,185,129,.15)", statusColor: susp?"#a09aa8":"#6ee7b7", suspendLabel: susp?"Reactivate":"Suspend", onSuspend: suspendAcct(a.id), onDelete: deleteAcct(a.id) }; });
+
+    const wheelDefs = [ {title:"Lola's Lucky Wheel",dot:"var(--brand)"}, {title:"VIP Vault",dot:"#a855f7"}, {title:"Spring promo",dot:"#22c55e"} ];
+    const wheels = wheelDefs.map((w,i)=>{ const on=st.activeWheel===i; return { title:w.title, dot:w.dot, onClick:setWheelIdx(i), color:on?"#f4f1f6":"#a09aa8", bg:on?"color-mix(in oklab, var(--brand) 14%, transparent)":"transparent", border:on?"color-mix(in oklab, var(--brand) 45%, transparent)":"#2a2533" }; });
+
+    const allToday = [
+      { key:"fulfil", target:"prizes", icon:ICON.prizes, icolor:"var(--brand)", tint:"color-mix(in oklab, var(--brand) 14%, transparent)", tag:"Fulfil", tagBg:"color-mix(in oklab, var(--brand) 16%, transparent)", tagColor:"var(--brand)", title:"3 prizes waiting to be fulfilled", body:"Mia, Jordan & Sasha each won — deliver before they cool off.", cta:"Open queue" },
+      { key:"reengage", target:"fans", icon:ICON.fans, icolor:"#60a5fa", tint:"color-mix(in oklab, #3b82f6 16%, transparent)", tag:"Re-engage", tagBg:"color-mix(in oklab, #3b82f6 16%, transparent)", tagColor:"#93c5fd", title:"Sasha hasn't spun in 6 days", body:"A whale at 28 spins lifetime. A DM nudge usually brings her back.", cta:"Copy link" },
+      { key:"timing", target:"boosts", icon:ICON.clock, icolor:"#fbbf24", tint:"color-mix(in oklab, #f59e0b 16%, transparent)", tag:"Timing", tagBg:"color-mix(in oklab, #f59e0b 16%, transparent)", tagColor:"#fcd34d", title:"Friday 9pm is your hottest hour", body:"Fans spin 2.4× more then. Schedule a happy hour to ride the wave.", cta:"Schedule" },
+      { key:"tune", target:"wheels", icon:ICON.target, icolor:"#c084fc", tint:"color-mix(in oklab, #a855f7 16%, transparent)", tag:"Tune", tagBg:"color-mix(in oklab, #a855f7 16%, transparent)", tagColor:"#d8b4fe", title:"Legendary drop is too rare", body:"Only 1 in 240 spins hits it. Loosen the odds to keep the thrill.", cta:"Edit wheel" },
+    ];
+    const todayCards = allToday.filter(c => !st.dismissed.includes(c.key)).map(c => ({ ...c, onDismiss: dismissCard(c.key), onCta: go(c.target) }));
+
+    const notifLabels = ["Email me when a prize is pending","Push on a new fan message","Alert when a prize is low on stock"];
+    const notifPrefs = notifLabels.map((label,i)=>({ label, onToggle:toggleNotif(i), bg: st.notifs[i]?"var(--brand)":"#2a2533", justify: st.notifs[i]?"flex-end":"flex-start" }));
+
+    return {
+      rootRef: (el) => { this._root = el; },
+      activeName: activeT.name, activeMeta: activeT.meta, reply: st.reply, onReply, onReplyKey, sendMsg,
+      leaderBg: st.leaderboard?"var(--brand)":"#2a2533", leaderJustify: st.leaderboard?"flex-end":"flex-start", toggleLeader,
+      fanQuery: st.fanQuery, onFanQuery,
+      threads, messages, prizeFilters, redemptions, wheels, todayCards, notifPrefs,
+      todayCount: todayCards.length,
+      noRedemptions: redemptions.length === 0, noFans: fans.length === 0,
+      ICON, isNew, getStarted, gsDone, gsTotal: gsSteps.length, showPriorities: !isNew && todayCards.length > 0,
+      noThreads: threads.length === 0, hasThreads: threads.length > 0,
+      pulseHeading: isNew ? "Your first steps" : "Needs you now",
+      wheelRef: (el) => { this._wheel = el; if (el) this.drawWheel(); },
+      noop, brandInk, brandHex: brand,
+      handle: this.props.handle ?? "@lola_lynx",
+      navGroups, goSettings: go("settings"), goFans: go("fans"),
+      toastMsg: st.toast, hasToast: !!st.toast,
+      saveWheel: () => this.toast("Wheel saved ✓"),
+      saveProfile: () => this.toast("Profile saved ✓"),
+      updatePassword: () => this.toast("Password updated ✓"),
+      scheduleHour: () => this.toast("Happy hour scheduled ✓"),
+      clearData: () => this.toast("This would clear all data"),
+      newWheel: () => this.toast("New wheel created"),
+      newAccount: () => this.toast("Invite sent ✓"),
+      importFans: () => this.toast("Import started…"),
+      saveLibrary: () => this.toast("Saved to library ✓"),
+      bellClick: () => this.toast("No new notifications"),
+      copyPublic: () => this.copy("fanfunnel.app/c/lola", "Public link copied"),
+      copyTip: () => this.copy("https://onlyfans.com/lolalynx", "Tip link copied"),
+      copyFanLink: (url) => () => this.copy(url, "Spin link copied"),
+      drawerMessage: () => { this.setState({ openFanId: null }); this.setState({ section: "inbox" }); this.toast("Opening conversation…"); },
+      blockFan: () => { this.setState({ openFanId: null }); this.toast("Fan blocked"); },
+      title: meta[sec][0], subtitle: meta[sec][1],
+      isToday: sec==="today", isAnalytics: sec==="analytics", isWheels: sec==="wheels",
+      isPrizes: sec==="prizes", isFans: sec==="fans", isCampaigns: sec==="campaigns",
+      isBoosts: sec==="boosts", isInbox: sec==="inbox", isSettings: sec==="settings", isAdmin: sec==="admin",
+      editorPrizes, noPrizes: editorPrizes.length === 0, addPrize, balanceOdds, adminAccounts,
+      mintName: st.mintName, mintSpins: st.mintSpins, mintPer: st.mintPer, onMintName: onMint("mintName"), onMintSpins: onMint("mintSpins"), onMintPer: onMint("mintPer"), mintFan,
+      referrals: [ { label:"Referred", value:"38" }, { label:"Credited", value:"24" }, { label:"Bonus spins", value:"72" } ],
+      adminStats: [
+        { label:"Accounts", value:"4" }, { label:"Total fans", value:"315" },
+        { label:"Spins", value:"4,287" }, { label:"Prizes pending", value:"7" },
+      ],
+
+      pulse: isNew ? [
+        { label:"Revenue today", value:"$0", chip:"—", note:"get spinning", chipBg:"rgba(255,255,255,.06)", chipColor:"#8b8494", sparkColor:"#3a3442", spark:this.spark([1,1,1,1,1,1],120,40), icon:ICON.dollar, icolor:"#8b8494" },
+        { label:"Spins today", value:"0", chip:"—", note:"no spins yet", chipBg:"rgba(255,255,255,.06)", chipColor:"#8b8494", sparkColor:"#3a3442", spark:this.spark([1,1,1,1,1,1],120,40), icon:ICON.wheels, icolor:"#8b8494" },
+        { label:"Active fans", value:"0", chip:"—", note:"invite fans", chipBg:"rgba(255,255,255,.06)", chipColor:"#8b8494", sparkColor:"#3a3442", spark:this.spark([1,1,1,1,1,1],120,40), icon:ICON.fans, icolor:"#8b8494" },
+        { label:"To fulfil", value:"0", chip:"—", note:"all clear", chipBg:"rgba(255,255,255,.06)", chipColor:"#8b8494", sparkColor:"#3a3442", spark:this.spark([1,1,1,1,1,1],120,40), icon:ICON.prizes, icolor:"#8b8494" },
+      ] : [
+        { label:"Revenue today", value:"$312", chip:"▲ 18%", note:"vs avg", chipBg:"rgba(16,185,129,.16)", chipColor:"#6ee7b7", sparkColor:"#22c55e", spark:this.spark([120,140,132,178,160,205,238,222,258,288,272,312],120,40), icon:ICON.dollar, icolor:"#22c55e" },
+        { label:"Spins today", value:"84", chip:"▲ 12", note:"vs yest.", chipBg:"rgba(16,185,129,.16)", chipColor:"#6ee7b7", sparkColor:"var(--brand)", spark:this.spark([38,52,46,60,72,64,80,75,84],120,40), icon:ICON.wheels, icolor:"var(--brand)" },
+        { label:"Active fans", value:"142", chip:"▲ 6", note:"this week", chipBg:"rgba(255,255,255,.07)", chipColor:"#cfc9d6", sparkColor:"#8b8494", spark:this.spark([120,124,127,130,133,135,138,142],120,40), icon:ICON.fans, icolor:"#a09aa8" },
+        { label:"To fulfil", value:"3", chip:"4h", note:"waiting", chipBg:"rgba(245,158,11,.16)", chipColor:"#fcd34d", sparkColor:"#f59e0b", spark:this.spark([1,2,1,3,2,4,3,3],120,40), icon:ICON.prizes, icolor:"#fcd34d" },
+      ],
+      stats: isNew ? [
+        { label:"Fans", value:"0" }, { label:"Revenue", value:"$0" }, { label:"Spins played", value:"0" },
+        { label:"To fulfil", value:"0" }, { label:"Delivered", value:"0" },
+      ] : [
+        { label:"Fans", value:"142" }, { label:"Revenue", value:"$4,820" }, { label:"Spins played", value:"1,309" },
+        { label:"To fulfil", value:"3" }, { label:"Delivered", value:"87" },
+      ],
+      spinsSpark: this.spark(isNew ? [0,0,0,0,0,0] : [8,12,9,14,11,18,16,22,19,26,24,31,28,34], 320, 56),
+      revSpark: this.spark(isNew ? [0,0,0,0,0,0] : [3,5,4,6,5,9,7,11,9,12,10,15,13,17], 320, 56),
+      topPrizes: isNew ? [] : [
+        { emoji:"🎬", label:"Custom video", count:42, color:RC.Rare, pct:"100%" },
+        { emoji:"💋", label:"Voice note", count:31, color:RC.Uncommon, pct:"74%" },
+        { emoji:"📸", label:"Exclusive set", count:24, color:RC.Epic, pct:"57%" },
+        { emoji:"💬", label:"1:1 chat", count:18, color:RC.Common, pct:"43%" },
+        { emoji:"👑", label:"VIP month", count:6, color:RC.Legendary, pct:"14%" },
+      ],
+      rarityMix: isNew ? [] : [
+        { label:"Common", count:34, color:RC.Common, pct:"28%" }, { label:"Uncommon", count:41, color:RC.Uncommon, pct:"34%" },
+        { label:"Rare", count:28, color:RC.Rare, pct:"23%" }, { label:"Epic", count:12, color:RC.Epic, pct:"10%" },
+        { label:"Legendary", count:6, color:RC.Legendary, pct:"5%" },
+      ],
+      profit: isNew ? [ {label:"Revenue",value:"$0"}, {label:"Prize cost",value:"$0"}, {label:"Profit",value:"$0"}, {label:"Margin",value:"—"} ] : [ {label:"Revenue",value:"$4,820"}, {label:"Prize cost",value:"$1,240"}, {label:"Profit",value:"$3,580"}, {label:"Margin",value:"74%"} ],
+
+      fans,
+      drawer, drawerOpen: !!sel, closeDrawer: () => this.setState({ openFanId: null }),
+      campaigns: campaignCards, noCampaigns: campaignCards.length === 0, newCampaign: st.newCampaign, onNewCampaign, createCampaign,
+      happyHours: [
+        { when:"Tonight · 9:00–11:00 PM", detail:"2× legendary odds · auto-banner on fan page", status:"Scheduled", pillBg:"color-mix(in oklab, var(--brand) 16%, transparent)", pillColor:"var(--brand)" },
+        { when:"Fri · 8:00–10:00 PM", detail:"1.5× all rare+ odds", status:"Live", pillBg:"rgba(16,185,129,.15)", pillColor:"#6ee7b7" },
+      ],
+      wishlist: [ { label:"Worn items", votes:34, pct:"100%" }, { label:"Custom audio", votes:21, pct:"62%" }, { label:"Video call", votes:12, pct:"35%" } ],
+    };
+  }
+
+  spark(values, w, h) {
+    const max=Math.max(...values), min=Math.min(...values), span=max-min||1;
+    return values.map((v,i)=>{ const x=(i/(values.length-1))*w; const y=h-((v-min)/span)*(h-4)-2; return `${x.toFixed(1)},${y.toFixed(1)}`; }).join(" ");
+  }
+}
+</script>
+</body>
+</html>

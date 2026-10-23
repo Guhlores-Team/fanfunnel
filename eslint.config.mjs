@@ -12,9 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Not app code: agent tooling and one-off seed scripts.
+    // Not app code: agent tooling, one-off seed scripts, and design references
+    // (docs/design ships a generated prototype runtime).
     ".claude/**",
     "scripts/**",
+    "docs/**",
   ]),
   // Dead code fails CI, not just warns — so unused vars/imports can't quietly
   // accumulate. Intentional throwaways are opt-out via a leading underscore.

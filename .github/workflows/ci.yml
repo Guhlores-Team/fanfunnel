@@ -1,7 +1,7 @@
 name: CI
 
 # Gate every push and PR on a clean typecheck/build, the unit + RLS-lint tests,
-# and lint. This is the safety net DEPLOY.md's "merge to main" step relied on a
+# and lint. This is the safety net docs/DEPLOY.md's "merge to main" step relied on a
 # human to run manually.
 on:
   push:
@@ -10,7 +10,9 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is now 26.04, which Playwright 1.60 can't install
+    # Chromium on. Unpin after upgrading playwright to a release that supports it.
+    runs-on: ubuntu-24.04
     # The in-app debug console is only compiled in when NEXT_PUBLIC_ENABLE_DEBUG=1
     # (N9 keeps it out of prod). The mock e2e drives it to assert zero console
     # errors across the creator flow, so enable it for this test build — otherwise

@@ -88,7 +88,7 @@ Compounded from a 4-angle review (security · correctness/data-layer · performa
 - [ ] **[CORRECTNESS] mock vs real `nonce` basis differs** (`index.ts:615` per-pass-post-decrement vs `mock.ts:964` aggregate-pre). Use one canonical monotonic nonce in both, e.g. `spins_granted_total - spins_remaining`.
 - [ ] **[CORRECTNESS] mock floors fractional happy-hour multiplier** (`mock.ts:2088` `Math.floor`); real accepts 2.5. Drop the floor in mock.
 - [ ] **[CORRECTNESS] `fan_passes.spins_remaining` lacks the `>= 0` CHECK** that `fans.spins_remaining` has (`schema.sql:1705`). Add `check (spins_remaining >= 0)` (and for `spins_granted_total`).
-- [ ] **[PERF] Tighten middleware matcher** (`src/middleware.ts:9`) to only `/dashboard/:path*`, `/login`, `/signup` so it doesn't even invoke on fan/API traffic. (Invocation cost, not DB.)
+- [ ] **[PERF] Tighten middleware matcher** (`src/proxy.ts`) to only `/dashboard/:path*`, `/login`, `/signup` so it doesn't even invoke on fan/API traffic. (Invocation cost, not DB.)
 - [ ] **[PERF] Add exponential backoff to all poll loops** so a degraded/paused DB makes outages self-limiting instead of sustaining them.
 - [ ] **[UX-fan] Chat sends on every Enter, no Shift+Enter newline** (`ChatPanel.tsx:263`). Newline on Shift+Enter.
 
