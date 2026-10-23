@@ -24,7 +24,7 @@ React 19 · Tailwind v4 · Supabase (Postgres + Auth + RLS) · Vercel
 | | |
 |---|---|
 | **Production** | Live on `main`. Last shipped 2026-07-02 (security audit + wheel-label fixes); CI green. |
-| **In progress** | **Creator Command Center redesign** — sidebar + top-bar dashboard replacing the 9-tab layout. Design handoff: [`docs/design/command-center/`](docs/design/command-center/). Phase 1 (tokens + contrast fix) exists on `dashboard-redesign`; phases 2–8 not started. |
+| **In progress** | **Creator Command Center redesign** — sidebar + top-bar dashboard replacing the 9-tab layout. Design handoff: [`docs/design/command-center/`](docs/design/command-center/). Built on the `dashboard-redesign` branch (= current `main` + Phase 1 as of 2026-10-23); phases 2–8 next, then one verified PR to `main`. |
 | **Before the next prod release** | Live smoke test on prod (see [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)); as of 2026-06-30 the test DB had no admin user. |
 
 ## How it works
@@ -55,6 +55,10 @@ mint really spin.
 
 To run against a real database, copy `.env.example` → `.env.local` and point it
 at the **test** Supabase project (never prod).
+
+Claude Code cloud sessions set themselves up via `.claude/hooks/session-start.sh`
+(installs deps, points Playwright at the image's preinstalled Chromium), so lint,
+tests, build, and the browser E2E suites run with no manual setup.
 
 ## Commands
 

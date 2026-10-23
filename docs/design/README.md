@@ -17,7 +17,8 @@ exported from the Claude Design project *FanFunnel Command Center* on
   Rule from it: **port the markup, keep the current logic.** The prototype's wheel drawing,
   odds, balance, and top-up code would bring back bugs that were already fixed.
 
-**Port status:** Phase 1 (tokens + accessibility foundation) is on the
-`dashboard-redesign` branch. Phases 2–8 are not started. The port must keep every
+**Port status:** `dashboard-redesign` is the integration branch: current `main`
+plus Phase 1 (tokens + accessibility foundation), refreshed 2026-10-23. Phases 2–8
+land there as separate PRs, then the whole redesign goes to `main` in one verified PR. The port must keep every
 existing dashboard feature, edit control, animation, and bug fix in its
 corresponding spot in the new layout.

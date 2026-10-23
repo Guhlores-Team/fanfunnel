@@ -13,19 +13,23 @@ being ticked) · `after:X` = don't start until X is merged.
 Status: `[ ]` open · `[~]` PR open (link it) · `[x]` merged/verified (cite PR or evidence).
 
 ## P0 — Preserve & stabilize (owner)
-- [ ] **OPS-1** Approve the branch cleanup in `docs/BRANCHES.md` (archive tags, then delete), fold `CONFIRM_EVERYTHING.md` into `docs/`. `human`
-- [ ] **OPS-2** Confirm both Supabase projects are awake (free tier pauses after ~1 week idle). Prod responded in 6–21s on 2026-10-23. `human`
-- [ ] **OPS-3** Live prod smoke test (CONFIRM_EVERYTHING Phase 8) + create an admin on the **test** DB. `human`
+- [~] **OPS-1** Branch cleanup: all 21 retired branches preserved in `archive/branches-2026-10` (done); deleting them needs the owner (`scripts/delete-archived-branches.sh --apply`). `human`
+- [x] **OPS-2** Both Supabase projects resumed 2026-10-23: ACTIVE_HEALTHY, both at migration 0038.
+- [ ] **OPS-3** Live prod smoke test + create an admin on the **test** DB. `human`
+- [ ] **OPS-4** Development env vars on Vercel point at the **prod** DB. Remove them or repoint to test. `human` approval
 
 ## P1 — Command Center redesign (do before the security audit)
 Spec: `docs/design/command-center/` · parity: `docs/design/command-center/PARITY_MAP.md`.
 Every current feature, edit control, animation, and bug fix must land in its
-mapped spot (owner requirement). Each phase = one PR, reviewed on Preview before the next.
+mapped spot (owner requirement). **`dashboard-redesign` is the integration branch:** each
+phase is a PR *into `dashboard-redesign`* (branch off it), reviewed on its Preview before the
+next. `main` and the live site stay untouched until RD-9. Re-merge `main` into
+`dashboard-redesign` whenever `main` gains fixes, so they carry over.
 Port the prototype's **markup**, keep the app's **logic** (the prototype's wheel/odds/balance
 code would bring back fixed bugs). 78 parity rows are `needs placement`: propose a home in
 the phase's PR and get owner sign-off; never drop one silently. The e2e `[role=tab]` /
 `clickTab` helpers break in RD-2, so update them in that PR (that's not weakening the tests).
-- [ ] **RD-1** Phase 1 tokens + `readableInk()` contrast fix: port `dashboard-redesign` onto current `main` (only conflict: keep `main`'s `supabase-migrations.yml`). `human` approval to bring that branch in.
+- [x] **RD-1** Phase 1 tokens + `readableInk()` contrast fix, refreshed onto current `main` (`dashboard-redesign` @ `911ee3e`; lint/tsc/tests/build, e2e 23/23, a11y green).
 - [ ] **RD-2** Phase 2 shell: sidebar + top bar in `DashboardClient.tsx`, keeping tablist keyboard a11y semantics. `after:RD-1`
 - [ ] **RD-3** Phase 3 Today: pulse strip + "Needs you now". `after:RD-2`
 - [ ] **RD-4** Phase 4 panels: Analytics, Wheels editor, Fulfilment, Fans + drawer, Campaigns, Boosts, Inbox, Settings/Admin (one PR per panel). `after:RD-3`
@@ -33,9 +37,10 @@ the phase's PR and get owner sign-off; never drop one silently. The e2e `[role=t
 - [ ] **RD-6** Phase 6 mobile: bottom tab bar, bottom sheet, stacked editor. `after:RD-5`
 - [ ] **RD-7** Phase 7 behavior wiring (spec items 1–7: notifications, pack qty increments, no-refresh, debug gate + admin, onboarding persistence, stock→odds, fan-page fairness hash clipping). Some need product calls. `after:RD-6`
 - [ ] **RD-8** Phase 8 QA: axe AA, 360→1440 sweep, keyboard, visual diff vs screenshots; update `DESIGN.md` to the new system. `after:RD-7`
+- [ ] **RD-9** Ship it: PR `dashboard-redesign` → `main`, with the full parity map checked on its Preview. Merge is the owner's call. `human` `after:RD-8`
 
 ## P1 — Full security audit (after the redesign lands)
-- [ ] **SEC-AUDIT** Run `SECURITY_AUDIT_PROMPT.md` on Fable 5.1. Findings get added below as `SEC-xx`. `after:RD-8`
+- [ ] **SEC-AUDIT** Run `SECURITY_AUDIT_PROMPT.md` on Fable 5.1. Findings get added below as `SEC-xx`. `after:RD-9`
 <!-- SEC-xx findings are inserted here by the audit: Critical/High first. -->
 
 ## P2 — Correctness (money/fairness paths)

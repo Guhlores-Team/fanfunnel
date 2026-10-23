@@ -1,20 +1,30 @@
 # Branch audit — 2026-10-23
 
-The repo had 23 branches besides `main`, all last touched between 2026-05-31 and
+The repo had 22 branches besides `main`, all last touched between 2026-05-31 and
 2026-07-02. All 41 PRs were merged; none were open. Each branch was checked by
 test-merging it into `main` (`git merge-tree`). If `main`'s tree came out
 unchanged, every line of the branch is already on `main`.
 
 **Target end state:** `main` + `dashboard-redesign` (until the redesign lands) +
-whatever is actively being worked on. Every other branch becomes an
-`archive/<branch-name>` tag first, so nothing is lost and any branch can be
-restored:
+whatever is actively being worked on.
+
+**What was done (2026-10-23):**
+- The 21 branches in sections A, B, D and the handoff branch were preserved in
+  **one archive branch, `archive/branches-2026-10`**. It holds a single commit whose
+  parents are all 21 branch tips (so every commit stays reachable), plus an
+  `ARCHIVE.md` listing each branch and its exact commit. Deployments are disabled
+  for that branch. (Cloud sessions can't push tags, so tags weren't an option.)
+- Deleting the 21 branches needs a machine with delete rights (cloud sessions get
+  HTTP 403). Run `scripts/delete-archived-branches.sh` (dry run), then `--apply`.
+  It only deletes branches whose current tip is inside the archive.
+- `dashboard-redesign` was brought up to date: `main` merged into it (`911ee3e`), so
+  it is now `main` + redesign Phase 1. `main` was not touched.
 
 ```bash
-git push origin archive/<branch-name>:refs/heads/<branch-name>   # restore a branch
+git push origin <commit>:refs/heads/<branch-name>   # restore any archived branch (commits in ARCHIVE.md)
 ```
 
-## A. Already fully on `main` (merge is a no-op) → archive
+## A. Already fully on `main` (merge is a no-op) → archived
 
 | Branch | Tip | Landed via |
 |---|---|---|
@@ -29,7 +39,7 @@ git push origin archive/<branch-name>:refs/heads/<branch-name>   # restore a bra
 | `claude/hex-color-wheel-crash-x85m5t` | `a6a2a17` | PRs #2–#24, #26, #33 (long-lived dev branch) |
 | `fix/security-backlog` | `4908f78` | ancestor of `main` |
 
-## B. Merged by PR, then superseded by later work on `main` → archive
+## B. Merged by PR, then superseded by later work on `main` → archived
 
 These conflict with `main` only because `main` kept improving the same lines.
 Their features are on `main`.
@@ -49,14 +59,14 @@ Their features are on `main`.
 
 | Branch | Tip | What's unique | Plan |
 |---|---|---|---|
-| `dashboard-redesign` | `1c8a16a` | Redesign **Phase 1**: elevation tokens (`--s1/--s2/--hair/--lift`), `readableInk()` fix for the 3.52:1 white-on-brand contrast defect, focus ring (`globals.css`, `theme.ts`, `theme.test.ts`); `docs/dashboard-redesign/TEAM_CHECKLIST.md` | Becomes the base of the redesign port. Its only conflict with `main` is `supabase-migrations.yml`, where `main`'s copy is newer. |
-| `claude/fanfunnel-handoff-dwgt2m` | `6a2692d` | `CONFIRM_EVERYTHING.md`: the 2026-06-30 infra verification (secrets, branch protection, Vercel env scoping, Supabase health, migration-pipeline proof, open items) | Move into `docs/`, then archive. Clean merge. |
+| `dashboard-redesign` | `1c8a16a` | Redesign **Phase 1**: elevation tokens (`--s1/--s2/--hair/--lift`), `readableInk()` fix for the 3.52:1 white-on-brand contrast defect, focus ring (`globals.css`, `theme.ts`, `theme.test.ts`); `docs/dashboard-redesign/TEAM_CHECKLIST.md` | **Done:** refreshed onto `main` (`911ee3e`, all checks + 23/23 e2e + a11y green). It is the integration branch for the redesign: phase PRs target it, and it goes to `main` once the whole redesign is verified on its Preview. |
+| `claude/fanfunnel-handoff-dwgt2m` | `6a2692d` | `CONFIRM_EVERYTHING.md`: the 2026-06-30 infra verification (secrets, branch protection, Vercel env scoping, Supabase health, migration-pipeline proof, open items) | Archived. Its still-useful facts now live in `docs/DEPLOY.md` and `docs/autopilot/OWNER_ACTIONS.md`. |
 
-## D. Pre-history → archive (only copy)
+## D. Pre-history → archived (only copy)
 
 `main`'s history restarts at 2026-06-12 (PR #4). These two branches are the
 only record of the original build, from 2026-05-22 to 2026-06-09. Their
-content was later rebuilt on `main`. Archive them, never delete them outright.
+content was later rebuilt on `main`. Their full history is kept in the archive branch.
 
 | Branch | Tip | Contents |
 |---|---|---|

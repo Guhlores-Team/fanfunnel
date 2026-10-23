@@ -4,7 +4,7 @@ Works through [`BACKLOG.md`](BACKLOG.md) one item at a time, top to bottom.
 Every item becomes its own branch + PR + Preview. **It never merges.** The owner
 verifies each Preview and merges (AGENTS.md: `main` is production).
 
-Order of operations: **P0 preserve (owner) → P1 redesign RD-1…RD-8 → security audit
+Order of operations: **P0 preserve (owner) → P1 redesign RD-2…RD-9 (PRs into `dashboard-redesign`) → security audit
 ([`SECURITY_AUDIT_PROMPT.md`](SECURITY_AUDIT_PROMPT.md), Fable 5.1) → everything else.**
 
 ## How to launch
@@ -45,8 +45,11 @@ would conflict on them.
    open and awaiting review, stop and report (WIP limit).
 2. Pick the first item that is not tagged `human`, has no `[autopilot]` PR, and whose
    `after:` item is merged. Redesign items RD-n must wait until RD-(n-1) is merged.
-3. **Claim it first:** branch off `origin/main` (use the session's designated branch if one
-   is assigned), push, and open a **draft** PR titled `[autopilot] <ID>: <title>`.
+3. **Claim it first:** branch off `origin/main`, or off `origin/dashboard-redesign` for `RD-*`
+   items (use the session's designated branch name if one is assigned). Push, and open a
+   **draft** PR titled `[autopilot] <ID>: <title>` against `main` (or against
+   `dashboard-redesign` for `RD-*`). Before starting an `RD-*` item, if `main` has commits
+   that `dashboard-redesign` lacks, first open an `[autopilot] RD-sync` PR merging `main` into it.
 4. If tagged `verify-first`, confirm the problem still exists in current code. If it's
    already fixed, turn the PR into a docs-only note with the evidence, mark it ready, and continue.
 5. Bug fixes get a failing test first, then the fix. Keep the diff minimal and in scope.
@@ -66,7 +69,11 @@ prod access, or fails after 3 honest attempts: leave the PR as draft with a "Blo
 needs owner: …" note, add a line to `docs/autopilot/OWNER_ACTIONS.md` in that PR, and
 move on.
 
-**Never:** merge or push to `main`; touch the prod Supabase project or send test traffic to
+**Environment:** cloud sessions run `.claude/hooks/session-start.sh` (deps + Playwright pointed
+at the preinstalled Chromium), so `npm run e2e` / `e2e:a11y` work against `npx next start`.
+Cloud sessions can push branches and open PRs but can't delete branches or push tags. Don't try.
+
+**Never:** merge, or push to `main` / `dashboard-redesign` directly; touch the prod Supabase project or send test traffic to
 `fanfunnel.vercel.app`; delete branches or tags; weaken, skip, or delete a test, RLS
 policy, or CI check; commit secrets; add a dependency without saying why in the PR;
 stack PRs on each other's branches.
