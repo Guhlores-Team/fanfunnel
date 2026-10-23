@@ -121,6 +121,7 @@ reaches the browser. Details: [`SECURITY.md`](SECURITY.md) ·
 | [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | Pre-release review findings + checklist |
 | [`docs/design/command-center/`](docs/design/command-center/) | Dashboard redesign handoff (spec, porting plan, prototypes, screenshots) |
 | [`docs/BRANCHES.md`](docs/BRANCHES.md) | Branch audit (Oct 2026) and what's kept / archived |
+| [`docs/autopilot/`](docs/autopilot/) | **Start here when resuming:** ordered [backlog](docs/autopilot/BACKLOG.md), [owner actions](docs/autopilot/OWNER_ACTIONS.md), goal prompts for the autopilot + security audit |
 | [`SECURITY.md`](SECURITY.md) · [`docs/SUPABASE_AUTH_CONTRACT.md`](docs/SUPABASE_AUTH_CONTRACT.md) | Security model, auth rules |
 | [`PRODUCT.md`](PRODUCT.md) · [`DESIGN.md`](DESIGN.md) | Product context + current design system (read by design tooling) |
 | [`e2e/README.md`](e2e/README.md) · [`scripts/TESTING.md`](scripts/TESTING.md) | Test suites |
@@ -128,7 +129,10 @@ reaches the browser. Details: [`SECURITY.md`](SECURITY.md) ·
 
 ## Known open items
 
+The full ordered queue is [`docs/autopilot/BACKLOG.md`](docs/autopilot/BACKLOG.md). Headlines:
+
 - **Redesign port** — phases 2–8 of the [porting checklist](docs/design/command-center/PORTING_CHECKLIST.md).
+- **Full security audit** (after the redesign) — [`docs/autopilot/SECURITY_AUDIT_PROMPT.md`](docs/autopilot/SECURITY_AUDIT_PROMPT.md).
 - **Prod smoke test + test-DB admin** — never completed after the June infra setup.
 - **Generated DB types** — `npm run gen:types` exists but `src/lib/data/db.types.ts` was never generated.
 - **Split `src/lib/data/index.ts`** (~6k lines) and unify its error convention.
