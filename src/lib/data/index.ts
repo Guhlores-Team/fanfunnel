@@ -1444,7 +1444,40 @@ export async function editGrant(
     update.spins = newSpins;
   }
 
-  // Update the grant row first and abort on failure, so the aggregate
+  // The pass this grant's spins landed on. A grant whose pass row is gone
+  // (fan_pass_id is ON DELETE SET NULL) falls back to the fan's oldest active
+  // pass, the 0020 attribution convention, so the spins stay spendable and the
+  // aggregate (= SUM of active passes) can follow them.
+  type PassBal = { id: string; spins_remaining: number; spins_granted_total: number };
+  let pass: PassBal | null = null;
+  if (delta !== 0) {
+    if (grant.fan_pass_id) {
+      const { data: pRow } = await sb
+        .from("fan_passes")
+        .select("id, spins_remaining, spins_granted_total")
+        .eq("id", grant.fan_pass_id)
+        .maybeSingle();
+      pass = pRow as PassBal | null;
+    }
+    if (!pass) {
+      const { data: oldest } = await sb
+        .from("fan_passes")
+        .select("id, spins_remaining, spins_granted_total")
+        .eq("fan_id", grant.fan_id)
+        .eq("is_active", true)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      pass = oldest as PassBal | null;
+    }
+    // Spins the fan has already spun can't be un-granted: a cut deeper than
+    // the pass's unspent balance is refused up front (before any write) rather
+    // than clamped. Clamping silently destroyed the deficit, and growing the
+    // grant back afterwards minted spins that had already been spent.
+    if (pass && pass.spins_remaining + delta < 0) return { error: "insufficient_spins" };
+  }
+
+  // Update the grant row first and abort on failure, so the balance
   // adjustments below only run once the edit itself has persisted.
   const { error: grantErr } = await sb.from("grants").update(update).eq("id", grantId);
   if (grantErr) return { error: "db_error" };
@@ -1459,49 +1492,44 @@ export async function editGrant(
   });
 
   if (delta !== 0) {
-    // Adjust the fan-level aggregate.
-    const { data: fanRow } = await sb
-      .from("fans")
-      .select("spins_remaining, spins_granted_total")
-      .eq("id", grant.fan_id)
-      .maybeSingle();
-    const fan = fanRow as { spins_remaining: number; spins_granted_total: number } | null;
-    if (fan) {
-      const { error: fanErr } = await sb
-        .from("fans")
+    if (pass) {
+      // Checked above: spins_remaining + delta >= 0, so the pass never goes
+      // negative and the fan's spent spins stay spent.
+      const { error: pErr } = await sb
+        .from("fan_passes")
         .update({
-          spins_remaining: clampInt(fan.spins_remaining + delta, 0),
-          spins_granted_total: clampInt(fan.spins_granted_total + delta, 0),
+          spins_remaining: pass.spins_remaining + delta,
+          spins_granted_total: clampInt(pass.spins_granted_total + delta, 0),
         })
-        .eq("id", grant.fan_id);
-      if (fanErr) return fail("db_error");
-      const fanRem = fan.spins_remaining, fanGr = fan.spins_granted_total;
+        .eq("id", pass.id);
+      if (pErr) return fail("db_error");
+      const passId = pass.id, passRem = pass.spins_remaining, passGr = pass.spins_granted_total;
       rollbacks.push(async () => {
         await sb
-          .from("fans")
-          .update({ spins_remaining: fanRem, spins_granted_total: fanGr })
-          .eq("id", grant.fan_id);
+          .from("fan_passes")
+          .update({ spins_remaining: passRem, spins_granted_total: passGr })
+          .eq("id", passId);
       });
     }
-    // And the specific wheel's pass balance this grant landed on.
-    if (grant.fan_pass_id) {
-      const { data: pRow } = await sb
-        .from("fan_passes")
-        .select("spins_remaining, spins_granted_total")
-        .eq("id", grant.fan_pass_id)
-        .maybeSingle();
-      const p = pRow as { spins_remaining: number; spins_granted_total: number } | null;
-      if (p) {
-        const { error: pErr } = await sb
-          .from("fan_passes")
-          .update({
-            spins_remaining: clampInt(p.spins_remaining + delta, 0),
-            spins_granted_total: clampInt(p.spins_granted_total + delta, 0),
-          })
-          .eq("id", grant.fan_pass_id);
-        if (pErr) return fail("db_error");
-      }
-    }
+
+    // Fan-level aggregate = SUM over the fan's active passes. The 0035 trigger
+    // already did this on the pass write; recomputing (rather than adding the
+    // delta to a fan-level balance that clamps independently of the pass) is
+    // correct with or without the trigger and can never drift from the passes.
+    const { data: passRows } = await sb
+      .from("fan_passes")
+      .select("spins_remaining, spins_granted_total")
+      .eq("fan_id", grant.fan_id)
+      .eq("is_active", true);
+    const rows = (passRows ?? []) as { spins_remaining: number; spins_granted_total: number }[];
+    const { error: fanErr } = await sb
+      .from("fans")
+      .update({
+        spins_remaining: rows.reduce((s, r) => s + r.spins_remaining, 0),
+        spins_granted_total: rows.reduce((s, r) => s + r.spins_granted_total, 0),
+      })
+      .eq("id", grant.fan_id);
+    if (fanErr) return fail("db_error");
   }
 
   return { ok: true };
