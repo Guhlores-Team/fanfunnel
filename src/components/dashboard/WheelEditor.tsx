@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
 import {
   RARITY_COLORS,
+  RARITY_LABEL,
   RARITY_ORDER,
   type Prize,
   type Rarity,
@@ -14,7 +15,6 @@ import {
 import type { PrizeTemplate } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
 import { OddsBar } from "@/components/dashboard/OddsBar";
-import { Field } from "./ui";
 import WheelSwitcher from "@/components/dashboard/WheelSwitcher";
 import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
 import {
@@ -25,6 +25,72 @@ import {
   reorder,
   RARITY_DEFAULT_WEIGHT,
 } from "@/components/dashboard/editorHelpers";
+
+// 24×24 stroke paths (Command Center prototype line icons).
+const P = {
+  plus: "M12 5v14M5 12h14",
+  grip: "M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01",
+  star: "M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 17l-5.2 2.6 1-5.8L3.5 9.7l5.9-.9Z",
+  copy: "M8 8h12v12H8zM16 8V4H4v12h4",
+  x: "M18 6 6 18M6 6l12 12",
+  gift: "M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7ZM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7Z",
+  book: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z",
+  chevron: "m6 9 6 6 6-6",
+  up: "m18 15-6-6-6 6",
+  down: "m6 9 6 6 6-6",
+  check: "M20 6 9 17l-5-5",
+};
+
+function Glyph({
+  d,
+  size = 16,
+  strokeWidth = 1.8,
+  className = "",
+}: {
+  d: string;
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className={`shrink-0 ${className}`}
+    >
+      <path d={d} />
+    </svg>
+  );
+}
+
+const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
+const cap = "text-[11px] font-semibold uppercase tracking-[0.05em] text-muted";
+const capSm = "text-[10px] font-semibold uppercase tracking-[0.05em] text-muted";
+const iconBtn =
+  "grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+const secondaryBtn =
+  "inline-flex min-h-[38px] items-center gap-1.5 rounded-[10px] border border-[var(--hair)] px-4 text-[13.5px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+// Native color input drawn as a plain swatch (the hex field next to it is the
+// typed source of truth; a half-typed hex never reaches the picker).
+const swatchInput =
+  "h-9 w-[46px] shrink-0 cursor-pointer rounded-lg border border-[var(--hair)] bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0.5 [&::-webkit-color-swatch]:rounded-[6px] [&::-webkit-color-swatch]:border-0";
+
+function Lbl({ label, children, small }: { label: string; children: ReactNode; small?: boolean }) {
+  return (
+    <label className="flex min-w-0 flex-col gap-1.5">
+      <span className={small ? capSm : cap}>{label}</span>
+      {children}
+    </label>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Wheel editor
@@ -57,6 +123,8 @@ export default function WheelEditor({
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  // Per-prize "More" disclosure (emoji picks + description), keyed by prize id.
+  const [moreOpen, setMoreOpen] = useState<Record<string, boolean>>({});
   // #9: bumped after a prize is saved to the library (★) so TemplateLibrary
   // refetches and the favorite shows up immediately — no page refresh.
   const [librarySignal, setLibrarySignal] = useState(0);
@@ -133,6 +201,10 @@ export default function WheelEditor({
   // edited. The config carries its own id, so the existing save (PUT /api/wheel
   // with the full config) targets the right wheel.
   async function loadWheel(id: string) {
+    // Switching wheels replaces the editor state: don't silently drop edits.
+    if (dirty && id !== wheel.id && !window.confirm("Discard unsaved changes to this wheel?")) {
+      return;
+    }
     const res = await fetch(`/api/wheels/${id}`, { cache: "no-store" });
     if (!res.ok) {
       toast("Couldn't open that wheel.", { tone: "error" });
@@ -285,9 +357,11 @@ export default function WheelEditor({
     });
   }
 
+  const canRemove = wheel.prizes.length > 2;
+
   return (
-    <div>
-      <div className="mb-6">
+    <div className="flex flex-col">
+      <div className="mb-5">
         <WheelSwitcher
           currentWheelId={editingWheelId}
           onEdit={loadWheel}
@@ -295,12 +369,26 @@ export default function WheelEditor({
         />
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-        <p className="text-sm">
+      {/* Save bar. Top of the editor on desktop; on phones it moves to the end
+          of the flow and sticks to the bottom edge so Save is always in reach. */}
+      <div
+        className={`z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors duration-200 max-lg:sticky max-lg:bottom-2 max-lg:order-last max-lg:mt-5 lg:mb-5 ${
+          dirty
+            ? "border-[color-mix(in_oklab,#f59e0b_30%,#1f1b27)] bg-[color-mix(in_oklab,#f59e0b_6%,#16131c)] shadow-[var(--lift)]"
+            : raised
+        }`}
+      >
+        <p className="flex items-center gap-2 text-[13.5px]" role="status">
           {dirty ? (
-            <span className="text-amber-300">● Unsaved changes</span>
+            <>
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[#f59e0b]" />
+              <span className="text-[#fcd34d]">Unsaved changes</span>
+            </>
           ) : justSaved ? (
-            <span className="text-emerald-300">✓ Saved</span>
+            <>
+              <Glyph d={P.check} size={14} strokeWidth={2.4} className="text-[#86efac]" />
+              <span className="text-[#86efac]">Saved</span>
+            </>
           ) : (
             <span className="text-muted">All changes saved</span>
           )}
@@ -308,53 +396,79 @@ export default function WheelEditor({
         <button
           onClick={save}
           disabled={saving || !dirty}
-          className="btn-brand rounded-lg px-5 py-2 text-sm font-bold"
+          className="btn-brand min-h-[38px] rounded-[9px] px-5 text-[13.5px] font-bold"
         >
           {saving ? "Saving…" : "Save wheel"}
         </button>
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
-        <div className="min-w-0">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Title">
+      <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_340px]">
+        {/* Live preview. First in the DOM so it leads on phones (README mobile),
+            right column on desktop. */}
+        <div
+          className={`flex flex-col items-center gap-4 self-start rounded-[18px] p-4 sm:p-6 lg:sticky lg:top-24 lg:order-2 ${raised}`}
+        >
+          <p className={cap}>Live preview</p>
+          <Wheel
+            prizes={wheel.prizes}
+            brandColor={wheel.brandColor ?? "#ec4899"}
+            labelColor={wheel.labelColor}
+            labelSize={wheel.labelSize}
+            result={null}
+            size={280}
+          />
+          <p className="text-center text-xs text-muted text-pretty">
+            A prize&rsquo;s chance is its <strong className="text-ink">tickets ÷ all tickets</strong>.
+            The <span className="text-brand">%</span> updates live. Out-of-stock prizes leave the
+            pool and the rest renormalize.
+          </p>
+        </div>
+
+        <div className="min-w-0 lg:order-1">
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <Lbl label="Title">
               <input
                 className="ff-input w-full"
                 data-testid="wheel-title-input"
                 value={wheel.title}
                 onChange={(e) => setWheel({ ...wheel, title: e.target.value })}
               />
-            </Field>
-            <Field label="Brand color">
+            </Lbl>
+            <Lbl label="Brand color">
               <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  className="h-9 w-12 rounded border border-line bg-transparent"
+                  className={swatchInput}
                   value={wheel.brandColor ?? "#ec4899"}
                   onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
+                  aria-label="Brand color picker"
                 />
                 <input
-                  className="ff-input w-full flex-1"
+                  className="ff-input tnum w-full min-w-0 flex-1"
                   value={wheel.brandColor ?? ""}
                   onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
+                  aria-label="Brand color hex"
                 />
               </div>
-            </Field>
-            {/* #11: per-wheel prize-label text color. Empty = Auto (Wheel.tsx
-                picks a readable color per segment). Persists with the wheel. */}
-            <Field label="Label text color" full>
+            </Lbl>
+          </div>
+
+          {/* Wheel style: label color (#11), label size and subtitle. Not drawn in
+              the design; kept as a compact row under Title/Brand. */}
+          <div className="mt-3.5 grid gap-3.5 sm:grid-cols-[1fr_auto_1fr]">
+            <Lbl label="Label text color">
               <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  className="h-9 w-12 shrink-0 rounded border border-line bg-transparent"
+                  className={swatchInput}
                   value={wheel.labelColor ?? "#ffffff"}
                   onChange={(e) => setWheel({ ...wheel, labelColor: e.target.value })}
                   aria-label="Prize label color"
                 />
                 <input
-                  className="ff-input min-w-0 flex-1"
+                  className="ff-input tnum min-w-0 flex-1"
                   value={wheel.labelColor ?? ""}
-                  placeholder="Auto (readable per slice)"
+                  placeholder="Auto"
                   onChange={(e) =>
                     setWheel({
                       ...wheel,
@@ -367,17 +481,15 @@ export default function WheelEditor({
                   type="button"
                   onClick={() => setWheel({ ...wheel, labelColor: undefined })}
                   disabled={wheel.labelColor == null}
-                  className="shrink-0 text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline disabled:opacity-40"
+                  className="shrink-0 text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline disabled:opacity-40"
                 >
                   Auto
                 </button>
               </div>
-            </Field>
-            {/* Per-wheel prize-label text size. Empty = Auto (fit to slices).
-                Larger sizes stay inside each slice (single line + ellipsis). */}
-            <Field label="Label text size" full>
+            </Lbl>
+            <Lbl label="Label size">
               <select
-                className="ff-input w-full"
+                className="ff-input w-full sm:w-36"
                 value={wheel.labelSize ?? ""}
                 onChange={(e) =>
                   setWheel({
@@ -388,25 +500,24 @@ export default function WheelEditor({
                 }
                 aria-label="Prize label text size"
               >
-                <option value="">Auto (fit to slices)</option>
+                <option value="">Auto (fit)</option>
                 <option value="s">Small</option>
                 <option value="l">Large</option>
                 <option value="xl">Extra large</option>
               </select>
-            </Field>
-            <Field label="Subtitle" full>
+            </Lbl>
+            <Lbl label="Subtitle">
               <input
                 className="ff-input w-full"
                 value={wheel.subtitle ?? ""}
+                placeholder="Shown under the title on the fan page"
                 onChange={(e) => setWheel({ ...wheel, subtitle: e.target.value })}
               />
-            </Field>
+            </Lbl>
           </div>
 
-          <div className="card mt-6 rounded-xl p-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-              Odds
-            </span>
+          <div className={`mt-5 rounded-xl p-3 ${raised}`}>
+            <span className={cap}>Odds</span>
             <div className="mt-2">
               <OddsBar prizes={wheel.prizes} odds={oddsPct} />
             </div>
@@ -415,28 +526,33 @@ export default function WheelEditor({
           {/* #7: brand-new wheels start with zero prizes — show a friendly
               empty state + "Add your first prize" instead of a bare list. */}
           {wheel.prizes.length === 0 && (
-            <div className="mt-4 rounded-xl border border-dashed border-line p-8 text-center">
-              <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-2xl">
-                🎁
-              </div>
-              <p className="mt-3 font-semibold text-ink">No prizes yet</p>
-              <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
-                Add your first prize to start building this wheel. You can set its
-                rarity, odds, and color — or pull one from your library below.
+            <div className="mt-4 flex flex-col items-center gap-2.5 rounded-[14px] border border-dashed border-[var(--hair)] px-6 py-9 text-center">
+              <span className="grid h-11 w-11 place-items-center rounded-xl bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+                <Glyph d={P.gift} size={20} strokeWidth={1.6} />
+              </span>
+              <p className="text-[14.5px] font-bold text-ink">No prizes yet</p>
+              <p className="max-w-[300px] text-[13px] text-muted text-pretty">
+                Add your first prize to start building the wheel. Set its rarity, tickets and
+                odds — or pull one from your library below.
               </p>
               <button
                 type="button"
                 onClick={addPrize}
-                className="btn-brand mt-4 rounded-lg px-4 py-2 text-sm font-bold"
+                className="btn-brand mt-1 inline-flex min-h-[38px] items-center gap-1.5 rounded-[10px] px-4 text-[13.5px] font-bold"
               >
-                + Add your first prize
+                <Glyph d={P.plus} size={15} strokeWidth={2.2} />
+                Add your first prize
               </button>
             </div>
           )}
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 grid gap-2.5 2xl:grid-cols-2">
             {wheel.prizes.map((p, index) => {
               const swatch = p.color ?? RARITY_COLORS[p.rarity];
+              const rarityColor = RARITY_COLORS[p.rarity];
+              const pct = (odds.get(p.id) ?? 0) * 100;
+              const outOfStock = p.stock === 0;
+              const more = moreOpen[p.id] ?? false;
               return (
                 <div
                   key={p.id}
@@ -461,7 +577,7 @@ export default function WheelEditor({
                     setDragOverIdx(null);
                     setDragArmedIdx(null);
                   }}
-                  className={`card rounded-xl p-3 transition-[box-shadow,opacity,transform] duration-150 ${
+                  className={`relative rounded-[13px] p-3.5 transition-[box-shadow,opacity,transform] duration-150 ${raised} ${
                     dragIdx === index ? "scale-[0.99] opacity-50" : ""
                   } ${
                     dragOverIdx === index
@@ -469,7 +585,30 @@ export default function WheelEditor({
                       : ""
                   }`}
                 >
-                  <div className="flex items-center gap-2">
+                  {/* Corner reorder cluster: ▲▼ (keyboard path) + the drag grip. */}
+                  <div className="absolute right-2.5 top-2.5 z-[1] flex items-center gap-0.5">
+                    <div className="flex flex-col">
+                      <button
+                        type="button"
+                        onClick={() => movePrize(index, index - 1)}
+                        disabled={index === 0}
+                        className="grid h-[13px] w-5 place-items-center rounded-[4px] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        aria-label="Move prize up"
+                        title="Move up"
+                      >
+                        <Glyph d={P.up} size={12} strokeWidth={2.4} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => movePrize(index, index + 1)}
+                        disabled={index === wheel.prizes.length - 1}
+                        className="grid h-[13px] w-5 place-items-center rounded-[4px] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        aria-label="Move prize down"
+                        title="Move down"
+                      >
+                        <Glyph d={P.down} size={12} strokeWidth={2.4} />
+                      </button>
+                    </div>
                     <button
                       type="button"
                       // The ONLY drag affordance: arming on pointer-down lets the
@@ -480,123 +619,81 @@ export default function WheelEditor({
                       onPointerUp={() => setDragArmedIdx((v) => (v === index ? null : v))}
                       aria-label="Drag to reorder prize"
                       title="Drag to reorder (or use the ▲ ▼ buttons)"
-                      className="shrink-0 cursor-grab touch-none select-none rounded px-1 text-muted transition hover:text-ink active:cursor-grabbing"
+                      className="grid h-[26px] w-[26px] cursor-grab touch-none select-none place-items-center rounded-[7px] bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] active:cursor-grabbing"
                     >
-                      ⠿
+                      <Glyph d={P.grip} size={14} />
                     </button>
-                    <div className="flex shrink-0 flex-col">
-                      <button
-                        type="button"
-                        onClick={() => movePrize(index, index - 1)}
-                        disabled={index === 0}
-                        className="grid h-6 min-w-6 place-items-center rounded text-xs leading-none text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
-                        aria-label="Move prize up"
-                        title="Move up"
-                      >
-                        ▲
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => movePrize(index, index + 1)}
-                        disabled={index === wheel.prizes.length - 1}
-                        className="grid h-6 min-w-6 place-items-center rounded text-xs leading-none text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
-                        aria-label="Move prize down"
-                        title="Move down"
-                      >
-                        ▼
-                      </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 pr-[60px]">
+                    <div className="flex min-w-[170px] flex-1 items-center gap-2">
+                      <input
+                        aria-label="Emoji"
+                        className="ff-input w-[42px] shrink-0 text-center text-base"
+                        value={p.emoji ?? ""}
+                        onChange={(e) => updatePrize(p.id, { emoji: e.target.value })}
+                      />
+                      <input
+                        aria-label="Prize name"
+                        className="ff-input min-w-0 flex-1"
+                        value={p.label}
+                        onChange={(e) => updatePrize(p.id, { label: e.target.value })}
+                      />
                     </div>
-                    <input
-                      aria-label="Emoji"
-                      className="ff-input w-11 shrink-0 text-center text-base"
-                      value={p.emoji ?? ""}
-                      onChange={(e) => updatePrize(p.id, { emoji: e.target.value })}
-                    />
-                    <input
-                      aria-label="Prize name"
-                      className="ff-input min-w-0 flex-1"
-                      value={p.label}
-                      onChange={(e) => updatePrize(p.id, { label: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => savePrizeToLibrary(p)}
-                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-[var(--brand)]"
-                      title="Save this prize to your library"
-                      aria-label="Save prize to library"
-                    >
-                      ★
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => duplicateAt(index)}
-                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-ink"
-                      title="Duplicate prize"
-                      aria-label="Duplicate prize"
-                    >
-                      ⧉
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removePrize(p.id)}
-                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-red-400"
-                      title="Remove prize"
-                      aria-label="Remove prize"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {EMOJI_SUGGESTIONS.map((emo) => (
-                      <button
-                        key={emo}
-                        type="button"
-                        onClick={() => updatePrize(p.id, { emoji: emo })}
-                        className="rounded-md border border-line px-1.5 py-0.5 text-sm transition hover:bg-white/5"
-                        aria-label={`Use emoji ${emo}`}
-                        title={`Use ${emo}`}
-                      >
-                        {emo}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-1 text-[11px] text-muted">Tip: type or paste any emoji.</p>
-
-                  <Field label="Cost (your cost)">
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      placeholder="0.00"
-                      className="ff-input tnum w-full text-right"
-                      value={p.cost == null ? "" : (p.cost ?? 0) / 100}
-                      onChange={(e) =>
-                        updatePrize(p.id, {
-                          cost:
-                            e.target.value === ""
-                              ? null
-                              : Math.round(Number(e.target.value) * 100),
-                        })
-                      }
-                    />
-                  </Field>
-
-                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <Field label="Rarity">
+                    <div className="flex items-center gap-0.5">
+                      {/* Rarity pill: a real <select> (keyboard + screen readers +
+                          e2e selectOption) drawn as the design's tinted pill. The
+                          change handler is changeRarity, which re-fills tickets. */}
                       <select
-                        className="ff-input w-full"
+                        className="ff-input ff-pill mr-1.5"
                         value={p.rarity}
                         onChange={(e) => changeRarity(p, e.target.value as Rarity)}
+                        aria-label="Rarity"
+                        title="Change rarity (re-fills tickets from the rarity default)"
+                        style={{
+                          backgroundColor: `color-mix(in oklab, ${rarityColor} 16%, transparent)`,
+                          color: rarityColor,
+                        }}
                       >
                         {RARITY_ORDER.map((r) => (
                           <option key={r} value={r}>
-                            {r}
+                            {RARITY_LABEL[r]}
                           </option>
                         ))}
                       </select>
-                    </Field>
-                    <Field label="Tickets">
+                      <button
+                        type="button"
+                        onClick={() => savePrizeToLibrary(p)}
+                        className={`${iconBtn} hover:text-brand`}
+                        title="Save this prize to your library"
+                        aria-label="Save prize to library"
+                      >
+                        <Glyph d={P.star} strokeWidth={1.6} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => duplicateAt(index)}
+                        className={`${iconBtn} hover:text-ink`}
+                        title="Duplicate prize"
+                        aria-label="Duplicate prize"
+                      >
+                        <Glyph d={P.copy} size={15} strokeWidth={1.7} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removePrize(p.id)}
+                        disabled={!canRemove}
+                        className={`${iconBtn} hover:text-[#fca5a5] disabled:opacity-35 disabled:hover:bg-transparent`}
+                        title={canRemove ? "Remove prize" : "A wheel needs at least 2 prizes"}
+                        aria-label="Remove prize"
+                      >
+                        <Glyph d={P.x} size={15} strokeWidth={1.9} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-2.5 grid grid-cols-4 gap-2">
+                    <Lbl label="Tickets" small>
                       <input
                         type="number"
                         min={0}
@@ -604,8 +701,8 @@ export default function WheelEditor({
                         value={p.weight}
                         onChange={(e) => updatePrize(p.id, { weight: Number(e.target.value) })}
                       />
-                    </Field>
-                    <Field label="Stock">
+                    </Lbl>
+                    <Lbl label="Stock" small>
                       <input
                         type="number"
                         min={0}
@@ -618,120 +715,176 @@ export default function WheelEditor({
                           })
                         }
                       />
-                    </Field>
-                    <div className="flex min-w-0 flex-col gap-1">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-                        Odds
-                      </span>
+                    </Lbl>
+                    <Lbl label="Cost" small>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="0.00"
+                        className="ff-input tnum w-full text-right"
+                        value={p.cost == null ? "" : (p.cost ?? 0) / 100}
+                        onChange={(e) =>
+                          updatePrize(p.id, {
+                            cost:
+                              e.target.value === ""
+                                ? null
+                                : Math.round(Number(e.target.value) * 100),
+                          })
+                        }
+                        aria-label="Cost (your cost, dollars)"
+                      />
+                    </Lbl>
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <span className={capSm}>Odds</span>
                       {/* Match .ff-input's box (padding + border) so the % sits on
-                          the same baseline as the Rarity/Tickets/Stock inputs. */}
-                      <span className="tnum flex items-center justify-end border border-transparent px-[0.7rem] py-[0.5rem] text-[0.9rem] font-mono font-semibold text-[var(--brand)]">
-                        {((odds.get(p.id) ?? 0) * 100).toFixed(1)}%
+                          the same baseline as the Tickets/Stock/Cost inputs. */}
+                      <span
+                        className={`tnum flex items-center justify-end border border-transparent py-[0.5rem] font-mono text-[0.9rem] font-semibold ${
+                          outOfStock ? "text-muted" : "text-brand"
+                        }`}
+                        title={outOfStock ? "Out of stock — leaves the pool until restocked" : undefined}
+                      >
+                        {pct.toFixed(1)}%
                       </span>
                     </div>
                   </div>
+                  {outOfStock && (
+                    <p className="mt-1 text-right text-[11px] text-[#fcd34d]">
+                      Out of stock — the other prizes&rsquo; odds renormalize.
+                    </p>
+                  )}
 
-                  <Field label="Color">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        className="h-9 w-12 shrink-0 rounded border border-line bg-transparent"
-                        value={swatch}
-                        onChange={(e) => updatePrize(p.id, { color: e.target.value })}
-                        aria-label="Prize color"
-                      />
-                      <input
-                        className="ff-input min-w-0 flex-1"
-                        value={swatch}
-                        onChange={(e) => updatePrize(p.id, { color: e.target.value })}
-                        aria-label="Prize color hex"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => updatePrize(p.id, { color: RARITY_COLORS[p.rarity] })}
-                        className="shrink-0 text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
-                      >
-                        Reset to rarity color
-                      </button>
-                    </div>
-                  </Field>
-
-                  <Field label="Description (shown on win)">
-                    <textarea
-                      className="ff-input w-full"
-                      rows={2}
-                      value={p.description ?? ""}
-                      onChange={(e) => updatePrize(p.id, { description: e.target.value })}
+                  <div className="mt-2.5 flex items-center gap-2.5">
+                    <span className={capSm}>Color</span>
+                    <input
+                      type="color"
+                      className="h-7 w-10 shrink-0 cursor-pointer rounded-[7px] border border-[var(--hair)] bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0.5 [&::-webkit-color-swatch]:rounded-[5px] [&::-webkit-color-swatch]:border-0"
+                      value={swatch}
+                      onChange={(e) => updatePrize(p.id, { color: e.target.value })}
+                      aria-label="Prize color"
                     />
-                  </Field>
+                    <input
+                      className="ff-input tnum min-w-0 flex-1"
+                      value={swatch}
+                      onChange={(e) => updatePrize(p.id, { color: e.target.value })}
+                      aria-label="Prize color hex"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updatePrize(p.id, { color: RARITY_COLORS[p.rarity] })}
+                      className="shrink-0 text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
+                    >
+                      Reset to rarity
+                    </button>
+                  </div>
+
+                  {/* "More": emoji quick-picks and the win description. */}
+                  <button
+                    type="button"
+                    onClick={() => setMoreOpen((m) => ({ ...m, [p.id]: !more }))}
+                    aria-expanded={more}
+                    className="mt-2.5 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                  >
+                    <Glyph
+                      d={P.chevron}
+                      size={12}
+                      strokeWidth={2.4}
+                      className={`transition-transform ${more ? "rotate-180" : ""}`}
+                    />
+                    {more ? "Less" : "More"}
+                    {!more && p.description ? (
+                      <span className="font-medium"> · has a win message</span>
+                    ) : null}
+                  </button>
+                  {more && (
+                    <div className="mt-2.5 rounded-[10px] border border-[var(--hair)] p-3 [background:var(--s2)]">
+                      <span className={capSm}>Emoji</span>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {EMOJI_SUGGESTIONS.map((emo) => (
+                          <button
+                            key={emo}
+                            type="button"
+                            onClick={() => updatePrize(p.id, { emoji: emo })}
+                            className="rounded-md border border-[var(--hair)] px-1.5 py-0.5 text-sm transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                            aria-label={`Use emoji ${emo}`}
+                            title={`Use ${emo}`}
+                          >
+                            {emo}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-muted">Tip: type or paste any emoji.</p>
+                      <div className="mt-3">
+                        <Lbl label="Description (shown on win)" small>
+                          <textarea
+                            className="ff-input w-full"
+                            rows={2}
+                            value={p.description ?? ""}
+                            onChange={(e) => updatePrize(p.id, { description: e.target.value })}
+                          />
+                        </Lbl>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={addPrize}
-              className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
-            >
-              + Add prize
+            <button type="button" onClick={addPrize} className={secondaryBtn}>
+              <Glyph d={P.plus} size={15} strokeWidth={2.2} />
+              Add prize
             </button>
             {wheel.prizes.length > 0 && (
               <button
                 type="button"
                 onClick={() => setWheel({ ...wheel, prizes: balanceOdds(wheel.prizes) })}
-                className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
+                className={secondaryBtn}
               >
                 Balance odds
               </button>
             )}
           </div>
-        </div>
 
-        <div className="flex flex-col items-center gap-4 self-start rounded-2xl border border-line bg-surface p-6">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted">Live preview</p>
-          <Wheel
-            prizes={wheel.prizes}
-            brandColor={wheel.brandColor ?? "#ec4899"}
-            labelColor={wheel.labelColor}
-            labelSize={wheel.labelSize}
-            result={null}
-            size={280}
-          />
-          <p className="text-center text-xs text-muted">
-            Think of <strong>tickets</strong> like a raffle: a prize&rsquo;s chance is its
-            tickets ÷ all tickets. The <span className="text-[var(--brand)]">%</span> next to
-            each prize is its real odds — it updates live as you add prizes or change tickets.
-            Pick a rarity and we fill sensible tickets for you.
-          </p>
-        </div>
-      </div>
-
-      {/* Library lives at the bottom: you build the wheel first, then optionally
-          save it as a template or pull reusable prizes/templates in. */}
-      <div className="mt-6 rounded-xl border border-line bg-surface">
-        <button
-          type="button"
-          onClick={() => setShowLibrary((v) => !v)}
-          aria-expanded={showLibrary}
-          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-        >
-          <span className="font-bold text-ink">📚 Prize &amp; wheel library</span>
-          <span className="text-sm font-semibold text-muted">
-            {showLibrary ? "Hide ▲" : "Save / reuse prizes & templates ▼"}
-          </span>
-        </button>
-        {showLibrary && (
-          <div className="border-t border-line px-4 py-4">
-            <TemplateLibrary
-              onApplyWheelTemplate={applyWheelTemplate}
-              onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
-              onApplyPrizeTemplate={applyPrizeTemplate}
-              onSaveCurrentPrizesToLibrary={saveCurrentPrizesToLibrary}
-              refreshSignal={librarySignal}
-            />
+          {/* Library lives at the bottom: you build the wheel first, then optionally
+              save it as a template or pull reusable prizes/templates in. */}
+          <div className={`mt-4 rounded-xl ${raised}`}>
+            <button
+              type="button"
+              onClick={() => setShowLibrary((v) => !v)}
+              aria-expanded={showLibrary}
+              className="flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <Glyph d={P.book} size={17} strokeWidth={1.7} className="text-brand" />
+                Prize &amp; wheel library
+              </span>
+              <span className="flex items-center gap-1.5 text-[13px] font-semibold text-muted">
+                <span className="max-sm:hidden">
+                  {showLibrary ? "Hide" : "Save / reuse prizes & templates"}
+                </span>
+                <Glyph
+                  d={P.chevron}
+                  size={14}
+                  strokeWidth={2.2}
+                  className={`transition-transform ${showLibrary ? "rotate-180" : ""}`}
+                />
+              </span>
+            </button>
+            {showLibrary && (
+              <div className="border-t border-[var(--hair)] px-4 py-4">
+                <TemplateLibrary
+                  onApplyWheelTemplate={applyWheelTemplate}
+                  onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
+                  onApplyPrizeTemplate={applyPrizeTemplate}
+                  onSaveCurrentPrizesToLibrary={saveCurrentPrizesToLibrary}
+                  refreshSignal={librarySignal}
+                />
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

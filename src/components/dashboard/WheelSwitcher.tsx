@@ -1,15 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { WheelSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
 
 /**
  * Header control for the wheel editor. Self-fetches the creator's wheels and
- * offers per-wheel management (edit, set active, duplicate, archive) plus an
- * inline schedule editor for the currently-selected wheel. Owns its own list
- * state and refetches after every mutation so the surrounding editor only has
- * to react to `onChanged`.
+ * draws them as chips (Command Center). Each chip has a "Manage" menu with the
+ * per-wheel actions (set active, duplicate, archive/restore, delete forever,
+ * schedule) and the schedule editor for the currently-selected wheel opens as a
+ * card under the chips. Owns its own list state and refetches after every
+ * mutation so the surrounding editor only has to react to `onChanged`.
  *
  * Props:
  *   currentWheelId  the wheel the editor is presently editing (highlighted)
@@ -35,6 +37,11 @@ export default function WheelSwitcher({
   // Local edits to the selected wheel's schedule inputs.
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
+  // Which chip's "Manage" menu is open, and whether the schedule card is shown.
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuAnchorRef = useRef<HTMLButtonElement | null>(null);
 
   const load = useCallback(async () => {
     // Include archived wheels so they're visible (and restorable), not hidden.
@@ -59,6 +66,53 @@ export default function WheelSwitcher({
     setFrom(toLocalInput(selected?.activeFrom ?? null));
     setUntil(toLocalInput(selected?.activeUntil ?? null));
   }, [selected?.id, selected?.activeFrom, selected?.activeUntil]);
+
+  // Menu: close on Escape / outside click, and hand focus back to its trigger.
+  useEffect(() => {
+    if (!menuFor) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (menuRef.current?.contains(t) || menuAnchorRef.current?.contains(t)) return;
+      closeMenu(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu(true);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    // Move focus into the menu so keyboard users land on the first action.
+    menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuFor]);
+
+  function closeMenu(restoreFocus: boolean) {
+    setMenuFor(null);
+    setConfirmArchive(null);
+    setConfirmDelete(null);
+    if (restoreFocus) menuAnchorRef.current?.focus();
+  }
+
+  function onMenuKey(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']:not(:disabled)") ?? [],
+    );
+    if (items.length === 0) return;
+    e.preventDefault();
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? items.length - 1
+          : e.key === "ArrowDown"
+            ? (i + 1) % items.length
+            : (i - 1 + items.length) % items.length;
+    items[next].focus();
+  }
 
   async function createWheel() {
     setBusy(true);
@@ -197,174 +251,266 @@ export default function WheelSwitcher({
     await patchWheel(selected.id, { activeFrom: null, activeUntil: null }, "Set to always on");
   }
 
+  const menuItem =
+    "flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[13px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none disabled:opacity-50";
+
   return (
-    <section className="card rounded-xl p-4" aria-label="Wheel switcher">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-bold text-ink">Wheels</h3>
+    <section aria-label="Wheel switcher">
+      <div className="flex flex-wrap items-center gap-2">
+        {wheels === null
+          ? Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="skeleton h-[34px] w-32 rounded-full" />
+            ))
+          : wheels.map((w) => {
+              const current = w.id === currentWheelId;
+              const open = menuFor === w.id;
+              const hint = `${w.prizeCount} ${w.prizeCount === 1 ? "prize" : "prizes"} · ${scheduleHint(
+                w.activeFrom,
+                w.activeUntil,
+                w.isActive,
+              )}`;
+              return (
+                <div
+                  key={w.id}
+                  className={`relative inline-flex min-h-[34px] items-center rounded-full border pl-3.5 pr-1 text-[13px] font-semibold transition-colors duration-150 ${
+                    current
+                      ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-ink"
+                      : "border-[var(--hair)] text-muted hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] hover:text-ink"
+                  } ${w.archivedAt ? "opacity-60" : ""}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onEdit(w.id)}
+                    aria-current={current ? "true" : undefined}
+                    title={hint}
+                    className="flex min-h-[32px] max-w-[220px] items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: w.brandColor }}
+                    />
+                    <span className="truncate">{w.title}</span>
+                    {w.isActive && (
+                      <span className="shrink-0 rounded-full bg-[var(--brand)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[var(--brand-ink)]">
+                        Active
+                      </span>
+                    )}
+                    {w.archivedAt && (
+                      <span className="shrink-0 rounded-full border border-[var(--hair)] px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wide text-muted">
+                        Archived
+                      </span>
+                    )}
+                    <span className="sr-only">{`, ${hint}`}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      if (open) {
+                        closeMenu(false);
+                      } else {
+                        menuAnchorRef.current = e.currentTarget;
+                        setConfirmArchive(null);
+                        setConfirmDelete(null);
+                        setMenuFor(w.id);
+                      }
+                    }}
+                    aria-haspopup="menu"
+                    aria-expanded={open}
+                    aria-label={`Manage ${w.title}`}
+                    title="Manage wheel"
+                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                  >
+                    <Icon d="M5 12h.01M12 12h.01M19 12h.01" size={15} />
+                  </button>
+
+                  {open && (
+                    <div
+                      ref={menuRef}
+                      role="menu"
+                      aria-label={`Manage ${w.title}`}
+                      onKeyDown={onMenuKey}
+                      className="absolute left-0 top-[calc(100%+6px)] z-30 w-64 rounded-xl border border-[var(--hair)] p-1.5 shadow-[var(--lift)] [background:var(--s1)]"
+                    >
+                      <div className="px-2.5 pb-2 pt-1.5">
+                        <p className="truncate text-[13px] font-bold text-ink">{w.title}</p>
+                        <p className="tnum mt-0.5 text-[11.5px] text-muted">{hint}</p>
+                      </div>
+                      {!current && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            onEdit(w.id);
+                            closeMenu(true);
+                          }}
+                          className={menuItem}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {!w.isActive && !w.archivedAt && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={async () => {
+                            closeMenu(true);
+                            await setActive(w.id);
+                          }}
+                          disabled={busy}
+                          className={menuItem}
+                        >
+                          Set active
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          if (!current) onEdit(w.id);
+                          setScheduleOpen(true);
+                          closeMenu(false);
+                        }}
+                        className={menuItem}
+                      >
+                        Schedule…
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={async () => {
+                          closeMenu(true);
+                          await duplicate(w.id);
+                        }}
+                        disabled={busy}
+                        className={menuItem}
+                      >
+                        Duplicate
+                      </button>
+                      {w.archivedAt ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={async () => {
+                            closeMenu(true);
+                            await restore(w.id);
+                          }}
+                          disabled={busy}
+                          className={`${menuItem} text-brand`}
+                        >
+                          Restore
+                        </button>
+                      ) : confirmArchive === w.id ? (
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={async () => {
+                              await archive(w.id);
+                              closeMenu(true);
+                            }}
+                            disabled={busy}
+                            className={`${menuItem} text-[#fca5a5]`}
+                          >
+                            Confirm archive
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => setConfirmArchive(null)}
+                            className={`${menuItem} w-auto text-muted`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => setConfirmArchive(w.id)}
+                          className={menuItem}
+                        >
+                          Archive
+                        </button>
+                      )}
+                      {confirmDelete === w.id ? (
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={async () => {
+                              await hardDelete(w.id);
+                              closeMenu(true);
+                            }}
+                            disabled={busy}
+                            className={`${menuItem} text-[#fca5a5]`}
+                          >
+                            Delete forever
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => setConfirmDelete(null)}
+                            className={`${menuItem} w-auto text-muted`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => setConfirmDelete(w.id)}
+                          className={`${menuItem} text-muted hover:text-[#fca5a5]`}
+                        >
+                          Delete…
+                        </button>
+                      )}
+                      <p className="mt-1 border-t border-[var(--hair)] px-2.5 pb-1 pt-2 text-[11px] leading-snug text-muted">
+                        One wheel is <strong>active</strong> (the one fans spin) at a time.{" "}
+                        <strong>Archive</strong> keeps its history (you can Restore). Only wheels with
+                        no spins can be deleted.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
         <button
           type="button"
           onClick={createWheel}
           disabled={busy}
-          className="btn-brand rounded-lg px-3 py-1.5 text-sm font-bold disabled:opacity-50"
+          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-dashed border-[var(--hair)] px-3.5 text-[13px] font-semibold text-muted transition-colors duration-150 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
         >
-          ＋ New wheel
+          <Icon d="M12 5v14M5 12h14" size={14} strokeWidth={2.2} />
+          New wheel
         </button>
       </div>
-      <p className="mt-1 text-xs text-muted">
-        One wheel is <strong>active</strong> (the one fans spin) at a time — set another active to
-        swap. <strong>Archive</strong> takes a wheel out of rotation but keeps its history (you can
-        Restore it). Wheels with no spins can be deleted outright.
-      </p>
-
-      {wheels === null ? (
-        <div className="mt-4 space-y-2">
-          {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="skeleton h-16 rounded-lg" />
-          ))}
-        </div>
-      ) : wheels.length === 0 ? (
-        <p className="mt-4 text-sm text-muted">No wheels yet. Create one to get started.</p>
-      ) : (
-        <ul className="mt-4 space-y-2">
-          {wheels.map((w) => {
-            const current = w.id === currentWheelId;
-            return (
-              <li
-                key={w.id}
-                className={`rounded-lg border bg-base/40 p-3 ${
-                  current ? "border-[var(--brand)]" : "border-line"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 truncate font-semibold text-ink">{w.title}</span>
-                      {w.isActive && (
-                        <span className="shrink-0 rounded-full bg-[var(--brand)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                          Active
-                        </span>
-                      )}
-                      {w.archivedAt && (
-                        <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                          Archived
-                        </span>
-                      )}
-                    </div>
-                    <p className="tnum mt-0.5 text-xs text-muted">
-                      {w.prizeCount} {w.prizeCount === 1 ? "prize" : "prizes"} ·{" "}
-                      {scheduleHint(w.activeFrom, w.activeUntil, w.isActive)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onEdit(w.id)}
-                    className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5"
-                  >
-                    Edit
-                  </button>
-                  {!w.isActive && !w.archivedAt && (
-                    <button
-                      type="button"
-                      onClick={() => setActive(w.id)}
-                      disabled={busy}
-                      className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5 disabled:opacity-50"
-                    >
-                      Set active
-                    </button>
-                  )}
-                  {w.archivedAt && (
-                    <button
-                      type="button"
-                      onClick={() => restore(w.id)}
-                      disabled={busy}
-                      className="rounded-lg border border-[var(--brand)]/50 px-2.5 py-1 text-xs font-semibold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] disabled:opacity-50"
-                    >
-                      Restore
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => duplicate(w.id)}
-                    disabled={busy}
-                    className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5 disabled:opacity-50"
-                  >
-                    Duplicate
-                  </button>
-                  {!w.archivedAt &&
-                    (confirmArchive === w.id ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => archive(w.id)}
-                          disabled={busy}
-                          className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
-                        >
-                          Confirm archive
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmArchive(null)}
-                          className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmArchive(w.id)}
-                        className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
-                      >
-                        Archive
-                      </button>
-                    ))}
-                  {confirmDelete === w.id ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => hardDelete(w.id)}
-                        disabled={busy}
-                        className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
-                      >
-                        Delete forever
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDelete(null)}
-                        className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDelete(w.id)}
-                      className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-[#ef4444]"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+      {wheels !== null && wheels.length === 0 && (
+        <p className="mt-2 text-sm text-muted">No wheels yet. Create one to get started.</p>
       )}
 
-      {/* Schedule editor for the selected wheel. */}
-      {selected && (
-        <div className="mt-4 rounded-lg border border-line bg-base/40 p-3">
+      {/* Schedule editor for the selected wheel (opened from its Manage menu). */}
+      {scheduleOpen && selected && (
+        <div className="mt-3 rounded-xl border border-[var(--hair)] p-3.5 [background:var(--s2)]">
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold text-ink">Schedule</h4>
-            <span className="min-w-0 truncate text-xs text-muted">{selected.title}</span>
+            <h4 className="flex items-center gap-2 text-sm font-bold text-ink">
+              <span aria-hidden="true" className="h-3.5 w-[3px] rounded-sm bg-[var(--brand)]" />
+              Schedule
+              <span className="min-w-0 truncate text-xs font-medium text-muted">{selected.title}</span>
+            </h4>
+            <button
+              type="button"
+              onClick={() => setScheduleOpen(false)}
+              aria-label="Close schedule"
+              className="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:text-ink"
+            >
+              <Icon d="M18 6 6 18M6 6l12 12" size={14} />
+            </button>
           </div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex min-w-0 flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
                 Active from
               </span>
               <input
@@ -375,8 +521,8 @@ export default function WheelSwitcher({
                 aria-label="Active from"
               />
             </label>
-            <label className="flex min-w-0 flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
                 Active until
               </span>
               <input
@@ -393,7 +539,7 @@ export default function WheelSwitcher({
               type="button"
               onClick={saveSchedule}
               disabled={busy}
-              className="btn-brand rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
+              className="btn-brand min-h-9 rounded-[9px] px-3.5 text-xs font-bold disabled:opacity-50"
             >
               Save schedule
             </button>
@@ -401,7 +547,7 @@ export default function WheelSwitcher({
               type="button"
               onClick={clearSchedule}
               disabled={busy || (!from && !until)}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5 disabled:opacity-50"
+              className="min-h-9 rounded-[9px] border border-[var(--hair)] px-3.5 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] disabled:opacity-50"
             >
               Always on
             </button>
@@ -409,6 +555,26 @@ export default function WheelSwitcher({
         </div>
       )}
     </section>
+  );
+}
+
+function Icon({ d, size = 16, strokeWidth = 1.8 }: { d: string; size?: number; strokeWidth?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className="shrink-0"
+    >
+      <path d={d} />
+    </svg>
   );
 }
 
