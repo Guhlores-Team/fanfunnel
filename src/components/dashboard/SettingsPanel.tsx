@@ -1,50 +1,226 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { brandVars } from "@/lib/theme";
 import { useToast } from "@/components/ui/Toast";
+import { useClipboard } from "@/lib/hooks/useClipboard";
 import { Field } from "./ui";
 
 /**
- * Settings (Phase 9 #6). Two groups:
- *   • Account — change password + email (Supabase Auth via server routes),
- *     display name, and notification preferences (persisted per account).
- *   • Public profile (SFW link-in-bio) — the editor MOVED out of Boosts, now
- *     with a LIVE PREVIEW of the public /c/[slug] page that updates as fields
- *     change (avatar, slug, tagline, note, tip URL, brand color).
+ * Settings (Command Center). Two groups:
+ *   • Account — profile (avatar, display name, handle, email), password and
+ *     notification preferences (Supabase Auth via server routes; prefs are
+ *     persisted per account).
+ *   • Public page (SFW link-in-bio) — slug / tagline / tip link / note, the brand
+ *     color, and a LIVE PREVIEW of the public /c/[slug] page that updates as
+ *     fields change. The avatar is edited in Profile but stored on the same
+ *     public profile, so the preview reflects it live too.
  *
  * `onBrandColorChange` lets the dashboard re-tint live (brandVars) the instant a
- * new brand color is picked here — no refresh (#9).
+ * new brand color is saved here — no refresh (#9).
  */
 export default function SettingsPanel({
   onBrandColorChange,
 }: {
   onBrandColorChange?: (color: string) => void;
 }) {
+  const [account, setAccount] = useState<AccountState>(INITIAL_ACCOUNT);
+  const [profile, setProfile] = useState<ProfileFields>(EMPTY_PROFILE);
+  // Last server-confirmed profile; "dirty" and per-card saves compare against it.
+  const [savedProfile, setSavedProfile] = useState<ProfileFields>(EMPTY_PROFILE);
+
+  useEffect(() => {
+    let live = true;
+    fetch("/api/account", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!live) return;
+        setAccount((a) => ({
+          ...a,
+          loaded: true,
+          ...(d
+            ? {
+                email: d.email ?? null,
+                displayName: d.displayName ?? "",
+                savedName: d.displayName ?? "",
+                ...(d.notifications
+                  ? { notif: d.notifications, savedNotif: d.notifications }
+                  : {}),
+              }
+            : {}),
+        }));
+      })
+      .catch(() => {
+        if (live) setAccount((a) => ({ ...a, loaded: true }));
+      });
+    fetch("/api/public-profile", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (!live || !p) return;
+        const next: ProfileFields = {
+          slug: p.slug ?? "",
+          tipUrl: p.tipUrl ?? "",
+          tagline: p.tagline ?? "",
+          note: p.note ?? "",
+          avatarUrl: p.avatarUrl ?? "",
+        };
+        setProfile(next);
+        setSavedProfile(next);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const patchAccount = useCallback(
+    (p: Partial<AccountState>) => setAccount((a) => ({ ...a, ...p })),
+    []
+  );
+  const patchProfile = useCallback(
+    (p: Partial<ProfileFields>) => setProfile((x) => ({ ...x, ...p })),
+    []
+  );
+  const markSaved = useCallback(
+    (p: Partial<ProfileFields>) => setSavedProfile((x) => ({ ...x, ...p })),
+    []
+  );
+
   return (
-    <div className="space-y-12">
-      <AccountSection />
-      <PublicProfileSection onBrandColorChange={onBrandColorChange} />
+    <div className="max-w-5xl space-y-11">
+      <section aria-labelledby="settings-account">
+        <GroupHeader
+          id="settings-account"
+          title="Account"
+          hint="Your profile, sign-in details and how you want to be notified."
+        />
+        <div className="max-w-[680px] space-y-[18px]">
+          <ProfileCard
+            account={account}
+            patchAccount={patchAccount}
+            profile={profile}
+            savedAvatar={savedProfile.avatarUrl}
+            patchProfile={patchProfile}
+            markSaved={markSaved}
+          />
+          <SecurityCard />
+          <NotificationsCard account={account} patchAccount={patchAccount} />
+        </div>
+      </section>
+
+      <section aria-labelledby="settings-public">
+        <GroupHeader
+          id="settings-public"
+          title="Public page"
+          hint="A clean, safe-for-work link-in-bio you can post in your Instagram/TikTok bio — your wheel teaser plus a way in. No explicit content."
+        />
+        <PublicPageSection
+          profile={profile}
+          savedProfile={savedProfile}
+          displayName={account.displayName}
+          patchProfile={patchProfile}
+          markSaved={markSaved}
+          onBrandColorChange={onBrandColorChange}
+        />
+      </section>
     </div>
   );
-}
-
-function GroupHeader({ title, hint }: { title: string; hint?: string }) {
-  return (
-    <div className="mb-4">
-      <h2 className="text-lg font-bold text-ink">{title}</h2>
-      {hint && <p className="mt-0.5 text-sm text-muted">{hint}</p>}
-    </div>
-  );
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return <div className="card space-y-4 rounded-xl p-5">{children}</div>;
 }
 
 // ---------------------------------------------------------------------------
-// Account: display name, email, password, notification prefs.
+// Shared bits: icons, headers, cards, buttons.
+// ---------------------------------------------------------------------------
+const P = {
+  user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z",
+  lock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4",
+  bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0",
+  link: "M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7",
+  palette:
+    "M12 22a10 10 0 1 1 10-10c0 3-2 4-4 4h-2a2 2 0 0 0-1.5 3.3c.6.7.2 2.7-2.5 2.7ZM7.5 11.5h.01M10.5 7.5h.01M15.5 8.5h.01",
+  upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
+  external: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3",
+  copy: "M9 9h11v11H9zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1",
+  mail: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM22 6l-10 7L2 6",
+};
+
+function Glyph({ d, size = 17 }: { d: string; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className="shrink-0"
+    >
+      <path d={d} />
+    </svg>
+  );
+}
+
+const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
+const recessed = "border border-[var(--hair)] [background:var(--s2)]";
+const primaryBtn =
+  "btn-brand inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] px-[18px] text-sm font-bold disabled:opacity-50";
+const secondaryBtn =
+  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
+
+function GroupHeader({ id, title, hint }: { id: string; title: string; hint?: string }) {
+  return (
+    <div className="mb-3.5">
+      <h2
+        id={id}
+        className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink"
+      >
+        <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+        {title}
+      </h2>
+      {hint && <p className="mt-1 max-w-2xl text-[13px] text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+function Card({ children }: { children: ReactNode }) {
+  return <div className={`min-w-0 space-y-4 rounded-2xl p-5 ${raised}`}>{children}</div>;
+}
+
+function CardTitle({ icon, title, hint }: { icon: string; title: string; hint?: ReactNode }) {
+  return (
+    <div>
+      <h3 className="flex items-center gap-2 text-[15px] font-bold text-ink">
+        <span className="text-brand">
+          <Glyph d={icon} />
+        </span>
+        {title}
+      </h3>
+      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+function Unsaved() {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#fcd34d]" role="status">
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#f59e0b]" />
+      Unsaved changes
+    </span>
+  );
+}
+
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+// ---------------------------------------------------------------------------
+// Account state shared by the Profile and Notifications cards.
 // ---------------------------------------------------------------------------
 interface NotificationPrefs {
   newSpin: boolean;
@@ -52,153 +228,189 @@ interface NotificationPrefs {
   messages: boolean;
 }
 
-function AccountSection() {
-  const [email, setEmail] = useState<string | null>(null);
-  const [displayName, setDisplayName] = useState("");
-  const [savedName, setSavedName] = useState("");
-  const [notif, setNotif] = useState<NotificationPrefs>({
-    newSpin: true,
-    lowBalance: true,
-    messages: true,
-  });
-  const [savedNotif, setSavedNotif] = useState<NotificationPrefs>({
-    newSpin: true,
-    lowBalance: true,
-    messages: true,
-  });
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    fetch("/api/account", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!live || !d) return;
-        setEmail(d.email ?? null);
-        setDisplayName(d.displayName ?? "");
-        setSavedName(d.displayName ?? "");
-        if (d.notifications) {
-          setNotif(d.notifications);
-          setSavedNotif(d.notifications);
-        }
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  return (
-    <section>
-      <GroupHeader
-        title="Account"
-        hint="Your sign-in details and how you want to be notified."
-      />
-      <div className="space-y-5">
-        <Card>
-          <DisplayNameRow
-            value={displayName}
-            saved={savedName}
-            disabled={!loaded}
-            onChange={setDisplayName}
-            onSaved={(n) => setSavedName(n)}
-          />
-        </Card>
-
-        <Card>
-          <EmailRow currentEmail={email} disabled={!loaded} />
-        </Card>
-
-        <Card>
-          <PasswordRow />
-        </Card>
-
-        <Card>
-          <NotificationsRow
-            value={notif}
-            saved={savedNotif}
-            disabled={!loaded}
-            onChange={setNotif}
-            onSaved={(n) => setSavedNotif(n)}
-          />
-        </Card>
-      </div>
-    </section>
-  );
+interface AccountState {
+  email: string | null;
+  displayName: string;
+  savedName: string;
+  notif: NotificationPrefs;
+  savedNotif: NotificationPrefs;
+  loaded: boolean;
 }
 
-function DisplayNameRow({
-  value,
-  saved,
-  disabled,
-  onChange,
-  onSaved,
+const DEFAULT_NOTIF: NotificationPrefs = { newSpin: true, lowBalance: true, messages: true };
+const INITIAL_ACCOUNT: AccountState = {
+  email: null,
+  displayName: "",
+  savedName: "",
+  notif: DEFAULT_NOTIF,
+  savedNotif: DEFAULT_NOTIF,
+  loaded: false,
+};
+
+interface ProfileFields {
+  slug: string;
+  tipUrl: string;
+  tagline: string;
+  note: string;
+  avatarUrl: string;
+}
+const EMPTY_PROFILE: ProfileFields = { slug: "", tipUrl: "", tagline: "", note: "", avatarUrl: "" };
+
+// ---------------------------------------------------------------------------
+// Profile: avatar, display name, handle (read-only), email change.
+// ---------------------------------------------------------------------------
+function ProfileCard({
+  account,
+  patchAccount,
+  profile,
+  savedAvatar,
+  patchProfile,
+  markSaved,
 }: {
-  value: string;
-  saved: string;
-  disabled: boolean;
-  onChange: (v: string) => void;
-  onSaved: (v: string) => void;
+  account: AccountState;
+  patchAccount: (p: Partial<AccountState>) => void;
+  profile: ProfileFields;
+  savedAvatar: string;
+  patchProfile: (p: Partial<ProfileFields>) => void;
+  markSaved: (p: Partial<ProfileFields>) => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const dirty = value.trim() !== saved.trim();
+  const { displayName, savedName, loaded } = account;
+  const nameDirty = displayName.trim() !== savedName.trim();
+  const avatarDirty = profile.avatarUrl !== savedAvatar;
+  const dirty = nameDirty || avatarDirty;
 
+  // One "Save profile": the name goes to /api/account/profile, the avatar lives
+  // on the public profile so it goes to /api/public-profile (avatarUrl only —
+  // the route updates just the fields it is sent).
   async function save() {
-    const name = value.trim();
-    if (!name) {
+    const name = displayName.trim();
+    if (nameDirty && !name) {
       toast("Enter a display name.", { tone: "error" });
       return;
     }
     setBusy(true);
+    let ok = true;
     try {
-      const res = await fetch("/api/account/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ displayName: name }),
-      });
-      if (!res.ok) throw new Error();
-      onSaved(name);
-      toast("Display name saved", { tone: "success" });
-    } catch {
-      toast("Couldn't save your name.", { tone: "error" });
+      if (nameDirty) {
+        try {
+          const res = await fetch("/api/account/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ displayName: name }),
+          });
+          if (!res.ok) throw new Error();
+          patchAccount({ savedName: name });
+        } catch {
+          ok = false;
+          toast("Couldn't save your name.", { tone: "error" });
+        }
+      }
+      if (avatarDirty) {
+        try {
+          const res = await fetch("/api/public-profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ avatarUrl: profile.avatarUrl }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            throw new Error(d.error === "invalid_avatar_url" ? "invalid_avatar_url" : "");
+          }
+          markSaved({ avatarUrl: profile.avatarUrl });
+        } catch (e) {
+          ok = false;
+          toast(
+            e instanceof Error && e.message === "invalid_avatar_url"
+              ? "That photo URL isn't allowed. Upload the image instead."
+              : "Couldn't save your photo.",
+            { tone: "error" }
+          );
+        }
+      }
+      if (ok) toast("Profile saved", { tone: "success" });
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div>
-      <h3 className="text-sm font-bold text-ink">Display name</h3>
-      <p className="mt-0.5 text-xs text-muted">
-        Shown to fans on your public page and spin links.
-      </p>
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <Field label="Name">
+    <Card>
+      <CardTitle icon={P.user} title="Profile" hint="Shown to fans on your public page and spin links." />
+
+      <div className="flex flex-wrap items-center gap-3.5">
+        <Avatar url={profile.avatarUrl} name={displayName} size={56} />
+        <AvatarUpload onUploaded={(url) => patchProfile({ avatarUrl: url })} />
+      </div>
+
+      <div className="grid gap-3.5 sm:grid-cols-2">
+        <Field label="Display name">
           <input
-            className="ff-input w-64 max-w-full"
-            value={value}
+            className="ff-input w-full"
+            value={displayName}
             maxLength={80}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.value)}
+            disabled={!loaded}
+            onChange={(e) => patchAccount({ displayName: e.target.value })}
             placeholder="Your creator name"
           />
         </Field>
+        <Field label="Handle">
+          <input
+            className="ff-input w-full opacity-80"
+            value={profile.slug ? `@${profile.slug}` : ""}
+            readOnly
+            aria-describedby="handle-hint"
+            placeholder="Not set yet"
+          />
+        </Field>
+        <p id="handle-hint" className="-mt-1.5 text-xs text-muted sm:col-span-2">
+          Your handle is your public link name. Change it under Public page.
+        </p>
+        <Field label="Avatar URL" full>
+          <input
+            className="ff-input w-full"
+            value={profile.avatarUrl}
+            onChange={(e) => patchProfile({ avatarUrl: e.target.value })}
+            placeholder="Paste an image URL, or use Change avatar"
+          />
+        </Field>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={save}
-          disabled={busy || disabled || !dirty}
-          className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
+          disabled={busy || !loaded || !dirty}
+          className={primaryBtn}
         >
-          {busy ? "Saving…" : "Save"}
+          {busy ? "Saving…" : "Save profile"}
         </button>
+        {dirty && <Unsaved />}
       </div>
-    </div>
+
+      <EmailBlock currentEmail={account.email} disabled={!loaded} />
+    </Card>
   );
 }
 
-function EmailRow({
+function Avatar({ url, name, size }: { url: string; name: string; size: number }) {
+  const style = { width: size, height: size } as CSSProperties;
+  return url ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={url} alt="" style={style} className="shrink-0 rounded-full object-cover ring-1 ring-line" />
+  ) : (
+    <span
+      aria-hidden="true"
+      style={style}
+      className="text-brand grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-lg font-bold"
+    >
+      {initialsOf(name)}
+    </span>
+  );
+}
+
+function EmailBlock({
   currentEmail,
   disabled,
 }: {
@@ -254,23 +466,33 @@ function EmailRow({
   }
 
   return (
-    <div>
-      <h3 className="text-sm font-bold text-ink">Email</h3>
-      <p className="mt-0.5 text-xs text-muted">
-        Current: <span className="font-semibold text-ink">{currentEmail ?? "—"}</span>.
-        Changing it sends a confirmation link to the new address; it applies once
-        you confirm.
-      </p>
+    <div className={`space-y-3 rounded-xl p-4 ${recessed}`}>
+      <div>
+        <h4 className="flex items-center gap-2 text-sm font-bold text-ink">
+          <span className="text-muted">
+            <Glyph d={P.mail} size={15} />
+          </span>
+          Email
+        </h4>
+        <p className="mt-1 text-xs text-muted">
+          Current: <span className="break-all font-semibold text-ink">{currentEmail ?? "—"}</span>.
+          Changing it sends a confirmation link to the new address; it applies once you confirm.
+        </p>
+      </div>
       {pending && (
-        <p className="mt-2 rounded-lg border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_10%,transparent)] px-3 py-2 text-xs text-ink">
-          Pending confirmation: <span className="font-semibold">{pending}</span>
+        <p
+          role="status"
+          className="rounded-lg border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_10%,transparent)] px-3 py-2 text-xs text-ink"
+        >
+          Pending confirmation: <span className="break-all font-semibold">{pending}</span>
         </p>
       )}
-      <div className="mt-3 flex flex-wrap items-end gap-2">
+      <div className="grid gap-3.5 sm:grid-cols-2">
         <Field label="New email">
           <input
             type="email"
-            className="ff-input w-72 max-w-full"
+            autoComplete="email"
+            className="ff-input w-full"
             value={email}
             disabled={disabled}
             onChange={(e) => setEmail(e.target.value)}
@@ -281,27 +503,30 @@ function EmailRow({
           <input
             type="password"
             autoComplete="current-password"
-            className="ff-input w-56 max-w-full"
+            className="ff-input w-full"
             value={current}
             disabled={disabled}
             onChange={(e) => setCurrent(e.target.value)}
             placeholder="Confirm it's you"
           />
         </Field>
-        <button
-          type="button"
-          onClick={save}
-          disabled={busy || disabled || !email.trim() || !current}
-          className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
-          {busy ? "Sending…" : "Change email"}
-        </button>
       </div>
+      <button
+        type="button"
+        onClick={save}
+        disabled={busy || disabled || !email.trim() || !current}
+        className={secondaryBtn}
+      >
+        {busy ? "Sending…" : "Change email"}
+      </button>
     </div>
   );
 }
 
-function PasswordRow() {
+// ---------------------------------------------------------------------------
+// Security: change password.
+// ---------------------------------------------------------------------------
+function SecurityCard() {
   const toast = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -350,13 +575,14 @@ function PasswordRow() {
   }
 
   return (
-    <div>
-      <h3 className="text-sm font-bold text-ink">Password</h3>
-      <p className="mt-0.5 text-xs text-muted">
-        You&rsquo;ll re-enter your current password to confirm it&rsquo;s you.
-      </p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        <Field label="Current password">
+    <Card>
+      <CardTitle
+        icon={P.lock}
+        title="Security"
+        hint="You’ll re-enter your current password to confirm it’s you. Use at least 8 characters."
+      />
+      <div className="grid gap-3.5 sm:grid-cols-2">
+        <Field label="Current password" full>
           <input
             type="password"
             autoComplete="current-password"
@@ -388,35 +614,33 @@ function PasswordRow() {
         type="button"
         onClick={save}
         disabled={busy || !current || !next || !confirm}
-        className="btn-brand mt-3 rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
+        className={secondaryBtn}
       >
         {busy ? "Updating…" : "Update password"}
       </button>
-    </div>
+    </Card>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Notifications: toggles + explicit Save.
+// ---------------------------------------------------------------------------
 const NOTIF_LABELS: { key: keyof NotificationPrefs; label: string; hint: string }[] = [
   { key: "newSpin", label: "New spins & wins", hint: "When a fan spins and wins a prize to fulfil." },
   { key: "lowBalance", label: "Low fan balance", hint: "When a fan is about to run out of spins." },
   { key: "messages", label: "New messages", hint: "When a fan replies in the inbox." },
 ];
 
-function NotificationsRow({
-  value,
-  saved,
-  disabled,
-  onChange,
-  onSaved,
+function NotificationsCard({
+  account,
+  patchAccount,
 }: {
-  value: NotificationPrefs;
-  saved: NotificationPrefs;
-  disabled: boolean;
-  onChange: (v: NotificationPrefs) => void;
-  onSaved: (v: NotificationPrefs) => void;
+  account: AccountState;
+  patchAccount: (p: Partial<AccountState>) => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const { notif: value, savedNotif: saved, loaded } = account;
   const dirty =
     value.newSpin !== saved.newSpin ||
     value.lowBalance !== saved.lowBalance ||
@@ -431,7 +655,7 @@ function NotificationsRow({
         body: JSON.stringify(value),
       });
       if (!res.ok) throw new Error();
-      onSaved(value);
+      patchAccount({ savedNotif: value });
       toast("Notification preferences saved", { tone: "success" });
     } catch {
       toast("Couldn't save preferences.", { tone: "error" });
@@ -441,114 +665,136 @@ function NotificationsRow({
   }
 
   return (
-    <div>
-      <h3 className="text-sm font-bold text-ink">Notifications</h3>
-      <p className="mt-0.5 text-xs text-muted">Choose what you want to hear about.</p>
-      <div className="mt-3 space-y-2">
-        {NOTIF_LABELS.map((n) => {
+    <Card>
+      <CardTitle icon={P.bell} title="Notifications" hint="Choose what you want to hear about." />
+      <div className="flex flex-col">
+        {NOTIF_LABELS.map((n, i) => {
           const on = value[n.key];
           return (
             <button
               key={n.key}
               type="button"
-              disabled={disabled}
-              onClick={() => onChange({ ...value, [n.key]: !on })}
+              disabled={!loaded}
+              onClick={() => patchAccount({ notif: { ...value, [n.key]: !on } })}
               aria-pressed={on}
-              className="flex w-full items-center gap-3 rounded-xl border border-line px-3 py-2.5 text-left transition hover:border-[var(--brand)]/50 disabled:opacity-50"
+              className={`flex w-full items-center justify-between gap-4 py-3 text-left transition-colors hover:bg-white/[0.02] disabled:opacity-50 ${
+                i < NOTIF_LABELS.length - 1 ? "border-b border-[var(--hair)]" : ""
+              }`}
             >
-              <span
-                className={`relative h-6 w-11 shrink-0 rounded-full transition ${on ? "bg-[var(--brand)]" : "bg-line"}`}
-              >
-                <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${on ? "left-[1.375rem]" : "left-0.5"}`}
-                />
-              </span>
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-ink">{n.label}</span>
                 <span className="block text-xs text-muted">{n.hint}</span>
+              </span>
+              <span
+                aria-hidden="true"
+                className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+              >
+                <span
+                  className={`absolute top-[3px] h-5 w-5 rounded-full transition-all ${
+                    on ? "left-[23px] bg-[var(--brand-ink)]" : "left-[3px] bg-white"
+                  }`}
+                />
               </span>
             </button>
           );
         })}
       </div>
-      <button
-        type="button"
-        onClick={save}
-        disabled={busy || disabled || !dirty}
-        className="btn-brand mt-3 rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
-      >
-        {busy ? "Saving…" : "Save preferences"}
-      </button>
-    </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={busy || !loaded || !dirty}
+          className={primaryBtn}
+        >
+          {busy ? "Saving…" : "Save preferences"}
+        </button>
+        {dirty && <Unsaved />}
+      </div>
+    </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Public profile (SFW link-in-bio) — MOVED from BoostsPanel, now with a live
-// preview of the public /c/[slug] page.
+// Public page (SFW link-in-bio) — slug / tagline / tip / note + brand color,
+// with a live preview of the public /c/[slug] page.
 // ---------------------------------------------------------------------------
-function PublicProfileSection({
+function PublicPageSection({
+  profile,
+  savedProfile,
+  displayName,
+  patchProfile,
+  markSaved,
   onBrandColorChange,
 }: {
+  profile: ProfileFields;
+  savedProfile: ProfileFields;
+  displayName: string;
+  patchProfile: (p: Partial<ProfileFields>) => void;
+  markSaved: (p: Partial<ProfileFields>) => void;
   onBrandColorChange?: (color: string) => void;
 }) {
   const toast = useToast();
-  const [slug, setSlug] = useState("");
-  const [tipUrl, setTipUrl] = useState("");
-  const [tagline, setTagline] = useState("");
-  const [note, setNote] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
-  const [displayName, setDisplayName] = useState("Creator");
+  const { copy, copied } = useClipboard();
   // Brand color drives the live preview (and the dashboard re-tint). Seeded from
   // the active wheel; saved to that wheel since /c/[slug] reads it from there.
   const [brandColor, setBrandColor] = useState("#ec4899");
   const [savedBrand, setSavedBrand] = useState("#ec4899");
   const [busy, setBusy] = useState(false);
   const [savingBrand, setSavingBrand] = useState(false);
-  const [copied, setCopied] = useState(false);
   const origin = typeof window !== "undefined" ? window.location.origin : "";
-
-  const reload = useCallback(async () => {
-    const [profile, account, wheel] = await Promise.all([
-      fetch("/api/public-profile", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
-      fetch("/api/account", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
-      fetch("/api/wheel", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
-    ]);
-    if (profile) {
-      setSlug(profile.slug ?? "");
-      setTipUrl(profile.tipUrl ?? "");
-      setTagline(profile.tagline ?? "");
-      setNote(profile.note ?? "");
-      setAvatarUrl(profile.avatarUrl ?? "");
-    }
-    if (account?.displayName) setDisplayName(account.displayName);
-    const wb = wheel?.wheel?.brandColor;
-    if (wb) {
-      setBrandColor(wb);
-      setSavedBrand(wb);
-    }
-  }, []);
+  const { slug, tipUrl, tagline, note, avatarUrl } = profile;
+  const linkDirty =
+    slug !== savedProfile.slug ||
+    tipUrl !== savedProfile.tipUrl ||
+    tagline !== savedProfile.tagline ||
+    note !== savedProfile.note;
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch-on-mount
-    void reload();
-  }, [reload]);
+    let live = true;
+    fetch("/api/wheel", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((w) => {
+        const wb = w?.wheel?.brandColor;
+        if (live && wb) {
+          setBrandColor(wb);
+          setSavedBrand(wb);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
+  // Saves the link-in-bio fields. The avatar is saved from the Profile card.
   const save = async () => {
     setBusy(true);
     try {
       const res = await fetch("/api/public-profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, tipUrl, tagline, note, avatarUrl }),
+        body: JSON.stringify({ slug, tipUrl, tagline, note }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(typeof d.error === "string" ? d.error : "");
+      }
       toast("Link-in-bio saved", { tone: "success" });
       // Reflect any server-side slug normalization.
       const fresh = await fetch("/api/public-profile", { cache: "no-store" }).then((r) => r.json());
-      setSlug(fresh.slug ?? "");
-    } catch {
-      toast("Couldn't save — that slug may be taken.", { tone: "error" });
+      const normalized = fresh.slug ?? "";
+      patchProfile({ slug: normalized });
+      markSaved({ slug: normalized, tipUrl, tagline, note });
+    } catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      toast(
+        code === "invalid_slug"
+          ? "Use letters, numbers, spaces, dashes or underscores in your link name."
+          : code === "invalid_tip_url"
+            ? "That tip link doesn't look like a web address."
+            : "Couldn't save — that slug may be taken.",
+        { tone: "error" }
+      );
     } finally {
       setBusy(false);
     }
@@ -575,162 +821,121 @@ function PublicProfileSection({
   };
 
   const url = slug ? `${origin}/c/${slug}` : "";
-  const copy = async () => {
+  const onCopy = async () => {
     if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard blocked */
-    }
+    if (!(await copy(url))) toast("Couldn't copy — select the link and copy it.", { tone: "error" });
   };
 
   return (
-    <section>
-      <GroupHeader
-        title="Public profile"
-        hint="A clean, safe-for-work link-in-bio you can post in your Instagram/TikTok bio — your wheel teaser plus a way in. No explicit content."
-      />
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-        {/* Editor */}
-        <div className="space-y-4">
-          <Card>
-            <label className="block text-xs text-muted">
-              Your public link
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="shrink-0 break-all text-sm text-muted">{origin}/c/</span>
-                <input
-                  value={slug}
-                  onChange={(e) => setSlug(e.target.value)}
-                  className="ff-input min-w-0 flex-1"
-                  placeholder="your-name"
-                />
-              </div>
-            </label>
-            <label className="block text-xs text-muted">
-              Tagline
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+      {/* Editor */}
+      <div className="min-w-0 space-y-[18px]">
+        <Card>
+          <CardTitle icon={P.link} title="Link-in-bio" />
+          <Field label="Your public link">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="tnum shrink-0 break-all text-sm text-muted">{origin}/c/</span>
               <input
-                value={tagline}
-                onChange={(e) => setTagline(e.target.value)}
-                className="ff-input mt-1 w-full"
-                placeholder="Spin my wheel — every spin wins 🎡"
+                value={slug}
+                onChange={(e) => patchProfile({ slug: e.target.value })}
+                className="ff-input min-w-0 flex-1 basis-40"
+                placeholder="your-name"
               />
-            </label>
-            <label className="block text-xs text-muted">
-              Tip / buy-spins link (where fans go to pay)
-              <input
-                value={tipUrl}
-                onChange={(e) => setTipUrl(e.target.value)}
-                className="ff-input mt-1 w-full"
-                placeholder="https://onlyfans.com/you  or your tip link"
-              />
-            </label>
-            <label className="block text-xs text-muted">
-              Personal note to fans (shown atop their spin page)
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                className="ff-input mt-1 w-full"
-                placeholder="Hey you 😘 spin away — every spin wins!"
-              />
-            </label>
-            <label className="block text-xs text-muted">
-              Avatar (optional)
-              <div className="mt-1 flex items-center gap-3">
-                {avatarUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={avatarUrl} alt="" className="h-12 w-12 shrink-0 rounded-full object-cover ring-1 ring-line" />
-                ) : (
-                  <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white/5 text-lg">📷</span>
-                )}
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <input
-                    value={avatarUrl}
-                    onChange={(e) => setAvatarUrl(e.target.value)}
-                    className="ff-input w-full"
-                    placeholder="Paste an image URL, or upload →"
-                  />
-                  <AvatarUpload onUploaded={setAvatarUrl} />
-                </div>
-              </div>
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={save}
-                disabled={busy}
-                className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
-              >
-                Save
-              </button>
-              {url && (
-                <>
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
-                  >
-                    Open ↗
-                  </a>
-                  <button
-                    onClick={copy}
-                    className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)]"
-                  >
-                    {copied ? "Copied!" : "Copy link"}
-                  </button>
-                </>
-              )}
             </div>
-          </Card>
+          </Field>
+          <Field label="Tagline">
+            <input
+              value={tagline}
+              onChange={(e) => patchProfile({ tagline: e.target.value })}
+              className="ff-input w-full"
+              placeholder="Spin my wheel — every spin wins 🎡"
+            />
+          </Field>
+          <Field label="Tip / buy-spins link (where fans go to pay)">
+            <input
+              value={tipUrl}
+              onChange={(e) => patchProfile({ tipUrl: e.target.value })}
+              className="ff-input w-full"
+              placeholder="https://onlyfans.com/you  or your tip link"
+            />
+          </Field>
+          <Field label="Personal note to fans (shown atop their spin page)">
+            <input
+              value={note}
+              onChange={(e) => patchProfile({ note: e.target.value })}
+              className="ff-input w-full"
+              placeholder="Hey you 😘 spin away — every spin wins!"
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={save} disabled={busy} className={primaryBtn}>
+              {busy ? "Saving…" : "Save"}
+            </button>
+            {url && (
+              <>
+                <a href={url} target="_blank" rel="noopener noreferrer" className={secondaryBtn}>
+                  Open
+                  <Glyph d={P.external} size={14} />
+                  <span className="sr-only">(opens in a new tab)</span>
+                </a>
+                <button onClick={onCopy} className={secondaryBtn}>
+                  <Glyph d={P.copy} size={14} />
+                  {copied ? "Copied!" : "Copy link"}
+                </button>
+              </>
+            )}
+            {linkDirty && <Unsaved />}
+          </div>
+        </Card>
 
-          {/* Brand color (drives the public page + dashboard, applies live). */}
-          <Card>
-            <h3 className="text-sm font-bold text-ink">Brand color</h3>
-            <p className="mt-0.5 text-xs text-muted">
-              Tints your public page and dashboard. Applies to your active wheel.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <input
-                type="color"
-                className="h-9 w-12 shrink-0 rounded border border-line bg-transparent"
-                value={brandColor}
-                onChange={(e) => setBrandColor(e.target.value)}
-                aria-label="Brand color"
-              />
-              <input
-                className="ff-input w-32"
-                value={brandColor}
-                onChange={(e) => setBrandColor(e.target.value)}
-                aria-label="Brand color hex"
-              />
-              <button
-                type="button"
-                onClick={saveBrand}
-                disabled={savingBrand || brandColor === savedBrand}
-                className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
-              >
-                {savingBrand ? "Saving…" : "Save color"}
-              </button>
-            </div>
-          </Card>
-        </div>
-
-        {/* Live preview of the public /c/[slug] page. */}
-        <div className="lg:sticky lg:top-4 lg:self-start">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
-            Live preview
-          </p>
-          <ProfilePreview
-            brandColor={brandColor}
-            avatarUrl={avatarUrl}
-            displayName={displayName}
-            tagline={tagline}
-            hasTipUrl={!!tipUrl.trim()}
+        {/* Brand color (drives the public page + dashboard, applies live). */}
+        <Card>
+          <CardTitle
+            icon={P.palette}
+            title="Brand color"
+            hint="Tints your public page and dashboard. Applies to your active wheel."
           />
-        </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="color"
+              className="h-10 w-12 shrink-0 cursor-pointer rounded-[10px] border border-line bg-transparent p-0.5"
+              value={brandColor}
+              onChange={(e) => setBrandColor(e.target.value)}
+              aria-label="Brand color"
+            />
+            <input
+              className="ff-input tnum w-32"
+              value={brandColor}
+              onChange={(e) => setBrandColor(e.target.value)}
+              aria-label="Brand color hex"
+            />
+            <button
+              type="button"
+              onClick={saveBrand}
+              disabled={savingBrand || brandColor === savedBrand}
+              className={primaryBtn}
+            >
+              {savingBrand ? "Saving…" : "Save color"}
+            </button>
+            {brandColor !== savedBrand && <Unsaved />}
+          </div>
+        </Card>
       </div>
-    </section>
+
+      {/* Live preview of the public /c/[slug] page. */}
+      <div className="min-w-0 lg:sticky lg:top-4 lg:self-start">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.05em] text-muted">
+          Live preview
+        </p>
+        <ProfilePreview
+          brandColor={brandColor}
+          avatarUrl={avatarUrl}
+          displayName={displayName || "Creator"}
+          tagline={tagline}
+          hasTipUrl={!!tipUrl.trim()}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -754,7 +959,7 @@ function ProfilePreview({
 }) {
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-line"
+      className="overflow-hidden rounded-2xl border border-[var(--hair)] shadow-[var(--lift)]"
       style={brandVars(brandColor)}
     >
       <div
@@ -786,9 +991,7 @@ function ProfilePreview({
               🎡
             </div>
           )}
-          <h1 className="text-2xl font-extrabold text-ink">
-            {displayName || "Creator"}
-          </h1>
+          <p className="break-words text-2xl font-extrabold text-ink">{displayName || "Creator"}</p>
           <p className="mx-auto mt-2 max-w-xs text-sm text-muted text-pretty">
             {tagline || "Spin my wheel — every spin wins a prize. 🎁"}
           </p>
@@ -831,7 +1034,7 @@ function AvatarUpload({ onUploaded }: { onUploaded: (url: string) => void }) {
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.url) {
         onUploaded(d.url);
-        toast("Photo uploaded — Save to apply.", { tone: "success" });
+        toast("Photo uploaded — Save profile to apply.", { tone: "success" });
       } else {
         toast(
           d.error === "too_large"
@@ -848,9 +1051,17 @@ function AvatarUpload({ onUploaded }: { onUploaded: (url: string) => void }) {
   }
 
   return (
-    <label className="inline-flex w-fit cursor-pointer items-center rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5">
-      {busy ? "Uploading…" : "⬆ Upload photo"}
-      <input type="file" accept="image/*" onChange={pick} disabled={busy} className="hidden" />
+    <label className="relative inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] border border-line px-3.5 text-sm font-semibold text-ink transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--brand)] hover:border-[var(--brand)]/60 hover:bg-white/5 min-h-9 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60">
+      <Glyph d={P.upload} size={15} />
+      {busy ? "Uploading…" : "Change avatar"}
+      <input
+        type="file"
+        accept="image/*"
+        onChange={pick}
+        disabled={busy}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        aria-label="Change avatar — choose an image file"
+      />
     </label>
   );
 }
