@@ -1,10 +1,34 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 type Mode = "signin" | "signup";
+
+// Map known Supabase auth error codes to specific, friendly copy (mirrors how
+// SpinClient maps spin error codes). Falls back to the raw message, then a
+// generic line, so nothing is ever swallowed.
+const AUTH_MESSAGES: Record<string, string> = {
+  invalid_credentials: "That email and password don't match. Try again.",
+  email_not_confirmed: "Confirm your email first — check your inbox for the link.",
+  user_already_exists: "An account with that email already exists. Sign in instead.",
+  email_exists: "An account with that email already exists. Sign in instead.",
+  weak_password: "Pick a stronger password (at least 6 characters).",
+  over_request_rate_limit: "Too many attempts — wait a moment and try again.",
+  validation_failed: "Check your email and password and try again.",
+};
+
+function authErrorMessage(err: unknown): string {
+  if (err && typeof err === "object") {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string" && AUTH_MESSAGES[code]) return AUTH_MESSAGES[code];
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string" && message) return message;
+  }
+  return "Something went wrong. Try again.";
+}
 
 export default function LoginForm() {
   const router = useRouter();
@@ -54,7 +78,7 @@ export default function LoginForm() {
       router.push(next);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setError(authErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -89,6 +113,8 @@ export default function LoginForm() {
           required
           autoComplete="email"
           aria-label="Email address"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? "login-error" : undefined}
           className="ff-input w-full"
           placeholder="you@example.com"
           value={email}
@@ -100,15 +126,27 @@ export default function LoginForm() {
           minLength={6}
           autoComplete={mode === "signin" ? "current-password" : "new-password"}
           aria-label="Password"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? "login-error" : undefined}
           className="ff-input w-full"
           placeholder="Password (min 6 chars)"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+        {mode === "signin" && (
+          <div className="text-right">
+            <Link
+              href="/forgot-password"
+              className="text-xs text-white/50 hover:text-white"
+            >
+              Forgot password?
+            </Link>
+          </div>
+        )}
       </div>
 
       {error && (
-        <p role="alert" className="mt-3 text-sm text-amber-300">
+        <p id="login-error" role="alert" className="mt-3 text-sm text-amber-300">
           {error}
         </p>
       )}

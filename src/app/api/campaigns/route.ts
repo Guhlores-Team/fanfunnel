@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createCampaign, listCampaigns } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // A creator's campaigns: named groupings of links they can compare against
 // each other. Creator-scoped; newest first.
@@ -9,22 +10,15 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  let body: { name?: string; pinnedWheelId?: string | null };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ name?: string; pinnedWheelId?: string | null }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const name = String(body.name ?? "").trim();
   if (!name || name.length > 120) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
 
   const result = await createCampaign(name, body.pinnedWheelId ?? null);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

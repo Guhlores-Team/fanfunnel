@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useToast } from "@/components/ui/Toast";
 
 interface Invite {
   id: string;
@@ -18,6 +19,7 @@ export default function InvitesBanner() {
   const router = useRouter();
   const [invites, setInvites] = useState<Invite[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const toast = useToast();
 
   const load = async () => {
     try {
@@ -34,17 +36,26 @@ export default function InvitesBanner() {
   }, []);
 
   const respond = async (inviteId: string, accept: boolean) => {
+    // Optimistically drop the responded invite, restoring it on failure so a
+    // dead network never leaves the banner showing a stale (or missing) invite.
+    const snapshot = invites;
     setBusy(inviteId);
+    setInvites((cur) => cur.filter((i) => i.id !== inviteId));
     try {
-      await fetch("/api/invites", {
+      const res = await fetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ inviteId, accept }),
       });
-      setInvites((cur) => cur.filter((i) => i.id !== inviteId));
+      if (!res.ok) throw new Error();
       // #9: re-run the server components (active creator context changes on
       // accept) without a full-page reload.
       if (accept) router.refresh();
+    } catch {
+      setInvites(snapshot);
+      toast(accept ? "Couldn't accept invite." : "Couldn't decline invite.", {
+        tone: "error",
+      });
     } finally {
       setBusy(null);
     }

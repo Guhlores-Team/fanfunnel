@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import type { Rarity } from "@/lib/games/wheel/types";
-import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { prefersReducedMotion } from "@/lib/sound";
 import type { NearMiss } from "@/components/fan/nearMiss";
 
@@ -11,14 +10,6 @@ import type { NearMiss } from "@/components/fan/nearMiss";
 // module so callers can detect a near-miss without pulling in this component's
 // motion dependency. Re-exported here for backward compatibility.
 export { detectNearMiss, type NearMiss } from "@/components/fan/nearMiss";
-
-const RARITY_LABEL: Record<Rarity, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
 
 /**
  * Brief, tasteful "So close!" beat. Plays after the win reveal and settles on

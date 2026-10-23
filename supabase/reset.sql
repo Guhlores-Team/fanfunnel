@@ -12,15 +12,33 @@
 
 begin;
 
--- Order doesn't matter thanks to ON DELETE CASCADE, but truncate explicitly so
--- the intent is obvious.
+-- Every app-data table is listed EXPLICITLY (not left to implicit cascade): some
+-- relations don't cascade from fans/fan_passes — notably `grants.fan_pass_id` is
+-- ON DELETE SET NULL, so revenue rows would otherwise survive a "clean slate" as
+-- orphans. `cascade` still resolves FK ordering; `restart identity` resets
+-- sequences. Preserves creator/admin logins (profiles) and agency structure
+-- (orgs, org_members, org_member_creators, org_invites).
 truncate table
   public.redemptions,
   public.spins,
+  public.grants,
+  public.referrals,
+  public.wishlists,
+  public.messages,
+  public.happy_hours,
+  public.webhooks,
+  public.creator_reports,
+  public.creator_applications,
+  public.autopilot_dismissals,
+  public.dm_templates,
+  public.campaign_packs,
+  public.prize_templates,
+  public.wheel_templates,
   public.fan_passes,
   public.fans,
   public.prizes,
-  public.wheels
+  public.wheels,
+  public.campaigns
 restart identity cascade;
 
 commit;

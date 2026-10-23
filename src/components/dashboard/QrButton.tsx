@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { useToast } from "@/components/ui/Toast";
+import { copyToClipboard } from "@/lib/hooks/useClipboard";
 
 /**
  * A compact "QR" button that opens an inline popover rendering a QR code for the
@@ -59,10 +60,9 @@ export default function QrButton({
   }, [open]);
 
   async function copyLink() {
-    try {
-      await navigator.clipboard?.writeText(url);
+    if (await copyToClipboard(url)) {
       toast("Link copied", { tone: "success" });
-    } catch {
+    } else {
       toast("Couldn't copy link", { tone: "error" });
     }
   }

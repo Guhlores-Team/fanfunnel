@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { DailyCount } from "@/lib/data/types";
+import { prefersReducedMotion } from "@/lib/sound";
 
 // A dependency-free, responsive spin-trend sparkline. The line + area are drawn
 // in a fixed 0..100 viewBox and stretched to fill the container; the stroke is
@@ -39,6 +41,16 @@ export default function Sparkline({
 
   const label = `${noun} trend: ${fmt(total)} total over ${n} day${n === 1 ? "" : "s"}, peak ${fmt(peak)} in a day.`;
 
+  // Animate the line drawing itself in — but only when the viewer hasn't asked
+  // for reduced motion. Resolved after mount (matchMedia is client-only), so
+  // SSR + first paint render the line statically and there's no hydration
+  // mismatch; reduced-motion users keep the static line.
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only motion-preference resolution after mount (SSR-safe)
+    if (!prefersReducedMotion()) setAnimate(true);
+  }, []);
+
   return (
     <div>
       <svg
@@ -62,8 +74,21 @@ export default function Sparkline({
           strokeLinejoin="round"
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
+          pathLength={1}
+          style={
+            animate
+              ? {
+                  strokeDasharray: 1,
+                  strokeDashoffset: 1,
+                  animation: "ff-spark-draw 0.7s ease-out forwards",
+                }
+              : undefined
+          }
         />
       </svg>
+      {animate && (
+        <style>{`@keyframes ff-spark-draw { to { stroke-dashoffset: 0 } }`}</style>
+      )}
       <div className="mt-2 flex items-center justify-between text-xs text-muted">
         <span>
           <span className="tnum font-semibold text-ink">{fmt(total)}</span> total

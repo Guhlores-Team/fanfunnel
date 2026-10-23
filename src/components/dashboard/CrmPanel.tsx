@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { formatCents } from "@/lib/format";
 import { useToast } from "@/components/ui/Toast";
+import { useFetch } from "@/lib/hooks/useFetch";
+import { copyToClipboard } from "@/lib/hooks/useClipboard";
+import { useOrigin } from "@/lib/hooks/useOrigin";
 
 interface CrmFan {
   fanId: string;
@@ -26,30 +28,20 @@ interface CreatorCrm {
  * fan's spin link so you can drop it in a DM.
  */
 export default function CrmPanel() {
-  const [crm, setCrm] = useState<CreatorCrm | null>(null);
   const toast = useToast();
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-
-  useEffect(() => {
-    let live = true;
-    fetch("/api/crm", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => live && d && setCrm(d))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
+  const origin = useOrigin();
+  // A failed read leaves `crm` null and the panel renders its empty sections —
+  // same as before, but the error is owned by the hook, not silently swallowed.
+  const { data: crm } = useFetch<CreatorCrm>("/api/crm", { refreshOnVisible: false });
 
   const copyLink = async (token: string | null) => {
     if (!token) {
       toast("No link for this fan yet.", { tone: "error" });
       return;
     }
-    try {
-      await navigator.clipboard.writeText(`${origin}/spin/${token}`);
+    if (await copyToClipboard(`${origin}/spin/${token}`)) {
       toast("Spin link copied — paste it in a DM.", { tone: "success" });
-    } catch {
+    } else {
       toast("Couldn't copy.", { tone: "error" });
     }
   };

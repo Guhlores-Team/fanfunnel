@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteWebhook } from "@/lib/data";
+import { errorResponse } from "@/lib/api/handler";
 
 // Delete one of the creator's registered webhooks.
 export async function DELETE(
@@ -8,9 +9,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const result = await deleteWebhook(id);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }

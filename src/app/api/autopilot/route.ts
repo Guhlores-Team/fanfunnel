@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAutopilot, dismissAutopilotCard } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { ValidationError, str } from "@/lib/api/validate";
 
 // The creator's ranked action feed.
 export async function GET() {
@@ -9,17 +11,23 @@ export async function GET() {
 
 // Dismiss or snooze a card. Body: { key, snoozeUntil? }.
 export async function POST(req: Request) {
-  let body: { key?: string; snoozeUntil?: string };
+  const body = await parseJsonBody<{ key?: string; snoozeUntil?: string }>(req);
+  if (body === BAD_REQUEST) return badRequest();
+
+  let key: string;
+  let snoozeUntil: string | undefined;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    key = str(body.key, { max: 200, required: true })!;
+    snoozeUntil = str(body.snoozeUntil, { max: 40 });
+    if (snoozeUntil !== undefined && Number.isNaN(new Date(snoozeUntil).getTime())) {
+      throw new ValidationError();
+    }
+  } catch (e) {
+    if (e instanceof ValidationError) return badRequest(e.code);
+    throw e;
   }
-  if (!body.key) return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  const result = await dismissAutopilotCard(body.key, body.snoozeUntil);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+
+  const result = await dismissAutopilotCard(key, snoozeUntil);
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

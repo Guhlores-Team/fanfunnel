@@ -4,6 +4,12 @@
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
+// Max prizes (slices) a single wheel may persist. The render + engine handle any
+// count; this is a sanity ceiling so a wheel stays spinnable/readable. CRUCIAL:
+// callers must REJECT a payload over this limit, never silently truncate it —
+// silent truncation is how prize data gets lost on save (see saveWheel).
+export const MAX_WHEEL_PRIZES = 50;
+
 export const RARITY_ORDER: Rarity[] = [
   "common",
   "uncommon",
@@ -20,6 +26,17 @@ export const RARITY_COLORS: Record<Rarity, string> = {
   rare: "#3b82f6", // blue
   epic: "#a855f7", // purple
   legendary: "#f59e0b", // gold
+};
+
+// Human-readable label per rarity. Lives next to RARITY_COLORS so the wheel,
+// dashboard, and fan widgets all share one source of truth instead of each
+// re-declaring the same map.
+export const RARITY_LABEL: Record<Rarity, string> = {
+  common: "Common",
+  uncommon: "Uncommon",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
 };
 
 export interface Prize {
@@ -45,6 +62,9 @@ export interface Prize {
   stock?: number | null;
 }
 
+/** Per-wheel prize-label text size; undefined = Auto (smart fit). */
+export type WheelLabelSize = "s" | "l" | "xl";
+
 export interface WheelConfig {
   id: string;
   title: string;
@@ -56,6 +76,12 @@ export interface WheelConfig {
    * wheel. When unset, Wheel.tsx auto-picks a readable label color per segment.
    */
   labelColor?: string;
+  /**
+   * Per-wheel prize-label text size. Undefined = Auto (Wheel.tsx fits the font
+   * to the slices). Explicit values bias it smaller/larger; an enlarged font is
+   * still capped so a single line fits its slice (no overlap).
+   */
+  labelSize?: WheelLabelSize;
   prizes: Prize[];
   /** Phase 2: scheduling + lifecycle. All optional so existing callers are untouched. */
   isActive?: boolean;

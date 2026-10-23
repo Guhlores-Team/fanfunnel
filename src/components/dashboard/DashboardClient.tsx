@@ -9,6 +9,7 @@ import { prizeOdds } from "@/lib/games/wheel/engine";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
 import {
   RARITY_COLORS,
+  RARITY_LABEL,
   RARITY_ORDER,
   type Prize,
   type Rarity,
@@ -26,6 +27,10 @@ import type {
 } from "@/lib/data/types";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { formatCents } from "@/lib/format";
+import { useFetch } from "@/lib/hooks/useFetch";
+import { useClipboard, copyToClipboard } from "@/lib/hooks/useClipboard";
+import { useOrigin } from "@/lib/hooks/useOrigin";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { OddsBar } from "@/components/dashboard/OddsBar";
 import Sparkline from "@/components/dashboard/Sparkline";
 import Funnel from "@/components/dashboard/Funnel";
@@ -78,70 +83,23 @@ type Tab =
   | "analytics"
   | "settings";
 
-const RARITY_LABEL: Record<Rarity, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-};
-
-// Shared overview, polled so metrics + the pending badge stay live.
+// Shared overview, polled (12s) + refreshed on tab focus so metrics + the
+// pending badge stay live. `setData` is exposed for optimistic account edits.
 function useOverview() {
-  const [data, setData] = useState<CreatorOverview | null>(null);
-  const [loading, setLoading] = useState(true);
-  const seq = useRef(0);
-  const refresh = useCallback(async () => {
-    const mine = ++seq.current; // ignore stale overlapping responses (req-id guard)
-    try {
-      const res = await fetch("/api/overview", { cache: "no-store" });
-      const json = res.ok ? await res.json() : null;
-      if (mine === seq.current && json) setData(json);
-    } finally {
-      if (mine === seq.current) setLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 12000);
-    const onVis = () => document.visibilityState === "visible" && refresh();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [refresh]);
-  return { data, loading, refresh, setData };
+  const { data, loading, reload, setData } = useFetch<CreatorOverview>(
+    "/api/overview",
+    { pollMs: 12000 }
+  );
+  return { data, loading, refresh: reload, setData };
 }
 
 // Enhanced metrics (spin trend + conversion funnel), polled like the overview
 // and refetched whenever the selected window (`days`) changes.
 function useMetricsExtra(days: number) {
-  const [data, setData] = useState<CreatorMetricsExtra | null>(null);
-  const [loading, setLoading] = useState(true);
-  const seq = useRef(0);
-  const refresh = useCallback(async () => {
-    const mine = ++seq.current; // ignore stale overlapping responses (req-id guard)
-    try {
-      const res = await fetch(`/api/metrics?days=${days}`, { cache: "no-store" });
-      const json = res.ok ? await res.json() : null;
-      if (mine === seq.current && json) setData(json);
-    } finally {
-      if (mine === seq.current) setLoading(false);
-    }
-  }, [days]);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading when the window (`days`) changes, then refetch
-    setLoading(true);
-    refresh();
-    const id = setInterval(refresh, 12000);
-    const onVis = () => document.visibilityState === "visible" && refresh();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [refresh]);
+  const { data, loading } = useFetch<CreatorMetricsExtra>(
+    `/api/metrics?days=${days}`,
+    { pollMs: 12000 }
+  );
   return { data, loading };
 }
 
@@ -223,6 +181,24 @@ export default function DashboardClient({
   const goTab = (t: Tab) => {
     userPickedTab.current = true;
     setTab(t);
+  };
+
+  // ARIA tabs keyboard pattern: Arrow keys move between tabs (wrapping), Home/End
+  // jump to the ends, and focus follows selection. `tabs` is defined below but is
+  // stable per render, so reading it here in the handler is safe.
+  const onTabKeyDown = (e: React.KeyboardEvent, id: Tab) => {
+    const ids = tabs.map(([t]) => t);
+    const i = ids.indexOf(id);
+    let next: Tab | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = ids[(i + 1) % ids.length];
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = ids[(i - 1 + ids.length) % ids.length];
+    else if (e.key === "Home") next = ids[0];
+    else if (e.key === "End") next = ids[ids.length - 1];
+    if (next) {
+      e.preventDefault();
+      goTab(next);
+      tabRefs.current[next]?.focus();
+    }
   };
 
   // Keep the active tab visible in the horizontally-scrolling tab bar on mobile
@@ -360,7 +336,9 @@ export default function DashboardClient({
             aria-selected={tab === id}
             aria-controls={`panel-${id}`}
             id={`tab-${id}`}
+            tabIndex={tab === id ? 0 : -1}
             onClick={() => goTab(id)}
+            onKeyDown={(e) => onTabKeyDown(e, id)}
             className={`-mb-px flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] font-semibold transition sm:text-sm ${
               tab === id
                 ? "border-[var(--brand)] text-ink"
@@ -1001,7 +979,7 @@ function FansPanel() {
   const [templates, setTemplates] = useState<DmTemplate[]>([]);
   const [managingMessages, setManagingMessages] = useState(false);
   const toast = useToast();
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const origin = useOrigin();
 
   const load = useCallback(async () => {
     const res = await fetch("/api/fans", { cache: "no-store" });
@@ -1331,14 +1309,9 @@ function ManageMessages({
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const toast = useToast();
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Focus-trap the dialog: focus in on open, cycle Tab, Escape to close, restore
+  // focus on close.
+  const dialogRef = useFocusTrap<HTMLDivElement>({ active: true, onEscape: onClose });
 
   async function add() {
     if (!title.trim() || !body.trim()) return;
@@ -1376,6 +1349,7 @@ function ManageMessages({
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Manage DM templates"
@@ -1539,10 +1513,9 @@ function AccountCard({
       return;
     }
     const text = template.body.split("{link}").join(primaryUrl);
-    try {
-      await navigator.clipboard?.writeText(text);
+    if (await copyToClipboard(text)) {
       toast("DM copied", { tone: "success" });
-    } catch {
+    } else {
       toast("Couldn't copy DM.", { tone: "error" });
     }
   }
@@ -1871,7 +1844,7 @@ function CopyDmMenu({
 }
 
 function LinkRow({ url, latest }: { url: string; latest: boolean }) {
-  const [copied, setCopied] = useState(false);
+  const { copy, copied } = useClipboard();
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-base/40 p-2.5">
       <p className="min-w-0 flex-1 truncate text-xs text-muted">
@@ -1884,11 +1857,7 @@ function LinkRow({ url, latest }: { url: string; latest: boolean }) {
       </p>
       <div className="flex shrink-0 items-center gap-2">
         <button
-          onClick={() => {
-            navigator.clipboard?.writeText(url);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
+          onClick={() => void copy(url)}
           className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
         >
           {copied ? "Copied" : "Copy"}
@@ -2253,6 +2222,27 @@ function WheelEditor({
                 </button>
               </div>
             </Field>
+            {/* Per-wheel prize-label text size. Empty = Auto (fit to slices).
+                Larger sizes stay inside each slice (single line + ellipsis). */}
+            <Field label="Label text size" full>
+              <select
+                className="ff-input w-full"
+                value={wheel.labelSize ?? ""}
+                onChange={(e) =>
+                  setWheel({
+                    ...wheel,
+                    labelSize:
+                      (e.target.value || undefined) as WheelConfig["labelSize"],
+                  })
+                }
+                aria-label="Prize label text size"
+              >
+                <option value="">Auto (fit to slices)</option>
+                <option value="s">Small</option>
+                <option value="l">Large</option>
+                <option value="xl">Extra large</option>
+              </select>
+            </Field>
             <Field label="Subtitle" full>
               <input
                 className="ff-input w-full"
@@ -2553,6 +2543,7 @@ function WheelEditor({
             prizes={wheel.prizes}
             brandColor={wheel.brandColor ?? "#ec4899"}
             labelColor={wheel.labelColor}
+            labelSize={wheel.labelSize}
             result={null}
             size={280}
           />

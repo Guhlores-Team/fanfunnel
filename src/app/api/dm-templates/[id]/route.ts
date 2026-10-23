@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteDmTemplate } from "@/lib/data";
+import { errorResponse } from "@/lib/api/handler";
 
 // Permanently delete one of the creator's saved DM templates.
 export async function DELETE(
@@ -8,9 +9,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const result = await deleteDmTemplate(id);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }

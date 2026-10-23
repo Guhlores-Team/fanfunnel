@@ -1,22 +1,16 @@
 import { NextResponse } from "next/server";
 import { sendChatOutro } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Auto-send the creator's out-of-spins nudge when a fan runs dry (token-gated,
 // service role). Guarded against spamming the same outro twice in a row.
 export async function POST(req: Request) {
-  let body: { token?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ token?: string }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   if (!body.token) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
   const result = await sendChatOutro(body.token);
-  if ("error" in result) {
-    const status = result.error === "not_found" ? 404 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

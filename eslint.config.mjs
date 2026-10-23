@@ -16,6 +16,20 @@ const eslintConfig = defineConfig([
     ".claude/**",
     "scripts/**",
   ]),
+  // Dead code fails CI, not just warns — so unused vars/imports can't quietly
+  // accumulate. Intentional throwaways are opt-out via a leading underscore.
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

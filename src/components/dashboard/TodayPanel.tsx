@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "@/components/ui/Toast";
+import { copyToClipboard } from "@/lib/hooks/useClipboard";
+import { useOrigin } from "@/lib/hooks/useOrigin";
 
 interface Action {
   kind: string;
@@ -32,7 +34,7 @@ export default function TodayPanel({
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
   const toast = useToast();
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const origin = useOrigin();
 
   const load = useCallback(async () => {
     try {
@@ -70,10 +72,9 @@ export default function TodayPanel({
       case "dm_fan":
       case "copy_link":
         if (a.token) {
-          try {
-            await navigator.clipboard.writeText(`${origin}/spin/${a.token}`);
+          if (await copyToClipboard(`${origin}/spin/${a.token}`)) {
             toast("Spin link copied — paste it in a DM.", { tone: "success" });
-          } catch {
+          } else {
             toast("Couldn't copy.", { tone: "error" });
           }
         } else {

@@ -9,16 +9,13 @@ import {
   scopeOrgCreator,
   type OrgRole,
 } from "@/lib/data";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Owner-guarded agency mutations. Each RPC re-checks ownership server-side, so
 // this route only dispatches. Body: { action, ...args }.
 export async function POST(req: Request) {
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<Record<string, unknown>>(req);
+  if (body === BAD_REQUEST) return badRequest();
   const action = body.action as string;
   const s = (k: string) => String(body[k] ?? "");
 
@@ -46,11 +43,9 @@ export async function POST(req: Request) {
       result = await scopeOrgCreator(s("memberId"), s("creatorId"), Boolean(body.on));
       break;
     default:
-      return NextResponse.json({ error: "unknown_action" }, { status: 400 });
+      return badRequest("unknown_action");
   }
 
-  if ("error" in result) {
-    return NextResponse.json({ error: result.error }, { status: 400 });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

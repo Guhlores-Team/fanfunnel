@@ -3,7 +3,8 @@
 Captured headlessly via Playwright (Chromium) against a production build
 (`npm run build && npm run start`) in **demo mode**, after Phases 1–5 + Phase 6
 roadmap + Wave 3 (realtime chat). Fan surfaces at mobile viewport (390×844 @2x);
-dashboard at 1280×900. Regenerate with `node scripts/shots.mjs` (server on :3212).
+dashboard at 1280×900. Captured manually via Playwright against a local
+production build (the one-off capture script has since been removed).
 
 | File | What it proves |
 |---|---|

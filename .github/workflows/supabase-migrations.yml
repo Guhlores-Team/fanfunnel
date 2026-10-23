@@ -6,6 +6,11 @@
 #   - On merge to main -> apply migrations to the PRODUCTION project.
 # So a merged PR ships code AND its schema together — no manual psql, no terminal.
 #
+# IMPORTANT one-time setup before the first real migration PR (see docs):
+#   1. Add the repo secrets listed below.
+#   2. Reconcile migration history: mark 0001-0035 as already-applied in BOTH
+#      the test and prod projects, so `db push` doesn't try to re-run them.
+#
 # Required GitHub repo secrets (Settings -> Secrets and variables -> Actions):
 #   SUPABASE_ACCESS_TOKEN       (Supabase dashboard -> Account -> Access Tokens)
 #   SUPABASE_TEST_PROJECT_REF   (test project ref — the xxxx in xxxx.supabase.co)

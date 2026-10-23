@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteWheelTemplate } from "@/lib/data";
+import { errorResponse } from "@/lib/api/handler";
 
 // Delete a saved wheel preset.
 export async function DELETE(
@@ -8,9 +9,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const result = await deleteWheelTemplate(id);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }

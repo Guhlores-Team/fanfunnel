@@ -46,8 +46,7 @@ next-env.d.ts
 .agents/
 skills-lock.json
 
-# agent worktrees (per-session scratch, never committed)
-.claude/worktrees/
-
 # multi-review loop artifacts (review logs, round JSON, PLAN.md)
 reviews/
+# claude code agent worktrees + local state
+.claude/worktrees/

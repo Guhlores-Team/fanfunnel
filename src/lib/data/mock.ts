@@ -1,4 +1,4 @@
-import { applyRareBoost, pickPrize, pickPrizeWithPity } from "@/lib/games/wheel/engine";
+import { applyRareBoost, pickPrizeWithPity } from "@/lib/games/wheel/engine";
 import { makeFairRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
@@ -708,21 +708,6 @@ function fanGrants(fanId: string): MockGrant[] {
   return store.grants.filter((g) => g.fanId === fanId);
 }
 
-/**
- * FIFO-attribute the spin at 0-based index `playedBefore` to a campaign. Walk
- * the fan's grants oldest→newest, accumulating spins; the grant whose
- * cumulative range covers the index owns the spin. Returns null if the index
- * lies beyond every grant (i.e. an unfunded spin).
- */
-function fifoCampaignForSpin(fanId: string, playedBefore: number): string | null {
-  let cumulative = 0;
-  for (const g of fanGrants(fanId)) {
-    cumulative += g.spins;
-    if (playedBefore < cumulative) return g.campaignId;
-  }
-  return null;
-}
-
 export function mockGetWheel(): WheelConfig {
   return structuredClone(activeWheel());
 }
@@ -1425,6 +1410,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
   return {
     fanId: fan.id,
     name: fan.name,
+    blocked: !!(fan as { blockedAt?: string | null }).blockedAt,
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spinsRemaining,

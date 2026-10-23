@@ -1,26 +1,19 @@
 import { NextResponse } from "next/server";
 import { setRedemptionStatus } from "@/lib/data";
 import type { RedemptionStatus } from "@/lib/data/types";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 const VALID: RedemptionStatus[] = ["pending", "in_progress", "fulfilled", "cancelled"];
 
 // Mark a won prize as fulfilled / cancelled / pending.
 export async function POST(req: Request) {
-  let body: { id?: string; status?: RedemptionStatus };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ id?: string; status?: RedemptionStatus }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   if (!body.id || !body.status || !VALID.includes(body.status)) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    return badRequest();
   }
 
   const result = await setRedemptionStatus(body.id, body.status);
-  if ("error" in result) {
-    const status =
-      result.error === "unauthorized" ? 401 : result.error === "not_found" ? 404 : 400;
-    return NextResponse.json(result, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

@@ -12,9 +12,10 @@ interface PendingMessage {
 
 /**
  * Spin-gated DM thread with the creator. Fans with ≥1 spin (chatUnlocked) can
- * message; otherwise they see a top-up nudge. Polls every 3s while open, and
- * every 12s while closed so a creator reply surfaces an unread dot on the 💬
- * button. Fans aren't authed, so this stays HTTP polling (no realtime).
+ * message; otherwise they see a top-up nudge. Polls every 10s while open, and
+ * every 30s while closed so a creator reply surfaces an unread dot on the 💬
+ * button — both paused while the tab is hidden. Fans aren't authed, so this
+ * stays HTTP polling (no realtime).
  */
 export default function ChatPanel({
   token,
@@ -92,13 +93,18 @@ export default function ChatPanel({
     return latest;
   };
 
+  // Monotonic request id: overlapping loads (poll tick + refocus + post-send)
+  // can resolve out of order; only the newest response may write state.
+  const loadReq = useRef(0);
   const load = useCallback(async () => {
+    const id = ++loadReq.current;
     try {
       const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
         cache: "no-store",
       });
       if (res.ok) {
         const d = await res.json();
+        if (id !== loadReq.current) return; // superseded by a newer load
         const list: ChatMessage[] = d.messages ?? [];
         setMessages(list);
         // While the panel is open the fan is "seeing" everything; mark read.
@@ -129,7 +135,7 @@ export default function ChatPanel({
   }, [token, readSeen]);
 
   // When the panel OPENS and is unlocked: request the auto-intro once (so the
-  // greeting is waiting), then load + poll fast (3s).
+  // greeting is waiting), then load + poll (10s, visible tab only).
   useEffect(() => {
     if (!open || !unlocked) return;
     let live = true;
@@ -150,25 +156,48 @@ export default function ChatPanel({
       // One quick retry shortly after open: if the first load raced the
       // auto-intro insert (or hit a transient error), history still appears
       // immediately instead of waiting for the next poll tick.
-      setTimeout(() => {
+      retry = setTimeout(() => {
         if (live) void load();
       }, 800);
     };
+    let retry: ReturnType<typeof setTimeout> | null = null;
     run();
-    const id = setInterval(load, 3000);
+    // Poll while open, but only when the tab is visible — a backgrounded tab
+    // shouldn't keep hitting the endpoint. Re-sync immediately on refocus.
+    const tick = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    const id = setInterval(tick, 10000);
+    const onVisible = () => {
+      if (live && document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       live = false;
       clearInterval(id);
+      if (retry) clearTimeout(retry);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [open, unlocked, load, token]);
 
-  // While the panel is CLOSED (and unlocked): poll slowly (12s) for unread.
+  // While the panel is CLOSED (and unlocked): poll slowly (30s) for unread.
   useEffect(() => {
     if (open || !unlocked) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- poll for unread, then poll
     checkUnread();
-    const id = setInterval(checkUnread, 12000);
-    return () => clearInterval(id);
+    // Slow background poll, paused while the tab is hidden; re-check on refocus.
+    const tick = () => {
+      if (document.visibilityState === "visible") void checkUnread();
+    };
+    const id = setInterval(tick, 30000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void checkUnread();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [open, unlocked, checkUnread]);
 
   useEffect(() => {
@@ -326,7 +355,14 @@ export default function ChatPanel({
                   aria-label={`Message ${creatorTitle}`}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && send()}
+                  onKeyDown={(e) => {
+                    // Enter sends; Shift+Enter is left for a newline. `send`
+                    // already no-ops while a message is in flight.
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void send();
+                    }
+                  }}
                   maxLength={2000}
                   placeholder="Message…"
                   className="flex-1 rounded-full border border-line bg-base px-4 py-2 text-sm text-ink outline-none focus:border-[var(--brand)]"

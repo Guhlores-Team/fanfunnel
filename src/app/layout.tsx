@@ -40,13 +40,14 @@ export default function RootLayout({
     >
       <body className="min-h-[100dvh] flex flex-col bg-base text-ink">
         <DebugErrorBoundary>
-          <CrashCanary />
+          {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <CrashCanary />}
           {children}
         </DebugErrorBoundary>
-        {/* In-app error console. Inert unless ?debug=1 (or the persisted flag);
-            see src/components/debug. Outside the boundary so it stays mounted
-            and visible even if the page subtree throws. */}
-        <DebugConsole />
+        {/* In-app error console with a manual crash trigger. Only SHIPPED when
+            NEXT_PUBLIC_ENABLE_DEBUG=1 (dev/preview); in production the launcher
+            isn't mounted at all, so appending ?debug=1 to a prod URL does nothing.
+            (The error boundary above always stays on — it's protective.) */}
+        {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <DebugConsole />}
       </body>
     </html>
   );

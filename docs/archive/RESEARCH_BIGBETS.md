@@ -2,7 +2,7 @@
 
 **Author:** Principal Product Strategist
 **Date:** 2026-05-31
-**Status:** Planning doc (no application code). Data-model sketches are grounded in the real schema — see `supabase/schema.sql`, `supabase/migrations/0001`–`0012`, and `src/lib/data/index.ts`.
+**Status:** Planning doc (no application code). Data-model sketches are grounded in the real schema — see `supabase/schema.sql`, the migrations under `supabase/migrations/` (through the latest), and `src/lib/data/index.ts`.
 
 This document plans three "big bet" features:
 

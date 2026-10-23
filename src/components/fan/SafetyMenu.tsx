@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 
 /**
  * A discreet safety menu on the fan page: report the creator (predatory /
@@ -14,6 +15,10 @@ export default function SafetyMenu({ token }: { token: string }) {
   const [detail, setDetail] = useState("");
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const panelRef = useFocusTrap<HTMLDivElement>({
+    active: open,
+    onEscape: () => setOpen(false),
+  });
 
   const report = async () => {
     if (!reason.trim()) return;
@@ -63,6 +68,10 @@ export default function SafetyMenu({ token }: { token: string }) {
           onClick={() => setOpen(false)}
         >
           <div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Safety and privacy"
             className="card w-full max-w-sm rounded-2xl p-6"
             onClick={(e) => e.stopPropagation()}
           >

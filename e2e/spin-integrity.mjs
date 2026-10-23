@@ -128,8 +128,13 @@ try {
     wheelB = await makeWheel("Wheel B");
   });
 
-  await step("double-spend: 40 concurrent on balance 12 → exactly 12 win, lands at 0", async () => {
-    const { token } = await mintPass({ balance: 12 });
+  await step("double-spend: 40 concurrent on balance 5 → exactly 5 win, lands at 0", async () => {
+    // Tests the row-lock that prevents overselling under concurrency. Balance (5)
+    // is below the per-fan in-row rate cap (8 / 10s, migration 0028), so the
+    // BALANCE is the binding constraint — exactly 5 claims may win regardless of
+    // how the rate limiter throttles the rest. Rate-limited claims (-1) return
+    // before touching the balance, so they can't affect the no-oversell invariant.
+    const { token } = await mintPass({ balance: 5 });
     const settled = await Promise.all(Array.from({ length: 40 }, () => claim(token)));
     let ok = 0, noSpins = 0, rl = 0, errs = 0, minRemaining = Infinity;
     for (const { data, error } of settled) {
@@ -140,9 +145,8 @@ try {
     }
     log(`     success=${ok} noSpins=${noSpins} rateLimited=${rl} errors=${errs} minRemaining=${minRemaining}`);
     assert(errs === 0, `no RPC errors (got ${errs})`);
-    assert(rl === 0, `rate limiter shouldn't trip (got ${rl})`);
-    assert(ok === 12, `exactly 12 succeed (got ${ok})`);
-    assert(noSpins === 28, `the other 28 report no-spins (got ${noSpins})`);
+    assert(ok === 5, `exactly 5 win — no oversell (got ${ok})`);
+    assert(ok + noSpins + rl === 40, `all 40 accounted (got ${ok + noSpins + rl})`);
     assert(minRemaining >= 0, `never negative (min ${minRemaining})`);
     assert((await passBalance(token)) === 0, "final balance is 0");
   });
@@ -175,18 +179,16 @@ try {
     assert((await passBalance(token)) === 5, "balance untouched");
   });
 
-  await step("rate limit: 8 recent spins in window → next claim returns -1 (429)", async () => {
+  await step("rate limit: in-row window counter at cap → next claim returns -1 (429)", async () => {
     const { token, fanId } = await mintPass({ balance: 20 });
-    const { data: pass } = await admin.from("fan_passes").select("id").eq("token", token).single();
-    const rows = Array.from({ length: 8 }, () => ({
-      fan_pass_id: pass.id,
-      creator_id: userId,
-      wheel_id: wheelA,
-      fan_id: fanId,
-      prize_label: "rate-limit filler",
-    }));
-    const { error: sErr } = await admin.from("spins").insert(rows);
-    assert(!sErr, `insert spins: ${sErr?.message}`);
+    // 0028 enforces the per-fan limit via an IN-ROW fixed-window counter
+    // (fans.rl_window_start / rl_count), not by counting public.spins. Prime the
+    // counter to the cap (8) inside an open window; the next claim must throttle.
+    const { error: uErr } = await admin
+      .from("fans")
+      .update({ rl_window_start: new Date().toISOString(), rl_count: 8 })
+      .eq("id", fanId);
+    assert(!uErr, `prime rl counter: ${uErr?.message}`);
     const { data } = await claim(token);
     assert(data === -1, `expected -1 (rate limited), got ${data}`);
     assert((await passBalance(token)) === 20, "balance untouched while rate limited");
