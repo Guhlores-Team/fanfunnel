@@ -12,6 +12,7 @@ import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { playWin, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
+import { spinErrorInfo } from "./spinErrors";
 // Both beats pull in the motion library and only render briefly after a spin,
 // so defer them off the fan page's initial bundle.
 const NearMissBeat = dynamic(() => import("./NearMissBeat"), { ssr: false });
@@ -128,15 +129,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(
-          body.error === "no_spins"
-            ? "You're out of spins! Tip your creator to get more. 💖"
-            : body.error === "rate_limited"
-              ? "Whoa, slow down a sec — try again in a moment. 😅"
-              : body.error === "blocked"
-                ? "This link isn't active. Reach out to your creator."
-                : "Something went wrong. Try again."
-        );
+        const info = spinErrorInfo(body.error);
+        setError(info.message);
+        if (info.reopenAgeGate) setNeedsAck(true);
         setBusy(false);
         return;
       }
