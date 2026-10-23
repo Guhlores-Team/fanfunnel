@@ -305,10 +305,14 @@ export default function TodayPanel({
         />
         <PulseCard
           icon={P.fans}
-          label="Fans"
-          value={m ? m.fans : dash}
-          chip={<TrendChip trend={null} />}
-          note="all time"
+          label="Active fans"
+          value={extra ? extra.activeFans.thisWeek : dash}
+          chip={
+            <TrendChip
+              trend={extra ? trendVsYesterday([extra.activeFans.lastWeek, extra.activeFans.thisWeek]) : null}
+            />
+          }
+          note={m ? `vs last week · ${m.fans} total` : "vs last week"}
         />
         <PulseCard
           icon={P.gift}

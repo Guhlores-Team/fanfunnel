@@ -48,7 +48,7 @@ import type {
   SpinVerification,
   Webhook,
 } from "./types";
-import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { activeFans, bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 import {
   mockGetFanPass,
   mockSpin,
@@ -3335,12 +3335,16 @@ export async function getMetricsExtra(
       trend: bucketByDay([], n),
       funnel: { fans: 0, spun: 0, fulfilled: 0 },
       revenueTrend: bucketCentsByDay([], n),
+      activeFans: { thisWeek: 0, lastWeek: 0 },
     };
   }
 
   const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  // Weekly-active fans needs the last 14 days (this week + last week) of spins
+  // with their fan, independent of the trend window.
+  const since14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
-  // All five reads are independent — run them concurrently (12s metrics poll).
+  // All six reads are independent — run them concurrently (12s metrics poll).
   // Per-fan funnel: fans created → fans with ≥1 spin → fans with a fulfilled
   // prize. Counts distinct FANS (not links/spins).
   const head = { count: "exact" as const, head: true };
@@ -3350,6 +3354,7 @@ export async function getMetricsExtra(
     { count: fans },
     { data: spunRows },
     { data: fulfilledRows },
+    { data: recentSpinRows },
   ] = await Promise.all([
     sb.from("spins").select("created_at").eq("creator_id", user.id).gte("created_at", since),
     sb
@@ -3364,6 +3369,12 @@ export async function getMetricsExtra(
       .select("spin:spins(fan_id)")
       .eq("creator_id", user.id)
       .eq("status", "fulfilled"),
+    sb
+      .from("spins")
+      .select("fan_id, created_at")
+      .eq("creator_id", user.id)
+      .not("fan_id", "is", null)
+      .gte("created_at", since14),
   ]);
 
   const timestamps = ((spinRows ?? []) as { created_at: string }[]).map(
@@ -3396,6 +3407,11 @@ export async function getMetricsExtra(
     trend,
     funnel: { fans: fans ?? 0, spun, fulfilled },
     revenueTrend,
+    activeFans: activeFans(
+      ((recentSpinRows ?? []) as { fan_id: string | null; created_at: string }[])
+        .filter((r): r is { fan_id: string; created_at: string } => r.fan_id !== null)
+        .map((r) => ({ fanId: r.fan_id, at: r.created_at }))
+    ),
   };
 }
 
