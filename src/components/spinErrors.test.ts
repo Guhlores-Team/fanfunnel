@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { spinErrorInfo } from "./spinErrors";
+import { spinErrorInfo, ackErrorMessage } from "./spinErrors";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -50,5 +50,19 @@ for (const bad of [undefined, null, 42, {}, "", "totally_new_code"]) {
 check("no_spins message unchanged", spinErrorInfo("no_spins").message === "You're out of spins! Tip your creator to get more. 💖");
 check("rate_limited message unchanged", spinErrorInfo("rate_limited").message === "Whoa, slow down a sec — try again in a moment. 😅");
 check("blocked message unchanged", spinErrorInfo("blocked").message === "This link isn't active. Reach out to your creator.");
+
+// --- age-gate acknowledgement failures (POST /api/fans/ack) -------------------
+const ackGeneric = ackErrorMessage(undefined);
+check("ack generic is a retryable fan message", /try again/i.test(ackGeneric));
+const ackSeen = new Set<string>();
+for (const code of ["rate_limited", "not_found", "db_error", "bad_request"]) {
+  const m = ackErrorMessage(code);
+  check(`ack ${code} is specific`, m !== ackGeneric && !ackSeen.has(m));
+  ackSeen.add(m);
+  check(`ack ${code} does not leak the raw code`, !m.includes(code) && !m.includes("_"));
+}
+for (const bad of [null, 7, {}, "", "totally_new_code"]) {
+  check(`ack unknown ${JSON.stringify(bad)} -> generic`, ackErrorMessage(bad) === ackGeneric);
+}
 
 console.log(`spinErrors.test: ${passed} checks passed`);
