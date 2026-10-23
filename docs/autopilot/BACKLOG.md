@@ -78,6 +78,7 @@ the phase's PR and get owner sign-off; never drop one silently. The e2e `[role=t
 - [ ] **DEBT-3** Dedupe `clientIp` helpers (`lib/api/limit.ts` vs `lib/api/clientIp.ts`, different header precedence). Security-sensitive.
 - [ ] **DEBT-4** Remove unused `src/components/fan/ReferralWidget.tsx`.
 - [ ] **DEBT-5** Tick the stale boxes in `docs/RELEASE_CHECKLIST.md` with evidence (headers, 404, debug gate, avatar sniff, Shift+Enter, chat poll are already fixed).
+- [ ] **DEBT-6** Upgrade `playwright` to a release that supports Ubuntu 26.04, then unpin `runs-on: ubuntu-24.04` in `ci.yml` and `e2e-supabase-ui.yml` (pinned 2026-10-23 when `ubuntu-latest` moved to 26.04). Also bump the GitHub actions still on Node 20 (`checkout@v4`, `setup-node@v4`, `upload-artifact@v4`).
 
 ## P5 — Roadmap (product calls; propose before building)
 - [ ] **RM-1** Reveal theater (rarity-tiered win animation). `human` sign-off on direction
