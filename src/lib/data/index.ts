@@ -733,11 +733,12 @@ async function recordClaimedSpin(
     ? await consumeCommittedSeed(
         {
           read: async () => {
-            const { data } = await sb
+            const { data, error } = await sb
               .from("fan_passes")
               .select("next_server_seed, next_server_seed_hash")
               .eq("id", pass.id)
               .maybeSingle();
+            if (error) throw new Error(`spin: seed read failed: ${error.message}`);
             const row = data as { next_server_seed: string | null; next_server_seed_hash: string | null } | null;
             return { seed: row?.next_server_seed ?? null, hash: row?.next_server_seed_hash ?? null };
           },
@@ -746,13 +747,16 @@ async function recordClaimedSpin(
               .from("fan_passes")
               .update({ next_server_seed: next.seed, next_server_seed_hash: next.hash })
               .eq("id", pass.id);
-            const { data } = await (expected.seed
+            const { data, error } = await (expected.seed
               ? q.eq("next_server_seed", expected.seed)
               : q.is("next_server_seed", null)
             )
               .select("id")
               .maybeSingle();
-            return !!data;
+            // An error means we can't know whether the UPDATE committed; only a
+            // clean 0-row match is a definite loss that is safe to retry.
+            if (error) return "unknown";
+            return data ? "won" : "lost";
           },
         },
         { seed: pass.next_server_seed, hash: pass.next_server_seed_hash },

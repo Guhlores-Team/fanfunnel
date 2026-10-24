@@ -14,15 +14,24 @@ export type ConsumedSeed = {
   nextServerSeedHash: string;
 };
 
+/**
+ * Outcome of one compare-and-swap attempt.
+ * - `won`:     the UPDATE matched and this spin now owns the seed it read.
+ * - `lost`:    the UPDATE ran without error and matched 0 rows — another spin
+ *              consumed the seed first; retrying on a fresh read is safe.
+ * - `unknown`: the request errored (transport, timeout, …). The UPDATE may or
+ *              may not have committed, so neither "retry" nor "won" is safe.
+ */
+export type SwapOutcome = "won" | "lost" | "unknown";
+
 export type SeedStore = {
-  /** Read the pass's current commitment. */
+  /** Read the pass's current commitment. Throws when the row can't be read. */
   read(): Promise<CommittedSeed>;
   /**
    * Compare-and-swap: replace the commitment with `next` ONLY if the pass still
-   * holds `expected.seed` (null = no commitment yet). Resolves true when the
-   * swap happened, false when another spin consumed the seed first.
+   * holds `expected.seed` (null = no commitment yet).
    */
-  swap(expected: CommittedSeed, next: { seed: string; hash: string }): Promise<boolean>;
+  swap(expected: CommittedSeed, next: { seed: string; hash: string }): Promise<SwapOutcome>;
 };
 
 export const MAX_SEED_SWAP_ATTEMPTS = 5;
@@ -63,6 +72,14 @@ export async function freshSeed(): Promise<ConsumedSeed> {
  *
  * A pass with no commitment yet (legacy row) gets a fresh seed for this spin
  * only; the swap guarantees no other spin shares it.
+ *
+ * Only a definite `lost` is retried. An `unknown` swap (the request errored)
+ * may have committed: retrying would consume a second seed, and inferring a win
+ * from "the row now holds my next seed" is wrong once a concurrent spin has
+ * moved the row on again. So the spin fails (`null`) and the caller refunds
+ * the claimed spin: the fan never gets a result on a seed we can't attribute.
+ * The cost is that the shown commitment may have been rotated without a spin;
+ * the next page load / `nextSpinHash` republishes the one now on the row.
  */
 export async function consumeCommittedSeed(
   store: SeedStore,
@@ -75,15 +92,10 @@ export async function consumeCommittedSeed(
       current.seed && current.hash ? current.hash : await sha256Hex(serverSeed);
     const nextServerSeed = randomSeedHex();
     const nextServerSeedHash = await sha256Hex(nextServerSeed);
-    const consumed = { serverSeed, serverSeedHash, nextServerSeed, nextServerSeedHash };
-    if (await store.swap(current, { seed: nextServerSeed, hash: nextServerSeedHash })) {
-      return consumed;
-    }
+    const outcome = await store.swap(current, { seed: nextServerSeed, hash: nextServerSeedHash });
+    if (outcome === "won") return { serverSeed, serverSeedHash, nextServerSeed, nextServerSeedHash };
+    if (outcome === "unknown") return null;
     current = await store.read();
-    // The UPDATE can commit while its response is lost. If the row now holds
-    // OUR next seed the swap did win: reveal the seed the fan was shown rather
-    // than consuming our own fresh commitment (which would burn the shown one).
-    if (current.seed === nextServerSeed) return consumed;
   }
   return null;
 }
