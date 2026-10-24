@@ -2,16 +2,23 @@ import { type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 // Next 16 renamed the `middleware` file convention to `proxy` (same behavior).
-// This runs Supabase session refresh before routes render; `updateSession`
-// short-circuits before any Supabase call on non-auth routes so a slow/paused
-// Supabase can't 504 the site.
+// This refreshes the Supabase session before the auth pages render. It runs
+// only where `needsSessionRefresh` says a refresh is needed, so public pages
+// (landing, /c, /spin, /share, /verify, /leaderboard) and API routes skip it.
+// Security headers come from next.config.ts, not from here.
 export async function proxy(request: NextRequest) {
   return await updateSession(request);
 }
 
 export const config = {
+  // Must match `needsSessionRefresh` in src/lib/supabase/middleware.ts
+  // (enforced by src/proxy.test.ts). Must be literals: Next reads it statically.
   matcher: [
-    // Run on everything except static assets.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/dashboard/:path*",
+    "/admin/:path*",
+    "/agency/:path*",
+    "/pending",
+    "/login",
+    "/signup",
   ],
 };

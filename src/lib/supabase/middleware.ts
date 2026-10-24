@@ -2,9 +2,31 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseUrl } from "./url";
 
-// Refreshes the Supabase auth session on every request and guards the
-// dashboard. When Supabase isn't configured the app runs in demo mode, so this
-// is a pass-through and the dashboard stays open.
+/**
+ * Pages that need the Supabase session refreshed here, before they render.
+ * Server Components can read the session but can't write cookies, so a token
+ * refreshed during render would be lost (and the rotated refresh token
+ * burned): every server-rendered page that calls `auth.getUser()` belongs here.
+ * Route Handlers (`/api/*`, `/auth/*`) write their own refreshed cookies and
+ * client pages use the browser client, so neither needs the proxy.
+ *
+ * `config.matcher` in src/proxy.ts must cover exactly these paths;
+ * src/proxy.test.ts fails if the two drift apart.
+ */
+export function needsSessionRefresh(path: string): boolean {
+  return (
+    ["/dashboard", "/admin", "/agency"].some(
+      (p) => path === p || path.startsWith(p + "/")
+    ) ||
+    path === "/pending" ||
+    path === "/login" ||
+    path === "/signup"
+  );
+}
+
+// Refreshes the Supabase auth session and guards the dashboard. When Supabase
+// isn't configured the app runs in demo mode, so this is a pass-through and the
+// dashboard stays open.
 export async function updateSession(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -15,11 +37,10 @@ export async function updateSession(request: NextRequest) {
   // Only the auth-relevant routes need a Supabase round-trip. Landing, fan spin
   // links, share/verify, and API routes must NEVER depend on auth here — that
   // way a slow or paused Supabase can't 504 the whole site (esp. fans' spin
-  // pages). Everything else short-circuits before touching the network.
+  // pages). The proxy matcher already limits us to these routes; this check
+  // stays as a second guard.
   const path = request.nextUrl.pathname;
-  const needsAuth =
-    path.startsWith("/dashboard") || path === "/login" || path === "/signup";
-  if (!needsAuth) return response;
+  if (!needsSessionRefresh(path)) return response;
 
   const supabase = createServerClient(supabaseUrl(), anon, {
     cookies: {
