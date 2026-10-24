@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useFetch } from "@/lib/hooks/useFetch";
 
 interface Entry {
@@ -192,17 +192,22 @@ function LeaderboardOptIn({
   const [draft, setDraft] = useState(handle);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  // Revealed when the fan tries to join without a board name yet.
+  // Revealed (and focused) when the fan tries to join without a board name.
   const [needName, setNeedName] = useState(false);
+  const nameInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (needName) nameInput.current?.focus();
+  }, [needName]);
+  const uid = useId();
+  const labelId = `${uid}-label`;
+  const hintId = `${uid}-hint`;
+  const inputId = `${uid}-handle`;
 
   const save = async (optIn: boolean, name: string) => {
-    // Mirror the route's own sanitizer (src/app/api/leaderboard/opt-in/route.ts)
-    // so what we send is byte-for-byte what gets stored — the server re-applies
-    // it either way; this just keeps the local "You're #X" match honest.
-    const clean = name.trim().replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40);
+    const trimmed = name.trim();
     // Joining requires a board name (the route rejects it otherwise): the board
     // never shows a fan's real name, so there's nothing else it could display.
-    if (optIn && !clean) {
+    if (optIn && !trimmed) {
       setNeedName(true);
       setStatus("Pick a board name to join.");
       return;
@@ -213,12 +218,26 @@ function LeaderboardOptIn({
       const res = await fetch("/api/leaderboard/opt-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, optIn, handle: clean || undefined }),
+        body: JSON.stringify({ token, optIn, handle: optIn ? trimmed : undefined }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        // The server validates the name as typed and never mangles it; relay
+        // its verdict so the fan can fix the name instead of guessing.
+        const code = ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
+        setNeedName(true);
+        setStatus(
+          code === "handle_invalid"
+            ? "Board names are 2–40 characters: letters, numbers, _ . or - only."
+            : code === "handle_required"
+              ? "Pick a board name to join."
+              : "Couldn't save that — try again."
+        );
+        return;
+      }
       setStatus(optIn ? "You're on the board." : "You're off the board.");
-      setDraft(clean);
-      onSaved(optIn, clean);
+      setNeedName(false);
+      setDraft(trimmed);
+      onSaved(optIn, trimmed);
     } catch {
       setStatus("Couldn't save that — try again.");
     } finally {
@@ -230,8 +249,8 @@ function LeaderboardOptIn({
     <div className="mt-3 rounded-xl border border-line bg-surface/40 px-3 py-3">
       <div className="flex items-center justify-between gap-3">
         <span className="min-w-0 text-sm font-semibold text-ink">
-          <span id="lb-opt-in-label">Show me on the leaderboard</span>
-          <span className="mt-0.5 block text-[11px] font-normal text-muted">
+          <span id={labelId}>Show me on the leaderboard</span>
+          <span id={hintId} className="mt-0.5 block text-[11px] font-normal text-muted">
             Off by default. Only your board name, spins and rare wins are shown —
             never what you&rsquo;ve spent.
           </span>
@@ -240,7 +259,8 @@ function LeaderboardOptIn({
           type="button"
           role="switch"
           aria-checked={on}
-          aria-labelledby="lb-opt-in-label"
+          aria-labelledby={labelId}
+          aria-describedby={hintId}
           disabled={busy}
           onClick={() => void save(!on, draft)}
           className="shrink-0 rounded-full border border-line p-0.5 transition disabled:opacity-60"
@@ -258,18 +278,20 @@ function LeaderboardOptIn({
       {(on || needName) && (
         <div className="mt-3">
           <label
-            htmlFor="lb-handle"
+            htmlFor={inputId}
             className="block text-[11px] font-medium uppercase tracking-[0.14em] text-muted"
           >
             Board name
           </label>
           <div className="mt-1 flex gap-2">
             <input
-              id="lb-handle"
+              id={inputId}
+              ref={nameInput}
               value={draft}
               maxLength={40}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="pick a name"
+              placeholder="2–40 letters, numbers, _ . -"
+              autoComplete="nickname"
               className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink"
             />
             <button

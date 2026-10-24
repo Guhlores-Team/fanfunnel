@@ -12,9 +12,12 @@
 -- written only by the server (service role) through
 -- `setFanLeaderboardOptIn()`, token-gated at /api/leaderboard/opt-in.
 --
--- NOTE: this is intentionally a blanket reset. There is no record of which
--- fans would have opted in deliberately, so the privacy-safe default is to
--- clear all of them and let fans re-consent.
+-- Only flags on fans WITHOUT a board handle are cleared. Opting in now
+-- requires a handle and no UI ever set one before this change, so a set flag
+-- with no handle can only have come from spin()'s auto opt-in, while a fan
+-- who has a handle chose it deliberately. This also makes a re-run safe: it
+-- never touches a real opt-in.
 update public.fans
    set leaderboard_opt_in = false
- where leaderboard_opt_in;
+ where leaderboard_opt_in
+   and (handle is null or btrim(handle) = '');
