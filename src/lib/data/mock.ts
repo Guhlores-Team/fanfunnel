@@ -151,6 +151,7 @@ interface MockMessage {
 interface MockGrant {
   id: string;
   fanId: string;
+  passToken?: string; // the per-wheel pass the spins landed on (grants.fan_pass_id)
   campaignId: string | null;
   spins: number;
   amountCents: number;
@@ -1111,10 +1112,11 @@ export function mockCreatePass(
     creditedFan.referralCredited = true;
   };
 
-  const pushGrant = (id: string) => {
+  const pushGrant = (id: string, passToken: string) => {
     store.grants.push({
       id: genId("g"),
       fanId: id,
+      passToken,
       campaignId: campaignId ?? null,
       spins: add,
       amountCents: money,
@@ -1186,7 +1188,7 @@ export function mockCreatePass(
       });
     }
 
-    pushGrant(id);
+    pushGrant(id, token);
     maybeCreditReferral(newFan, money);
     return { token, fanId: id };
   }
@@ -1219,7 +1221,7 @@ export function mockCreatePass(
     store.tokens.set(tokenOut, fan.id);
   }
   recomputeFanAggregate(fan);
-  pushGrant(fan.id);
+  pushGrant(fan.id, tokenOut);
   maybeCreditReferral(fan, money);
   if (campaignId) store.tokenCampaign.set(tokenOut, campaignId);
   return { token: tokenOut, fanId: fan.id };
@@ -1697,19 +1699,33 @@ export function mockEditGrant(
 ): { ok: true } | { error: string } {
   const grant = store.grants.find((x) => x.id === grantId);
   if (!grant) return { error: "not_found" };
+  // Resolve the balance change first so a refused edit changes nothing.
+  let delta = 0;
+  let pass: MockPass | undefined;
+  const fan = store.fans.get(grant.fanId);
+  if (patch.spins != null) {
+    if (!Number.isFinite(patch.spins)) return { error: "invalid" };
+    delta = Math.max(0, Math.floor(patch.spins)) - grant.spins;
+    if (fan && delta !== 0) {
+      ensurePasses(fan);
+      // The pass this grant landed on (oldest pass when the grant predates
+      // per-pass attribution) — mirrors grants.fan_pass_id in Supabase.
+      pass =
+        fan.passes.find((p) => p.token === grant.passToken) ??
+        fan.passes.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+      // Spins already spun can't be un-granted: refuse a cut deeper than the
+      // pass's unspent balance instead of clamping (clamping lost the deficit,
+      // and growing the grant back afterwards minted already-spent spins).
+      if (pass && pass.spinsRemaining + delta < 0) return { error: "insufficient_spins" };
+    }
+  }
   if (patch.amountCents != null) grant.amountCents = Math.max(0, Math.round(patch.amountCents));
   if (patch.campaignId !== undefined) grant.campaignId = patch.campaignId;
   if (patch.spins != null) {
-    const newSpins = Math.max(0, Math.floor(patch.spins));
-    const delta = newSpins - grant.spins;
-    grant.spins = newSpins;
-    const fan = store.fans.get(grant.fanId);
+    grant.spins += delta;
     if (fan && delta !== 0) {
-      ensurePasses(fan);
-      // Apply the delta to the fan's first pass, then re-derive the aggregate.
-      const pass = fan.passes[0];
       if (pass) {
-        pass.spinsRemaining = Math.max(0, pass.spinsRemaining + delta);
+        pass.spinsRemaining += delta;
         pass.spinsGrantedTotal = Math.max(0, pass.spinsGrantedTotal + delta);
       }
       recomputeFanAggregate(fan);

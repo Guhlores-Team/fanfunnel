@@ -62,7 +62,9 @@ for (const f of files) {
     process.exit(1);
   }
   console.log("# " + f);
-  const r = spawnSync(npx, ["tsx", f], { stdio: "inherit" });
+  // --experimental-test-module-mocks lets a test swap a module (e.g. the
+  // Supabase client for an in-memory fake) with node:test's mock.module.
+  const r = spawnSync(npx, ["tsx", "--experimental-test-module-mocks", f], { stdio: "inherit" });
   if (r.status !== 0) failed.push(f);
 }
 

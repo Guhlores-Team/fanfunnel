@@ -515,7 +515,13 @@ function GrantRow({
         setEditing(false);
         await onSaved();
       } else {
-        toast("Couldn't update grant.", { tone: "error" });
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        toast(
+          body?.error === "insufficient_spins"
+            ? "Can't cut below the spins this fan has already used."
+            : "Couldn't update grant.",
+          { tone: "error" }
+        );
       }
     } finally {
       setBusy(false);

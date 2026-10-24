@@ -1444,65 +1444,105 @@ export async function editGrant(
     update.spins = newSpins;
   }
 
-  // Update the grant row first and abort on failure, so the aggregate
-  // adjustments below only run once the edit itself has persisted.
-  const { error: grantErr } = await sb.from("grants").update(update).eq("id", grantId);
-  if (grantErr) return { error: "db_error" };
-  // Restore the grant's pre-edit values if an aggregate update below fails.
-  const oldGrant = {
-    spins: grant.spins,
-    amount_cents: grant.amount_cents,
-    campaign_id: grant.campaign_id,
-  };
-  rollbacks.push(async () => {
-    await sb.from("grants").update(oldGrant).eq("id", grantId);
-  });
-
-  if (delta !== 0) {
-    // Adjust the fan-level aggregate.
-    const { data: fanRow } = await sb
-      .from("fans")
-      .select("spins_remaining, spins_granted_total")
-      .eq("id", grant.fan_id)
-      .maybeSingle();
-    const fan = fanRow as { spins_remaining: number; spins_granted_total: number } | null;
-    if (fan) {
-      const { error: fanErr } = await sb
-        .from("fans")
-        .update({
-          spins_remaining: clampInt(fan.spins_remaining + delta, 0),
-          spins_granted_total: clampInt(fan.spins_granted_total + delta, 0),
-        })
-        .eq("id", grant.fan_id);
-      if (fanErr) return fail("db_error");
-      const fanRem = fan.spins_remaining, fanGr = fan.spins_granted_total;
-      rollbacks.push(async () => {
-        await sb
-          .from("fans")
-          .update({ spins_remaining: fanRem, spins_granted_total: fanGr })
-          .eq("id", grant.fan_id);
-      });
-    }
-    // And the specific wheel's pass balance this grant landed on.
+  // The pass this grant's spins landed on. When that row is gone (fan_pass_id
+  // is ON DELETE SET NULL) or no longer active, fall back to the fan's oldest
+  // active pass — the 0020 attribution convention — so the spins stay
+  // spendable. Scoped to this creator like every other pass read.
+  type PassBal = { id: string; is_active: boolean; spins_remaining: number; spins_granted_total: number };
+  const PASS_COLS = "id, is_active, spins_remaining, spins_granted_total";
+  // A lookup error is not "pass missing": falling back on one would move the
+  // delta onto another wheel while the grant keeps its fan_pass_id.
+  const readPass = async (): Promise<PassBal | null | "db_error"> => {
     if (grant.fan_pass_id) {
-      const { data: pRow } = await sb
+      const { data: pRow, error: pErr } = await sb
         .from("fan_passes")
-        .select("spins_remaining, spins_granted_total")
+        .select(PASS_COLS)
         .eq("id", grant.fan_pass_id)
+        .eq("creator_id", user.id)
         .maybeSingle();
-      const p = pRow as { spins_remaining: number; spins_granted_total: number } | null;
-      if (p) {
-        const { error: pErr } = await sb
+      if (pErr) return "db_error";
+      const p = pRow as PassBal | null;
+      if (p && p.is_active) return p;
+    }
+    const { data: oldest, error: oErr } = await sb
+      .from("fan_passes")
+      .select(PASS_COLS)
+      .eq("fan_id", grant.fan_id)
+      .eq("creator_id", user.id)
+      .eq("is_active", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (oErr) return "db_error";
+    return oldest as PassBal | null;
+  };
+
+  // Balance first, grant row second: a refused or failed balance change must
+  // leave the grant untouched, and the fan-level aggregate is the 0035
+  // trigger's alone (it fires on the pass write below), so editGrant never
+  // writes fans.spins_remaining.
+  if (delta !== 0) {
+    // Compare-and-swap on the balance just read: a spin landing between the
+    // read and the write (claim_spin runs concurrently) makes the update match
+    // zero rows, and we re-read and re-check instead of overwriting it. The
+    // over-cut check runs on every attempt, so spins the fan has already spun
+    // are never un-granted — a cut deeper than the pass's unspent balance is
+    // refused (insufficient_spins), never clamped. Clamping silently dropped
+    // the deficit and re-growing the grant then minted already-spent spins.
+    let applied: PassBal | null = null;
+    for (let attempt = 0; attempt < 3 && !applied; attempt++) {
+      const pass = await readPass();
+      if (pass === "db_error") return { error: "db_error" };
+      if (!pass) return { error: "no_active_pass" };
+      if (pass.spins_remaining + delta < 0) return { error: "insufficient_spins" };
+      const { data: updated, error: pErr } = await sb
+        .from("fan_passes")
+        .update({
+          spins_remaining: pass.spins_remaining + delta,
+          spins_granted_total: clampInt(pass.spins_granted_total + delta, 0),
+        })
+        .eq("id", pass.id)
+        .eq("spins_remaining", pass.spins_remaining)
+        .eq("spins_granted_total", pass.spins_granted_total)
+        .select("id")
+        .maybeSingle();
+      if (pErr) return { error: "db_error" };
+      if (updated) applied = pass;
+    }
+    if (!applied) return { error: "db_error" }; // balance kept moving under us
+    // Undo the balance change if the grant update below fails: same
+    // compare-and-swap on the balance as it is THEN (a spin may have landed
+    // since), up to three attempts. Skipped when it would take the pass
+    // negative (the fan already spent the spins); a skip or a miss is logged.
+    const passId = applied.id;
+    rollbacks.push(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data: cur } = await sb
+          .from("fan_passes")
+          .select(PASS_COLS)
+          .eq("id", passId)
+          .maybeSingle();
+        const c = cur as PassBal | null;
+        if (!c || c.spins_remaining - delta < 0) break;
+        const { data: undone } = await sb
           .from("fan_passes")
           .update({
-            spins_remaining: clampInt(p.spins_remaining + delta, 0),
-            spins_granted_total: clampInt(p.spins_granted_total + delta, 0),
+            spins_remaining: c.spins_remaining - delta,
+            spins_granted_total: clampInt(c.spins_granted_total - delta, 0),
           })
-          .eq("id", grant.fan_pass_id);
-        if (pErr) return fail("db_error");
+          .eq("id", passId)
+          .eq("spins_remaining", c.spins_remaining)
+          .eq("spins_granted_total", c.spins_granted_total)
+          .select("id")
+          .maybeSingle();
+        if (undone) return;
       }
-    }
+      console.error("editGrant: balance rollback could not be applied", { grantId, passId, delta });
+    });
   }
+
+  const { error: grantErr } = await sb.from("grants").update(update).eq("id", grantId);
+  if (grantErr) return fail("db_error");
 
   return { ok: true };
 }
