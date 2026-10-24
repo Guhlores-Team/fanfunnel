@@ -54,12 +54,14 @@ export async function creatorJourney(page, { step, assert }) {
     assert(await title.count(), "found the wheel title input");
     await title.fill("E2E Wheel " + Date.now());
     await page.locator("button:has-text('Save wheel')").first().click();
-    // Web-first wait for the save confirmation rather than a fixed sleep.
-    await page
-      .waitForFunction(() => /saved|all changes saved/i.test(document.body.innerText))
-      .catch(() => {});
-    const body = await page.locator("body").innerText();
-    assert(/saved|all changes saved/i.test(body), "save confirmed in the UI");
+    // Web-first wait for the save bar's own confirmation. Match the whole status
+    // text: a bare /saved/ also matches "Unsaved changes", which shows before
+    // the save has landed.
+    const savedStatus = page
+      .locator('[role="status"]')
+      .filter({ hasText: /^\s*(Saved|All changes saved)\s*$/ });
+    await savedStatus.first().waitFor({ timeout: 10000 }).catch(() => {});
+    assert(await savedStatus.count(), "save confirmed in the UI");
   });
 
   await step("wheel editor: invalid brand color blocks save with an accessible error", async () => {
