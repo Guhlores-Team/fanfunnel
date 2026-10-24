@@ -38,4 +38,18 @@ const body = data.slice(start, end);
 check("getPublicProfileBySlug uses the service client", body.includes("createServiceClient()"));
 check("getPublicProfileBySlug never touches the session", !/await createClient\(\)|auth\.get(User|Session)/.test(body));
 
+// Saving the public profile marks both the old and the new slug's page stale,
+// only after a successful save, and with the slug in its stored form.
+const save = readFileSync(join("src", "app", "api", "public-profile", "route.ts"), "utf8");
+const put = save.slice(save.indexOf("export async function PUT("));
+check("save route imports revalidatePath from next/cache", /import\s*\{\s*revalidatePath\s*\}\s*from\s*"next\/cache"/.test(save));
+check("save route reads the old slug before saving", put.indexOf("getMyPublicProfile()") >= 0 && put.indexOf("getMyPublicProfile()") < put.indexOf("setMyPublicProfile("));
+check("save route normalizes the new slug like the data layer", put.includes("normalizePublicSlug(body.slug)"));
+check("save route revalidates /c/<slug> for old and new", /new Set\(\[oldSlug, newSlug\]\)/.test(put) && put.includes("revalidatePath(`/c/${s}`)"));
+check(
+  "revalidation happens only after the error return",
+  put.indexOf('if ("error" in result)') >= 0 && put.indexOf('if ("error" in result)') < put.indexOf("revalidatePath(")
+);
+check("data layer stores slugs via the same normalizer", /normalizePublicSlug\(input\.slug\)/.test(data));
+
 console.log(`c/[slug] ISR: ${passed} checks passed`);

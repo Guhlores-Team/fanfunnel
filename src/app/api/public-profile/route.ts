@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getMyPublicProfile, setMyPublicProfile } from "@/lib/data";
+import { revalidatePath } from "next/cache";
+import { getMyPublicProfile, normalizePublicSlug, setMyPublicProfile } from "@/lib/data";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -97,6 +98,16 @@ export async function PUT(req: Request) {
   ) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
   }
+  // /c/<slug> is ISR (revalidate 60). Fields it renders mark the old and new
+  // slug's cached page stale, so a rename or bio edit shows on the next visit
+  // instead of up to a minute later (and the old slug stops serving the page).
+  const touchesPublicPage =
+    body.slug !== undefined ||
+    body.tipUrl !== undefined ||
+    body.tagline !== undefined ||
+    body.avatarUrl !== undefined;
+  const oldSlug = touchesPublicPage ? (await getMyPublicProfile()).slug : null;
+
   // Pass only the fields present in the request; the data layer (migration 0033)
   // updates exactly those atomically and leaves omitted fields unchanged — no
   // read-modify-write, so concurrent partial updates can't clobber each other.
@@ -108,5 +119,11 @@ export async function PUT(req: Request) {
     ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
   });
   if ("error" in result) return errorResponse(result.error);
+  if (touchesPublicPage) {
+    const newSlug = body.slug !== undefined ? normalizePublicSlug(body.slug) : oldSlug;
+    for (const s of new Set([oldSlug, newSlug])) {
+      if (s) revalidatePath(`/c/${s}`);
+    }
+  }
   return NextResponse.json(result);
 }

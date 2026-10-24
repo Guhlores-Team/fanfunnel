@@ -5754,6 +5754,11 @@ export async function getMyPublicProfile(): Promise<{
 const MAX_AVATAR_URL_LEN = 2048;
 
 /** Creator updates their SFW link-in-bio fields + fan-page personal note. */
+/** The stored form of a public slug (the `/c/<slug>` path segment). */
+export function normalizePublicSlug(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 export async function setMyPublicProfile(input: {
   slug?: string;
   tipUrl?: string;
@@ -5772,10 +5777,7 @@ export async function setMyPublicProfile(input: {
   // route's old read-modify-write, which raced concurrent partial updates
   // (TOCTOU) and could wipe an omitted note/avatar.
   if (input.slug !== undefined || input.tipUrl !== undefined || input.tagline !== undefined) {
-    const slug =
-      input.slug !== undefined
-        ? input.slug.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-        : null;
+    const slug = input.slug !== undefined ? normalizePublicSlug(input.slug) : null;
     const { error } = await sb.rpc("set_public_profile", {
       p_slug: slug,
       p_tip_url: input.tipUrl !== undefined ? externalUrl(input.tipUrl) : null,
