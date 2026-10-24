@@ -113,7 +113,7 @@ export function duplicatePrize(p: Prize): Prize {
  *  - Within a tier, the target total is split proportionally to each prize's
  *    existing weight. If every prize in a tier has weight 0 (no signal), the
  *    total is split evenly so we never produce all-zero weights.
- *  - The result is whole tickets summing to BALANCED_WEIGHT_TOTAL (1000), every
+ *  - The result is whole tickets summing to BALANCED_WEIGHT_TOTAL (10000), every
  *    prize ≥ 1, with the ratios above kept within rounding.
  *  - Length and order are preserved; each returned prize keeps all other fields.
  */

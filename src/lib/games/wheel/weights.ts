@@ -5,7 +5,7 @@
 const PG_INT4_MAX = 2147483647;
 
 /** Fixed total that Balance odds spreads across a wheel's prizes. */
-export const BALANCED_WEIGHT_TOTAL = 1000;
+export const BALANCED_WEIGHT_TOTAL = 10000;
 
 /** The integer a weight column stores: rounded, at least 1 when positive,
  *  0 for zero/negative/non-finite, capped at int4 max. */
