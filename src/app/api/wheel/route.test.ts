@@ -63,6 +63,15 @@ function check(label: string, cond: boolean) {
     check("fractional tickets → 400 bad_weight", r.status === 400 && r.data.error === "bad_weight");
   }
 
+  // A deliberate 0-ticket prize still saves (the editor allows it too).
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, weight: 0 } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("0 tickets → 200", r.status === 200);
+    const saved = r.data.wheel as { prizes: { weight: number }[] };
+    check("0 tickets stored as 0", saved.prizes[0].weight === 0);
+  }
+
   // A cleared prize color ("") is unset, not invalid: the editor allows it.
   {
     const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, color: "" } : p));

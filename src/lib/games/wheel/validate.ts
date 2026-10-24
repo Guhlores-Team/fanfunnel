@@ -37,10 +37,11 @@ export function colorError(value: unknown, opts: { optional?: boolean } = {}): s
   return normalizeHex(value) ? null : "Use a hex color: # plus 3 or 6 digits (0–9, a–f).";
 }
 
+/** 0 is allowed (the prize stays on the wheel but can't be won), matching
+ *  the server; the editor notes it and requires one prize above 0. */
 export function weightError(value: unknown): string | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return "Tickets must be more than 0.";
-  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return "Enter a number of tickets.";
+  if (value < 0) return "Tickets can't be negative.";
   // Weights are stored as int4; a fraction would be rounded on save and could
   // change the odds a lot (0.05 → 1 is 20×), so ask for whole tickets.
   if (!Number.isInteger(value)) return "Tickets must be a whole number.";
@@ -62,6 +63,9 @@ export function labelError(value: unknown): string | null {
   if (value.length > MAX_PRIZE_LABEL) return `Keep the name to ${MAX_PRIZE_LABEL} characters or fewer.`;
   return null;
 }
+
+export const NO_WINNABLE_PRIZE = "At least one prize needs more than 0 tickets.";
+export const ZERO_TICKETS_NOTE = "This prize can't be won (0 tickets).";
 
 export function prizeCountError(count: number): string | null {
   if (count >= MIN_WHEEL_PRIZES) return null;
@@ -103,11 +107,15 @@ export function validateWheelDraft(wheel: WheelConfig): WheelDraftErrors {
     out.issues.push({ key: "labelColor", message: `Label text color: ${label}` });
   }
 
+  // Editor-only: a wheel where every prize has 0 tickets has nothing to win.
+  // Reported on the first prize's tickets so it has a field to focus.
+  const allZero = wheel.prizes.length > 0 && wheel.prizes.every((p) => p.weight === 0);
+
   wheel.prizes.forEach((p, i) => {
     const errs: PrizeFieldErrors = {};
     const checks: [PrizeField, string | null][] = [
       ["label", labelError(p.label)],
-      ["weight", weightError(p.weight)],
+      ["weight", weightError(p.weight) ?? (allZero && i === 0 ? NO_WINNABLE_PRIZE : null)],
       ["stock", stockError(p.stock)],
       ["color", colorError(p.color, { optional: true })],
     ];

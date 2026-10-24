@@ -58,7 +58,7 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
   check("weight 10 ok", weightError(10) === null);
   check("fractional weight errors (tickets are whole numbers)", typeof weightError(0.5) === "string");
   check("tiny fractional weight errors", typeof weightError(0.05) === "string");
-  check("weight 0 errors", typeof weightError(0) === "string");
+  check("weight 0 allowed (prize can't be won, but matches the server)", weightError(0) === null);
   check("negative weight errors", typeof weightError(-1) === "string");
   check("NaN weight errors", typeof weightError(NaN) === "string");
   check("Infinity weight errors", typeof weightError(Infinity) === "string");
@@ -108,6 +108,19 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
   check("prizeCount is the last issue", one.issues[one.issues.length - 1]?.key === "prizeCount");
   check("zero prizes reports prizeCount", typeof validateWheelDraft(wheel({ prizes: [] })).prizeCount === "string");
 
+  const someZero = validateWheelDraft(wheel({ prizes: [prize({ id: "a", weight: 0 }), prize({ id: "b", weight: 10 })] }));
+  check("a 0-ticket prize next to a winnable one is valid", someZero.issues.length === 0);
+  const allZero = validateWheelDraft(wheel({ prizes: [prize({ id: "a", weight: 0 }), prize({ id: "b", weight: 0 })] }));
+  check(
+    "all prizes at 0 tickets → one issue on the first prize's tickets",
+    allZero.issues.length === 1 &&
+      allZero.issues[0].key === "prize:a:weight" &&
+      /at least one prize/i.test(allZero.issues[0].message) &&
+      typeof allZero.prizes.a?.weight === "string" &&
+      allZero.prizes.b === undefined,
+  );
+  const zeroAndBad = validateWheelDraft(wheel({ prizes: [prize({ id: "a", weight: -1 }), prize({ id: "b", weight: 0 })] }));
+  check("an invalid weight isn't double-reported by the all-zero rule", zeroAndBad.issues.filter((i) => i.key === "prize:a:weight").length === 1);
   check("unset label color is fine", validateWheelDraft(wheel({ labelColor: undefined })).issues.length === 0);
 }
 

@@ -31,6 +31,7 @@ import {
   colorFromInput,
   normalizeHex,
   validateWheelDraft,
+  ZERO_TICKETS_NOTE,
   type ValidationIssue,
 } from "@/lib/games/wheel/validate";
 
@@ -694,6 +695,10 @@ export default function WheelEditor({
               const numberErrors = (["weight", "stock"] as const).filter((f) =>
                 errFor(k(f), pe[f]),
               );
+              const weightErrOn = !!errFor(k("weight"), pe.weight);
+              // A deliberate 0 is allowed; say what it means instead of erroring.
+              const zeroNote = p.weight === 0 && !pe.weight;
+              const zeroNoteId = fieldId(k("weight")) + "-note";
               return (
                 <div
                   key={p.id}
@@ -854,6 +859,11 @@ export default function WheelEditor({
                         value={p.weight}
                         onChange={(e) => updatePrize(p.id, { weight: Number(e.target.value) })}
                         {...fieldProps(k("weight"), pe.weight)}
+                        aria-describedby={
+                          [weightErrOn ? errId(k("weight")) : null, zeroNote ? zeroNoteId : null]
+                            .filter(Boolean)
+                            .join(" ") || undefined
+                        }
                       />
                     </Lbl>
                     <Lbl label="Stock" small>
@@ -908,6 +918,11 @@ export default function WheelEditor({
                   {numberErrors.map((f) => (
                     <FieldError key={f} id={errId(k(f))} message={errFor(k(f), pe[f])} />
                   ))}
+                  {zeroNote && (
+                    <p id={zeroNoteId} className="mt-1 text-[12px] leading-snug text-[#fcd34d]">
+                      {ZERO_TICKETS_NOTE}
+                    </p>
+                  )}
                   {outOfStock && (
                     <p className="mt-1 text-right text-[11px] text-[#fcd34d]">
                       Out of stock — the other prizes&rsquo; odds renormalize.
