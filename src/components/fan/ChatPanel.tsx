@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/data/types";
+import { startPoll } from "@/lib/poll";
 
 /** A locally-tracked optimistic outbound message awaiting / failing its send. */
 interface PendingMessage {
@@ -96,41 +97,43 @@ export default function ChatPanel({
   // Monotonic request id: overlapping loads (poll tick + refocus + post-send)
   // can resolve out of order; only the newest response may write state.
   const loadReq = useRef(0);
-  const load = useCallback(async () => {
+  // Resolves false on a failed request so the poll can back off.
+  const load = useCallback(async (): Promise<boolean> => {
     const id = ++loadReq.current;
     try {
       const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
         cache: "no-store",
       });
-      if (res.ok) {
-        const d = await res.json();
-        if (id !== loadReq.current) return; // superseded by a newer load
-        const list: ChatMessage[] = d.messages ?? [];
-        setMessages(list);
-        // While the panel is open the fan is "seeing" everything; mark read.
-        const latest = latestCreatorAt(list);
-        if (latest) writeSeen(latest);
-        setHasUnread(false);
-      }
+      if (!res.ok) return false;
+      const d = await res.json();
+      if (id !== loadReq.current) return true; // superseded by a newer load
+      const list: ChatMessage[] = d.messages ?? [];
+      setMessages(list);
+      // While the panel is open the fan is "seeing" everything; mark read.
+      const latest = latestCreatorAt(list);
+      if (latest) writeSeen(latest);
+      setHasUnread(false);
+      return true;
     } catch {
-      /* transient */
+      return false;
     }
   }, [token, writeSeen]);
 
   // Lightweight closed-panel poll: just detect whether a creator message newer
   // than the fan's last view exists, and toggle the unread dot.
-  const checkUnread = useCallback(async () => {
+  const checkUnread = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
         cache: "no-store",
       });
-      if (!res.ok) return;
+      if (!res.ok) return false;
       const d = await res.json();
       const list: ChatMessage[] = d.messages ?? [];
       const latest = latestCreatorAt(list);
       setHasUnread(latest !== "" && latest > readSeen());
+      return true;
     } catch {
-      /* transient */
+      return false;
     }
   }, [token, readSeen]);
 
@@ -162,42 +165,22 @@ export default function ChatPanel({
     };
     let retry: ReturnType<typeof setTimeout> | null = null;
     run();
-    // Poll while open, but only when the tab is visible — a backgrounded tab
-    // shouldn't keep hitting the endpoint. Re-sync immediately on refocus.
-    const tick = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    const id = setInterval(tick, 10000);
-    const onVisible = () => {
-      if (live && document.visibilityState === "visible") void load();
-    };
-    document.addEventListener("visibilitychange", onVisible);
+    // Poll while open: paused on a hidden tab, re-synced on refocus, backed off
+    // on errors. run() above does the first load.
+    const poll = startPoll({ intervalMs: 10000, task: load });
     return () => {
       live = false;
-      clearInterval(id);
+      poll.stop();
       if (retry) clearTimeout(retry);
-      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [open, unlocked, load, token]);
 
-  // While the panel is CLOSED (and unlocked): poll slowly (30s) for unread.
+  // While the panel is CLOSED (and unlocked): poll slowly (30s) for unread,
+  // with the same hidden-tab pause, refocus re-check and error backoff.
   useEffect(() => {
     if (open || !unlocked) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- poll for unread, then poll
-    checkUnread();
-    // Slow background poll, paused while the tab is hidden; re-check on refocus.
-    const tick = () => {
-      if (document.visibilityState === "visible") void checkUnread();
-    };
-    const id = setInterval(tick, 30000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void checkUnread();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    const poll = startPoll({ intervalMs: 30000, immediate: true, task: checkUnread });
+    return () => poll.stop();
   }, [open, unlocked, checkUnread]);
 
   useEffect(() => {
