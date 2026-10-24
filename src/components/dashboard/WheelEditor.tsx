@@ -200,24 +200,25 @@ export default function WheelEditor({
   // Load a wheel's full config into the editor and mark it as the one being
   // edited. The config carries its own id, so the existing save (PUT /api/wheel
   // with the full config) targets the right wheel.
-  async function loadWheel(id: string) {
+  async function loadWheel(id: string): Promise<boolean> {
     // Switching wheels replaces the editor state: don't silently drop edits.
     if (dirty && id !== wheel.id && !window.confirm("Discard unsaved changes to this wheel?")) {
-      return;
+      return false;
     }
     const res = await fetch(`/api/wheels/${id}`, { cache: "no-store" });
     if (!res.ok) {
       toast("Couldn't open that wheel.", { tone: "error" });
-      return;
+      return false;
     }
     const data = (await res.json()) as { wheel?: WheelConfig };
     if (!data.wheel) {
       toast("Couldn't open that wheel.", { tone: "error" });
-      return;
+      return false;
     }
     setWheel(data.wheel);
     setSavedJson(JSON.stringify(data.wheel));
     setEditingWheelId(data.wheel.id);
+    return true;
   }
   // Apply a saved wheel template: it mints a fresh wheel from the template
   // server-side, then opens that new wheel in the editor.

@@ -15,7 +15,7 @@ import { useToast } from "@/components/ui/Toast";
  *
  * Props:
  *   currentWheelId  the wheel the editor is presently editing (highlighted)
- *   onEdit(id)      open a wheel in the editor
+ *   onEdit(id)      open a wheel in the editor; resolves true once it is open
  *   onChanged?()    fired after any mutation that may affect editor state
  */
 export default function WheelSwitcher({
@@ -24,7 +24,7 @@ export default function WheelSwitcher({
   onChanged,
 }: {
   currentWheelId: string | null;
-  onEdit: (id: string) => void;
+  onEdit: (id: string) => boolean | void | Promise<boolean | void>;
   onChanged?: () => void;
 }) {
   const toast = useToast();
@@ -366,10 +366,13 @@ export default function WheelSwitcher({
                       <button
                         type="button"
                         role="menuitem"
-                        onClick={() => {
-                          if (!current) onEdit(w.id);
-                          setScheduleOpen(true);
+                        onClick={async () => {
                           closeMenu(false);
+                          // The schedule card edits the SELECTED wheel, so open it
+                          // only once this wheel is selected: a cancelled discard
+                          // prompt or a failed load leaves another wheel selected.
+                          if (current || (await onEdit(w.id)) === true) setScheduleOpen(true);
+                          else menuAnchorRef.current?.focus();
                         }}
                         className={menuItem}
                       >
