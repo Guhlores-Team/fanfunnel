@@ -1450,18 +1450,21 @@ export async function editGrant(
   // spendable. Scoped to this creator like every other pass read.
   type PassBal = { id: string; is_active: boolean; spins_remaining: number; spins_granted_total: number };
   const PASS_COLS = "id, is_active, spins_remaining, spins_granted_total";
-  const readPass = async (): Promise<PassBal | null> => {
+  // A lookup error is not "pass missing": falling back on one would move the
+  // delta onto another wheel while the grant keeps its fan_pass_id.
+  const readPass = async (): Promise<PassBal | null | "db_error"> => {
     if (grant.fan_pass_id) {
-      const { data: pRow } = await sb
+      const { data: pRow, error: pErr } = await sb
         .from("fan_passes")
         .select(PASS_COLS)
         .eq("id", grant.fan_pass_id)
         .eq("creator_id", user.id)
         .maybeSingle();
+      if (pErr) return "db_error";
       const p = pRow as PassBal | null;
       if (p && p.is_active) return p;
     }
-    const { data: oldest } = await sb
+    const { data: oldest, error: oErr } = await sb
       .from("fan_passes")
       .select(PASS_COLS)
       .eq("fan_id", grant.fan_id)
@@ -1470,6 +1473,7 @@ export async function editGrant(
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
+    if (oErr) return "db_error";
     return oldest as PassBal | null;
   };
 
@@ -1488,6 +1492,7 @@ export async function editGrant(
     let applied: PassBal | null = null;
     for (let attempt = 0; attempt < 3 && !applied; attempt++) {
       const pass = await readPass();
+      if (pass === "db_error") return { error: "db_error" };
       if (!pass) return { error: "no_active_pass" };
       if (pass.spins_remaining + delta < 0) return { error: "insufficient_spins" };
       const { data: updated, error: pErr } = await sb

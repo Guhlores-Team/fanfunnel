@@ -362,6 +362,53 @@ async function main() {
   );
   check("skipped rollback: fans == SUM(passes)", invariantHolds(rb.id as string));
 
+  // 12b. A transient error looking up the grant's own pass must abort the edit,
+  //      not fall back to the fan's oldest active pass: that would credit the
+  //      wrong wheel while the grant keeps its original fan_pass_id.
+  const twoWheels = db.seed("fans", { creator_id: CREATOR, display_name: "TwoWheels" });
+  const oldPass = db.seed("fan_passes", {
+    token: "tok-old",
+    creator_id: CREATOR,
+    wheel_id: wheelA.id,
+    fan_id: twoWheels.id,
+    spins_remaining: 1,
+    spins_granted_total: 1,
+  });
+  const ownPass = db.seed("fan_passes", {
+    token: "tok-own",
+    creator_id: CREATOR,
+    wheel_id: wheelB.id,
+    fan_id: twoWheels.id,
+    spins_remaining: 5,
+    spins_granted_total: 5,
+  });
+  const ownGrant = db.seed("grants", {
+    creator_id: CREATOR,
+    fan_id: twoWheels.id,
+    fan_pass_id: ownPass.id,
+    spins: 5,
+    amount_cents: 500,
+  });
+  db.beforeStatement = (stmt) => {
+    if (
+      stmt.table === "fan_passes" &&
+      stmt.op === "select" &&
+      stmt.filters.some((f) => f.col === "id" && f.value === ownPass.id)
+    ) {
+      return { message: "injected lookup failure" };
+    }
+  };
+  const lookupFail = await editGrant(ownGrant.id as string, { spins: 6 });
+  db.beforeStatement = null;
+  check(
+    `lookup error: edit is refused as db_error (got ${JSON.stringify(lookupFail)})`,
+    "error" in lookupFail && lookupFail.error === "db_error"
+  );
+  check("lookup error: oldest pass not credited (still 1)", db.row("fan_passes", oldPass.id as string).spins_remaining === 1);
+  check("lookup error: own pass untouched (5)", db.row("fan_passes", ownPass.id as string).spins_remaining === 5);
+  check("lookup error: grant row untouched (5)", db.row("grants", ownGrant.id as string).spins === 5);
+  check("lookup error: fans == SUM(passes)", invariantHolds(twoWheels.id as string));
+
   // 13. A non-finite spins patch is rejected before anything is read or written.
   const nan = await editGrant(grantA.id as string, { spins: Number.NaN });
   check("NaN spins rejected as invalid", "error" in nan && nan.error === "invalid");
