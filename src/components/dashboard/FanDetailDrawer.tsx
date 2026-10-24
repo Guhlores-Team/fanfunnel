@@ -72,6 +72,16 @@ export default function FanDetailDrawer({
   const [blocking, setBlocking] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  // Fans with a top-up request in flight. Held here, not in TopUpForm, because
+  // the form unmounts when it is collapsed, the fan changes or the drawer closes;
+  // its local state would reset and let a second grant through mid-request.
+  const [toppingUpFans, setToppingUpFans] = useState<ReadonlySet<string>>(() => new Set());
+  const toppingUpRef = useRef<Set<string>>(new Set());
+  const markToppingUp = useCallback((id: string, busy: boolean) => {
+    if (busy) toppingUpRef.current.add(id);
+    else toppingUpRef.current.delete(id);
+    setToppingUpFans(new Set(toppingUpRef.current));
+  }, []);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -358,6 +368,9 @@ export default function FanDetailDrawer({
                     campaigns={campaigns}
                     wheels={wheels}
                     onTopUp={onTopUp}
+                    toppingUp={toppingUpFans.has(fanId)}
+                    isToppingUp={(id) => toppingUpRef.current.has(id)}
+                    onToppingUp={markToppingUp}
                     onDone={async () => {
                       setTopUpOpen(false);
                       await reload();
@@ -645,6 +658,9 @@ function TopUpForm({
   campaigns,
   wheels,
   onTopUp,
+  toppingUp,
+  isToppingUp,
+  onToppingUp,
   onDone,
 }: {
   id: string;
@@ -653,6 +669,9 @@ function TopUpForm({
   campaigns: Campaign[];
   wheels: Wheel[];
   onTopUp: TopUpFn;
+  toppingUp: boolean;
+  isToppingUp: (fanId: string) => boolean;
+  onToppingUp: (fanId: string, busy: boolean) => void;
   onDone: () => void | Promise<void>;
 }) {
   // Which wheel the top-up targets (per-wheel spins). Default to the fan's
@@ -661,7 +680,6 @@ function TopUpForm({
     summary?.passes[0]?.wheelId ?? wheels[0]?.id ?? ""
   );
   const [spins, setSpins] = useState(3);
-  const [toppingUp, setToppingUp] = useState(false);
   // Per-spin price as its own state so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
   const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
@@ -676,8 +694,10 @@ function TopUpForm({
   const [packId, setPackId] = useState<string | null>(null);
 
   async function submit() {
-    if (toppingUp) return; // in-flight guard: a double-click must not double-grant spins/spend
-    setToppingUp(true);
+    // In-flight guard: a double-click, or collapsing and reopening the form
+    // mid-request, must not double-grant spins/spend.
+    if (isToppingUp(fanId)) return;
+    onToppingUp(fanId, true);
     try {
       await onTopUp(
         fanId,
@@ -691,7 +711,7 @@ function TopUpForm({
       setPackId(null);
       await onDone();
     } finally {
-      setToppingUp(false);
+      onToppingUp(fanId, false);
     }
   }
 
