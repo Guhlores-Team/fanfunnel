@@ -41,6 +41,9 @@ export function weightError(value: unknown): string | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return "Tickets must be more than 0.";
   }
+  // Weights are stored as int4; a fraction would be rounded on save and could
+  // change the odds a lot (0.05 → 1 is 20×), so ask for whole tickets.
+  if (!Number.isInteger(value)) return "Tickets must be a whole number.";
   if (value > MAX_PRIZE_WEIGHT) return "Tickets can be at most 1,000,000.";
   return null;
 }
@@ -125,7 +128,8 @@ export function validateWheelDraft(wheel: WheelConfig): WheelDraftErrors {
 }
 
 /**
- * Server-side check for PUT /api/wheel: reject invalid colors and stock, and
+ * Server-side check for PUT /api/wheel: reject invalid colors, stock and
+ * fractional tickets (range is checked by the route), and
  * return a copy with every color normalized to lowercase `#rrggbb`. Unset colors
  * (missing, null, or "" from a cleared field) stay unset (the data layer
  * applies its defaults). Weight/label/rarity limits
@@ -133,7 +137,7 @@ export function validateWheelDraft(wheel: WheelConfig): WheelDraftErrors {
  */
 export function normalizeWheelPayload(
   config: WheelConfig,
-): { config: WheelConfig } | { error: "bad_color" | "bad_stock" } {
+): { config: WheelConfig } | { error: "bad_color" | "bad_stock" | "bad_weight" } {
   // undefined = unset (null, missing, or "" from a cleared field); false = invalid.
   const color = (v: unknown): string | undefined | false => {
     if (v == null || (typeof v === "string" && v.trim() === "")) return undefined;
@@ -149,6 +153,7 @@ export function normalizeWheelPayload(
     const c = color(p.color);
     if (c === false) return { error: "bad_color" };
     if (stockError(p.stock)) return { error: "bad_stock" };
+    if (typeof p.weight === "number" && !Number.isInteger(p.weight)) return { error: "bad_weight" };
     prizes.push({ ...p, color: c });
   }
 

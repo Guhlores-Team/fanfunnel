@@ -30,7 +30,8 @@ export async function POST(req: Request) {
     return badRequest("bad_rarity");
   }
   const weight = Number(body.weight);
-  if (!Number.isFinite(weight) || weight < 0 || weight > 1e6) {
+  // Whole tickets only: the column is int4 and rounding a fraction changes odds.
+  if (!Number.isInteger(weight) || weight < 0 || weight > 1e6) {
     return badRequest("bad_weight");
   }
   // Same color rule as PUT /api/wheel: #rgb / #rrggbb, stored as lowercase

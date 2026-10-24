@@ -47,6 +47,11 @@ function check(label: string, cond: boolean) {
     check("color normalized to lowercase #rrggbb", t?.color === "#aabbcc");
   }
   {
+    const r = await post({ label: "Fraction", rarity: "rare", weight: 2.5 });
+    check("fractional weight → 400 bad_weight", r.status === 400 && r.data.error === "bad_weight");
+    check("fractional weight not stored", !(await labels()).includes("Fraction"));
+  }
+  {
     const r = await post({ label: "No color", rarity: "common", weight: 5 });
     check("no color still accepted → 200", r.status === 200 && !!r.data.template);
   }

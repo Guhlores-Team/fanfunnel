@@ -848,6 +848,8 @@ export default function WheelEditor({
                       <input
                         type="number"
                         min={0}
+                        step={1}
+                        inputMode="numeric"
                         className="ff-input tnum w-full text-right"
                         value={p.weight}
                         onChange={(e) => updatePrize(p.id, { weight: Number(e.target.value) })}

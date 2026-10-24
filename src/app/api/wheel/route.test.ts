@@ -57,6 +57,12 @@ function check(label: string, cond: boolean) {
     check("negative stock → 400 bad_stock", r.status === 400 && r.data.error === "bad_stock");
   }
 
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, weight: 0.05 } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("fractional tickets → 400 bad_weight", r.status === 400 && r.data.error === "bad_weight");
+  }
+
   // A cleared prize color ("") is unset, not invalid: the editor allows it.
   {
     const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, color: "" } : p));

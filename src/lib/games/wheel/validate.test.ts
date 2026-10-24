@@ -56,7 +56,8 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
   check("bad optional color still errors", typeof colorError("#12", { optional: true }) === "string");
 
   check("weight 10 ok", weightError(10) === null);
-  check("fractional weight ok", weightError(0.5) === null);
+  check("fractional weight errors (tickets are whole numbers)", typeof weightError(0.5) === "string");
+  check("tiny fractional weight errors", typeof weightError(0.05) === "string");
   check("weight 0 errors", typeof weightError(0) === "string");
   check("negative weight errors", typeof weightError(-1) === "string");
   check("NaN weight errors", typeof weightError(NaN) === "string");
@@ -85,7 +86,7 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
     wheel({
       brandColor: "nope",
       labelColor: "#12",
-      prizes: [prize({ id: "a", label: "", weight: 0, stock: 1.5, color: "blue" }), prize({ id: "b" })],
+      prizes: [prize({ id: "a", label: "", weight: 2.5, stock: 1.5, color: "blue" }), prize({ id: "b" })],
     }),
   );
   check("brand color error reported", typeof bad.brandColor === "string");
@@ -145,6 +146,9 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
     "garbage prize color rejected",
     "error" in normalizeWheelPayload(wheel({ prizes: [prize({ color: "url(x)" }), prize()] })),
   );
+  const badWeight = normalizeWheelPayload(wheel({ prizes: [prize({ weight: 0.05 }), prize()] }));
+  check("fractional weight rejected as bad_weight", "error" in badWeight && badWeight.error === "bad_weight");
+  check("whole-number weight accepted", "config" in normalizeWheelPayload(wheel({ prizes: [prize({ weight: 7 }), prize()] })));
   const badStock = normalizeWheelPayload(wheel({ prizes: [prize({ stock: -2 }), prize()] }));
   check("negative stock rejected as bad_stock", "error" in badStock && badStock.error === "bad_stock");
   check(
