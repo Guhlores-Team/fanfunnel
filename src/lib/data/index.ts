@@ -935,18 +935,13 @@ export async function createPass(opts: {
     // The fan must belong to THIS creator before we mint or top up a pass for it:
     // reject a foreign fan id up front so we never insert a fan_pass under our own
     // creator_id that points at another tenant's fan (defense in depth on top of RLS).
-    // Read the fan-level aggregate HERE, before the pass is written: the 0035
-    // trigger resyncs fans.spins_remaining to SUM(passes) as soon as the pass
-    // changes, so a read after that write already contains the new spins and
-    // adding balanceAdd again credited them twice (mirrors grantSpins).
     const { data: ownFan } = await sb
       .from("fans")
-      .select("id, spins_remaining, spins_granted_total")
+      .select("id")
       .eq("id", fanId)
       .eq("creator_id", user.id)
       .maybeSingle();
-    const fan = ownFan as { id: string; spins_remaining: number; spins_granted_total: number } | null;
-    if (!fan) return { error: "fan_not_found" };
+    if (!ownFan) return { error: "fan_not_found" };
     // Existing fan: find this fan's pass FOR THIS WHEEL. Top it up if it exists,
     // otherwise mint a new per-wheel link. Spins live on the pass, not the fan.
     const { data: existing } = await sb
@@ -1002,25 +997,12 @@ export async function createPass(opts: {
         await sb.from("fan_passes").delete().eq("id", newPassId);
       });
     }
-
-    // Keep the fan-level aggregate (sum of passes) in sync, from the balance
-    // read BEFORE the pass write above (idempotent with the 0035 trigger).
-    const { error: fanBalErr } = await sb
-      .from("fans")
-      .update({
-        spins_remaining: fan.spins_remaining + balanceAdd,
-        spins_granted_total: fan.spins_granted_total + balanceAdd,
-      })
-      .eq("id", fanId);
-    if (fanBalErr) return fail("db_error");
-    // Undo the aggregate bump if a later write fails.
-    const fanRem = fan.spins_remaining, fanGr = fan.spins_granted_total;
-    rollbacks.push(async () => {
-      await sb
-        .from("fans")
-        .update({ spins_remaining: fanRem, spins_granted_total: fanGr })
-        .eq("id", fanId);
-    });
+    // The fan-level aggregate (fans.spins_remaining / spins_granted_total) is
+    // owned by the 0035 trigger: the pass write above already set it to the
+    // SUM of this fan's active passes, and the pass-restore rollback re-fires
+    // it. Writing it here too either double-counted the spins (a re-read after
+    // the pass write) or overwrote a spin that landed in between (a value read
+    // before it), so there is deliberately no fans update in this branch.
   } else {
     const { data: fan, error } = await sb
       .from("fans")

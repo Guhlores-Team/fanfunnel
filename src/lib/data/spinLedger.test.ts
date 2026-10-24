@@ -93,6 +93,55 @@ async function main() {
   check("new fan: aggregate is the pass balance (6)", db.row("fans", fresh.fanId).spins_remaining === 6);
   check("new fan: invariant holds", invariantHolds(fresh.fanId));
 
+  // --- Supabase path: a spin lands while the top-up is still in flight -------
+  // createPass is several round trips. The aggregate is owned by the 0035
+  // trigger (claim_spin and the pass write both fire it), so a fan spinning
+  // between the pass write and the end of createPass must not be overwritten
+  // by any fans.spins_remaining the code computed from an earlier read.
+  const racer = db.seed("fans", { creator_id: CREATOR, display_name: "Racer" });
+  db.seed("fan_passes", {
+    token: "tok-race",
+    creator_id: CREATOR,
+    wheel_id: wheelA.id,
+    fan_id: racer.id,
+    spins_remaining: 2,
+    spins_granted_total: 5,
+  });
+  let interleaved = 0;
+  let passWritten = false;
+  db.beforeStatement = (stmt) => {
+    // The fan spins between the pass write and whatever statement follows it.
+    if (stmt.table === "fan_passes" && stmt.op === "update") {
+      passWritten = true;
+    } else if (passWritten && interleaved === 0) {
+      interleaved++;
+      const left = db.spin("tok-race");
+      assert.strictEqual(left, 4, "interleaved spin spent one of the 2 + 3 spins");
+    }
+  };
+  const raced = await createPass({
+    name: "Racer",
+    spins: 3,
+    fanId: racer.id as string,
+    wheelId: wheelA.id as string,
+    amountCents: 300,
+  });
+  db.beforeStatement = null;
+  assert.ok(!("error" in raced), `raced top-up succeeded: ${JSON.stringify(raced)}`);
+  check("race: a spin was interleaved", interleaved === 1);
+  check("race: passes sum to 2 + 3 - 1 = 4", db.sumPasses(racer.id as string) === 4);
+  check(
+    `race: fan aggregate equals SUM(passes) after an interleaved spin (got ${db.row("fans", racer.id as string).spins_remaining}, want 4)`,
+    db.row("fans", racer.id as string).spins_remaining === 4
+  );
+  check("race: invariant holds", invariantHolds(racer.id as string));
+  check(
+    "createPass never writes fans.spins_remaining for an existing fan (the trigger owns it)",
+    !db.statements.some(
+      (s) => s.table === "fans" && s.op === "update" && s.payload != null && "spins_remaining" in (s.payload as object)
+    )
+  );
+
   // --- Mock path: same invariant --------------------------------------------
   const m = mockCreatePass("Mocked", 5);
   const again = mockCreatePass("Mocked", 3, m.fanId);
