@@ -5,7 +5,16 @@ import { brandVars } from "@/lib/theme";
 import { externalUrl } from "@/lib/format";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 
-export const dynamic = "force-dynamic";
+// ISR: public, viewer-independent data (service-client read, no cookies or
+// headers), so each slug renders on first visit and is re-generated at most
+// once a minute; profile/wheel edits show up within that window.
+export const revalidate = 60;
+
+// No slugs prerendered at build; returning [] (rather than omitting this) is
+// what lets the route be cached at runtime instead of rendered per request.
+export function generateStaticParams() {
+  return [];
+}
 
 export async function generateMetadata({
   params,
