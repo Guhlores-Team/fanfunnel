@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { selfExclude } from "@/lib/data";
-import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { clientIp } from "@/lib/api/clientIp";
+import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // A fan pauses their own spin link. Body: { token }.

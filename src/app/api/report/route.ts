@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { reportCreator } from "@/lib/data";
-import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { clientIp } from "@/lib/api/clientIp";
+import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // A fan reports the creator behind their token (predatory / rule-breaking).
