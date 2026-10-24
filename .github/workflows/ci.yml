@@ -68,3 +68,21 @@ jobs:
           name: e2e-artifacts
           path: e2e/artifacts/
           if-no-files-found: ignore
+
+  # DEBT-7: the three hand-maintained SQL build artifacts must build the same DB.
+  # Uses the PostgreSQL 16 binaries preinstalled on the runner image; the full
+  # history is needed because the reference build starts from the original
+  # schema.sql (see scripts/db/README.md).
+  schema-drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: schema.sql / migrations_combined.sql / migrations build the same DB
+        run: node scripts/db/schema-drift-check.mjs

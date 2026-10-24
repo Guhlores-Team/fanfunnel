@@ -13,7 +13,7 @@ Three connections: **GitHub→Vercel**, **Vercel→Supabase env vars**, **schema
 
 1. Go to **supabase.com → your project** (the one you've been running SQL on).
 2. Left sidebar → **SQL Editor** → **New query**.
-3. **Brand-new project (recommended):** run **two** files in order — first `supabase/schema.sql` (base tables + RLS + hardened `claim_spin`), then `supabase/migrations_combined.sql` (every migration on top). Both are idempotent, so this always yields a complete, current schema. ⚠ `schema.sql` alone is NOT complete — it omits the later migrations (org seats, account settings, locked RPCs, atomic spin rate-limit, is_active enforcement) and would bring up a weaker DB.
+3. **Brand-new project (recommended):** run `supabase/schema.sql` — the complete, current schema (base tables + RLS + hardened `claim_spin` + every migration folded in). It is idempotent, and running `supabase/migrations_combined.sql` on top is a harmless no-op. CI (`npm test` and the `schema-drift` job) proves the three SQL files build the same database.
 4. **Existing project that pre-dates these migrations:** new query → open **`supabase/migrations_combined.sql`**, paste it, **Run** to bring an older DB up to date. Idempotent (safe to re-run).
 5. (Optional) Authentication → Providers → Email → turn **OFF "Confirm email"** so you can sign in instantly while testing.
 
