@@ -633,23 +633,27 @@ const MAX_STOCK_CAS_ATTEMPTS = 5;
  * on failure; "unlimited" means the prize lost its stock limit meanwhile so
  * nothing was decremented; "sold_out" means no unit is left (or the retry
  * budget ran out under pathological contention — the caller then excludes
- * the prize for this spin and re-picks, never oversells).
+ * the prize for this spin and re-picks, never oversells); "unknown" means the
+ * UPDATE errored, so it may or may not have committed — only a clean 0-row
+ * match is a definite loss that is safe to retry (a retry after a committed
+ * decrement would take a SECOND unit while the refund covers one).
  */
 async function takeStockUnit(
   sb: AnyClient,
   prizeId: string,
   stockRead: number,
-): Promise<"taken" | "unlimited" | "sold_out"> {
+): Promise<"taken" | "unlimited" | "sold_out" | "unknown"> {
   let read = stockRead;
   for (let attempt = 0; attempt < MAX_STOCK_CAS_ATTEMPTS; attempt++) {
     if (read <= 0) return "sold_out";
-    const { data: updated } = await sb
+    const { data: updated, error } = await sb
       .from("prizes")
       .update({ stock: read - 1 })
       .eq("id", prizeId)
       .eq("stock", read)
       .select("id")
       .maybeSingle();
+    if (error) return "unknown";
     if (updated) return "taken";
     const { data: row } = await sb.from("prizes").select("stock").eq("id", prizeId).maybeSingle();
     const current = (row as { stock: number | null } | null)?.stock;
@@ -800,6 +804,15 @@ async function recordClaimedSpin(
         // Made unlimited since our read: nothing was decremented, nothing to refund.
         chosen = pick;
         break;
+      }
+      if (unit === "unknown") {
+        // The decrement may or may not have committed. Fail the spin (the
+        // caller refunds the claimed spin) WITHOUT restoring this prize's unit:
+        // adding one back when the decrement never happened would oversupply
+        // the prize by a unit and let it oversell, whereas leaving it when it
+        // did commit leaks one unit of stock, never a prize. Never oversell.
+        console.error("spin: stock decrement outcome unknown", pick.prize.id);
+        return { error: "db_error" };
       }
       excluded.add(pick.prize.id);
     }

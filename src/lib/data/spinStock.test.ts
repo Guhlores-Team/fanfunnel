@@ -37,7 +37,8 @@ type Resp = { data: unknown; error: { message: string } | null };
 type Handler = (ops: Op[]) => Resp;
 type Before = (table: string, ops: Op[]) => Promise<void>;
 const ok = (data: unknown): Resp => ({ data, error: null });
-const has = (ops: Op[], name: string, arg?: string) =>
+const fail = (message: string): Resp => ({ data: null, error: { message } });
+const has =(ops: Op[], name: string, arg?: string) =>
   ops.some((o) => o.name === name && (arg === undefined || String(o.args[0]).includes(arg)));
 
 function fakeClient(handlers: Record<string, Handler>, before?: Before) {
@@ -232,6 +233,52 @@ async function main() {
     check("two spins on stock 1: exactly one wins", awards === 1);
     check("two spins on stock 1: stock ends at 0", prizes.stock.get("prize-1") === 0);
     check("two spins on stock 1: the loser refunds with no prize", refunds(rpcs).length === 1 && refunds(rpcs)[0].args.p_prize_id === null);
+  }
+  {
+    // The CAS UPDATE commits but its response is an error (connection reset).
+    // Treating that as "lost" would re-read 2 and take a SECOND unit while the
+    // refund covers one at most. The spin must fail instead; the unit the
+    // decrement may have taken is deliberately NOT restored (restoring one
+    // that was never taken would oversupply the prize by one and oversell).
+    const prizes = prizeTable([{ id: "prize-1", weight: 1, stock: 3 }]);
+    let errored = false;
+    const h = handlers(prizes);
+    const table = h.prizes;
+    h.prizes = (ops) => {
+      const r = table(ops);
+      if (has(ops, "update") && !errored) {
+        errored = true;
+        return fail("connection reset");
+      }
+      return r;
+    };
+    const { sb, rpcs } = fakeClient(h);
+    const r = await completeClaimedSpin(sb, "tok", "cs", 1);
+    check("CAS error after commit → db_error, not a win", "error" in r && r.error === "db_error");
+    check("CAS error after commit → exactly one unit taken, never two", prizes.stock.get("prize-1") === 2);
+    check(
+      "CAS error after commit → spin refunded, prize unit not restored (never oversell)",
+      refunds(rpcs).length === 1 && refunds(rpcs)[0].args.p_prize_id === null,
+    );
+  }
+  {
+    // The CAS UPDATE errors WITHOUT committing: same outcome, stock untouched.
+    const prizes = prizeTable([{ id: "prize-1", weight: 1, stock: 3 }]);
+    let errored = false;
+    const h = handlers(prizes);
+    const table = h.prizes;
+    h.prizes = (ops) => {
+      if (has(ops, "update") && !errored) {
+        errored = true;
+        return fail("connection reset");
+      }
+      return table(ops);
+    };
+    const { sb, rpcs } = fakeClient(h);
+    const r = await completeClaimedSpin(sb, "tok", "cs", 1);
+    check("CAS error without commit → db_error", "error" in r && r.error === "db_error");
+    check("CAS error without commit → stock untouched", prizes.stock.get("prize-1") === 3);
+    check("CAS error without commit → refunded once, nothing restored", refunds(rpcs).length === 1 && refunds(rpcs)[0].args.p_prize_id === null);
   }
 
   // --- Mock path --------------------------------------------------------------
