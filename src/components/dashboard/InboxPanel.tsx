@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatSettings, FanThread } from "@/lib/data/types";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { startPoll } from "@/lib/poll";
+import { createRealtimeFallback } from "@/lib/realtimeFallback";
 import { playPing } from "@/lib/sound";
 import { useToast } from "@/components/ui/Toast";
 import { EmptyState } from "./ui";
@@ -120,17 +121,9 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
       // Polling fallback that runs ONLY if realtime never reaches SUBSCRIBED
       // (or errors out), so a flaky socket still surfaces new threads. Paused on
       // hidden tabs and backed off on errors like every other poll.
-      let fallback: { stop(): void } | null = null;
-      const startFallback = () => {
-        if (fallback === null)
-          fallback = startPoll({ intervalMs: 8000, task: loadThreads });
-      };
-      const stopFallback = () => {
-        if (fallback !== null) {
-          fallback.stop();
-          fallback = null;
-        }
-      };
+      const fallback = createRealtimeFallback(() =>
+        startPoll({ intervalMs: 8000, task: loadThreads })
+      );
 
       (async () => {
         const {
@@ -166,23 +159,15 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
               }
             }
           )
-          .subscribe((status) => {
-            // Keep the subscription robust: lean on the poll fallback whenever
-            // the socket isn't healthy, and drop it once realtime is live.
-            if (status === "SUBSCRIBED") stopFallback();
-            else if (
-              status === "CHANNEL_ERROR" ||
-              status === "TIMED_OUT" ||
-              status === "CLOSED"
-            )
-              startFallback();
-          });
+          // Lean on the poll fallback whenever the socket isn't healthy, and
+          // drop it once realtime is live. Ignored after cleanup.
+          .subscribe((status) => fallback.onStatus(status));
         channelRef = channel;
       })();
 
       return () => {
         cancelled = true;
-        stopFallback();
+        fallback.dispose(); // before removeChannel, which fires "CLOSED"
         if (channelRef) supabase.removeChannel(channelRef);
       };
     }
