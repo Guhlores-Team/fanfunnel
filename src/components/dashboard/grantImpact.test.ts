@@ -2,6 +2,7 @@ import assert from "node:assert";
 import {
   grantAmountCents,
   grantImpact,
+  grantPriceError,
   grantSaveAmount,
   parseSpins,
   perSpinText,
@@ -160,6 +161,28 @@ function check(label: string, cond: boolean) {
   check("revenue line for a price edit", line("3", "4") === "Recorded revenue goes from $10.00 to $12.00.");
   check("revenue line when spins scale the total", line("6", "3.33") === "Recorded revenue goes from $10.00 to $20.00.");
   check("no revenue line when a price edit lands on the same total", line("4", "2.50") === null);
+}
+
+// --- grantPriceError: the $/spin field rejects what the server would 400 ---
+{
+  const g = { spins: 3, amountCents: 1000 };
+  const err = (spinsInput: string, perSpinInput: string) => grantPriceError({ grant: g, spinsInput, perSpinInput });
+  check("untouched price is valid", err("3", "3.33") === null);
+  check("real price edit is valid", err("3", "4") === null);
+  check("empty price (free) is valid", err("3", "") === null);
+  check("zero price is valid", err("3", "0") === null);
+  check("negative price is invalid", err("3", "-5") === "Price can't be negative.");
+  check("non-finite price is invalid", err("3", "1e400") === "Enter a valid price.");
+  check("junk price is invalid", err("3", "abc") === "Enter a valid price.");
+  check("$1,000,000 total exactly is valid", err("4", "250000") === null);
+  check("total over $1,000,000 is invalid", err("4", "250000.01") === "That's over the $1,000,000 limit for one grant.");
+  // Price untouched but the spin count scales the total over the max.
+  const big = { spins: 1, amountCents: 50_000_000 };
+  check(
+    "scaled total over the max is invalid",
+    grantPriceError({ grant: big, spinsInput: "3", perSpinInput: perSpinText(1, 50_000_000) }) ===
+      "That's over the $1,000,000 limit for one grant."
+  );
 }
 
 console.log(`grantImpact: ${passed} checks passed`);

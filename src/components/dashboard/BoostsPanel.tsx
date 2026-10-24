@@ -124,7 +124,8 @@ function RemoveConfirm({
   return (
     <div
       role="group"
-      aria-labelledby={questionId}
+      // A short label: the question itself is the confirm button's description.
+      aria-label="Confirm removal"
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.stopPropagation();

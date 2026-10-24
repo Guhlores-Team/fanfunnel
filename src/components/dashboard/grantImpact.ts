@@ -52,6 +52,25 @@ export function grantSaveAmount({
   return Math.round((grant.amountCents * spins) / grant.spins);
 }
 
+/** The grant API's cap on a grant's recorded amount (api/grants/[id] PATCH). */
+export const MAX_GRANT_AMOUNT_CENTS = 100_000_000;
+
+/** Why the "$ / spin" field can't be saved, or null when it can. */
+export function grantPriceError(form: {
+  grant: { spins: number; amountCents: number };
+  spinsInput: string;
+  perSpinInput: string;
+}): string | null {
+  const raw = form.perSpinInput.trim();
+  if (raw !== "") {
+    const price = Number(raw);
+    if (!Number.isFinite(price)) return "Enter a valid price.";
+    if (price < 0) return "Price can't be negative.";
+  }
+  if (grantSaveAmount(form) > MAX_GRANT_AMOUNT_CENTS) return "That's over the $1,000,000 limit for one grant.";
+  return null;
+}
+
 const dollars = (c: number) => "$" + (c / 100).toFixed(2);
 
 /** The preview's revenue sentence, or null when the save leaves the amount as is. */

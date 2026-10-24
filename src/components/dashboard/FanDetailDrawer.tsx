@@ -8,7 +8,7 @@ import { useClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { TagEditor } from "./ui";
-import { grantImpact, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
+import { grantImpact, grantPriceError, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
 
 export default function FanDetailDrawer({
@@ -512,10 +512,14 @@ function GrantRow({
   // Recorded revenue only changes when the price or spin count really does.
   const newAmountCents = grantSaveAmount({ grant: g, spinsInput: spins, perSpinInput: perSpin });
   const revenueLine = revenueChangeText(g.amountCents, newAmountCents);
+  // Negative, non-finite or over-cap prices would 400 on save.
+  const priceError = grantPriceError({ grant: g, spinsInput: spins, perSpinInput: perSpin });
+  const canSave = impact.allowed && !priceError;
   const previewId = `grant-impact-${g.id}`;
+  const priceErrorId = `grant-price-error-${g.id}`;
 
   async function save() {
-    if (!impact.allowed) return;
+    if (!canSave) return;
     setBusy(true);
     try {
       const nSpins = parseSpins(spins);
@@ -534,7 +538,13 @@ function GrantRow({
         setEditing(false);
         await onSaved();
       } else {
-        toast("Couldn't update grant.", { tone: "error" });
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        toast(
+          body?.error === "insufficient_spins"
+            ? "Can't cut below the spins this fan has already used."
+            : "Couldn't update grant.",
+          { tone: "error" }
+        );
       }
     } finally {
       setBusy(false);
@@ -569,7 +579,6 @@ function GrantRow({
             min={0}
             value={spins}
             onChange={(e) => setSpins(e.target.value)}
-            aria-describedby={previewId}
             aria-invalid={!impact.allowed || undefined}
             className="ff-input tnum w-20"
           />
@@ -583,6 +592,8 @@ function GrantRow({
             value={perSpin}
             onChange={(e) => setPerSpin(e.target.value)}
             placeholder="0.00"
+            aria-invalid={!!priceError || undefined}
+            aria-errormessage={priceError ? priceErrorId : undefined}
             className="ff-input tnum w-24"
           />
         </label>
@@ -602,18 +613,24 @@ function GrantRow({
           </select>
         </label>
       </div>
+      {priceError && (
+        <p id={priceErrorId} role="alert" className="text-xs font-semibold text-[#f87171]">
+          {priceError}
+        </p>
+      )}
+      {/* Live region only (no aria-describedby on the inputs) so it is read once. */}
       <p
         id={previewId}
         role="status"
         className={`text-xs text-pretty ${impact.allowed ? "text-muted" : "font-semibold text-[#f87171]"}`}
       >
         {impact.message}
-        {impact.allowed && revenueLine && <> {revenueLine}</>}
+        {impact.allowed && !priceError && revenueLine && <> {revenueLine}</>}
       </p>
       <div className="flex gap-2">
         <button
           onClick={save}
-          disabled={busy || !impact.allowed}
+          disabled={busy || !canSave}
           className="btn-brand rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
         >
           {busy ? "Saving…" : "Save"}
