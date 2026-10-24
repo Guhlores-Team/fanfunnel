@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getSpinVerification } from "@/lib/data";
-import type { SeedCommitment } from "@/lib/data/types";
+import { COMMITMENT_COPY, verdictColor } from "./commitmentCopy";
 import { brandVars } from "@/lib/theme";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 
@@ -12,41 +12,6 @@ const RARITY_LABEL: Record<string, string> = {
   rare: "Rare",
   epic: "Epic",
   legendary: "Legendary",
-};
-
-/**
- * What a matching hash proves depends on HOW the spin got its seed. Only a
- * `published` commitment carries the full "fixed before you spun" guarantee;
- * the other cases say so instead of borrowing that claim.
- */
-const COMMITMENT_COPY: Record<
-  SeedCommitment | "unknown",
-  { label: string; verdict: string; strong: boolean }
-> = {
-  published: {
-    label: "Published before your spin",
-    verdict:
-      "This result was committed before it was revealed — the seed's hash was on your spin page before you spun, and the seed wasn't swapped after the spin.",
-    strong: true,
-  },
-  stored: {
-    label: "Committed in a concurrent spin",
-    verdict:
-      "Two spins were in flight on this link. This seed was committed on the server before this spin consumed it, so it couldn't be chosen after seeing your request — but its hash reached you in the other spin's response, not on your spin page before this one.",
-    strong: true,
-  },
-  fresh: {
-    label: "Generated at spin time",
-    verdict:
-      "The seed and its hash are consistent, but this seed was generated when you spun and its hash was not published in advance — so this check alone doesn't prove the outcome was fixed before your spin.",
-    strong: false,
-  },
-  unknown: {
-    label: "Not recorded",
-    verdict:
-      "The seed and its hash are consistent, but this spin predates commitment tracking, so we can't show that its hash was published before you spun (older spins may also use an earlier RNG derivation).",
-    strong: false,
-  },
 };
 
 export const metadata: Metadata = { title: "Verify fairness · FanFunnel" };
@@ -88,9 +53,7 @@ export default async function VerifyPage({
 
   const color = RARITY_COLORS[v.rarity];
   const commitment = COMMITMENT_COPY[v.commitment ?? "unknown"];
-  // Green only when the hash matches AND the commitment was fixed in advance;
-  // a consistent-but-unpublished pair is amber; a mismatch is red.
-  const verdictColor = !v.hashOk ? "#ef4444" : commitment.strong ? "#22c55e" : "#f59e0b";
+  const verdict = verdictColor(v.hashOk, v.commitment);
 
   return (
     <main
@@ -127,8 +90,8 @@ export default async function VerifyPage({
           <div
             className="mt-6 rounded-xl border p-4 text-center"
             style={{
-              borderColor: `color-mix(in oklab, ${verdictColor} 55%, transparent)`,
-              backgroundColor: `color-mix(in oklab, ${verdictColor} 12%, transparent)`,
+              borderColor: `color-mix(in oklab, ${verdict} 55%, transparent)`,
+              backgroundColor: `color-mix(in oklab, ${verdict} 12%, transparent)`,
             }}
           >
             <p className="text-sm font-bold text-ink">

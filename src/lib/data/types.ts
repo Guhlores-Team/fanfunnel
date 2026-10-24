@@ -86,11 +86,14 @@ export interface FanPassView {
 /**
  * How a spin obtained its server seed (recorded per spin, migration 0041).
  *  - `published`: the pass's pre-committed seed, whose hash was on the fan's
- *    spin page before the request — the full commit-reveal guarantee.
+ *    spin page before the request — the full commit-reveal guarantee. This
+ *    assumes no concurrent rotation between the request's arrival and the
+ *    read: a seed rotated in by another in-flight spin and read on the first
+ *    attempt is indistinguishable from one the page showed.
  *  - `stored`: a concurrent spin consumed the shown commitment first, so this
- *    spin consumed the seed that spin committed. It was stored (hash fixed)
- *    before this spin consumed it, but its hash reached the fan only in the
- *    other spin's response.
+ *    spin consumed the seed that spin committed — generated on the server
+ *    while this request (client seed included) was already in flight, and
+ *    never shown to the fan in advance. No stronger than `fresh`.
  *  - `fresh`: generated at spin time (pass with no commitment, or a pre-0022
  *    DB). The hash was never published in advance.
  * `null` on spins recorded before this was tracked.
