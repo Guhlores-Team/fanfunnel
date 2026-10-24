@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getFanPass } from "@/lib/data";
 import SpinClient from "@/components/SpinClient";
 import SafetyMenu from "@/components/fan/SafetyMenu";
+import { LinkPauseProvider } from "@/components/fan/LinkPauseProvider";
 import { brandVars } from "@/lib/theme";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
@@ -25,13 +26,15 @@ export default async function SpinPage({
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 pt-10 pb-28"
       style={brandVars(brand)}
     >
-      <div className="relative z-[1] flex w-full justify-center">
-        <SpinClient pass={pass} />
-      </div>
-      <footer className="relative z-[1] mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted/70">
-        <span>Powered by FanFunnel · every spin wins</span>
-        <SafetyMenu token={token} />
-      </footer>
+      <LinkPauseProvider>
+        <div className="relative z-[1] flex w-full justify-center">
+          <SpinClient pass={pass} />
+        </div>
+        <footer className="relative z-[1] mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted/70">
+          <span>Powered by FanFunnel · every spin wins</span>
+          <SafetyMenu token={token} />
+        </footer>
+      </LinkPauseProvider>
     </main>
   );
 }

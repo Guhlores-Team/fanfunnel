@@ -25,6 +25,8 @@ import CreatorNote from "./fan/CreatorNote";
 import PrizeBook from "./fan/PrizeBook";
 import RecentWinsTicker from "./fan/RecentWinsTicker";
 import WinsGallery from "./fan/WinsGallery";
+import { useLinkPause } from "./fan/LinkPauseProvider";
+import { spinControl } from "./fan/linkPause";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -105,7 +107,13 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
 
   // Canvas needs a real color string (it can't read the --brand CSS var).
   const brand = pass.wheel.brandColor ?? "#ec4899";
-  const canSpin = spinsRemaining > 0 && !busy;
+  // A fan who just paused their own link can no longer spin; no reload needed.
+  const { paused } = useLinkPause();
+  const { canSpin, label: spinLabel, balanceLabel } = spinControl({
+    spinsRemaining,
+    busy,
+    paused,
+  });
 
   const handleSpin = useCallback(async () => {
     if (!canSpin) return;
@@ -250,10 +258,13 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       <div className="reveal-scale relative flex items-center justify-center" style={{ animationDelay: "0.15s" }}>
         <div
           aria-hidden
-          className="ambient-glow pointer-events-none absolute h-[115%] w-[115%] rounded-full blur-2xl"
+          className="ambient-glow pointer-events-none absolute h-[106%] w-[106%] rounded-full blur-2xl"
           style={{
+            // Sized to the visible halo (closest-side: it fades out at the box
+            // edge) so the layout box, even at the pulse's 1.05 scale peak,
+            // stays inside the viewport on narrow phones.
             background:
-              "radial-gradient(circle, color-mix(in oklab, var(--brand) 38%, transparent), transparent 65%)",
+              "radial-gradient(circle closest-side, color-mix(in oklab, var(--brand) 38%, transparent), transparent)",
           }}
         />
         <div className="relative">
@@ -275,7 +286,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           <div className="rounded-full border border-line bg-surface/70 px-4 py-1.5 text-sm font-medium text-ink">
             Spins left{" "}
             <span className="tnum ml-1 font-bold text-brand">
-              {spinsRemaining}
+              {balanceLabel}
             </span>
           </div>
           <button
@@ -293,8 +304,14 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           disabled={!canSpin}
           className="btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
         >
-          {busy ? "Spinning…" : spinsRemaining > 0 ? "SPIN" : "Out of spins"}
+          {spinLabel}
         </button>
+
+        {paused && (
+          <p role="status" className="text-center text-sm text-muted">
+            Your link is paused. Ask your creator for a new link to play again.
+          </p>
+        )}
 
         {error && (
           <p role="alert" className="text-center text-sm text-amber-300">
@@ -315,7 +332,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             </span>
           </p>
         )}
-        {spinsRemaining === 0 && !reveal && (
+        {spinsRemaining === 0 && !reveal && !paused && (
           <TopUpMoment
             prizes={pass.wheel.prizes}
             history={history}
