@@ -49,6 +49,7 @@ import type {
   Webhook,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { provisionCreatorUser } from "./creatorAccount";
 import {
   mockGetFanPass,
   mockSpin,
@@ -4333,20 +4334,7 @@ export async function createCreatorAccount(
   if (!(await requireAdmin(sb))) return { error: "unauthorized" };
 
   // Service role is required to create a user without a sign-up flow.
-  const svc = createServiceClient();
-  const { data, error } = await svc.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { display_name: displayName || email },
-  });
-  if (error || !data.user) return { error: error?.message ?? "create_failed" };
-
-  await svc
-    .from("profiles")
-    .update({ display_name: displayName || email, approval_status: "approved" })
-    .eq("id", data.user.id);
-  return { ok: true };
+  return provisionCreatorUser(createServiceClient(), email, password, displayName);
 }
 
 // --- Gated signups: request → admin approval queue ---------------------------

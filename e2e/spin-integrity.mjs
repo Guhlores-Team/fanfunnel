@@ -101,13 +101,17 @@ async function passBalance(token) {
   return data?.spins_remaining;
 }
 
+/** Returns false if the test user couldn't be deleted, so the run fails
+ *  instead of silently leaking it into the project. */
 async function cleanup() {
-  if (userId) {
-    try {
-      await admin.auth.admin.deleteUser(userId);
-    } catch {
-      /* best effort */
-    }
+  if (!userId) return true;
+  try {
+    const { error } = await admin.auth.admin.deleteUser(userId);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    log(`✗ CLEANUP FAILED: could not delete test user ${userId} — ${e?.message ?? e}`);
+    return false;
   }
 }
 
@@ -214,6 +218,6 @@ try {
   log("Spin-behaviors harness error: " + (e?.stack || e));
   exitCode = 1;
 } finally {
-  await cleanup();
+  if (!(await cleanup())) exitCode = 1;
   process.exit(exitCode);
 }

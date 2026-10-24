@@ -38,6 +38,40 @@ function assert(cond, msg) {
 const admin = createClient(URL, SERVICE, { auth: { persistSession: false } });
 const rand = Math.random().toString(36).slice(2, 8);
 const users = []; // { id, email, password, client }
+// Every e2e script's throwaway users (this one, login-ui, spin-integrity).
+const TEST_EMAIL = /^e2e-[^@]*@fanfunnel\.test$/i;
+const STALE_MS = 60 * 60 * 1000;
+
+// Delete e2e users left behind by a run that was killed before its `finally`
+// (e.g. a cancelled CI job). Only old ones, so a concurrent run's users are
+// never touched.
+async function sweepStaleUsers() {
+  const cutoff = Date.now() - STALE_MS;
+  const stale = [];
+  for (let page = 1; ; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) {
+      log("⚠ Skipping stale-user sweep — listUsers: " + error.message);
+      return;
+    }
+    const list = data?.users ?? [];
+    for (const u of list) {
+      if (u.email && TEST_EMAIL.test(u.email) && Date.parse(u.created_at) < cutoff) stale.push(u.id);
+    }
+    if (list.length < 1000) break;
+  }
+  let swept = 0;
+  for (const id of stale) {
+    try {
+      const { error } = await admin.auth.admin.deleteUser(id);
+      if (error) throw error;
+      swept++;
+    } catch (e) {
+      log(`⚠ Could not sweep stale test user ${id} — ${e?.message ?? e}`);
+    }
+  }
+  if (swept) log(`Swept ${swept} stale e2e user(s) from earlier killed runs.`);
+}
 
 async function makeCreator(tag) {
   const email = `e2e-${tag}-${rand}@fanfunnel.test`;
@@ -49,6 +83,9 @@ async function makeCreator(tag) {
   });
   if (error) throw new Error(`createUser(${tag}): ${error.message}`);
   const id = data.user.id;
+  // Register for cleanup before anything below can throw.
+  const rec = { id, email, password, client: null, role: null };
+  users.push(rec);
 
   // handle_new_user runs in the same txn as the auth insert, but poll briefly
   // in case of replication lag before asserting the profile exists.
@@ -71,24 +108,31 @@ async function makeCreator(tag) {
   const { error: signInErr } = await client.auth.signInWithPassword({ email, password });
   if (signInErr) throw new Error(`signIn(${tag}): ${signInErr.message}`);
 
-  const rec = { id, email, password, client, role };
-  users.push(rec);
+  rec.client = client;
+  rec.role = role;
   return rec;
 }
 
+/** Delete this run's users (cascades profile + owned rows). Returns false if
+ *  any delete failed, so the run fails instead of silently leaking users. */
 async function cleanup() {
+  let ok = true;
   for (const u of users) {
     try {
-      await admin.auth.admin.deleteUser(u.id); // cascades profile + owned rows
-    } catch {
-      /* best effort */
+      const { error } = await admin.auth.admin.deleteUser(u.id);
+      if (error) throw error;
+    } catch (e) {
+      ok = false;
+      log(`✗ CLEANUP FAILED: could not delete test user ${u.email} (${u.id}) — ${e?.message ?? e}`);
     }
   }
+  return ok;
 }
 
 let exitCode = 1;
 try {
   log(`Supabase integration tests → ${URL}`);
+  await sweepStaleUsers();
 
   let A, B, wheelId;
 
@@ -300,6 +344,6 @@ try {
   log("Supabase integration harness error: " + (e?.stack || e));
   exitCode = 1;
 } finally {
-  await cleanup();
+  if (!(await cleanup())) exitCode = 1;
   process.exit(exitCode);
 }
