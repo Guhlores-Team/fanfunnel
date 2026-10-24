@@ -374,6 +374,34 @@ export async function fanExtras(page, { step, assert }, ctx) {
     assert(/out of spins|tip|get (more )?spins|top.?up/i.test(body), "out-of-spins / top-up prompt shown");
   });
 
+  // Regression for React #418 on the fan page: the out-of-spins state (which
+  // now has fresh wins in the gallery) must hydrate cleanly on reload and on a
+  // fresh load. Clock-derived text ("just now" vs "1m ago") only diverged when a
+  // boundary fell between SSR and hydration, so a second page runs with its
+  // clock 50s ahead of the server to make any such divergence deterministic.
+  await step("fan: out-of-spins state hydrates cleanly (reload + skewed clock)", async () => {
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 45000 });
+    await page.waitForTimeout(1400);
+    assert(/out of spins/i.test(await page.locator("body").innerText()), "out-of-spins state after reload");
+
+    const skewed = await ctx.newPage();
+    const errors = [];
+    skewed.on("pageerror", (e) => errors.push(String(e.message || e)));
+    skewed.on("console", (m) => {
+      if (m.type() === "error") errors.push(m.text());
+    });
+    try {
+      await skewed.clock.install({ time: Date.now() + 50_000 });
+      await goto(skewed, "/spin/demo", 1600);
+      await skewed.reload({ waitUntil: "domcontentloaded", timeout: 45000 });
+      await skewed.waitForTimeout(1600);
+      assert(/out of spins/i.test(await skewed.locator("body").innerText()), "out-of-spins state with a skewed clock");
+    } finally {
+      await skewed.close();
+    }
+    assert(errors.length === 0, `skewed-clock page logged errors: ${errors[0]?.slice(0, 120)}`);
+  });
+
   await step("fan: self-exclude deactivates the link (LAST)", async () => {
     const safety = page.locator("button:has-text('Safety')").first();
     assert(await safety.count(), "safety menu trigger present");
