@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { listPrizeTemplates, createPrizeTemplate } from "@/lib/data";
 import { RARITY_ORDER, type Rarity } from "@/lib/games/wheel/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { normalizeHex } from "@/lib/games/wheel/validate";
 
 // The creator's saved prize presets.
 export async function GET() {
@@ -32,6 +33,14 @@ export async function POST(req: Request) {
   if (!Number.isFinite(weight) || weight < 0 || weight > 1e6) {
     return badRequest("bad_weight");
   }
+  // Same color rule as PUT /api/wheel: #rgb / #rrggbb, stored as lowercase
+  // #rrggbb. Unset (or empty) keeps the rarity default.
+  let color: string | undefined;
+  if (body.color != null && body.color !== "") {
+    const normalized = normalizeHex(body.color);
+    if (!normalized) return badRequest("bad_color");
+    color = normalized;
+  }
 
   try {
     const template = await createPrizeTemplate({
@@ -39,7 +48,7 @@ export async function POST(req: Request) {
       description: body.description,
       rarity: body.rarity,
       weight,
-      color: body.color,
+      color,
       emoji: body.emoji,
     });
     return NextResponse.json({ template });
