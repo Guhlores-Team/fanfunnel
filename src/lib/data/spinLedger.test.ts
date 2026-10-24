@@ -142,6 +142,74 @@ async function main() {
     )
   );
 
+  // --- Supabase path: a spin lands between the pass read and the pass write --
+  // The top-up must be applied to the balance as it is at write time (5 - 1 + 3
+  // = 7), not overwrite the spin with read + 3 = 8 (a free spin for the fan).
+  const racer2 = db.seed("fans", { creator_id: CREATOR, display_name: "Racer2" });
+  const racer2Pass = db.seed("fan_passes", {
+    token: "tok-race2",
+    creator_id: CREATOR,
+    wheel_id: wheelA.id,
+    fan_id: racer2.id,
+    spins_remaining: 5,
+    spins_granted_total: 5,
+  });
+  interleaved = 0;
+  db.beforeStatement = (stmt) => {
+    if (stmt.table === "fan_passes" && stmt.op === "update" && interleaved === 0) {
+      interleaved++;
+      assert.strictEqual(db.spin("tok-race2"), 4, "interleaved spin before the pass write");
+    }
+  };
+  const raced2 = await createPass({
+    name: "Racer2",
+    spins: 3,
+    fanId: racer2.id as string,
+    wheelId: wheelA.id as string,
+  });
+  db.beforeStatement = null;
+  assert.ok(!("error" in raced2), `top-up with a spin before the pass write succeeded: ${JSON.stringify(raced2)}`);
+  check("race B: a spin was interleaved", interleaved === 1);
+  check(
+    `race B: pass is 5 - 1 + 3 = 7, the spin is kept (got ${db.row("fan_passes", racer2Pass.id as string).spins_remaining})`,
+    db.row("fan_passes", racer2Pass.id as string).spins_remaining === 7
+  );
+  check("race B: pass granted_total is 8", db.row("fan_passes", racer2Pass.id as string).spins_granted_total === 8);
+  check("race B: invariant holds", invariantHolds(racer2.id as string));
+
+  // --- Supabase path: the grant insert fails after a spin landed -------------
+  // The top-up (7 -> 10) is rolled back. The fan spun once in between (10 -> 9),
+  // so the rollback must subtract the top-up from the current balance (9 - 3 =
+  // 6), not restore the pre-top-up value (7) and refund the spin.
+  const grantsBefore = db.rows("grants").filter((g) => g.fan_id === racer2.id).length;
+  let grantFailed = 0;
+  db.beforeStatement = (stmt) => {
+    if (stmt.table === "grants" && stmt.op === "insert" && grantFailed === 0) {
+      grantFailed++;
+      assert.strictEqual(db.spin("tok-race2"), 9, "spin after the top-up, before the grant insert");
+      return { message: "injected grant insert failure" };
+    }
+  };
+  const rolledBack = await createPass({
+    name: "Racer2",
+    spins: 3,
+    fanId: racer2.id as string,
+    wheelId: wheelA.id as string,
+  });
+  db.beforeStatement = null;
+  check("rollback: a failed grant insert fails the top-up", "error" in rolledBack && rolledBack.error === "db_error");
+  check("rollback: the grant insert was the statement that failed", grantFailed === 1);
+  check(
+    `rollback: pass is 9 - 3 = 6, the spin is not refunded (got ${db.row("fan_passes", racer2Pass.id as string).spins_remaining})`,
+    db.row("fan_passes", racer2Pass.id as string).spins_remaining === 6
+  );
+  check("rollback: pass granted_total is back to 8", db.row("fan_passes", racer2Pass.id as string).spins_granted_total === 8);
+  check(
+    "rollback: no grant row was added",
+    db.rows("grants").filter((g) => g.fan_id === racer2.id).length === grantsBefore
+  );
+  check("rollback: invariant holds", invariantHolds(racer2.id as string));
+
   // --- Mock path: same invariant --------------------------------------------
   const m = mockCreatePass("Mocked", 5);
   const again = mockCreatePass("Mocked", 3, m.fanId);
