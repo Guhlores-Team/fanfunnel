@@ -5,6 +5,7 @@ import {
   createServiceClient,
   createClient,
 } from "@/lib/supabase/server";
+import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { externalUrl } from "@/lib/format";
 import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
 import { randomSeedHex, sha256Hex, makeFairRng, normalizeClientSeed } from "@/lib/games/wheel/fairness";
@@ -3995,30 +3996,17 @@ export async function setRedemptionMeta(
 // Admin (cross-account)
 // ---------------------------------------------------------------------------
 
-async function requireAdmin(
-  sb: Awaited<ReturnType<typeof createClient>>
-): Promise<boolean> {
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return false;
-  const { data } = await sb
-    .from("profiles")
-    .select("role, is_active")
-    .eq("id", user.id)
-    .maybeSingle();
-  // A suspended admin (is_active=false) must NOT retain admin power. This gate
-  // fronts service-role actions that bypass RLS (create/delete accounts), so the
-  // is_active check has to live here too — not only in the DB is_admin() policy.
-  return data?.role === "admin" && data?.is_active === true;
-}
+// Admin gate = the shared is_admin() predicate (role AND is_active) from
+// src/lib/auth/adminCheck.ts. A suspended admin must NOT retain admin power;
+// these gates front service-role actions that bypass RLS (create/delete
+// accounts), so the check has to live here too — not only in RLS policies.
 
 /** Whether the signed-in user is an admin. Server-only; used to gate admin-only
  *  UI such as the in-app debug console. Returns false in demo mode (no Supabase). */
 export async function isCurrentUserAdmin(): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
   const sb = await createClient();
-  return requireAdmin(sb);
+  return isActiveAdmin(sb);
 }
 
 /**
@@ -4307,7 +4295,7 @@ export async function updateAccount(
   }
 
   const sb = await createClient();
-  if (!(await requireAdmin(sb))) return { error: "unauthorized" };
+  if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 
   const upd: Record<string, unknown> = {};
   if (patch.role) upd.role = patch.role;
@@ -4330,7 +4318,7 @@ export async function createCreatorAccount(
   }
 
   const sb = await createClient();
-  if (!(await requireAdmin(sb))) return { error: "unauthorized" };
+  if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 
   // Service role is required to create a user without a sign-up flow.
   const svc = createServiceClient();
@@ -4417,7 +4405,7 @@ export interface CreatorApplication {
 export async function listCreatorApplications(): Promise<CreatorApplication[]> {
   if (!isSupabaseConfigured()) return [];
   const sb = await createClient();
-  if (!(await requireAdmin(sb))) return [];
+  if (!(await isActiveAdmin(sb))) return [];
 
   const { data } = await sb
     .from("creator_applications")
@@ -4456,7 +4444,7 @@ export async function decideCreatorApplication(
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return { ok: true };
   const sb = await createClient();
-  if (!(await requireAdmin(sb))) return { error: "unauthorized" };
+  if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 
   const now = new Date().toISOString();
   const { error: aErr } = await sb

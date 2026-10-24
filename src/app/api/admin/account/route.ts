@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { updateAccount } from "@/lib/data";
+import { requireAdminRoute } from "@/lib/auth/admin";
 import type { AppRole } from "@/lib/data/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Update a creator account: role, active status, or feature flags.
 export async function POST(req: Request) {
+  const admin = await requireAdminRoute();
+  if (!admin.ok) return admin.response;
   const body = await parseJsonBody<{
     id?: string;
     role?: AppRole;
