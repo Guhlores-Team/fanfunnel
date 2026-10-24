@@ -307,6 +307,7 @@ export default function DashboardClient({
           <BoostsPanel
             leaderboardEnabled={overview.data?.metrics.leaderboardEnabled ?? false}
             onLeaderboardChange={overview.refresh}
+            onNavigate={(t) => setTab(t as Tab)}
           />
         )}
         {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
