@@ -44,7 +44,8 @@ function AdminPanel() {
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/admin", { cache: "no-store" });
-      if (res.status === 403) {
+      // 401 = session expired while the panel was open; 403 = not an active admin.
+      if (res.status === 401 || res.status === 403) {
         setForbidden(true);
         return;
       }

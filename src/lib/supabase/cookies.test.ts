@@ -11,8 +11,9 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
-import { sessionCookieOptions } from "./cookies";
+import { createRequire } from "node:module";
+import { dirname, join, relative } from "node:path";
+import { serverRequestProtocol, sessionCookieOptions } from "./cookies";
 
 const SRC = join(import.meta.dirname, "../..");
 const ROOT = join(SRC, "..");
@@ -47,6 +48,34 @@ for (const [input, secure] of [
   assert.equal(o.path, "/");
   passed++;
 }
+
+// --- 1b. Server-side protocol fallback (self-hosted https keeps Secure) ------
+for (const [fwd, siteUrl, expected] of [
+  ["https", undefined, "https"], // Vercel / any proxy that forwards the scheme
+  ["http", "https://fanfunnel.example", "http"], // header wins over env
+  ["https, http", undefined, "https"], // comma-separated hops: first one counts
+  [" https ", undefined, "https"],
+  [null, "https://fanfunnel.example", "https:"], // self-hosted: env scheme
+  ["", "https://fanfunnel.example/", "https:"],
+  [null, "http://localhost:3000", "http:"],
+  [null, "not a url", "http"], // unparseable env → plain http
+  [null, undefined, "http"], // nothing known → plain http (no Secure)
+] as const) {
+  const protocol = serverRequestProtocol(fwd, siteUrl);
+  assert.equal(protocol, expected, `fwd=${JSON.stringify(fwd)} site=${JSON.stringify(siteUrl)}`);
+  assert.equal(
+    sessionCookieOptions(protocol).secure,
+    expected.startsWith("https"),
+    `secure for fwd=${JSON.stringify(fwd)} site=${JSON.stringify(siteUrl)}`
+  );
+  passed++;
+}
+// Default second argument reads NEXT_PUBLIC_SITE_URL.
+process.env.NEXT_PUBLIC_SITE_URL = "https://fanfunnel.example";
+assert.equal(sessionCookieOptions(serverRequestProtocol(null)).secure, true);
+delete process.env.NEXT_PUBLIC_SITE_URL;
+assert.equal(sessionCookieOptions(serverRequestProtocol(null)).secure, false);
+passed++;
 
 // --- 2. Browser, server and proxy clients all pass the shared options --------
 for (const f of ["client.ts", "server.ts", "middleware.ts"]) {
@@ -98,7 +127,8 @@ for (const path of NEEDS_SESSION_COOKIE) {
 
 // The browser client in this @supabase/ssr version really is document.cookie
 // based; if an upgrade changes that, this is the prompt to revisit httpOnly.
-const ssr = read(join(ROOT, "node_modules/@supabase/ssr/dist/main/cookies.js"));
+const ssrEntry = createRequire(import.meta.url).resolve("@supabase/ssr"); // …/dist/main/index.js
+const ssr = read(join(dirname(ssrEntry), "cookies.js"));
 assert.match(ssr, /document\.cookie/, "@supabase/ssr browser client no longer uses document.cookie — re-evaluate httpOnly");
 passed++;
 
