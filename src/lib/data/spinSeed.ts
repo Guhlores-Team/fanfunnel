@@ -1,4 +1,5 @@
 import { randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
+import type { SeedCommitment } from "./types";
 
 /** The pass's current commitment: the seed for its NEXT spin and its hash. */
 export type CommittedSeed = {
@@ -10,6 +11,8 @@ export type CommittedSeed = {
 export type ConsumedSeed = {
   serverSeed: string;
   serverSeedHash: string;
+  /** How the seed was obtained — recorded on the spin so /verify claims only what holds. */
+  commitment: SeedCommitment;
   nextServerSeed: string;
   nextServerSeedHash: string;
 };
@@ -47,6 +50,7 @@ export async function freshSeed(): Promise<ConsumedSeed> {
   return {
     serverSeed,
     serverSeedHash: await sha256Hex(serverSeed),
+    commitment: "fresh",
     nextServerSeed,
     nextServerSeedHash: await sha256Hex(nextServerSeed),
   };
@@ -73,6 +77,12 @@ export async function freshSeed(): Promise<ConsumedSeed> {
  * A pass with no commitment yet (legacy row) gets a fresh seed for this spin
  * only; the swap guarantees no other spin shares it.
  *
+ * Each outcome is tagged (`commitment`) so the verify page can state exactly
+ * which guarantee this spin has: the seed read on the first attempt was the one
+ * whose hash the fan's page showed (`published`); a seed re-read after losing
+ * the swap was committed by the concurrent winner (`stored`); a missing seed
+ * is generated now (`fresh`).
+ *
  * Only a definite `lost` is retried. An `unknown` swap (the request errored)
  * may have committed: retrying would consume a second seed, and inferring a win
  * from "the row now holds my next seed" is wrong once a concurrent spin has
@@ -90,10 +100,17 @@ export async function consumeCommittedSeed(
     const serverSeed = current.seed ?? randomSeedHex();
     const serverSeedHash =
       current.seed && current.hash ? current.hash : await sha256Hex(serverSeed);
+    const commitment: SeedCommitment = !current.seed
+      ? "fresh"
+      : attempt === 0
+        ? "published"
+        : "stored";
     const nextServerSeed = randomSeedHex();
     const nextServerSeedHash = await sha256Hex(nextServerSeed);
     const outcome = await store.swap(current, { seed: nextServerSeed, hash: nextServerSeedHash });
-    if (outcome === "won") return { serverSeed, serverSeedHash, nextServerSeed, nextServerSeedHash };
+    if (outcome === "won") {
+      return { serverSeed, serverSeedHash, commitment, nextServerSeed, nextServerSeedHash };
+    }
     if (outcome === "unknown") return null;
     current = await store.read();
   }

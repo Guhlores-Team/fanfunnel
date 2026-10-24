@@ -19,8 +19,15 @@ export interface ShareCardData { creatorTitle: string; prizeLabel: string; rarit
 export interface WishlistItem { id: string; prizeLabel: string; rarity: Rarity; at: string }
 /** Phase 3: aggregated wishlist demand for a prize, for the creator. */
 export interface WishlistDemand { prizeLabel: string; rarity: Rarity; count: number; fanNames: string[] }
-/** Phase 3: a single row in a public leaderboard. */
-export interface LeaderboardEntry { rank: number; handle: string; spins: number; spentCents: number; rareWins: number }
+/**
+ * Phase 3: a single row in a public leaderboard.
+ *
+ * Privacy: this shape is served unauthenticated from /api/leaderboard/[creatorId]
+ * and rendered on a public page, so it carries NO spend/revenue figure and no
+ * fan id, email or token — only the handle the fan chose and activity counts.
+ * Ranking is by spins, then rare wins. Don't add a money field here.
+ */
+export interface LeaderboardEntry { rank: number; handle: string; spins: number; rareWins: number }
 /** Phase 3: the leaderboard as shown to fans. */
 export interface LeaderboardView { enabled: boolean; creatorTitle: string; entries: LeaderboardEntry[] }
 /** Phase 3: a scheduled happy-hour rare-boost window. */
@@ -63,12 +70,35 @@ export interface FanPassView {
   creatorId?: string;
   /** Phase 7: whether the creator's leaderboard is on (embed it inline if so). */
   leaderboardEnabled?: boolean;
+  /**
+   * Whether THIS fan has explicitly consented to appear on that public board.
+   * Always false until the fan ticks the toggle on their spin page — spinning
+   * never opts them in.
+   */
+  leaderboardOptIn?: boolean;
   /** Phase 8C: optional personal note + avatar from the creator (mini-hero). */
   creatorNote?: string | null;
   creatorAvatarUrl?: string | null;
   /** Commit-reveal: sha256 of the pre-committed seed for the fan's NEXT spin. */
   nextSpinHash?: string | null;
 }
+
+/**
+ * How a spin obtained its server seed (recorded per spin, migration 0041).
+ *  - `published`: the pass's pre-committed seed, whose hash was on the fan's
+ *    spin page before the request — the full commit-reveal guarantee. This
+ *    assumes no concurrent rotation between the request's arrival and the
+ *    read: a seed rotated in by another in-flight spin and read on the first
+ *    attempt is indistinguishable from one the page showed.
+ *  - `stored`: a concurrent spin consumed the shown commitment first, so this
+ *    spin consumed the seed that spin committed — generated on the server
+ *    while this request (client seed included) was already in flight, and
+ *    never shown to the fan in advance. No stronger than `fresh`.
+ *  - `fresh`: generated at spin time (pass with no commitment, or a pre-0022
+ *    DB). The hash was never published in advance.
+ * `null` on spins recorded before this was tracked.
+ */
+export type SeedCommitment = "published" | "stored" | "fresh";
 
 /** Phase 5b (#23): the data a public verify page needs for one spin. */
 export interface SpinVerification {
@@ -81,6 +111,8 @@ export interface SpinVerification {
   at: string;
   /** Commit-reveal: the fan-contributed seed mixed into the RNG ("" pre-0022). */
   clientSeed?: string | null;
+  /** Whether the seed was pre-committed; null when the spin predates tracking. */
+  commitment?: SeedCommitment | null;
 }
 
 /** Phase 5b (#24): a creator's outbound webhook registration. */

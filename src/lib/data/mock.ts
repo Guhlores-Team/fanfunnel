@@ -31,6 +31,7 @@ import type {
   RedemptionItem,
   RedemptionStatus,
   ReferralOverview,
+  SeedCommitment,
   ShareCardData,
   SpinVerification,
   Webhook,
@@ -69,6 +70,8 @@ interface MockWin extends WonPrize {
   nonce: number;
   // Commit-reveal v2: the fan-contributed seed mixed into the RNG.
   clientSeed?: string | null;
+  // Whether the seed was pre-committed (absent on seeded demo wins).
+  commitment?: SeedCommitment | null;
 }
 
 // A per-wheel link under a fan: its own balance + which wheel/campaign it's for.
@@ -938,6 +941,7 @@ export async function mockGetFanPass(
     needsAck: fan.ackedAt == null,
     creatorId: "demo-creator",
     leaderboardEnabled: store.leaderboardEnabled,
+    leaderboardOptIn: fan.leaderboardOptIn === true,
     creatorNote: "Hey you 😘 spin away — every spin wins!",
     creatorAvatarUrl: null,
     nextSpinHash: pass?.nextServerSeedHash ?? null,
@@ -977,11 +981,16 @@ export async function mockSpin(token: string, clientSeed = "") {
   const committedSeed = pass.nextServerSeed;
   const committedHash = pass.nextServerSeedHash;
   const serverSeed = committedSeed ?? randomSeedHex();
-  const nonce = fan.spinsRemaining;
+  // No CAS loser here (the claim + swap below is synchronous), so a seed is
+  // either the one the page showed or generated right now.
+  const commitment: SeedCommitment = committedSeed && committedHash ? "published" : "fresh";
   pass.nextServerSeed = nextServerSeed;
   pass.nextServerSeedHash = nextServerSeedHash;
   pass.spinsRemaining -= 1; // spend from this wheel's pass
   recomputeFanAggregate(fan); // keep the fan-level total in sync
+  // Same basis as the Supabase path: claim_spin returns THIS pass's balance
+  // after the decrement, and that is the spin's nonce.
+  const nonce = pass.spinsRemaining;
 
   const wheelId = pass.wheelId;
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
@@ -1013,9 +1022,9 @@ export async function mockSpin(token: string, clientSeed = "") {
   const campaignId = pass.campaignId;
 
   fan.pityCounter = nextPityCounter;
-  // Spinning auto-opts the fan into the leaderboard (handle-only; the board only
-  // renders when the creator enables it, so nothing is exposed until then).
-  fan.leaderboardOptIn = true;
+  // Spinning must NOT touch `leaderboardOptIn` — appearing on the creator's
+  // public leaderboard is the fan's own explicit choice (the toggle on their
+  // spin page). Mirrors the same fix in ./index.ts's spin().
 
   // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
   const live = wheel.prizes[index];
@@ -1038,6 +1047,7 @@ export async function mockSpin(token: string, clientSeed = "") {
       serverSeedHash,
       nonce,
       clientSeed: clientSeed || null,
+      commitment,
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -2118,8 +2128,10 @@ export function mockCreateHappyHour(input: {
   endsAt: string;
 }): HappyHour | { error: string } {
   if (!(input.endsAt > input.startsAt)) return { error: "invalid_window" };
-  const multiplier = Math.floor(input.multiplier);
-  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+  // Stored as given (the happy_hours.multiplier column is numeric, the UI steps
+  // by 0.5): flooring would turn a ×1.5 boost into no boost at all.
+  const multiplier = Number(input.multiplier);
+  if (!(multiplier >= 1 && multiplier <= 10)) {
     return { error: "invalid_multiplier" };
   }
   const row: MockHappyHour = {
@@ -2180,6 +2192,7 @@ export async function mockGetSpinVerification(
       hashOk,
       at: win.at,
       clientSeed: win.clientSeed ?? null,
+      commitment: win.commitment ?? null,
     };
   }
   return null;
@@ -2407,9 +2420,13 @@ export function mockSetFanLeaderboardOptIn(
   return { ok: true };
 }
 
-/** A first name from a fan's full name (leaderboard privacy fallback). */
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name.trim() || "Fan";
+/**
+ * The name a fan is shown under on public surfaces, or null when they have no
+ * board handle — in which case they're skipped. Their real name (`f.name`) is
+ * never used here.
+ */
+function publicHandle(f: { handle?: string }): string | null {
+  return f.handle?.trim() || null;
 }
 
 export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
@@ -2417,24 +2434,20 @@ export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
     return { enabled: false, creatorTitle: CREATOR_TITLE, entries: [] };
   }
   const rows = Array.from(store.fans.values())
-    .filter((f) => f.leaderboardOptIn)
+    .filter((f) => f.leaderboardOptIn && publicHandle(f) !== null)
     .map((f) => {
       const spins = f.wins.length;
-      const spentCents = fanGrants(f.id).reduce((s, g) => s + g.amountCents, 0);
       const rareWins = f.wins.filter(
         (w) => RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")
       ).length;
+      // No spend figure: this payload is served publicly and unauthenticated.
       return {
-        handle: f.handle?.trim() || firstName(f.name),
+        handle: publicHandle(f) as string,
         spins,
-        spentCents,
         rareWins,
       };
     })
-    .sort(
-      (a, b) =>
-        b.spins - a.spins || b.spentCents - a.spentCents || b.rareWins - a.rareWins
-    );
+    .sort((a, b) => b.spins - a.spins || b.rareWins - a.rareWins);
   const entries: LeaderboardEntry[] = rows.map((r, i) => ({ rank: i + 1, ...r }));
   return structuredClone({ enabled: true, creatorTitle: CREATOR_TITLE, entries });
 }
@@ -2449,7 +2462,8 @@ export function mockGetRecentWins(): {
   const wins: { handle: string; prizeLabel: string; rarity: Rarity; at: string }[] = [];
   for (const f of store.fans.values()) {
     if (!f.leaderboardOptIn) continue;
-    const handle = f.handle?.trim() || firstName(f.name);
+    const handle = publicHandle(f);
+    if (handle === null) continue; // never fall back to the fan's real name
     for (const w of f.wins) {
       if (RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")) {
         wins.push({ handle, prizeLabel: w.label, rarity: w.rarity, at: w.at });

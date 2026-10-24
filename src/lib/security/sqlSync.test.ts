@@ -95,10 +95,55 @@ for (const name of migTriggers) {
   }
 }
 
+// Constraint parity: a CHECK added by a migration but missing from a snapshot
+// means a fresh DB accepts writes the migrated DB rejects (or vice versa).
+function constraintNames(sql: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of sql.matchAll(/add\s+constraint\s+(\w+)/gi)) out.add(m[1].toLowerCase());
+  return out;
+}
+const migConstraints = constraintNames(migrationsSql);
+const schemaConstraints = constraintNames(schemaSql);
+const combinedConstraints = constraintNames(combinedSql);
+for (const name of migConstraints) {
+  if (!combinedConstraints.has(name)) {
+    fail(`constraint "${name}" is added in migrations/ but missing from migrations_combined.sql`);
+  }
+  if (!schemaConstraints.has(name)) {
+    fail(`constraint "${name}" is added in migrations/ but missing from schema.sql`);
+  }
+}
+
+// Ledger balances must never go negative. fans.spins_remaining carries an
+// inline CHECK in the base schema; the per-wheel fan_passes.spins_remaining
+// (the balance claim_spin actually spends) gets its CHECK from migration 0039,
+// so it must be added AND validated in a migration and in both snapshots.
+const normSchema = normalize(schemaSql);
+const passCheck =
+  /alter table public\.fan_passes add constraint fan_passes_spins_remaining_check check \(spins_remaining >= 0\)/;
+const passValidate =
+  /alter table public\.fan_passes validate constraint fan_passes_spins_remaining_check/;
+const ledgerSources: [string, string][] = [
+  ["migrations/", normalize(migrationsSql)],
+  ["schema.sql", normSchema],
+  ["migrations_combined.sql", normalize(combinedSql)],
+];
+for (const [label, src] of ledgerSources) {
+  if (!passCheck.test(src)) {
+    fail(`${label} does not add CHECK (spins_remaining >= 0) on public.fan_passes`);
+  }
+  if (!passValidate.test(src)) {
+    fail(`${label} never validates fan_passes_spins_remaining_check`);
+  }
+}
+if (!/create table if not exists public\.fans \([^;]*spins_remaining integer not null default 0 check \(spins_remaining >= 0\)/.test(normSchema)) {
+  fail("schema.sql: fans.spins_remaining lost its CHECK (spins_remaining >= 0)");
+}
+
 if (failures > 0) {
   console.error(`\nSQL sync guard FAILED with ${failures} issue(s).`);
   process.exit(1);
 }
 console.log(
-  `sqlSync.test: ${mig.size} migration functions + ${migTriggers.size} trigger(s) match schema.sql + migrations_combined.sql`,
+  `sqlSync.test: ${mig.size} migration functions + ${migTriggers.size} trigger(s) + ${migConstraints.size} constraint(s) match schema.sql + migrations_combined.sql; ledger balance CHECKs present`,
 );

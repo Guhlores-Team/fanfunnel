@@ -16,7 +16,12 @@ export async function POST(req: Request) {
     typeof body.handle === "string"
       ? body.handle.trim().replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40)
       : undefined;
-  const result = await setFanLeaderboardOptIn(body.token, Boolean(body.optIn), handle);
+  const optIn = Boolean(body.optIn);
+  // Opting IN requires a board name: without one the only thing the public
+  // board could show is the fan's real name, which it must never do. Opting
+  // OUT needs nothing.
+  if (optIn && !handle) return badRequest("handle_required");
+  const result = await setFanLeaderboardOptIn(body.token, optIn, handle);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);
 }

@@ -1867,3 +1867,46 @@ end;
 $$;
 
 revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated;
+
+-- ============================================================
+-- 0039_fan_pass_balance_check.sql
+-- ============================================================
+-- fan_passes.spins_remaining >= 0. Add NOT VALID (new writes checked), clamp any
+-- pre-existing negative rows to 0 (already unspendable), then VALIDATE.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'fan_passes_spins_remaining_check'
+       and conrelid = 'public.fan_passes'::regclass
+  ) then
+    alter table public.fan_passes
+      add constraint fan_passes_spins_remaining_check
+      check (spins_remaining >= 0) not valid;
+  end if;
+end;
+$$;
+
+update public.fan_passes
+   set spins_remaining = 0
+ where spins_remaining < 0;
+
+alter table public.fan_passes
+  validate constraint fan_passes_spins_remaining_check;
+
+-- ============================================================
+-- 0040_leaderboard_optin_reset.sql
+-- ============================================================
+-- Fan leaderboard privacy: spin() used to set fans.leaderboard_opt_in = true on
+-- a fan's first spin, so every fan who ever spun is marked as consenting to a
+-- public page they never saw a control for. Clear those flags; fans re-consent
+-- via the toggle on their spin page. No schema/RLS/grant change.
+update public.fans
+   set leaderboard_opt_in = false
+ where leaderboard_opt_in;
+
+-- ============================================================
+-- 0041_spin_seed_commitment.sql
+-- ============================================================
+alter table public.spins add column if not exists seed_commitment text
+  check (seed_commitment is null or seed_commitment in ('published', 'stored', 'fresh'));

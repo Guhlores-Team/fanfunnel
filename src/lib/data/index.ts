@@ -351,7 +351,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   if (!isSupabaseConfigured()) return mockGetFanPass(token);
 
   const sb = createServiceClient();
-  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at)`;
+  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, leaderboard_opt_in)`;
   const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`;
   // Per-wheel balance lives on the pass (migration 0020). If that column isn't
   // present yet (migration not run), fall back to the legacy select so the fan
@@ -407,6 +407,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       spins_granted_total: number;
       referral_code: string | null;
       acked_at: string | null;
+      leaderboard_opt_in?: boolean | null;
     } | null;
     creator: {
       display_name: string | null;
@@ -533,6 +534,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     tipUrl: pass.creator?.tip_url ?? null,
     creatorId: pass.creator_id,
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
+    // Default false: anything other than an explicit true means "not opted in".
+    leaderboardOptIn: pass.fan.leaderboard_opt_in === true,
     creatorNote: pass.creator?.creator_note ?? null,
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
     nextSpinHash,
@@ -727,7 +730,7 @@ async function recordClaimedSpin(
     console.error("spin: could not consume committed seed");
     return { error: "db_error" };
   }
-  const { serverSeed, serverSeedHash, nextServerSeedHash } = seeds;
+  const { serverSeed, serverSeedHash, nextServerSeedHash, commitment } = seeds;
   // The fan's clientSeed is mixed into the RNG so the server can't dictate the outcome.
   const rng = await makeFairRng(serverSeed, clientSeed, nonce);
 
@@ -775,15 +778,17 @@ async function recordClaimedSpin(
     return { error: "no_prizes" };
   }
 
-  // Persist the fan's next pity counter. Spinning also auto-opts the fan into
-  // the leaderboard (handle-only; the board only shows when the CREATOR enables
-  // it, so this never leaks anything until the creator turns it on).
+  // Persist the fan's next pity counter. Spinning must NOT touch
+  // `leaderboard_opt_in`: appearing on the creator's public, unauthenticated
+  // leaderboard is the fan's own decision, made with the toggle on their spin
+  // page (POST /api/leaderboard/opt-in). It used to be set to true here, which
+  // put every fan who spun on a public page they never consented to.
   const { error: pityErr } = await sb
     .from("fans")
-    .update({ pity_counter: chosen.nextPityCounter, leaderboard_opt_in: true })
+    .update({ pity_counter: chosen.nextPityCounter })
     .eq("id", pass.fan_id);
   if (pityErr) {
-    console.error("spin: pity/leaderboard update failed", pityErr.message);
+    console.error("spin: pity update failed", pityErr.message);
   }
 
   // 3b. Per-wheel attribution: the spin belongs to THIS pass's campaign (the
@@ -791,26 +796,34 @@ async function recordClaimedSpin(
   const spinCampaignId: string | null = pass.campaign_id;
 
   // 4. Log the spin (against the fan account) + a pending redemption.
-  const { data: spinRow, error: spinErr } = await sb
+  const spinInsert = {
+    fan_pass_id: pass.id,
+    creator_id: pass.creator_id,
+    wheel_id: wheelId,
+    fan_id: pass.fan_id,
+    prize_id: chosen.prize.id,
+    prize_label: chosen.prize.label,
+    prize_rarity: chosen.prize.rarity,
+    prize_image_url: chosen.prize.imageUrl ?? null,
+    campaign_id: spinCampaignId,
+    server_seed: serverSeed,
+    server_seed_hash: serverSeedHash,
+    nonce,
+    // Only on a 0022+ DB — including an unknown column would fail the insert.
+    ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
+  };
+  // seed_commitment (migration 0041) tells /verify whether this seed's hash was
+  // published before the spin. On a 0022+ DB that lacks 0041 PostgREST rejects
+  // the unknown column: retry without it rather than refund every spin.
+  let inserted = await sb
     .from("spins")
-    .insert({
-      fan_pass_id: pass.id,
-      creator_id: pass.creator_id,
-      wheel_id: wheelId,
-      fan_id: pass.fan_id,
-      prize_id: chosen.prize.id,
-      prize_label: chosen.prize.label,
-      prize_rarity: chosen.prize.rarity,
-      prize_image_url: chosen.prize.imageUrl ?? null,
-      campaign_id: spinCampaignId,
-      server_seed: serverSeed,
-      server_seed_hash: serverSeedHash,
-      nonce,
-      // Only on a 0022+ DB — including an unknown column would fail the insert.
-      ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
-    })
+    .insert({ ...spinInsert, ...(hasCommitRevealCols ? { seed_commitment: commitment } : {}) })
     .select("id, share_id")
     .single();
+  if (inserted.error && hasCommitRevealCols && /seed_commitment/.test(inserted.error.message)) {
+    inserted = await sb.from("spins").insert(spinInsert).select("id, share_id").single();
+  }
+  const { data: spinRow, error: spinErr } = inserted;
 
   // CRITICAL (revenue path): if the win couldn't be durably recorded, DON'T
   // return a "you won" the creator never sees and can't fulfil. Fail cleanly;
@@ -4694,15 +4707,18 @@ export async function getSpinVerification(
   if (!isSupabaseConfigured()) return mockGetSpinVerification(shareId);
 
   const sb = createServiceClient();
-  const { data } = await sb
+  const SELECT =
+    "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at";
+  let res = await sb
     .from("spins")
-    .select(
-      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at"
-    )
+    .select(`${SELECT}, seed_commitment`)
     .eq("share_id", shareId)
     .maybeSingle();
+  // Pre-0041 DB (no seed_commitment column yet): read the rest; the commitment
+  // is then unknown, which the page states rather than claiming more.
+  if (res.error) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
 
-  const row = data as {
+  const row = res.data as {
     prize_label: string;
     prize_rarity: Rarity;
     server_seed: string | null;
@@ -4710,10 +4726,12 @@ export async function getSpinVerification(
     nonce: number | null;
     client_seed: string | null;
     created_at: string;
+    seed_commitment?: string | null;
   } | null;
   if (!row || !row.server_seed || !row.server_seed_hash) return null;
 
   const hashOk = (await sha256Hex(row.server_seed)) === row.server_seed_hash;
+  const c = row.seed_commitment;
   return {
     prizeLabel: row.prize_label,
     rarity: row.prize_rarity,
@@ -4723,6 +4741,7 @@ export async function getSpinVerification(
     hashOk,
     at: row.created_at,
     clientSeed: row.client_seed,
+    commitment: c === "published" || c === "stored" || c === "fresh" ? c : null,
   };
 }
 
@@ -5147,7 +5166,8 @@ export async function setFanLeaderboardOptIn(
 /**
  * The public leaderboard for a creator (service role; fans aren't authed). When
  * the creator hasn't enabled it, returns enabled:false with no entries. Only
- * opted-in fans appear, and only their handle (never email/token/fan_id).
+ * fans who EXPLICITLY opted in appear (spinning never opts anyone in), and only
+ * their handle plus activity counts — never email/token/fan_id, and never spend.
  */
 export async function getLeaderboard(
   creatorIdOrSlug: string
@@ -5179,13 +5199,12 @@ export async function getLeaderboard(
 
   const { data: fanRows } = await sb
     .from("fans")
-    .select("id, handle, display_name")
+    .select("id, handle")
     .eq("creator_id", creatorId)
     .eq("leaderboard_opt_in", true);
   const fans = (fanRows ?? []) as {
     id: string;
     handle: string | null;
-    display_name: string | null;
   }[];
   if (fans.length === 0) return { enabled: true, creatorTitle, entries: [] };
 
@@ -5197,14 +5216,8 @@ export async function getLeaderboard(
     .in("fan_id", fanIds);
   const spins = (spinRows ?? []) as { fan_id: string; prize_rarity: Rarity }[];
 
-  const { data: grantRows } = await sb
-    .from("grants")
-    .select("fan_id, amount_cents")
-    .in("fan_id", fanIds);
-  const grants = (grantRows ?? []) as {
-    fan_id: string;
-    amount_cents: number;
-  }[];
+  // Deliberately NOT reading `grants` here: per-fan spend must never reach this
+  // public payload (see LeaderboardEntry in ./types).
 
   const spinCount = new Map<string, number>();
   const rareCount = new Map<string, number>();
@@ -5214,22 +5227,18 @@ export async function getLeaderboard(
       rareCount.set(s.fan_id, (rareCount.get(s.fan_id) ?? 0) + 1);
     }
   }
-  const spentCount = new Map<string, number>();
-  for (const g of grants) {
-    spentCount.set(g.fan_id, (spentCount.get(g.fan_id) ?? 0) + g.amount_cents);
-  }
-
-  const firstName = (name: string | null): string =>
-    (name ?? "").trim().split(/\s+/)[0] || "Fan";
 
   const entries: LeaderboardEntry[] = fans
+    // A fan with no board handle is skipped, never shown under their real
+    // name (display_name isn't even selected above).
+    .filter((f): f is typeof f & { handle: string } => !!f.handle?.trim())
     .map((f) => ({
-      handle: f.handle ?? firstName(f.display_name),
+      handle: f.handle.trim(),
       spins: spinCount.get(f.id) ?? 0,
-      spentCents: spentCount.get(f.id) ?? 0,
       rareWins: rareCount.get(f.id) ?? 0,
     }))
-    .sort((a, b) => b.spins - a.spins)
+    // Ranked by activity (spins, then rare wins) — never by money spent.
+    .sort((a, b) => b.spins - a.spins || b.rareWins - a.rareWins)
     .slice(0, 100) // sane upper bound for the public board
     .map((e, i) => ({ rank: i + 1, ...e }));
 
@@ -5263,16 +5272,15 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
 
   const { data: fanRows } = await sb
     .from("fans")
-    .select("id, handle, display_name")
+    .select("id, handle")
     .eq("creator_id", prof.id)
     .eq("leaderboard_opt_in", true);
-  const fans = (fanRows ?? []) as {
-    id: string;
-    handle: string | null;
-    display_name: string | null;
-  }[];
+  // Only fans with a board handle are surfaced; a real name is never read here.
+  const fans = ((fanRows ?? []) as { id: string; handle: string | null }[]).filter(
+    (f) => !!f.handle?.trim()
+  );
   if (fans.length === 0) return [];
-  const byId = new Map(fans.map((f) => [f.id, f]));
+  const byId = new Map(fans.map((f) => [f.id, f.handle!.trim()]));
 
   const { data: spinRows } = await sb
     .from("spins")
@@ -5282,22 +5290,15 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const firstName = (name: string | null): string =>
-    (name ?? "").trim().split(/\s+/)[0] || "Fan";
-
   return ((spinRows ?? []) as {
     fan_id: string;
     prize_label: string;
     prize_rarity: Rarity;
     created_at: string;
-  }[]).map((s) => {
-    const f = byId.get(s.fan_id);
-    return {
-      handle: f?.handle ?? firstName(f?.display_name ?? null),
-      prizeLabel: s.prize_label,
-      rarity: s.prize_rarity,
-      at: s.created_at,
-    };
+  }[]).flatMap((s) => {
+    const handle = byId.get(s.fan_id);
+    if (!handle) return [];
+    return [{ handle, prizeLabel: s.prize_label, rarity: s.prize_rarity, at: s.created_at }];
   });
 }
 
