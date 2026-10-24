@@ -1,5 +1,12 @@
 import assert from "node:assert";
-import { grantAmountCents, grantImpact, parseSpins } from "./grantImpact";
+import {
+  grantAmountCents,
+  grantImpact,
+  grantSaveAmount,
+  parseSpins,
+  perSpinText,
+  revenueChangeText,
+} from "./grantImpact";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -92,6 +99,67 @@ function check(label: string, cond: boolean) {
 {
   const i = grantImpact({ grantSpins: 5, spinsInput: "4", fanSpinsRemaining: -2 });
   check("negative balance treated as 0", !i.allowed && i.used === 5);
+}
+
+// --- grantSaveAmount: recorded revenue never drifts on an untouched price ---
+{
+  // $10.00 over 3 spins: the $/spin field shows "3.33" (3.33 x 3 = $9.99).
+  const g = { spins: 3, amountCents: 1000 };
+  const shown = perSpinText(g.spins, g.amountCents);
+  check("$/spin field shows the rounded price", shown === "3.33");
+
+  // Only the campaign changes: spins and price untouched.
+  const campaignOnly = grantSaveAmount({ grant: g, spinsInput: "3", perSpinInput: shown });
+  check("campaign-only edit keeps 1000c (not 999c)", campaignOnly === 1000);
+
+  // Field retyped to the same text still counts as untouched.
+  check("same text retyped keeps 1000c", grantSaveAmount({ grant: g, spinsInput: "3.0", perSpinInput: "3.33" }) === 1000);
+
+  // Spin count changes, price untouched: the field is "$ / spin", so the total
+  // scales at the grant's exact original rate (1000/3 per spin), not at 3.33.
+  check("3 -> 6 spins at the exact rate = 2000c", grantSaveAmount({ grant: g, spinsInput: "6", perSpinInput: shown }) === 2000);
+  check("3 -> 4 spins at the exact rate = 1333c", grantSaveAmount({ grant: g, spinsInput: "4", perSpinInput: shown }) === 1333);
+  check("3 -> 0 spins = 0c", grantSaveAmount({ grant: g, spinsInput: "0", perSpinInput: shown }) === 0);
+}
+
+// --- grantSaveAmount: a real price edit uses the typed price ----------------
+{
+  const g = { spins: 3, amountCents: 1000 };
+  check("price edit $4 x 3 = 1200c", grantSaveAmount({ grant: g, spinsInput: "3", perSpinInput: "4" }) === 1200);
+  check("price + spins edit $2.50 x 4 = 1000c", grantSaveAmount({ grant: g, spinsInput: "4", perSpinInput: "2.50" }) === 1000);
+  check("price cleared = free grant (0c)", grantSaveAmount({ grant: g, spinsInput: "3", perSpinInput: "" }) === 0);
+  check("price typed as the shown value (3.330) is untouched", grantSaveAmount({ grant: g, spinsInput: "3", perSpinInput: "3.330" }) === 1000);
+}
+
+// --- grantSaveAmount: grants with no derivable rate ---------------------------
+{
+  // Amount recorded on a 0-spin grant: the field starts empty; leave the amount.
+  const zeroSpin = { spins: 0, amountCents: 500 };
+  check("0-spin grant field starts empty", perSpinText(0, 500) === "");
+  check("0-spin grant, untouched, keeps 500c", grantSaveAmount({ grant: zeroSpin, spinsInput: "0", perSpinInput: "" }) === 500);
+  check("0-spin grant gaining spins keeps 500c (no rate to scale)", grantSaveAmount({ grant: zeroSpin, spinsInput: "2", perSpinInput: "" }) === 500);
+
+  // Free grant stays free when spins change.
+  const free = { spins: 5, amountCents: 0 };
+  check("free grant field starts empty", perSpinText(5, 0) === "");
+  check("free grant stays 0c", grantSaveAmount({ grant: free, spinsInput: "8", perSpinInput: "" }) === 0);
+  check("free grant priced at $1 x 8 = 800c", grantSaveAmount({ grant: free, spinsInput: "8", perSpinInput: "1" }) === 800);
+
+  // A sub-cent rate shows as "0.00" but must not wipe the amount when untouched.
+  const tiny = { spins: 3, amountCents: 1 };
+  check("tiny rate shows 0.00", perSpinText(3, 1) === "0.00");
+  check("tiny rate untouched keeps 1c", grantSaveAmount({ grant: tiny, spinsInput: "3", perSpinInput: "0.00" }) === 1);
+}
+
+// --- revenueChangeText: the preview line only shows for a real change -------
+{
+  const g = { spins: 3, amountCents: 1000 };
+  const line = (spinsInput: string, perSpinInput: string) =>
+    revenueChangeText(g.amountCents, grantSaveAmount({ grant: g, spinsInput, perSpinInput }));
+  check("no revenue line for a campaign-only edit", line("3", "3.33") === null);
+  check("revenue line for a price edit", line("3", "4") === "Recorded revenue goes from $10.00 to $12.00.");
+  check("revenue line when spins scale the total", line("6", "3.33") === "Recorded revenue goes from $10.00 to $20.00.");
+  check("no revenue line when a price edit lands on the same total", line("4", "2.50") === null);
 }
 
 console.log(`grantImpact: ${passed} checks passed`);

@@ -8,7 +8,7 @@ import { useClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { TagEditor } from "./ui";
-import { grantAmountCents, grantImpact, parseSpins } from "./grantImpact";
+import { grantImpact, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
 
 export default function FanDetailDrawer({
@@ -492,9 +492,7 @@ function GrantRow({
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [spins, setSpins] = useState(String(g.spins));
-  const [perSpin, setPerSpin] = useState(
-    g.spins > 0 && g.amountCents > 0 ? (g.amountCents / 100 / g.spins).toFixed(2) : ""
-  );
+  const [perSpin, setPerSpin] = useState(perSpinText(g.spins, g.amountCents));
   const [campaignId, setCampaignId] = useState(g.campaignId ?? "");
   const [busy, setBusy] = useState(false);
 
@@ -504,14 +502,16 @@ function GrantRow({
     if (editing) return;
     /* eslint-disable react-hooks/set-state-in-effect -- mirror persisted grant into the idle form */
     setSpins(String(g.spins));
-    setPerSpin(g.spins > 0 && g.amountCents > 0 ? (g.amountCents / 100 / g.spins).toFixed(2) : "");
+    setPerSpin(perSpinText(g.spins, g.amountCents));
     setCampaignId(g.campaignId ?? "");
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [g.spins, g.amountCents, g.campaignId, editing]);
 
   // Plain-language preview of what saving does to the fan's balance (UX-3).
   const impact = grantImpact({ grantSpins: g.spins, spinsInput: spins, fanSpinsRemaining });
-  const newAmountCents = grantAmountCents(perSpin, impact.newSpins);
+  // Recorded revenue only changes when the price or spin count really does.
+  const newAmountCents = grantSaveAmount({ grant: g, spinsInput: spins, perSpinInput: perSpin });
+  const revenueLine = revenueChangeText(g.amountCents, newAmountCents);
   const previewId = `grant-impact-${g.id}`;
 
   async function save() {
@@ -519,11 +519,15 @@ function GrantRow({
     setBusy(true);
     try {
       const nSpins = parseSpins(spins);
-      const amountCents = grantAmountCents(perSpin, nSpins);
       const res = await fetch(`/api/grants/${g.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spins: nSpins, amountCents, campaignId: campaignId || null }),
+        body: JSON.stringify({
+          spins: nSpins,
+          // Omitted when unchanged so the stored amount is never rewritten.
+          ...(newAmountCents !== g.amountCents ? { amountCents: newAmountCents } : {}),
+          campaignId: campaignId || null,
+        }),
       });
       if (res.ok) {
         toast("Grant updated", { tone: "success" });
@@ -604,9 +608,7 @@ function GrantRow({
         className={`text-xs text-pretty ${impact.allowed ? "text-muted" : "font-semibold text-[#f87171]"}`}
       >
         {impact.message}
-        {impact.allowed && newAmountCents !== g.amountCents && (
-          <> Recorded revenue goes from {formatCents(g.amountCents)} to {formatCents(newAmountCents)}.</>
-        )}
+        {impact.allowed && revenueLine && <> {revenueLine}</>}
       </p>
       <div className="flex gap-2">
         <button
