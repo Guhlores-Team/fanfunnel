@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 import { rateLimitShared } from "@/lib/rateLimit";
 
-/** Best-effort client identifier from the proxy header (falls back to "local"). */
-export function clientIp(req: Request): string {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-}
-
 /**
  * Apply a fixed-window rate limit. Returns a ready-to-send 429 response when the
  * caller is over the limit, or null when the request may proceed.
