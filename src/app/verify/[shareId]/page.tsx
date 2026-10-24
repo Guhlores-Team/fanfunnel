@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getSpinVerification } from "@/lib/data";
+import type { SeedCommitment } from "@/lib/data/types";
 import { brandVars } from "@/lib/theme";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 
@@ -11,6 +12,41 @@ const RARITY_LABEL: Record<string, string> = {
   rare: "Rare",
   epic: "Epic",
   legendary: "Legendary",
+};
+
+/**
+ * What a matching hash proves depends on HOW the spin got its seed. Only a
+ * `published` commitment carries the full "fixed before you spun" guarantee;
+ * the other cases say so instead of borrowing that claim.
+ */
+const COMMITMENT_COPY: Record<
+  SeedCommitment | "unknown",
+  { label: string; verdict: string; strong: boolean }
+> = {
+  published: {
+    label: "Published before your spin",
+    verdict:
+      "This result was committed before it was revealed — the seed's hash was on your spin page before you spun, and the seed wasn't swapped after the spin.",
+    strong: true,
+  },
+  stored: {
+    label: "Committed in a concurrent spin",
+    verdict:
+      "Two spins were in flight on this link. This seed was committed on the server before this spin consumed it, so it couldn't be chosen after seeing your request — but its hash reached you in the other spin's response, not on your spin page before this one.",
+    strong: true,
+  },
+  fresh: {
+    label: "Generated at spin time",
+    verdict:
+      "The seed and its hash are consistent, but this seed was generated when you spun and its hash was not published in advance — so this check alone doesn't prove the outcome was fixed before your spin.",
+    strong: false,
+  },
+  unknown: {
+    label: "Not recorded",
+    verdict:
+      "The seed and its hash are consistent, but this spin predates commitment tracking, so we can't show that its hash was published before you spun (older spins may also use an earlier RNG derivation).",
+    strong: false,
+  },
 };
 
 export const metadata: Metadata = { title: "Verify fairness · FanFunnel" };
@@ -51,6 +87,10 @@ export default async function VerifyPage({
   }
 
   const color = RARITY_COLORS[v.rarity];
+  const commitment = COMMITMENT_COPY[v.commitment ?? "unknown"];
+  // Green only when the hash matches AND the commitment was fixed in advance;
+  // a consistent-but-unpublished pair is amber; a mismatch is red.
+  const verdictColor = !v.hashOk ? "#ef4444" : commitment.strong ? "#22c55e" : "#f59e0b";
 
   return (
     <main
@@ -87,12 +127,8 @@ export default async function VerifyPage({
           <div
             className="mt-6 rounded-xl border p-4 text-center"
             style={{
-              borderColor: v.hashOk
-                ? "color-mix(in oklab, #22c55e 55%, transparent)"
-                : "color-mix(in oklab, #ef4444 55%, transparent)",
-              backgroundColor: v.hashOk
-                ? "color-mix(in oklab, #22c55e 12%, transparent)"
-                : "color-mix(in oklab, #ef4444 12%, transparent)",
+              borderColor: `color-mix(in oklab, ${verdictColor} 55%, transparent)`,
+              backgroundColor: `color-mix(in oklab, ${verdictColor} 12%, transparent)`,
             }}
           >
             <p className="text-sm font-bold text-ink">
@@ -100,13 +136,19 @@ export default async function VerifyPage({
             </p>
             <p className="mt-1 text-xs text-muted text-pretty">
               {v.hashOk
-                ? "This result was committed before it was revealed — the server seed wasn't swapped after the spin."
+                ? commitment.verdict
                 : "The revealed seed does not hash to the committed value. This commitment can't be trusted."}
             </p>
           </div>
 
-          {/* The committed hash + revealed seed + nonce. */}
+          {/* The commitment's provenance + hash + revealed seed + nonce. */}
           <dl className="mt-6 space-y-4 text-sm">
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted">
+                Commitment
+              </dt>
+              <dd className="mt-1 text-xs text-ink">{commitment.label}</dd>
+            </div>
             <div>
               <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted">
                 Committed hash (SHA-256)
@@ -142,17 +184,19 @@ export default async function VerifyPage({
           </dl>
 
           <p className="mt-6 text-[11px] leading-relaxed text-muted/80 text-pretty">
-            How it works: the server committed to this spin&rsquo;s random seed
-            <strong className="text-ink"> before</strong> you spun, by publishing
-            its SHA-256 hash on your spin page. Your browser contributed its own
-            seed, so neither side could dictate the outcome alone. The result was
+            How it works: for a committed spin the server fixes the random seed
+            <strong className="text-ink"> before</strong> you spin, by publishing
+            its SHA-256 hash on your spin page. Your browser contributes its own
+            seed, so neither side can dictate the outcome alone. The result is
             drawn from{" "}
             <code className="font-mono text-[10px] text-ink">
               SHA-256(serverSeed:clientSeed:nonce:block)
             </code>
-            . After the spin the seed was revealed; because re-hashing it
-            reproduces the committed hash, the outcome couldn&rsquo;t have been
-            changed after the fact. This verifies the
+            . After the spin the seed is revealed; when re-hashing it reproduces
+            a hash you saw <strong className="text-ink">before</strong> spinning,
+            the outcome couldn&rsquo;t have been changed after the fact. The
+            &ldquo;Commitment&rdquo; line above says whether that applies to this
+            spin. This verifies the
             <strong className="text-ink"> commitment&rsquo;s integrity</strong>;
             it does not re-simulate the full prize pool.
           </p>

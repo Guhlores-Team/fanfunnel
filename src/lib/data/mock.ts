@@ -31,6 +31,7 @@ import type {
   RedemptionItem,
   RedemptionStatus,
   ReferralOverview,
+  SeedCommitment,
   ShareCardData,
   SpinVerification,
   Webhook,
@@ -69,6 +70,8 @@ interface MockWin extends WonPrize {
   nonce: number;
   // Commit-reveal v2: the fan-contributed seed mixed into the RNG.
   clientSeed?: string | null;
+  // Whether the seed was pre-committed (absent on seeded demo wins).
+  commitment?: SeedCommitment | null;
 }
 
 // A per-wheel link under a fan: its own balance + which wheel/campaign it's for.
@@ -977,6 +980,9 @@ export async function mockSpin(token: string, clientSeed = "") {
   const committedSeed = pass.nextServerSeed;
   const committedHash = pass.nextServerSeedHash;
   const serverSeed = committedSeed ?? randomSeedHex();
+  // No CAS loser here (the claim + swap below is synchronous), so a seed is
+  // either the one the page showed or generated right now.
+  const commitment: SeedCommitment = committedSeed && committedHash ? "published" : "fresh";
   pass.nextServerSeed = nextServerSeed;
   pass.nextServerSeedHash = nextServerSeedHash;
   pass.spinsRemaining -= 1; // spend from this wheel's pass
@@ -1040,6 +1046,7 @@ export async function mockSpin(token: string, clientSeed = "") {
       serverSeedHash,
       nonce,
       clientSeed: clientSeed || null,
+      commitment,
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -2184,6 +2191,7 @@ export async function mockGetSpinVerification(
       hashOk,
       at: win.at,
       clientSeed: win.clientSeed ?? null,
+      commitment: win.commitment ?? null,
     };
   }
   return null;

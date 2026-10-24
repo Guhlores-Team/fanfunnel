@@ -1,4 +1,5 @@
 import { randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
+import type { SeedCommitment } from "./types";
 
 /** The pass's current commitment: the seed for its NEXT spin and its hash. */
 export type CommittedSeed = {
@@ -10,6 +11,8 @@ export type CommittedSeed = {
 export type ConsumedSeed = {
   serverSeed: string;
   serverSeedHash: string;
+  /** How the seed was obtained — recorded on the spin so /verify claims only what holds. */
+  commitment: SeedCommitment;
   nextServerSeed: string;
   nextServerSeedHash: string;
 };
@@ -38,6 +41,7 @@ export async function freshSeed(): Promise<ConsumedSeed> {
   return {
     serverSeed,
     serverSeedHash: await sha256Hex(serverSeed),
+    commitment: "fresh",
     nextServerSeed,
     nextServerSeedHash: await sha256Hex(nextServerSeed),
   };
@@ -63,6 +67,12 @@ export async function freshSeed(): Promise<ConsumedSeed> {
  *
  * A pass with no commitment yet (legacy row) gets a fresh seed for this spin
  * only; the swap guarantees no other spin shares it.
+ *
+ * Each outcome is tagged (`commitment`) so the verify page can state exactly
+ * which guarantee this spin has: the seed read on the first attempt was the one
+ * whose hash the fan's page showed (`published`); a seed re-read after losing
+ * the swap was committed by the concurrent winner (`stored`); a missing seed
+ * is generated now (`fresh`).
  */
 export async function consumeCommittedSeed(
   store: SeedStore,
@@ -73,9 +83,20 @@ export async function consumeCommittedSeed(
     const serverSeed = current.seed ?? randomSeedHex();
     const serverSeedHash =
       current.seed && current.hash ? current.hash : await sha256Hex(serverSeed);
+    const commitment: SeedCommitment = !current.seed
+      ? "fresh"
+      : attempt === 0
+        ? "published"
+        : "stored";
     const nextServerSeed = randomSeedHex();
     const nextServerSeedHash = await sha256Hex(nextServerSeed);
-    const consumed = { serverSeed, serverSeedHash, nextServerSeed, nextServerSeedHash };
+    const consumed: ConsumedSeed = {
+      serverSeed,
+      serverSeedHash,
+      commitment,
+      nextServerSeed,
+      nextServerSeedHash,
+    };
     if (await store.swap(current, { seed: nextServerSeed, hash: nextServerSeedHash })) {
       return consumed;
     }

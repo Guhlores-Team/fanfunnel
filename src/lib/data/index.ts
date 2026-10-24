@@ -723,7 +723,7 @@ async function recordClaimedSpin(
     console.error("spin: could not consume committed seed");
     return { error: "db_error" };
   }
-  const { serverSeed, serverSeedHash, nextServerSeedHash } = seeds;
+  const { serverSeed, serverSeedHash, nextServerSeedHash, commitment } = seeds;
   // The fan's clientSeed is mixed into the RNG so the server can't dictate the outcome.
   const rng = await makeFairRng(serverSeed, clientSeed, nonce);
 
@@ -787,26 +787,34 @@ async function recordClaimedSpin(
   const spinCampaignId: string | null = pass.campaign_id;
 
   // 4. Log the spin (against the fan account) + a pending redemption.
-  const { data: spinRow, error: spinErr } = await sb
+  const spinInsert = {
+    fan_pass_id: pass.id,
+    creator_id: pass.creator_id,
+    wheel_id: wheelId,
+    fan_id: pass.fan_id,
+    prize_id: chosen.prize.id,
+    prize_label: chosen.prize.label,
+    prize_rarity: chosen.prize.rarity,
+    prize_image_url: chosen.prize.imageUrl ?? null,
+    campaign_id: spinCampaignId,
+    server_seed: serverSeed,
+    server_seed_hash: serverSeedHash,
+    nonce,
+    // Only on a 0022+ DB — including an unknown column would fail the insert.
+    ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
+  };
+  // seed_commitment (migration 0039) tells /verify whether this seed's hash was
+  // published before the spin. On a 0022+ DB that lacks 0039 PostgREST rejects
+  // the unknown column: retry without it rather than refund every spin.
+  let inserted = await sb
     .from("spins")
-    .insert({
-      fan_pass_id: pass.id,
-      creator_id: pass.creator_id,
-      wheel_id: wheelId,
-      fan_id: pass.fan_id,
-      prize_id: chosen.prize.id,
-      prize_label: chosen.prize.label,
-      prize_rarity: chosen.prize.rarity,
-      prize_image_url: chosen.prize.imageUrl ?? null,
-      campaign_id: spinCampaignId,
-      server_seed: serverSeed,
-      server_seed_hash: serverSeedHash,
-      nonce,
-      // Only on a 0022+ DB — including an unknown column would fail the insert.
-      ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
-    })
+    .insert({ ...spinInsert, ...(hasCommitRevealCols ? { seed_commitment: commitment } : {}) })
     .select("id, share_id")
     .single();
+  if (inserted.error && hasCommitRevealCols && /seed_commitment/.test(inserted.error.message)) {
+    inserted = await sb.from("spins").insert(spinInsert).select("id, share_id").single();
+  }
+  const { data: spinRow, error: spinErr } = inserted;
 
   // CRITICAL (revenue path): if the win couldn't be durably recorded, DON'T
   // return a "you won" the creator never sees and can't fulfil. Fail cleanly;
@@ -4690,15 +4698,18 @@ export async function getSpinVerification(
   if (!isSupabaseConfigured()) return mockGetSpinVerification(shareId);
 
   const sb = createServiceClient();
-  const { data } = await sb
+  const SELECT =
+    "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at";
+  let res = await sb
     .from("spins")
-    .select(
-      "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at"
-    )
+    .select(`${SELECT}, seed_commitment`)
     .eq("share_id", shareId)
     .maybeSingle();
+  // Pre-0039 DB (no seed_commitment column yet): read the rest; the commitment
+  // is then unknown, which the page states rather than claiming more.
+  if (res.error) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
 
-  const row = data as {
+  const row = res.data as {
     prize_label: string;
     prize_rarity: Rarity;
     server_seed: string | null;
@@ -4706,10 +4717,12 @@ export async function getSpinVerification(
     nonce: number | null;
     client_seed: string | null;
     created_at: string;
+    seed_commitment?: string | null;
   } | null;
   if (!row || !row.server_seed || !row.server_seed_hash) return null;
 
   const hashOk = (await sha256Hex(row.server_seed)) === row.server_seed_hash;
+  const c = row.seed_commitment;
   return {
     prizeLabel: row.prize_label,
     rarity: row.prize_rarity,
@@ -4719,6 +4732,7 @@ export async function getSpinVerification(
     hashOk,
     at: row.created_at,
     clientSeed: row.client_seed,
+    commitment: c === "published" || c === "stored" || c === "fresh" ? c : null,
   };
 }
 
