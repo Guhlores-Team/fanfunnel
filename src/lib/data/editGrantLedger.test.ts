@@ -154,6 +154,140 @@ async function main() {
   check("amount-only edit leaves the aggregate alone", db.row("fans", fanId).spins_remaining === before);
   check("amount-only edit keeps the invariant", invariantHolds(fanId));
 
+  // 7. A spin lands between editGrant's read of the pass and its write. The
+  //    write must not be based on the stale read: the over-cut check has to
+  //    see the new balance (here it now fails: 1 left, cut asks for 2 back).
+  const racer = db.seed("fans", { creator_id: CREATOR, display_name: "Racer" });
+  const racePass = db.seed("fan_passes", {
+    token: "tok-race",
+    creator_id: CREATOR,
+    wheel_id: wheelA.id,
+    fan_id: racer.id,
+    spins_remaining: 2,
+    spins_granted_total: 5,
+  });
+  const raceGrant = db.seed("grants", {
+    creator_id: CREATOR,
+    fan_id: racer.id,
+    fan_pass_id: racePass.id,
+    spins: 5,
+    amount_cents: 500,
+  });
+  const raceId = racer.id as string;
+  let spinsInjected = 0;
+  db.beforeStatement = (stmt) => {
+    // Just before the first pass write: the fan spins (2 -> 1).
+    if (stmt.table === "fan_passes" && stmt.op === "update" && spinsInjected === 0) {
+      spinsInjected++;
+      assert.strictEqual(db.spin("tok-race"), 1, "interleaved spin");
+    }
+  };
+  const racedCut = await editGrant(raceGrant.id as string, { spins: 3 });
+  db.beforeStatement = null;
+  check("race: a spin was interleaved before the pass write", spinsInjected === 1);
+  check(
+    `race: cut 5->3 after the fan spun to 1 left is refused (got ${JSON.stringify(racedCut)})`,
+    "error" in racedCut && racedCut.error === "insufficient_spins"
+  );
+  check("race: grant row untouched (5)", db.row("grants", raceGrant.id as string).spins === 5);
+  check("race: pass keeps the spin that landed (1 of 5)", db.row("fan_passes", racePass.id as string).spins_remaining === 1);
+  check("race: pass granted_total untouched (5)", db.row("fan_passes", racePass.id as string).spins_granted_total === 5);
+  check("race: fans == SUM(passes)", invariantHolds(raceId));
+
+  // 8. Same interleaving on a grow: the write retries from the fresh balance
+  //    instead of overwriting the spin (1 + 1 = 2, not 2 + 1 = 3).
+  spinsInjected = 0;
+  db.beforeStatement = (stmt) => {
+    if (stmt.table === "fan_passes" && stmt.op === "update" && spinsInjected === 0) {
+      spinsInjected++;
+      assert.strictEqual(db.spin("tok-race"), 0, "interleaved spin");
+    }
+  };
+  const racedGrow = await editGrant(raceGrant.id as string, { spins: 6 });
+  db.beforeStatement = null;
+  check("race grow: accepted", "ok" in racedGrow);
+  check("race grow: grant row says 6", db.row("grants", raceGrant.id as string).spins === 6);
+  check(
+    `race grow: pass is 0 + 1 = 1, the interleaved spin is kept (got ${db.row("fan_passes", racePass.id as string).spins_remaining})`,
+    db.row("fan_passes", racePass.id as string).spins_remaining === 1
+  );
+  check("race grow: pass granted_total is 6", db.row("fan_passes", racePass.id as string).spins_granted_total === 6);
+  check("race grow: fans == SUM(passes)", invariantHolds(raceId));
+
+  // 9. A failing read after the pass write must not be able to zero the
+  //    aggregate: editGrant leaves fans.spins_remaining to the 0035 trigger and
+  //    never writes it itself.
+  let passWritten = false;
+  db.beforeStatement = (stmt) => {
+    if (stmt.table === "fan_passes" && stmt.op === "update") passWritten = true;
+    else if (passWritten && stmt.table === "fan_passes" && stmt.op === "select") {
+      return { message: "injected read failure" };
+    }
+  };
+  const sumBefore = db.sumPasses(raceId);
+  const afterFailedRead = await editGrant(raceGrant.id as string, { spins: 8 });
+  db.beforeStatement = null;
+  check("failed read: edit outcome is consistent with the rows", "ok" in afterFailedRead
+    ? db.row("grants", raceGrant.id as string).spins === 8 && db.sumPasses(raceId) === sumBefore + 2
+    : db.row("grants", raceGrant.id as string).spins === 6 && db.sumPasses(raceId) === sumBefore);
+  check(
+    `failed read: aggregate not zeroed (fan ${db.row("fans", raceId).spins_remaining}, sum ${db.sumPasses(raceId)})`,
+    invariantHolds(raceId) && (db.row("fans", raceId).spins_remaining as number) > 0
+  );
+  check(
+    "editGrant never writes fans.spins_remaining (the trigger owns it)",
+    !db.statements.some(
+      (s) => s.table === "fans" && s.op === "update" && s.payload != null && "spins_remaining" in (s.payload as object)
+    )
+  );
+
+  // 10. A grant on a pass that was deactivated (self-exclusion) moves its spins
+  //     via the fan's oldest ACTIVE pass; with no active pass at all a balance
+  //     change is refused rather than silently dropped.
+  const dormant = db.seed("fans", { creator_id: CREATOR, display_name: "Dormant" });
+  const deadPass = db.seed("fan_passes", {
+    token: "tok-dead",
+    creator_id: CREATOR,
+    wheel_id: wheelA.id,
+    fan_id: dormant.id,
+    is_active: false,
+    spins_remaining: 3,
+    spins_granted_total: 3,
+  });
+  const deadGrant = db.seed("grants", {
+    creator_id: CREATOR,
+    fan_id: dormant.id,
+    fan_pass_id: deadPass.id,
+    spins: 3,
+    amount_cents: 0,
+  });
+  const noPass = await editGrant(deadGrant.id as string, { spins: 5 });
+  check(
+    `no active pass: balance change refused (got ${JSON.stringify(noPass)})`,
+    "error" in noPass && noPass.error === "no_active_pass"
+  );
+  check("no active pass: grant untouched (3)", db.row("grants", deadGrant.id as string).spins === 3);
+  check("no active pass: dead pass untouched (3)", db.row("fan_passes", deadPass.id as string).spins_remaining === 3);
+  const amountOnly = await editGrant(deadGrant.id as string, { amountCents: 100 });
+  check("no active pass: amount-only edit still allowed", "ok" in amountOnly);
+  const livePass = db.seed("fan_passes", {
+    token: "tok-live",
+    creator_id: CREATOR,
+    wheel_id: wheelB.id,
+    fan_id: dormant.id,
+    spins_remaining: 1,
+    spins_granted_total: 1,
+  });
+  const viaLive = await editGrant(deadGrant.id as string, { spins: 5 });
+  check("dead pass grant: edit accepted once an active pass exists", "ok" in viaLive);
+  check("dead pass grant: +2 landed on the active pass (1 + 2 = 3)", db.row("fan_passes", livePass.id as string).spins_remaining === 3);
+  check("dead pass grant: inactive pass untouched (3)", db.row("fan_passes", deadPass.id as string).spins_remaining === 3);
+  check("dead pass grant: fans == SUM(active passes)", invariantHolds(dormant.id as string));
+
+  // 11. A non-finite spins patch is rejected before anything is read or written.
+  const nan = await editGrant(grantA.id as string, { spins: Number.NaN });
+  check("NaN spins rejected as invalid", "error" in nan && nan.error === "invalid");
+
   // --- Mock path: same rules -------------------------------------------------
   const m = mockCreatePass("MockEdited", 5, undefined, undefined, 500);
   mockAckFan(m.token);
@@ -197,6 +331,9 @@ async function main() {
     "mock grow: fans == SUM(passes)",
     afterGrow.spinsRemaining === afterGrow.passes.reduce((s, p) => s + p.spinsRemaining, 0)
   );
+
+  const mockNan = mockEditGrant(grant.id, { spins: Number.NaN });
+  check("mock NaN spins rejected as invalid", "error" in mockNan && mockNan.error === "invalid");
 
   console.log(`editGrantLedger.test: ${passed} checks passed`);
 }

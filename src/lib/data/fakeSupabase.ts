@@ -1,21 +1,34 @@
 // Test-only, in-memory stand-in for the slice of the supabase-js query builder
 // the fan spin ledger code in ./index.ts uses (from/select/insert/update/delete,
-// eq/is/not/order/limit, single/maybeSingle, auth.getUser, rpc). It models the
-// two database rules the ledger depends on:
+// eq/neq/is/not/order/limit, single/maybeSingle, auth.getUser, rpc). It models
+// the database rules the ledger depends on:
 //   - migration 0035's trigger: after any write to fan_passes, the owning fan's
 //     spins_remaining / spins_granted_total are reset to the SUM over that
 //     fan's ACTIVE passes;
 //   - the `fans.spins_remaining >= 0` check constraint (a statement that would
-//     violate it fails and leaves the tables untouched).
+//     violate it fails and leaves the tables untouched);
+//   - claim_spin's decrement, via `spin(token)`, so a test can interleave a
+//     fan's spin between two of the code's statements (`beforeStatement`).
 // Unit tests swap it in for `createClient()` with node:test's `mock.module`, so
-// the real Supabase code path can be exercised without a database.
+// the real Supabase code path can be exercised without a database. Anything it
+// does not model (an unknown rpc, limit on a write) throws instead of quietly
+// succeeding, so a test can't pass on behaviour the fake made up.
 
 export type Row = Record<string, unknown>;
 
-type Filter = (row: Row) => boolean;
+export type DbError = { message: string; code?: string };
 type Op = "select" | "insert" | "update" | "delete";
-type DbError = { message: string; code?: string };
+type Filter = { col: string; operator: string; value: unknown; test: (row: Row) => boolean };
 type Result = { data: unknown; error: DbError | null; count: number | null };
+
+/** What `beforeStatement` sees for each statement the code under test runs. */
+export type Statement = {
+  n: number; // 1-based position in the sequence of statements so far
+  table: string;
+  op: Op;
+  filters: Array<{ col: string; operator: string; value: unknown }>;
+  payload: Row | Row[] | null;
+};
 
 const TABLE_DEFAULTS: Record<string, Row> = {
   fans: {
@@ -49,7 +62,16 @@ export class FakeSupabase {
     campaign_packs: [],
     referrals: [],
   };
-  readonly rpcCalls: Array<{ name: string; args: unknown }> = [];
+  /** Every statement executed so far, in order (for assertions on sequencing). */
+  readonly statements: Statement[] = [];
+  /** rpc handlers a test registers; an unregistered rpc name throws. */
+  readonly rpcHandlers: Record<string, (args: unknown) => unknown> = {};
+  /**
+   * Runs before each statement. Return a DbError to make that statement fail
+   * (nothing is written); mutate the store (e.g. `spin(token)`) to model a
+   * concurrent writer landing between two of the code's round trips.
+   */
+  beforeStatement: ((stmt: Statement) => DbError | void) | null = null;
   private seq = 0;
 
   constructor(readonly userId: string) {}
@@ -81,6 +103,20 @@ export class FakeSupabase {
       .reduce((s, p) => s + (p[col] as number), 0);
   }
 
+  /**
+   * claim_spin (0035): spend one spin from the pass behind `token` and let the
+   * trigger resync the fan. Returns the pass's new balance, or null when the
+   * token is unknown/inactive/empty.
+   */
+  spin(token: string): number | null {
+    const p = this.rows("fan_passes").find((x) => x.token === token && x.is_active === true);
+    if (!p || (p.spins_remaining as number) <= 0) return null;
+    p.spins_remaining = (p.spins_remaining as number) - 1;
+    p.last_spin_at = new Date().toISOString();
+    this.syncAggregate(p.fan_id as string);
+    return p.spins_remaining as number;
+  }
+
   /** The object the code under test receives from `createClient()`. */
   client() {
     return {
@@ -89,8 +125,9 @@ export class FakeSupabase {
       },
       from: (table: string) => new Query(this, table),
       rpc: async (name: string, args: unknown) => {
-        this.rpcCalls.push({ name, args });
-        return { data: null, error: null };
+        const handler = this.rpcHandlers[name];
+        if (!handler) throw new Error(`fakeSupabase: rpc ${name} is not modelled`);
+        return { data: handler(args) ?? null, error: null };
       },
     };
   }
@@ -124,7 +161,23 @@ export class FakeSupabase {
   }
 
   /** Run one statement atomically: on a constraint failure nothing changes. */
-  execute(table: string, op: Op, filters: Filter[], payload: Row | Row[] | null): { rows: Row[]; error: DbError | null } {
+  execute(
+    table: string,
+    op: Op,
+    filters: Filter[],
+    payload: Row | Row[] | null
+  ): { rows: Row[]; error: DbError | null } {
+    const stmt: Statement = {
+      n: this.statements.length + 1,
+      table,
+      op,
+      filters: filters.map(({ col, operator, value }) => ({ col, operator, value })),
+      payload,
+    };
+    this.statements.push(stmt);
+    const injected = this.beforeStatement?.(stmt);
+    if (injected) return { rows: [], error: injected };
+
     const snapshot = Object.fromEntries(
       Object.entries(this.tables).map(([k, v]) => [k, v.map((r) => ({ ...r }))])
     );
@@ -136,7 +189,7 @@ export class FakeSupabase {
       affected = list.map((r) => this.withDefaults(table, r));
       this.rows(table).push(...affected);
     } else {
-      affected = this.rows(table).filter((r) => filters.every((f) => f(r)));
+      affected = this.rows(table).filter((r) => filters.every((f) => f.test(r)));
       if (op === "update") {
         for (const r of affected) {
           if (table === "fan_passes") touchedFans.add(r.fan_id as string);
@@ -194,20 +247,20 @@ class Query implements PromiseLike<Result> {
     return this;
   }
   eq(col: string, val: unknown) {
-    this.filters.push((r) => r[col] === val);
+    this.filters.push({ col, operator: "eq", value: val, test: (r) => r[col] === val });
     return this;
   }
   neq(col: string, val: unknown) {
-    this.filters.push((r) => r[col] !== val);
+    this.filters.push({ col, operator: "neq", value: val, test: (r) => r[col] !== val });
     return this;
   }
   is(col: string, val: null | boolean) {
-    this.filters.push((r) => (r[col] ?? null) === val);
+    this.filters.push({ col, operator: "is", value: val, test: (r) => (r[col] ?? null) === val });
     return this;
   }
   not(col: string, operator: string, val: unknown) {
     if (operator !== "is") throw new Error(`fakeSupabase: not(${operator}) unsupported`);
-    this.filters.push((r) => (r[col] ?? null) !== val);
+    this.filters.push({ col, operator: "not.is", value: val, test: (r) => (r[col] ?? null) !== val });
     return this;
   }
   order(col: string, opts?: { ascending?: boolean }) {
@@ -228,6 +281,9 @@ class Query implements PromiseLike<Result> {
   }
 
   private run(): Result {
+    if (this.op !== "select" && this.limitN != null) {
+      throw new Error(`fakeSupabase: limit() on ${this.op} is not modelled`);
+    }
     const { rows, error } = this.db.execute(this.table, this.op, this.filters, this.payload);
     if (error) return { data: null, error, count: null };
     let out = rows;

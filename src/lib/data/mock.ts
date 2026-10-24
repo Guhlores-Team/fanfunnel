@@ -1704,6 +1704,7 @@ export function mockEditGrant(
   let pass: MockPass | undefined;
   const fan = store.fans.get(grant.fanId);
   if (patch.spins != null) {
+    if (!Number.isFinite(patch.spins)) return { error: "invalid" };
     delta = Math.max(0, Math.floor(patch.spins)) - grant.spins;
     if (fan && delta !== 0) {
       ensurePasses(fan);
