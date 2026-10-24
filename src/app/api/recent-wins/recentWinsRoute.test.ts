@@ -1,0 +1,72 @@
+import assert from "node:assert";
+import { mockSetLeaderboardEnabled } from "@/lib/data/mock";
+import { GET } from "./[creatorId]/route";
+
+// Runs against the in-memory demo store (no Supabase env in unit tests).
+
+let passed = 0;
+function check(label: string, cond: boolean) {
+  assert.ok(cond, label);
+  passed++;
+}
+
+const call = (creatorId: string, headers: Record<string, string> = {}) =>
+  GET(new Request(`http://localhost/api/recent-wins/${creatorId}?k=0`, { headers }), {
+    params: Promise.resolve({ creatorId }),
+  });
+
+function parseCacheControl(v: string | null): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const part of (v ?? "").split(",")) {
+    const [k, val = ""] = part.trim().toLowerCase().split("=");
+    if (k) m.set(k, val);
+  }
+  return m;
+}
+
+async function main() {
+  mockSetLeaderboardEnabled(true);
+
+  const anon = await call("demo");
+  const anonBody = await anon.text();
+
+  // --- response shape is unchanged: { wins: RecentWin[] } -------------------
+  {
+    const json = JSON.parse(anonBody) as { wins?: unknown };
+    check("200 OK", anon.status === 200);
+    check("body is { wins: [...] }", Array.isArray(json.wins));
+    check("no extra top-level keys", Object.keys(json).join(",") === "wins");
+  }
+
+  // --- shared-cacheable: short CDN TTL + SWR, never per-browser long-lived --
+  {
+    const cc = parseCacheControl(anon.headers.get("cache-control"));
+    check("Cache-Control is public", cc.has("public"));
+    const sMax = Number(cc.get("s-maxage"));
+    check("s-maxage set and short (1..60s)", sMax >= 1 && sMax <= 60);
+    const swr = Number(cc.get("stale-while-revalidate"));
+    check("stale-while-revalidate set and bounded (<=60s)", swr >= 1 && swr <= 60);
+    check("no private/no-store", !cc.has("private") && !cc.has("no-store"));
+    check("no Set-Cookie on a shared-cached response", anon.headers.get("set-cookie") === null);
+  }
+
+  // --- nothing per-viewer: a signed-in-looking request gets identical bytes --
+  {
+    const authed = await call("demo", {
+      cookie: "sb-access-token=abc; ff_fan=xyz",
+      authorization: "Bearer someone",
+    });
+    check("same body regardless of viewer cookies/auth", (await authed.text()) === anonBody);
+    check(
+      "same Cache-Control regardless of viewer",
+      authed.headers.get("cache-control") === anon.headers.get("cache-control")
+    );
+  }
+
+  console.log(`recent-wins route: ${passed} checks passed`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
