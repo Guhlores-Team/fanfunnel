@@ -1867,3 +1867,29 @@ end;
 $$;
 
 revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated;
+
+-- ============================================================
+-- 0039_fan_pass_balance_check.sql
+-- ============================================================
+-- fan_passes.spins_remaining >= 0. Add NOT VALID (new writes checked), clamp any
+-- pre-existing negative rows to 0 (already unspendable), then VALIDATE.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'fan_passes_spins_remaining_check'
+       and conrelid = 'public.fan_passes'::regclass
+  ) then
+    alter table public.fan_passes
+      add constraint fan_passes_spins_remaining_check
+      check (spins_remaining >= 0) not valid;
+  end if;
+end;
+$$;
+
+update public.fan_passes
+   set spins_remaining = 0
+ where spins_remaining < 0;
+
+alter table public.fan_passes
+  validate constraint fan_passes_spins_remaining_check;
