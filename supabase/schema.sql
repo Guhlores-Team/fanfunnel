@@ -1,11 +1,14 @@
 -- ============================================================================
--- FanFunnel — BASE database schema (base tables, RLS, auth trigger, base RPCs).
+-- FanFunnel — COMPLETE database schema for a brand-new project: base tables,
+-- RLS, auth trigger, RPCs, plus every migration in `supabase/migrations/`
+-- folded in (through 0038). Idempotent: safe to run repeatedly, and running
+-- `supabase/migrations_combined.sql` on top is a no-op.
 --
--- ⚠ NOT COMPLETE ON ITS OWN. For a brand-new database run this file FIRST, then
---   run `supabase/migrations_combined.sql` (every migration, idempotent) on top.
---   This file omits later migrations (org seats / can_act_for, account settings,
---   locked server-only RPCs, atomic spin rate-limit, is_active enforcement, …);
---   applying it alone brings up a weaker, out-of-date schema.
+-- The three SQL build artifacts (this file, migrations_combined.sql and
+-- migrations/) are kept equivalent by `npm test` (sqlSync.test.ts, static) and
+-- `node scripts/db/schema-drift-check.mjs` (catalog diff on a local Postgres).
+-- When you add a migration, mirror its DDL here too (columns, policies, grants,
+-- triggers, comments — not just functions).
 --
 -- Multi-tenant model with three effective roles:
 --   * admin   — you / the agency. A SUPERSET of creator: owns its own wheels,
@@ -1396,48 +1399,60 @@ create policy prizes_write on public.prizes for all
 
 -- fans (view; edits via manage)
 drop policy if exists fans_rw on public.fans;
+drop policy if exists fans_select on public.fans;
 create policy fans_select on public.fans for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists fans_write on public.fans;
 create policy fans_write on public.fans for all
   using (public.can_act_for(creator_id, 'manage') or public.is_admin())
   with check (public.can_act_for(creator_id, 'manage') or public.is_admin());
 
 -- fan_passes (view; create/edit via grant — minting a link is part of granting)
 drop policy if exists fan_passes_rw on public.fan_passes;
+drop policy if exists fan_passes_select on public.fan_passes;
 create policy fan_passes_select on public.fan_passes for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists fan_passes_write on public.fan_passes;
 create policy fan_passes_write on public.fan_passes for all
   using (public.can_act_for(creator_id, 'grant') or public.is_admin())
   with check (public.can_act_for(creator_id, 'grant') or public.is_admin());
 
 -- campaigns (edit_wheel-level config)
 drop policy if exists campaigns_rw on public.campaigns;
+drop policy if exists campaigns_select on public.campaigns;
 create policy campaigns_select on public.campaigns for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists campaigns_write on public.campaigns;
 create policy campaigns_write on public.campaigns for all
   using (public.can_act_for(creator_id, 'manage') or public.is_admin())
   with check (public.can_act_for(creator_id, 'manage') or public.is_admin());
 
 -- redemptions (fulfil)
 drop policy if exists redemptions_rw on public.redemptions;
+drop policy if exists redemptions_select on public.redemptions;
 create policy redemptions_select on public.redemptions for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists redemptions_write on public.redemptions;
 create policy redemptions_write on public.redemptions for all
   using (public.can_act_for(creator_id, 'fulfil') or public.is_admin())
   with check (public.can_act_for(creator_id, 'fulfil') or public.is_admin());
 
 -- grants (grant — money in)
 drop policy if exists grants_rw on public.grants;
+drop policy if exists grants_select on public.grants;
 create policy grants_select on public.grants for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists grants_write on public.grants;
 create policy grants_write on public.grants for all
   using (public.can_act_for(creator_id, 'grant') or public.is_admin())
   with check (public.can_act_for(creator_id, 'grant') or public.is_admin());
 
 -- messages (chat)
 drop policy if exists messages_rw on public.messages;
+drop policy if exists messages_select on public.messages;
 create policy messages_select on public.messages for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists messages_write on public.messages;
 create policy messages_write on public.messages for all
   using (public.can_act_for(creator_id, 'chat') or public.is_admin())
   with check (public.can_act_for(creator_id, 'chat') or public.is_admin());
@@ -1940,6 +1955,13 @@ begin
 end;
 $$;
 
+-- Migration 0028: the in-row fixed-window rate-limit counter that claim_spin
+-- below reads under FOR UPDATE. Without these columns every spin errors on a
+-- database built from this file alone.
+alter table public.fans
+  add column if not exists rl_window_start timestamptz,
+  add column if not exists rl_count int not null default 0;
+
 create or replace function public.claim_spin(p_token text)
 returns integer
 language plpgsql
@@ -2087,6 +2109,15 @@ returns void language sql security definer set search_path = public as $$
    where id = auth.uid();
 $$;
 
+-- Migration 0025: per-account notification preferences (default on) that
+-- set_notification_prefs below writes.
+alter table public.profiles
+  add column if not exists notify_new_spin boolean not null default true;
+alter table public.profiles
+  add column if not exists notify_low_balance boolean not null default true;
+alter table public.profiles
+  add column if not exists notify_messages boolean not null default true;
+
 create or replace function public.set_notification_prefs(
   p_new_spin boolean, p_low_balance boolean, p_messages boolean
 )
@@ -2097,6 +2128,9 @@ returns void language sql security definer set search_path = public as $$
          notify_messages    = coalesce(p_messages, notify_messages)
    where id = auth.uid();
 $$;
+
+grant execute on function public.set_display_name(text) to authenticated;
+grant execute on function public.set_notification_prefs(boolean, boolean, boolean) to authenticated;
 
 create or replace function public.sync_fan_spin_aggregate()
 returns trigger
@@ -2157,6 +2191,8 @@ begin
 end;
 $$;
 
+grant execute on function public.admin_reserve_account_deletion(uuid) to authenticated;
+
 create or replace function public.current_user_active()
 returns boolean
 language sql
@@ -2167,6 +2203,54 @@ as $$
     select 1 from public.profiles where id = auth.uid() and is_active
   );
 $$;
+
+-- Migration 0032: the remaining creator-owned tables gate the self branch on
+-- current_user_active(), so a suspended creator loses read and write access.
+-- The earlier *_rw policies above are the pre-0032 shape; these replace them.
+drop policy if exists dm_templates_rw on public.dm_templates;
+create policy dm_templates_rw on public.dm_templates for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists campaign_packs_rw on public.campaign_packs;
+create policy campaign_packs_rw on public.campaign_packs for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists prize_templates_rw on public.prize_templates;
+create policy prize_templates_rw on public.prize_templates for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists wheel_templates_rw on public.wheel_templates;
+create policy wheel_templates_rw on public.wheel_templates for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists happy_hours_rw on public.happy_hours;
+create policy happy_hours_rw on public.happy_hours for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists wishlists_rw on public.wishlists;
+create policy wishlists_rw on public.wishlists for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists referrals_rw on public.referrals;
+create policy referrals_rw on public.referrals for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists webhooks_rw on public.webhooks;
+create policy webhooks_rw on public.webhooks for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
+
+drop policy if exists autopilot_dismissals_rw on public.autopilot_dismissals;
+create policy autopilot_dismissals_rw on public.autopilot_dismissals for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
 
 create or replace function public.import_fans(p_rows jsonb)
 returns void language plpgsql security definer set search_path = public as $$
@@ -2220,6 +2304,8 @@ begin
     from jsonb_array_elements(p_rows) r;
 end;
 $$;
+
+grant execute on function public.import_fans(jsonb) to authenticated;
 
 
 -- ============================================================
@@ -2295,6 +2381,20 @@ create trigger trg_sync_fan_spin_aggregate
      or update of spins_remaining, spins_granted_total, is_active, fan_id
   on public.fan_passes
   for each row execute function public.sync_fan_spin_aggregate();
+
+-- Migrations 0027 / 0028 / 0030 / 0035: server-only RPCs. Without an explicit
+-- grant a SECURITY DEFINER function is executable by PUBLIC, i.e. callable by
+-- any anon/authenticated PostgREST client. These are only ever invoked through
+-- the service-role client, so lock them to service_role.
+revoke execute on function public.claim_spin(text) from public, anon, authenticated;
+grant  execute on function public.claim_spin(text) to service_role;
+revoke execute on function public.credit_pass_spins(uuid, int) from public, anon, authenticated;
+grant  execute on function public.credit_pass_spins(uuid, int) to service_role;
+revoke execute on function public.org_add_creator(uuid, text) from public, anon, authenticated;
+grant  execute on function public.org_add_creator(uuid, text) to service_role;
+
+-- Migration 0036: pipeline probe marker (no-op comment).
+comment on schema public is 'fanfunnel — migration pipeline verified (0036 probe)';
 
 -- Compensating rollback for a claimed-but-unrecorded spin (migration 0038).
 create or replace function public.rollback_claimed_spin(p_token text, p_prize_id uuid)
