@@ -62,6 +62,57 @@ export async function creatorJourney(page, { step, assert }) {
     assert(/saved|all changes saved/i.test(body), "save confirmed in the UI");
   });
 
+  await step("wheel editor: invalid brand color blocks save with an accessible error", async () => {
+    // Let the previous step's save land first: its response replaces the editor
+    // state and would wipe an edit made while it was in flight.
+    await page
+      .waitForFunction(() => /all changes saved|^saved$/im.test(document.body.innerText) && !/unsaved changes|saving…/i.test(document.body.innerText))
+      .catch(() => {});
+    const hex = page.getByRole("textbox", { name: "Brand color hex" });
+    const original = await hex.inputValue();
+    await hex.fill("nope");
+    await hex.blur();
+    await page
+      .waitForFunction(() => document.querySelector('[aria-label="Brand color hex"]')?.getAttribute("aria-invalid") === "true")
+      .catch(() => {});
+    assert((await hex.getAttribute("aria-invalid")) === "true", "hex field marked aria-invalid");
+    const errId = await hex.getAttribute("aria-describedby");
+    assert(errId, "hex field points at its error text");
+    const errText = await page.locator(`[id="${errId}"]`).innerText();
+    assert(/hex color/i.test(errText), `error text explains the format (saw "${errText}")`);
+
+    await page.locator("button:has-text('Save wheel')").first().click();
+    await page.waitForFunction(() => /can't save yet/i.test(document.body.innerText)).catch(() => {});
+    assert(/can't save yet/i.test(await page.locator('[role="alert"]').allInnerTexts().then((t) => t.join(" "))), "save blocked with a summary");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brand color hex").catch(() => {});
+    assert(
+      (await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))) === "Brand color hex",
+      "focus moved to the invalid field",
+    );
+
+    // #RGB shorthand is accepted and normalized to lowercase #rrggbb on blur.
+    await hex.fill("#ABC");
+    await hex.blur();
+    await page
+      .waitForFunction(() => document.querySelector('[aria-label="Brand color hex"]')?.value === "#aabbcc")
+      .catch(() => {});
+    assert((await hex.inputValue()) === "#aabbcc", "shorthand normalized on blur");
+    assert((await hex.getAttribute("aria-invalid")) === null, "error cleared once valid");
+    const save = page.locator("button:has-text('Save wheel')").first();
+    await save.click();
+    await page.waitForFunction(() => !/unsaved changes/i.test(document.body.innerText)).catch(() => {});
+    const after = await page.locator("body").innerText();
+    assert(!/unsaved changes|can't save yet/i.test(after), "valid color saves");
+
+    // Put the original brand color back so later steps see the usual theme.
+    await hex.fill(original || "#ec4899");
+    await hex.blur();
+    if (await save.isEnabled()) {
+      await save.click();
+      await page.waitForFunction(() => !/unsaved changes/i.test(document.body.innerText)).catch(() => {});
+    }
+  });
+
   await step("fans: create an account", async () => {
     await clickTab(page, "Fans");
     const name = page.locator("input.ff-input").first();
