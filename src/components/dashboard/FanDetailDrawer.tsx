@@ -8,6 +8,7 @@ import { useClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { TagEditor } from "./ui";
+import { grantAmountCents, grantImpact, parseSpins } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
 
 export default function FanDetailDrawer({
@@ -367,7 +368,13 @@ export default function FanDetailDrawer({
                 ) : (
                   <ul className="mt-3 space-y-2">
                     {detail.grants.map((g) => (
-                      <GrantRow key={g.id} g={g} campaigns={campaigns} onSaved={reload} />
+                      <GrantRow
+                        key={g.id}
+                        g={g}
+                        fanSpinsRemaining={detail.spinsRemaining}
+                        campaigns={campaigns}
+                        onSaved={reload}
+                      />
                     ))}
                   </ul>
                 )}
@@ -473,10 +480,12 @@ function LinkRow({ token }: { token: string }) {
  *  Editing spins adjusts the fan's balance server-side; we refetch on save. */
 function GrantRow({
   g,
+  fanSpinsRemaining,
   campaigns,
   onSaved,
 }: {
   g: Grant;
+  fanSpinsRemaining: number;
   campaigns: { id: string; name: string }[];
   onSaved: () => void | Promise<void>;
 }) {
@@ -500,11 +509,17 @@ function GrantRow({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [g.spins, g.amountCents, g.campaignId, editing]);
 
+  // Plain-language preview of what saving does to the fan's balance (UX-3).
+  const impact = grantImpact({ grantSpins: g.spins, spinsInput: spins, fanSpinsRemaining });
+  const newAmountCents = grantAmountCents(perSpin, impact.newSpins);
+  const previewId = `grant-impact-${g.id}`;
+
   async function save() {
+    if (!impact.allowed) return;
     setBusy(true);
     try {
-      const nSpins = Math.max(0, Math.floor(Number(spins) || 0));
-      const amountCents = perSpin ? Math.round(Number(perSpin) * nSpins * 100) : 0;
+      const nSpins = parseSpins(spins);
+      const amountCents = grantAmountCents(perSpin, nSpins);
       const res = await fetch(`/api/grants/${g.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -550,6 +565,8 @@ function GrantRow({
             min={0}
             value={spins}
             onChange={(e) => setSpins(e.target.value)}
+            aria-describedby={previewId}
+            aria-invalid={!impact.allowed || undefined}
             className="ff-input tnum w-20"
           />
         </label>
@@ -581,10 +598,20 @@ function GrantRow({
           </select>
         </label>
       </div>
+      <p
+        id={previewId}
+        role="status"
+        className={`text-xs text-pretty ${impact.allowed ? "text-muted" : "font-semibold text-[#f87171]"}`}
+      >
+        {impact.message}
+        {impact.allowed && newAmountCents !== g.amountCents && (
+          <> Recorded revenue goes from {formatCents(g.amountCents)} to {formatCents(newAmountCents)}.</>
+        )}
+      </p>
       <div className="flex gap-2">
         <button
           onClick={save}
-          disabled={busy}
+          disabled={busy || !impact.allowed}
           className="btn-brand rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
         >
           {busy ? "Saving…" : "Save"}
