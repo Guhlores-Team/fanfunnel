@@ -350,7 +350,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   if (!isSupabaseConfigured()) return mockGetFanPass(token);
 
   const sb = createServiceClient();
-  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at)`;
+  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, leaderboard_opt_in)`;
   const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`;
   // Per-wheel balance lives on the pass (migration 0020). If that column isn't
   // present yet (migration not run), fall back to the legacy select so the fan
@@ -406,6 +406,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       spins_granted_total: number;
       referral_code: string | null;
       acked_at: string | null;
+      leaderboard_opt_in?: boolean | null;
     } | null;
     creator: {
       display_name: string | null;
@@ -532,6 +533,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     tipUrl: pass.creator?.tip_url ?? null,
     creatorId: pass.creator_id,
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
+    // Default false: anything other than an explicit true means "not opted in".
+    leaderboardOptIn: pass.fan.leaderboard_opt_in === true,
     creatorNote: pass.creator?.creator_note ?? null,
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
     nextSpinHash,
@@ -707,15 +710,17 @@ export async function spin(
     return { error: "no_prizes" };
   }
 
-  // Persist the fan's next pity counter. Spinning also auto-opts the fan into
-  // the leaderboard (handle-only; the board only shows when the CREATOR enables
-  // it, so this never leaks anything until the creator turns it on).
+  // Persist the fan's next pity counter. Spinning must NOT touch
+  // `leaderboard_opt_in`: appearing on the creator's public, unauthenticated
+  // leaderboard is the fan's own decision, made with the toggle on their spin
+  // page (POST /api/leaderboard/opt-in). It used to be set to true here, which
+  // put every fan who spun on a public page they never consented to.
   const { error: pityErr } = await sb
     .from("fans")
-    .update({ pity_counter: chosen.nextPityCounter, leaderboard_opt_in: true })
+    .update({ pity_counter: chosen.nextPityCounter })
     .eq("id", pass.fan_id);
   if (pityErr) {
-    console.error("spin: pity/leaderboard update failed", pityErr.message);
+    console.error("spin: pity update failed", pityErr.message);
   }
 
   // 3b. Per-wheel attribution: the spin belongs to THIS pass's campaign (the
@@ -5086,7 +5091,8 @@ export async function setFanLeaderboardOptIn(
 /**
  * The public leaderboard for a creator (service role; fans aren't authed). When
  * the creator hasn't enabled it, returns enabled:false with no entries. Only
- * opted-in fans appear, and only their handle (never email/token/fan_id).
+ * fans who EXPLICITLY opted in appear (spinning never opts anyone in), and only
+ * their handle plus activity counts — never email/token/fan_id, and never spend.
  */
 export async function getLeaderboard(
   creatorIdOrSlug: string
@@ -5118,13 +5124,12 @@ export async function getLeaderboard(
 
   const { data: fanRows } = await sb
     .from("fans")
-    .select("id, handle, display_name")
+    .select("id, handle")
     .eq("creator_id", creatorId)
     .eq("leaderboard_opt_in", true);
   const fans = (fanRows ?? []) as {
     id: string;
     handle: string | null;
-    display_name: string | null;
   }[];
   if (fans.length === 0) return { enabled: true, creatorTitle, entries: [] };
 
@@ -5136,14 +5141,8 @@ export async function getLeaderboard(
     .in("fan_id", fanIds);
   const spins = (spinRows ?? []) as { fan_id: string; prize_rarity: Rarity }[];
 
-  const { data: grantRows } = await sb
-    .from("grants")
-    .select("fan_id, amount_cents")
-    .in("fan_id", fanIds);
-  const grants = (grantRows ?? []) as {
-    fan_id: string;
-    amount_cents: number;
-  }[];
+  // Deliberately NOT reading `grants` here: per-fan spend must never reach this
+  // public payload (see LeaderboardEntry in ./types).
 
   const spinCount = new Map<string, number>();
   const rareCount = new Map<string, number>();
@@ -5153,22 +5152,18 @@ export async function getLeaderboard(
       rareCount.set(s.fan_id, (rareCount.get(s.fan_id) ?? 0) + 1);
     }
   }
-  const spentCount = new Map<string, number>();
-  for (const g of grants) {
-    spentCount.set(g.fan_id, (spentCount.get(g.fan_id) ?? 0) + g.amount_cents);
-  }
-
-  const firstName = (name: string | null): string =>
-    (name ?? "").trim().split(/\s+/)[0] || "Fan";
 
   const entries: LeaderboardEntry[] = fans
+    // A fan with no board handle is skipped, never shown under their real
+    // name (display_name isn't even selected above).
+    .filter((f): f is typeof f & { handle: string } => !!f.handle?.trim())
     .map((f) => ({
-      handle: f.handle ?? firstName(f.display_name),
+      handle: f.handle.trim(),
       spins: spinCount.get(f.id) ?? 0,
-      spentCents: spentCount.get(f.id) ?? 0,
       rareWins: rareCount.get(f.id) ?? 0,
     }))
-    .sort((a, b) => b.spins - a.spins)
+    // Ranked by activity (spins, then rare wins) — never by money spent.
+    .sort((a, b) => b.spins - a.spins || b.rareWins - a.rareWins)
     .slice(0, 100) // sane upper bound for the public board
     .map((e, i) => ({ rank: i + 1, ...e }));
 
@@ -5202,16 +5197,15 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
 
   const { data: fanRows } = await sb
     .from("fans")
-    .select("id, handle, display_name")
+    .select("id, handle")
     .eq("creator_id", prof.id)
     .eq("leaderboard_opt_in", true);
-  const fans = (fanRows ?? []) as {
-    id: string;
-    handle: string | null;
-    display_name: string | null;
-  }[];
+  // Only fans with a board handle are surfaced; a real name is never read here.
+  const fans = ((fanRows ?? []) as { id: string; handle: string | null }[]).filter(
+    (f) => !!f.handle?.trim()
+  );
   if (fans.length === 0) return [];
-  const byId = new Map(fans.map((f) => [f.id, f]));
+  const byId = new Map(fans.map((f) => [f.id, f.handle!.trim()]));
 
   const { data: spinRows } = await sb
     .from("spins")
@@ -5221,22 +5215,15 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const firstName = (name: string | null): string =>
-    (name ?? "").trim().split(/\s+/)[0] || "Fan";
-
   return ((spinRows ?? []) as {
     fan_id: string;
     prize_label: string;
     prize_rarity: Rarity;
     created_at: string;
-  }[]).map((s) => {
-    const f = byId.get(s.fan_id);
-    return {
-      handle: f?.handle ?? firstName(f?.display_name ?? null),
-      prizeLabel: s.prize_label,
-      rarity: s.prize_rarity,
-      at: s.created_at,
-    };
+  }[]).flatMap((s) => {
+    const handle = byId.get(s.fan_id);
+    if (!handle) return [];
+    return [{ handle, prizeLabel: s.prize_label, rarity: s.prize_rarity, at: s.created_at }];
   });
 }
 

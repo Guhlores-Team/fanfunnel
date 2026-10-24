@@ -2336,3 +2336,12 @@ update public.fan_passes
 
 alter table public.fan_passes
   validate constraint fan_passes_spins_remaining_check;
+
+-- Fan leaderboard privacy (migration 0040): appearing on the public leaderboard
+-- is explicit opt-in only. The column already defaults to false; this reset is a
+-- no-op on a fresh DB and clears the flags spin() used to set on an existing one
+-- (only where the fan has no board handle — a handle marks a deliberate opt-in).
+update public.fans
+   set leaderboard_opt_in = false
+ where leaderboard_opt_in
+   and (handle is null or btrim(handle) = '');

@@ -19,8 +19,15 @@ export interface ShareCardData { creatorTitle: string; prizeLabel: string; rarit
 export interface WishlistItem { id: string; prizeLabel: string; rarity: Rarity; at: string }
 /** Phase 3: aggregated wishlist demand for a prize, for the creator. */
 export interface WishlistDemand { prizeLabel: string; rarity: Rarity; count: number; fanNames: string[] }
-/** Phase 3: a single row in a public leaderboard. */
-export interface LeaderboardEntry { rank: number; handle: string; spins: number; spentCents: number; rareWins: number }
+/**
+ * Phase 3: a single row in a public leaderboard.
+ *
+ * Privacy: this shape is served unauthenticated from /api/leaderboard/[creatorId]
+ * and rendered on a public page, so it carries NO spend/revenue figure and no
+ * fan id, email or token — only the handle the fan chose and activity counts.
+ * Ranking is by spins, then rare wins. Don't add a money field here.
+ */
+export interface LeaderboardEntry { rank: number; handle: string; spins: number; rareWins: number }
 /** Phase 3: the leaderboard as shown to fans. */
 export interface LeaderboardView { enabled: boolean; creatorTitle: string; entries: LeaderboardEntry[] }
 /** Phase 3: a scheduled happy-hour rare-boost window. */
@@ -63,6 +70,12 @@ export interface FanPassView {
   creatorId?: string;
   /** Phase 7: whether the creator's leaderboard is on (embed it inline if so). */
   leaderboardEnabled?: boolean;
+  /**
+   * Whether THIS fan has explicitly consented to appear on that public board.
+   * Always false until the fan ticks the toggle on their spin page — spinning
+   * never opts them in.
+   */
+  leaderboardOptIn?: boolean;
   /** Phase 8C: optional personal note + avatar from the creator (mini-hero). */
   creatorNote?: string | null;
   creatorAvatarUrl?: string | null;

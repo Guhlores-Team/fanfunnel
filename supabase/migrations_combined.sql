@@ -1893,3 +1893,17 @@ update public.fan_passes
 
 alter table public.fan_passes
   validate constraint fan_passes_spins_remaining_check;
+
+-- ============================================================
+-- 0040_leaderboard_optin_reset.sql
+-- ============================================================
+-- Fan leaderboard privacy: spin() used to set fans.leaderboard_opt_in = true on
+-- a fan's first spin, so every fan who ever spun is marked as consenting to a
+-- public page they never saw a control for. Clear those flags — only where the
+-- fan has no board handle (opting in now requires one, so a handle marks a
+-- deliberate choice); fans re-consent via the toggle on their spin page.
+-- Re-run safe. No schema/RLS/grant change.
+update public.fans
+   set leaderboard_opt_in = false
+ where leaderboard_opt_in
+   and (handle is null or btrim(handle) = '');
