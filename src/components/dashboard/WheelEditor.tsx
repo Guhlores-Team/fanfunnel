@@ -28,6 +28,7 @@ import {
 import {
   MAX_PRIZE_LABEL,
   MIN_WHEEL_PRIZES,
+  colorFromInput,
   normalizeHex,
   validateWheelDraft,
   type ValidationIssue,
@@ -599,7 +600,7 @@ export default function WheelEditor({
                     onChange={(e) =>
                       setWheel({
                         ...wheel,
-                        labelColor: e.target.value ? e.target.value : undefined,
+                        labelColor: colorFromInput(e.target.value),
                       })
                     }
                     aria-label="Prize label color hex"
@@ -925,7 +926,8 @@ export default function WheelEditor({
                       value={swatch}
                       spellCheck={false}
                       autoComplete="off"
-                      onChange={(e) => updatePrize(p.id, { color: e.target.value })}
+                      // Cleared = back to the rarity color (unset), not "".
+                      onChange={(e) => updatePrize(p.id, { color: colorFromInput(e.target.value) })}
                       aria-label="Prize color hex"
                       {...fieldProps(k("color"), pe.color, () => {
                         const n = normalizeHex(p.color);

@@ -57,6 +57,15 @@ function check(label: string, cond: boolean) {
     check("negative stock → 400 bad_stock", r.status === 400 && r.data.error === "bad_stock");
   }
 
+  // A cleared prize color ("") is unset, not invalid: the editor allows it.
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, color: "" } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("empty prize color → 200", r.status === 200);
+    const saved = r.data.wheel as { prizes: { color?: string | null }[] };
+    check("empty prize color saved as unset", saved.prizes[0].color == null);
+  }
+
   // Valid shorthand is accepted and normalized; the response shape is unchanged.
   {
     const r = await put({ wheel: { ...base, brandColor: "#ABC", labelColor: "#FFF" } });

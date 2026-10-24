@@ -24,8 +24,14 @@ export function normalizeHex(value: unknown): string | null {
   return "#" + h;
 }
 
+/** Editor onChange for an optional color field: a cleared (or blank) field
+ *  means "unset" (rarity default / auto), not an invalid "" value. */
+export function colorFromInput(value: string): string | undefined {
+  return value.trim() === "" ? undefined : value;
+}
+
 export function colorError(value: unknown, opts: { optional?: boolean } = {}): string | null {
-  if (value == null || value === "") {
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
     return opts.optional ? null : "Enter a hex color, like #ec4899.";
   }
   return normalizeHex(value) ? null : "Use a hex color: # plus 3 or 6 digits (0–9, a–f).";
@@ -121,14 +127,16 @@ export function validateWheelDraft(wheel: WheelConfig): WheelDraftErrors {
 /**
  * Server-side check for PUT /api/wheel: reject invalid colors and stock, and
  * return a copy with every color normalized to lowercase `#rrggbb`. Unset colors
- * stay unset (the data layer applies its defaults). Weight/label/rarity limits
+ * (missing, null, or "" from a cleared field) stay unset (the data layer
+ * applies its defaults). Weight/label/rarity limits
  * stay where the route already enforces them.
  */
 export function normalizeWheelPayload(
   config: WheelConfig,
 ): { config: WheelConfig } | { error: "bad_color" | "bad_stock" } {
-  const color = (v: unknown): string | null | undefined | false => {
-    if (v == null) return v as null | undefined;
+  // undefined = unset (null, missing, or "" from a cleared field); false = invalid.
+  const color = (v: unknown): string | undefined | false => {
+    if (v == null || (typeof v === "string" && v.trim() === "")) return undefined;
     return normalizeHex(v) ?? false;
   };
 
@@ -141,11 +149,9 @@ export function normalizeWheelPayload(
     const c = color(p.color);
     if (c === false) return { error: "bad_color" };
     if (stockError(p.stock)) return { error: "bad_stock" };
-    prizes.push(c == null ? { ...p } : { ...p, color: c });
+    prizes.push({ ...p, color: c });
   }
 
-  const next: WheelConfig = { ...config, prizes };
-  if (brandColor != null) next.brandColor = brandColor;
-  if (labelColor != null) next.labelColor = labelColor;
+  const next: WheelConfig = { ...config, brandColor, labelColor, prizes };
   return { config: next };
 }

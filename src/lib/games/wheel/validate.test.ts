@@ -9,6 +9,7 @@ import {
   labelError,
   validateWheelDraft,
   normalizeWheelPayload,
+  colorFromInput,
 } from "./validate";
 
 let passed = 0;
@@ -125,7 +126,19 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
   check("unset brand color accepted (server defaults it)", "config" in normalizeWheelPayload(wheel({ brandColor: undefined })));
   const garbage = normalizeWheelPayload(wheel({ brandColor: "garbage" }));
   check("garbage brand color rejected as bad_color", "error" in garbage && garbage.error === "bad_color");
-  check("empty brand color rejected", "error" in normalizeWheelPayload(wheel({ brandColor: "" })));
+  const emptyBrand = normalizeWheelPayload(wheel({ brandColor: "" }));
+  check(
+    "empty brand color treated as unset (server defaults it)",
+    "config" in emptyBrand && emptyBrand.config.brandColor === undefined,
+  );
+  const emptyLabel = normalizeWheelPayload(wheel({ labelColor: "" }));
+  check("empty label color treated as unset", "config" in emptyLabel && emptyLabel.config.labelColor === undefined);
+  const emptyPrize = normalizeWheelPayload(wheel({ prizes: [prize({ id: "a", color: "" }), prize()] }));
+  check(
+    "empty prize color treated as unset (not a 400)",
+    "config" in emptyPrize && emptyPrize.config.prizes[0].color === undefined,
+  );
+  check("validateWheelDraft agrees: empty prize color is fine", !validateWheelDraft(wheel({ prizes: [prize({ color: "" }), prize()] })).issues.length);
   check("garbage label color rejected", "error" in normalizeWheelPayload(wheel({ labelColor: "white" })));
   check("null label color accepted", "config" in normalizeWheelPayload(wheel({ labelColor: null as unknown as undefined })));
   check(
@@ -141,6 +154,14 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
   const input = wheel({ brandColor: "#ABC" });
   normalizeWheelPayload(input);
   check("input not mutated", input.brandColor === "#ABC");
+}
+
+// --- colorFromInput (editor onChange for optional color fields) -----------
+{
+  check("cleared field → unset", colorFromInput("") === undefined);
+  check("whitespace-only → unset", colorFromInput("   ") === undefined);
+  check("typed value kept as typed", colorFromInput("#AbC") === "#AbC");
+  check("partial value kept (validated on blur/save)", colorFromInput("#a") === "#a");
 }
 
 console.log(`validate: ${passed} checks passed`);
