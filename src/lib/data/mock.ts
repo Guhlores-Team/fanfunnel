@@ -2,6 +2,7 @@ import { applyRareBoost, pickPrizeWithPity } from "@/lib/games/wheel/engine";
 import { makeFairRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
+import { storedWeight } from "@/lib/games/wheel/weights";
 import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
@@ -719,6 +720,8 @@ export function mockSaveWheel(config: WheelConfig): WheelConfig {
   const existing = store.wheels.get(targetId);
   const saved: WheelConfig = {
     ...structuredClone(config),
+    // Mirror the int4 weight column (see prizeRow): round, positive stays ≥ 1.
+    prizes: config.prizes.map((p) => ({ ...structuredClone(p), weight: storedWeight(p.weight) })),
     id: targetId,
     // Preserve lifecycle/schedule fields unless the incoming config sets them.
     isActive: config.isActive ?? existing?.isActive,
@@ -1929,7 +1932,7 @@ export function mockCreatePrizeTemplate(input: {
     id: genId("ptpl"),
     label,
     rarity: input.rarity,
-    weight: Math.max(0, Math.floor(input.weight) || 0),
+    weight: storedWeight(input.weight),
     description: input.description,
     color: input.color ?? RARITY_COLORS[input.rarity],
     emoji: input.emoji,
