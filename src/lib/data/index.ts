@@ -49,6 +49,7 @@ import type {
   Webhook,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { campaignStatsFor, listCampaignsFor } from "./campaignStats";
 import {
   mockGetFanPass,
   mockSpin,
@@ -1222,26 +1223,7 @@ export async function listCampaigns(): Promise<Campaign[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
-  const { data } = await sb
-    .from("campaigns")
-    .select("id, name, is_active, created_at, pinned_wheel_id")
-    .eq("creator_id", user.id)
-    .order("created_at", { ascending: false });
-
-  const rows = (data ?? []) as {
-    id: string;
-    name: string;
-    is_active: boolean;
-    created_at: string;
-    pinned_wheel_id: string | null;
-  }[];
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    isActive: r.is_active,
-    createdAt: r.created_at,
-    pinnedWheelId: r.pinned_wheel_id ?? null,
-  }));
+  return listCampaignsFor(sb, user.id);
 }
 
 export async function getCampaignStats(): Promise<CampaignStats[]> {
@@ -1253,89 +1235,8 @@ export async function getCampaignStats(): Promise<CampaignStats[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
-  const campaigns = await listCampaigns();
-
-  // Process campaigns concurrently (was a 3N-sequential N+1 loop). Within each,
-  // the grants and spins reads are independent so run them together too; the
-  // fulfilled-count depends on the spin ids, so it follows.
-  const result: CampaignStats[] = await Promise.all(
-    campaigns.map(async (campaign) => {
-      // Grants tagged to this campaign → spinsBought, revenue, uniqueFans.
-      // Spins attributed (FIFO) to this campaign → spinsPlayed + top prize.
-      const [{ data: grantRows }, { data: spinRows }] = await Promise.all([
-        sb
-          .from("grants")
-          .select("fan_id, spins, amount_cents")
-          .eq("creator_id", user.id)
-          .eq("campaign_id", campaign.id),
-        sb
-          .from("spins")
-          .select("id, prize_label, prize_rarity")
-          .eq("creator_id", user.id)
-          .eq("campaign_id", campaign.id),
-      ]);
-
-      const grants = (grantRows ?? []) as {
-        fan_id: string;
-        spins: number;
-        amount_cents: number;
-      }[];
-      const spinsBought = grants.reduce((s, g) => s + g.spins, 0);
-      const revenue = grants.reduce((s, g) => s + g.amount_cents, 0);
-      const uniqueFans = new Set(grants.map((g) => g.fan_id)).size;
-
-      const spins = (spinRows ?? []) as {
-        id: string;
-        prize_label: string;
-        prize_rarity: Rarity;
-      }[];
-      const spinsPlayed = spins.length;
-      const spinIds = spins.map((s) => s.id);
-
-      // Fulfilled redemptions joined to those campaign-attributed spins.
-      let fulfilled = 0;
-      if (spinIds.length > 0) {
-        const { count } = await sb
-          .from("redemptions")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "fulfilled")
-          .in("spin_id", spinIds);
-        fulfilled = count ?? 0;
-      }
-
-      // Top prize: the most frequent (label + rarity) among those spins.
-      const counts = new Map<
-        string,
-        { label: string; rarity: Rarity; count: number }
-      >();
-      for (const s of spins) {
-        const cur = counts.get(s.prize_label);
-        if (cur) cur.count += 1;
-        else counts.set(s.prize_label, { label: s.prize_label, rarity: s.prize_rarity, count: 1 });
-      }
-      let topPrize: { label: string; rarity: Rarity; count: number } | null = null;
-      for (const entry of counts.values()) {
-        if (!topPrize || entry.count > topPrize.count) topPrize = entry;
-      }
-
-      const arpu = uniqueFans ? Math.round(revenue / uniqueFans) : 0;
-
-      return {
-        campaign,
-        spinsBought,
-        spinsPlayed,
-        uniqueFans,
-        fulfilled,
-        pending: Math.max(0, spinsPlayed - fulfilled),
-        playThroughPct: spinsBought > 0 ? spinsPlayed / spinsBought : 0,
-        revenue,
-        arpu,
-        topPrize,
-      };
-    })
-  );
-
-  return result;
+  // Batched: a fixed number of queries however many campaigns there are.
+  return campaignStatsFor(sb, user.id);
 }
 
 export interface UncategorizedStats {
