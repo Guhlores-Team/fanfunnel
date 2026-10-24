@@ -37,8 +37,9 @@ export function colorError(value: unknown, opts: { optional?: boolean } = {}): s
   return normalizeHex(value) ? null : "Use a hex color: # plus 3 or 6 digits (0–9, a–f).";
 }
 
-/** 0 is allowed (the prize stays on the wheel but can't be won), matching
- *  the server; the editor notes it and requires one prize above 0. */
+/** 0 is allowed (the prize drops out of normal spins), matching the server;
+ *  the editor notes it and requires one prize above 0. The spin engine can
+ *  still award a 0-ticket rare-or-better prize via pity or happy hour. */
 export function weightError(value: unknown): string | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return "Enter a number of tickets.";
   if (value < 0) return "Tickets can't be negative.";
@@ -65,7 +66,8 @@ export function labelError(value: unknown): string | null {
 }
 
 export const NO_WINNABLE_PRIZE = "At least one prize needs more than 0 tickets.";
-export const ZERO_TICKETS_NOTE = "This prize can't be won (0 tickets).";
+export const ZERO_TICKETS_NOTE =
+  "0 tickets: this prize won't come up in normal spins. Rare or better prizes can still land through the pity guarantee or happy hour.";
 
 export function prizeCountError(count: number): string | null {
   if (count >= MIN_WHEEL_PRIZES) return null;

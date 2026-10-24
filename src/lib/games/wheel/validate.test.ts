@@ -58,7 +58,7 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
   check("weight 10 ok", weightError(10) === null);
   check("fractional weight errors (tickets are whole numbers)", typeof weightError(0.5) === "string");
   check("tiny fractional weight errors", typeof weightError(0.05) === "string");
-  check("weight 0 allowed (prize can't be won, but matches the server)", weightError(0) === null);
+  check("weight 0 allowed (out of normal spins, matches the server)", weightError(0) === null);
   check("negative weight errors", typeof weightError(-1) === "string");
   check("NaN weight errors", typeof weightError(NaN) === "string");
   check("Infinity weight errors", typeof weightError(Infinity) === "string");
