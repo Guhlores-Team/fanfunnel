@@ -491,6 +491,16 @@ function AccountRow({
   );
 }
 
+// Stable `error` codes from POST /api/admin/invite. Other values (the route's
+// own validation sentence) are already user-facing and shown as-is.
+const INVITE_ERROR_TEXT: Record<string, string> = {
+  email_taken: "An account with that email already exists.",
+  invalid_email: "That email address doesn't look right.",
+  weak_password: "Password needs 8+ characters with a letter and a number.",
+  create_failed: "Couldn't create account. Try again.",
+  unauthorized: "Admins only.",
+};
+
 function InviteModal({
   onClose,
   onCreated,
@@ -516,7 +526,7 @@ function InviteModal({
       });
       const data = await res.json();
       if (res.ok) onCreated();
-      else setError(data.error ?? "Couldn't create account.");
+      else setError(INVITE_ERROR_TEXT[data.error] ?? data.error ?? "Couldn't create account.");
     } finally {
       setBusy(false);
     }
