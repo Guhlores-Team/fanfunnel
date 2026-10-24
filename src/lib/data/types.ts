@@ -71,7 +71,7 @@ export interface FanPassView {
 }
 
 /**
- * How a spin obtained its server seed (recorded per spin, migration 0039).
+ * How a spin obtained its server seed (recorded per spin, migration 0041).
  *  - `published`: the pass's pre-committed seed, whose hash was on the fan's
  *    spin page before the request — the full commit-reveal guarantee.
  *  - `stored`: a concurrent spin consumed the shown commitment first, so this

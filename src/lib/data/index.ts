@@ -807,8 +807,8 @@ async function recordClaimedSpin(
     // Only on a 0022+ DB — including an unknown column would fail the insert.
     ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
   };
-  // seed_commitment (migration 0039) tells /verify whether this seed's hash was
-  // published before the spin. On a 0022+ DB that lacks 0039 PostgREST rejects
+  // seed_commitment (migration 0041) tells /verify whether this seed's hash was
+  // published before the spin. On a 0022+ DB that lacks 0041 PostgREST rejects
   // the unknown column: retry without it rather than refund every spin.
   let inserted = await sb
     .from("spins")
@@ -4709,7 +4709,7 @@ export async function getSpinVerification(
     .select(`${SELECT}, seed_commitment`)
     .eq("share_id", shareId)
     .maybeSingle();
-  // Pre-0039 DB (no seed_commitment column yet): read the rest; the commitment
+  // Pre-0041 DB (no seed_commitment column yet): read the rest; the commitment
   // is then unknown, which the page states rather than claiming more.
   if (res.error) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
 

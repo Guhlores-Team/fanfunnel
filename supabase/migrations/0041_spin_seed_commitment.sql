@@ -1,4 +1,4 @@
--- 0039: Record how each spin obtained its server seed.
+-- 0041: Record how each spin obtained its server seed.
 --
 -- Re-hashing a seed stored next to its own hash proves only that the pair is
 -- self-consistent, not that the hash was published before the spin. The spin
