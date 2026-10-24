@@ -5124,13 +5124,12 @@ export async function getLeaderboard(
 
   const { data: fanRows } = await sb
     .from("fans")
-    .select("id, handle, display_name")
+    .select("id, handle")
     .eq("creator_id", creatorId)
     .eq("leaderboard_opt_in", true);
   const fans = (fanRows ?? []) as {
     id: string;
     handle: string | null;
-    display_name: string | null;
   }[];
   if (fans.length === 0) return { enabled: true, creatorTitle, entries: [] };
 
@@ -5154,12 +5153,12 @@ export async function getLeaderboard(
     }
   }
 
-  const firstName = (name: string | null): string =>
-    (name ?? "").trim().split(/\s+/)[0] || "Fan";
-
   const entries: LeaderboardEntry[] = fans
+    // A fan with no board handle is skipped, never shown under their real
+    // name (display_name isn't even selected above).
+    .filter((f): f is typeof f & { handle: string } => !!f.handle?.trim())
     .map((f) => ({
-      handle: f.handle ?? firstName(f.display_name),
+      handle: f.handle.trim(),
       spins: spinCount.get(f.id) ?? 0,
       rareWins: rareCount.get(f.id) ?? 0,
     }))
@@ -5198,16 +5197,15 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
 
   const { data: fanRows } = await sb
     .from("fans")
-    .select("id, handle, display_name")
+    .select("id, handle")
     .eq("creator_id", prof.id)
     .eq("leaderboard_opt_in", true);
-  const fans = (fanRows ?? []) as {
-    id: string;
-    handle: string | null;
-    display_name: string | null;
-  }[];
+  // Only fans with a board handle are surfaced; a real name is never read here.
+  const fans = ((fanRows ?? []) as { id: string; handle: string | null }[]).filter(
+    (f) => !!f.handle?.trim()
+  );
   if (fans.length === 0) return [];
-  const byId = new Map(fans.map((f) => [f.id, f]));
+  const byId = new Map(fans.map((f) => [f.id, f.handle!.trim()]));
 
   const { data: spinRows } = await sb
     .from("spins")
@@ -5217,22 +5215,15 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const firstName = (name: string | null): string =>
-    (name ?? "").trim().split(/\s+/)[0] || "Fan";
-
   return ((spinRows ?? []) as {
     fan_id: string;
     prize_label: string;
     prize_rarity: Rarity;
     created_at: string;
-  }[]).map((s) => {
-    const f = byId.get(s.fan_id);
-    return {
-      handle: f?.handle ?? firstName(f?.display_name ?? null),
-      prizeLabel: s.prize_label,
-      rarity: s.prize_rarity,
-      at: s.created_at,
-    };
+  }[]).flatMap((s) => {
+    const handle = byId.get(s.fan_id);
+    if (!handle) return [];
+    return [{ handle, prizeLabel: s.prize_label, rarity: s.prize_rarity, at: s.created_at }];
   });
 }
 

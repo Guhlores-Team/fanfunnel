@@ -334,7 +334,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           creatorId={pass.creatorId}
           token={pass.token}
           optedIn={pass.leaderboardOptIn === true}
-          youHandle={pass.fanHandle ?? (pass.fanName ?? "").trim().split(/\s+/)[0] ?? null}
+          // Only the fan's chosen board handle — never pre-fill their real name,
+          // since whatever is here is what gets published if they join.
+          youHandle={pass.fanHandle ?? null}
           refreshKey={boardRefresh}
         />
       )}

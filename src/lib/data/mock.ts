@@ -2390,9 +2390,13 @@ export function mockSetFanLeaderboardOptIn(
   return { ok: true };
 }
 
-/** A first name from a fan's full name (leaderboard privacy fallback). */
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name.trim() || "Fan";
+/**
+ * The name a fan is shown under on public surfaces, or null when they have no
+ * board handle — in which case they're skipped. Their real name (`f.name`) is
+ * never used here.
+ */
+function publicHandle(f: { handle?: string }): string | null {
+  return f.handle?.trim() || null;
 }
 
 export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
@@ -2400,7 +2404,7 @@ export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
     return { enabled: false, creatorTitle: CREATOR_TITLE, entries: [] };
   }
   const rows = Array.from(store.fans.values())
-    .filter((f) => f.leaderboardOptIn)
+    .filter((f) => f.leaderboardOptIn && publicHandle(f) !== null)
     .map((f) => {
       const spins = f.wins.length;
       const rareWins = f.wins.filter(
@@ -2408,7 +2412,7 @@ export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
       ).length;
       // No spend figure: this payload is served publicly and unauthenticated.
       return {
-        handle: f.handle?.trim() || firstName(f.name),
+        handle: publicHandle(f) as string,
         spins,
         rareWins,
       };
@@ -2428,7 +2432,8 @@ export function mockGetRecentWins(): {
   const wins: { handle: string; prizeLabel: string; rarity: Rarity; at: string }[] = [];
   for (const f of store.fans.values()) {
     if (!f.leaderboardOptIn) continue;
-    const handle = f.handle?.trim() || firstName(f.name);
+    const handle = publicHandle(f);
+    if (handle === null) continue; // never fall back to the fan's real name
     for (const w of f.wins) {
       if (RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")) {
         wins.push({ handle, prizeLabel: w.label, rarity: w.rarity, at: w.at });

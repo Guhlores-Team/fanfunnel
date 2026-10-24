@@ -88,7 +88,32 @@ async function main() {
   check("creator toggle off -> no entries", off.entries.length === 0);
   mockSetLeaderboardEnabled(true);
 
-  // --- 6. Ranking is by spins / rare wins, never by spend ---------------
+  // --- 6. A fan's real name is never published --------------------------
+  // An opted-in fan with NO board handle is skipped outright rather than
+  // shown under their first name (the old `firstName(display_name)` fallback).
+  const nameless = mockCreatePass("Priya Realname", 2, undefined, undefined, 0);
+  mockAckFan(nameless.token);
+  await mockSpin(nameless.token);
+  mockSetFanLeaderboardOptIn(nameless.token, true); // no handle
+  check(
+    "the data layer records the opt-in",
+    (await mockGetFanPass(nameless.token))?.leaderboardOptIn === true
+  );
+  const board = mockGetLeaderboard("demo-creator");
+  check(
+    "an opted-in fan without a handle is not on the board",
+    !board.entries.some((e) => /priya|realname/i.test(e.handle))
+  );
+  check(
+    "nor in the recent-wins ticker",
+    !mockGetRecentWins().some((w) => /priya|realname/i.test(w.handle))
+  );
+  check(
+    "the public payload never contains the fan's name",
+    !/priya|realname/i.test(JSON.stringify(board) + JSON.stringify(mockGetRecentWins()))
+  );
+
+  // --- 7. Ranking is by spins / rare wins, never by spend ---------------
   const quiet = mockCreatePass("Quiet Quincy", 5, undefined, undefined, 0);
   mockAckFan(quiet.token);
   mockSetFanLeaderboardOptIn(quiet.token, true, "quincy");

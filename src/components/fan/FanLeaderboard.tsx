@@ -192,12 +192,21 @@ function LeaderboardOptIn({
   const [draft, setDraft] = useState(handle);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // Revealed when the fan tries to join without a board name yet.
+  const [needName, setNeedName] = useState(false);
 
   const save = async (optIn: boolean, name: string) => {
     // Mirror the route's own sanitizer (src/app/api/leaderboard/opt-in/route.ts)
     // so what we send is byte-for-byte what gets stored — the server re-applies
     // it either way; this just keeps the local "You're #X" match honest.
     const clean = name.trim().replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40);
+    // Joining requires a board name (the route rejects it otherwise): the board
+    // never shows a fan's real name, so there's nothing else it could display.
+    if (optIn && !clean) {
+      setNeedName(true);
+      setStatus("Pick a board name to join.");
+      return;
+    }
     setBusy(true);
     setStatus(null);
     try {
@@ -246,7 +255,7 @@ function LeaderboardOptIn({
         </button>
       </div>
 
-      {on && (
+      {(on || needName) && (
         <div className="mt-3">
           <label
             htmlFor="lb-handle"
@@ -269,7 +278,7 @@ function LeaderboardOptIn({
               onClick={() => void save(true, draft)}
               className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)] disabled:opacity-60"
             >
-              Save
+              {on ? "Save" : "Join"}
             </button>
           </div>
         </div>

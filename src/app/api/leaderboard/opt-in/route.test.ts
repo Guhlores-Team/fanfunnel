@@ -34,11 +34,34 @@ async function main() {
     "a non-string token is rejected",
     (await post({ token: { $ne: null }, optIn: true })).status === 400
   );
-  const unknown = await post({ token: "not-a-real-token-" + Date.now(), optIn: true });
+  const unknown = await post({ token: "not-a-real-token-" + Date.now(), optIn: true, handle: "x" });
   check("an unknown token is 404, not a silent success", unknown.status === 404);
   check(
     "a rejected request flips nothing",
     (await mockGetFanPass(fan.token))?.leaderboardOptIn === false
+  );
+
+  // --- a board name is mandatory to opt IN -------------------------------
+  // Without one the only thing the board could show is the fan's real name,
+  // which must never happen on a public page.
+  for (const [label, body] of [
+    ["no handle", { token: fan.token, optIn: true }],
+    ["empty handle", { token: fan.token, optIn: true, handle: "" }],
+    ["whitespace-only handle", { token: fan.token, optIn: true, handle: "   " }],
+    ["handle that sanitises to nothing", { token: fan.token, optIn: true, handle: "<!>" }],
+  ] as const) {
+    const res = await post(body);
+    const json = (await res.json()) as { error?: string };
+    check(`opt-in with ${label} is 400`, res.status === 400);
+    check(`opt-in with ${label} says handle_required`, json.error === "handle_required");
+  }
+  check(
+    "a handle-less opt-in flips nothing",
+    (await mockGetFanPass(fan.token))?.leaderboardOptIn === false
+  );
+  check(
+    "opting OUT needs no handle",
+    (await post({ token: fan.token, optIn: false })).status === 200
   );
 
   // --- the happy path, with a real token ---------------------------------
