@@ -2312,3 +2312,10 @@ end;
 $$;
 
 revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated;
+
+-- Fan leaderboard privacy (migration 0040): appearing on the public leaderboard
+-- is explicit opt-in only. The column already defaults to false; this reset is a
+-- no-op on a fresh DB and clears the flags spin() used to set on an existing one.
+update public.fans
+   set leaderboard_opt_in = false
+ where leaderboard_opt_in;

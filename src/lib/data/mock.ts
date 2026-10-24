@@ -938,6 +938,7 @@ export async function mockGetFanPass(
     needsAck: fan.ackedAt == null,
     creatorId: "demo-creator",
     leaderboardEnabled: store.leaderboardEnabled,
+    leaderboardOptIn: fan.leaderboardOptIn === true,
     creatorNote: "Hey you 😘 spin away — every spin wins!",
     creatorAvatarUrl: null,
     nextSpinHash: pass?.nextServerSeedHash ?? null,
@@ -996,9 +997,9 @@ export async function mockSpin(token: string, clientSeed = "") {
   pass.spinsRemaining -= 1; // spend from this wheel's pass
   recomputeFanAggregate(fan); // keep the fan-level total in sync
   fan.pityCounter = nextPityCounter;
-  // Spinning auto-opts the fan into the leaderboard (handle-only; the board only
-  // renders when the creator enables it, so nothing is exposed until then).
-  fan.leaderboardOptIn = true;
+  // Spinning must NOT touch `leaderboardOptIn` — appearing on the creator's
+  // public leaderboard is the fan's own explicit choice (the toggle on their
+  // spin page). Mirrors the same fix in ./index.ts's spin().
 
   // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
   const live = wheel.prizes[index];
@@ -2402,21 +2403,17 @@ export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
     .filter((f) => f.leaderboardOptIn)
     .map((f) => {
       const spins = f.wins.length;
-      const spentCents = fanGrants(f.id).reduce((s, g) => s + g.amountCents, 0);
       const rareWins = f.wins.filter(
         (w) => RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")
       ).length;
+      // No spend figure: this payload is served publicly and unauthenticated.
       return {
         handle: f.handle?.trim() || firstName(f.name),
         spins,
-        spentCents,
         rareWins,
       };
     })
-    .sort(
-      (a, b) =>
-        b.spins - a.spins || b.spentCents - a.spentCents || b.rareWins - a.rareWins
-    );
+    .sort((a, b) => b.spins - a.spins || b.rareWins - a.rareWins);
   const entries: LeaderboardEntry[] = rows.map((r, i) => ({ rank: i + 1, ...r }));
   return structuredClone({ enabled: true, creatorTitle: CREATOR_TITLE, entries });
 }

@@ -1867,3 +1867,14 @@ end;
 $$;
 
 revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated;
+
+-- ============================================================
+-- 0040_leaderboard_optin_reset.sql
+-- ============================================================
+-- Fan leaderboard privacy: spin() used to set fans.leaderboard_opt_in = true on
+-- a fan's first spin, so every fan who ever spun is marked as consenting to a
+-- public page they never saw a control for. Clear those flags; fans re-consent
+-- via the toggle on their spin page. No schema/RLS/grant change.
+update public.fans
+   set leaderboard_opt_in = false
+ where leaderboard_opt_in;

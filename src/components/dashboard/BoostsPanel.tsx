@@ -172,7 +172,7 @@ function LeaderboardToggle({ enabled, onChange }: { enabled: boolean; onChange?:
   return (
     <Section
       title="Public leaderboard"
-      hint="Rank opted-in fans by spins, spend, and rare wins. Drives competitive tipping."
+      hint="Ranks fans by spins and rare wins — never by spend. Only fans who tick “Show me on the leaderboard” on their spin page appear."
     >
       <div className="flex flex-wrap items-center gap-3">
         <button

@@ -332,6 +332,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       {pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard
           creatorId={pass.creatorId}
+          token={pass.token}
+          optedIn={pass.leaderboardOptIn === true}
           youHandle={pass.fanHandle ?? (pass.fanName ?? "").trim().split(/\s+/)[0] ?? null}
           refreshKey={boardRefresh}
         />
