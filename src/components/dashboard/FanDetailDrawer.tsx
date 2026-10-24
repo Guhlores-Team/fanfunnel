@@ -8,6 +8,7 @@ import { useClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { TagEditor } from "./ui";
+import { grantImpact, grantPriceError, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
 
 export default function FanDetailDrawer({
@@ -367,7 +368,13 @@ export default function FanDetailDrawer({
                 ) : (
                   <ul className="mt-3 space-y-2">
                     {detail.grants.map((g) => (
-                      <GrantRow key={g.id} g={g} campaigns={campaigns} onSaved={reload} />
+                      <GrantRow
+                        key={g.id}
+                        g={g}
+                        fanSpinsRemaining={detail.spinsRemaining}
+                        campaigns={campaigns}
+                        onSaved={reload}
+                      />
                     ))}
                   </ul>
                 )}
@@ -473,19 +480,19 @@ function LinkRow({ token }: { token: string }) {
  *  Editing spins adjusts the fan's balance server-side; we refetch on save. */
 function GrantRow({
   g,
+  fanSpinsRemaining,
   campaigns,
   onSaved,
 }: {
   g: Grant;
+  fanSpinsRemaining: number;
   campaigns: { id: string; name: string }[];
   onSaved: () => void | Promise<void>;
 }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [spins, setSpins] = useState(String(g.spins));
-  const [perSpin, setPerSpin] = useState(
-    g.spins > 0 && g.amountCents > 0 ? (g.amountCents / 100 / g.spins).toFixed(2) : ""
-  );
+  const [perSpin, setPerSpin] = useState(perSpinText(g.spins, g.amountCents));
   const [campaignId, setCampaignId] = useState(g.campaignId ?? "");
   const [busy, setBusy] = useState(false);
 
@@ -495,27 +502,49 @@ function GrantRow({
     if (editing) return;
     /* eslint-disable react-hooks/set-state-in-effect -- mirror persisted grant into the idle form */
     setSpins(String(g.spins));
-    setPerSpin(g.spins > 0 && g.amountCents > 0 ? (g.amountCents / 100 / g.spins).toFixed(2) : "");
+    setPerSpin(perSpinText(g.spins, g.amountCents));
     setCampaignId(g.campaignId ?? "");
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [g.spins, g.amountCents, g.campaignId, editing]);
 
+  // Plain-language preview of what saving does to the fan's balance (UX-3).
+  const impact = grantImpact({ grantSpins: g.spins, spinsInput: spins, fanSpinsRemaining });
+  // Recorded revenue only changes when the price or spin count really does.
+  const newAmountCents = grantSaveAmount({ grant: g, spinsInput: spins, perSpinInput: perSpin });
+  const revenueLine = revenueChangeText(g.amountCents, newAmountCents);
+  // Negative, non-finite or over-cap prices would 400 on save.
+  const priceError = grantPriceError({ grant: g, spinsInput: spins, perSpinInput: perSpin });
+  const canSave = impact.allowed && !priceError;
+  const previewId = `grant-impact-${g.id}`;
+  const priceErrorId = `grant-price-error-${g.id}`;
+
   async function save() {
+    if (!canSave) return;
     setBusy(true);
     try {
-      const nSpins = Math.max(0, Math.floor(Number(spins) || 0));
-      const amountCents = perSpin ? Math.round(Number(perSpin) * nSpins * 100) : 0;
+      const nSpins = parseSpins(spins);
       const res = await fetch(`/api/grants/${g.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spins: nSpins, amountCents, campaignId: campaignId || null }),
+        body: JSON.stringify({
+          spins: nSpins,
+          // Omitted when unchanged so the stored amount is never rewritten.
+          ...(newAmountCents !== g.amountCents ? { amountCents: newAmountCents } : {}),
+          campaignId: campaignId || null,
+        }),
       });
       if (res.ok) {
         toast("Grant updated", { tone: "success" });
         setEditing(false);
         await onSaved();
       } else {
-        toast("Couldn't update grant.", { tone: "error" });
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        toast(
+          body?.error === "insufficient_spins"
+            ? "Can't cut below the spins this fan has already used."
+            : "Couldn't update grant.",
+          { tone: "error" }
+        );
       }
     } finally {
       setBusy(false);
@@ -550,6 +579,7 @@ function GrantRow({
             min={0}
             value={spins}
             onChange={(e) => setSpins(e.target.value)}
+            aria-invalid={!impact.allowed || undefined}
             className="ff-input tnum w-20"
           />
         </label>
@@ -562,6 +592,8 @@ function GrantRow({
             value={perSpin}
             onChange={(e) => setPerSpin(e.target.value)}
             placeholder="0.00"
+            aria-invalid={!!priceError || undefined}
+            aria-errormessage={priceError ? priceErrorId : undefined}
             className="ff-input tnum w-24"
           />
         </label>
@@ -581,10 +613,24 @@ function GrantRow({
           </select>
         </label>
       </div>
+      {priceError && (
+        <p id={priceErrorId} role="alert" className="text-xs font-semibold text-[#f87171]">
+          {priceError}
+        </p>
+      )}
+      {/* Live region only (no aria-describedby on the inputs) so it is read once. */}
+      <p
+        id={previewId}
+        role="status"
+        className={`text-xs text-pretty ${impact.allowed ? "text-muted" : "font-semibold text-[#f87171]"}`}
+      >
+        {impact.message}
+        {impact.allowed && !priceError && revenueLine && <> {revenueLine}</>}
+      </p>
       <div className="flex gap-2">
         <button
           onClick={save}
-          disabled={busy}
+          disabled={busy || !canSave}
           className="btn-brand rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
         >
           {busy ? "Saving…" : "Save"}
