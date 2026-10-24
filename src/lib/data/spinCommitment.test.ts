@@ -10,7 +10,13 @@ import {
   mockGetSpinVerification,
   mockSpin,
 } from "./mock";
-import { consumeCommittedSeed, freshSeed, type CommittedSeed, type SeedStore } from "./spinSeed";
+import {
+  consumeCommittedSeed,
+  freshSeed,
+  type CommittedSeed,
+  type SeedStore,
+  type SwapOutcome,
+} from "./spinSeed";
 
 // Regression (COR-4): the public verify page said "committed before it was
 // revealed" for EVERY spin whose seed re-hashes to the stored hash — including
@@ -32,14 +38,14 @@ function fakeRow(initial: CommittedSeed, beforeSwap?: () => Promise<void>) {
   let hooked = false;
   const store: SeedStore = {
     read: async () => ({ ...row }),
-    swap: async (expected, next) => {
+    swap: async (expected, next): Promise<SwapOutcome> => {
       if (beforeSwap && !hooked) {
         hooked = true;
         await beforeSwap();
       }
-      if (row.seed !== expected.seed) return false;
+      if (row.seed !== expected.seed) return "lost";
       row = { ...next };
-      return true;
+      return "won";
     },
   };
   return { store, get row() { return row; } };
