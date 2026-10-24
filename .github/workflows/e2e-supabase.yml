@@ -12,6 +12,9 @@ name: E2E (real Supabase)
 #   NEXT_PUBLIC_SUPABASE_ANON_KEY
 #   SUPABASE_SERVICE_ROLE_KEY
 # and apply supabase/schema.sql (incl. the latest migration) to that project first.
+# On PRs that change migrations, the job first waits for supabase-migrations.yml
+# to apply them to the TEST project. It also runs the RLS runtime negative test
+# (scripts/security/rls-runtime-test.mjs), which is pinned to the TEST project.
 
 on:
   push:
@@ -22,6 +25,11 @@ on:
 jobs:
   supabase:
     runs-on: ubuntu-latest
+    # Read-only token: the migration wait below only lists PR files and runs.
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +40,46 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # The tests below must see this PR's schema. When the PR changes
+      # migrations, supabase-migrations.yml applies them to the TEST project in
+      # a separate run; wait for that run (same head SHA) to succeed first.
+      - name: Wait for this PR's migrations to reach the TEST project
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_SECRETS: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_SECRETS" != "true" ]; then
+            echo "Supabase secrets unset — the tests below skip, nothing to wait for."
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          if ! grep -qE '^supabase/(migrations/|config\.toml$)' <<<"$files"; then
+            echo "This PR changes no migrations — nothing to wait for."
+            exit 0
+          fi
+          deadline=$((SECONDS + 900))
+          while :; do
+            state=$(gh api "repos/$REPO/actions/workflows/supabase-migrations.yml/runs?head_sha=$SHA&event=pull_request&per_page=1" \
+              --jq '.workflow_runs[0] | "\(.status // "none") \(.conclusion // "none")"')
+            echo "Supabase migrations run for $SHA: $state"
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*)
+                echo "::error title=TEST migrations failed::The Supabase migrations run for this commit did not succeed, so the TEST project is not on this PR's schema."
+                exit 1 ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error title=TEST migrations not applied::Timed out after 15 min waiting for the Supabase migrations run for $SHA (is the 'test' environment waiting for approval?)."
+              exit 1
+            fi
+            sleep 20
+          done
 
       - name: Real-Supabase integration tests — RLS + RPCs (skips if secrets unset)
         env:
@@ -46,3 +94,25 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run e2e:spin
+
+      # AGENTS.md's runtime negative test: cross-tenant isolation + a creator
+      # cannot promote itself to admin. Fails the check on any leak. Refuses to
+      # run against anything but the TEST project (the script also hard-refuses
+      # the prod ref).
+      - name: RLS runtime test — tenant isolation + no self-promotion (TEST project)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RLS_TEST_REQUIRE_REF: snmcrmhgevfqggxdiomu
+        run: |
+          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::warning title=RLS runtime test skipped::NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY unset — the RLS runtime test did NOT run."
+            exit 0
+          fi
+          case "$NEXT_PUBLIC_SUPABASE_URL" in
+            *ttlogfmogcccwiraaoae*)
+              echo "::error title=Refusing prod::NEXT_PUBLIC_SUPABASE_URL points at the PRODUCTION project. This job must target the TEST project."
+              exit 1 ;;
+          esac
+          node scripts/security/rls-runtime-test.mjs
