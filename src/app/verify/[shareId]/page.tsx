@@ -193,8 +193,8 @@ export default async function VerifyPage({
               SHA-256(serverSeed:clientSeed:nonce:block)
             </code>
             . After the spin the seed is revealed; when re-hashing it reproduces
-            a hash you saw <strong className="text-ink">before</strong> spinning,
-            the outcome couldn&rsquo;t have been changed after the fact. The
+            a hash you saw <strong className="text-ink">before</strong>{" "}
+            spinning, the outcome couldn&rsquo;t have been changed after the fact. The
             &ldquo;Commitment&rdquo; line above says whether that applies to this
             spin. This verifies the
             <strong className="text-ink"> commitment&rsquo;s integrity</strong>;
