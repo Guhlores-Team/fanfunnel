@@ -39,6 +39,7 @@ jobs:
       - name: Build
         run: npm run build
 
+      # ubuntu-latest is 26.04: needs playwright >= 1.61 (first release supporting it).
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
