@@ -6,7 +6,8 @@ import { getRecentWins } from "@/lib/data";
 // only on the creatorId path param: no cookies, auth or token are read, and it
 // is the same opt-in, handle-only list every viewer sees. Route handlers are
 // uncached by default in Next 16, so this header is the only caching layer.
-const CACHE_CONTROL = "public, s-maxage=10, stale-while-revalidate=30";
+// Kept short (<=20s total) so a fan who opts out drops off the ticker quickly.
+const CACHE_CONTROL = "public, s-maxage=10, stale-while-revalidate=10";
 
 // Recent rare+ wins for a creator (handle-only, opt-in fans only). Empty when
 // the creator's leaderboard is off.

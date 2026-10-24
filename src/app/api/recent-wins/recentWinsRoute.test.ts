@@ -45,7 +45,9 @@ async function main() {
     const sMax = Number(cc.get("s-maxage"));
     check("s-maxage set and short (1..60s)", sMax >= 1 && sMax <= 60);
     const swr = Number(cc.get("stale-while-revalidate"));
-    check("stale-while-revalidate set and bounded (<=60s)", swr >= 1 && swr <= 60);
+    check("stale-while-revalidate set", swr >= 1);
+    // Bounds how long an opted-out fan can linger in other fans' tickers.
+    check("total CDN staleness (s-maxage + SWR) <= 20s", sMax + swr <= 20);
     check("no private/no-store", !cc.has("private") && !cc.has("no-store"));
     check("no Set-Cookie on a shared-cached response", anon.headers.get("set-cookie") === null);
   }
