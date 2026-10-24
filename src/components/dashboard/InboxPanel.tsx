@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatSettings, FanThread } from "@/lib/data/types";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { startPoll } from "@/lib/poll";
+import { createRealtimeFallback } from "@/lib/realtimeFallback";
 import { playPing } from "@/lib/sound";
 import { useToast } from "@/components/ui/Toast";
 import { EmptyState } from "./ui";
@@ -40,10 +42,15 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
     threadsRef.current = threads;
   }, [threads]);
 
-  const loadThreads = useCallback(async () => {
+  // Resolves whether the load succeeded so the poll fallback can back off.
+  const loadThreads = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch("/api/messages/inbox", { cache: "no-store" });
-      if (res.ok) setThreads((await res.json()).threads ?? []);
+      if (!res.ok) return false;
+      setThreads((await res.json()).threads ?? []);
+      return true;
+    } catch {
+      return false;
     } finally {
       setLoading(false);
     }
@@ -103,6 +110,7 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial thread-list load
     loadThreads();
 
     // Real Supabase Realtime for the authed creator (RLS passes on messages).
@@ -111,17 +119,11 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
       let channelRef: ReturnType<typeof supabase.channel> | null = null;
       let cancelled = false;
       // Polling fallback that runs ONLY if realtime never reaches SUBSCRIBED
-      // (or errors out), so a flaky socket still surfaces new threads.
-      let pollId: ReturnType<typeof setInterval> | null = null;
-      const startPoll = () => {
-        if (pollId === null) pollId = setInterval(loadThreads, 8000);
-      };
-      const stopPoll = () => {
-        if (pollId !== null) {
-          clearInterval(pollId);
-          pollId = null;
-        }
-      };
+      // (or errors out), so a flaky socket still surfaces new threads. Paused on
+      // hidden tabs and backed off on errors like every other poll.
+      const fallback = createRealtimeFallback(() =>
+        startPoll({ intervalMs: 8000, task: loadThreads })
+      );
 
       (async () => {
         const {
@@ -157,23 +159,15 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
               }
             }
           )
-          .subscribe((status) => {
-            // Keep the subscription robust: lean on the poll fallback whenever
-            // the socket isn't healthy, and drop it once realtime is live.
-            if (status === "SUBSCRIBED") stopPoll();
-            else if (
-              status === "CHANNEL_ERROR" ||
-              status === "TIMED_OUT" ||
-              status === "CLOSED"
-            )
-              startPoll();
-          });
+          // Lean on the poll fallback whenever the socket isn't healthy, and
+          // drop it once realtime is live. Ignored after cleanup.
+          .subscribe((status) => fallback.onStatus(status));
         channelRef = channel;
       })();
 
       return () => {
         cancelled = true;
-        stopPoll();
+        fallback.dispose(); // before removeChannel, which fires "CLOSED"
         if (channelRef) supabase.removeChannel(channelRef);
       };
     }
@@ -188,12 +182,12 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
     const seen = new Map<string, { lastAt: string; unread: number }>();
     let seeded = false;
 
-    const pollDemo = async () => {
+    const pollDemo = async (): Promise<boolean> => {
       try {
         const res = await fetch("/api/messages/inbox", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) return false;
         const next: FanThread[] = (await res.json()).threads ?? [];
-        if (cancelled) return;
+        if (cancelled) return true;
         setThreads(next);
 
         if (seeded) {
@@ -216,16 +210,24 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
         seen.clear();
         for (const t of next) seen.set(t.fanId, { lastAt: t.lastAt, unread: t.unread });
         seeded = true;
+        return true;
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
 
-    pollDemo();
-    const id = setInterval(pollDemo, 8000);
+    // This loop is what pings a creator who is on another tab, so it keeps
+    // running while hidden (no Realtime socket in demo mode); errors back off.
+    const poll = startPoll({
+      intervalMs: 8000,
+      immediate: true,
+      pauseWhenHidden: false,
+      refreshOnVisible: false,
+      task: pollDemo,
+    });
     return () => {
       cancelled = true;
-      clearInterval(id);
+      poll.stop();
     };
   }, [loadThreads, alertInbound]);
 
@@ -438,26 +440,27 @@ function Thread({ fan, onChanged }: { fan: FanThread; onChanged: () => void }) {
   // one overwrite messages (e.g. an in-flight poll clobbering a just-sent message).
   const reqId = useRef(0);
 
-  const load = useCallback(async () => {
+  // Resolves false on a failed request so the poll can back off.
+  const load = useCallback(async (): Promise<boolean> => {
     const id = ++reqId.current;
     try {
       const res = await fetch(`/api/messages/thread/${fan.fanId}`, { cache: "no-store" });
-      if (res.ok) {
-        const list = (await res.json()).messages ?? [];
-        if (id !== reqId.current) return;
-        setMessages(list);
-        onChangedRef.current();
-      }
+      if (!res.ok) return false;
+      const list = (await res.json()).messages ?? [];
+      if (id !== reqId.current) return true;
+      setMessages(list);
+      onChangedRef.current();
+      return true;
     } catch {
-      /* transient */
+      return false;
     }
   }, [fan.fanId]);
 
+  // Load the selected fan's thread, then poll it (paused on hidden tabs,
+  // refreshed on return, backed off on errors).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load thread for the selected fan, then poll
-    load();
-    const id = setInterval(load, 6000);
-    return () => clearInterval(id);
+    const poll = startPoll({ intervalMs: 6000, immediate: true, task: load });
+    return () => poll.stop();
   }, [load]);
 
   useEffect(() => {
