@@ -681,7 +681,7 @@ export default function WheelEditor({
             </div>
           )}
 
-          <div className="mt-4 grid gap-2.5 2xl:grid-cols-2">
+          <div className="mt-4 grid grid-cols-1 gap-2.5 2xl:grid-cols-2">
             {wheel.prizes.map((p, index) => {
               const swatch = p.color ?? RARITY_COLORS[p.rarity];
               const rarityColor = RARITY_COLORS[p.rarity];
