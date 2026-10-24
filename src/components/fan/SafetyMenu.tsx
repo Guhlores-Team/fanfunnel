@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
+import { useLinkPause } from "./LinkPauseProvider";
+import { PAUSED_CONFIRMATION, pauseErrorMessage } from "./linkPause";
 
 /**
  * A discreet safety menu on the fan page: report the creator (predatory /
@@ -15,6 +17,9 @@ export default function SafetyMenu({ token }: { token: string }) {
   const [detail, setDetail] = useState("");
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { markPaused } = useLinkPause();
+  // Inline failure on the pause confirm step so the fan can retry in place.
+  const [pauseError, setPauseError] = useState<string | null>(null);
   const panelRef = useFocusTrap<HTMLDivElement>({
     active: open,
     onEscape: () => setOpen(false),
@@ -37,13 +42,24 @@ export default function SafetyMenu({ token }: { token: string }) {
 
   const exclude = async () => {
     setBusy(true);
+    setPauseError(null);
     try {
       const res = await fetch("/api/self-exclude", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token }),
       });
-      setDone(res.ok ? "Your link is paused. Refresh to confirm." : "Couldn't pause. Try again.");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setPauseError(pauseErrorMessage(typeof body.error === "string" ? body.error : undefined));
+        return;
+      }
+      // Flip the page to its paused state now (SPIN off, balance chip and
+      // button say so) instead of making the fan refresh to find out.
+      markPaused();
+      setDone(PAUSED_CONFIRMATION);
+    } catch {
+      setPauseError(pauseErrorMessage("network"));
     } finally {
       setBusy(false);
     }
@@ -56,6 +72,7 @@ export default function SafetyMenu({ token }: { token: string }) {
           setOpen(true);
           setMode(null);
           setDone(null);
+          setPauseError(null);
         }}
         className="text-[11px] text-muted/60 underline-offset-4 transition hover:text-muted hover:underline"
       >
@@ -77,7 +94,7 @@ export default function SafetyMenu({ token }: { token: string }) {
           >
             {done ? (
               <div className="text-center">
-                <p className="text-sm text-ink">{done}</p>
+                <p role="status" className="text-sm text-ink">{done}</p>
                 <button
                   onClick={() => setOpen(false)}
                   className="btn-brand mt-5 w-full rounded-xl py-2.5 text-sm font-bold"
@@ -159,6 +176,11 @@ export default function SafetyMenu({ token }: { token: string }) {
                 >
                   {busy ? "Pausing…" : "Yes, pause my link"}
                 </button>
+                {pauseError && (
+                  <p role="alert" className="mt-2 text-center text-xs text-amber-300">
+                    {pauseError}
+                  </p>
+                )}
                 <button
                   onClick={() => setMode(null)}
                   className="mt-2 w-full text-center text-xs text-muted hover:text-ink"
