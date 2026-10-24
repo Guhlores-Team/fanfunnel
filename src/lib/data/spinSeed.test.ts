@@ -4,15 +4,19 @@ import {
   consumeCommittedSeed,
   MAX_SEED_SWAP_ATTEMPTS,
   type CommittedSeed,
+  type ConsumedSeed,
   type SeedStore,
+  type SwapOutcome,
 } from "./spinSeed";
 
 // Unit test for the Supabase-path seed consumption (COR-3). The fake store
 // models the fan_passes row and the compare-and-swap UPDATE
-// (`... where id = ? and next_server_seed = <expected>`): a swap succeeds only
-// if the row still holds the seed the caller read. Interleaving two consumers
+// (`... where id = ? and next_server_seed = <expected>`): a swap wins only if
+// the row still holds the seed the caller read. Interleaving two consumers
 // against one row must hand out two DIFFERENT seeds, each matching a
-// commitment that was on the row before it was consumed.
+// commitment that was on the row before it was consumed. A swap whose outcome
+// is unknown (request errored) must yield NO result: the fan never spins on a
+// seed we can't attribute.
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -20,25 +24,57 @@ function check(label: string, cond: boolean) {
   passed++;
 }
 
-/** A fan_passes row with a CAS-guarded update, plus an optional hook to
- *  interleave other work between the read and the swap. */
+/** A fan_passes row with a CAS-guarded update. */
 function fakeRow(initial: CommittedSeed) {
   let row: CommittedSeed = { ...initial };
   const history: string[] = []; // every hash that was ever committed on the row
   if (initial.hash) history.push(initial.hash);
   let swaps = 0;
+  let reads = 0;
   const store: SeedStore = {
-    read: async () => ({ ...row }),
-    swap: async (expected, next) => {
+    read: async () => {
+      reads++;
+      return { ...row };
+    },
+    swap: async (expected, next): Promise<SwapOutcome> => {
       await Promise.resolve(); // yield, like a network hop
-      if (row.seed !== expected.seed) return false;
+      if (row.seed !== expected.seed) return "lost";
       row = { seed: next.seed, hash: next.hash };
       history.push(next.hash);
       swaps++;
-      return true;
+      return "won";
     },
   };
-  return { store, history, get row() { return row; }, get swaps() { return swaps; } };
+  return {
+    store,
+    history,
+    get row() {
+      return row;
+    },
+    get swaps() {
+      return swaps;
+    },
+    get reads() {
+      return reads;
+    },
+  };
+}
+
+/** Wrap a store so the first swap that commits reports `unknown` instead. */
+function withLostResponse(inner: SeedStore): SeedStore & { lost: () => number } {
+  let lost = 0;
+  return {
+    read: inner.read,
+    swap: async (expected, next) => {
+      const out = await inner.swap(expected, next);
+      if (out === "won" && lost === 0) {
+        lost++;
+        return "unknown"; // committed, but the caller never heard
+      }
+      return out;
+    },
+    lost: () => lost,
+  };
 }
 
 async function main() {
@@ -83,31 +119,74 @@ async function main() {
     check("legacy: row is committed afterwards", r.row.seed !== null && r.row.hash === loser.nextServerSeedHash);
   }
 
-  // --- Swap committed but its response was lost ------------------------------
-  // The UPDATE landed, yet the client saw no row back (data null → false). The
-  // consumer must recognise its own next seed on re-read and reveal the seed the
-  // fan was shown — not consume its own fresh commitment and burn the shown one.
+  // --- Swap committed but its response was lost → no result ------------------
+  // The UPDATE landed, yet the request errored. We can't tell a committed swap
+  // from one that never ran, so the spin yields nothing (the caller refunds the
+  // claim). The shown commitment is rotated without a spin; the row's new
+  // commitment is what the next page load republishes.
   {
     const seed0 = "c".repeat(64);
     const hash0 = await sha256Hex(seed0);
     const r = fakeRow({ seed: seed0, hash: hash0 });
-    let lostResponses = 0;
-    const flaky: SeedStore = {
+    const flaky = withLostResponse(r.store);
+    const out = await consumeCommittedSeed(flaky);
+    check("lost response: no result on a seed we can't attribute", out === null);
+    check("lost response: the swap was not retried", r.swaps === 1 && flaky.lost() === 1);
+    check("lost response: no recovery read was attempted", r.reads === 1);
+    check("lost response: the row holds a new, unrevealed commitment", r.row.seed !== seed0 && r.row.seed !== null);
+  }
+
+  // --- Lost response, then ANOTHER consumer runs before any recovery ----------
+  // (Codex's interleaving.) A's swap commits but errors; B then reads A's new
+  // seed and consumes it. A must not come back and consume a third seed: the
+  // only result is B's, and it reveals the seed that was on the row when B read
+  // it. Nothing reveals the originally shown seed twice, or a seed that was
+  // never a stored commitment.
+  {
+    const seed0 = "d".repeat(64);
+    const hash0 = await sha256Hex(seed0);
+    const r = fakeRow({ seed: seed0, hash: hash0 });
+    const flaky = withLostResponse(r.store);
+    const captured: { b: ConsumedSeed | null } = { b: null };
+    const gated: SeedStore = {
       read: r.store.read,
       swap: async (expected, next) => {
-        const won = await r.store.swap(expected, next);
-        if (won && lostResponses === 0) {
-          lostResponses++;
-          return false; // committed, but the caller never heard
+        const out = await flaky.swap(expected, next);
+        if (out === "unknown") {
+          // B runs to completion while A's response is "in flight".
+          captured.b = await consumeCommittedSeed(r.store);
         }
-        return won;
+        return out;
       },
     };
-    const out = await consumeCommittedSeed(flaky);
-    assert.ok(out, "consumer gets a seed");
-    check("lost response: reveals the seed the fan was shown", out.serverSeed === seed0 && out.serverSeedHash === hash0);
-    check("lost response: the row holds THIS spin's next commitment", r.row.seed === out.nextServerSeed && r.row.hash === out.nextServerSeedHash);
-    check("lost response: the row was swapped exactly once", r.swaps === 1 && lostResponses === 1);
+    const aResult = await consumeCommittedSeed(gated);
+    assert.ok(captured.b, "B gets a seed");
+    const b = captured.b;
+    check("interleaving: A yields no result", aResult === null);
+    check("interleaving: exactly two rotations, not three", r.swaps === 2);
+    check("interleaving: B reveals the seed that was on the row when it read", b.serverSeedHash === r.history[1]);
+    check("interleaving: B does not reveal the originally shown seed (A's committed swap consumed it)", b.serverSeed !== seed0);
+    check("interleaving: B's seed hashes to its commitment", (await sha256Hex(b.serverSeed)) === b.serverSeedHash);
+    check("interleaving: the row ends on B's new commitment", r.row.seed === b.nextServerSeed && r.row.hash === b.nextServerSeedHash);
+  }
+
+  // --- An unknown outcome on the very first attempt is not retried -----------
+  {
+    let swapCalls = 0;
+    let reads = 0;
+    const store: SeedStore = {
+      read: async () => {
+        reads++;
+        return { seed: "s", hash: "h" };
+      },
+      swap: async () => {
+        swapCalls++;
+        return "unknown";
+      },
+    };
+    const out = await consumeCommittedSeed(store);
+    check("unknown: returns null", out === null);
+    check("unknown: exactly one swap, no retry, no re-read", swapCalls === 1 && reads === 1);
   }
 
   // --- Unwinnable contention gives up (caller refunds the claim) --------------
@@ -117,11 +196,11 @@ async function main() {
       read: async () => ({ seed: "s", hash: "h" }),
       swap: async () => {
         swapCalls++;
-        return false;
+        return "lost";
       },
     };
     const out = await consumeCommittedSeed(store);
-    check("returns null when the swap never wins", out === null);
+    check("returns null when every swap is definitely lost", out === null);
     check("bounded retries", swapCalls === MAX_SEED_SWAP_ATTEMPTS);
   }
 
