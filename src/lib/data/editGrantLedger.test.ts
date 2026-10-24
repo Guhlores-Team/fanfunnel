@@ -284,7 +284,85 @@ async function main() {
   check("dead pass grant: inactive pass untouched (3)", db.row("fan_passes", deadPass.id as string).spins_remaining === 3);
   check("dead pass grant: fans == SUM(active passes)", invariantHolds(dormant.id as string));
 
-  // 11. A non-finite spins patch is rejected before anything is read or written.
+  // 11. The grants update fails after the balance change was applied, and a
+  //     spin lands while the rollback is in flight. The rollback must undo the
+  //     delta from the balance as it is then (not give up after one miss):
+  //     pass 2 -> +2 = 4 -> spin -> 3 -> rollback -> 1.
+  const rb = db.seed("fans", { creator_id: CREATOR, display_name: "Rollback" });
+  const rbPass = db.seed("fan_passes", {
+    token: "tok-rb",
+    creator_id: CREATOR,
+    wheel_id: wheelA.id,
+    fan_id: rb.id,
+    spins_remaining: 2,
+    spins_granted_total: 5,
+  });
+  const rbGrant = db.seed("grants", {
+    creator_id: CREATOR,
+    fan_id: rb.id,
+    fan_pass_id: rbPass.id,
+    spins: 5,
+    amount_cents: 500,
+  });
+  let passUpdates = 0;
+  db.beforeStatement = (stmt) => {
+    if (stmt.table === "grants" && stmt.op === "update") return { message: "injected grant update failure" };
+    if (stmt.table === "fan_passes" && stmt.op === "update") {
+      passUpdates++;
+      // The 2nd pass update is the rollback's first compare-and-swap: a spin
+      // lands just before it, so it misses and must be retried.
+      if (passUpdates === 2) assert.strictEqual(db.spin("tok-rb"), 3, "spin during the rollback");
+    }
+  };
+  const failedGrant = await editGrant(rbGrant.id as string, { spins: 7 });
+  db.beforeStatement = null;
+  check("rollback: a failed grant update fails the edit", "error" in failedGrant && failedGrant.error === "db_error");
+  check("rollback: grant row untouched (5)", db.row("grants", rbGrant.id as string).spins === 5);
+  check(
+    `rollback: pass is 2 + 2 - 1 (spin) - 2 (undo) = 1, the spin is kept (got ${db.row("fan_passes", rbPass.id as string).spins_remaining})`,
+    db.row("fan_passes", rbPass.id as string).spins_remaining === 1
+  );
+  check("rollback: pass granted_total is back to 5", db.row("fan_passes", rbPass.id as string).spins_granted_total === 5);
+  check("rollback: the first undo missed and was retried (3 pass updates)", passUpdates === 3);
+  check("rollback: fans == SUM(passes)", invariantHolds(rb.id as string));
+
+  // 12. Same failure, but the fan spent the whole delta before the rollback ran:
+  //     undoing would take the pass negative, so it is skipped and logged.
+  const logged: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  db.beforeStatement = (stmt) => {
+    if (stmt.table === "grants" && stmt.op === "update") {
+      // Pass is 1 + 2 = 3 here; the fan spins all 3 before the rollback reads.
+      assert.strictEqual(db.spin("tok-rb"), 2, "spin 1");
+      assert.strictEqual(db.spin("tok-rb"), 1, "spin 2");
+      assert.strictEqual(db.spin("tok-rb"), 0, "spin 3");
+      return { message: "injected grant update failure" };
+    }
+  };
+  const skipped = await editGrant(rbGrant.id as string, { spins: 7 });
+  db.beforeStatement = null;
+  console.error = realError;
+  check("skipped rollback: the edit still fails", "error" in skipped && skipped.error === "db_error");
+  check("skipped rollback: grant row untouched (5)", db.row("grants", rbGrant.id as string).spins === 5);
+  check("skipped rollback: pass stays at 0, never negative", db.row("fan_passes", rbPass.id as string).spins_remaining === 0);
+  check(
+    "skipped rollback: logged with grantId/passId/delta",
+    logged.some(
+      (a) =>
+        a[0] === "editGrant: balance rollback could not be applied" &&
+        typeof a[1] === "object" &&
+        a[1] !== null &&
+        (a[1] as { grantId?: string; passId?: string; delta?: number }).grantId === rbGrant.id &&
+        (a[1] as { passId?: string }).passId === rbPass.id &&
+        (a[1] as { delta?: number }).delta === 2
+    )
+  );
+  check("skipped rollback: fans == SUM(passes)", invariantHolds(rb.id as string));
+
+  // 13. A non-finite spins patch is rejected before anything is read or written.
   const nan = await editGrant(grantA.id as string, { spins: Number.NaN });
   check("NaN spins rejected as invalid", "error" in nan && nan.error === "invalid");
 

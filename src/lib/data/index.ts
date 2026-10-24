@@ -1505,26 +1505,34 @@ export async function editGrant(
       if (updated) applied = pass;
     }
     if (!applied) return { error: "db_error" }; // balance kept moving under us
-    // Undo the balance change (same compare-and-swap, one attempt) if the
-    // grant update below fails.
+    // Undo the balance change if the grant update below fails: same
+    // compare-and-swap on the balance as it is THEN (a spin may have landed
+    // since), up to three attempts. Skipped when it would take the pass
+    // negative (the fan already spent the spins); a skip or a miss is logged.
     const passId = applied.id;
     rollbacks.push(async () => {
-      const { data: cur } = await sb
-        .from("fan_passes")
-        .select(PASS_COLS)
-        .eq("id", passId)
-        .maybeSingle();
-      const c = cur as PassBal | null;
-      if (!c || c.spins_remaining - delta < 0) return;
-      await sb
-        .from("fan_passes")
-        .update({
-          spins_remaining: c.spins_remaining - delta,
-          spins_granted_total: clampInt(c.spins_granted_total - delta, 0),
-        })
-        .eq("id", passId)
-        .eq("spins_remaining", c.spins_remaining)
-        .eq("spins_granted_total", c.spins_granted_total);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data: cur } = await sb
+          .from("fan_passes")
+          .select(PASS_COLS)
+          .eq("id", passId)
+          .maybeSingle();
+        const c = cur as PassBal | null;
+        if (!c || c.spins_remaining - delta < 0) break;
+        const { data: undone } = await sb
+          .from("fan_passes")
+          .update({
+            spins_remaining: c.spins_remaining - delta,
+            spins_granted_total: clampInt(c.spins_granted_total - delta, 0),
+          })
+          .eq("id", passId)
+          .eq("spins_remaining", c.spins_remaining)
+          .eq("spins_granted_total", c.spins_granted_total)
+          .select("id")
+          .maybeSingle();
+        if (undone) return;
+      }
+      console.error("editGrant: balance rollback could not be applied", { grantId, passId, delta });
     });
   }
 
