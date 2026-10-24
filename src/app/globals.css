@@ -97,6 +97,11 @@ body {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, transparent);
 }
+.ff-input[aria-invalid="true"],
+.ff-input[aria-invalid="true"]:focus {
+  border-color: #f87171;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #f87171 22%, transparent);
+}
 .ff-input option { color: #000; }
 /* A native <select> drawn as a rarity pill (wheel editor). Stays a real select
    so it is keyboard/screen-reader operable and e2e can selectOption() on it;
