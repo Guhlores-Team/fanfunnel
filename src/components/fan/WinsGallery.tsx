@@ -3,9 +3,11 @@
 import { RARITY_COLORS, RARITY_LABEL, RARITY_ORDER } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
 import { timeAgo } from "@/lib/format";
+import { useNow } from "@/lib/hooks/useNow";
 
 // Relative time for a win; older than a week falls back to an absolute date.
-const ago = (iso: string) => timeAgo(iso, { invalid: "", absoluteAfterDays: 7 });
+const ago = (iso: string, now: number) =>
+  timeAgo(iso, { invalid: "", absoluteAfterDays: 7, now });
 
 interface Grouped {
   label: string;
@@ -22,6 +24,10 @@ interface Grouped {
  * and how recently — turning a list into a collection worth showing off.
  */
 export default function WinsGallery({ history }: { history: WonPrize[] }) {
+  // Relative times depend on the clock (and the absolute fallback on the
+  // viewer's locale), so they stay blank in the server HTML and fill in right
+  // after hydration. Reading Date.now() during render caused React #418.
+  const now = useNow(15_000);
   if (history.length === 0) return null;
 
   // Group identical prizes; keep a count + the most recent timestamp.
@@ -93,7 +99,9 @@ export default function WinsGallery({ history }: { history: WonPrize[] }) {
                 >
                   {RARITY_LABEL[g.rarity] ?? g.rarity}
                 </span>
-                <span className="shrink-0 text-[10px] text-muted">{ago(g.latest)}</span>
+                <span className="shrink-0 text-[10px] text-muted">
+                  {now === null ? "" : ago(g.latest, now)}
+                </span>
               </div>
             </div>
           );
