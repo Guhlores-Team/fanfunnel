@@ -6,6 +6,17 @@ import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
 import { EmptyState } from "./ui";
 
+const well = "rounded-xl border border-[var(--hair)] p-4 [background:var(--s2)]";
+const row =
+  "flex items-center gap-3 rounded-[10px] border border-[var(--hair)] bg-[color-mix(in_oklab,var(--color-ink)_3%,transparent)] px-3 py-2.5";
+const smallBtn =
+  "shrink-0 rounded-[8px] border border-[var(--hair)] px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+const mutedBtn =
+  "shrink-0 rounded-[8px] border border-[var(--hair)] px-2.5 py-1 text-xs font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+const dangerBtn =
+  "shrink-0 rounded-[8px] border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#fca5a5] transition-colors hover:bg-[#ef4444]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50";
+const tick = <span aria-hidden="true" className="h-3.5 w-[3px] rounded-sm bg-[var(--brand)]" />;
+
 /**
  * Reusable template + prize library. Self-fetches the creator's saved wheel
  * templates and prize library, and exposes apply / save / delete affordances.
@@ -128,10 +139,13 @@ export default function TemplateLibrary({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="grid gap-4 xl:grid-cols-2">
       {/* Wheel templates */}
-      <section className="card rounded-xl p-5" aria-label="Wheel templates">
-        <h3 className="font-bold text-ink">Wheel templates</h3>
+      <section className={well} aria-label="Wheel templates">
+        <h3 className="flex items-center gap-2 text-[15px] font-bold text-ink">
+          {tick}
+          Wheel templates
+        </h3>
         <p className="mt-1 text-sm text-muted">
           Reusable wheel presets — apply one to start a new wheel, or save the
           wheel you&rsquo;re editing as a template.
@@ -140,7 +154,7 @@ export default function TemplateLibrary({
         {/* Save current wheel as a template */}
         <div className="mt-4 flex flex-wrap items-end gap-2">
           <label className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
               Save current wheel as template
             </span>
             <input
@@ -162,7 +176,7 @@ export default function TemplateLibrary({
             type="button"
             onClick={saveCurrentWheel}
             disabled={!name.trim()}
-            className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
+            className="btn-brand min-h-9 rounded-[9px] px-4 text-sm font-bold disabled:opacity-50"
           >
             Save template
           </button>
@@ -172,7 +186,7 @@ export default function TemplateLibrary({
           {wheelTemplates === null ? (
             <div className="space-y-2">
               {Array.from({ length: 2 }).map((_, i) => (
-                <div key={i} className="skeleton h-14 rounded-lg" />
+                <div key={i} className="skeleton h-14 rounded-[10px]" />
               ))}
             </div>
           ) : wheelTemplates.length === 0 ? (
@@ -183,10 +197,7 @@ export default function TemplateLibrary({
           ) : (
             <ul className="space-y-2">
               {wheelTemplates.map((t) => (
-                <li
-                  key={t.id}
-                  className="flex items-center gap-3 rounded-lg border border-line bg-base/40 px-3 py-2.5"
-                >
+                <li key={t.id} className={row}>
                   <span
                     aria-hidden
                     className="h-3 w-3 shrink-0 rounded-full"
@@ -201,7 +212,7 @@ export default function TemplateLibrary({
                   <button
                     type="button"
                     onClick={() => onApplyWheelTemplate(t.id)}
-                    className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5"
+                    className={smallBtn}
                   >
                     Apply
                   </button>
@@ -211,14 +222,14 @@ export default function TemplateLibrary({
                         type="button"
                         onClick={() => deleteWheelTemplate(t.id)}
                         disabled={busy}
-                        className="shrink-0 rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
+                        className={dangerBtn}
                       >
                         Confirm
                       </button>
                       <button
                         type="button"
                         onClick={() => setConfirmDelete(null)}
-                        className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+                        className={mutedBtn}
                       >
                         Cancel
                       </button>
@@ -227,7 +238,7 @@ export default function TemplateLibrary({
                     <button
                       type="button"
                       onClick={() => setConfirmDelete(t.id)}
-                      className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+                      className={mutedBtn}
                     >
                       Delete
                     </button>
@@ -240,9 +251,12 @@ export default function TemplateLibrary({
       </section>
 
       {/* Prize library */}
-      <section className="card rounded-xl p-5" aria-label="Prize library">
+      <section className={well} aria-label="Prize library">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-bold text-ink">Prize library</h3>
+          <h3 className="flex items-center gap-2 text-[15px] font-bold text-ink">
+            {tick}
+            Prize library
+          </h3>
           {onSaveCurrentPrizesToLibrary && (
             <button
               type="button"
@@ -250,7 +264,7 @@ export default function TemplateLibrary({
                 await onSaveCurrentPrizesToLibrary();
                 await loadPrizes();
               }}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
+              className={smallBtn}
             >
               Save current prizes
             </button>
@@ -264,7 +278,7 @@ export default function TemplateLibrary({
           {prizes === null ? (
             <div className="space-y-2">
               {Array.from({ length: 2 }).map((_, i) => (
-                <div key={i} className="skeleton h-14 rounded-lg" />
+                <div key={i} className="skeleton h-14 rounded-[10px]" />
               ))}
             </div>
           ) : prizes.length === 0 ? (
@@ -275,17 +289,14 @@ export default function TemplateLibrary({
           ) : (
             <ul className="space-y-2">
               {prizes.map((p) => (
-                <li
-                  key={p.id}
-                  className="flex items-center gap-3 rounded-lg border border-line bg-base/40 px-3 py-2.5"
-                >
+                <li key={p.id} className={row}>
                   <span
                     aria-hidden
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ backgroundColor: p.color ?? RARITY_COLORS[p.rarity] }}
                   />
                   <div className="min-w-0 flex-1">
-                    <span className="truncate font-semibold text-ink">
+                    <span className="block truncate font-semibold text-ink">
                       {p.emoji ? `${p.emoji} ` : ""}
                       {p.label}
                     </span>
@@ -294,7 +305,7 @@ export default function TemplateLibrary({
                   <button
                     type="button"
                     onClick={() => onApplyPrizeTemplate(p)}
-                    className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5"
+                    className={smallBtn}
                   >
                     Add
                   </button>
@@ -304,14 +315,14 @@ export default function TemplateLibrary({
                         type="button"
                         onClick={() => deletePrizeTemplate(p.id)}
                         disabled={busy}
-                        className="shrink-0 rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
+                        className={dangerBtn}
                       >
                         Confirm
                       </button>
                       <button
                         type="button"
                         onClick={() => setConfirmDelete(null)}
-                        className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+                        className={mutedBtn}
                       >
                         Cancel
                       </button>
@@ -320,7 +331,7 @@ export default function TemplateLibrary({
                     <button
                       type="button"
                       onClick={() => setConfirmDelete(p.id)}
-                      className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
+                      className={mutedBtn}
                     >
                       Delete
                     </button>
