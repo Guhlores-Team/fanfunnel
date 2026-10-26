@@ -145,6 +145,30 @@ export async function fanJourney(page, { step, assert }, ctx) {
       (await page.locator("[role='dialog'][aria-modal='true']").count()) === 1,
       "age gate dialog shown to a fresh fan"
     );
+    // Phone widths must not scroll sideways. The wheel's pulsing halo used to
+    // push the layout past the viewport (361 vs 360), so sample the document
+    // width across ~2.5s of the glow animation, not just one frame.
+    for (const width of [360, 375, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      // Let the wheel's resize handler re-fit to the new width first (a stale
+      // 1280px-sized wheel for one frame is not the bug under test).
+      await page.waitForTimeout(300);
+      const worst = await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            let max = 0;
+            const t0 = performance.now();
+            const tick = () => {
+              max = Math.max(max, document.documentElement.scrollWidth - window.innerWidth);
+              if (performance.now() - t0 < 2500) requestAnimationFrame(tick);
+              else resolve(max);
+            };
+            tick();
+          })
+      );
+      assert(worst <= 0, `no horizontal overflow at ${width}px (worst +${worst}px)`);
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
   });
 
   await step("fan page: leaderboard visible before spinning", async () => {
@@ -383,10 +407,38 @@ export async function fanExtras(page, { step, assert }, ctx) {
     // Arm the pause-mutation wait before confirming, so the link is actually
     // deactivated server-side before we probe it — instead of a fixed sleep.
     const paused = page
-      .waitForResponse((r) => r.request().method() === "POST" && r.status() < 400)
+      .waitForResponse(
+        (r) =>
+          r.request().method() === "POST" &&
+          r.url().includes("/api/self-exclude") &&
+          r.status() < 400
+      )
       .catch(() => null);
+    // Marker on the live document: if the page reloads/navigates it disappears,
+    // proving the paused state below came from in-page state, not a refresh.
+    await page.evaluate(() => {
+      window.__ffNoReload = true;
+    });
     await page.locator("button:has-text('Yes, pause my link')").first().click();
     await paused;
+    // The fan sees a confirmation, and the page flips to paused WITHOUT a reload:
+    // SPIN is disabled and says so (distinct from the "Out of spins" label that
+    // the previous step leaves behind), and the balance chip reads "Paused".
+    const status = page.locator("[role='dialog'] [role='status']");
+    await status.first().waitFor();
+    assert(/paused/i.test(await status.first().innerText()), "pause confirmation shown to the fan");
+    await page.locator("[role='dialog'] button:has-text('Close')").first().click();
+    const spinBtn = page.getByRole("button", { name: "Link paused" });
+    await spinBtn.waitFor();
+    assert(await spinBtn.isDisabled(), "SPIN is disabled immediately after pausing, without a reload");
+    assert(
+      /Spins left\s*Paused/i.test(await page.locator("body").innerText()),
+      "balance chip shows the paused state without a reload"
+    );
+    assert(
+      await page.evaluate(() => window.__ffNoReload === true),
+      "the page was not reloaded after pausing"
+    );
     // The now-paused link should 404 (getFanPass returns null). Check via the
     // request context so this *expected* 404 isn't logged as a page signal.
     const resp = await ctx.request.get(BASE + "/spin/demo");
