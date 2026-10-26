@@ -7,11 +7,12 @@ import { useToast } from "@/components/ui/Toast";
 
 /**
  * Header control for the wheel editor. Self-fetches the creator's wheels and
- * draws them as chips (Command Center). Each chip has a "Manage" menu with the
- * per-wheel actions (set active, duplicate, archive/restore, delete forever,
- * schedule) and the schedule editor for the currently-selected wheel opens as a
- * card under the chips. Owns its own list state and refetches after every
- * mutation so the surrounding editor only has to react to `onChanged`.
+ * draws them as chips (Command Center). "Set active" (the everyday action) sits
+ * on every eligible chip; the rare actions (duplicate, archive/restore, delete
+ * forever) live in each chip's "Manage" menu. The schedule card for the
+ * selected wheel is always shown under the chips, as it was before the
+ * redesign. Owns its own list state and refetches after every mutation so the
+ * surrounding editor only has to react to `onChanged`.
  *
  * Props:
  *   currentWheelId  the wheel the editor is presently editing (highlighted)
@@ -37,9 +38,8 @@ export default function WheelSwitcher({
   // Local edits to the selected wheel's schedule inputs.
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
-  // Which chip's "Manage" menu is open, and whether the schedule card is shown.
+  // Which chip's "Manage" menu is open.
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchorRef = useRef<HTMLButtonElement | null>(null);
 
@@ -303,6 +303,18 @@ export default function WheelSwitcher({
                     )}
                     <span className="sr-only">{`, ${hint}`}</span>
                   </button>
+                  {/* The one everyday wheel action stays visible (not in the menu). */}
+                  {!w.isActive && !w.archivedAt && (
+                    <button
+                      type="button"
+                      onClick={() => setActive(w.id)}
+                      disabled={busy}
+                      aria-label={`Set ${w.title} active`}
+                      className="ml-1.5 shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-2 py-px text-[10.5px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
+                    >
+                      Set active
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -349,35 +361,6 @@ export default function WheelSwitcher({
                           Edit
                         </button>
                       )}
-                      {!w.isActive && !w.archivedAt && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={async () => {
-                            closeMenu(true);
-                            await setActive(w.id);
-                          }}
-                          disabled={busy}
-                          className={menuItem}
-                        >
-                          Set active
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={async () => {
-                          closeMenu(false);
-                          // The schedule card edits the SELECTED wheel, so open it
-                          // only once this wheel is selected: a cancelled discard
-                          // prompt or a failed load leaves another wheel selected.
-                          if (current || (await onEdit(w.id)) === true) setScheduleOpen(true);
-                          else menuAnchorRef.current?.focus();
-                        }}
-                        className={menuItem}
-                      >
-                        Schedule…
-                      </button>
                       <button
                         type="button"
                         role="menuitem"
@@ -493,23 +476,22 @@ export default function WheelSwitcher({
         <p className="mt-2 text-sm text-muted">No wheels yet. Create one to get started.</p>
       )}
 
-      {/* Schedule editor for the selected wheel (opened from its Manage menu). */}
-      {scheduleOpen && selected && (
-        <div className="mt-3 rounded-xl border border-[var(--hair)] p-3.5 [background:var(--s2)]">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="flex items-center gap-2 text-sm font-bold text-ink">
-              <span aria-hidden="true" className="h-3.5 w-[3px] rounded-sm bg-[var(--brand)]" />
+      {/* Schedule for the selected wheel: always visible, so a time-boxed wheel
+          is obvious at a glance (prior design). */}
+      {selected && (
+        <section
+          aria-label={`Schedule for ${selected.title}`}
+          className="mt-3 rounded-xl border border-[var(--hair)] p-3.5 [background:var(--s2)]"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="flex min-w-0 items-center gap-2 text-sm font-bold text-ink">
+              <span aria-hidden="true" className="h-3.5 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
               Schedule
               <span className="min-w-0 truncate text-xs font-medium text-muted">{selected.title}</span>
             </h4>
-            <button
-              type="button"
-              onClick={() => setScheduleOpen(false)}
-              aria-label="Close schedule"
-              className="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:text-ink"
-            >
-              <Icon d="M18 6 6 18M6 6l12 12" size={14} />
-            </button>
+            <span className="tnum text-xs text-muted">
+              {scheduleHint(selected.activeFrom, selected.activeUntil, selected.isActive)}
+            </span>
           </div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex min-w-0 flex-col gap-1.5">
@@ -555,7 +537,7 @@ export default function WheelSwitcher({
               Always on
             </button>
           </div>
-        </div>
+        </section>
       )}
     </section>
   );

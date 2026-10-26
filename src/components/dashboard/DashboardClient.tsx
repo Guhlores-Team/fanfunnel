@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { brandVars } from "@/lib/theme";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
@@ -15,6 +15,7 @@ import MetricsPanel from "@/components/dashboard/MetricsPanel";
 import WheelEditor from "@/components/dashboard/WheelEditor";
 import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
+import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -66,6 +67,23 @@ export default function DashboardClient({
 }) {
   const [tab, setTab] = useState<Tab>("today");
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
+  // Last saved/loaded wheel JSON. Lives beside `wheel` so "Unsaved changes"
+  // (and the edits themselves) survive leaving the Wheels section and coming back.
+  const [savedWheelJson, setSavedWheelJson] = useState(() => JSON.stringify(initialWheel));
+  const wheelDirty = useMemo(() => JSON.stringify(wheel) !== savedWheelJson, [wheel, savedWheelJson]);
+  // Leaving with unsaved wheel edits. Sign out asks in-app first (below); a
+  // reload/close can only get the browser's own beforeunload prompt. Lives
+  // here, not in the editor, so it holds while another section is open.
+  const leavingRef = useRef(false);
+  const [signOutForm, setSignOutForm] = useState<HTMLFormElement | null>(null);
+  useEffect(() => {
+    if (!wheelDirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      if (!leavingRef.current) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [wheelDirty]);
   // Which wheel the editor is currently editing. Lifted so it survives tab
   // switches and the WheelSwitcher highlights the right wheel. Seeded from the
   // initial active wheel's id so the switcher highlights it on first paint.
@@ -182,6 +200,11 @@ export default function DashboardClient({
         accountName={accountName}
         accountSub={email ?? "Demo workspace — connect Supabase to go live"}
         showSignOut={!!email}
+        onSignOut={(e) => {
+          if (!wheelDirty) return;
+          e.preventDefault();
+          setSignOutForm(e.currentTarget);
+        }}
         footerExtra={
           !overview.loading && onboardingDismissed && !onboardingAllDone ? (
             <SetupChecklistButton
@@ -280,7 +303,8 @@ export default function DashboardClient({
           <WheelEditor
             wheel={wheel}
             setWheel={setWheel}
-            initialWheel={initialWheel}
+            savedJson={savedWheelJson}
+            setSavedJson={setSavedWheelJson}
             editingWheelId={editingWheelId}
             setEditingWheelId={setEditingWheelId}
             onWheelMutated={overview.refresh}
@@ -294,6 +318,17 @@ export default function DashboardClient({
             onBrandColorChange={(color) =>
               setWheel((w) => ({ ...w, brandColor: color }))
             }
+          />
+        )}
+        {signOutForm && (
+          <DiscardChangesDialog
+            what="your wheel"
+            consequence="Signing out now throws them away."
+            onKeep={() => setSignOutForm(null)}
+            onDiscard={() => {
+              leavingRef.current = true;
+              signOutForm.submit();
+            }}
           />
         )}
       </div>

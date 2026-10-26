@@ -17,6 +17,7 @@ import { useToast } from "@/components/ui/Toast";
 import { OddsBar } from "@/components/dashboard/OddsBar";
 import WheelSwitcher from "@/components/dashboard/WheelSwitcher";
 import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
+import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -127,14 +128,18 @@ function Lbl({ label, children, small }: { label: string; children: ReactNode; s
 export default function WheelEditor({
   wheel,
   setWheel,
-  initialWheel,
+  savedJson,
+  setSavedJson,
   editingWheelId,
   setEditingWheelId,
   onWheelMutated,
 }: {
   wheel: WheelConfig;
   setWheel: Dispatch<SetStateAction<WheelConfig>>;
-  initialWheel: WheelConfig;
+  /** JSON of the last saved/loaded config. Lifted with `wheel` so the dirty
+   *  state survives leaving and re-entering the Wheels section. */
+  savedJson: string;
+  setSavedJson: (json: string) => void;
   editingWheelId: string | null;
   setEditingWheelId: (id: string | null) => void;
   /** Notify the parent (refreshes overview, incl. the wheelBuilt onboarding signal). */
@@ -148,16 +153,23 @@ export default function WheelEditor({
     return m;
   }, [odds]);
   const toast = useToast();
-  const [savedJson, setSavedJson] = useState(() => JSON.stringify(initialWheel));
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
-  // Per-prize "More" disclosure (emoji picks + description), keyed by prize id.
+  // Per-prize "More" disclosure (emoji picks), keyed by prize id.
   const [moreOpen, setMoreOpen] = useState<Record<string, boolean>>({});
   // #9: bumped after a prize is saved to the library (★) so TemplateLibrary
   // refetches and the favorite shows up immediately — no page refresh.
   const [librarySignal, setLibrarySignal] = useState(0);
   const dirty = JSON.stringify(wheel) !== savedJson;
+  // A wheel switch requested while there are unsaved edits waits here for the
+  // in-app dialog's answer (the browser's own confirm() is not accessible).
+  const [pendingSwitch, setPendingSwitch] = useState<{
+    id: string;
+    resolve: (discard: boolean) => void;
+  } | null>(null);
+  // Leaving the page with unsaved edits is guarded by DashboardClient (it owns
+  // the saved snapshot), so the guard holds while another section is open.
   const validation = useMemo(() => validateWheelDraft(wheel), [wheel]);
   // Errors show for a field once it has been left (blur) or after a save
   // attempt, so a half-typed hex isn't flagged mid-keystroke.
@@ -286,8 +298,12 @@ export default function WheelEditor({
   // with the full config) targets the right wheel.
   async function loadWheel(id: string): Promise<boolean> {
     // Switching wheels replaces the editor state: don't silently drop edits.
-    if (dirty && id !== wheel.id && !window.confirm("Discard unsaved changes to this wheel?")) {
-      return false;
+    if (dirty) {
+      // Re-opening the wheel already in the editor (its chip) must not reload
+      // it over the unsaved edits: it is already open.
+      if (id === wheel.id) return true;
+      const discard = await new Promise<boolean>((resolve) => setPendingSwitch({ id, resolve }));
+      if (!discard) return false;
     }
     const res = await fetch(`/api/wheels/${id}`, { cache: "no-store" });
     if (!res.ok) {
@@ -457,6 +473,19 @@ export default function WheelEditor({
 
   return (
     <div className="flex flex-col">
+      {pendingSwitch && (
+        <DiscardChangesDialog
+          what="this wheel"
+          onKeep={() => {
+            pendingSwitch.resolve(false);
+            setPendingSwitch(null);
+          }}
+          onDiscard={() => {
+            pendingSwitch.resolve(true);
+            setPendingSwitch(null);
+          }}
+        />
+      )}
       <div className="mb-5">
         <WheelSwitcher
           currentWheelId={editingWheelId}
@@ -961,7 +990,19 @@ export default function WheelEditor({
                   </div>
                   <FieldError id={errId(k("color"))} message={errFor(k("color"), pe.color)} />
 
-                  {/* "More": emoji quick-picks and the win description. */}
+                  {/* The win message is content fans see, so it stays visible. */}
+                  <div className="mt-2.5">
+                    <Lbl label="Description (shown on win)" small>
+                      <textarea
+                        className="ff-input w-full"
+                        rows={2}
+                        value={p.description ?? ""}
+                        onChange={(e) => updatePrize(p.id, { description: e.target.value })}
+                      />
+                    </Lbl>
+                  </div>
+
+                  {/* "More": the emoji quick-picks (a helper, not content). */}
                   <button
                     type="button"
                     onClick={() => setMoreOpen((m) => ({ ...m, [p.id]: !more }))}
@@ -975,9 +1016,7 @@ export default function WheelEditor({
                       className={`transition-transform ${more ? "rotate-180" : ""}`}
                     />
                     {more ? "Less" : "More"}
-                    {!more && p.description ? (
-                      <span className="font-medium"> · has a win message</span>
-                    ) : null}
+                    {!more && <span className="font-medium"> · emoji picks</span>}
                   </button>
                   {more && (
                     <div className="mt-2.5 rounded-[10px] border border-[var(--hair)] p-3 [background:var(--s2)]">
@@ -997,16 +1036,6 @@ export default function WheelEditor({
                         ))}
                       </div>
                       <p className="mt-1.5 text-[11px] text-muted">Tip: type or paste any emoji.</p>
-                      <div className="mt-3">
-                        <Lbl label="Description (shown on win)" small>
-                          <textarea
-                            className="ff-input w-full"
-                            rows={2}
-                            value={p.description ?? ""}
-                            onChange={(e) => updatePrize(p.id, { description: e.target.value })}
-                          />
-                        </Lbl>
-                      </div>
                     </div>
                   )}
                 </div>

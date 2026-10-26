@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { prefersReducedMotion } from "@/lib/sound";
 
 // Command Center shell: grouped left sidebar + sticky top bar. Presentational
@@ -98,6 +98,7 @@ export function Sidebar({
   accountName,
   accountSub,
   showSignOut,
+  onSignOut,
   footerExtra,
 }: {
   active: Tab;
@@ -108,6 +109,8 @@ export function Sidebar({
   accountName: string;
   accountSub: string;
   showSignOut: boolean;
+  /** May preventDefault() to ask first (unsaved wheel edits). */
+  onSignOut?: (e: FormEvent<HTMLFormElement>) => void;
   footerExtra?: ReactNode;
 }) {
   const itemRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
@@ -255,7 +258,7 @@ export function Sidebar({
       <div className="col-start-2 row-start-1 flex items-center gap-1 lg:flex-col lg:items-stretch lg:gap-0.5 lg:border-t lg:border-[#1f1b27] lg:pt-3">
         {footerExtra}
         {showSignOut && (
-          <form action="/auth/signout" method="post" className="flex">
+          <form action="/auth/signout" method="post" className="flex" onSubmit={onSignOut}>
             <button
               type="submit"
               className="flex min-h-[38px] w-full items-center gap-[11px] rounded-[10px] px-2.5 text-[13px] font-semibold text-muted transition-colors duration-150 hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] hover:text-ink"
