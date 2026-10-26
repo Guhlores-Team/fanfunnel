@@ -146,8 +146,19 @@ export async function mobileJourney(browser, { step, assert }, sink) {
       const barTop = async () => (await page.locator("nav[aria-label='Dashboard sections']:visible").boundingBox()).y;
       for (const name of ["Today", "Fans"]) {
         await clickTab(page, name);
-        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-        await page.waitForTimeout(250);
+        // The section's data can render after the first scroll and grow the page,
+        // so keep scrolling to the bottom until the height holds steady.
+        await page.waitForFunction(
+          () => {
+            const h = document.documentElement.scrollHeight;
+            window.scrollTo(0, h);
+            const settled = window.__ffLastH === h;
+            window.__ffLastH = h;
+            return settled && Math.ceil(window.scrollY + window.innerHeight) >= h - 1;
+          },
+          null,
+          { polling: 250, timeout: 8000 },
+        ).catch(() => {});
         const region = await page.locator("[role='region']").first().boundingBox();
         assert(region && region.y + region.height <= (await barTop()) + 1, `${name}: the last content ends above the bar`);
       }
