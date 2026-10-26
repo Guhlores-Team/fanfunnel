@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { activeFans, bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -103,6 +103,28 @@ test("bucketCentsByDay ignores out-of-window and unparseable events", () => {
 test("bucketCentsByDay clamps day window like bucketByDay", () => {
   assert.equal(bucketCentsByDay([], 0, now).length, 1);
   assert.equal(bucketCentsByDay([], 500, now).length, 90);
+});
+
+test("activeFans counts distinct fans per rolling 7-day window", () => {
+  const ev = (fanId: string, at: string) => ({ fanId, at });
+  const out = activeFans(
+    [
+      ev("a", "2026-05-31T11:00:00Z"), // this week
+      ev("a", "2026-05-30T09:00:00Z"), // same fan again: counted once
+      ev("b", "2026-05-24T13:00:00Z"), // 6d23h ago: still this week
+      ev("c", "2026-05-24T11:00:00Z"), // 7d1h ago: last week
+      ev("a", "2026-05-20T00:00:00Z"), // last week too (a is active in both)
+      ev("d", "2026-05-17T11:00:00Z"), // 14d1h ago: outside both windows
+      ev("e", "2026-06-01T00:00:00Z"), // in the future: ignored
+      ev("f", "not a date"), // unparseable: ignored
+    ],
+    now
+  );
+  assert.deepEqual(out, { thisWeek: 2, lastWeek: 2 });
+});
+
+test("activeFans of no events is zero/zero", () => {
+  assert.deepEqual(activeFans([], now), { thisWeek: 0, lastWeek: 0 });
 });
 
 console.log(`\n${passed} test(s) passed`);

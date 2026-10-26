@@ -41,7 +41,7 @@ import type {
   WishlistItem,
   WonPrize,
 } from "./types";
-import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { activeFans, bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 
 // In-memory demo store. Used automatically when Supabase env vars are absent,
 // so `npm run dev` gives a fully working app with zero setup. State resets when
@@ -1511,6 +1511,11 @@ export function mockGetOverview(): CreatorOverview {
       unreadMessages,
       leaderboardEnabled: store.leaderboardEnabled,
       wheelBuilt,
+      // Oldest pending across ALL redemptions, not just the 200-row display slice.
+      oldestPendingAt:
+        redemptions
+          .filter((r) => r.status === "pending")
+          .reduce<string | null>((min, r) => (min === null || r.at < min ? r.at : min), null),
     },
     redemptions: structuredClone(items),
   };
@@ -1538,6 +1543,8 @@ export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
       ).size,
     },
     revenueTrend,
+    // Each redemption is one spin and carries its fanId.
+    activeFans: activeFans(store.redemptions.map((r) => ({ fanId: r.fanId, at: r.at }))),
   };
 }
 

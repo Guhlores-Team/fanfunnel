@@ -296,6 +296,11 @@ export interface CreatorMetrics {
    * compile.
    */
   wheelBuilt?: boolean;
+  /**
+   * ISO timestamp of the oldest still-pending redemption across ALL rows (the
+   * overview's redemptions list is capped at the newest 200). null when none.
+   */
+  oldestPendingAt?: string | null;
 }
 
 /** Everything the creator dashboard's metrics + inbox need. */
@@ -336,7 +341,14 @@ export interface RevenueDaily { date: string; cents: number } // YYYY-MM-DD (UTC
 // least once → fans with a fulfilled prize. Measures real audience conversion,
 // not link/spin volume.
 export interface ConversionFunnel { fans: number; spun: number; fulfilled: number }
-export interface CreatorMetricsExtra { trend: DailyCount[]; funnel: ConversionFunnel; revenueTrend: RevenueDaily[] }
+/** Distinct fans with ≥1 spin in the rolling last 7 days, and the 7 days before. */
+export interface WeeklyActiveFans { thisWeek: number; lastWeek: number }
+export interface CreatorMetricsExtra {
+  trend: DailyCount[];
+  funnel: ConversionFunnel;
+  revenueTrend: RevenueDaily[];
+  activeFans: WeeklyActiveFans;
+}
 
 // --- Admin (cross-account) --------------------------------------------------
 
