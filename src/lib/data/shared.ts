@@ -1,5 +1,28 @@
 // Data layer — shared helpers: row shapes, selects, the client type, small
 // guards and the wheel row -> WheelConfig mapper used by several domains.
+//
+// Error convention (every module under src/lib/data follows it):
+//  * A mutation returns a discriminated result and never throws for an
+//    expected failure: `{ ok: true } | { error: string }`, or
+//    `{ <payload> } | { error: string }` when it has something to hand back.
+//    Callers branch on `"error" in result`.
+//  * `error` is a short lowercase_snake code, never prose and never a raw DB
+//    message. Shared codes: "unauthorized" (no session / not the owner),
+//    "not_found" (no such row for this creator), "db_error" (any Supabase
+//    failure — the detail goes to console.error, never to the client),
+//    "rate_limited", "blocked", "needs_ack". Domain codes ("no_spins",
+//    "campaign_not_found", "invalid_url", ...) follow the same shape. Routes
+//    map a code to an HTTP status in src/lib/api/handler.ts (statusForError)
+//    and the fan-facing copy lives in src/components/spinErrors.ts.
+//  * `SpinError` below is the closed union the spin path returns, so the
+//    fan-facing mapper can be exhaustive.
+//  * A read (get*/list*) returns `null`, `[]` or a default instead of an error
+//    result, and never throws when signed out.
+//  * One deliberate exception: the create* functions that return the created
+//    entity directly (createWheel, duplicateWheel, createCampaignPack,
+//    createPrizeTemplate, createWheelTemplate) `throw new Error("<code>")`
+//    with the same codes; their routes catch and pass the message through
+//    errorResponse().
 import { createServiceClient, createClient } from "@/lib/supabase/server";
 import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";

@@ -43,7 +43,12 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
   ];
   for (const t of tables) {
     const { error } = await sb.from(t).delete().eq("creator_id", user.id);
-    if (error) return { error: `db_error:${t}` };
+    if (error) {
+      // Plain "db_error" like every other mutation (see shared.ts): the table
+      // name is operator detail, not something to hand to the client.
+      console.error("clearMyData: delete failed", { table: t, error: error.message });
+      return { error: "db_error" };
+    }
   }
 
   // A true fresh start also resets profile preferences (via the SECURITY
