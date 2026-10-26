@@ -35,6 +35,7 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard (Fans)", prep: openTab("Fans"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Analytics)", prep: openTab("Analytics"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Boosts)", prep: openTab("Boosts"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Settings)", prep: openTab("Settings"), advisory: DASH_ADVISORY },
   { path: "/spin/demo", name: "fan spin (age gate)" },
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
 ];
