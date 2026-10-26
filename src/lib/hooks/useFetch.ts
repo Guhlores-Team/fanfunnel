@@ -8,6 +8,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { startPoll } from "@/lib/poll";
 
 export interface FetchState<T> {
   /** Latest successfully-parsed payload, or null before the first success. */
@@ -25,10 +26,14 @@ export interface FetchState<T> {
 export interface UseFetchOptions<T> {
   /**
    * Poll interval in ms. When set, the resource refetches on this cadence while
-   * the document is visible. Omit / 0 to fetch once (on mount + dep change).
+   * the document is visible (paused while hidden; consecutive failures back off
+   * exponentially, see `startPoll`). Omit / 0 to fetch once (on mount + dep change).
    */
   pollMs?: number;
-  /** Refetch when the tab becomes visible again. Defaults to true. */
+  /**
+   * Refetch when the tab becomes visible again. Defaults to true. When polling
+   * with this off, returning still refreshes once if a poll was missed while hidden.
+   */
   refreshOnVisible?: boolean;
   /**
    * Validate / narrow the parsed JSON before it's stored. Return the typed value
@@ -76,24 +81,32 @@ export function useFetch<T>(
 
   const active = enabled && url !== null;
 
-  const load = useCallback(async () => {
-    if (!active || typeof window === "undefined") return;
+  // Resolves false only when THIS request failed (feeds the poll backoff); a
+  // superseded or post-unmount response is not a failure.
+  const fetchOnce = useCallback(async (): Promise<boolean> => {
+    if (!active || typeof window === "undefined") return true;
     const id = ++reqId.current;
     try {
       const res = await fetch(url as string, { cache: "no-store" });
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const raw: unknown = await res.json();
       const value = selectRef.current ? selectRef.current(raw) : (raw as T);
-      if (!mounted.current || id !== reqId.current) return;
+      if (!mounted.current || id !== reqId.current) return true;
       setData(value);
       setError(null);
+      return true;
     } catch (e) {
-      if (!mounted.current || id !== reqId.current) return;
+      if (!mounted.current || id !== reqId.current) return true;
       setError(e instanceof Error ? e : new Error("Request failed"));
+      return false;
     } finally {
       if (mounted.current && id === reqId.current) setLoading(false);
     }
   }, [url, active]);
+
+  const load = useCallback(async () => {
+    await fetchOnce();
+  }, [fetchOnce]);
 
   useEffect(() => {
     mounted.current = true;
@@ -105,19 +118,23 @@ export function useFetch<T>(
       };
     }
     setLoading(true);
-    void load();
 
     const cleanups: Array<() => void> = [];
     if (pollMs > 0) {
-      // Only poll while the tab is visible — a backgrounded dashboard shouldn't
-      // keep hitting the API every pollMs for hours (matches the hook's doc
-      // contract and refreshOnVisible re-fetches on return).
-      const interval = setInterval(() => {
-        if (document.visibilityState === "visible") void load();
-      }, pollMs);
-      cleanups.push(() => clearInterval(interval));
+      // The scheduler owns the first load, the hidden-tab pause, the refresh on
+      // return and the error backoff, so a backgrounded dashboard stops hitting
+      // the API and a failing endpoint isn't hammered every pollMs.
+      const poll = startPoll({
+        intervalMs: pollMs,
+        immediate: true,
+        refreshOnVisible,
+        task: fetchOnce,
+      });
+      cleanups.push(() => poll.stop());
+    } else {
+      void load();
     }
-    if (refreshOnVisible) {
+    if (refreshOnVisible && pollMs <= 0) {
       const onVis = () => {
         if (document.visibilityState === "visible") void load();
       };
@@ -128,7 +145,7 @@ export function useFetch<T>(
       mounted.current = false;
       for (const c of cleanups) c();
     };
-  }, [load, active, pollMs, refreshOnVisible]);
+  }, [load, fetchOnce, active, pollMs, refreshOnVisible]);
 
   return { data, loading, error, reload: load, setData };
 }
