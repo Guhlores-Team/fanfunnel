@@ -14,6 +14,7 @@ export default function Sparkline({
   height = 56,
   format,
   noun = "Spin",
+  color = "var(--brand)",
 }: {
   data: DailyCount[];
   height?: number;
@@ -21,6 +22,8 @@ export default function Sparkline({
   format?: (n: number) => string;
   /** Noun used in the aria-label ("Spin trend" / "Revenue trend"). */
   noun?: string;
+  /** Line color (the Command Center draws revenue in green). */
+  color?: string;
 }) {
   const fmt = format ?? ((n: number) => String(n));
   const total = data.reduce((s, d) => s + d.spins, 0);
@@ -64,13 +67,13 @@ export default function Sparkline({
       >
         <polygon
           points={areaPoints}
-          fill="color-mix(in oklab, var(--brand) 18%, transparent)"
+          fill={`color-mix(in oklab, ${color} 18%, transparent)`}
           stroke="none"
         />
         <polyline
           points={linePoints}
           fill="none"
-          stroke="var(--brand)"
+          stroke={color}
           strokeWidth={2}
           strokeLinejoin="round"
           strokeLinecap="round"
