@@ -53,11 +53,16 @@ async function main() {
     check(`matcher == needsSessionRefresh for ${path}`, matches(path) === needsSessionRefresh(path));
   }
 
-  // 2. Every server-rendered page that reads the session is matched.
+  // 2. Every server-rendered page that reads the session is matched. A page
+  //    reads it directly (auth.getUser / getSession) or through the admin
+  //    guard (checkAdmin / requireAdminRoute call auth.getUser for it).
   const sessionPages = routes.filter(({ file }) => {
     if (!file.endsWith("page.tsx")) return false;
     const src = readFileSync(file, "utf8");
-    return !/^\s*["']use client["']/.test(src) && /auth\.get(User|Session)\(/.test(src);
+    return (
+      !/^\s*["']use client["']/.test(src) &&
+      /auth\.get(User|Session)\(|\b(checkAdmin|requireAdminRoute)\(/.test(src)
+    );
   });
   check("found the session-reading pages", sessionPages.length >= 4);
   for (const { path } of sessionPages) {
