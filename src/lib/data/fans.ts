@@ -16,6 +16,7 @@ import {
 } from "./mock";
 import { clampInt, creatorOwnsCampaign } from "./shared";
 import { resolveWheelId } from "./wheels";
+import { pickGrantPass } from "./grantPass";
 
 /** Edit an existing grant's spins / amount / campaign after the fact. Adjusts
  *  the fan's balance by the spin delta (floored at 0) so totals stay consistent. */
@@ -88,34 +89,23 @@ export async function editGrant(
   // The pass this grant's spins landed on. When that row is gone (fan_pass_id
   // is ON DELETE SET NULL) or no longer active, fall back to the fan's oldest
   // active pass — the 0020 attribution convention — so the spins stay
-  // spendable. Scoped to this creator like every other pass read.
+  // spendable. The choice is pickGrantPass, which getFanDetail also uses for
+  // the drawer's preview. Scoped to this creator like every other pass read.
   type PassBal = { id: string; is_active: boolean; spins_remaining: number; spins_granted_total: number };
   const PASS_COLS = "id, is_active, spins_remaining, spins_granted_total";
   // A lookup error is not "pass missing": falling back on one would move the
   // delta onto another wheel while the grant keeps its fan_pass_id.
   const readPass = async (): Promise<PassBal | null | "db_error"> => {
-    if (grant.fan_pass_id) {
-      const { data: pRow, error: pErr } = await sb
-        .from("fan_passes")
-        .select(PASS_COLS)
-        .eq("id", grant.fan_pass_id)
-        .eq("creator_id", user.id)
-        .maybeSingle();
-      if (pErr) return "db_error";
-      const p = pRow as PassBal | null;
-      if (p && p.is_active) return p;
-    }
-    const { data: oldest, error: oErr } = await sb
+    const { data: rows, error: pErr } = await sb
       .from("fan_passes")
       .select(PASS_COLS)
       .eq("fan_id", grant.fan_id)
       .eq("creator_id", user.id)
-      .eq("is_active", true)
       .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (oErr) return "db_error";
-    return oldest as PassBal | null;
+      .order("id", { ascending: true });
+    if (pErr) return "db_error";
+    const oldestFirst = ((rows ?? []) as PassBal[]).map((p) => ({ ...p, isActive: p.is_active }));
+    return pickGrantPass(oldestFirst, grant.fan_pass_id);
   };
 
   // Balance first, grant row second: a refused or failed balance change must
@@ -468,25 +458,40 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
       at: r.created_at,
     }));
 
+  // Every pass, oldest first in editGrant's order: the links list (newest
+  // first) and each grant's preview balance come from this one read.
   const { data: passRows } = await sb
     .from("fan_passes")
-    .select("token, created_at")
+    .select("id, token, created_at, is_active, spins_remaining, wheel:wheels(title)")
     .eq("fan_id", fanId)
-    .order("created_at", { ascending: false });
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
 
-  const links = ((passRows ?? []) as { token: string; created_at: string }[]).map(
-    (p) => ({ token: p.token, createdAt: p.created_at })
-  );
+  const passesOldestFirst = ((passRows ?? []) as unknown as {
+    id: string;
+    token: string;
+    created_at: string;
+    is_active: boolean;
+    spins_remaining: number;
+    wheel?: { title: string } | null;
+  }[]).map((p) => ({ ...p, isActive: p.is_active }));
+
+  const links = passesOldestFirst
+    .slice()
+    .reverse()
+    .map((p) => ({ token: p.token, createdAt: p.created_at }));
 
   // This fan's grants, newest first, with campaign name resolved via a join.
   const { data: grantRows } = await sb
     .from("grants")
-    .select("id, spins, amount_cents, bonus_spins, campaign_id, created_at, campaign:campaigns(name)")
+    .select("id, fan_pass_id, spins, amount_cents, bonus_spins, campaign_id, created_at, campaign:campaigns(name)")
     .eq("fan_id", fanId)
     .order("created_at", { ascending: false });
 
   const grantData = (grantRows ?? []) as unknown as {
     id: string;
+    fan_pass_id: string | null;
     spins: number;
     amount_cents: number;
     bonus_spins: number;
@@ -495,15 +500,20 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     campaign: { name: string } | null;
   }[];
 
-  const grants: Grant[] = grantData.map((g) => ({
-    id: g.id,
-    spins: g.spins,
-    amountCents: g.amount_cents,
-    bonusSpins: g.bonus_spins,
-    campaignId: g.campaign_id,
-    campaignName: g.campaign?.name ?? null,
-    at: g.created_at,
-  }));
+  const grants: Grant[] = grantData.map((g) => {
+    // The pass editGrant would move for this grant (same pickGrantPass rule).
+    const pass = pickGrantPass(passesOldestFirst, g.fan_pass_id);
+    return {
+      id: g.id,
+      spins: g.spins,
+      amountCents: g.amount_cents,
+      bonusSpins: g.bonus_spins,
+      campaignId: g.campaign_id,
+      campaignName: g.campaign?.name ?? null,
+      at: g.created_at,
+      editPass: pass ? { spinsRemaining: pass.spins_remaining, wheelTitle: pass.wheel?.title ?? null } : null,
+    };
+  });
 
   const totalSpent = grantData.reduce((s, g) => s + g.amount_cents, 0);
 

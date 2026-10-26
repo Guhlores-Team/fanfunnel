@@ -146,6 +146,12 @@ export interface Grant {
   campaignName: string | null;
   at: string; // ISO timestamp
   bonusSpins?: number;
+  /**
+   * The pass a spin-count edit of this grant moves (editGrant's rule, see
+   * grantPass.ts), so the drawer previews that balance exactly. Null when the
+   * fan has no active pass: a spin change is then refused (no_active_pass).
+   */
+  editPass: { spinsRemaining: number; wheelTitle: string | null } | null;
 }
 
 /** A compact view of a creator's wheel for list/management screens. */

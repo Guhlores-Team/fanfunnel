@@ -5,8 +5,9 @@
  *
  * The rule mirrors editGrant (COR-2): spins the fan has already spun can't be
  * un-granted, so a cut deeper than the unspent balance is refused by the
- * server. The drawer only knows the fan-level balance, which equals the
- * grant's pass balance for a single-wheel fan; the server stays the authority.
+ * server. editGrant moves the change on ONE pass (grantPass.ts), and
+ * getFanDetail reports that pass's balance per grant, so the preview judges
+ * exactly the balance the server will (owner decision h).
  */
 
 /** The spin count the save sends: a whole, non-negative number. */
@@ -84,7 +85,7 @@ export interface GrantImpact {
   newSpins: number;
   /** newSpins - the grant's current spins. */
   delta: number;
-  /** The fan's balance after the edit (negative when refused). */
+  /** The balance of the pass the edit moves, after it (negative when refused). */
   remainingAfter: number;
   /** Spins of this grant already used: the lowest value the server accepts. */
   used: number;
@@ -93,18 +94,42 @@ export interface GrantImpact {
   message: string;
 }
 
+/**
+ * What saving a grant's spin count does, judged on the pass editGrant moves.
+ * `passSpinsRemaining` is that pass's balance (Grant.editPass); omitted, the
+ * fan-level balance stands in for it (a single-wheel fan); null means the fan
+ * has no active pass, so only an unchanged spin count can save. The wheel is
+ * named only when the pass isn't the fan's whole balance.
+ */
 export function grantImpact({
   grantSpins,
   spinsInput,
   fanSpinsRemaining,
+  passSpinsRemaining,
+  wheelTitle,
 }: {
   grantSpins: number;
   spinsInput: string;
   fanSpinsRemaining: number;
+  passSpinsRemaining?: number | null;
+  wheelTitle?: string | null;
 }): GrantImpact {
-  const remaining = Math.max(0, fanSpinsRemaining);
   const newSpins = parseSpins(spinsInput);
   const delta = newSpins - grantSpins;
+
+  if (passSpinsRemaining === null) {
+    // editGrant refuses any spin change here (no_active_pass).
+    const allowed = delta === 0;
+    const lead = "This fan has no active link to move spins on.";
+    const effect = allowed
+      ? "Spins unchanged."
+      : `Setting it to ${newSpins} isn't allowed: only the price and campaign can change.`;
+    return { newSpins, delta, remainingAfter: allowed ? 0 : -1, used: grantSpins, allowed, message: `${lead} ${effect}` };
+  }
+
+  const fanRemaining = Math.max(0, fanSpinsRemaining);
+  const remaining = passSpinsRemaining === undefined ? fanRemaining : Math.max(0, passSpinsRemaining);
+  const where = remaining === fanRemaining ? "" : ` on ${wheelTitle || "this wheel"}`;
   const remainingAfter = remaining + delta;
   const used = Math.max(0, Math.min(grantSpins, grantSpins - remaining));
   const allowed = remainingAfter >= 0;
@@ -112,17 +137,17 @@ export function grantImpact({
   const lead =
     used > 0
       ? `This fan has used ${used} of these ${spinsText(grantSpins)}.`
-      : `This fan has ${spinsText(remaining)} left.`;
+      : `This fan has ${spinsText(remaining)} left${where}.`;
 
   let effect: string;
   if (!allowed) {
     effect = `Setting it to ${newSpins} isn't allowed: it can't go below the ${spinsText(used)} already used.`;
   } else if (delta === 0) {
-    effect = `Spins unchanged, so they keep ${spinsText(remainingAfter)}.`;
+    effect = `Spins unchanged, so they keep ${spinsText(remainingAfter)}${where}.`;
   } else if (delta > 0) {
-    effect = `Setting it to ${newSpins} adds ${spinsText(delta)} and leaves ${spinsText(remainingAfter)}.`;
+    effect = `Setting it to ${newSpins} adds ${spinsText(delta)} and leaves ${spinsText(remainingAfter)}${where}.`;
   } else {
-    effect = `Setting it to ${newSpins} takes back ${spinsText(-delta)} and leaves ${spinsText(remainingAfter)}.`;
+    effect = `Setting it to ${newSpins} takes back ${spinsText(-delta)} and leaves ${spinsText(remainingAfter)}${where}.`;
   }
 
   return { newSpins, delta, remainingAfter, used, allowed, message: `${lead} ${effect}` };

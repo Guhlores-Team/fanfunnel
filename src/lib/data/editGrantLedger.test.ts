@@ -389,11 +389,15 @@ async function main() {
     spins: 5,
     amount_cents: 500,
   });
+  // The lookup is the read editGrant picks the pass from: by the grant's
+  // fan_pass_id, or (since the shared pickGrantPass rule) the fan's passes.
   db.beforeStatement = (stmt) => {
     if (
       stmt.table === "fan_passes" &&
       stmt.op === "select" &&
-      stmt.filters.some((f) => f.col === "id" && f.value === ownPass.id)
+      stmt.filters.some(
+        (f) => (f.col === "id" && f.value === ownPass.id) || (f.col === "fan_id" && f.value === twoWheels.id)
+      )
     ) {
       return { message: "injected lookup failure" };
     }

@@ -102,6 +102,84 @@ function check(label: string, cond: boolean) {
   check("negative balance treated as 0", !i.allowed && i.used === 5);
 }
 
+// --- grantImpact: exact per-wheel balance (owner decision h) ----------------
+// editGrant moves a grant's spin change on ONE pass (the grant's own, else the
+// fan's oldest active one), so the preview must judge that pass's balance, not
+// the fan total. Fan below: 6 left in total = 2 on Wheel A (this grant's pass,
+// 3 of its 5 spun) + 4 on Wheel B.
+{
+  const cut = grantImpact({
+    grantSpins: 5,
+    spinsInput: "1",
+    fanSpinsRemaining: 6,
+    passSpinsRemaining: 2,
+    wheelTitle: "Wheel A",
+  });
+  check("per-pass: cut refused though the fan total (6) would cover it", !cut.allowed);
+  check("per-pass: used is counted on this grant's pass", cut.used === 3);
+  check("per-pass: remainingAfter is the pass balance", cut.remainingAfter === -2);
+  check(
+    "per-pass: refusal names the floor",
+    cut.message === "This fan has used 3 of these 5 spins. Setting it to 1 isn't allowed: it can't go below the 3 spins already used."
+  );
+  // The fan-level preview this replaces said the opposite.
+  const fanLevel = grantImpact({ grantSpins: 5, spinsInput: "1", fanSpinsRemaining: 6 });
+  check("fan-level preview was too lenient for this cut", fanLevel.allowed);
+
+  const deepest = grantImpact({ grantSpins: 5, spinsInput: "3", fanSpinsRemaining: 6, passSpinsRemaining: 2, wheelTitle: "Wheel A" });
+  check("per-pass: cut to the used count leaves the pass at 0", deepest.allowed && deepest.remainingAfter === 0);
+  check("per-pass: effect names the wheel", /takes back 2 spins and leaves 0 spins on Wheel A\.$/.test(deepest.message));
+
+  // A grant on Wheel B (4 left there, none of it spun).
+  const b = grantImpact({ grantSpins: 4, spinsInput: "0", fanSpinsRemaining: 6, passSpinsRemaining: 4, wheelTitle: "Wheel B" });
+  check("per-pass: unused grant can go to 0", b.allowed && b.used === 0 && b.remainingAfter === 0);
+  check(
+    "per-pass: lead states the wheel's balance, not the fan total",
+    b.message === "This fan has 4 spins left on Wheel B. Setting it to 0 takes back 4 spins and leaves 0 spins on Wheel B."
+  );
+  const grow = grantImpact({ grantSpins: 4, spinsInput: "6", fanSpinsRemaining: 6, passSpinsRemaining: 4, wheelTitle: "Wheel B" });
+  check("per-pass: grow adds on the wheel", grow.allowed && grow.remainingAfter === 6 && /leaves 6 spins on Wheel B\.$/.test(grow.message));
+  const same = grantImpact({ grantSpins: 4, spinsInput: "4", fanSpinsRemaining: 6, passSpinsRemaining: 4, wheelTitle: "Wheel B" });
+  check("per-pass: unchanged keeps the wheel's balance", /Spins unchanged, so they keep 4 spins on Wheel B\.$/.test(same.message));
+
+  const untitled = grantImpact({ grantSpins: 4, spinsInput: "0", fanSpinsRemaining: 6, passSpinsRemaining: 4, wheelTitle: null });
+  check("per-pass: untitled wheel still says where", untitled.message.startsWith("This fan has 4 spins left on this wheel."));
+}
+
+// --- grantImpact: a single-pass fan reads exactly as before ------------------
+{
+  // Pass balance == fan balance: the pass IS the fan's whole balance, so the
+  // wording stays fan-level and the numbers are unchanged.
+  const legacy = grantImpact({ grantSpins: 5, spinsInput: "4", fanSpinsRemaining: 2 });
+  const exact = grantImpact({ grantSpins: 5, spinsInput: "4", fanSpinsRemaining: 2, passSpinsRemaining: 2, wheelTitle: "Wheel A" });
+  check("single pass: same message as the fan-level preview", exact.message === legacy.message);
+  check("single pass: same numbers", exact.allowed === legacy.allowed && exact.remainingAfter === legacy.remainingAfter && exact.used === legacy.used);
+  const unused = grantImpact({ grantSpins: 5, spinsInput: "0", fanSpinsRemaining: 5, passSpinsRemaining: 5, wheelTitle: "Wheel A" });
+  check("single pass: lead has no wheel name", unused.message.startsWith("This fan has 5 spins left. "));
+}
+
+// --- grantImpact: no active pass to move spins on (no_active_pass) ----------
+{
+  const none = grantImpact({ grantSpins: 3, spinsInput: "5", fanSpinsRemaining: 0, passSpinsRemaining: null });
+  check("no pass: a spin change is refused like the server's no_active_pass", !none.allowed);
+  check("no pass: nothing can be cut", none.used === 3);
+  check(
+    "no pass: message explains",
+    none.message === "This fan has no active link to move spins on. Setting it to 5 isn't allowed: only the price and campaign can change."
+  );
+  const cutNone = grantImpact({ grantSpins: 3, spinsInput: "1", fanSpinsRemaining: 0, passSpinsRemaining: null });
+  check("no pass: a cut is refused too", !cutNone.allowed);
+  const keep = grantImpact({ grantSpins: 3, spinsInput: "3", fanSpinsRemaining: 0, passSpinsRemaining: null });
+  check("no pass: unchanged spins can still save (price/campaign edit)", keep.allowed && keep.delta === 0);
+  check("no pass: unchanged wording", keep.message === "This fan has no active link to move spins on. Spins unchanged.");
+}
+
+// --- grantImpact: a negative stored pass balance never loosens the rule -----
+{
+  const i = grantImpact({ grantSpins: 5, spinsInput: "4", fanSpinsRemaining: 3, passSpinsRemaining: -2, wheelTitle: "Wheel A" });
+  check("negative pass balance treated as 0", !i.allowed && i.used === 5);
+}
+
 // --- grantSaveAmount: recorded revenue never drifts on an untouched price ---
 {
   // $10.00 over 3 spins: the $/spin field shows "3.33" (3.33 x 3 = $9.99).

@@ -975,8 +975,15 @@ function GrantRow({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [g.spins, g.amountCents, g.campaignId, editing]);
 
-  // Plain-language preview of what saving does to the fan's balance (UX-3).
-  const impact = grantImpact({ grantSpins: g.spins, spinsInput: spins, fanSpinsRemaining });
+  // Plain-language preview of what saving does (UX-3), judged on the balance of
+  // the pass editGrant will move for this grant (g.editPass), not the fan total.
+  const impact = grantImpact({
+    grantSpins: g.spins,
+    spinsInput: spins,
+    fanSpinsRemaining,
+    passSpinsRemaining: g.editPass ? g.editPass.spinsRemaining : null,
+    wheelTitle: g.editPass?.wheelTitle,
+  });
   // Recorded revenue only changes when the price or spin count really does.
   const newAmountCents = grantSaveAmount({ grant: g, spinsInput: spins, perSpinInput: perSpin });
   const revenueLine = revenueChangeText(g.amountCents, newAmountCents);

@@ -42,6 +42,7 @@ import type {
   WonPrize,
 } from "./types";
 import { activeFans, bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { pickGrantPass } from "./grantPass";
 
 // In-memory demo store. Used automatically when Supabase env vars are absent,
 // so `npm run dev` gives a fully working app with zero setup. State resets when
@@ -705,6 +706,18 @@ function toWheelSummary(w: WheelConfig): WheelSummary {
     prizeCount: w.prizes.length,
     updatedAt: meta?.updatedAt ?? new Date().toISOString(),
   };
+}
+
+/** The pass a spin-count edit of this grant moves (grantPass.ts rule). Mock
+ *  passes carry no is_active flag, so every pass counts as active; ties on
+ *  createdAt keep push (creation) order. */
+function grantEditPass(fan: MockFan, grant: MockGrant): MockPass | null {
+  ensurePasses(fan);
+  const oldestFirst = fan.passes
+    .slice()
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((p) => ({ id: p.token, isActive: true, pass: p }));
+  return pickGrantPass(oldestFirst, grant.passToken)?.pass ?? null;
 }
 
 // A fan's grants, oldest→newest (push order is creation order in the mock).
@@ -1379,18 +1392,25 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
   const myGrants = fanGrants(fanId);
   const totalSpent = myGrants.reduce((s, g) => s + g.amountCents, 0);
 
-  // Grants newest-first, with campaign name resolved.
+  // Grants newest-first, with campaign name resolved and the balance of the
+  // pass an edit would move (mockEditGrant uses the same grantEditPass).
   const grants: Grant[] = myGrants
     .slice()
     .reverse()
-    .map((g) => ({
-      id: g.id,
-      spins: g.spins,
-      amountCents: g.amountCents,
-      campaignId: g.campaignId,
-      campaignName: g.campaignId ? campaignName.get(g.campaignId) ?? null : null,
-      at: g.at,
-    }));
+    .map((g) => {
+      const pass = grantEditPass(fan, g);
+      return {
+        id: g.id,
+        spins: g.spins,
+        amountCents: g.amountCents,
+        campaignId: g.campaignId,
+        campaignName: g.campaignId ? campaignName.get(g.campaignId) ?? null : null,
+        at: g.at,
+        editPass: pass
+          ? { spinsRemaining: pass.spinsRemaining, wheelTitle: store.wheels.get(pass.wheelId)?.title ?? null }
+          : null,
+      };
+    });
 
   // Per-campaign breakdown: grant rollups (spinsBought, spentCents) merged with
   // spins attributed to each campaign (spinsPlayed + prizes from win records).
@@ -1748,12 +1768,9 @@ export function mockEditGrant(
     if (!Number.isFinite(patch.spins)) return { error: "invalid" };
     delta = Math.max(0, Math.floor(patch.spins)) - grant.spins;
     if (fan && delta !== 0) {
-      ensurePasses(fan);
       // The pass this grant landed on (oldest pass when the grant predates
       // per-pass attribution) — mirrors grants.fan_pass_id in Supabase.
-      pass =
-        fan.passes.find((p) => p.token === grant.passToken) ??
-        fan.passes.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+      pass = grantEditPass(fan, grant) ?? undefined;
       // Spins already spun can't be un-granted: refuse a cut deeper than the
       // pass's unspent balance instead of clamping (clamping lost the deficit,
       // and growing the grant back afterwards minted already-spent spins).
