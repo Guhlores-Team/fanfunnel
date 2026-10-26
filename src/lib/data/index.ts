@@ -1137,22 +1137,70 @@ export async function createPass(opts: {
     if (ex) {
       passId = ex.id;
       token = ex.token;
-      const { error: topUpErr } = await sb
-        .from("fan_passes")
-        .update({
-          spins_remaining: ex.spins_remaining + balanceAdd,
-          spins_granted_total: ex.spins_granted_total + balanceAdd,
-          ...(campaignId ? { campaign_id: campaignId } : {}),
-        })
-        .eq("id", ex.id);
-      if (topUpErr) return fail("db_error");
-      // Undo the top-up (restore the pre-top-up balance) if a later write fails.
-      const exId = ex.id, exRem = ex.spins_remaining, exGr = ex.spins_granted_total;
-      rollbacks.push(async () => {
-        await sb
+      const exId = ex.id;
+      type PassBal = { spins_remaining: number; spins_granted_total: number };
+      // Compare-and-swap on the balance just read: claim_spin runs concurrently,
+      // and a spin landing between our read and an absolute write would be
+      // overwritten (the fan gets it back for free). A miss re-reads and retries.
+      let cur: PassBal | null = ex;
+      let topped = false;
+      for (let attempt = 0; attempt < 3 && !topped; attempt++) {
+        if (attempt > 0) {
+          const { data: again } = await sb
+            .from("fan_passes")
+            .select("spins_remaining, spins_granted_total")
+            .eq("id", exId)
+            .maybeSingle();
+          cur = again as PassBal | null;
+          if (!cur) return fail("db_error");
+        }
+        const { data: updated, error: topUpErr } = await sb
           .from("fan_passes")
-          .update({ spins_remaining: exRem, spins_granted_total: exGr })
-          .eq("id", exId);
+          .update({
+            spins_remaining: cur.spins_remaining + balanceAdd,
+            spins_granted_total: cur.spins_granted_total + balanceAdd,
+            ...(campaignId ? { campaign_id: campaignId } : {}),
+          })
+          .eq("id", exId)
+          .eq("spins_remaining", cur.spins_remaining)
+          .eq("spins_granted_total", cur.spins_granted_total)
+          .select("id")
+          .maybeSingle();
+        if (topUpErr) return fail("db_error");
+        topped = !!updated;
+      }
+      if (!topped) return fail("db_error"); // balance kept moving under us
+      // Undo the top-up if a later write fails: subtract balanceAdd from the
+      // balance as it is THEN (a spin may have landed since), with the same
+      // compare-and-swap, so the rollback never refunds a spin. Skipped (and
+      // logged) if the fan already spent more than the top-up.
+      rollbacks.push(async () => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { data: now } = await sb
+            .from("fan_passes")
+            .select("spins_remaining, spins_granted_total")
+            .eq("id", exId)
+            .maybeSingle();
+          const c = now as PassBal | null;
+          if (!c || c.spins_remaining - balanceAdd < 0) break;
+          const { data: undone } = await sb
+            .from("fan_passes")
+            .update({
+              spins_remaining: c.spins_remaining - balanceAdd,
+              spins_granted_total: c.spins_granted_total - balanceAdd,
+            })
+            .eq("id", exId)
+            .eq("spins_remaining", c.spins_remaining)
+            .eq("spins_granted_total", c.spins_granted_total)
+            .select("id")
+            .maybeSingle();
+          if (undone) return;
+        }
+        console.error("createPass: top-up rollback could not be applied", {
+          fanId,
+          passId: exId,
+          balanceAdd,
+        });
       });
     } else {
       token = randomToken();
@@ -1176,30 +1224,12 @@ export async function createPass(opts: {
         await sb.from("fan_passes").delete().eq("id", newPassId);
       });
     }
-
-    // Keep the fan-level aggregate (sum of passes) in sync.
-    const { data: fan } = await sb
-      .from("fans")
-      .select("spins_remaining, spins_granted_total")
-      .eq("id", fanId)
-      .maybeSingle();
-    if (!fan) return fail("fan_not_found");
-    const { error: fanBalErr } = await sb
-      .from("fans")
-      .update({
-        spins_remaining: fan.spins_remaining + balanceAdd,
-        spins_granted_total: fan.spins_granted_total + balanceAdd,
-      })
-      .eq("id", fanId);
-    if (fanBalErr) return fail("db_error");
-    // Undo the aggregate bump if a later write fails.
-    const fanRem = fan.spins_remaining, fanGr = fan.spins_granted_total;
-    rollbacks.push(async () => {
-      await sb
-        .from("fans")
-        .update({ spins_remaining: fanRem, spins_granted_total: fanGr })
-        .eq("id", fanId);
-    });
+    // The fan-level aggregate (fans.spins_remaining / spins_granted_total) is
+    // owned by the 0035 trigger: the pass write above already set it to the
+    // SUM of this fan's active passes, and the pass-restore rollback re-fires
+    // it. Writing it here too either double-counted the spins (a re-read after
+    // the pass write) or overwrote a spin that landed in between (a value read
+    // before it), so there is deliberately no fans update in this branch.
   } else {
     const { data: fan, error } = await sb
       .from("fans")
