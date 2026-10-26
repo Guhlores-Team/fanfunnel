@@ -74,15 +74,20 @@ function parseCsv(text: string): ParseResult {
   return { rows: rows.slice(0, MAX_ROWS), warnings, skippedHeader };
 }
 
+/**
+ * The bulk-import form. The "Import fans" trigger lives in the Fans list
+ * controls, so the form is controlled: mount it while `open`, `onClose` hides.
+ */
 export default function ImportFans({
   campaignId,
   onImported,
+  onClose,
 }: {
   campaignId?: string;
   onImported: () => void;
+  onClose: () => void;
 }) {
   const toast = useToast();
-  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -119,7 +124,7 @@ export default function ImportFans({
         tone: failed > 0 ? "info" : "success",
       });
       setText("");
-      setOpen(false);
+      onClose();
       onImported();
     } finally {
       setSubmitting(false);
@@ -135,32 +140,26 @@ export default function ImportFans({
     e.target.value = "";
   }
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-      >
-        Import CSV
-      </button>
-    );
-  }
-
   return (
-    <div className="card mt-2 rounded-xl border border-line p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h4 className="font-bold text-ink">Bulk import fans</h4>
-          <p className="mt-1 text-xs text-muted">
+    <section
+      aria-label="Bulk import fans"
+      className="lift-in rounded-2xl border border-[var(--hair)] p-4 shadow-[var(--lift)] [background:var(--s1)] sm:p-5"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
+            <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+            Import fans
+          </h3>
+          <p className="mt-1 text-[13px] text-muted">
             Columns: <code className="text-ink">name, spins, amount</code> (amount in
             dollars, optional). Header row optional. Up to {MAX_ROWS} rows.
           </p>
         </div>
         <button
           type="button"
-          onClick={() => setOpen(false)}
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
+          onClick={onClose}
+          className="min-h-9 shrink-0 rounded-[9px] border border-line px-3 text-xs font-semibold text-muted transition-colors hover:text-ink"
         >
           Close
         </button>
@@ -168,6 +167,7 @@ export default function ImportFans({
 
       <textarea
         className="ff-input mt-3 h-32 w-full font-mono text-sm"
+        aria-label="CSV rows"
         placeholder={"@bigfan, 5, 25\n@superfan, 3\nJamie, 10, 100"}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -175,19 +175,19 @@ export default function ImportFans({
 
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <label className="text-xs font-semibold text-muted">
-          <span className="cursor-pointer rounded-lg border border-line px-3 py-1.5 transition hover:text-ink">
+          <span className="inline-flex min-h-8 cursor-pointer items-center rounded-[9px] border border-line px-3 transition-colors hover:text-ink">
             Choose .csv file
           </span>
-          <input type="file" accept=".csv" onChange={onFile} className="hidden" />
+          <input type="file" accept=".csv" onChange={onFile} className="sr-only" />
         </label>
-        <span className="text-xs text-muted">
+        <span className="tnum text-xs text-muted">
           {parsed.rows.length} valid row{parsed.rows.length === 1 ? "" : "s"}
           {parsed.skippedHeader ? " · header skipped" : ""}
         </span>
       </div>
 
       {parsed.warnings.length > 0 && (
-        <ul className="mt-3 space-y-1 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-300">
+        <ul className="mt-3 space-y-1 rounded-[10px] bg-[#f59e0b]/15 p-3 text-xs text-[#fcd34d]">
           {parsed.warnings.map((w, i) => (
             <li key={i}>{w}</li>
           ))}
@@ -195,9 +195,9 @@ export default function ImportFans({
       )}
 
       {parsed.rows.length > 0 && (
-        <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-line">
+        <div className="mt-3 max-h-64 overflow-auto rounded-[10px] border border-[var(--hair)] [background:var(--s2)]">
           <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-surface text-xs text-muted">
+            <thead className="sticky top-0 text-[11px] uppercase tracking-[0.04em] text-muted [background:var(--s2)]">
               <tr>
                 <th className="px-3 py-2 font-semibold">Name</th>
                 <th className="px-3 py-2 text-right font-semibold">Spins</th>
@@ -206,10 +206,10 @@ export default function ImportFans({
             </thead>
             <tbody>
               {parsed.rows.map((r, i) => (
-                <tr key={i} className="border-t border-line">
+                <tr key={i} className="border-t border-[var(--hair)]">
                   <td className="truncate px-3 py-1.5 text-ink">{r.name}</td>
-                  <td className="px-3 py-1.5 text-right tnum text-ink">{r.spins}</td>
-                  <td className="px-3 py-1.5 text-right tnum text-muted">
+                  <td className="tnum px-3 py-1.5 text-right text-ink">{r.spins}</td>
+                  <td className="tnum px-3 py-1.5 text-right text-muted">
                     {r.amountCents != null
                       ? `$${(r.amountCents / 100).toFixed(2)}`
                       : "—"}
@@ -225,12 +225,12 @@ export default function ImportFans({
         type="button"
         onClick={submit}
         disabled={submitting || parsed.rows.length === 0}
-        className="btn-brand mt-3 rounded-lg px-5 py-2 text-sm font-bold disabled:opacity-50"
+        className="btn-brand mt-3 min-h-10 rounded-[10px] px-[18px] text-sm font-bold disabled:opacity-50"
       >
         {submitting
           ? "Importing…"
           : `Create ${parsed.rows.length} fan${parsed.rows.length === 1 ? "" : "s"}`}
       </button>
-    </div>
+    </section>
   );
 }

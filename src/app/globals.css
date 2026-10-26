@@ -189,6 +189,33 @@ input[type="time"] {
   to { transform: none; }
 }
 .lift-in { animation: ff-lift 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+/* Drawer / sheet entrance (README: slide in .34s, backdrop fade .2s). Keyframe
+   animations run on mount, so a conditionally-mounted panel still animates.
+   Transform-only for the panel; the backdrop fade is a dim layer, not content. */
+@keyframes ff-slide {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+@keyframes ff-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+@keyframes ff-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* Below `lg` the fan drawer is a bottom sheet that slides up; from `lg` it slides
+   in from the right. */
+.drawer-in { animation: ff-sheet-up 0.34s cubic-bezier(0.16, 1, 0.3, 1); }
+@media (min-width: 64rem) {
+  .drawer-in { animation-name: ff-slide; }
+}
+.fade-in { animation: ff-fade 0.2s ease; }
+/* Centered modals: a bottom sheet below `lg`, a lifted card from `lg`. */
+.modal-in { animation: ff-sheet-up 0.34s cubic-bezier(0.16, 1, 0.3, 1); }
+@media (min-width: 64rem) {
+  .modal-in { animation: ff-lift 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+}
 .reveal-scale { animation: ff-scale-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .ambient-glow { animation: ff-glow-pulse 6s ease-in-out infinite; }
 .ambient-float { animation: ff-float 7s ease-in-out infinite; }

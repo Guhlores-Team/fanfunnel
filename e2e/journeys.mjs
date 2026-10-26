@@ -66,7 +66,9 @@ export async function creatorJourney(page, { step, assert }) {
     await clickTab(page, "Fans");
     const name = page.locator("input.ff-input").first();
     if (await name.isEditable()) await name.fill("E2E Fan");
-    const btn = page.locator("button:has-text('Create account')").first();
+    // The mint button is labelled "Create" (Command Center). Exact match so the
+    // Import form's "Create N fans" can never be picked instead.
+    const btn = page.locator("button:text-is('Create')").first();
     if ((await btn.count()) && (await btn.isEnabled())) {
       await btn.click();
       // Web-first wait for post-create content instead of a fixed sleep.
