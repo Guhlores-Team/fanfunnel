@@ -21,9 +21,21 @@ check(
     "7.7.7.7",
 );
 check(
-  "x-vercel-forwarded-for preferred over x-real-ip (survives a proxy on top of Vercel)",
-  clientIp(req({ "x-vercel-forwarded-for": "7.7.7.7", "x-real-ip": "9.9.9.9" })) === "7.7.7.7",
+  "x-real-ip preferred over x-vercel-forwarded-for",
+  clientIp(req({ "x-vercel-forwarded-for": "7.7.7.7", "x-real-ip": "9.9.9.9" })) === "9.9.9.9",
 );
+{
+  // Behind a proxy that pins x-real-ip/XFF but passes other headers through,
+  // rotating x-vercel-forwarded-for must not mint a fresh bucket per request.
+  const keys = new Set(
+    ["1.1.1.1", "2.2.2.2", "3.3.3.3"].map((s) =>
+      clientIp(
+        req({ "x-vercel-forwarded-for": s, "x-real-ip": "9.9.9.9", "x-forwarded-for": "9.9.9.9" }),
+      ),
+    ),
+  );
+  check("rotating x-vercel-forwarded-for under a pinned x-real-ip yields one bucket", keys.size === 1);
+}
 
 // The attack: the client prepends its own entry to x-forwarded-for, rotating it
 // per request to land in a fresh rate-limit bucket each time.

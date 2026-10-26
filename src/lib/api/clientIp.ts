@@ -3,10 +3,12 @@
 // It keys every per-visitor rate limit, so it must not be steerable by a caller.
 //
 // Precedence (FanFunnel deploys on Vercel):
-//   1. `x-vercel-forwarded-for`: written by Vercel's edge; unlike XFF it survives
-//      a proxy placed in front of Vercel.
-//   2. `x-real-ip`: also written by Vercel's edge (what `@vercel/functions`'
-//      `ipAddress()` reads).
+//   1. `x-real-ip`: written by Vercel's edge (what `@vercel/functions`'
+//      `ipAddress()` reads), and the header a self-hosted reverse proxy is
+//      expected to pin, so it is never steerable when present.
+//   2. `x-vercel-forwarded-for`: also written by Vercel's edge, but only
+//      consulted when x-real-ip is absent; a proxy that pins x-real-ip may pass
+//      it through untouched, and trusting it first would let a caller rotate it.
 //   3. `x-forwarded-for`, RIGHT-most hop only, for local/unproxied runs. Every
 //      hop appends to the right, so the left-most entry is whatever the client
 //      sent and rotating it would mint a fresh rate-limit bucket per request.
@@ -39,8 +41,8 @@ function lastEntry(value: string | null): string | null {
 export function clientIp(req: Request): string {
   const h = req.headers;
   return (
-    firstEntry(h.get("x-vercel-forwarded-for")) ??
     firstEntry(h.get("x-real-ip")) ??
+    firstEntry(h.get("x-vercel-forwarded-for")) ??
     lastEntry(h.get("x-forwarded-for")) ??
     "local"
   );
