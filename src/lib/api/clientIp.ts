@@ -1,25 +1,47 @@
-// Best-effort client IP for per-visitor rate-limit keys.
+// The ONE place a client IP is derived from request headers (a static test,
+// clientIpSingleSource.test.ts, fails if any other module reads these headers).
+// It keys every per-visitor rate limit, so it must not be steerable by a caller.
 //
-// The left-most `x-forwarded-for` entry is supplied by the client and can be
-// spoofed to rotate rate-limit buckets, so we prefer headers that a trusted
-// proxy sets (Vercel's `x-real-ip`, Cloudflare's `cf-connecting-ip`). XFF is a
-// last-resort fallback for unproxied/local runs.
+// Precedence (FanFunnel deploys on Vercel):
+//   1. `x-vercel-forwarded-for`: written by Vercel's edge; unlike XFF it survives
+//      a proxy placed in front of Vercel.
+//   2. `x-real-ip`: also written by Vercel's edge (what `@vercel/functions`'
+//      `ipAddress()` reads).
+//   3. `x-forwarded-for`, RIGHT-most hop only, for local/unproxied runs. Every
+//      hop appends to the right, so the left-most entry is whatever the client
+//      sent and rotating it would mint a fresh rate-limit bucket per request.
+//      Self-hosted `next start` keeps a client-sent XFF and only fills it from
+//      the socket address when absent, so this fallback is not spoof-proof
+//      without a proxy that sets `x-real-ip`.
+//   4. "local": no usable header (unit tests, scripts). Never throws.
 //
-// IMPORTANT: limits keyed on this are a front-line shield only. The authoritative
-// abuse guard (e.g. spins-remaining + the atomic per-fan rate window) lives in
-// the database and does not trust any client header.
+// `cf-connecting-ip` and friends are deliberately ignored: Vercel does not set
+// them, so here they are plain client input.
+//
+// Limits keyed on this are a front-line shield only. The authoritative abuse
+// guards (spins remaining, the atomic per-fan rate window in `claim_spin`) live
+// in the database and trust no client header.
+
+function firstEntry(value: string | null): string | null {
+  const first = value?.split(",")[0]?.trim();
+  return first || null;
+}
+
+function lastEntry(value: string | null): string | null {
+  if (!value) return null;
+  const hops = value
+    .split(",")
+    .map((h) => h.trim())
+    .filter(Boolean);
+  return hops.length ? hops[hops.length - 1] : null;
+}
+
 export function clientIp(req: Request): string {
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  if (realIp) return realIp;
-
-  const cf = req.headers.get("cf-connecting-ip")?.trim();
-  if (cf) return cf;
-
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) {
-    const first = xff.split(",")[0]?.trim();
-    if (first) return first;
-  }
-
-  return "local";
+  const h = req.headers;
+  return (
+    firstEntry(h.get("x-vercel-forwarded-for")) ??
+    firstEntry(h.get("x-real-ip")) ??
+    lastEntry(h.get("x-forwarded-for")) ??
+    "local"
+  );
 }

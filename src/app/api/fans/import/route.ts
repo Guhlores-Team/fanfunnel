@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createPass } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
-import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { clientIp } from "@/lib/api/clientIp";
+import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 
 const MAX_ROWS = 500;
