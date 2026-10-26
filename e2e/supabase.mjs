@@ -293,6 +293,15 @@ try {
     assert(a.role === "creator", "A is still a creator");
   });
 
+  await step("normal creator is not an admin: is_admin() is false and admin_account_stats returns nothing", async () => {
+    // The dashboard shell shows its Admin section only when checkAdmin() (the
+    // is_admin() RPC) says so, and the admin data RPC is empty for everyone else.
+    const { data: isAdmin, error } = await A.client.rpc("is_admin");
+    assert(!error && isAdmin === false, `is_admin() must be false for a creator (got ${isAdmin}, ${error?.message ?? "no error"})`);
+    const { data: rows } = await A.client.rpc("admin_account_stats");
+    assert(!rows || rows.length === 0, `admin_account_stats returned ${rows?.length ?? 0} rows to a creator (must be 0)`);
+  });
+
   await step("suspended creator (is_active=false) cannot write own data (RLS)", async () => {
     // Admin suspends A.
     const { error: susErr } = await admin

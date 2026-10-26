@@ -115,6 +115,83 @@ export async function creatorJourney(page, { step, assert }) {
     }
   });
 
+  await step("wheel editor: unsaved edits survive leaving the section", async () => {
+    const title = page.getByTestId("wheel-title-input");
+    const draft = "Draft " + Date.now();
+    await title.fill(draft);
+    await page.locator('[role="status"]').filter({ hasText: /unsaved changes/i }).first().waitFor({ timeout: 5000 });
+    // Leave the section and come back: the edit and its dirty state must still be there.
+    await clickTab(page, "Fans");
+    await clickTab(page, "Wheel");
+    await page.getByTestId("wheel-title-input").waitFor({ timeout: 5000 });
+    assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "the draft title is still in the editor");
+    assert(
+      (await page.locator('[role="status"]').filter({ hasText: /unsaved changes/i }).count()) > 0,
+      "the save bar still says Unsaved changes",
+    );
+  });
+
+  await step("wheel editor: switching wheels with unsaved edits asks in-app (not window.confirm)", async () => {
+    // A native confirm() would auto-dismiss here and fail the step; the dialog
+    // must be the app's own accessible one.
+    page.once("dialog", (d) => d.dismiss().catch(() => {}));
+    const draft = await page.getByTestId("wheel-title-input").inputValue();
+    // P23: the win description is visible on every prize of the open wheel without opening "More".
+    assert(
+      (await page.getByRole("textbox", { name: "Description (shown on win)" }).count()) >= 2,
+      "each prize shows its win description field",
+    );
+    // "New wheel" creates a wheel and tries to open it → the guard must fire.
+    // exact: a wheel created with the default title is itself called "New wheel".
+    await page.getByRole("button", { name: "New wheel", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: /discard unsaved changes/i });
+    await dialog.waitFor({ timeout: 8000 });
+    assert(await dialog.count(), "an in-app discard dialog opened");
+    assert(
+      (await page.evaluate(() => document.activeElement?.textContent?.trim())) === "Keep editing",
+      "focus lands on the safe action",
+    );
+    // Focus is trapped: tabbing past the last button wraps back inside the dialog.
+    for (let i = 0; i < 3; i++) await page.keyboard.press("Tab");
+    assert(
+      await page.evaluate(() => !!document.activeElement?.closest("[role='dialog']")),
+      "Tab stays inside the discard dialog",
+    );
+    // Escape keeps the edits.
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden", timeout: 4000 });
+    assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "Escape kept the draft");
+    // Clicking the chip of the wheel already open must not reload it over the edits.
+    const switcher = page.locator("section[aria-label='Wheel switcher']");
+    await switcher.locator("button[title*='prize'][aria-current='true']").click();
+    await page.waitForTimeout(600);
+    assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "re-clicking the open wheel kept the draft");
+    assert((await page.getByRole("dialog").count()) === 0, "re-clicking the open wheel asks nothing");
+    // The new wheel now exists as a chip; opening it asks again, and Discard switches.
+    const chips = switcher.locator("button[title*='prize']:not([aria-current])");
+    const count = await chips.count();
+    assert(count >= 1, `expected another wheel chip, saw ${count}`);
+    // P21: "Set active" is one click on an inactive wheel's chip, not in the menu.
+    assert(
+      await page.locator("section[aria-label='Wheel switcher']").getByRole("button", { name: /^Set .+ active$/ }).count(),
+      "Set active is visible on an inactive wheel's chip",
+    );
+    await chips.first().click();
+    await dialog.waitFor({ timeout: 8000 });
+    await dialog.getByRole("button", { name: "Discard changes" }).click();
+    await dialog.waitFor({ state: "hidden", timeout: 4000 });
+    await page
+      .waitForFunction((d) => document.querySelector('[data-testid="wheel-title-input"]')?.value !== d, draft)
+      .catch(() => {});
+    assert((await page.getByTestId("wheel-title-input").inputValue()) !== draft, "Discard switched to the other wheel");
+    assert(
+      (await page.locator('[role="status"]').filter({ hasText: /unsaved changes/i }).count()) === 0,
+      "the freshly opened wheel is clean",
+    );
+    // The schedule card is always visible for the selected wheel.
+    assert(await page.locator("section[aria-label^='Schedule for']").count(), "schedule card visible");
+  });
+
   await step("fans: create an account", async () => {
     await clickTab(page, "Fans");
     const name = page.locator("input.ff-input").first();
@@ -316,7 +393,7 @@ export async function fanJourney(page, { step, assert }, ctx) {
 
 // Creator edge cases. Runs AFTER the fan has spun (so a pending redemption
 // exists to fulfil). Operates on the dashboard.
-export async function creatorExtras(page, { step, assert }) {
+export async function creatorExtras(page, { step, assert }, ctx) {
   await step("redemptions: advance a fulfilment status", async () => {
     await goto(page, "/dashboard", 1800);
     await clickTab(page, "Fulfilment");
@@ -333,6 +410,88 @@ export async function creatorExtras(page, { step, assert }) {
     await page.waitForFunction((b) => document.body.innerText !== b, before).catch(() => {});
     const after = await page.locator("body").innerText();
     assert(before !== after, "the fulfilment queue changed after advancing a status");
+  });
+
+  await step("redemptions: note, due date and Cancel prize sit on the row; cancel asks first", async () => {
+    // The row just moved to In progress; show that filter.
+    await page.getByRole("group", { name: "Filter by status" }).getByRole("button", { name: /^In progress/ }).click();
+    const cancel = page.getByRole("button", { name: /^Cancel prize:/ }).first();
+    await cancel.waitFor({ timeout: 8000 });
+    // Anchor the row on its stable aria-label, not on the trigger (the confirm replaces it).
+    const label = await cancel.getAttribute("aria-label");
+    const subject = label.replace(/^Cancel prize:\s*/, "");
+    const row = page.locator("li").filter({ has: page.getByRole("button", { name: `Mark fulfilled: ${subject}` }) }).first();
+    assert(await row.count(), "found the in-progress row");
+    assert(await row.locator("input[placeholder^='Add a note']").count(), "the note field is inline on the row");
+    assert(await row.locator("input[type='date']").count(), "the due date is inline on the row");
+    assert((await row.getByRole("button", { name: /details/i }).count()) === 0, "no Details disclosure hides them");
+    await row.getByRole("button", { name: /^Cancel prize:/ }).click();
+    const confirm = row.getByRole("group", { name: /confirm cancelling/i });
+    await confirm.waitFor({ timeout: 4000 });
+    assert(
+      (await page.evaluate(() => document.activeElement?.textContent?.trim())) === "Cancel prize",
+      "focus moved to the confirm button",
+    );
+    await confirm.getByRole("button", { name: "Keep" }).click();
+    await confirm.waitFor({ state: "hidden", timeout: 4000 });
+    assert(await row.getByRole("button", { name: /^Cancel prize:/ }).count(), "Keep closed the confirm without cancelling");
+  });
+
+  await step("fans: drawer Message opens that fan's Inbox thread", async () => {
+    await clickTab(page, "Fans");
+    await page.getByRole("button", { name: "View Demo Fan" }).click();
+    const drawer = page.getByRole("dialog", { name: "Fan details" });
+    await drawer.waitFor({ timeout: 5000 });
+    // Campaign names + tags are row-level info; the row meta stays on the list.
+    const msg = drawer.getByRole("button", { name: "Message" });
+    await page
+      .waitForFunction(() => {
+        const b = [...document.querySelectorAll("[role='dialog'] button")].find((x) => x.textContent?.trim() === "Message");
+        return b && !b.getAttribute("aria-disabled");
+      })
+      .catch(() => {});
+    await msg.click();
+    const inboxNav = page.locator(NAV_ITEMS).filter({ hasText: "Inbox" }).first();
+    await inboxNav.and(page.locator("[aria-current='page']")).waitFor({ timeout: 5000 });
+    const thread = page.getByRole("list", { name: "Conversations" }).locator("button[aria-current='true']");
+    await thread.waitFor({ timeout: 8000 });
+    assert(/demo fan/i.test(await thread.innerText()), "the demo fan's thread is selected");
+    const heading = page.getByRole("heading", { name: "Demo Fan" }).first();
+    assert(await heading.count(), "the conversation pane shows the fan");
+  });
+
+  await step("admin: section renders inside the shell (demo mode is open)", async () => {
+    assert(await clickTab(page, "Admin"), "Admin is a section in the sidebar");
+    const region = page.getByRole("region", { name: "Admin" });
+    await region.getByRole("heading", { name: "Creator accounts" }).waitFor({ timeout: 8000 });
+    assert(await region.getByRole("button", { name: "New account" }).count(), "New account lives in the section");
+    // The heading renders before the accounts load; wait for the first row.
+    await region.getByRole("button", { name: /^Show role and features for/ }).first().waitFor({ timeout: 8000 });
+    const text = await region.innerText();
+    assert(/wheels/.test(text) && /spins/.test(text) && /pending/.test(text), "per-account counts show on the rows");
+    assert(/Suspend|Reactivate/.test(text) && /Delete/.test(text), "Suspend and Delete are on the rows");
+    // Role + feature flags are behind each row's disclosure.
+    await region.getByRole("button", { name: /^Show role and features for/ }).first().click();
+    assert(await region.getByRole("combobox").first().count(), "the role select is in the disclosure");
+    assert(await region.getByRole("switch").first().count(), "feature flags are in the disclosure");
+  });
+
+  await step("admin: a non-admin answer from the server shows Admins only", async () => {
+    // A separate page (no error sink): the 403 here is the point of the step.
+    const other = await ctx.newPage();
+    try {
+      await other.route("**/api/admin", (route) =>
+        route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"forbidden"}' }),
+      );
+      await goto(other, "/dashboard?section=admin", 2000);
+      await other.getByRole("alert").filter({ hasText: /admins only/i }).waitFor({ timeout: 8000 });
+      assert(
+        (await other.getByRole("region", { name: "Admin" }).getByRole("heading", { name: "Creator accounts" }).count()) === 0,
+        "no account data renders for a non-admin answer",
+      );
+    } finally {
+      await other.close().catch(() => {});
+    }
   });
 
   await step("webhooks: add then remove", async () => {

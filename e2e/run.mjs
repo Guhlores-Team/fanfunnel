@@ -41,7 +41,7 @@ try {
   try {
     await creatorJourney(page, runner);
     await fanJourney(page, runner, ctx); // fan spins → creates a pending redemption
-    await creatorExtras(page, runner); // fulfil it + webhooks + happy hour
+    await creatorExtras(page, runner, ctx); // fulfil it + drawer→inbox + admin + webhooks + happy hour
     await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));
