@@ -10,6 +10,7 @@ import {
   validateWheelDraft,
   normalizeWheelPayload,
   colorFromInput,
+  wheelRulesError,
 } from "./validate";
 
 let passed = 0;
@@ -179,6 +180,34 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
   check("whitespace-only → unset", colorFromInput("   ") === undefined);
   check("typed value kept as typed", colorFromInput("#AbC") === "#AbC");
   check("partial value kept (validated on blur/save)", colorFromInput("#a") === "#a");
+}
+
+// wheelRulesError: the save rules PUT /api/wheel enforces. Every wheel it
+// rejects must also be blocked by the editor (validateWheelDraft), so the two
+// can't drift apart.
+{
+  const rejected: [string, Prize[], string][] = [
+    ["no prizes", [], "too_few_prizes"],
+    ["one prize", [prize({ id: "a" })], "too_few_prizes"],
+    ["empty name", [prize({ id: "a" }), prize({ id: "b", label: "" })], "prize_name_required"],
+    ["whitespace name", [prize({ id: "a" }), prize({ id: "b", label: "  \n" })], "prize_name_required"],
+    ["all 0 tickets", [prize({ id: "a", weight: 0 }), prize({ id: "b", weight: 0 })], "no_winnable_prize"],
+  ];
+  for (const [name, prizes, code] of rejected) {
+    check(`rules: ${name} → ${code}`, wheelRulesError(prizes) === code);
+    check(`rules: ${name} is also blocked in the editor`, validateWheelDraft(wheel({ prizes })).issues.length > 0);
+  }
+  check("rules: count is checked first", wheelRulesError([prize({ label: "", weight: 0 })]) === "too_few_prizes");
+  check(
+    "rules: name is checked before tickets",
+    wheelRulesError([prize({ id: "a", label: "", weight: 0 }), prize({ id: "b", weight: 0 })]) === "prize_name_required"
+  );
+  check("rules: a valid wheel passes", wheelRulesError(wheel().prizes) === null);
+  check(
+    "rules: one prize at 0 tickets is fine when another can win",
+    wheelRulesError([prize({ id: "a", weight: 0 }), prize({ id: "b", weight: 1 })]) === null
+  );
+  check("rules: the minimum is MIN_WHEEL_PRIZES", MIN_WHEEL_PRIZES === 2);
 }
 
 console.log(`validate: ${passed} checks passed`);

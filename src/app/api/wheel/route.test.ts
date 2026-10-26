@@ -97,6 +97,25 @@ function check(label: string, cond: boolean) {
     check("save without colors → 200", r.status === 200);
   }
 
+  // Owner decision: the server enforces the editor's wheel rules on save, with
+  // a stable code and a 400. Nothing is persisted on a rejected save.
+  {
+    const first = base!.prizes[0];
+    const cases: [string, unknown[], string][] = [
+      ["one prize", [first], "too_few_prizes"],
+      ["no prizes", [], "too_few_prizes"],
+      ["blank prize name", base!.prizes.map((p, i) => (i === 1 ? { ...p, label: "   " } : p)), "prize_name_required"],
+      ["every prize at 0 tickets", base!.prizes.map((p) => ({ ...p, weight: 0 })), "no_winnable_prize"],
+    ];
+    for (const [name, prizes, code] of cases) {
+      const r = await put({ wheel: { ...base, title: "Rejected", prizes } });
+      check(`${name} → 400`, r.status === 400);
+      check(`${name} → ${code}`, r.data.error === code);
+      const after = await getWheel();
+      check(`${name} → not persisted`, after?.title === base!.title && after?.prizes.length === base!.prizes.length);
+    }
+  }
+
   console.log(`api/wheel route: ${passed} checks passed`);
 })().catch((err) => {
   console.error(err);

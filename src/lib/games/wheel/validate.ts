@@ -137,6 +137,27 @@ export function validateWheelDraft(wheel: WheelConfig): WheelDraftErrors {
   return out;
 }
 
+/** Stable codes saveWheel returns when a wheel breaks the save rules. */
+export type WheelRuleError = "too_few_prizes" | "prize_name_required" | "no_winnable_prize";
+
+/**
+ * The save rules the server enforces (saveWheel, both data paths). They are
+ * the editor's own rules from validateWheelDraft — prizeCountError, labelError
+ * and NO_WINNABLE_PRIZE — so anything rejected here is already blocked in the
+ * editor (validate.test.ts locks that in). Checked in on-screen order: count,
+ * names, tickets. Only applied on save; wheels already stored stay as they are.
+ */
+export function wheelRulesError(
+  prizes: readonly Pick<Prize, "label" | "weight">[],
+): WheelRuleError | null {
+  if (prizeCountError(prizes.length)) return "too_few_prizes";
+  if (prizes.some((p) => typeof p.label !== "string" || p.label.trim() === "")) {
+    return "prize_name_required";
+  }
+  if (!prizes.some((p) => typeof p.weight === "number" && p.weight > 0)) return "no_winnable_prize";
+  return null;
+}
+
 /**
  * Server-side check for PUT /api/wheel: reject invalid colors, stock and
  * fractional tickets (range is checked by the route), and
