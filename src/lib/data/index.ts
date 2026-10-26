@@ -600,7 +600,9 @@ export async function spin(
  * public entry point is `spin`).
  */
 export async function completeClaimedSpin(
-  sb: AnyClient,
+  // Service client only: `rollback_claimed_spin` is revoked from `authenticated`
+  // (0038), so a session client here would fail silently (serverOnlyRpc.test).
+  sb: ReturnType<typeof createServiceClient>,
   token: string,
   clientSeed: string,
   spinsRemaining: number,
