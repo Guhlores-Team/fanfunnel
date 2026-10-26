@@ -5,6 +5,7 @@ import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, WheelConfig } from "@/lib/games/wheel/types";
 import { MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
+import { wheelRulesError } from "@/lib/games/wheel/validate";
 import type { WheelSummary, HappyHourStatus } from "./types";
 import {
   mockGetWheel,
@@ -209,6 +210,13 @@ export async function getWheel(): Promise<WheelConfig | null> {
 export async function saveWheel(
   config: WheelConfig
 ): Promise<{ wheel: WheelConfig } | { error: string }> {
+  // The editor's wheel rules (≥ 2 prizes, every prize named, one prize with
+  // tickets > 0), enforced here for both data paths before anything is read or
+  // written. This also refuses an empty prize set, which is almost always a
+  // failed editor load and would otherwise wipe the wheel's real prizes.
+  const rule = wheelRulesError(config.prizes);
+  if (rule) return { error: rule };
+
   if (!isSupabaseConfigured()) return { wheel: mockSaveWheel(config) };
 
   const sb = await createClient();
@@ -265,11 +273,6 @@ export async function saveWheel(
   // prize past 24 with no warning).
   if (config.prizes.length > MAX_WHEEL_PRIZES) return { error: "too_many_prizes" };
   const rows = config.prizes.map((p, i) => prizeRow(wheelId, p, i));
-
-  // Refuse to wipe a wheel down to nothing. An empty incoming set is almost
-  // always a failed editor load, not a real intent — and the delete below would
-  // destroy the real prizes.
-  if (rows.length === 0) return { error: "no_prizes" };
 
   const { data: prevPrizes } = await sb
     .from("prizes")

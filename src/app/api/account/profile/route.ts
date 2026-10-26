@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { setMyDisplayName } from "@/lib/data";
+import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 
 // Update the creator's display name (Account → Settings). The data layer routes
 // this through a narrow SECURITY DEFINER RPC since profiles_update is admin-only.
@@ -20,5 +21,6 @@ export async function PUT(req: Request) {
     const status = result.error === "unauthorized" ? 401 : 400;
     return NextResponse.json({ error: result.error }, { status });
   }
+  await revalidateMyPublicPage();
   return NextResponse.json({ ok: true, displayName: name });
 }

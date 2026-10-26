@@ -4,6 +4,7 @@ import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { badRequest, errorResponse } from "@/lib/api/handler";
 import { normalizeWheelPayload } from "@/lib/games/wheel/validate";
+import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 
 // Reject prize fields the data layer forwards without sanitizing. rarity drives
 // the odds defaults, and imageUrl is rendered (and must not be a non-http(s)
@@ -61,5 +62,6 @@ export async function PUT(req: Request) {
 
   const result = await saveWheel(checked.config);
   if ("error" in result) return errorResponse(result.error);
+  await revalidateMyPublicPage();
   return NextResponse.json(result);
 }

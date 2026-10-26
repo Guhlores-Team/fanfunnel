@@ -8,6 +8,7 @@ import {
   deleteWheel,
 } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 
 // Load one wheel's full config.
 export async function GET(
@@ -91,6 +92,8 @@ export async function PATCH(
     if ("error" in result) return errorResponse(result.error);
   }
 
+  // Activation, schedule and restore all change which wheel /c/<slug> shows.
+  await revalidateMyPublicPage();
   return NextResponse.json({ ok: true });
 }
 
@@ -104,5 +107,6 @@ export async function DELETE(
   const hard = new URL(req.url).searchParams.get("hard") === "1";
   const result = hard ? await deleteWheel(id) : await archiveWheel(id);
   if ("error" in result) return errorResponse(result.error);
+  await revalidateMyPublicPage();
   return NextResponse.json({ ok: true });
 }

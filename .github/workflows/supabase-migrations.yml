@@ -34,6 +34,7 @@ on:
     paths:
       - "supabase/migrations/**"
       - "supabase/config.toml"
+      - "src/lib/data/db.types.ts"
 
 # Never run two migration pushes against the same target at once.
 concurrency:
@@ -50,14 +51,31 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned (not `latest`) so CI is reproducible; bump it deliberately.
+          version: 2.122.0
       - name: Apply migrations to TEST
         run: |
           supabase link --project-ref "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" \
             --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
           supabase db push --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
+      - name: Check src/lib/data/db.types.ts matches TEST
+        # The committed row types must match the schema the migrations just
+        # produced. The comparison ignores whitespace only: the file can come
+        # from `npm run gen:types` (this CLI) or Supabase's hosted generator,
+        # which emit the same types but may differ in blank lines/indentation.
+        # Any change to a name, type or nullability still fails.
+        shell: bash
+        run: |
+          generated="$RUNNER_TEMP/db.types.ts"
+          supabase gen types typescript --project-id "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" > "$generated"
+          if ! cmp -s <(tr -d '[:space:]' < src/lib/data/db.types.ts) <(tr -d '[:space:]' < "$generated"); then
+            echo "::error file=src/lib/data/db.types.ts::src/lib/data/db.types.ts is out of date with the database schema. Run \`npm run gen:types\` (with the CLI linked to a project at this migration) and commit the result."
+            diff -u src/lib/data/db.types.ts "$generated" || true
+            exit 1
+          fi
+          echo "src/lib/data/db.types.ts matches the TEST schema."
 
   production:
     # Only a real merge/push to main touches PRODUCTION.
@@ -68,9 +86,10 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned (not `latest`) so CI is reproducible; bump it deliberately.
+          version: 2.122.0
       - name: Apply migrations to PRODUCTION
         run: |
           supabase link --project-ref "${{ secrets.SUPABASE_PROD_PROJECT_REF }}" \

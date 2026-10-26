@@ -28,6 +28,13 @@ export async function POST(req: Request) {
     password,
     (body.displayName ?? "").trim()
   );
-  if ("error" in result) return errorResponse(result.error);
+  if ("error" in result) {
+    // A taken email conflicts with an existing account: 409, same `{ error }`
+    // shape. Every other code keeps statusForError's mapping.
+    if (result.error === "email_taken") {
+      return NextResponse.json({ error: "email_taken" }, { status: 409 });
+    }
+    return errorResponse(result.error);
+  }
   return NextResponse.json(result);
 }

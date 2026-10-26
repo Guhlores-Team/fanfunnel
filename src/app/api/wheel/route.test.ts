@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { mock } from "node:test";
 
 // Route-level test for PUT /api/wheel, run against the in-memory mock data
 // layer. Clear the Supabase env before importing so the route can't reach a
@@ -6,6 +7,9 @@ import assert from "node:assert";
 delete process.env.NEXT_PUBLIC_SUPABASE_URL;
 delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+// A successful save revalidates /c/<slug>; next/cache needs a Next request
+// context, so it is stubbed here (publicPage.test.ts asserts the calls).
+mock.module("next/cache", { namedExports: { revalidatePath: () => {} } });
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -95,6 +99,25 @@ function check(label: string, cond: boolean) {
   {
     const r = await put({ wheel: { ...base, brandColor: undefined, labelColor: undefined } });
     check("save without colors → 200", r.status === 200);
+  }
+
+  // Owner decision: the server enforces the editor's wheel rules on save, with
+  // a stable code and a 400. Nothing is persisted on a rejected save.
+  {
+    const first = base!.prizes[0];
+    const cases: [string, unknown[], string][] = [
+      ["one prize", [first], "too_few_prizes"],
+      ["no prizes", [], "too_few_prizes"],
+      ["blank prize name", base!.prizes.map((p, i) => (i === 1 ? { ...p, label: "   " } : p)), "prize_name_required"],
+      ["every prize at 0 tickets", base!.prizes.map((p) => ({ ...p, weight: 0 })), "no_winnable_prize"],
+    ];
+    for (const [name, prizes, code] of cases) {
+      const r = await put({ wheel: { ...base, title: "Rejected", prizes } });
+      check(`${name} → 400`, r.status === 400);
+      check(`${name} → ${code}`, r.data.error === code);
+      const after = await getWheel();
+      check(`${name} → not persisted`, after?.title === base!.title && after?.prizes.length === base!.prizes.length);
+    }
   }
 
   console.log(`api/wheel route: ${passed} checks passed`);
