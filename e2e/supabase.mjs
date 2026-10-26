@@ -304,6 +304,24 @@ try {
     assert(anonErr, "anon cannot execute set_notifications_seen");
   });
 
+  await step("anon cannot execute the self-service setters (0044); the signed-in creator still can", async () => {
+    const anon = createClient(URL, ANON, { auth: { persistSession: false } });
+    for (const [fn, args] of [
+      ["set_display_name", { p_name: "anon" }],
+      ["set_onboarding_dismissed", { p_dismissed: true }],
+      ["set_leaderboard_enabled", { p_enabled: true }],
+      ["set_chat_settings", { p_intro: "x", p_outro: "y" }],
+      ["set_notification_prefs", { p_new_spin: false, p_low_balance: false, p_messages: false }],
+      ["set_public_profile", { p_slug: "anon-probe", p_tip_url: "", p_tagline: "" }],
+      ["set_creator_note", { p_note: "x", p_avatar: "" }],
+    ]) {
+      const { error } = await anon.rpc(fn, args);
+      assert(error, `anon must not execute ${fn}`);
+    }
+    const { error } = await A.client.rpc("set_display_name", { p_name: "Creator A" });
+    assert(!error, `signed-in set_display_name failed: ${error?.message}`);
+  });
+
   await step("creator A cannot self-promote to admin (profiles_update is admin-only)", async () => {
     const { data } = await A.client.from("profiles").update({ role: "admin" }).eq("id", A.id).select("id");
     assert((data?.length ?? 0) === 0, "direct role update is blocked by RLS");

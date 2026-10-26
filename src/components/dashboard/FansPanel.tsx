@@ -486,7 +486,7 @@ function FanRow({
     >
       <span
         aria-hidden="true"
-        className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-sm font-bold text-brand"
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-sm font-bold text-ink"
       >
         {initialsOf(account.name)}
       </span>

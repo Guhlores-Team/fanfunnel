@@ -2282,3 +2282,48 @@ $$;
 
 revoke execute on function public.set_notifications_seen() from public, anon;
 grant execute on function public.set_notifications_seen() to authenticated;
+
+-- 0044_revoke_anon_setters.sql
+-- ============================================================
+-- Revoke anon EXECUTE on the self-service RPCs (RD-8). The app calls them only
+-- through the signed-in session client; authenticated keeps EXECUTE. Policy
+-- helpers (is_admin, can_act_for, current_user_active, _owns_org) stay callable
+-- by anon because RLS evaluates them. See migrations/0044 for the full notes.
+revoke execute on function public.set_onboarding_dismissed(boolean) from public, anon;
+grant execute on function public.set_onboarding_dismissed(boolean) to authenticated;
+revoke execute on function public.set_leaderboard_enabled(boolean) from public, anon;
+grant execute on function public.set_leaderboard_enabled(boolean) to authenticated;
+revoke execute on function public.set_chat_settings(text, text) from public, anon;
+grant execute on function public.set_chat_settings(text, text) to authenticated;
+revoke execute on function public.set_display_name(text) from public, anon;
+grant execute on function public.set_display_name(text) to authenticated;
+revoke execute on function public.set_notification_prefs(boolean, boolean, boolean) from public, anon;
+grant execute on function public.set_notification_prefs(boolean, boolean, boolean) to authenticated;
+revoke execute on function public.set_public_profile(text, text, text) from public, anon;
+grant execute on function public.set_public_profile(text, text, text) to authenticated;
+revoke execute on function public.set_creator_note(text, text) from public, anon;
+grant execute on function public.set_creator_note(text, text) to authenticated;
+revoke execute on function public.import_fans(jsonb) from public, anon;
+grant execute on function public.import_fans(jsonb) to authenticated;
+revoke execute on function public.admin_account_stats() from public, anon;
+grant execute on function public.admin_account_stats() to authenticated;
+revoke execute on function public.admin_reserve_account_deletion(uuid) from public, anon;
+grant execute on function public.admin_reserve_account_deletion(uuid) to authenticated;
+revoke execute on function public.org_account_stats(uuid) from public, anon;
+grant execute on function public.org_account_stats(uuid) to authenticated;
+revoke execute on function public.org_create(text) from public, anon;
+grant execute on function public.org_create(text) to authenticated;
+revoke execute on function public.org_invite_creator(uuid, text) from public, anon;
+grant execute on function public.org_invite_creator(uuid, text) to authenticated;
+revoke execute on function public.org_invite_respond(uuid, boolean) from public, anon;
+grant execute on function public.org_invite_respond(uuid, boolean) to authenticated;
+revoke execute on function public.org_invite_revoke(uuid) from public, anon;
+grant execute on function public.org_invite_revoke(uuid) to authenticated;
+revoke execute on function public.org_remove_creator(uuid, uuid) from public, anon;
+grant execute on function public.org_remove_creator(uuid, uuid) to authenticated;
+revoke execute on function public.org_add_member(uuid, text, public.org_role) from public, anon;
+grant execute on function public.org_add_member(uuid, text, public.org_role) to authenticated;
+revoke execute on function public.org_remove_member(uuid) from public, anon;
+grant execute on function public.org_remove_member(uuid) to authenticated;
+revoke execute on function public.org_scope_creator(uuid, uuid, boolean) from public, anon;
+grant execute on function public.org_scope_creator(uuid, uuid, boolean) to authenticated;

@@ -79,7 +79,7 @@ export default function MoreSheet({
         <div className="flex items-center gap-3 px-5 pb-3">
           <span
             aria-hidden="true"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-brand"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-ink"
           >
             {initials}
           </span>

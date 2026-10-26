@@ -2,6 +2,7 @@
 // outcome; the harness records pass/fail and attributes any browser signal.
 // Runs against MOCK mode, so data is deterministic per fresh server.
 
+import { readFileSync } from "node:fs";
 import { goto, clickTab, passAgeGate, BASE, NAV_ITEMS } from "./harness.mjs";
 
 const NAV = "nav[aria-label='Dashboard sections']";
@@ -519,6 +520,48 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     assert(await heading.count(), "the conversation pane shows the fan");
   });
 
+  await step("keyboard: drawer Copy DM menu is reachable, arrow-navigable, and Esc hands focus back", async () => {
+    await clickTab(page, "Fans");
+    await page.getByRole("button", { name: "View Demo Fan" }).click();
+    const drawer = page.getByRole("dialog", { name: "Fan details" });
+    await drawer.waitFor({ timeout: 5000 });
+    const trigger = drawer.getByRole("button", { name: /^Copy DM/ });
+    await trigger.waitFor({ timeout: 5000 });
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    const menu = page.getByRole("menu", { name: "DM templates" });
+    await menu.waitFor({ timeout: 4000 });
+    const focusedItem = () =>
+      page.evaluate(() => document.activeElement?.getAttribute("role") === "menuitem" ? document.activeElement.textContent : null);
+    const first = await focusedItem();
+    assert(first, "opening from the keyboard lands on the first template");
+    await page.keyboard.press("ArrowDown");
+    const second = await focusedItem();
+    assert(second && second !== first, "ArrowDown moves to the next template");
+    await page.keyboard.press("Escape");
+    await menu.waitFor({ state: "hidden", timeout: 4000 });
+    assert(await trigger.evaluate((el) => el === document.activeElement), "Esc closes the menu and focus returns to Copy DM");
+    assert(await drawer.isVisible(), "Esc on the menu leaves the drawer open");
+    // Toasts enter transform-only (README motion rule): never an opacity-0 start.
+    await drawer.getByRole("button", { name: "Copy link" }).click();
+    const toast = page.locator("[aria-live='polite'] > button").first();
+    await toast.waitFor({ timeout: 4000 });
+    const style = await toast.evaluate((el) => ({ opacity: getComputedStyle(el).opacity, name: getComputedStyle(el).animationName }));
+    assert(style.opacity === "1" && style.name !== "ff-rise", `the toast is fully opaque from its first frame (${style.opacity}, ${style.name})`);
+    await page.keyboard.press("Escape");
+    await drawer.waitFor({ state: "hidden", timeout: 4000 });
+  });
+
+  await step("keyboard: the first Tab after load lands on the sidebar's current section", async () => {
+    await goto(page, "/dashboard", 1600);
+    await page.keyboard.press("Tab");
+    const focused = await page.evaluate(() => {
+      const a = document.activeElement;
+      return { inNav: !!a?.closest("nav[aria-label='Dashboard sections']"), current: a?.getAttribute("aria-current") };
+    });
+    assert(focused.inNav && focused.current === "page", "focus starts on the current section in the sidebar, not the top bar");
+  });
+
   await step("admin: section renders inside the shell (demo mode is open)", async () => {
     assert(await clickTab(page, "Admin"), "Admin is a section in the sidebar");
     const region = page.getByRole("region", { name: "Admin" });
@@ -882,6 +925,26 @@ export async function firstRunJourney(page, { step, assert }, ctx) {
     const navTexts = await page.locator(NAV_ITEMS).allInnerTexts();
     assert(navTexts.every((t) => !/\d/.test(t)), "sidebar badges are hidden at 0");
     assert((await page.locator("#needs-you-now").count()) === 0, "an empty 'Needs you now' feed is replaced by the checklist");
+  });
+
+  await step("first run: Today has no serious/critical axe AA violations (desktop + phone)", async () => {
+    // Only this journey sees the wiped account, so the first-run screen is
+    // scanned here rather than in e2e/a11y.mjs. Contrast blocks too.
+    const axeSrc = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
+    const viewport = page.viewportSize();
+    for (const vp of [viewport, { width: 390, height: 844 }]) {
+      await page.setViewportSize(vp);
+      await goto(page, "/dashboard", 1600);
+      await list().waitFor({ timeout: 12000 }).catch(() => {});
+      await page.addScriptTag({ content: axeSrc });
+      const { violations } = await page.evaluate(() =>
+        window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] } })
+      );
+      const bad = violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+      assert(bad.length === 0, `${vp.width}px: ${bad.map((v) => `${v.id} (${v.nodes[0]?.target.join(" ")})`).join("; ") || "clean"}`);
+    }
+    await page.setViewportSize(viewport);
+    await goto(page, "/dashboard", 1600);
   });
 
   await step("first run: a step's CTA opens its section", async () => {

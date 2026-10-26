@@ -38,15 +38,32 @@ const openFanSheet = async (page) => {
 const DESKTOP = { width: 1280, height: 900 };
 const PHONE = { width: 390, height: 844 };
 
+// RD-8: overlays and editors. Each prep only needs what survives e2e's
+// first-run wipe (the fan comes from openFanSheet, the rest is static UI).
+const openBell = async (page) => {
+  await page.getByTestId("notification-bell").click();
+  await page.getByRole("dialog", { name: "Notifications" }).waitFor({ timeout: 4000 });
+  await page.waitForTimeout(500);
+};
+const inDrawer = (name) => async (page) => {
+  await openFanSheet(page);
+  await page.getByRole("dialog", { name: "Fan details" }).getByRole("button", { name }).first().click();
+  await page.waitForTimeout(600);
+};
+const clickIn = (tab, name) => async (page) => {
+  await clickTab(page, tab);
+  await page.getByRole("button", { name }).first().click();
+  await page.waitForTimeout(600);
+};
+
 // Pages to scan + an optional prep step to reach a meaningful state.
 //
 // `advisory` lists rule ids that are reported but NOT blocking for that page.
-// We keep every rule blocking on the public/fan/login pages, and treat
-// `color-contrast` as advisory on the AUTHENTICATED dashboard: small white-text
-// chips sit on the creator-customizable `--brand` (#ec4899 default = 3.52:1),
-// a known systemic brand-token issue tracked in ROADMAP.md — not silently
-// hidden, just not gating the whole suite on a brand redesign.
-const DASH_ADVISORY = ["color-contrast"];
+// The dashboard used to treat `color-contrast` as advisory while white text sat
+// on the creator's `--brand` (3.52:1 on the default pink). Brand fills now use
+// `--brand-ink` (readableInk) and initials avatars use ink on the brand tint,
+// so since RD-8 every rule blocks on every page, the dashboard included.
+const DASH_ADVISORY = [];
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -63,6 +80,24 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard phone (tab bar)", viewport: PHONE, advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (More sheet)", viewport: PHONE, prep: openMore, advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (fan sheet)", viewport: PHONE, prep: openFanSheet, advisory: DASH_ADVISORY },
+  // RD-8: every remaining section, the bell, the drawer and its menus, and the
+  // modals, on desktop and phone.
+  { path: "/dashboard", name: "dashboard (Inbox)", prep: openTab("Inbox"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Campaigns)", prep: openTab("Campaigns"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (bell panel)", prep: openBell, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer)", prep: openFanSheet, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer: top-up form)", prep: inDrawer("Top up spins"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer: Copy DM menu)", prep: inDrawer(/^Copy DM/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (fan drawer: QR dialog)", prep: inDrawer(/QR/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (DM templates modal)", prep: clickIn("Fans", /Manage messages/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Import fans)", prep: clickIn("Fans", /Import fans/), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (wheel Manage menu)", prep: clickIn("Wheel", /^Manage /), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Admin New account modal)", prep: clickIn("Admin", "New account"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (bell panel)", viewport: PHONE, prep: openBell, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Wheels)", viewport: PHONE, prep: openTab("Wheels"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Inbox)", viewport: PHONE, prep: openTab("Inbox"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Analytics)", viewport: PHONE, prep: openTab("Analytics"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Settings)", viewport: PHONE, prep: openTab("Settings"), advisory: DASH_ADVISORY },
   { path: "/spin/demo", name: "fan spin (age gate)" },
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
 ];

@@ -282,7 +282,7 @@ export default function DashboardClient({
           mobileLead={
             <span
               aria-hidden="true"
-              className="grid h-10 w-10 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-brand"
+              className="grid h-10 w-10 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-ink"
             >
               {accountInitials(accountName)}
             </span>
