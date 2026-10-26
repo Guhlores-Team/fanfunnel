@@ -2345,3 +2345,9 @@ update public.fans
    set leaderboard_opt_in = false
  where leaderboard_opt_in
    and (handle is null or btrim(handle) = '');
+
+-- ============================================================
+-- 0041_spin_seed_commitment.sql
+-- ============================================================
+alter table public.spins add column if not exists seed_commitment text
+  check (seed_commitment is null or seed_commitment in ('published', 'stored', 'fresh'));

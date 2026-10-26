@@ -31,6 +31,7 @@ import type {
   RedemptionItem,
   RedemptionStatus,
   ReferralOverview,
+  SeedCommitment,
   ShareCardData,
   SpinVerification,
   Webhook,
@@ -69,6 +70,8 @@ interface MockWin extends WonPrize {
   nonce: number;
   // Commit-reveal v2: the fan-contributed seed mixed into the RNG.
   clientSeed?: string | null;
+  // Whether the seed was pre-committed (absent on seeded demo wins).
+  commitment?: SeedCommitment | null;
 }
 
 // A per-wheel link under a fan: its own balance + which wheel/campaign it's for.
@@ -978,11 +981,16 @@ export async function mockSpin(token: string, clientSeed = "") {
   const committedSeed = pass.nextServerSeed;
   const committedHash = pass.nextServerSeedHash;
   const serverSeed = committedSeed ?? randomSeedHex();
-  const nonce = fan.spinsRemaining;
+  // No CAS loser here (the claim + swap below is synchronous), so a seed is
+  // either the one the page showed or generated right now.
+  const commitment: SeedCommitment = committedSeed && committedHash ? "published" : "fresh";
   pass.nextServerSeed = nextServerSeed;
   pass.nextServerSeedHash = nextServerSeedHash;
   pass.spinsRemaining -= 1; // spend from this wheel's pass
   recomputeFanAggregate(fan); // keep the fan-level total in sync
+  // Same basis as the Supabase path: claim_spin returns THIS pass's balance
+  // after the decrement, and that is the spin's nonce.
+  const nonce = pass.spinsRemaining;
 
   const wheelId = pass.wheelId;
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
@@ -1039,6 +1047,7 @@ export async function mockSpin(token: string, clientSeed = "") {
       serverSeedHash,
       nonce,
       clientSeed: clientSeed || null,
+      commitment,
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -2119,8 +2128,10 @@ export function mockCreateHappyHour(input: {
   endsAt: string;
 }): HappyHour | { error: string } {
   if (!(input.endsAt > input.startsAt)) return { error: "invalid_window" };
-  const multiplier = Math.floor(input.multiplier);
-  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+  // Stored as given (the happy_hours.multiplier column is numeric, the UI steps
+  // by 0.5): flooring would turn a ×1.5 boost into no boost at all.
+  const multiplier = Number(input.multiplier);
+  if (!(multiplier >= 1 && multiplier <= 10)) {
     return { error: "invalid_multiplier" };
   }
   const row: MockHappyHour = {
@@ -2181,6 +2192,7 @@ export async function mockGetSpinVerification(
       hashOk,
       at: win.at,
       clientSeed: win.clientSeed ?? null,
+      commitment: win.commitment ?? null,
     };
   }
   return null;
