@@ -50,13 +50,14 @@ store. Links you generate in the dashboard really work and really spin.
 
 ## Going live (Supabase + Vercel)
 
-1. **Create a Supabase project**, then in the SQL Editor run two files **in
-   order**: [`supabase/schema.sql`](supabase/schema.sql) (base tables, RLS, the
-   **hardened** `claim_spin`, the auth trigger) **then**
-   [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql) (every
-   migration on top). Both are idempotent, so together they always produce a
-   complete, current schema. ⚠ `schema.sql` alone omits the later migrations and
-   brings up a weaker DB.
+1. **Create a Supabase project**, then in the SQL Editor run
+   [`supabase/schema.sql`](supabase/schema.sql): the complete, current schema
+   (base tables, RLS, the **hardened** `claim_spin`, the auth trigger, and every
+   migration folded in). Running
+   [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql) on top
+   is harmless (both are idempotent) but adds nothing; it is the upgrade path
+   for an existing database. `npm test` and
+   `node scripts/db/schema-drift-check.mjs` keep the three equivalent.
 2. **Copy `.env.example` → `.env.local`** and fill in the URL, anon key, and
    service-role key from Supabase → Project Settings → API. **All three are
    required** — the app refuses to boot in production if any is missing (it will
@@ -98,7 +99,7 @@ src/
   app/spin/[token]/      Fan page.
   app/api/spin/          Server-authoritative spin endpoint.
   app/api/passes/        Create a unique fan link.
-supabase/schema.sql      Base multi-tenant schema + RLS (run migrations_combined.sql after).
+supabase/schema.sql      Complete multi-tenant schema + RLS (all migrations folded in).
 ```
 
 ### Why config-driven
@@ -129,8 +130,9 @@ links, spins, redemptions) but keeps your tables and logins. Optional blocks at
 the bottom let you also delete creator accounts or reset roles/features.
 
 To rebuild from scratch, re-run [`supabase/schema.sql`](supabase/schema.sql)
-**then** [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql)
-— both are idempotent (safe to run repeatedly).
+— it is idempotent (safe to run repeatedly) and already contains every
+migration; an existing database is upgraded with
+[`supabase/migrations_combined.sql`](supabase/migrations_combined.sql) instead.
 
 ## Tests
 

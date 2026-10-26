@@ -789,48 +789,60 @@ create policy prizes_write on public.prizes for all
 
 -- fans (view; edits via manage)
 drop policy if exists fans_rw on public.fans;
+drop policy if exists fans_select on public.fans;
 create policy fans_select on public.fans for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists fans_write on public.fans;
 create policy fans_write on public.fans for all
   using (public.can_act_for(creator_id, 'manage') or public.is_admin())
   with check (public.can_act_for(creator_id, 'manage') or public.is_admin());
 
 -- fan_passes (view; create/edit via grant — minting a link is part of granting)
 drop policy if exists fan_passes_rw on public.fan_passes;
+drop policy if exists fan_passes_select on public.fan_passes;
 create policy fan_passes_select on public.fan_passes for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists fan_passes_write on public.fan_passes;
 create policy fan_passes_write on public.fan_passes for all
   using (public.can_act_for(creator_id, 'grant') or public.is_admin())
   with check (public.can_act_for(creator_id, 'grant') or public.is_admin());
 
 -- campaigns (edit_wheel-level config)
 drop policy if exists campaigns_rw on public.campaigns;
+drop policy if exists campaigns_select on public.campaigns;
 create policy campaigns_select on public.campaigns for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists campaigns_write on public.campaigns;
 create policy campaigns_write on public.campaigns for all
   using (public.can_act_for(creator_id, 'manage') or public.is_admin())
   with check (public.can_act_for(creator_id, 'manage') or public.is_admin());
 
 -- redemptions (fulfil)
 drop policy if exists redemptions_rw on public.redemptions;
+drop policy if exists redemptions_select on public.redemptions;
 create policy redemptions_select on public.redemptions for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists redemptions_write on public.redemptions;
 create policy redemptions_write on public.redemptions for all
   using (public.can_act_for(creator_id, 'fulfil') or public.is_admin())
   with check (public.can_act_for(creator_id, 'fulfil') or public.is_admin());
 
 -- grants (grant — money in)
 drop policy if exists grants_rw on public.grants;
+drop policy if exists grants_select on public.grants;
 create policy grants_select on public.grants for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists grants_write on public.grants;
 create policy grants_write on public.grants for all
   using (public.can_act_for(creator_id, 'grant') or public.is_admin())
   with check (public.can_act_for(creator_id, 'grant') or public.is_admin());
 
 -- messages (chat)
 drop policy if exists messages_rw on public.messages;
+drop policy if exists messages_select on public.messages;
 create policy messages_select on public.messages for select
   using (public.can_act_for(creator_id, 'view') or public.is_admin());
+drop policy if exists messages_write on public.messages;
 create policy messages_write on public.messages for all
   using (public.can_act_for(creator_id, 'chat') or public.is_admin())
   with check (public.can_act_for(creator_id, 'chat') or public.is_admin());
@@ -1768,6 +1780,8 @@ begin
 end;
 $$;
 
+grant execute on function public.import_fans(jsonb) to authenticated;
+
 
 -- ============================================================
 -- Synced from migrations/ (effective definitions) so the SQL-sync
@@ -1842,6 +1856,11 @@ create trigger trg_sync_fan_spin_aggregate
      or update of spins_remaining, spins_granted_total, is_active, fan_id
   on public.fan_passes
   for each row execute function public.sync_fan_spin_aggregate();
+
+-- ============================================================
+-- 0036_pipeline_probe.sql
+-- ============================================================
+comment on schema public is 'fanfunnel — migration pipeline verified (0036 probe)';
 
 -- ============================================================
 -- 0037_wheel_label_size.sql
