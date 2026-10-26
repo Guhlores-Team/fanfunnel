@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { HappyHour, Webhook, WheelSummary, WishlistDemand } from "@/lib/data/types";
@@ -64,6 +64,100 @@ const primaryBtn =
 const secondaryBtn =
   "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 const fieldLabel = "flex min-w-0 flex-col gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-muted";
+const quietBtn =
+  "shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-muted transition-colors hover:bg-white/5 hover:text-ink";
+
+/**
+ * Two-step inline remove for a list row (the dashboard's Delete → Confirm /
+ * Cancel idiom). "Remove" opens a confirm strip under the row and focuses its
+ * destructive button, which is described by the plain-language question so a
+ * screen reader hears it on focus. Cancel or Escape closes the strip and puts
+ * focus back on "Remove".
+ */
+function RemoveConfirm({
+  id,
+  label,
+  question,
+  confirmText,
+  onConfirm,
+}: {
+  id: string;
+  /** Accessible name of the "Remove" trigger, e.g. "Remove webhook https://…". */
+  label: string;
+  question: string;
+  confirmText: string;
+  onConfirm: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  const questionId = `${id}-confirm-q`;
+
+  useEffect(() => {
+    if (open) confirmRef.current?.focus();
+    else if (restoreFocus.current) {
+      restoreFocus.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [open]);
+
+  const cancel = () => {
+    restoreFocus.current = true;
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={label}
+        className={quietBtn}
+      >
+        Remove
+      </button>
+    );
+  }
+
+  return (
+    <div
+      role="group"
+      // A short label: the question itself is the confirm button's description.
+      aria-label="Confirm removal"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          cancel();
+        }
+      }}
+      className="flex basis-full flex-wrap items-center gap-x-3 gap-y-2 border-t border-[var(--hair)] pt-2.5"
+    >
+      <p id={questionId} className="min-w-0 flex-1 basis-48 text-[12.5px] text-ink text-pretty">
+        {question}
+      </p>
+      <div className="flex shrink-0 gap-2">
+        <button
+          ref={confirmRef}
+          type="button"
+          onClick={onConfirm}
+          aria-describedby={questionId}
+          className="inline-flex min-h-8 items-center rounded-lg border border-[#ef4444]/70 px-3 text-xs font-bold text-[#f87171] transition-colors hover:bg-[#ef4444]/10"
+        >
+          {confirmText}
+        </button>
+        <button
+          type="button"
+          onClick={cancel}
+          className="inline-flex min-h-8 items-center rounded-lg border border-line px-3 text-xs font-semibold text-muted transition-colors hover:text-ink"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Raised Command Center card. The `<section aria-labelledby>` makes each card a
@@ -94,7 +188,12 @@ function Card({
     <section aria-labelledby={id} className={`lift-in min-w-0 rounded-2xl px-4 py-4 sm:px-5 sm:py-[18px] ${shell}`}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <h3 id={id} className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink">
+          {/* tabIndex -1: a removed row's focus lands on its card's heading. */}
+          <h3
+            id={id}
+            tabIndex={-1}
+            className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/60 rounded-sm"
+          >
             <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
             <span className={tone === "danger" ? "text-[#fca5a5]" : "text-brand"}>
               <Glyph d={icon} size={16} />
@@ -456,7 +555,11 @@ function HappyHourScheduler() {
 
   const remove = async (id: string) => {
     setWindows((w) => w.filter((x) => x.id !== id));
-    await fetch(`/api/happy-hours/${id}`, { method: "DELETE" });
+    // The row (and the focused confirm button) is gone: land on the card.
+    document.getElementById("boosts-happy-hours")?.focus();
+    const res = await fetch(`/api/happy-hours/${id}`, { method: "DELETE" }).catch(() => null);
+    // The reload restores the row if the delete didn't land.
+    toast(res?.ok ? "Happy hour removed" : "Couldn't remove happy hour");
     load();
   };
 
@@ -532,7 +635,7 @@ function HappyHourScheduler() {
             const status = happyHourStatus(w.startsAt, w.endsAt);
             const [pill, label] = HH_STATUS[status];
             return (
-              <li key={w.id} className={`flex items-center gap-3 rounded-[11px] px-3.5 py-3 ${recessed}`}>
+              <li key={w.id} className={`flex flex-wrap items-center gap-3 rounded-[11px] px-3.5 py-3 ${recessed}`}>
                 <span className="text-brand">
                   <Glyph d={P.clock} />
                 </span>
@@ -545,14 +648,17 @@ function HappyHourScheduler() {
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2.5 py-[3px] text-[11px] font-bold ${pill}`}>{label}</span>
-                <button
-                  type="button"
-                  onClick={() => remove(w.id)}
-                  aria-label={`Remove happy hour ${formatWindow(w.startsAt, w.endsAt)}`}
-                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-muted transition-colors hover:bg-white/5 hover:text-ink"
-                >
-                  Remove
-                </button>
+                <RemoveConfirm
+                  id={`hh-${w.id}`}
+                  label={`Remove happy hour ${formatWindow(w.startsAt, w.endsAt)}`}
+                  question={
+                    status === "live"
+                      ? `End this live happy hour now? Odds go back to normal for ${wheelName(w.wheelId)}.`
+                      : `Remove the happy hour for ${formatWindow(w.startsAt, w.endsAt)}?`
+                  }
+                  confirmText="Remove happy hour"
+                  onConfirm={() => remove(w.id)}
+                />
               </li>
             );
           })}
@@ -699,9 +805,12 @@ function WebhooksCard() {
     if (index === -1) return;
     const removed = hooks[index];
     setHooks((h) => h.filter((x) => x.id !== id));
+    // The row (and the focused confirm button) is gone: land on the card.
+    document.getElementById("boosts-webhooks")?.focus();
     try {
       const res = await fetch(`/api/webhooks/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error();
+      toast("Webhook removed");
     } catch {
       setHooks((h) => {
         const next = [...h];
@@ -750,19 +859,18 @@ function WebhooksCard() {
       {hooks.length > 0 && (
         <ul className="mt-3 flex flex-col gap-2">
           {hooks.map((h) => (
-            <li key={h.id} className={`flex items-center gap-3 rounded-[11px] px-3.5 py-2.5 text-sm ${recessed}`}>
+            <li key={h.id} className={`flex flex-wrap items-center gap-3 rounded-[11px] px-3.5 py-2.5 text-sm ${recessed}`}>
               <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] px-2 py-0.5 text-[11px] font-semibold text-brand">
                 {h.event}
               </span>
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">{h.url}</span>
-              <button
-                type="button"
-                onClick={() => remove(h.id)}
-                aria-label={`Remove webhook ${h.url}`}
-                className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-muted transition-colors hover:bg-white/5 hover:text-ink"
-              >
-                Remove
-              </button>
+              <RemoveConfirm
+                id={`wh-${h.id}`}
+                label={`Remove webhook ${h.url}`}
+                question="Remove this webhook? FanFunnel stops sending wins to this address right away."
+                confirmText="Remove webhook"
+                onConfirm={() => remove(h.id)}
+              />
             </li>
           ))}
         </ul>

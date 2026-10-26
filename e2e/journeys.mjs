@@ -300,6 +300,12 @@ export async function creatorExtras(page, { step, assert }) {
       "webhook appears in the list after Add"
     );
     await hooks.locator("button:has-text('Remove')").first().click();
+    // Removing asks first (UX-3): the row stays until the confirm is clicked.
+    assert(
+      (await hooks.locator("text=example.com/hooks/e2e").count()) > 0,
+      "webhook still listed while the remove confirm is open"
+    );
+    await hooks.getByRole("button", { name: "Remove webhook", exact: true }).click();
     // Auto-wait for the webhook row to disappear instead of a fixed sleep.
     await hooks.locator("text=example.com/hooks/e2e").first().waitFor({ state: "hidden" }).catch(() => {});
     assert(
