@@ -52,6 +52,7 @@ const files = findTests("src").sort();
 const SAFE_PATH = /^[A-Za-z0-9_.\-/\\]+$/;
 
 const npx = resolveBin("npx");
+const PRELOAD = join(import.meta.dirname, "test-preload.mjs");
 
 /** @type {string[]} */
 const failed = [];
@@ -64,7 +65,13 @@ for (const f of files) {
   console.log("# " + f);
   // --experimental-test-module-mocks lets a test swap a module (e.g. the
   // Supabase client for an in-memory fake) with node:test's mock.module.
-  const r = spawnSync(npx, ["tsx", "--experimental-test-module-mocks", f], { stdio: "inherit" });
+  // --import preloads the `server-only` stub (see scripts/test-preload.mjs) so
+  // tests can load src/lib/supabase/server.ts outside a React Server runtime.
+  const r = spawnSync(
+    npx,
+    ["tsx", "--experimental-test-module-mocks", "--import", PRELOAD, f],
+    { stdio: "inherit" },
+  );
   if (r.status !== 0) failed.push(f);
 }
 

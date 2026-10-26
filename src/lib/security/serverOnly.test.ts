@@ -8,8 +8,14 @@
  *  2. no `"use client"` module reaches server.ts through its import graph
  *     (transitively), so the guard can't be dodged by an intermediate file;
  *  3. the scanner itself catches a violation (it isn't vacuous);
- *  4. nothing run under tsx imports server.ts: `server-only` throws outside a
- *     React Server environment, so unit tests must not pull it in.
+ *  4. `server-only` throws outside a React Server environment, so a unit test
+ *     that reaches server.ts (the data-layer tests import src/lib/data/index.ts
+ *     against an in-memory Supabase fake) only runs because the test runner
+ *     preloads scripts/test-preload.mjs, which stubs that one package with
+ *     node:test's mock.module. Lock that wiring in: the runner must pass the
+ *     preload, the preload must stub exactly `server-only`, and nothing under
+ *     src/ may reference the stub (it exists for `npm test` only, never for
+ *     app code or the build, where the guard stays live).
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
@@ -141,14 +147,39 @@ const files = walk(SRC);
   else fail(`scanner self-test wrong, flagged: ${JSON.stringify(flagged)}`);
 }
 
-// --- 4. Nothing run under tsx imports server.ts -----------------------------
+// --- 4. Tests that reach server.ts run only through the server-only stub ----
 {
-  const offenders = files
+  const RUNNER = join(ROOT, "scripts/run-tests.mjs");
+  const PRELOAD = join(ROOT, "scripts/test-preload.mjs");
+  const reaching = files
     .filter((f) => f.endsWith(".test.ts") && f !== SELF)
     .filter((f) => chainsReaching(f, read, existsSync, SERVER_MODULE).length > 0)
     .map(rel);
-  if (offenders.length === 0) ok("no unit test imports lib/supabase/server (server-only would throw under tsx)");
-  else for (const o of offenders) fail(`unit test reaches server.ts; server-only would throw under tsx: ${o}`);
+
+  const runner = existsSync(RUNNER) ? stripComments(read(RUNNER)) : "";
+  const preload = existsSync(PRELOAD) ? stripComments(read(PRELOAD)) : "";
+  const runnerPreloads = /"--import",\s*PRELOAD\b/.test(runner) && /test-preload\.mjs/.test(runner);
+  const preloadStubs = /mock\.module\(\s*["']server-only["']/.test(preload);
+  const stubbedModules = [...preload.matchAll(/mock\.module\(\s*["']([^"']+)["']/g)].map((m) => m[1]);
+
+  if (reaching.length === 0) ok("no unit test imports lib/supabase/server");
+  else if (runnerPreloads && preloadStubs) {
+    ok(`${reaching.length} unit test(s) reach server.ts through the test runner's server-only stub`);
+  } else {
+    for (const o of reaching) fail(`unit test reaches server.ts; server-only would throw under tsx: ${o}`);
+    if (!runnerPreloads) fail("scripts/run-tests.mjs must preload scripts/test-preload.mjs (--import PRELOAD)");
+    if (!preloadStubs) fail('scripts/test-preload.mjs must mock.module("server-only", ...)');
+  }
+  // The stub is a unit-test affordance: it may neutralise `server-only` and
+  // nothing else, and no app code may pull it in.
+  const extra = stubbedModules.filter((m) => m !== "server-only");
+  if (extra.length === 0) ok("the test preload stubs only server-only");
+  else fail(`scripts/test-preload.mjs must stub only server-only, found: ${extra.join(", ")}`);
+  const stubUsers = files
+    .filter((f) => f !== SELF && /test-preload/.test(stripComments(read(f))))
+    .map(rel);
+  if (stubUsers.length === 0) ok("nothing under src/ references the test preload");
+  else for (const u of stubUsers) fail(`src must not reference scripts/test-preload.mjs: ${u}`);
 }
 
 if (failures > 0) {
