@@ -12,6 +12,7 @@ import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { playWin, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
+import { spinErrorInfo, ackErrorMessage } from "./spinErrors";
 // Both beats pull in the motion library and only render briefly after a spin,
 // so defer them off the fan page's initial bundle.
 const NearMissBeat = dynamic(() => import("./NearMissBeat"), { ssr: false });
@@ -128,15 +129,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(
-          body.error === "no_spins"
-            ? "You're out of spins! Tip your creator to get more. 💖"
-            : body.error === "rate_limited"
-              ? "Whoa, slow down a sec — try again in a moment. 😅"
-              : body.error === "blocked"
-                ? "This link isn't active. Reach out to your creator."
-                : "Something went wrong. Try again."
-        );
+        const info = spinErrorInfo(body.error);
+        setError(info.message);
+        if (info.reopenAgeGate) setNeedsAck(true);
         setBusy(false);
         return;
       }
@@ -401,6 +396,7 @@ function AgeGate({
   const [adult, setAdult] = useState(false);
   const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const ready = adult && terms && !busy;
   const firstRef = useRef<HTMLInputElement>(null);
 
@@ -413,16 +409,25 @@ function AgeGate({
   const confirm = async () => {
     if (!ready) return;
     setBusy(true);
+    setError(null);
     try {
-      await fetch("/api/fans/ack", {
+      const res = await fetch("/api/fans/ack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token }),
       });
-    } catch {
-      /* best-effort — dismiss anyway so the fan isn't stuck */
-    } finally {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(ackErrorMessage(body?.error));
+        setBusy(false);
+        return;
+      }
       onAck();
+    } catch {
+      // Keep the gate open so the fan can retry; dismissing here would just
+      // bounce them back with needs_ack on the next spin.
+      setError(ackErrorMessage(undefined));
+      setBusy(false);
     }
   };
 
@@ -474,6 +479,12 @@ function AgeGate({
             </span>
           </label>
         </div>
+
+        {error && (
+          <p role="alert" className="mt-4 text-center text-sm text-amber-300">
+            {error}
+          </p>
+        )}
 
         <button
           onClick={confirm}
