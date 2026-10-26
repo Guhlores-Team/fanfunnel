@@ -4,6 +4,7 @@ import "./globals.css";
 import DebugConsole from "@/components/debug/DebugConsole";
 import DebugErrorBoundary from "@/components/debug/DebugErrorBoundary";
 import CrashCanary from "@/components/debug/CrashCanary";
+import EnvBadge from "@/components/debug/EnvBadge";
 
 // Display face with real character (not Inter, not Space Grotesk) for headlines;
 // Geist for clean body; Geist Mono powers tabular figures in metrics.
@@ -48,6 +49,7 @@ export default function RootLayout({
             isn't mounted at all, so appending ?debug=1 to a prod URL does nothing.
             (The error boundary above always stays on — it's protective.) */}
         {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <DebugConsole />}
+        {process.env.NEXT_PUBLIC_ENABLE_DEBUG === "1" && <EnvBadge />}
       </body>
     </html>
   );
