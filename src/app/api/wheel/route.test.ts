@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { mock } from "node:test";
 
 // Route-level test for PUT /api/wheel, run against the in-memory mock data
 // layer. Clear the Supabase env before importing so the route can't reach a
@@ -6,6 +7,9 @@ import assert from "node:assert";
 delete process.env.NEXT_PUBLIC_SUPABASE_URL;
 delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+// A successful save revalidates /c/<slug>; next/cache needs a Next request
+// context, so it is stubbed here (publicPage.test.ts asserts the calls).
+mock.module("next/cache", { namedExports: { revalidatePath: () => {} } });
 
 let passed = 0;
 function check(label: string, cond: boolean) {
