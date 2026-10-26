@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // PERF-4: /c/[slug] (the public link-in-bio page) is ISR, not per-request.
@@ -30,11 +30,23 @@ check("page doesn't use the session client", !/supabase\/server|createClient/.te
 check("page doesn't take searchParams", !/searchParams/.test(page));
 
 // Its one data source reads with the service client, not the viewer's session.
-const data = readFileSync(join("src", "lib", "data", "index.ts"), "latin1");
+// The data layer is split by domain under src/lib/data; find the one module
+// that declares the function rather than pinning its file name.
+const DATA = join("src", "lib", "data");
+const owners = readdirSync(DATA)
+  .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+  .filter((f) => readFileSync(join(DATA, f), "utf8").includes("export async function getPublicProfileBySlug("));
+check("exactly one data module declares getPublicProfileBySlug", owners.length === 1);
+const data = readFileSync(join(DATA, owners[0]), "utf8");
 const start = data.indexOf("export async function getPublicProfileBySlug(");
 check("found getPublicProfileBySlug", start >= 0);
-const end = data.indexOf("\nexport ", start + 1);
+const endIdx = data.indexOf("\nexport ", start + 1);
+const end = endIdx === -1 ? data.length : endIdx;
 const body = data.slice(start, end);
+check(
+  "@/lib/data still exports getPublicProfileBySlug for the page",
+  /\bgetPublicProfileBySlug\b/.test(readFileSync(join(DATA, "index.ts"), "utf8"))
+);
 check("getPublicProfileBySlug uses the service client", body.includes("createServiceClient()"));
 check("getPublicProfileBySlug never touches the session", !/await createClient\(\)|auth\.get(User|Session)/.test(body));
 
