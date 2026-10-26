@@ -1787,8 +1787,15 @@ export function mockClearMyData(): { ok: true } | { error: string } {
   store.happyHours = [];
   store.referrals = [];
   store.messages = [];
-  // Keep one fresh starter wheel so the account isn't wheel-less.
+  // Keep one fresh starter wheel so the account isn't wheel-less. Its id is
+  // stable, so stamp fresh meta too (Supabase recreates the row, so
+  // updated_at = created_at and the "Build your first wheel" step un-ticks).
   store.wheels = seedWheels();
+  wheelMeta.clear();
+  for (const w of store.wheels.values()) {
+    const now = new Date().toISOString();
+    wheelMeta.set(w.id, { createdAt: now, updatedAt: now });
+  }
   // Parity with Supabase: a reset also restores profile prefs to defaults.
   store.leaderboardEnabled = false;
   store.onboardingDismissed = false;

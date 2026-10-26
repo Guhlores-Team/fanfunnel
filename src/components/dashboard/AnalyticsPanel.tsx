@@ -5,8 +5,6 @@ import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { formatCents } from "@/lib/format";
 import { useFetch } from "@/lib/hooks/useFetch";
 import CrmPanel from "@/components/dashboard/CrmPanel";
-import Funnel from "@/components/dashboard/Funnel";
-import type { ConversionState } from "@/components/dashboard/MetricsPanel";
 import { heatmapIndex, heatmapStrength, shareOfRevenue } from "./analyticsHelpers";
 import { CardHeader, Glyph, ICON, LoadError, StatCell, TickHeader, hairGrid, raised } from "./analyticsUi";
 
@@ -20,10 +18,11 @@ const ONCE = { refreshOnVisible: false } as const;
 /**
  * The deeper half of Analytics, below the Command Center's designed cards:
  * profit & prize costs (designed grid + costs warning + per-prize table), then
- * the Audience group (conversion, CRM, cohorts) and Timing (best-time heatmap).
- * All endpoints fall back to the in-memory mock when Supabase is absent.
+ * the Audience group (CRM, cohorts) and Timing (best-time heatmap). The
+ * conversion funnel sits in MetricsPanel's trend row, as the prior dashboard
+ * had it. All endpoints fall back to the in-memory mock when Supabase is absent.
  */
-export default function AnalyticsPanel({ conversion }: { conversion?: ConversionState }) {
+export default function AnalyticsPanel() {
   return (
     <div className="flex flex-col gap-10">
       <ProfitSection />
@@ -32,10 +31,10 @@ export default function AnalyticsPanel({ conversion }: { conversion?: Conversion
         <TickHeader
           id="an-audience"
           title="Audience"
-          hint="Who converts, who spends, and who comes back."
+          hint="Who spends, and who comes back."
         />
         <div className="flex flex-col gap-[18px]">
-          <CrmPanel leading={conversion && <ConversionCard {...conversion} />} />
+          <CrmPanel />
           <CohortCard />
         </div>
       </section>
@@ -45,27 +44,6 @@ export default function AnalyticsPanel({ conversion }: { conversion?: Conversion
         <HeatmapCard />
       </section>
     </div>
-  );
-}
-
-function ConversionCard({ funnel, failed, retry }: ConversionState) {
-  return (
-    <section className={`rounded-2xl p-5 ${raised}`}>
-      <CardHeader icon={ICON.funnel} title="Conversion" hint="Fans created → spun → fulfilled." />
-      <div className="mt-4">
-        {failed ? (
-          <LoadError what="the funnel" onRetry={retry} />
-        ) : !funnel ? (
-          <div className="space-y-3">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="skeleton h-3 w-full rounded" />
-            ))}
-          </div>
-        ) : (
-          <Funnel funnel={funnel} />
-        )}
-      </div>
-    </section>
   );
 }
 

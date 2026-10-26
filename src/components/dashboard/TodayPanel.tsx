@@ -199,10 +199,16 @@ function PulseCard({
 export default function TodayPanel({
   onNavigate,
   overview,
+  firstSteps = null,
+  firstRun = false,
 }: {
   onNavigate: (tab: string) => void;
   /** Shared, polled overview from DashboardClient (pending count + queue). */
   overview: CreatorOverview | null;
+  /** "Your first steps" (RD-5), owned by DashboardClient; null once hidden. */
+  firstSteps?: ReactNode;
+  /** Brand-new account (no fans, no spins): muted chips + first-run notes. */
+  firstRun?: boolean;
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
   const toast = useToast();
@@ -285,6 +291,12 @@ export default function TodayPanel({
         : oldestPendingAge(overview?.redemptions)
       : null;
   const dash = <span className="text-muted">—</span>;
+  // First run: nothing has happened, so there's no trend to claim. Chips show
+  // "—" and the notes say what would fill each tile (no invented numbers).
+  const muted = <TrendChip trend={null} />;
+  // The checklist replaces an EMPTY action feed on first run; real cards (if
+  // the autopilot has any) still show beneath it.
+  const hideEmptyFeed = firstRun && firstSteps !== null;
 
   return (
     <div className="relative flex flex-col gap-6">
@@ -293,22 +305,24 @@ export default function TodayPanel({
         className="pointer-events-none absolute inset-x-0 -top-6 h-60 blur-[8px] [background:radial-gradient(60%_100%_at_30%_0%,color-mix(in_oklab,var(--brand)_22%,transparent),transparent_70%)]"
       />
 
+      {/* "Today" on these two tiles is the UTC day (the /api/metrics daily
+          series are UTC buckets, like Analytics and the heatmap). */}
       <section aria-label="Today's pulse" className="relative grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-3.5">
         <PulseCard
           icon={P.dollar}
-          label="Revenue today"
+          label="Revenue today (UTC)"
           value={extra ? formatCents(lastValue(cents)) : dash}
-          chip={<TrendChip trend={trendVsAvg(cents)} />}
-          note="vs 14-day avg"
+          chip={firstRun ? muted : <TrendChip trend={trendVsAvg(cents)} />}
+          note={firstRun ? "get spinning" : "vs 14-day avg"}
           spark={sparkPoints(cents)}
           sparkColor="#22c55e"
         />
         <PulseCard
           icon={P.target}
-          label="Spins today"
+          label="Spins today (UTC)"
           value={extra ? lastValue(spins) : dash}
-          chip={<TrendChip trend={trendVsYesterday(spins)} />}
-          note="vs yesterday"
+          chip={firstRun ? muted : <TrendChip trend={trendVsYesterday(spins)} />}
+          note={firstRun ? "no spins yet" : "vs yesterday"}
           spark={sparkPoints(spins)}
         />
         <PulseCard
@@ -316,11 +330,15 @@ export default function TodayPanel({
           label="Active fans"
           value={extra ? extra.activeFans.thisWeek : dash}
           chip={
-            <TrendChip
-              trend={extra ? trendVsYesterday([extra.activeFans.lastWeek, extra.activeFans.thisWeek]) : null}
-            />
+            firstRun ? (
+              muted
+            ) : (
+              <TrendChip
+                trend={extra ? trendVsYesterday([extra.activeFans.lastWeek, extra.activeFans.thisWeek]) : null}
+              />
+            )
           }
-          note={m ? `vs last week · ${m.fans} total` : "vs last week"}
+          note={firstRun ? "invite fans" : m ? `vs last week · ${m.fans} total` : "vs last week"}
         />
         <PulseCard
           icon={P.gift}
@@ -328,12 +346,16 @@ export default function TodayPanel({
           value={m ? pending : dash}
           chip={<TrendChip trend={waiting} />}
           note={pending > 0 ? "oldest waiting" : "all clear"}
-          // Replaces the old every-tab "N prizes waiting" banner: the queue stays
-          // one tap away even when the autopilot fulfil card is dismissed.
+          // Replaces the old every-section "N prizes waiting… Open →" banner
+          // (P4): the server's pending count plus a jump to Fulfilment, one tap
+          // away even when the autopilot fulfil card is dismissed.
           action={pending > 0 ? { label: "Open", ariaLabel: "Open the fulfilment queue", onClick: () => onNavigate("prizes") } : undefined}
         />
       </section>
 
+      {firstSteps}
+
+      {!(hideEmptyFeed && cards !== null && cards.length === 0) && (
       <section aria-labelledby="needs-you-now" className="relative">
         <div className="mb-3.5 flex items-baseline justify-between gap-3">
           <h2 id="needs-you-now" className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink">
@@ -395,16 +417,17 @@ export default function TodayPanel({
                     >
                       {c.cta}
                     </button>
-                    {/* Snooze isn't in the design (✕ only); kept as a compact
-                        icon button beside ✕ so the 3-day snooze isn't lost. */}
+                    {/* Snooze isn't drawn in the design (✕ only); kept as the
+                        prior text button so the 3-day snooze stays findable. */}
                     <button
                       type="button"
                       onClick={() => dismiss(c.key, 3)}
-                      aria-label={`Snooze for 3 days: ${c.title}`}
                       title="Snooze 3 days"
-                      className="grid h-9 w-9 place-items-center rounded-[9px] border border-line text-muted transition-colors hover:text-ink"
+                      className="flex min-h-9 items-center gap-1.5 rounded-[9px] border border-line px-3 text-xs font-semibold text-muted transition-colors hover:text-ink"
                     >
-                      <Glyph d={P.clock} size={15} />
+                      <Glyph d={P.clock} size={14} />
+                      Snooze 3d
+                      <span className="sr-only">: {c.title}</span>
                     </button>
                     <button
                       type="button"
@@ -422,6 +445,7 @@ export default function TodayPanel({
           </ul>
         )}
       </section>
+      )}
     </div>
   );
 }

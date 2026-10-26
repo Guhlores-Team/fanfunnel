@@ -7,10 +7,11 @@ import type { ConversionFunnel, CreatorMetricsExtra, CreatorOverview } from "@/l
 import { formatCents } from "@/lib/format";
 import { useFetch } from "@/lib/hooks/useFetch";
 import Sparkline from "@/components/dashboard/Sparkline";
+import Funnel from "@/components/dashboard/Funnel";
 import { EmptyState } from "./ui";
 import type { Tab } from "@/components/dashboard/DashboardShell";
 import { summarizeWins } from "./analyticsHelpers";
-import { CardHeader, LoadError, StatCell, hairGrid, raised } from "./analyticsUi";
+import { CardHeader, ICON, LoadError, StatCell, hairGrid, raised } from "./analyticsUi";
 
 // Enhanced metrics (spin trend + conversion funnel), polled like the overview
 // and refetched whenever the selected window (`days`) changes.
@@ -22,8 +23,7 @@ function useMetricsExtra(days: number) {
   return { data, loading, error, reload };
 }
 
-/** The conversion funnel lives with the Audience group (AnalyticsPanel) but is
- *  read from this panel's polled /api/metrics, so it's handed down. */
+/** The conversion funnel's load state (read from this panel's polled /api/metrics). */
 export interface ConversionState {
   funnel: ConversionFunnel | null;
   failed: boolean;
@@ -31,9 +31,10 @@ export interface ConversionState {
 }
 
 // ---------------------------------------------------------------------------
-// Analytics — the Command Center's designed half: stat strip, the two trends,
-// what's landing + rarity mix. `renderDeep` renders the rest of the section
-// (profit, audience, timing) below it, in this order.
+// Analytics — the Command Center's designed half: stat strip, the trend row
+// (spins, revenue, conversion — as the prior dashboard had it), what's landing
+// + rarity mix. `renderDeep` renders the rest of the section (profit, audience,
+// timing) below it, in this order.
 // ---------------------------------------------------------------------------
 export default function MetricsPanel({
   overview,
@@ -44,7 +45,7 @@ export default function MetricsPanel({
   overview: CreatorOverview | null;
   loading: boolean;
   onGoTo: (t: Tab) => void;
-  renderDeep?: (conversion: ConversionState) => ReactNode;
+  renderDeep?: () => ReactNode;
 }) {
   const m = overview?.metrics;
   const reds = useMemo(() => overview?.redemptions ?? [], [overview]);
@@ -62,11 +63,12 @@ export default function MetricsPanel({
   ];
   const totalWins = reds.length;
   const extraFailed = !!extraError && !extra;
-  const deep = renderDeep?.({
+  const deep = renderDeep?.();
+  const conversion: ConversionState = {
     funnel: extraLoading ? null : (extra?.funnel ?? null),
     failed: extraFailed,
     retry: () => void reload(),
-  });
+  };
 
   // `deep` always sits at the same child position, so the overview finishing
   // its first load doesn't remount (and refetch) the profit/CRM/cohort cards.
@@ -117,11 +119,13 @@ export default function MetricsPanel({
         </p>
       </section>
 
-      <div className="grid gap-[18px] lg:grid-cols-2">
+      {/* Trend row: spins, revenue and the conversion funnel (its prior spot). */}
+      <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
         {/* Spins trend — the 14d/30d window drives both trend cards. */}
         <section className={`rounded-2xl p-5 ${raised}`}>
           <CardHeader
             title="Spins trend"
+            hint="Daily spins over time."
             right={
               <div role="group" aria-label="Trend window (days)"className="flex shrink-0 gap-1">
                 {([14, 30] as const).map((d) => (
@@ -148,6 +152,7 @@ export default function MetricsPanel({
         <section className={`rounded-2xl p-5 ${raised}`}>
           <CardHeader
             title="Revenue trend"
+            hint="Daily revenue over time."
             right={
               !extraLoading && extra ? (
                 <span className="tnum shrink-0 text-sm font-bold text-ink">
@@ -169,6 +174,8 @@ export default function MetricsPanel({
             )}
           </div>
         </section>
+
+        <ConversionCard {...conversion} />
       </div>
 
       <div className="grid gap-[18px] lg:grid-cols-2">
@@ -245,6 +252,27 @@ export default function MetricsPanel({
   return <Stack top={top} deep={deep} />;
 }
 
+function ConversionCard({ funnel, failed, retry }: ConversionState) {
+  return (
+    <section className={`rounded-2xl p-5 ${raised}`}>
+      <CardHeader icon={ICON.funnel} title="Conversion" hint="Fans created → spun → fulfilled." />
+      <div className="mt-4">
+        {failed ? (
+          <LoadError what="the funnel" onRetry={retry} />
+        ) : !funnel ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="skeleton h-3 w-full rounded" />
+            ))}
+          </div>
+        ) : (
+          <Funnel funnel={funnel} />
+        )}
+      </div>
+    </section>
+  );
+}
+
 function Stack({ top, deep }: { top: ReactNode; deep: ReactNode }) {
   return (
     <div className="flex flex-col gap-7">
@@ -265,8 +293,8 @@ function MetricsSkeleton() {
           </div>
         ))}
       </div>
-      <div className="grid gap-[18px] lg:grid-cols-2">
-        {[0, 1].map((i) => (
+      <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2].map((i) => (
           <div key={i} className={`rounded-2xl p-5 ${raised}`}>
             <div className="skeleton h-4 w-32 rounded" />
             <div className="mt-4 space-y-3">

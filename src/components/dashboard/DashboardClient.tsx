@@ -23,6 +23,7 @@ import {
   type Tab,
 } from "@/components/dashboard/DashboardShell";
 import { prefersReducedMotion } from "@/lib/sound";
+import { firstStepsAllDone, isFirstRun } from "@/components/dashboard/firstSteps";
 
 // Code-split the tab-gated panels so the initial dashboard bundle doesn't
 // carry every tab a creator may never open. (QrButton is split in FansPanel.)
@@ -80,6 +81,7 @@ export default function DashboardClient({
   // still on the sample wheel (no saved wheel id of their own).
   const metricsFans = overview.data?.metrics.fans ?? 0;
   const metricsSpins = overview.data?.metrics.spinsPlayed ?? 0;
+  const metricsFulfilled = overview.data?.metrics.fulfilled ?? 0;
   // "Built a wheel" comes from the server (saved an edit, or has >1 wheel) so it
   // catches every edit and reliably survives reloads / new wheels. The local
   // content check is a fast pre-save hint so editing ticks the step instantly.
@@ -91,7 +93,13 @@ export default function DashboardClient({
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     initialOnboardingDismissed
   );
-  const onboardingAllDone = wheelSaved && metricsFans > 0 && metricsSpins > 0;
+  const firstStepSignals = {
+    wheelSaved,
+    fans: metricsFans,
+    spins: metricsSpins,
+    fulfilled: metricsFulfilled,
+  };
+  const onboardingAllDone = firstStepsAllDone(firstStepSignals);
   const setOnboardingHidden = useCallback((hidden: boolean) => {
     setOnboardingDismissed(hidden);
     // Fire-and-forget: the UI already reflects the change optimistically.
@@ -116,22 +124,9 @@ export default function DashboardClient({
     }
   }, [overview.loading, onboardingAllDone, onboardingDismissed, setOnboardingHidden]);
 
-  // New creators should land on the Wheel editor (their first task), not the
-  // empty "Today" feed. Switch once, on first data load, only if they haven't
-  // already navigated somewhere themselves.
-  const userPickedTab = useRef(false);
-  const autoLanded = useRef(false);
-  useEffect(() => {
-    if (autoLanded.current || overview.loading || userPickedTab.current) return;
-    autoLanded.current = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time landing choice after async overview load
-    if (metricsFans === 0 && metricsSpins === 0) setTab("editor");
-  }, [overview.loading, metricsFans, metricsSpins]);
-
-  const goTab = (t: Tab) => {
-    userPickedTab.current = true;
-    setTab(t);
-  };
+  // Brand-new creators land on Today, where "Your first steps" guides them
+  // (RD-5) — no auto-switch to the Wheel editor any more.
+  const goTab = (t: Tab) => setTab(t);
 
   // Onboarding CTAs: switch to the relevant tab AND scroll its panel into view,
   // so a creator on a phone is actually taken to the section to act on it.
@@ -143,6 +138,21 @@ export default function DashboardClient({
       panelRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
     });
   };
+
+  // "Your first steps" lives inside Today (replacing the old every-section
+  // checklist). Rendered here so its signals + dismissal stay owned by the
+  // dashboard; TodayPanel only places it.
+  const checklistVisible = !overview.loading && !onboardingDismissed && !onboardingAllDone;
+  const firstSteps = checklistVisible ? (
+    <div ref={checklistRef} className="scroll-mt-24">
+      <GetStartedChecklist
+        signals={firstStepSignals}
+        dismissed={onboardingDismissed}
+        onDismiss={() => setOnboardingHidden(true)}
+        onGoTo={(t) => goToSection(t as Tab)}
+      />
+    </div>
+  ) : null;
 
   // Display name for the sidebar workspace pill (no polling — it rarely changes).
   const account = useFetch<{ displayName: string | null }>(email ? "/api/account" : null);
@@ -187,7 +197,8 @@ export default function DashboardClient({
             <SetupChecklistButton
               onClick={() => {
                 setOnboardingHidden(false);
-                // The checklist renders above the panel, so bring it (not the panel) into view.
+                // The checklist lives on Today: open it there and bring it into view.
+                goTab("today");
                 requestAnimationFrame(() => {
                   checklistRef.current?.scrollIntoView({
                     behavior: prefersReducedMotion() ? "auto" : "smooth",
@@ -217,19 +228,6 @@ export default function DashboardClient({
         <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
       {email && <InvitesBanner />}
 
-      <div ref={checklistRef} className="scroll-mt-24">
-      {!overview.loading && (
-        <GetStartedChecklist
-          wheelSaved={wheelSaved}
-          fans={metricsFans}
-          spins={metricsSpins}
-          dismissed={onboardingDismissed}
-          onDismiss={() => setOnboardingHidden(true)}
-          onGoTo={(t) => goToSection(t as Tab)}
-        />
-      )}
-      </div>
-
       <div
         ref={panelRef}
         className="scroll-mt-24"
@@ -238,7 +236,12 @@ export default function DashboardClient({
         aria-label={title}
       >
         {tab === "today" && (
-          <TodayPanel onNavigate={(t) => setTab(t as Tab)} overview={overview.data} />
+          <TodayPanel
+            onNavigate={(t) => setTab(t as Tab)}
+            overview={overview.data}
+            firstSteps={firstSteps}
+            firstRun={!overview.loading && isFirstRun(firstStepSignals)}
+          />
         )}
         {tab === "prizes" && (
           <PrizesPanel
@@ -273,7 +276,7 @@ export default function DashboardClient({
             overview={overview.data}
             loading={overview.loading}
             onGoTo={setTab}
-            renderDeep={(conversion) => <AnalyticsPanel conversion={conversion} />}
+            renderDeep={() => <AnalyticsPanel />}
           />
         )}
         {tab === "editor" && (
