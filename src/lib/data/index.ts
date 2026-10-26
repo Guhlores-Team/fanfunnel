@@ -2397,7 +2397,7 @@ export async function saveWheel(
   // creator's real, larger prize list with the 7 defaults. If the incoming
   // labels are EXACTLY the sample set and the wheel currently has more prizes,
   // treat it as a stale editor and refuse rather than destroy data.
-  const SEP = " ";
+  const SEP = "\u0000";
   const sampleLabels = SAMPLE_WHEEL.prizes.map((p) => p.label).join(SEP);
   const incomingLabels = config.prizes.map((p) => p.label).join(SEP);
   if (incomingLabels === sampleLabels && (prevPrizes?.length ?? 0) > rows.length) {
