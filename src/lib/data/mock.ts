@@ -31,7 +31,6 @@ import type {
   PrizeTemplate,
   RedemptionItem,
   RedemptionStatus,
-  ReferralOverview,
   SeedCommitment,
   ShareCardData,
   SpinVerification,
@@ -2513,21 +2512,6 @@ export function mockGetRecentWins(): {
 }
 
 // --- Phase 3: Referrals -----------------------------------------------------
-
-export function mockGetReferralOverview(token: string): ReferralOverview | null {
-  const fan = fanForToken(token);
-  if (!fan) return null;
-  const mine = store.referrals.filter((r) => r.referrerFanId === fan.id);
-  const referredCount = mine.length;
-  const creditedCount = mine.filter((r) => r.creditedAt !== null).length;
-  return structuredClone({
-    code: fan.referralCode,
-    referredCount,
-    creditedCount,
-    cap: REFERRAL_CAP,
-    bonusPerReferral: REFERRAL_BONUS,
-  });
-}
 
 export function mockGetReferralStats(): {
   referredCount: number;

@@ -34,8 +34,6 @@ export interface LeaderboardView { enabled: boolean; creatorTitle: string; entri
 export interface HappyHour { id: string; wheelId: string; multiplier: number; startsAt: string; endsAt: string }
 /** Phase 3: the current happy-hour status for a wheel. */
 export interface HappyHourStatus { active: boolean; multiplier: number; endsAt: string | null }
-/** Phase 3: a fan's referral program summary. */
-export interface ReferralOverview { code: string; referredCount: number; creditedCount: number; cap: number; bonusPerReferral: number }
 export type MessageSender = "fan" | "creator";
 /** Phase 3: a single chat message between a fan and a creator. */
 export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null }

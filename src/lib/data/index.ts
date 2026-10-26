@@ -111,7 +111,7 @@ export {
   getRecentWins,
 } from "./boosts";
 export type { RecentWin } from "./boosts";
-export { getReferralOverview, getReferralStats } from "./referrals";
+export { getReferralStats } from "./referrals";
 export {
   isCurrentUserAdmin,
   claimAdmin,
