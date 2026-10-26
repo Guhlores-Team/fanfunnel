@@ -12,6 +12,7 @@ import { randomSeedHex, sha256Hex, makeFairRng, normalizeClientSeed } from "@/li
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
+import { storedWeight } from "@/lib/games/wheel/weights";
 import type {
   AdminAccount,
   AdminOverview,
@@ -2426,13 +2427,16 @@ function clampInt(n: number, min = PG_INT4_MIN, max = PG_INT4_MAX): number {
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
-function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
+// Exported for the weight round-trip test (prizeWeights.test.ts).
+export function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
   return {
     wheel_id: wheelId,
     label: p.label.slice(0, 80) || "Prize",
     description: p.description?.slice(0, 280) ?? null,
     rarity: p.rarity,
-    weight: Number.isFinite(p.weight) ? clampInt(Math.floor(p.weight) || 0, 0) : 0,
+    // Round (not truncate) and keep a positive weight ≥ 1: a stored 0 makes
+    // the prize unwinnable.
+    weight: storedWeight(p.weight),
     color: p.color ?? null,
     emoji: p.emoji ?? null,
     image_url: p.imageUrl ?? null,
@@ -3209,7 +3213,7 @@ export async function createPrizeTemplate(input: {
       label,
       description: input.description?.slice(0, 280) ?? null,
       rarity: input.rarity,
-      weight: Math.max(0, Math.floor(input.weight) || 0),
+      weight: storedWeight(input.weight),
       color: input.color ?? null,
       emoji: input.emoji ?? null,
     })

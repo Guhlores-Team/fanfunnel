@@ -25,6 +25,15 @@ import {
   reorder,
   RARITY_DEFAULT_WEIGHT,
 } from "@/components/dashboard/editorHelpers";
+import {
+  MAX_PRIZE_LABEL,
+  MIN_WHEEL_PRIZES,
+  colorFromInput,
+  normalizeHex,
+  validateWheelDraft,
+  ZERO_TICKETS_NOTE,
+  type ValidationIssue,
+} from "@/lib/games/wheel/validate";
 
 // 24×24 stroke paths (Command Center prototype line icons).
 const P = {
@@ -83,6 +92,26 @@ const secondaryBtn =
 const swatchInput =
   "h-9 w-[46px] shrink-0 cursor-pointer rounded-lg border border-[var(--hair)] bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0.5 [&::-webkit-color-swatch]:rounded-[6px] [&::-webkit-color-swatch]:border-0";
 
+// DOM ids for validated fields and their error text, derived from the
+// validation issue key ("brandColor", "prize:<id>:weight", ...).
+function fieldId(key: string): string {
+  return "wf-" + key.replace(/[^A-Za-z0-9_-]/g, "-");
+}
+function errId(key: string): string {
+  return fieldId(key) + "-err";
+}
+const MIN_PRIZES_NOTE_ID = "wf-min-prizes-note";
+const SAVE_SUMMARY_ID = "wf-save-summary";
+
+function FieldError({ id, message }: { id: string; message?: string | null }) {
+  if (!message) return null;
+  return (
+    <p id={id} className="mt-1 text-[12px] leading-snug text-[#fca5a5]">
+      {message}
+    </p>
+  );
+}
+
 function Lbl({ label, children, small }: { label: string; children: ReactNode; small?: boolean }) {
   return (
     <label className="flex min-w-0 flex-col gap-1.5">
@@ -129,6 +158,57 @@ export default function WheelEditor({
   // refetches and the favorite shows up immediately — no page refresh.
   const [librarySignal, setLibrarySignal] = useState(0);
   const dirty = JSON.stringify(wheel) !== savedJson;
+  const validation = useMemo(() => validateWheelDraft(wheel), [wheel]);
+  // Errors show for a field once it has been left (blur) or after a save
+  // attempt, so a half-typed hex isn't flagged mid-keystroke.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [submitted, setSubmitted] = useState(false);
+  const touch = (key: string) => setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
+  const shown = (key: string) => submitted || touched[key] === true;
+  const showErrors = submitted && validation.issues.length > 0;
+
+  // Props for a validated input: stable id, aria-invalid + aria-describedby
+  // while its error is showing, and blur marks it touched.
+  function fieldProps(key: string, message: string | undefined, onBlur?: () => void) {
+    const on = !!message && shown(key);
+    return {
+      id: fieldId(key),
+      "aria-invalid": on ? (true as const) : undefined,
+      "aria-describedby": on ? errId(key) : undefined,
+      onBlur: () => {
+        touch(key);
+        onBlur?.();
+      },
+    };
+  }
+  function errFor(key: string, message: string | undefined) {
+    return message && shown(key) ? message : null;
+  }
+
+  function issueTargetId(issue: ValidationIssue): string {
+    if (issue.key === "prizeCount") {
+      return wheel.prizes.length === 0 ? "wf-add-first-prize" : "wf-add-prize";
+    }
+    return fieldId(issue.key);
+  }
+  function focusFirstIssue() {
+    const first = validation.issues[0];
+    if (!first) return;
+    // After the render that turns the error states on.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(issueTargetId(first));
+      el?.scrollIntoView({ block: "center", behavior: "smooth" });
+      el?.focus({ preventScroll: true });
+    });
+  }
+  function attemptSave() {
+    if (validation.issues.length > 0) {
+      setSubmitted(true);
+      focusFirstIssue();
+      return;
+    }
+    void save();
+  }
 
   async function save() {
     setSaving(true);
@@ -143,11 +223,15 @@ export default function WheelEditor({
       if (res.ok && data.wheel) {
         setWheel(data.wheel);
         setSavedJson(JSON.stringify(data.wheel));
+        setSubmitted(false);
+        setTouched({});
         setEditingWheelId(data.wheel.id);
         setJustSaved(true);
         setTimeout(() => setJustSaved(false), 2000);
         // Refresh the onboarding "wheelBuilt" signal now that this wheel saved.
         onWheelMutated();
+      } else if (res.status === 400 && (data.error === "bad_color" || data.error === "bad_stock")) {
+        toast("Couldn't save: a color or stock value is invalid.", { tone: "error" });
       } else {
         toast("Couldn't save. Are you signed in?", { tone: "error" });
       }
@@ -218,6 +302,8 @@ export default function WheelEditor({
     setWheel(data.wheel);
     setSavedJson(JSON.stringify(data.wheel));
     setEditingWheelId(data.wheel.id);
+    setSubmitted(false);
+    setTouched({});
     return true;
   }
   // Apply a saved wheel template: it mints a fresh wheel from the template
@@ -331,7 +417,7 @@ export default function WheelEditor({
     });
   }
   function removePrize(id: string) {
-    if (wheel.prizes.length <= 2) return;
+    if (wheel.prizes.length <= MIN_WHEEL_PRIZES) return;
     const index = wheel.prizes.findIndex((p) => p.id === id);
     if (index < 0) return;
     const removed = wheel.prizes[index];
@@ -358,7 +444,16 @@ export default function WheelEditor({
     });
   }
 
-  const canRemove = wheel.prizes.length > 2;
+  const canRemove = wheel.prizes.length > MIN_WHEEL_PRIZES;
+  // Below the list: the min-prizes error (too few to save) or, at exactly the
+  // minimum, why every Remove button is off. Remove buttons point here.
+  const prizeCountMsg =
+    validation.prizeCount && (wheel.prizes.length > 0 || submitted) ? validation.prizeCount : null;
+  const minNote = prizeCountMsg
+    ? null
+    : wheel.prizes.length === MIN_WHEEL_PRIZES
+      ? `Remove is off: a wheel needs at least ${MIN_WHEEL_PRIZES} prizes. Add one first to swap a prize out.`
+      : null;
 
   return (
     <div className="flex flex-col">
@@ -395,12 +490,32 @@ export default function WheelEditor({
           )}
         </p>
         <button
-          onClick={save}
+          onClick={attemptSave}
           disabled={saving || !dirty}
+          aria-describedby={showErrors ? SAVE_SUMMARY_ID : undefined}
           className="btn-brand min-h-[38px] rounded-[9px] px-5 text-[13.5px] font-bold"
         >
           {saving ? "Saving…" : "Save wheel"}
         </button>
+        <div id={SAVE_SUMMARY_ID} role="alert" className="w-full empty:hidden">
+          {showErrors && (
+            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] text-[#fca5a5]">
+              <span>
+                {validation.issues.length === 1
+                  ? "Can't save yet: 1 thing to fix."
+                  : `Can't save yet: ${validation.issues.length} things to fix.`}{" "}
+                {validation.issues[0].message}
+              </span>
+              <button
+                type="button"
+                onClick={focusFirstIssue}
+                className="font-semibold text-ink underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              >
+                Go to it
+              </button>
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -435,59 +550,78 @@ export default function WheelEditor({
                 onChange={(e) => setWheel({ ...wheel, title: e.target.value })}
               />
             </Lbl>
-            <Lbl label="Brand color">
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  className={swatchInput}
-                  value={wheel.brandColor ?? "#ec4899"}
-                  onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
-                  aria-label="Brand color picker"
-                />
-                <input
-                  className="ff-input tnum w-full min-w-0 flex-1"
-                  value={wheel.brandColor ?? ""}
-                  onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
-                  aria-label="Brand color hex"
-                />
-              </div>
-            </Lbl>
+            <div className="min-w-0">
+              <Lbl label="Brand color">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    className={swatchInput}
+                    value={normalizeHex(wheel.brandColor) ?? "#ec4899"}
+                    onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
+                    aria-label="Brand color picker"
+                  />
+                  <input
+                    className="ff-input tnum w-full min-w-0 flex-1"
+                    value={wheel.brandColor ?? ""}
+                    placeholder="#ec4899"
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
+                    aria-label="Brand color hex"
+                    {...fieldProps("brandColor", validation.brandColor, () => {
+                      const n = normalizeHex(wheel.brandColor);
+                      if (n && n !== wheel.brandColor) setWheel({ ...wheel, brandColor: n });
+                    })}
+                  />
+                </div>
+              </Lbl>
+              <FieldError id={errId("brandColor")} message={errFor("brandColor", validation.brandColor)} />
+            </div>
           </div>
 
           {/* Wheel style: label color (#11), label size and subtitle. Not drawn in
               the design; kept as a compact row under Title/Brand. */}
           <div className="mt-3.5 grid gap-3.5 sm:grid-cols-[1fr_auto_1fr]">
-            <Lbl label="Label text color">
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  className={swatchInput}
-                  value={wheel.labelColor ?? "#ffffff"}
-                  onChange={(e) => setWheel({ ...wheel, labelColor: e.target.value })}
-                  aria-label="Prize label color"
-                />
-                <input
-                  className="ff-input tnum min-w-0 flex-1"
-                  value={wheel.labelColor ?? ""}
-                  placeholder="Auto"
-                  onChange={(e) =>
-                    setWheel({
-                      ...wheel,
-                      labelColor: e.target.value ? e.target.value : undefined,
-                    })
-                  }
-                  aria-label="Prize label color hex"
-                />
-                <button
-                  type="button"
-                  onClick={() => setWheel({ ...wheel, labelColor: undefined })}
-                  disabled={wheel.labelColor == null}
-                  className="shrink-0 text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline disabled:opacity-40"
-                >
-                  Auto
-                </button>
-              </div>
-            </Lbl>
+            <div className="min-w-0">
+              <Lbl label="Label text color">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    className={swatchInput}
+                    value={normalizeHex(wheel.labelColor) ?? "#ffffff"}
+                    onChange={(e) => setWheel({ ...wheel, labelColor: e.target.value })}
+                    aria-label="Prize label color"
+                  />
+                  <input
+                    className="ff-input tnum min-w-0 flex-1"
+                    value={wheel.labelColor ?? ""}
+                    placeholder="Auto"
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) =>
+                      setWheel({
+                        ...wheel,
+                        labelColor: colorFromInput(e.target.value),
+                      })
+                    }
+                    aria-label="Prize label color hex"
+                    {...fieldProps("labelColor", validation.labelColor, () => {
+                      const n = normalizeHex(wheel.labelColor);
+                      if (n && n !== wheel.labelColor) setWheel({ ...wheel, labelColor: n });
+                    })}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setWheel({ ...wheel, labelColor: undefined })}
+                    disabled={wheel.labelColor == null}
+                    className="shrink-0 text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline disabled:opacity-40"
+                  >
+                    Auto
+                  </button>
+                </div>
+              </Lbl>
+              <FieldError id={errId("labelColor")} message={errFor("labelColor", validation.labelColor)} />
+            </div>
             <Lbl label="Label size">
               <select
                 className="ff-input w-full sm:w-36"
@@ -538,7 +672,9 @@ export default function WheelEditor({
               </p>
               <button
                 type="button"
+                id="wf-add-first-prize"
                 onClick={addPrize}
+                aria-describedby={prizeCountMsg ? MIN_PRIZES_NOTE_ID : undefined}
                 className="btn-brand mt-1 inline-flex min-h-[38px] items-center gap-1.5 rounded-[10px] px-4 text-[13.5px] font-bold"
               >
                 <Glyph d={P.plus} size={15} strokeWidth={2.2} />
@@ -547,13 +683,22 @@ export default function WheelEditor({
             </div>
           )}
 
-          <div className="mt-4 grid gap-2.5 2xl:grid-cols-2">
+          <div className="mt-4 grid grid-cols-1 gap-2.5 2xl:grid-cols-2">
             {wheel.prizes.map((p, index) => {
               const swatch = p.color ?? RARITY_COLORS[p.rarity];
               const rarityColor = RARITY_COLORS[p.rarity];
               const pct = (odds.get(p.id) ?? 0) * 100;
               const outOfStock = p.stock === 0;
               const more = moreOpen[p.id] ?? false;
+              const pe = validation.prizes[p.id] ?? {};
+              const k = (f: string) => `prize:${p.id}:${f}`;
+              const numberErrors = (["weight", "stock"] as const).filter((f) =>
+                errFor(k(f), pe[f]),
+              );
+              const weightErrOn = !!errFor(k("weight"), pe.weight);
+              // A deliberate 0 is allowed; say what it means instead of erroring.
+              const zeroNote = p.weight === 0 && !pe.weight;
+              const zeroNoteId = fieldId(k("weight")) + "-note";
               return (
                 <div
                   key={p.id}
@@ -638,7 +783,9 @@ export default function WheelEditor({
                         aria-label="Prize name"
                         className="ff-input min-w-0 flex-1"
                         value={p.label}
+                        maxLength={MAX_PRIZE_LABEL}
                         onChange={(e) => updatePrize(p.id, { label: e.target.value })}
+                        {...fieldProps(k("label"), pe.label)}
                       />
                     </div>
                     <div className="flex items-center gap-0.5">
@@ -683,30 +830,47 @@ export default function WheelEditor({
                       <button
                         type="button"
                         onClick={() => removePrize(p.id)}
-                        disabled={!canRemove}
-                        className={`${iconBtn} hover:text-[#fca5a5] disabled:opacity-35 disabled:hover:bg-transparent`}
-                        title={canRemove ? "Remove prize" : "A wheel needs at least 2 prizes"}
+                        // aria-disabled (not disabled) keeps it focusable and
+                        // hoverable, so the reason can be read and seen.
+                        aria-disabled={canRemove ? undefined : true}
+                        aria-describedby={canRemove ? undefined : MIN_PRIZES_NOTE_ID}
+                        className={`${iconBtn} hover:text-[#fca5a5] aria-disabled:cursor-not-allowed aria-disabled:opacity-35 aria-disabled:hover:bg-transparent aria-disabled:hover:text-muted`}
+                        title={
+                          canRemove
+                            ? "Remove prize"
+                            : `A wheel needs at least ${MIN_WHEEL_PRIZES} prizes`
+                        }
                         aria-label="Remove prize"
                       >
                         <Glyph d={P.x} size={15} strokeWidth={1.9} />
                       </button>
                     </div>
                   </div>
+                  <FieldError id={errId(k("label"))} message={errFor(k("label"), pe.label)} />
 
                   <div className="mt-2.5 grid grid-cols-4 gap-2">
                     <Lbl label="Tickets" small>
                       <input
                         type="number"
                         min={0}
+                        step={1}
+                        inputMode="numeric"
                         className="ff-input tnum w-full text-right"
                         value={p.weight}
                         onChange={(e) => updatePrize(p.id, { weight: Number(e.target.value) })}
+                        {...fieldProps(k("weight"), pe.weight)}
+                        aria-describedby={
+                          [weightErrOn ? errId(k("weight")) : null, zeroNote ? zeroNoteId : null]
+                            .filter(Boolean)
+                            .join(" ") || undefined
+                        }
                       />
                     </Lbl>
                     <Lbl label="Stock" small>
                       <input
                         type="number"
                         min={0}
+                        step={1}
                         placeholder="∞"
                         className="ff-input tnum w-full text-right"
                         value={p.stock ?? ""}
@@ -715,6 +879,7 @@ export default function WheelEditor({
                             stock: e.target.value === "" ? null : Number(e.target.value),
                           })
                         }
+                        {...fieldProps(k("stock"), pe.stock)}
                       />
                     </Lbl>
                     <Lbl label="Cost" small>
@@ -750,6 +915,14 @@ export default function WheelEditor({
                       </span>
                     </div>
                   </div>
+                  {numberErrors.map((f) => (
+                    <FieldError key={f} id={errId(k(f))} message={errFor(k(f), pe[f])} />
+                  ))}
+                  {zeroNote && (
+                    <p id={zeroNoteId} className="mt-1 text-[12px] leading-snug text-[#fcd34d]">
+                      {ZERO_TICKETS_NOTE}
+                    </p>
+                  )}
                   {outOfStock && (
                     <p className="mt-1 text-right text-[11px] text-[#fcd34d]">
                       Out of stock — the other prizes&rsquo; odds renormalize.
@@ -761,15 +934,22 @@ export default function WheelEditor({
                     <input
                       type="color"
                       className="h-7 w-10 shrink-0 cursor-pointer rounded-[7px] border border-[var(--hair)] bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0.5 [&::-webkit-color-swatch]:rounded-[5px] [&::-webkit-color-swatch]:border-0"
-                      value={swatch}
+                      value={normalizeHex(swatch) ?? rarityColor}
                       onChange={(e) => updatePrize(p.id, { color: e.target.value })}
                       aria-label="Prize color"
                     />
                     <input
                       className="ff-input tnum min-w-0 flex-1"
                       value={swatch}
-                      onChange={(e) => updatePrize(p.id, { color: e.target.value })}
+                      spellCheck={false}
+                      autoComplete="off"
+                      // Cleared = back to the rarity color (unset), not "".
+                      onChange={(e) => updatePrize(p.id, { color: colorFromInput(e.target.value) })}
                       aria-label="Prize color hex"
+                      {...fieldProps(k("color"), pe.color, () => {
+                        const n = normalizeHex(p.color);
+                        if (n && n !== p.color) updatePrize(p.id, { color: n });
+                      })}
                     />
                     <button
                       type="button"
@@ -779,6 +959,7 @@ export default function WheelEditor({
                       Reset to rarity
                     </button>
                   </div>
+                  <FieldError id={errId(k("color"))} message={errFor(k("color"), pe.color)} />
 
                   {/* "More": emoji quick-picks and the win description. */}
                   <button
@@ -832,8 +1013,22 @@ export default function WheelEditor({
               );
             })}
           </div>
+          {(prizeCountMsg || minNote) && (
+            <p
+              id={MIN_PRIZES_NOTE_ID}
+              className={`mt-3 text-[12.5px] ${prizeCountMsg ? "text-[#fca5a5]" : "text-muted"}`}
+            >
+              {prizeCountMsg ?? minNote}
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={addPrize} className={secondaryBtn}>
+            <button
+              type="button"
+              id="wf-add-prize"
+              onClick={addPrize}
+              aria-describedby={prizeCountMsg ? MIN_PRIZES_NOTE_ID : undefined}
+              className={secondaryBtn}
+            >
               <Glyph d={P.plus} size={15} strokeWidth={2.2} />
               Add prize
             </button>
