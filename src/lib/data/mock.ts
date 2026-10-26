@@ -938,6 +938,7 @@ export async function mockGetFanPass(
     needsAck: fan.ackedAt == null,
     creatorId: "demo-creator",
     leaderboardEnabled: store.leaderboardEnabled,
+    leaderboardOptIn: fan.leaderboardOptIn === true,
     creatorNote: "Hey you 😘 spin away — every spin wins!",
     creatorAvatarUrl: null,
     nextSpinHash: pass?.nextServerSeedHash ?? null,
@@ -1013,9 +1014,9 @@ export async function mockSpin(token: string, clientSeed = "") {
   const campaignId = pass.campaignId;
 
   fan.pityCounter = nextPityCounter;
-  // Spinning auto-opts the fan into the leaderboard (handle-only; the board only
-  // renders when the creator enables it, so nothing is exposed until then).
-  fan.leaderboardOptIn = true;
+  // Spinning must NOT touch `leaderboardOptIn` — appearing on the creator's
+  // public leaderboard is the fan's own explicit choice (the toggle on their
+  // spin page). Mirrors the same fix in ./index.ts's spin().
 
   // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
   const live = wheel.prizes[index];
@@ -2407,9 +2408,13 @@ export function mockSetFanLeaderboardOptIn(
   return { ok: true };
 }
 
-/** A first name from a fan's full name (leaderboard privacy fallback). */
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name.trim() || "Fan";
+/**
+ * The name a fan is shown under on public surfaces, or null when they have no
+ * board handle — in which case they're skipped. Their real name (`f.name`) is
+ * never used here.
+ */
+function publicHandle(f: { handle?: string }): string | null {
+  return f.handle?.trim() || null;
 }
 
 export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
@@ -2417,24 +2422,20 @@ export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
     return { enabled: false, creatorTitle: CREATOR_TITLE, entries: [] };
   }
   const rows = Array.from(store.fans.values())
-    .filter((f) => f.leaderboardOptIn)
+    .filter((f) => f.leaderboardOptIn && publicHandle(f) !== null)
     .map((f) => {
       const spins = f.wins.length;
-      const spentCents = fanGrants(f.id).reduce((s, g) => s + g.amountCents, 0);
       const rareWins = f.wins.filter(
         (w) => RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")
       ).length;
+      // No spend figure: this payload is served publicly and unauthenticated.
       return {
-        handle: f.handle?.trim() || firstName(f.name),
+        handle: publicHandle(f) as string,
         spins,
-        spentCents,
         rareWins,
       };
     })
-    .sort(
-      (a, b) =>
-        b.spins - a.spins || b.spentCents - a.spentCents || b.rareWins - a.rareWins
-    );
+    .sort((a, b) => b.spins - a.spins || b.rareWins - a.rareWins);
   const entries: LeaderboardEntry[] = rows.map((r, i) => ({ rank: i + 1, ...r }));
   return structuredClone({ enabled: true, creatorTitle: CREATOR_TITLE, entries });
 }
@@ -2449,7 +2450,8 @@ export function mockGetRecentWins(): {
   const wins: { handle: string; prizeLabel: string; rarity: Rarity; at: string }[] = [];
   for (const f of store.fans.values()) {
     if (!f.leaderboardOptIn) continue;
-    const handle = f.handle?.trim() || firstName(f.name);
+    const handle = publicHandle(f);
+    if (handle === null) continue; // never fall back to the fan's real name
     for (const w of f.wins) {
       if (RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")) {
         wins.push({ handle, prizeLabel: w.label, rarity: w.rarity, at: w.at });
