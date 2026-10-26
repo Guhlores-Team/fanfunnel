@@ -288,9 +288,11 @@ export function TopBar({
   subtitle,
   onSearch,
   onNewFanLink,
+  bell,
 }: {
   title: string;
   subtitle: ReactNode;
+  bell?: ReactNode;
   /** Submitting routes the query to the Fans name filter (client-side only). */
   onSearch: (q: string) => void;
   onNewFanLink: () => void;
@@ -326,17 +328,8 @@ export function TopBar({
             className="min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-muted focus-visible:outline-none"
           />
         </form>
-        {/* No notifications feed exists yet (behavior-spec #1), so the bell is
-            deliberately inert and shows no unread dot. */}
-        <button
-          type="button"
-          aria-label="Notifications (coming soon)"
-          aria-disabled="true"
-          title="Notifications are coming soon"
-          className="grid h-10 w-10 cursor-not-allowed place-items-center rounded-[10px] border border-line bg-surface text-muted"
-        >
-          <Icon d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" size={18} />
-        </button>
+        {/* Notification bell slot (NotificationBell, owned by DashboardClient). */}
+        {bell}
         <button
           type="button"
           onClick={onNewFanLink}

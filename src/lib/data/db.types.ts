@@ -826,6 +826,7 @@ export type Database = {
           id: string
           is_active: boolean
           leaderboard_enabled: boolean
+          notifications_seen_at: string | null
           onboarding_dismissed: boolean
           org_id: string | null
           public_slug: string | null
@@ -846,6 +847,7 @@ export type Database = {
           id: string
           is_active?: boolean
           leaderboard_enabled?: boolean
+          notifications_seen_at?: string | null
           onboarding_dismissed?: boolean
           org_id?: string | null
           public_slug?: string | null
@@ -866,6 +868,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           leaderboard_enabled?: boolean
+          notifications_seen_at?: string | null
           onboarding_dismissed?: boolean
           org_id?: string | null
           public_slug?: string | null
@@ -1363,6 +1366,7 @@ export type Database = {
         Args: { p_enabled: boolean }
         Returns: undefined
       }
+      set_notifications_seen: { Args: never; Returns: undefined }
       set_onboarding_dismissed: {
         Args: { p_dismissed: boolean }
         Returns: undefined

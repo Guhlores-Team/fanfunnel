@@ -16,6 +16,7 @@ import WheelEditor from "@/components/dashboard/WheelEditor";
 import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
 import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
+import NotificationBell from "@/components/dashboard/NotificationBell";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -266,6 +267,16 @@ export default function DashboardClient({
             goTab("fans");
             setMintFocus((n) => n + 1);
           }}
+          bell={
+            <NotificationBell
+              // Same in-app routes as the drawer "Message" and top-bar search.
+              onNavigate={({ section, fanId, fanName }) => {
+                if (section === "inbox" && fanId) setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
+                if (section === "fans" && fanName) setFanSearch((s) => ({ q: fanName, nonce: s.nonce + 1 }));
+                goToSection(section);
+              }}
+            />
+          }
         />
 
         <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
@@ -350,6 +361,10 @@ export default function DashboardClient({
             // --brand updates with no refresh — #9).
             onBrandColorChange={(color) =>
               setWheel((w) => ({ ...w, brandColor: color }))
+            }
+            // …and the sidebar's workspace name the moment a new one is saved.
+            onDisplayNameChange={(displayName) =>
+              account.setData((d) => ({ ...d, displayName }))
             }
           />
         )}

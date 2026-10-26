@@ -18,12 +18,15 @@ import { Field } from "./ui";
  *     public profile, so the preview reflects it live too.
  *
  * `onBrandColorChange` lets the dashboard re-tint live (brandVars) the instant a
- * new brand color is saved here — no refresh (#9).
+ * new brand color is saved here — no refresh (#9). `onDisplayNameChange` does
+ * the same for the sidebar's workspace name (behavior spec #3).
  */
 export default function SettingsPanel({
   onBrandColorChange,
+  onDisplayNameChange,
 }: {
   onBrandColorChange?: (color: string) => void;
+  onDisplayNameChange?: (name: string) => void;
 }) {
   const [account, setAccount] = useState<AccountState>(INITIAL_ACCOUNT);
   const [profile, setProfile] = useState<ProfileFields>(EMPTY_PROFILE);
@@ -103,6 +106,7 @@ export default function SettingsPanel({
             savedAvatar={savedProfile.avatarUrl}
             patchProfile={patchProfile}
             markSaved={markSaved}
+            onDisplayNameChange={onDisplayNameChange}
           />
           <SecurityCard />
           <NotificationsCard account={account} patchAccount={patchAccount} />
@@ -266,6 +270,7 @@ function ProfileCard({
   savedAvatar,
   patchProfile,
   markSaved,
+  onDisplayNameChange,
 }: {
   account: AccountState;
   patchAccount: (p: Partial<AccountState>) => void;
@@ -273,6 +278,7 @@ function ProfileCard({
   savedAvatar: string;
   patchProfile: (p: Partial<ProfileFields>) => void;
   markSaved: (p: Partial<ProfileFields>) => void;
+  onDisplayNameChange?: (name: string) => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -302,6 +308,7 @@ function ProfileCard({
           });
           if (!res.ok) throw new Error();
           patchAccount({ savedName: name });
+          onDisplayNameChange?.(name);
         } catch {
           ok = false;
           toast("Couldn't save your name.", { tone: "error" });
