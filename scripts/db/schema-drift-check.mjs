@@ -12,6 +12,10 @@
 //   C  supabase/schema.sql + migrations_combined.sql -> documented "paste both" path
 //   C2 C + migrations_combined.sql again          -> the combined file must be re-runnable
 //
+// Then, on A, B and C, a runtime grant probe (0044): anon calls to the
+// signed-in-only RPCs are refused, authenticated setter calls still persist,
+// and the RLS helper functions stay callable by anon.
+//
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
 // and the data dir is deleted afterwards. When run as root (containers), the
@@ -19,7 +23,7 @@
 //
 //   node scripts/db/schema-drift-check.mjs [--keep] [--base-rev <git-rev>] [--base <file>]
 //
-// Exit code 0 = all builds load and all catalogs match; 1 otherwise.
+// Exit code 0 = all builds load, all catalogs match and the probe passes; 1 otherwise.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, chownSync } from "node:fs";
@@ -239,6 +243,85 @@ function diff(labelA, a, labelB, b) {
   for (const l of onlyB) console.log(`  + ${l}`);
 }
 
+// ------------------------------------------------- runtime grant probe ---
+// 0044: the signed-in-only RPCs must refuse anon and still work for
+// authenticated, on every build path. The RLS helper functions must stay
+// callable by anon, or anon reads that evaluate those policies would error.
+const SIGNED_IN_ONLY = [
+  "set_onboarding_dismissed(boolean)",
+  "set_leaderboard_enabled(boolean)",
+  "set_chat_settings(text, text)",
+  "set_display_name(text)",
+  "set_notification_prefs(boolean, boolean, boolean)",
+  "set_public_profile(text, text, text)",
+  "set_creator_note(text, text)",
+  "set_notifications_seen()",
+  "import_fans(jsonb)",
+  "admin_account_stats()",
+  "admin_reserve_account_deletion(uuid)",
+  "org_account_stats(uuid)",
+  "org_create(text)",
+  "org_invite_creator(uuid, text)",
+  "org_invite_respond(uuid, boolean)",
+  "org_invite_revoke(uuid)",
+  "org_remove_creator(uuid, uuid)",
+  "org_add_member(uuid, text, public.org_role)",
+  "org_remove_member(uuid)",
+  "org_scope_creator(uuid, uuid, boolean)",
+];
+const RLS_HELPERS = ["is_admin()", "can_act_for(uuid, text)", "current_user_active()", "_owns_org(uuid)"];
+const PROBE_UID = "00000000-0000-4000-8000-000000000044";
+
+function probeGrants(db) {
+  const bad = [];
+  const priv = (role, sig) => sql(db, `select has_function_privilege('${role}', 'public.${sig}', 'execute')`) === "t";
+  for (const sig of SIGNED_IN_ONLY) {
+    if (priv("anon", sig)) bad.push(`anon can EXECUTE ${sig}`);
+    if (!priv("authenticated", sig)) bad.push(`authenticated lost EXECUTE on ${sig}`);
+  }
+  for (const sig of RLS_HELPERS) if (!priv("anon", sig)) bad.push(`anon lost EXECUTE on RLS helper ${sig}`);
+
+  // A real call as anon must fail with "permission denied for function".
+  for (const sig of SIGNED_IN_ONLY) {
+    const name = sig.slice(0, sig.indexOf("("));
+    const types = sig.slice(sig.indexOf("(") + 1, -1).split(",").map((t) => t.trim()).filter(Boolean);
+    const call = `public.${name}(${types.map((t) => `null::${t}`).join(", ")})`;
+    const r = psql(db, ["-c", `begin; set local role anon; select ${call}; rollback;`], { allowFail: true });
+    if (!new RegExp(`permission denied for function ${name}\\b`).test(r.stderr || "")) {
+      bad.push(`anon call ${call} was not refused (${(r.stderr || "no error").trim().split("\n")[0]})`);
+    }
+  }
+
+  // A real call as an authenticated creator still writes that creator's row.
+  const r = psql(db, ["-c", `
+    begin;
+    insert into auth.users (id, email) values ('${PROBE_UID}', 'probe-0044@example.test');
+    set local role authenticated;
+    select set_config('request.jwt.claim.sub', '${PROBE_UID}', true);
+    select public.set_display_name('Probe 0044');
+    select public.set_onboarding_dismissed(true);
+    select public.set_leaderboard_enabled(true);
+    select public.set_chat_settings('hi', 'bye');
+    select public.set_notification_prefs(false, false, false);
+    reset role;
+    select display_name || '|' || onboarding_dismissed || '|' || leaderboard_enabled || '|' || chat_intro || '|' || chat_outro
+           || '|' || notify_new_spin || notify_low_balance || notify_messages
+      from public.profiles where id = '${PROBE_UID}';
+    rollback;`], { allowFail: true });
+  const got = (r.stdout || "").split("\n").filter(Boolean).at(-1);
+  if (r.status !== 0 || got !== "Probe 0044|true|true|hi|bye|falsefalsefalse") {
+    bad.push(`authenticated setter calls did not persist (got ${got ?? "nothing"}; ${(r.stderr || "").trim().split("\n")[0]})`);
+  }
+
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: signed-in-only RPC grants`);
+    for (const b of bad) console.log(`  - ${b}`);
+  } else {
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; RLS helpers still anon-callable`);
+  }
+}
+
 // ----------------------------------------------------------------- builds ---
 try {
   const migrations = readdirSync(join(SUPABASE, "migrations"))
@@ -290,6 +373,8 @@ try {
   diff("A", A, "B2", catalog("ffb2"));
   diff("A", A, "C", catalog("ffc"));
   diff("A", A, "C2", catalog("ffc2"));
+
+  for (const db of ["ffa", "ffb", "ffc"]) probeGrants(db);
 } catch (e) {
   failures++;
   console.error(e instanceof Error ? e.message : e);
@@ -297,5 +382,5 @@ try {
   cleanup();
 }
 
-console.log(failures ? `\n${failures} problem(s): the SQL snapshots have drifted from the migrations.` : "\nALL PASS: schema.sql, migrations_combined.sql and migrations/ build the same database.");
+console.log(failures ? `\n${failures} problem(s): the SQL snapshots have drifted from the migrations, or the grant probe failed.` : "\nALL PASS: schema.sql, migrations_combined.sql and migrations/ build the same database.");
 process.exit(failures ? 1 : 0);
