@@ -161,3 +161,5 @@ export {
   setMyPublicProfile,
 } from "./publicProfile";
 export type { PublicProfile } from "./publicProfile";
+export { getNotifications, markNotificationsSeen } from "./notifications";
+export type { NotificationFeed, NotificationItem, NotificationKind, NotificationTarget } from "./notifications";

@@ -286,6 +286,24 @@ try {
     assert(b.onboarding_dismissed === false, "B's onboarding flag is unaffected");
   });
 
+  await step("set_notifications_seen RPC (0043) stamps only the caller's row; direct writes stay blocked", async () => {
+    const { error } = await A.client.rpc("set_notifications_seen");
+    assert(!error, `rpc failed: ${error?.message}`);
+    const { data: a } = await A.client.from("profiles").select("notifications_seen_at").eq("id", A.id).single();
+    assert(a.notifications_seen_at !== null, "A's seen marker set");
+    const { data: b } = await B.client.from("profiles").select("notifications_seen_at").eq("id", B.id).single();
+    assert(b.notifications_seen_at === null, "B's seen marker is unaffected by A's RPC");
+    const { data: upd } = await B.client
+      .from("profiles")
+      .update({ notifications_seen_at: new Date().toISOString() })
+      .eq("id", B.id)
+      .select("id");
+    assert((upd?.length ?? 0) === 0, "a creator can't write the column directly (profiles_update is admin-only)");
+    const anon = createClient(URL, ANON, { auth: { persistSession: false } });
+    const { error: anonErr } = await anon.rpc("set_notifications_seen");
+    assert(anonErr, "anon cannot execute set_notifications_seen");
+  });
+
   await step("creator A cannot self-promote to admin (profiles_update is admin-only)", async () => {
     const { data } = await A.client.from("profiles").update({ role: "admin" }).eq("id", A.id).select("id");
     assert((data?.length ?? 0) === 0, "direct role update is blocked by RLS");

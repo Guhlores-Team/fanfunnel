@@ -42,6 +42,12 @@ import type {
   WonPrize,
 } from "./types";
 import { activeFans, bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import {
+  FEED_LIMIT,
+  LOW_STOCK_THRESHOLD,
+  OUT_OF_SPINS_WINDOW_DAYS,
+  type NotificationSources,
+} from "./notificationFeed";
 
 // In-memory demo store. Used automatically when Supabase env vars are absent,
 // so `npm run dev` gives a fully working app with zero setup. State resets when
@@ -194,6 +200,8 @@ interface Store {
   notifyNewSpin: boolean;
   notifyLowBalance: boolean;
   notifyMessages: boolean;
+  // RD-7: when the creator last opened the notification bell (null = never).
+  notificationsSeenAt: string | null;
   // Phase 5b
   webhooks: MockWebhook[];
   // Wave 3: editable auto intro/outro chat messages (creator-level).
@@ -405,6 +413,7 @@ const store: Store =
     notifyNewSpin: true,
     notifyLowBalance: true,
     notifyMessages: true,
+    notificationsSeenAt: null,
     webhooks: [],
     chatIntro: DEFAULT_CHAT_INTRO,
     chatOutro: DEFAULT_CHAT_OUTRO,
@@ -431,6 +440,7 @@ store.displayName ??= "Demo Creator";
 store.notifyNewSpin ??= true;
 store.notifyLowBalance ??= true;
 store.notifyMessages ??= true;
+store.notificationsSeenAt ??= null;
 store.webhooks ??= [];
 // Wave 3: backfill auto-message defaults on stores pinned before they existed.
 if (store.chatIntro === undefined) store.chatIntro = DEFAULT_CHAT_INTRO;
@@ -2431,6 +2441,58 @@ export function mockSetMyNotificationPrefs(prefs: {
   store.notifyNewSpin = !!prefs.newSpin;
   store.notifyLowBalance = !!prefs.lowBalance;
   store.notifyMessages = !!prefs.messages;
+  return { ok: true };
+}
+
+// --- RD-7: notification bell sources (mirrors notifications.ts) ---------------
+
+export function mockGetNotificationSources(): NotificationSources {
+  const fanName = (id: string) => store.fans.get(id)?.name ?? "Fan";
+  const pendingWins = store.redemptions
+    .filter((r) => r.status === "pending")
+    .slice(0, FEED_LIMIT)
+    .map((r) => ({ id: r.id, fanName: r.fanName, prizeLabel: r.prizeLabel, emoji: r.emoji ?? null, at: r.at }));
+  const unreadMessages = store.messages
+    .filter((m) => m.sender === "fan" && m.readAt === null)
+    .map((m) => ({ fanId: m.fanId, fanName: fanName(m.fanId), body: m.body, at: m.at }));
+  const lowStock: NotificationSources["lowStock"] = [];
+  for (const w of store.wheels.values()) {
+    if (w.archivedAt) continue;
+    for (const p of w.prizes) {
+      if (p.stock === null || p.stock === undefined || p.stock > LOW_STOCK_THRESHOLD) continue;
+      // Stock moves on a win; the demo has no prize id on a win, so match the label.
+      const lastWin = store.redemptions.find((r) => r.prizeLabel === p.label)?.at;
+      lowStock.push({
+        prizeId: p.id,
+        label: p.label,
+        emoji: p.emoji ?? null,
+        stock: p.stock,
+        wheelId: w.id,
+        wheelTitle: w.title,
+        at: lastWin ?? wheelMeta.get(w.id)?.updatedAt ?? new Date(0).toISOString(),
+      });
+    }
+  }
+  const since = Date.now() - OUT_OF_SPINS_WINDOW_DAYS * 86_400_000;
+  const outOfSpins = [...store.fans.values()]
+    .filter(
+      (f) =>
+        f.spinsRemaining === 0 &&
+        f.wins.length > 0 &&
+        !f.selfExcludedAt &&
+        !(f as { blockedAt?: string | null }).blockedAt &&
+        Date.parse(f.wins[0].at) >= since
+    )
+    .map((f) => ({ fanId: f.id, fanName: f.name, at: f.wins[0].at }));
+  return structuredClone({ pendingWins, unreadMessages, lowStock, outOfSpins });
+}
+
+export function mockGetNotificationsSeenAt(): string | null {
+  return store.notificationsSeenAt;
+}
+
+export function mockSetNotificationsSeen(): { ok: true } {
+  store.notificationsSeenAt = new Date().toISOString();
   return { ok: true };
 }
 
