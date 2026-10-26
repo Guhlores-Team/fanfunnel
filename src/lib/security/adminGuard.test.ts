@@ -30,6 +30,19 @@ const fail = (msg: string) => {
 };
 const ok = (msg: string) => console.log("  ✓", msg);
 
+// The data layer is split by domain under src/lib/data (index.ts is the
+// barrel), so a guard on "the data layer" scans every non-test module there.
+const dataModules = walk(join(SRC, "lib/data")).filter((p) => /\.ts$/.test(p) && !p.endsWith(".test.ts"));
+/** The ONE data module that declares `needle` (a function head); fails otherwise. */
+function dataModuleDeclaring(needle: string): { path: string; source: string } | null {
+  const hits = dataModules.filter((p) => read(p).includes(needle));
+  if (hits.length !== 1) {
+    fail(`expected exactly one module under src/lib/data to declare ${needle.trim()}, found ${hits.length}`);
+    return null;
+  }
+  return { path: hits[0], source: read(hits[0]) };
+}
+
 // The one-time bootstrap is the only admin route a NON-admin may call: it
 // promotes the caller only if their email is in ADMIN_EMAILS and no admin
 // exists yet. It is exempt from the guard but must keep both locks.
@@ -43,9 +56,11 @@ for (const file of routes) {
   const path = rel(file);
   const source = read(file);
   if (path === BOOTSTRAP_ROUTE) {
-    const data = read(join(SRC, "lib/data/index.ts"));
-    const body = data.slice(data.indexOf("export async function claimAdmin("));
-    const claim = body.slice(0, body.indexOf("\nexport "));
+    const mod = dataModuleDeclaring("export async function claimAdmin(");
+    if (!mod) continue;
+    const body = mod.source.slice(mod.source.indexOf("export async function claimAdmin("));
+    const cut = body.indexOf("\nexport ");
+    const claim = cut === -1 ? body : body.slice(0, cut);
     if (!/ADMIN_EMAILS/.test(claim)) fail(`${path}: claimAdmin lost the ADMIN_EMAILS allowlist`);
     if (!/already_bootstrapped/.test(claim)) fail(`${path}: claimAdmin lost the first-admin-only lock`);
     continue;
@@ -105,11 +120,22 @@ const sqlFn = read(join(ROOT, "supabase/schema.sql")).match(
 if (!sqlFn || !/role = 'admin' and is_active/.test(sqlFn) || !/security definer/.test(sqlFn)) {
   fail("schema.sql: is_admin() must be SECURITY DEFINER and require role = 'admin' and is_active");
 }
-const data = read(join(SRC, "lib/data/index.ts"));
-if (/async function requireAdmin\(/.test(data) || !/from "@\/lib\/auth\/adminCheck"/.test(data)) {
-  fail("src/lib/data/index.ts: must reuse isActiveAdmin() from @/lib/auth/adminCheck, not a private predicate");
+// Every data module: no private admin predicate anywhere, and any module that
+// decides on `isActiveAdmin` must take it from @/lib/auth/adminCheck.
+let adminCheckUsers = 0;
+for (const file of dataModules) {
+  const data = read(file);
+  if (/async function requireAdmin\(/.test(data)) {
+    fail(`${rel(file)}: defines a private requireAdmin() instead of reusing isActiveAdmin()`);
+  }
+  if (!/\bisActiveAdmin\b/.test(data)) continue;
+  if (!/import \{[^}]*\bisActiveAdmin\b[^}]*\} from "@\/lib\/auth\/adminCheck"/.test(data)) {
+    fail(`${rel(file)}: must import isActiveAdmin() from @/lib/auth/adminCheck, not define its own`);
+  }
+  adminCheckUsers++;
 }
-if (failures === 0) ok("adminCheck.ts mirrors is_admin() (role AND is_active); data layer reuses it");
+if (adminCheckUsers === 0) fail("no module under src/lib/data reuses isActiveAdmin() from @/lib/auth/adminCheck");
+if (failures === 0) ok(`adminCheck.ts mirrors is_admin() (role AND is_active); ${adminCheckUsers} data module(s) reuse it`);
 
 // --- 5. The server-only check never reaches the browser bundle --------------
 for (const file of walk(SRC).filter((p) => /\.(ts|tsx)$/.test(p) && !p.endsWith(".test.ts"))) {
