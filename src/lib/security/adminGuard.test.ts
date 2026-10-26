@@ -75,10 +75,33 @@ if (!/from "@\/lib\/auth\/admin"/.test(page) || !/await checkAdmin\(/.test(page)
   fail("src/app/admin/page.tsx: must gate on checkAdmin() from @/lib/auth/admin");
 } else ok("src/app/admin/page.tsx gates on checkAdmin()");
 
+// --- 2b. The dashboard shell's Admin section is gated by the same check ------
+// Admin renders inside the dashboard ("Account › Admin"). The shell shows it
+// only when dashboard/page.tsx resolved the viewer through checkAdmin(), and
+// the client never decides from anything but that server-derived prop.
+const dashPage = read(join(SRC, "app/dashboard/page.tsx"));
+if (!/from "@\/lib\/auth\/admin"/.test(dashPage) || !/await checkAdmin\(/.test(dashPage)) {
+  fail("src/app/dashboard/page.tsx: must derive isAdmin from checkAdmin() (@/lib/auth/admin)");
+} else ok("src/app/dashboard/page.tsx derives isAdmin from checkAdmin()");
+const dashClient = read(join(SRC, "components/dashboard/DashboardClient.tsx"));
+if (!/tab === "admin" && adminVisible && <AdminClient \/>/.test(dashClient)) {
+  fail("DashboardClient.tsx: the Admin section must render only behind the server-derived isAdmin gate");
+} else ok("DashboardClient.tsx renders the Admin section only behind the isAdmin gate");
+if (/user_metadata|app_metadata/.test(dashClient) || /fetch\(["']\/api\/me/.test(dashClient)) {
+  fail("DashboardClient.tsx: the admin gate must not be derived client-side");
+}
+if (!/const adminVisible = isAdmin;/.test(dashClient)) {
+  fail("DashboardClient.tsx: adminVisible must be exactly the server-derived isAdmin prop (no email/client fallback)");
+} else ok("DashboardClient.tsx: adminVisible is the server-derived isAdmin prop only");
+if (!/resolveSection\(params\.section, isAdmin\)/.test(dashPage)) {
+  fail("src/app/dashboard/page.tsx: ?section=admin must resolve through resolveSection(…, isAdmin)");
+} else ok("src/app/dashboard/page.tsx: ?section= deep links go through the server-side admin gate");
+
 // --- 3. No metadata-based or role-only decisions on the admin surface -------
 const surface = [
   ...routes,
   join(SRC, "app/admin/page.tsx"),
+  join(SRC, "app/dashboard/page.tsx"),
   ...walk(join(SRC, "lib/auth")).filter((p) => !p.endsWith(".test.ts")),
 ];
 const before = failures;

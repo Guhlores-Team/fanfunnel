@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
-import AdminClient from "@/components/admin/AdminClient";
 import AdminClaim from "@/components/admin/AdminClaim";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { checkAdmin } from "@/lib/auth/admin";
 
-// Admin-only, cross-account control panel. Open in demo mode; gated in
-// production on is_admin() (role AND is_active) via the shared checkAdmin().
+// Admin is a section inside the dashboard shell ("Account › Admin"). /admin
+// stays as the deep link: gated here on is_admin() (role AND is_active) via
+// the shared checkAdmin(), then sent into the shell's Admin section. In demo
+// mode (no Supabase) the panel is open, as before.
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
@@ -24,9 +25,5 @@ export default async function AdminPage() {
     }
   }
 
-  return (
-    <main className="min-h-[100dvh] overflow-x-clip bg-base">
-      <AdminClient />
-    </main>
-  );
+  redirect("/dashboard?section=admin");
 }

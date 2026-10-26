@@ -43,6 +43,11 @@ const AnalyticsPanel = dynamic(() => import("@/components/dashboard/AnalyticsPan
 const SettingsPanel = dynamic(() => import("@/components/dashboard/SettingsPanel"), {
   loading: PanelFallback,
 });
+// Admin lives in the shell as "Account › Admin". It only renders behind the
+// server-derived `isAdmin` gate below, and every /api/admin route re-checks.
+const AdminClient = dynamic(() => import("@/components/admin/AdminClient"), {
+  loading: PanelFallback,
+});
 
 // Shared overview, polled (12s) + refreshed on tab focus so metrics + the
 // pending badge stay live. `setData` is exposed for optimistic account edits.
@@ -59,13 +64,22 @@ export default function DashboardClient({
   email,
   initialWheel,
   initialOnboardingDismissed = false,
+  initialTab,
 }: {
+  /** Server-derived (dashboard/page.tsx): an active admin per is_admin(), or
+   *  demo mode. The only input to the Admin section gate. */
   isAdmin: boolean;
   email: string | null;
   initialWheel: WheelConfig;
   initialOnboardingDismissed?: boolean;
+  /** Deep link (`/dashboard?section=admin`, used by the /admin redirect). */
+  initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("today");
+  // The Admin section exists only when the server said so (never client state).
+  const adminVisible = isAdmin;
+  const [tab, setTab] = useState<Tab>(
+    initialTab && (initialTab !== "admin" || adminVisible) ? initialTab : "today"
+  );
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
   // Last saved/loaded wheel JSON. Lives beside `wheel` so "Unsaved changes"
   // (and the edits themselves) survive leaving the Wheels section and coming back.
@@ -137,7 +151,8 @@ export default function DashboardClient({
   // New creators should land on the Wheel editor (their first task), not the
   // empty "Today" feed. Switch once, on first data load, only if they haven't
   // already navigated somewhere themselves.
-  const userPickedTab = useRef(false);
+  // A deep-linked section counts as the user's own choice.
+  const userPickedTab = useRef(!!initialTab);
   const autoLanded = useRef(false);
   useEffect(() => {
     if (autoLanded.current || overview.loading || userPickedTab.current) return;
@@ -200,9 +215,9 @@ export default function DashboardClient({
         active={tab}
         onSelect={goTab}
         badges={{ prizes: pending, inbox: unread }}
-        // Same gate as before the redesign: isAdmin comes from profiles.role on
-        // the server (dashboard/page.tsx); no email = demo mode.
-        showAdmin={isAdmin || !email}
+        // Server-derived gate: is_admin() via checkAdmin in dashboard/page.tsx
+        // (or demo mode, decided there too). The /api/admin routes re-check.
+        showAdmin={adminVisible}
         accountName={accountName}
         accountSub={email ?? "Demo workspace — connect Supabase to go live"}
         showSignOut={!!email}
@@ -336,6 +351,7 @@ export default function DashboardClient({
             }
           />
         )}
+        {tab === "admin" && adminVisible && <AdminClient />}
         {signOutForm && (
           <DiscardChangesDialog
             what="your wheel"

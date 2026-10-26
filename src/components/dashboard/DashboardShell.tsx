@@ -16,10 +16,11 @@ export type Tab =
   | "inbox"
   | "boosts"
   | "analytics"
-  | "settings";
+  | "settings"
+  | "admin";
 
 // 24×24 stroke paths (1.7px line icons) from the Command Center prototype.
-const ICON: Record<Tab | "admin" | "signout" | "setup", string> = {
+const ICON: Record<Tab | "signout" | "setup", string> = {
   today: "M3 10.6 12 3l9 7.6M5 9.2V21h14V9.2",
   inbox: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z",
   prizes:
@@ -65,6 +66,9 @@ export const NAV_GROUPS: { title: string; items: [Tab, string][] }[] = [
   { title: "Measure", items: [["analytics", "Analytics"]] },
   { title: "Account", items: [["settings", "Settings"]] },
 ];
+// "Admin" joins the Account group only when the server says the viewer is an
+// active admin (`showAdmin`); it is never in the static list.
+const ADMIN_ITEM: [Tab, string] = ["admin", "Admin"];
 const NAV_ORDER: Tab[] = NAV_GROUPS.flatMap((g) => g.items.map(([t]) => t));
 
 export const SECTION_META: Record<Tab, [title: string, subtitle: string]> = {
@@ -77,6 +81,7 @@ export const SECTION_META: Record<Tab, [title: string, subtitle: string]> = {
   boosts: ["Boosts", "Happy hours, leaderboard & referrals"],
   analytics: ["Analytics", "What's working, in numbers"],
   settings: ["Settings", "Profile, security & workspace"],
+  admin: ["Admin", "Manage every creator account"],
 };
 
 function CountBadge({ n }: { n: number }) {
@@ -104,7 +109,7 @@ export function Sidebar({
   active: Tab;
   onSelect: (t: Tab) => void;
   badges: Partial<Record<Tab, number>>;
-  /** Server-derived (`profiles.role`) — never client state. */
+  /** Server-derived (`is_admin()` via checkAdmin) — never client state. */
   showAdmin: boolean;
   accountName: string;
   accountSub: string;
@@ -114,18 +119,19 @@ export function Sidebar({
   footerExtra?: ReactNode;
 }) {
   const itemRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
+  const order = showAdmin ? [...NAV_ORDER, ADMIN_ITEM[0]] : NAV_ORDER;
 
   // Roving tabindex + Arrow/Home/End (56814f0), kept in nav form: one tab stop
   // for the section list, arrows move between sections (wrapping) and focus
   // follows the selection, exactly as the old tablist did.
   const onKeyDown = (e: React.KeyboardEvent, id: Tab) => {
-    const i = NAV_ORDER.indexOf(id);
+    const i = order.indexOf(id);
     let next: Tab | null = null;
-    if (e.key === "ArrowDown" || e.key === "ArrowRight") next = NAV_ORDER[(i + 1) % NAV_ORDER.length];
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") next = order[(i + 1) % order.length];
     else if (e.key === "ArrowUp" || e.key === "ArrowLeft")
-      next = NAV_ORDER[(i - 1 + NAV_ORDER.length) % NAV_ORDER.length];
-    else if (e.key === "Home") next = NAV_ORDER[0];
-    else if (e.key === "End") next = NAV_ORDER[NAV_ORDER.length - 1];
+      next = order[(i - 1 + order.length) % order.length];
+    else if (e.key === "Home") next = order[0];
+    else if (e.key === "End") next = order[order.length - 1];
     if (next) {
       e.preventDefault();
       onSelect(next);
@@ -197,7 +203,9 @@ export function Sidebar({
               {g.title}
             </p>
             <ul className="flex gap-1 lg:flex-col lg:gap-0.5" aria-labelledby={`nav-group-${g.title}`}>
-              {g.items.map(([id, label]) => {
+              {/* Admin is a section inside the shell; the server-derived gate only
+                  decides whether the item exists, the admin APIs re-check. */}
+              {(g.title === "Account" && showAdmin ? [...g.items, ADMIN_ITEM] : g.items).map(([id, label]) => {
                 const on = active === id;
                 const badge = badges[id] ?? 0;
                 return (
@@ -237,18 +245,6 @@ export function Sidebar({
                   </li>
                 );
               })}
-              {g.title === "Account" && showAdmin && (
-                <li className="flex">
-                  {/* /admin re-checks profiles.role server-side; this only hides the link. */}
-                  <a
-                    href="/admin"
-                    className={`${itemBase} w-full font-medium text-[#b8b2c0] hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] hover:text-ink`}
-                  >
-                    <Icon d={ICON.admin} className="text-[#8b8494]" />
-                    <span className="flex-1">Admin</span>
-                  </a>
-                </li>
-              )}
             </ul>
           </div>
         ))}

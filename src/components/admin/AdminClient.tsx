@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useId, useState } from "react";
 import type { ReactNode } from "react";
-import Link from "next/link";
 import { FEATURES } from "@/lib/features";
 import { MIN_PASSWORD_LENGTH } from "@/lib/api/password";
-import { ToastProvider, useToast } from "@/components/ui/Toast";
+import { useToast } from "@/components/ui/Toast";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 import Modal from "@/components/ui/Modal";
 import { deleteErrorMessage, inviteErrorMessage } from "./adminErrors";
@@ -26,7 +25,6 @@ interface PendingApp {
 const P = {
   shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10ZM9.5 12l2 2 3.5-4",
   lock: "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5zM12 15v2",
-  back: "M19 12H5M12 19l-7-7 7-7",
   plus: "M12 5v14M5 12h14",
   chevron: "m6 9 6 6 6-6",
   users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87",
@@ -94,17 +92,13 @@ function SectionTitle({ id, children, extra }: { id: string; children: ReactNode
   );
 }
 
-// The /admin route renders this directly (no app-wide ToastProvider), so we
-// supply one here for the inner panel's success/error toasts.
+/**
+ * The "Account › Admin" section of the dashboard shell. The shell renders it
+ * only when the server resolved the viewer as an active admin (`is_admin()` via
+ * checkAdmin in dashboard/page.tsx); every /api/admin route re-checks with
+ * requireAdminRoute, so a 401/403 here still shows "Admins only".
+ */
 export default function AdminClient() {
-  return (
-    <ToastProvider>
-      <AdminPanel />
-    </ToastProvider>
-  );
-}
-
-function AdminPanel() {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
@@ -223,21 +217,14 @@ function AdminPanel() {
 
   if (forbidden) {
     return (
-      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col items-center justify-center px-4 py-16 text-center">
-        <div className={`w-full rounded-2xl px-6 py-8 ${raised}`}>
-          <span className="mx-auto grid h-12 w-12 place-items-center rounded-[13px] bg-[#f59e0b]/15 text-[#fcd34d]">
-            <Glyph d={P.lock} size={22} />
-          </span>
-          <h1 className="mt-4 text-xl font-bold tracking-[-0.02em] text-ink">Admins only</h1>
-          <p className="mt-2 text-[13.5px] text-muted">This area is restricted to admin accounts.</p>
-          <Link
-            href="/dashboard"
-            className="btn-brand mt-6 inline-flex min-h-10 items-center gap-2 rounded-[10px] px-4 text-[13.5px] font-bold"
-          >
-            <Glyph d={P.back} size={16} />
-            Back to dashboard
-          </Link>
-        </div>
+      <div className={`mx-auto max-w-md rounded-2xl px-6 py-8 text-center ${raised}`} role="alert">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-[13px] bg-[#f59e0b]/15 text-[#fcd34d]">
+          <Glyph d={P.lock} size={22} />
+        </span>
+        <h2 className="mt-4 text-xl font-bold tracking-[-0.02em] text-ink">Admins only</h2>
+        <p className="mt-2 text-[13.5px] text-muted">
+          This area is restricted to active admin accounts. If your session expired, sign in again.
+        </p>
       </div>
     );
   }
@@ -253,35 +240,16 @@ function AdminPanel() {
   const accounts = data?.accounts ?? [];
 
   return (
-    <div className="flex min-h-[100dvh] flex-col">
-      <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-[#1f1b27] bg-[color-mix(in_oklab,#0c0a0e_86%,transparent)] px-4 py-3 backdrop-blur-md sm:gap-4 sm:px-7 sm:py-[18px]">
-        <Link
-          href="/dashboard"
-          className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-[10px] border border-line bg-surface px-3 text-[13px] font-semibold text-muted transition-colors hover:text-ink"
-        >
-          <Glyph d={P.back} size={16} />
-          <span>
-            Back<span className="max-sm:sr-only"> to dashboard</span>
-          </span>
-        </Link>
-        <div className="min-w-0 flex-1">
-          <h1 className="flex items-center gap-2 truncate text-lg font-bold tracking-[-0.02em] text-ink sm:text-[22px]">
-            Admin
-            <span className={`${pill} bg-[#f59e0b]/15 text-[#fcd34d]`}>cross-account</span>
-          </h1>
-          <p className="mt-[3px] truncate text-[13px] text-muted">Manage every creator account</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowInvite(true)}
-          className="btn-brand flex min-h-10 shrink-0 items-center gap-[7px] rounded-[10px] px-3 text-[13.5px] font-bold sm:px-4"
-        >
-          <Glyph d={P.plus} size={16} />
-          <span className="max-sm:sr-only">New account</span>
-        </button>
-      </header>
+    <div className="flex flex-col gap-[18px]">
+      <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
+        <span className={`${pill} bg-[#f59e0b]/15 text-[#fcd34d]`}>
+          <Glyph d={P.shield} size={11} className="mr-1" />
+          cross-account
+        </span>
+        Everything here spans every creator account. Changes apply immediately.
+      </p>
 
-      <div className="mx-auto flex w-full max-w-[960px] flex-col gap-[18px] px-4 py-5 sm:px-7 sm:py-6">
+      <div className="flex flex-col gap-[18px]">
         {/* Cross-account stat strip: one framed grid, 1px hairline gutters. */}
         <dl
           aria-label="Cross-account totals"
@@ -364,7 +332,19 @@ function AdminPanel() {
           <SectionTitle
             id="admin-accounts"
             extra={
-              !loading && <span className="tnum text-xs text-muted">{accounts.length} total</span>
+              <span className="flex items-center gap-3">
+                {!loading && (
+                  <span className="tnum text-xs text-muted">{accounts.length} total</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowInvite(true)}
+                  className="btn-brand inline-flex min-h-9 items-center gap-1.5 rounded-[9px] px-3.5 text-[13px] font-bold"
+                >
+                  <Glyph d={P.plus} size={15} />
+                  New account
+                </button>
+              </span>
             }
           >
             Creator accounts
@@ -473,7 +453,16 @@ function AccountRow({
             )}
           </p>
           <p className="tnum mt-0.5 truncate text-[12.5px] text-muted" title={account.email}>
-            {account.email} · {account.fans.toLocaleString()} {account.fans === 1 ? "fan" : "fans"}
+            {account.email}
+          </p>
+          {/* Per-account counts at a glance (they were always visible before). */}
+          <p className="mt-1 flex flex-wrap gap-x-3.5 gap-y-1">
+            {stats.map(([d, label, value]) => (
+              <span key={label} className="tnum inline-flex items-center gap-1 text-xs text-muted">
+                <Glyph d={d} size={13} className="text-[#8b8494]" />
+                <span className="font-semibold text-ink">{value.toLocaleString()}</span> {label}
+              </span>
+            ))}
           </p>
         </div>
         <span
@@ -513,7 +502,7 @@ function AccountRow({
             onClick={() => setOpen((o) => !o)}
             aria-expanded={open}
             aria-controls={detailsId}
-            aria-label={`${open ? "Hide" : "Show"} details for ${account.displayName}`}
+            aria-label={`${open ? "Hide" : "Show"} role and features for ${account.displayName}`}
             className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:text-ink"
           >
             <Glyph d={P.chevron} size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
@@ -521,19 +510,10 @@ function AccountRow({
         </div>
       </div>
 
-      {/* Row detail (not drawn in the design): per-account counts, role and
-          feature flags live here so nothing from the old panel is lost. */}
+      {/* Row disclosure (not drawn in the design): the privileged, rarely-changed
+          controls — role and feature flags — plus the delete confirm. */}
       <div id={detailsId} hidden={!open} className="px-4 pb-4 sm:px-[18px]">
         <div className={`flex flex-col gap-4 rounded-[13px] p-4 ${recessed}`}>
-          <div className="flex flex-wrap gap-x-5 gap-y-2">
-            {stats.map(([d, label, value]) => (
-              <span key={label} className="tnum inline-flex items-center gap-1.5 text-xs text-muted">
-                <Glyph d={d} size={14} className="text-[#8b8494]" />
-                <span className="font-semibold text-ink">{value.toLocaleString()}</span> {label}
-              </span>
-            ))}
-          </div>
-
           <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
             <label className="flex flex-col gap-1.5 sm:shrink-0">
               <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">Role</span>
