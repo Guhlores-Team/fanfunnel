@@ -21,9 +21,17 @@ const openMore = async (page) => {
   await page.getByRole("dialog", { name: "More" }).waitFor({ timeout: 4000 });
   await page.waitForTimeout(500);
 };
+// e2e's first-run step wipes the demo account before this scan runs on the same
+// server, so open whichever fan exists and create one if none does.
 const openFanSheet = async (page) => {
+  const { fans } = await (await page.request.get(BASE + "/api/fans")).json().catch(() => ({ fans: [] }));
+  if (!fans?.length) {
+    const res = await page.request.post(BASE + "/api/passes", { data: { name: "A11y Fan", spins: 3 } });
+    if (!res.ok()) throw new Error(`could not create a fan for the scan (${res.status()})`);
+    await page.reload();
+  }
   await clickTab(page, "Fans");
-  await page.getByRole("button", { name: "View Demo Fan" }).click();
+  await page.getByRole("button", { name: /^View / }).first().click();
   await page.getByRole("dialog", { name: "Fan details" }).waitFor({ timeout: 5000 });
   await page.waitForTimeout(800);
 };
