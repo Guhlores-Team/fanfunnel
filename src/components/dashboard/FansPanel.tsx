@@ -9,6 +9,7 @@ import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { CloseButton, Field, initialsOf } from "./ui";
+import { fanRowMeta, threadFanIds } from "./fansHelpers";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import PackPresets from "@/components/dashboard/PackPresets";
 import ImportFans from "@/components/dashboard/ImportFans";
@@ -28,9 +29,12 @@ const COPY_ICON = "M9 9h11v11H9zM5 15H4V4h11v1";
 export default function FansPanel({
   initialSearch = "",
   focusMintNonce = 0,
+  onMessage,
 }: {
   initialSearch?: string;
   focusMintNonce?: number;
+  /** Drawer "Message": open this fan's thread in the Inbox section. */
+  onMessage?: (fanId: string) => void;
 }) {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [name, setName] = useState("");
@@ -56,6 +60,9 @@ export default function FansPanel({
   const [campaignFilter, setCampaignFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
   const [templates, setTemplates] = useState<DmTemplate[]>([]);
+  // Fans with an inbox thread, so the drawer can say whether "Message" has
+  // somewhere to go (a creator can't start a thread; fans message first).
+  const [threadIds, setThreadIds] = useState<Set<string>>(() => new Set());
   const [managingMessages, setManagingMessages] = useState(false);
   const [importing, setImporting] = useState(false);
   const toast = useToast();
@@ -104,13 +111,25 @@ export default function FansPanel({
       setWheels((d.wheels ?? []).map((w) => ({ id: w.id, title: w.title })));
     }
   }, []);
+  const loadThreads = useCallback(async () => {
+    const res = await fetch("/api/messages/inbox", { cache: "no-store" });
+    if (!res.ok) return;
+    const d = (await res.json()) as { threads?: { fanId: string }[] };
+    setThreadIds(threadFanIds(d.threads ?? []));
+  }, []);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     load();
     loadCampaigns();
     loadTemplates();
     loadWheels();
-  }, [load, loadCampaigns, loadTemplates, loadWheels]);
+    loadThreads();
+  }, [load, loadCampaigns, loadTemplates, loadWheels, loadThreads]);
+  // Re-check threads whenever a drawer opens: a fan may have written since.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refetch on open (state lands after the fetch)
+    if (openFanId) void loadThreads();
+  }, [openFanId, loadThreads]);
 
   // Every distinct tag across loaded accounts, for the tag filter dropdown.
   const allTags = useMemo(() => {
@@ -413,6 +432,15 @@ export default function FansPanel({
         onSaved={load}
         onTopUp={topUp}
         onDeleted={load}
+        hasThread={!!openFanId && threadIds.has(openFanId)}
+        onMessage={
+          onMessage
+            ? (fanId) => {
+                setOpenFanId(null);
+                onMessage(fanId);
+              }
+            : undefined
+        }
       />
       {managingMessages && (
         <ManageMessages
@@ -439,9 +467,10 @@ function FansEmpty({ title, body }: { title: string; body: string }) {
   );
 }
 
-/** One fan row: avatar, name + meta, tag pills, balance, copy-link. The name
- *  block is a stretched button, so Enter/Space (and a click anywhere outside
- *  the copy button) opens the drawer. */
+/** One fan row: avatar, name + meta (incl. campaign names), read-only tag
+ *  pills, balance, copy-link. The name block is a stretched button, so
+ *  Enter/Space (and a click anywhere outside the copy button) opens the
+ *  drawer, where tags and every other per-fan tool are edited. */
 function FanRow({
   account,
   onOpen,
@@ -451,10 +480,9 @@ function FanRow({
   onOpen: () => void;
   onCopy: () => void;
 }) {
-  const links = account.links.length;
   return (
     <li
-      className={`relative flex items-center gap-3 rounded-[13px] px-3.5 py-[13px] transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] sm:gap-3.5 sm:px-4 ${raised}`}
+      className={`relative flex flex-wrap items-center gap-3 rounded-[13px] px-3.5 py-[13px] transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] sm:gap-3.5 sm:px-4 ${raised}`}
     >
       <span
         aria-hidden="true"
@@ -466,12 +494,12 @@ function FanRow({
         type="button"
         onClick={onOpen}
         aria-label={"View " + account.name}
-        className="min-w-0 flex-1 rounded-lg text-left after:absolute after:inset-0 after:rounded-[13px] after:content-['']"
+        className="min-w-0 flex-1 basis-32 rounded-lg text-left after:absolute after:inset-0 after:rounded-[13px] after:content-['']"
       >
         <p className="truncate text-sm font-semibold text-ink">{account.name}</p>
-        <p className="tnum truncate text-[12.5px] text-muted">
-          {account.grantedTotal} granted · {links} link{links === 1 ? "" : "s"} ·{" "}
-          {formatCents(account.totalSpent)} spent
+        {/* Wraps on phones so campaign names are never cut off; one line from sm up. */}
+        <p className="tnum break-words text-[12.5px] text-muted sm:truncate" title={fanRowMeta(account)}>
+          {fanRowMeta(account)}
           {account.lastWin && (
             <>
               {" "}
@@ -483,8 +511,13 @@ function FanRow({
           )}
         </p>
       </button>
+      {/* Read-only pills on every screen size; on phones they wrap under the
+          name so the row never clips them. */}
       {account.tags.length > 0 && (
-        <span className="hidden shrink-0 gap-1.5 sm:flex" aria-label={"Tags: " + account.tags.join(", ")}>
+        <span
+          className="flex shrink-0 flex-wrap gap-1.5 max-sm:order-last max-sm:basis-full max-sm:pl-[52px]"
+          aria-label={"Tags: " + account.tags.join(", ")}
+        >
           {account.tags.slice(0, 3).map((t) => (
             <span
               key={t}

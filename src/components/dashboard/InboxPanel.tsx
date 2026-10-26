@@ -64,7 +64,18 @@ const avatar =
  * replaces the list with the conversation, and its back button returns focus
  * to the thread that was open.
  */
-export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
+export default function InboxPanel({
+  onChanged,
+  initialFanId = null,
+  initialFanNonce = 0,
+}: {
+  onChanged?: () => void;
+  /** Open this fan's thread once the list has loaded (drawer "Message"). */
+  initialFanId?: string | null;
+  /** Bumped on every "Message" request so the same fan can be re-opened. */
+  initialFanNonce?: number;
+}) {
+  const toast = useToast();
   const [threads, setThreads] = useState<FanThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [openFan, setOpenFan] = useState<FanThread | null>(null);
@@ -90,6 +101,31 @@ export default function InboxPanel({ onChanged }: { onChanged?: () => void }) {
     itemRefs.current[returnFocusId.current]?.focus();
     returnFocusId.current = null;
   }, [openFan]);
+
+  // Deep link from the fan drawer: once the list is in, select that fan's
+  // thread and bring its row into view. Each request is honoured once (the
+  // nonce), so picking another thread afterwards isn't overridden.
+  const handledFocus = useRef(0);
+  useEffect(() => {
+    if (loading || !initialFanId || handledFocus.current === initialFanNonce) return;
+    handledFocus.current = initialFanNonce;
+    const t = threads.find((x) => x.fanId === initialFanId);
+    if (!t) {
+      toast("No conversation with this fan yet.", { tone: "info" });
+      return;
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- select the deep-linked thread once the list is loaded
+    setOpenFan(t);
+    if (t.unread > 0) {
+      setThreads((prev) => prev.map((x) => (x.fanId === t.fanId ? { ...x, unread: 0 } : x)));
+    }
+    requestAnimationFrame(() => {
+      itemRefs.current[t.fanId]?.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "nearest",
+      });
+    });
+  }, [loading, threads, initialFanId, initialFanNonce, toast]);
 
   // Resolves whether the load succeeded so the poll fallback can back off.
   const loadThreads = useCallback(async (): Promise<boolean> => {

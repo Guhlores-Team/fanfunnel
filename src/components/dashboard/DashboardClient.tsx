@@ -172,6 +172,12 @@ export default function DashboardClient({
   const [fanSearch, setFanSearch] = useState({ q: "", nonce: 0 });
   // "New fan link" → Fans, focus the mint form's name field.
   const [mintFocus, setMintFocus] = useState(0);
+  // Fan drawer "Message" → Inbox with that fan's thread selected. The nonce lets
+  // the same fan be re-requested after the creator picked another thread.
+  const [inboxFocus, setInboxFocus] = useState<{ fanId: string | null; nonce: number }>({
+    fanId: null,
+    nonce: 0,
+  });
 
   const [title, subtitleText] = SECTION_META[tab];
   const subtitle =
@@ -276,6 +282,10 @@ export default function DashboardClient({
             key={fanSearch.nonce}
             initialSearch={fanSearch.q}
             focusMintNonce={mintFocus}
+            onMessage={(fanId) => {
+              setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
+              goToSection("inbox");
+            }}
           />
         )}
         {tab === "campaigns" && <CampaignsPanel />}
@@ -286,7 +296,13 @@ export default function DashboardClient({
             onNavigate={(t) => setTab(t as Tab)}
           />
         )}
-        {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
+        {tab === "inbox" && (
+          <InboxPanel
+            onChanged={overview.refresh}
+            initialFanId={inboxFocus.fanId}
+            initialFanNonce={inboxFocus.nonce}
+          />
+        )}
         {tab === "analytics" && (
           /* One consolidated view: the Command Center's designed cards (stat
              strip, trends, what's landing, rarity mix) up top, then profit &

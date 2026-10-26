@@ -52,6 +52,8 @@ export default function FanDetailDrawer({
   onSaved,
   onTopUp,
   onDeleted,
+  hasThread = false,
+  onMessage,
 }: {
   fanId: string | null;
   /** The list row for this fan (per-wheel passes, campaign names), if loaded. */
@@ -63,6 +65,10 @@ export default function FanDetailDrawer({
   onSaved?: () => void;
   onTopUp: TopUpFn;
   onDeleted: () => void;
+  /** Whether this fan already has an inbox thread to open. */
+  hasThread?: boolean;
+  /** "Message": jump to this fan's thread in the Inbox section. */
+  onMessage?: (fanId: string) => void;
 }) {
   const [detail, setDetail] = useState<FanDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -342,7 +348,7 @@ export default function FanDetailDrawer({
                 ))}
               </dl>
 
-              {/* Action row: top-up form toggle, copy link, QR, Copy DM. */}
+              {/* Action row: top-up form toggle, copy link, Message, QR, Copy DM. */}
               <div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -357,6 +363,26 @@ export default function FanDetailDrawer({
                   <button type="button" onClick={copyLink} className={actionBtn}>
                     Copy link
                   </button>
+                  {onMessage && (
+                    // Threads start on the fan's side (chat is spin-gated), so
+                    // without one there is nothing to open: say so instead of
+                    // landing on an empty inbox.
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (hasThread) onMessage(fanId);
+                        else
+                          toast("No conversation yet — fans can message you after their first spin.", {
+                            tone: "info",
+                          });
+                      }}
+                      aria-disabled={hasThread ? undefined : true}
+                      title={hasThread ? "Open this fan's thread in the Inbox" : "No conversation yet"}
+                      className={`${actionBtn} aria-disabled:opacity-60`}
+                    >
+                      Message
+                    </button>
+                  )}
                   {primaryUrl && <QrButton url={primaryUrl} label={`${name} spin link`} className={actionBtn} />}
                   <CopyDmMenu templates={templates} onPick={copyDm} />
                 </div>
