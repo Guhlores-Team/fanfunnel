@@ -154,8 +154,17 @@ export function Sidebar({
 
   // Keep the active item visible when the sidebar's nav list overflows (short
   // windows), so a section picked from a CTA never sits clipped off-screen.
+  // Only when it is actually clipped: scrollIntoView also moves the browser's
+  // sequential-focus starting point to the item, so an unconditional call on
+  // load made the first Tab skip the sidebar and land in the top bar.
   useEffect(() => {
-    itemRefs.current[active]?.scrollIntoView({
+    const el = itemRefs.current[active];
+    const list = el?.closest("nav");
+    if (!el || !list) return;
+    const r = el.getBoundingClientRect();
+    const box = list.getBoundingClientRect();
+    if (r.width === 0 || (r.top >= box.top && r.bottom <= box.bottom && r.left >= box.left && r.right <= box.right)) return;
+    el.scrollIntoView({
       behavior: prefersReducedMotion() ? "auto" : "smooth",
       inline: "center",
       block: "nearest",
@@ -186,7 +195,7 @@ export function Sidebar({
 
       {/* Workspace pill — name + email (or the demo-mode notice). */}
       <div className="surface-raised hidden items-center gap-2.5 rounded-xl p-2.5 lg:flex">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-brand">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-ink">
           {initials}
         </span>
         <div className="min-w-0 flex-1">

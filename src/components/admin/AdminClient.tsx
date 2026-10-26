@@ -286,7 +286,7 @@ export default function AdminClient() {
                     className={`flex flex-col gap-3 rounded-[13px] px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between ${recessed}`}
                   >
                     <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-xs font-bold text-brand">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-xs font-bold text-ink">
                         {initialsOf(a.displayName ?? "", a.email ?? "")}
                       </span>
                       <div className="min-w-0 flex-1">
@@ -439,7 +439,7 @@ function AccountRow({
       }`}
     >
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 px-4 py-3.5 sm:px-[18px]">
-        <span className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-[13px] font-bold text-brand">
+        <span className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-[13px] font-bold text-ink">
           {initialsOf(account.displayName, account.email)}
         </span>
         <div className="min-w-0 flex-1 basis-40">

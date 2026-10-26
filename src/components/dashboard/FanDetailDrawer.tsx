@@ -309,7 +309,7 @@ export default function FanDetailDrawer({
             <div className="flex min-w-0 items-center gap-3">
               <span
                 aria-hidden="true"
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-[15px] font-bold text-brand"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-[15px] font-bold text-ink"
               >
                 {name ? initialsOf(name) : ""}
               </span>
@@ -856,7 +856,16 @@ function CopyDmMenu({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+
+  // Closing from the keyboard (Esc, or a pick) hands focus back to the trigger;
+  // otherwise the focused item unmounts and focus falls out of the drawer.
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) buttonRef.current?.focus();
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -870,19 +879,45 @@ function CopyDmMenu({
         // Swallow so the drawer's own Escape handler doesn't close the drawer too.
         e.stopImmediatePropagation();
         setOpen(false);
+        buttonRef.current?.focus();
       }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey, true);
+    // Land keyboard users on the first template (same as the wheel Manage menu).
+    menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey, true);
     };
   }, [open]);
 
+  // Arrow / Home / End move between templates; Tab leaves and closes the menu.
+  function onMenuKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Tab") {
+      setOpen(false);
+      return;
+    }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? []);
+    if (items.length === 0) return;
+    e.preventDefault();
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? items.length - 1
+          : e.key === "ArrowDown"
+            ? (i + 1) % items.length
+            : (i - 1 + items.length) % items.length;
+    items[next].focus();
+  }
+
   return (
     <div ref={wrapRef} className="relative inline-block">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -897,8 +932,11 @@ function CopyDmMenu({
       </button>
       {open && (
         <div
+          ref={menuRef}
           id={menuId}
           role="menu"
+          aria-label="DM templates"
+          onKeyDown={onMenuKey}
           className="lift-in absolute right-0 z-30 mt-2 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-[var(--hair)] py-1 shadow-[var(--lift)] [background:var(--s1)]"
         >
           {templates.length === 0 ? (
@@ -913,7 +951,7 @@ function CopyDmMenu({
                 role="menuitem"
                 onClick={() => {
                   onPick(t);
-                  setOpen(false);
+                  close(true);
                 }}
                 className="block w-full px-3 py-2 text-left transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]"
               >
