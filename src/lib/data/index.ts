@@ -794,6 +794,56 @@ export async function spin(
 }
 
 /**
+ * Credit `n` spins to a fan's OLDEST active pass (their original link, the same
+ * convention as the `credit_pass_spins` RPC and the mock). Runs on the creator's
+ * RLS-scoped session: `credit_pass_spins` is service-role only since 0027, so
+ * calling it from this client was denied and the bonus silently never landed.
+ * The update is a compare-and-swap on the balance just read, so a concurrent
+ * spin's decrement is retried rather than overwritten. The fan aggregate is not
+ * written here: the 0035 trg_sync_fan_spin_aggregate trigger recomputes it in
+ * the same statement, and a separate read-sum-write would race concurrent spins.
+ * Returns whether it credited.
+ */
+async function creditOldestActivePass(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  creatorId: string,
+  fanId: string,
+  n: number
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: oldest } = await sb
+      .from("fan_passes")
+      .select("id, spins_remaining, spins_granted_total")
+      .eq("fan_id", fanId)
+      .eq("creator_id", creatorId)
+      .eq("is_active", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    const o = oldest as
+      | { id: string; spins_remaining: number; spins_granted_total: number }
+      | null;
+    if (!o) return false; // no active pass: nothing spendable to add to
+
+    const { data: updated, error } = await sb
+      .from("fan_passes")
+      .update({
+        spins_remaining: o.spins_remaining + n,
+        spins_granted_total: o.spins_granted_total + n,
+      })
+      .eq("id", o.id)
+      .eq("spins_remaining", o.spins_remaining)
+      .eq("spins_granted_total", o.spins_granted_total)
+      .select("id")
+      .maybeSingle();
+    // Transient error or the balance moved under us: re-read and retry.
+    if (error || !updated) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Create a link. Without `fanId`, creates a NEW fan account. With `fanId`,
  * mints a fresh link for that SAME account (history + balance preserved) and
  * adds the granted spins to the account's balance.
@@ -1140,14 +1190,19 @@ export async function createPass(opts: {
           // (the old behavior) left the bonus unspendable — claim_spin
           // decrements a PASS — and inflated the displayed balance until the
           // next spin resynced it down.
-          await sb.rpc("credit_pass_spins", {
-            p_fan_id: fanId,
-            p_spins: REFERRAL_BONUS,
-          });
-          await sb.rpc("credit_pass_spins", {
-            p_fan_id: me.referred_by_fan_id,
-            p_spins: REFERRAL_BONUS,
-          });
+          const fanCredited = await creditOldestActivePass(sb, user.id, fanId, REFERRAL_BONUS);
+          const referrerCredited = await creditOldestActivePass(
+            sb,
+            user.id,
+            me.referred_by_fan_id,
+            REFERRAL_BONUS
+          );
+          if (!fanCredited || !referrerCredited) {
+            console.error("createPass: referral bonus not credited to an active pass", {
+              fanCredited,
+              referrerCredited,
+            });
+          }
 
           // Mark the referral row credited.
           await sb
