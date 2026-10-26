@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { DailyCount } from "@/lib/data/types";
 import { prefersReducedMotion } from "@/lib/sound";
+import { sparklinePoints } from "./sparklineGeometry";
 
 // A dependency-free, responsive spin-trend sparkline. The line + area are drawn
 // in a fixed 0..100 viewBox and stretched to fill the container; the stroke is
@@ -26,25 +27,20 @@ export default function Sparkline({
   const peak = data.reduce((m, d) => Math.max(m, d.spins), 0);
   const n = data.length;
 
-  // Map each point into the 0..100 box, y inverted (0 = top). Guard against a
-  // single-point series and an all-zero series.
-  const max = peak || 1;
-  const points = data.map((d, i) => {
-    const x = n <= 1 ? 0 : (i / (n - 1)) * 100;
-    const y = 100 - (d.spins / max) * 100;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  });
-  const linePoints = points.join(" ");
+  const linePoints = sparklinePoints(data.map((d) => d.spins));
   // Close the area down to the baseline for the subtle fill.
   const areaPoints =
     n > 0 ? `0,100 ${linePoints} 100,100` : "0,100 100,100";
 
   const label = `${noun} trend: ${fmt(total)} total over ${n} day${n === 1 ? "" : "s"}, peak ${fmt(peak)} in a day.`;
 
-  // Animate the line drawing itself in — but only when the viewer hasn't asked
+  // Wipe the chart in left-to-right — but only when the viewer hasn't asked
   // for reduced motion. Resolved after mount (matchMedia is client-only), so
   // SSR + first paint render the line statically and there's no hydration
-  // mismatch; reduced-motion users keep the static line.
+  // mismatch; reduced-motion users keep the static line. The wipe is a
+  // clip-path on the <svg>, not a stroke-dash draw: Chromium measures dashes
+  // in screen space under vector-effect="non-scaling-stroke" while pathLength
+  // is in user space, which left flat lines dashed and other lines cut short.
   const [animate, setAnimate] = useState(false);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only motion-preference resolution after mount (SSR-safe)
@@ -58,8 +54,13 @@ export default function Sparkline({
         aria-label={label}
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
+        // A flat series sits on the top/bottom edge; don't clip half its stroke.
+        overflow="visible"
         className="w-full"
-        style={{ height }}
+        style={{
+          height,
+          animation: animate ? "ff-spark-draw 0.7s ease-out" : undefined,
+        }}
       >
         <polygon
           points={areaPoints}
@@ -74,20 +75,12 @@ export default function Sparkline({
           strokeLinejoin="round"
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
-          pathLength={1}
-          style={
-            animate
-              ? {
-                  strokeDasharray: 1,
-                  strokeDashoffset: 1,
-                  animation: "ff-spark-draw 0.7s ease-out forwards",
-                }
-              : undefined
-          }
         />
       </svg>
       {animate && (
-        <style>{`@keyframes ff-spark-draw { to { stroke-dashoffset: 0 } }`}</style>
+        // Negative insets keep edge strokes visible mid-wipe; with no fill-mode
+        // the clip is dropped entirely once the animation ends.
+        <style>{`@keyframes ff-spark-draw { from { clip-path: inset(-4px 100% -4px -4px) } to { clip-path: inset(-4px) } }`}</style>
       )}
       <div className="mt-2 flex items-center justify-between text-xs text-muted">
         <span>
