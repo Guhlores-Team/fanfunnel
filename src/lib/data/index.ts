@@ -49,6 +49,7 @@ import type {
   Webhook,
 } from "./types";
 import { bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
+import { consumeCommittedSeed, freshSeed } from "./spinSeed";
 import {
   mockGetFanPass,
   mockSpin,
@@ -587,7 +588,44 @@ export async function spin(
     return { error: "no_spins" };
   }
   const spinsRemaining = remaining as number;
+  return completeClaimedSpin(sb, token, clientSeed, spinsRemaining);
+}
 
+/**
+ * Everything after a successful claim_spin: resolve the wheel, consume the
+ * committed seed, pick + record the prize. Exported for unit tests only (the
+ * public entry point is `spin`).
+ */
+export async function completeClaimedSpin(
+  sb: AnyClient,
+  token: string,
+  clientSeed: string,
+  spinsRemaining: number,
+): Promise<SpinResult | SpinError> {
+  // The fan has already paid one spin. Every exit below that is not a durably
+  // recorded win refunds it — early returns and thrown errors alike — and
+  // restores a limited prize's unit when one was decremented on the way.
+  const refund: { prizeId: string | null } = { prizeId: null };
+  let result: SpinResult | SpinError;
+  try {
+    result = await recordClaimedSpin(sb, token, clientSeed, spinsRemaining, refund);
+  } catch (e) {
+    console.error("spin: failed after claim — rolling back", e instanceof Error ? e.message : e);
+    result = { error: "db_error" };
+  }
+  if ("error" in result) {
+    await sb.rpc("rollback_claimed_spin", { p_token: token, p_prize_id: refund.prizeId });
+  }
+  return result;
+}
+
+async function recordClaimedSpin(
+  sb: AnyClient,
+  token: string,
+  clientSeed: string,
+  spinsRemaining: number,
+  refund: { prizeId: string | null },
+): Promise<SpinResult | SpinError> {
   // 2. Load link context, then resolve WHICH wheel this spin uses + its prizes.
   const ctx = await sb
     .from("fan_passes")
@@ -605,6 +643,9 @@ export async function spin(
       .single();
     data = legacy.data;
   }
+  // The pass was readable a moment ago (claim_spin found it); if it is gone or
+  // unreadable now, fail (and refund) rather than dereference null.
+  if (!data) return { error: "db_error" };
 
   const pass = data as unknown as {
     id: string;
@@ -635,34 +676,60 @@ export async function spin(
   const pityCounter = (fanRow.data as { pity_counter: number } | null)?.pity_counter ?? 0;
   const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
 
-  // Provably-fair commit-reveal: use the seed that was PRE-committed on the
+  // Provably-fair commit-reveal: consume the seed that was PRE-committed on the
   // pass (its hash was published to the fan before this spin, so the server
-  // can't grind seeds after seeing the request). Legacy passes without a
-  // committed seed fall back to a fresh one for this spin only — the rotation
-  // below ensures every subsequent spin is fully pre-committed. The fan's
-  // clientSeed is mixed into the RNG so the server can't dictate the outcome.
-  const serverSeed = pass.next_server_seed ?? randomSeedHex();
+  // can't grind seeds after seeing the request) and, in the same guarded
+  // update, commit the NEXT spin's seed. The swap is a compare-and-swap on the
+  // seed we read: claim_spin only serializes the balance, so two in-flight
+  // spins on a pass with balance >= 2 would otherwise both reveal one committed
+  // seed. The CAS loser consumes the winner's new commitment instead — stored
+  // before it was consumed, though its hash reached the fan only in the
+  // winner's response (see consumeCommittedSeed for the trade-off). A legacy
+  // pass without a committed seed gets a fresh one for this spin only. (On a
+  // pre-0022 DB that lacks the columns nothing is committed or rotated.)
   const nonce = spinsRemaining;
-  const serverSeedHash =
-    pass.next_server_seed && pass.next_server_seed_hash
-      ? pass.next_server_seed_hash
-      : await sha256Hex(serverSeed);
-  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
-
-  // Rotate: commit the NEXT spin's seed now and publish its hash with the
-  // result, so the fan always holds a commitment that predates their spin.
-  // (Skipped on a pre-0022 DB that lacks the columns.)
-  const nextServerSeed = randomSeedHex();
-  const nextServerSeedHash = await sha256Hex(nextServerSeed);
-  if (hasCommitRevealCols) {
-    await sb
-      .from("fan_passes")
-      .update({
-        next_server_seed: nextServerSeed,
-        next_server_seed_hash: nextServerSeedHash,
-      })
-      .eq("id", pass.id);
+  const seeds = hasCommitRevealCols
+    ? await consumeCommittedSeed(
+        {
+          read: async () => {
+            const { data, error } = await sb
+              .from("fan_passes")
+              .select("next_server_seed, next_server_seed_hash")
+              .eq("id", pass.id)
+              .maybeSingle();
+            if (error) throw new Error(`spin: seed read failed: ${error.message}`);
+            const row = data as { next_server_seed: string | null; next_server_seed_hash: string | null } | null;
+            return { seed: row?.next_server_seed ?? null, hash: row?.next_server_seed_hash ?? null };
+          },
+          swap: async (expected, next) => {
+            const q = sb
+              .from("fan_passes")
+              .update({ next_server_seed: next.seed, next_server_seed_hash: next.hash })
+              .eq("id", pass.id);
+            const { data, error } = await (expected.seed
+              ? q.eq("next_server_seed", expected.seed)
+              : q.is("next_server_seed", null)
+            )
+              .select("id")
+              .maybeSingle();
+            // An error means we can't know whether the UPDATE committed; only a
+            // clean 0-row match is a definite loss that is safe to retry.
+            if (error) return "unknown";
+            return data ? "won" : "lost";
+          },
+        },
+        { seed: pass.next_server_seed, hash: pass.next_server_seed_hash },
+      )
+    : await freshSeed();
+  if (!seeds) {
+    // Lost the seed swap repeatedly (pathological contention or a DB fault):
+    // fail (the caller refunds) rather than spin on an unverifiable seed.
+    console.error("spin: could not consume committed seed");
+    return { error: "db_error" };
   }
+  const { serverSeed, serverSeedHash, nextServerSeedHash } = seeds;
+  // The fan's clientSeed is mixed into the RNG so the server can't dictate the outcome.
+  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
 
   // 3. Pick a prize in TS (single source of truth), honouring pity. If a
   //    limited prize sold out between our read and write, exclude it + re-pick.
@@ -689,6 +756,8 @@ export async function spin(
         .select("id")
         .maybeSingle();
       if (updated) {
+        // From here on a failed spin must give this unit back too.
+        refund.prizeId = pick.prize.id;
         chosen = pick;
         break;
       }
@@ -701,9 +770,8 @@ export async function spin(
   }
 
   if (!chosen) {
-    // The spin was already claimed (balance decremented). Refund it so a
-    // sold-out wheel doesn't burn the fan's spin for nothing.
-    await sb.rpc("rollback_claimed_spin", { p_token: token, p_prize_id: null });
+    // Sold out: the caller refunds the claimed spin so a sold-out wheel doesn't
+    // burn the fan's spin for nothing.
     return { error: "no_prizes" };
   }
 
@@ -745,18 +813,11 @@ export async function spin(
     .single();
 
   // CRITICAL (revenue path): if the win couldn't be durably recorded, DON'T
-  // return a "you won" the creator never sees and can't fulfil. Roll back the
-  // claimed spin (and restore the limited prize's decremented stock) so the fan
-  // isn't charged for a phantom prize, then fail cleanly.
+  // return a "you won" the creator never sees and can't fulfil. Fail cleanly;
+  // the caller rolls back the claimed spin (and restores the limited prize's
+  // decremented stock) so the fan isn't charged for a phantom prize.
   if (spinErr || !spinRow) {
-    await sb.rpc("rollback_claimed_spin", {
-      p_token: token,
-      p_prize_id:
-        chosen.prize.stock !== null && chosen.prize.stock !== undefined
-          ? chosen.prize.id
-          : null,
-    });
-    console.error("spin: spins insert failed — rolled back claim", spinErr?.message);
+    console.error("spin: spins insert failed", spinErr?.message);
     return { error: "db_error" };
   }
 
