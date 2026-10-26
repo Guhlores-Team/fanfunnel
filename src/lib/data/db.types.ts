@@ -827,6 +827,9 @@ export type Database = {
           is_active: boolean
           leaderboard_enabled: boolean
           notifications_seen_at: string | null
+          notify_low_balance: boolean
+          notify_messages: boolean
+          notify_new_spin: boolean
           onboarding_dismissed: boolean
           org_id: string | null
           public_slug: string | null
@@ -848,6 +851,9 @@ export type Database = {
           is_active?: boolean
           leaderboard_enabled?: boolean
           notifications_seen_at?: string | null
+          notify_low_balance?: boolean
+          notify_messages?: boolean
+          notify_new_spin?: boolean
           onboarding_dismissed?: boolean
           org_id?: string | null
           public_slug?: string | null
@@ -869,6 +875,9 @@ export type Database = {
           is_active?: boolean
           leaderboard_enabled?: boolean
           notifications_seen_at?: string | null
+          notify_low_balance?: boolean
+          notify_messages?: boolean
+          notify_new_spin?: boolean
           onboarding_dismissed?: boolean
           org_id?: string | null
           public_slug?: string | null
@@ -1300,6 +1309,10 @@ export type Database = {
         Returns: boolean
       }
       claim_spin: { Args: { p_token: string }; Returns: number }
+      credit_pass_spins: {
+        Args: { p_fan_id: string; p_spins: number }
+        Returns: undefined
+      }
       current_user_active: { Args: never; Returns: boolean }
       import_fans: { Args: { p_rows: Json }; Returns: undefined }
       is_admin: { Args: never; Returns: boolean }
@@ -1362,8 +1375,17 @@ export type Database = {
         Args: { p_avatar: string; p_note: string }
         Returns: undefined
       }
+      set_display_name: { Args: { p_name: string }; Returns: undefined }
       set_leaderboard_enabled: {
         Args: { p_enabled: boolean }
+        Returns: undefined
+      }
+      set_notification_prefs: {
+        Args: {
+          p_low_balance: boolean
+          p_messages: boolean
+          p_new_spin: boolean
+        }
         Returns: undefined
       }
       set_notifications_seen: { Args: never; Returns: undefined }
