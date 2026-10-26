@@ -26,6 +26,7 @@
 import { createServiceClient, createClient } from "@/lib/supabase/server";
 import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import type { Enums, Tables } from "./db.types";
 
 export function randomToken(): string {
   // URL-safe, unguessable token for a fan link.
@@ -69,35 +70,39 @@ export async function creatorOwnsCampaign(
 export const REFERRAL_CAP = 3;
 export const REFERRAL_BONUS = 3;
 
-// Shapes of the Supabase rows we read (keeps us off `any`).
-interface DbPrizeRow {
-  id: string;
-  label: string;
-  description: string | null;
-  rarity: Rarity;
-  weight: number;
-  color: string | null;
-  emoji: string | null;
-  image_url: string | null;
-  cost_cents: number | null;
-  stock: number | null;
-  sort_order: number | null;
-}
-export interface DbWheelRow {
-  id: string;
-  title: string;
-  subtitle: string | null;
-  brand_color: string | null;
-  /** Phase 9 (#11): creator-chosen prize-label color (migration 0025). */
-  label_color?: string | null;
-  /** Per-wheel prize-label text size (migration 0037). */
-  label_size?: string | null;
-  is_active?: boolean;
-  active_from?: string | null;
-  active_until?: string | null;
-  archived_at?: string | null;
+// Shapes of the Supabase rows we read (keeps us off `any`), derived from the
+// generated schema types (./db.types.ts, `npm run gen:types`, drift-checked in
+// CI) so a renamed or retyped column fails typecheck instead of drifting.
+type DbPrizeRow = Pick<
+  Tables<"prizes">,
+  | "id"
+  | "label"
+  | "description"
+  | "rarity"
+  | "weight"
+  | "color"
+  | "emoji"
+  | "image_url"
+  | "cost_cents"
+  | "stock"
+  | "sort_order"
+>;
+type WheelRow = Tables<"wheels">;
+// label_color: Phase 9 (#11) prize-label color (migration 0025); label_size:
+// per-wheel label text size (0037). Lifecycle columns are optional because
+// some selects leave them out.
+export interface DbWheelRow
+  extends Pick<WheelRow, "id" | "title" | "subtitle" | "brand_color">,
+    Partial<
+      Pick<WheelRow, "label_color" | "label_size" | "is_active" | "active_from" | "active_until" | "archived_at">
+    > {
   prizes: DbPrizeRow[];
 }
+
+// Compile-time guard: the app's Rarity union must equal the DB prize_rarity enum.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type AssertTrue<T extends true> = T;
+type _RarityMatchesDb = AssertTrue<Same<Rarity, Enums<"prize_rarity">>>;
 
 // The columns we select to load a wheel's full config (prizes joined).
 export const WHEEL_SELECT =

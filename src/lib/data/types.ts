@@ -1,5 +1,9 @@
 import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 
+// Generated Supabase schema types (`npm run gen:types`; CI fails on drift).
+// Use Tables<"name"> / Enums<"name"> for row shapes in new data-layer code.
+export type { Database, Tables, TablesInsert, TablesUpdate, Enums, Json } from "./db.types";
+
 /** A prize the fan has already won (their personal history). */
 export interface WonPrize {
   label: string;
