@@ -21,6 +21,7 @@ import {
   fanJourney,
   creatorExtras,
   fanExtras,
+  firstRunJourney,
 } from "./journeys.mjs";
 
 let server = null;
@@ -42,7 +43,8 @@ try {
     await creatorJourney(page, runner);
     await fanJourney(page, runner, ctx); // fan spins → creates a pending redemption
     await creatorExtras(page, runner); // fulfil it + webhooks + happy hour
-    await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude (last)
+    await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude
+    await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));
   }

@@ -4,6 +4,8 @@
 
 import { goto, clickTab, passAgeGate, BASE, NAV_ITEMS } from "./harness.mjs";
 
+const NAV = "nav[aria-label='Dashboard sections']";
+
 export async function creatorJourney(page, { step, assert }) {
   await step("landing renders with a CTA", async () => {
     await goto(page, "/");
@@ -166,6 +168,20 @@ export async function creatorJourney(page, { step, assert }) {
       await heading.first().waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
       assert((await heading.count()) > 0, `analytics renders the ${what} section (heading)`);
     }
+
+    // P40: the trend cards keep their prior one-line hints. P38: the conversion
+    // funnel is the third card of the trend row (same grid as the two trends).
+    const text = await page.locator("body").innerText();
+    assert(/Daily spins over time\./.test(text), "spins trend keeps its 'Daily spins over time.' sub-line");
+    assert(/Daily revenue over time\./.test(text), "revenue trend keeps its 'Daily revenue over time.' sub-line");
+    const sameRow = await page.evaluate(() => {
+      const h3s = [...document.querySelectorAll("h3")];
+      const card = (re) => h3s.find((h) => re.test(h.textContent.trim()))?.closest("section");
+      const spins = card(/^Spins trend$/);
+      const conv = card(/^Conversion$/);
+      return !!spins && !!conv && spins.parentElement === conv.parentElement;
+    });
+    assert(sameRow, "the Conversion card sits in the trend row beside Spins/Revenue");
   });
 
   await step("boosts: leaderboard toggle succeeds (no error toast)", async () => {
@@ -317,6 +333,31 @@ export async function fanJourney(page, { step, assert }, ctx) {
 // Creator edge cases. Runs AFTER the fan has spun (so a pending redemption
 // exists to fulfil). Operates on the dashboard.
 export async function creatorExtras(page, { step, assert }) {
+  await step("today: the pending-prizes tile shows the server count and opens Fulfilment", async () => {
+    // P4: the old every-section "N prizes waiting… Open →" banner is replaced by
+    // the sidebar Fulfilment badge plus the Today "To fulfil" tile. The fan has
+    // just spun, so one prize is pending.
+    await goto(page, "/dashboard", 1800);
+    const pulse = page.locator("section[aria-label=\"Today's pulse\"]");
+    await pulse.waitFor({ timeout: 10000 });
+    const tile = pulse.locator("> div").filter({ hasText: /To fulfil/ }).first();
+    await page
+      .waitForFunction(() => /oldest waiting/.test(document.body.innerText), null, { timeout: 15000 })
+      .catch(() => {});
+    const value = Number((await tile.locator("p.tnum").first().innerText()).trim());
+    assert(Number.isInteger(value) && value >= 1, `To fulfil tile shows the pending count (saw ${value})`);
+    const badge = page.locator(NAV_ITEMS).filter({ hasText: /Fulfilment/ }).first();
+    const badgeN = Number((await badge.innerText()).replace(/\D/g, ""));
+    assert(badgeN === value, `sidebar Fulfilment badge (${badgeN}) matches the tile (${value})`);
+    assert(
+      (await page.locator("text=/prizes? (is|are) waiting to be/").count()) === 0,
+      "the old 'prizes waiting' banner is gone"
+    );
+    await tile.getByRole("button", { name: "Open the fulfilment queue" }).click();
+    await badge.and(page.locator("[aria-current='page']")).waitFor({ timeout: 4000 }).catch(() => {});
+    assert((await badge.getAttribute("aria-current")) === "page", "the tile's Open jumps to Fulfilment");
+  });
+
   await step("redemptions: advance a fulfilment status", async () => {
     await goto(page, "/dashboard", 1800);
     await clickTab(page, "Fulfilment");
@@ -395,6 +436,168 @@ export async function creatorExtras(page, { step, assert }) {
         /happy hour|boost|×/i.test(await page.locator("body").innerText()),
       "a happy-hour window with the multiplier appears"
     );
+  });
+
+  await step("boosts: read-only link-in-bio card (link, Copy, jump to Settings)", async () => {
+    // P43/P44: Boosts shows the public link read-only; editing lives in Settings.
+    const card = page.locator("#boosts-link-in-bio").locator("xpath=ancestor::section[1]");
+    await card.waitFor();
+    await card.locator("text=/\\/c\\//").first().waitFor({ timeout: 8000 });
+    assert(/\/c\/[\w-]+/.test(await card.innerText()), "the public /c/ link is shown");
+    assert((await card.getByRole("button", { name: /^Copy$/ }).count()) === 1, "a Copy button for the link");
+    assert((await card.locator("input").count()) === 0, "the Boosts card has no editable fields");
+    await card.getByRole("button", { name: "Edit in Settings" }).click();
+    const settings = page.locator(NAV_ITEMS).filter({ hasText: /Settings/ }).first();
+    await settings.and(page.locator("[aria-current='page']")).waitFor({ timeout: 4000 }).catch(() => {});
+    assert((await settings.getAttribute("aria-current")) === "page", "'Edit in Settings' opens Settings");
+  });
+
+  await step("settings: handle is a read-only @slug; Public page keeps the form, note and live preview", async () => {
+    // P49: the Profile "Handle" is the public slug, read-only.
+    const handle = page.locator("input[aria-describedby='handle-hint']");
+    await handle.waitFor();
+    await page.waitForFunction(() => /^@/.test(document.querySelector("input[aria-describedby='handle-hint']")?.value ?? "")).catch(() => {});
+    assert((await handle.getAttribute("readonly")) !== null, "Handle is read-only");
+    assert(/^@[\w-]+$/.test(await handle.inputValue()), `Handle shows @slug (saw "${await handle.inputValue()}")`);
+
+    // P43/P44: slug, tagline, tip link, personal note, Save, Open, Copy link
+    // and the live /c/[slug] preview all stay under Settings › Public page.
+    const pub = page.locator("section[aria-labelledby='settings-public']");
+    const slug = pub.getByPlaceholder("your-name");
+    await slug.waitFor();
+    await page.waitForFunction(() => (document.querySelector("input[placeholder='your-name']")?.value ?? "") !== "").catch(() => {});
+    assert((await slug.inputValue()) !== "", "slug field is populated");
+    const tagline = pub.getByPlaceholder(/Spin my wheel/);
+    const note = pub.getByPlaceholder(/spin away/);
+    assert((await tagline.count()) === 1 && (await note.count()) === 1, "tagline + personal note fields present");
+    assert((await pub.getByPlaceholder(/tip link/).count()) === 1, "tip link field present");
+    for (const name of [/^Save$/, /^Copy link$/]) {
+      assert((await pub.getByRole("button", { name }).count()) === 1, `Public page has a ${name} button`);
+    }
+    assert((await pub.getByRole("link", { name: /^Open/ }).count()) === 1, "Public page has an Open link");
+    // (The label is uppercased by CSS, and innerText reflects that.)
+    assert(/Live preview/i.test(await pub.innerText()), "the live preview is in Settings");
+    const original = await tagline.inputValue();
+    await tagline.fill("E2E live tagline " + Date.now());
+    const typed = await tagline.inputValue();
+    // innerText never includes an <input>'s value, so the only place the typed
+    // text can appear in the section's text is the live preview.
+    await page.waitForFunction((t) => document.body.innerText.includes(t), typed).catch(() => {});
+    assert((await pub.innerText()).includes(typed), "the preview mirrors the tagline as it's typed (unsaved)");
+    await tagline.fill(original);
+  });
+
+  await step("settings: brand colour saves and re-tints the dashboard live", async () => {
+    // P48: the Settings brand-colour card persists to the active wheel and the
+    // whole shell re-tints without a refresh.
+    const pub = page.locator("section[aria-labelledby='settings-public']");
+    const hex = pub.getByRole("textbox", { name: "Brand color hex" });
+    await hex.waitFor();
+    const original = (await hex.inputValue()) || "#ec4899";
+    // The live --brand is set on the client shell (the nearest styled ancestor
+    // of the section nav); the server wrapper above it only seeds first paint.
+    const shellBrand = (sel) => {
+      const root = document.querySelector(sel)?.closest("[style*='--brand']");
+      return root ? getComputedStyle(root).getPropertyValue("--brand").trim().toLowerCase() : "";
+    };
+    const brandOf = () => page.evaluate(shellBrand, NAV);
+    const waitForBrand = (want) =>
+      page
+        .waitForFunction(
+          ([sel, w]) => {
+            const root = document.querySelector(sel)?.closest("[style*='--brand']");
+            return !!root && getComputedStyle(root).getPropertyValue("--brand").trim().toLowerCase() === w;
+          },
+          [NAV, want]
+        )
+        .catch(() => {});
+    const before = await brandOf();
+    assert(before !== "", "the dashboard shell carries --brand");
+    const next = before === "#3366ff" ? "#22aa66" : "#3366ff";
+    await hex.fill(next);
+    const save = pub.getByRole("button", { name: /^Save color$/ });
+    assert(await save.isEnabled(), "Save color enables once the colour changes");
+    await save.click();
+    await page.waitForFunction(() => /Brand color saved/i.test(document.body.innerText)).catch(() => {});
+    await waitForBrand(next);
+    assert((await brandOf()) === next, `the shell re-tinted to ${next} without a refresh`);
+    // Put the original colour back for the rest of the run.
+    await hex.fill(original);
+    await save.click();
+    await waitForBrand(original.toLowerCase());
+  });
+}
+
+// First-run (RD-5). Runs LAST of all: it wipes the demo account, so a brand-new
+// creator's Today can be exercised (and nothing after it needs the demo data).
+export async function firstRunJourney(page, { step, assert }, ctx) {
+  await step("first run: reset the account (setup)", async () => {
+    const res = await ctx.request.post(BASE + "/api/account/reset", { data: { confirm: "RESET" } });
+    assert(res.ok(), "account reset endpoint ok");
+  });
+
+  const navItem = (re) => page.locator(NAV_ITEMS).filter({ hasText: re }).first();
+  const isCurrent = async (re) => (await navItem(re).getAttribute("aria-current")) === "page";
+  const list = () => page.getByTestId("first-steps");
+
+  await step("first run: a brand-new creator lands on Today with 'Your first steps'", async () => {
+    await goto(page, "/dashboard", 2000);
+    await list().waitFor({ timeout: 12000 }).catch(() => {});
+    assert(await isCurrent(/^Today/), "landed on Today (not auto-switched to Wheels)");
+    assert(await list().count(), "'Your first steps' renders inside Today");
+    const text = await list().innerText();
+    assert(/Your first steps/.test(text), "checklist heading");
+    assert(/1 of 5 done/.test(text), `progress reads '1 of 5 done' (saw: ${text.match(/\d of \d done/)?.[0]})`);
+    assert((await list().locator("li").count()) === 5, "five steps");
+    for (const t of ["Create your account", "Build your first wheel", "Mint your first fan link", "Share their spin link", "Fulfil your first win"]) {
+      assert(text.includes(t), `step present: ${t}`);
+    }
+    // Honest first-run framing: no invented numbers, muted chips, no badges.
+    const body = await page.locator("body").innerText();
+    assert(/get spinning/.test(body) && /no spins yet/.test(body) && /invite fans/.test(body), "pulse tiles explain what would fill them");
+    const navTexts = await page.locator(NAV_ITEMS).allInnerTexts();
+    assert(navTexts.every((t) => !/\d/.test(t)), "sidebar badges are hidden at 0");
+    assert((await page.locator("#needs-you-now").count()) === 0, "an empty 'Needs you now' feed is replaced by the checklist");
+  });
+
+  await step("first run: a step's CTA opens its section", async () => {
+    await list().getByRole("button", { name: "Open wheel editor" }).click();
+    await navItem(/Wheels/).and(page.locator("[aria-current='page']")).waitFor({ timeout: 4000 }).catch(() => {});
+    assert(await isCurrent(/Wheels/), "'Open wheel editor' opens Wheels");
+    await clickTab(page, "Today");
+    await list().waitFor({ timeout: 6000 }).catch(() => {});
+    assert(await list().count(), "the checklist is still on Today");
+  });
+
+  await step("first run: dismiss persists, and 'Get started' re-opens it on Today", async () => {
+    const persisted = () =>
+      page.waitForResponse((r) => r.url().includes("/api/account/onboarding") && r.request().method() === "POST").catch(() => null);
+    let wait = persisted();
+    await list().getByRole("button", { name: /^Dismiss/ }).click();
+    await wait;
+    await list().waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
+    assert((await list().count()) === 0, "dismiss hides the checklist");
+    const reopen = page.getByRole("button", { name: /Get started/ });
+    await reopen.waitFor({ timeout: 4000 }).catch(() => {});
+    assert(await reopen.count(), "the sidebar footer offers 'Get started'");
+
+    // Reload: the dismissal lives on the account, not in this browser.
+    await goto(page, "/dashboard", 2200);
+    await page.waitForFunction(() => /get spinning/.test(document.body.innerText), null, { timeout: 12000 }).catch(() => {});
+    assert((await list().count()) === 0, "still dismissed after a reload (persisted server-side)");
+    assert(await page.getByRole("button", { name: /Get started/ }).count(), "'Get started' survives the reload");
+
+    // Re-open from another section: it switches to Today and shows the list.
+    await clickTab(page, "Fans");
+    wait = persisted();
+    await page.getByRole("button", { name: /Get started/ }).click();
+    await wait;
+    await list().waitFor({ timeout: 6000 }).catch(() => {});
+    assert(await isCurrent(/^Today/), "'Get started' switches to Today");
+    assert(await list().count(), "and the checklist is back");
+    await goto(page, "/dashboard", 2200);
+    await list().waitFor({ timeout: 12000 }).catch(() => {});
+    assert(await list().count(), "re-opening persisted too");
   });
 }
 
