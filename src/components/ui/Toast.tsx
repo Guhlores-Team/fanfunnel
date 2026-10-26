@@ -67,7 +67,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         aria-live="polite"
         className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 px-4"
         style={{
-          paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)",
+          // Above the phone dashboard tab bar when present (globals.css).
+          paddingBottom: "calc(max(env(safe-area-inset-bottom), var(--ff-bottom-offset, 0px)) + 1rem)",
         }}
       >
         {toasts.map((t) => (

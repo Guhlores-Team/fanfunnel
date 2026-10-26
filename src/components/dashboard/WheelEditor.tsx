@@ -496,7 +496,7 @@ export default function WheelEditor({
       {/* Save bar. Top of the editor on desktop; on phones it moves to the end
           of the flow and sticks to the bottom edge so Save is always in reach. */}
       <div
-        className={`z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors duration-200 max-lg:sticky max-lg:bottom-2 max-lg:order-last max-lg:mt-5 lg:mb-5 ${
+        className={`z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors duration-200 max-lg:sticky max-lg:bottom-[calc(var(--ff-bottom-offset,0px)+0.5rem)] max-lg:order-last max-lg:mt-5 lg:mb-5 ${
           dirty
             ? "border-[color-mix(in_oklab,#f59e0b_30%,#1f1b27)] bg-[color-mix(in_oklab,#f59e0b_6%,#16131c)] shadow-[var(--lift)]"
             : raised

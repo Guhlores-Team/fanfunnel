@@ -20,7 +20,7 @@ export type Tab =
   | "admin";
 
 // 24×24 stroke paths (1.7px line icons) from the Command Center prototype.
-const ICON: Record<Tab | "signout" | "setup", string> = {
+export const ICON: Record<Tab | "signout" | "setup", string> = {
   today: "M3 10.6 12 3l9 7.6M5 9.2V21h14V9.2",
   inbox: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z",
   prizes:
@@ -39,7 +39,7 @@ const ICON: Record<Tab | "signout" | "setup", string> = {
   setup: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
 };
 
-function Icon({ d, size = 19, className = "" }: { d: string; size?: number; className?: string }) {
+export function Icon({ d, size = 19, className = "" }: { d: string; size?: number; className?: string }) {
   return (
     <svg
       width={size}
@@ -68,7 +68,7 @@ export const NAV_GROUPS: { title: string; items: [Tab, string][] }[] = [
 ];
 // "Admin" joins the Account group only when the server says the viewer is an
 // active admin (`showAdmin`); it is never in the static list.
-const ADMIN_ITEM: [Tab, string] = ["admin", "Admin"];
+export const ADMIN_ITEM: [Tab, string] = ["admin", "Admin"];
 const NAV_ORDER: Tab[] = NAV_GROUPS.flatMap((g) => g.items.map(([t]) => t));
 
 export const SECTION_META: Record<Tab, [title: string, subtitle: string]> = {
@@ -84,11 +84,24 @@ export const SECTION_META: Record<Tab, [title: string, subtitle: string]> = {
   admin: ["Admin", "Manage every creator account"],
 };
 
-function CountBadge({ n }: { n: number }) {
+export function CountBadge({ n }: { n: number }) {
   return (
     <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
       {n}
     </span>
+  );
+}
+
+/** Up to two initials for the workspace avatar ("FF" when there are none). */
+export function accountInitials(name: string): string {
+  return (
+    name
+      .replace(/^@/, "")
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase())
+      .join("") || "FF"
   );
 }
 
@@ -139,8 +152,8 @@ export function Sidebar({
     }
   };
 
-  // Keep the active item visible: below `lg` the nav is a horizontal scroller,
-  // so a section picked from a CTA could otherwise sit clipped off-screen.
+  // Keep the active item visible when the sidebar's nav list overflows (short
+  // windows), so a section picked from a CTA never sits clipped off-screen.
   useEffect(() => {
     itemRefs.current[active]?.scrollIntoView({
       behavior: prefersReducedMotion() ? "auto" : "smooth",
@@ -149,18 +162,12 @@ export function Sidebar({
     });
   }, [active]);
 
-  const initials =
-    accountName
-      .replace(/^@/, "")
-      .split(/[\s._-]+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase())
-      .join("") || "FF";
+  const initials = accountInitials(accountName);
 
+  // Desktop only: below `lg` the bottom MobileTabBar + MoreSheet replace it.
   return (
     <aside
-      className="relative z-20 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 border-b border-[#1f1b27] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--brand)_8%,#0c0a0e),#0c0a0e_38%)] px-4 pb-3 pt-4 lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:w-[252px] lg:shrink-0 lg:flex-col lg:items-stretch lg:gap-[18px] lg:border-b-0 lg:border-r lg:px-4 lg:py-[22px]"
+      className="relative z-20 grid max-lg:hidden grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 border-b border-[#1f1b27] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--brand)_8%,#0c0a0e),#0c0a0e_38%)] px-4 pb-3 pt-4 lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:w-[252px] lg:shrink-0 lg:flex-col lg:items-stretch lg:gap-[18px] lg:border-b-0 lg:border-r lg:px-4 lg:py-[22px]"
     >
       {/* Wordmark */}
       <div className="flex min-w-0 items-center gap-2.5 lg:px-2">
@@ -288,9 +295,12 @@ export function TopBar({
   subtitle,
   onSearch,
   onNewFanLink,
+  mobileLead,
 }: {
   title: string;
   subtitle: ReactNode;
+  /** Shown before the title below `lg` only (the phone top bar's avatar). */
+  mobileLead?: ReactNode;
   /** Submitting routes the query to the Fans name filter (client-side only). */
   onSearch: (q: string) => void;
   onNewFanLink: () => void;
@@ -298,6 +308,7 @@ export function TopBar({
   const [q, setQ] = useState("");
   return (
     <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-[#1f1b27] bg-[color-mix(in_oklab,#0c0a0e_86%,transparent)] px-4 py-3 backdrop-blur-md sm:gap-4 sm:px-7 sm:py-[18px]">
+      {mobileLead && <div className="shrink-0 lg:hidden">{mobileLead}</div>}
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-lg font-bold tracking-[-0.02em] text-ink sm:text-[22px]">
           {title}
