@@ -342,6 +342,24 @@ export async function fanJourney(page, { step, assert }, ctx) {
     assert(/top spinners/i.test(body), "leaderboard section renders pre-spin");
   });
 
+  await step("fan page: the next-spin commitment sits below the wheel, uncut, at 360px", async () => {
+    // Behavior spec #7: the provably-fair hash used to clip under the wheel.
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.waitForTimeout(300);
+    const line = page.locator("p", { hasText: "next-spin commitment" }).first();
+    await line.waitFor({ timeout: 8000 });
+    const wheel = page.locator("[aria-label^='Prize wheel with']").first();
+    const [l, w] = [await line.boundingBox(), await wheel.boundingBox()];
+    assert(l && w, "commitment line and wheel are both rendered");
+    assert(l.y >= w.y + w.height, `commitment starts below the wheel (line ${l.y}, wheel bottom ${w.y + w.height})`);
+    assert(l.x >= 0 && l.x + l.width <= 360, `commitment fits the 360px width (${l.x}..${l.x + l.width})`);
+    const clipped = await line.evaluate((el) =>
+      [el, ...el.querySelectorAll("span")].some((n) => n.scrollWidth > n.clientWidth + 1)
+    );
+    assert(!clipped, "no part of the commitment line is clipped");
+    await page.setViewportSize({ width: 1280, height: 900 });
+  });
+
   // Carries the share id from the spin to the verify step.
   ctx._shareId = null;
 
@@ -684,6 +702,90 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     await hex.fill(original);
     await save.click();
     await waitForBrand(original.toLowerCase());
+  });
+
+  await step("settings: a saved display name shows in the sidebar without a refresh", async () => {
+    // Behavior spec #3: saves reflect immediately, never after a manual refresh.
+    const input = page.getByPlaceholder("Your creator name");
+    await input.waitFor();
+    await page.waitForFunction(() => !document.querySelector("input[placeholder='Your creator name']")?.disabled).catch(() => {});
+    const original = await input.inputValue();
+    const next = "E2E Creator " + String(Date.now()).slice(-5);
+    await page.evaluate(() => {
+      window.__ffNoReload = true;
+    });
+    await input.fill(next);
+    const save = page.getByRole("button", { name: "Save profile" });
+    await save.click();
+    const pill = page.locator("aside").getByText(next, { exact: true });
+    await pill.waitFor({ timeout: 6000 }).catch(() => {});
+    assert(await pill.count(), "the sidebar workspace pill shows the new name");
+    assert(await page.evaluate(() => window.__ffNoReload === true), "the page was not reloaded");
+    await input.fill(original || "Demo Creator");
+    await save.click();
+    await page.locator("aside").getByText(original || "Demo Creator", { exact: true }).waitFor({ timeout: 6000 }).catch(() => {});
+  });
+}
+
+// Notification bell (RD-7 / spec #1). Runs after fanExtras, so the demo fan has
+// spun (pending wins) and sent the creator a chat message (unread).
+export async function notificationsJourney(page, { step, assert }, ctx) {
+  const bell = page.getByTestId("notification-bell");
+  const count = page.getByTestId("notification-count");
+  const panel = page.getByRole("dialog", { name: "Notifications" });
+  const navItem = (re) => page.locator(NAV_ITEMS).filter({ hasText: re }).first();
+
+  await step("bell: shows an unread count after a fan spins and messages", async () => {
+    await goto(page, "/dashboard", 1800);
+    await count.waitFor({ timeout: 15000 });
+    const n = Number((await count.innerText()).replace(/\D/g, ""));
+    assert(n >= 2, `the bell counts the new win(s) and the message (saw ${n})`);
+    assert(/Notifications, \d+ unread/.test(await bell.getAttribute("aria-label")), "the count is in the bell's accessible name");
+    assert((await bell.getAttribute("aria-expanded")) === "false", "the bell is a collapsed disclosure");
+  });
+
+  await step("bell: opening it lists recent items and marks them seen", async () => {
+    const seen = page
+      .waitForResponse((r) => r.url().includes("/api/notifications/seen") && r.request().method() === "POST")
+      .catch(() => null);
+    await bell.click();
+    await panel.waitFor({ timeout: 5000 });
+    assert((await bell.getAttribute("aria-expanded")) === "true", "aria-expanded flips to true");
+    const items = panel.getByRole("list", { name: "Recent notifications" }).getByRole("button");
+    await items.first().waitFor({ timeout: 5000 });
+    const text = await panel.innerText();
+    assert(/won /.test(text), "a win to fulfil is listed");
+    assert(/message/i.test(text) && /Demo Fan/.test(text), "the fan's message is listed");
+    assert(/\bNew\b/.test(await items.first().innerText()) || (await panel.locator("text=/\\d+ new/").count()) > 0, "new items are marked while open");
+    const res = await seen;
+    assert(res && res.ok(), "opening the bell marked everything seen on the server");
+    assert((await count.count()) === 0, "the badge clears while the panel is open");
+    const feed = await (await ctx.request.get(BASE + "/api/notifications")).json();
+    assert(feed.unread === 0 && feed.items.length > 0, `server says 0 unread, items kept (unread ${feed.unread})`);
+    await page.keyboard.press("Escape");
+    await panel.waitFor({ state: "hidden", timeout: 4000 });
+    assert(await bell.evaluate((el) => el === document.activeElement), "Escape closes and returns focus to the bell");
+    await goto(page, "/dashboard", 1800);
+    assert((await count.count()) === 0, "still no badge after a reload (seen is server-side)");
+  });
+
+  await step("bell: clicking a win opens Fulfilment", async () => {
+    await bell.click();
+    await panel.waitFor({ timeout: 5000 });
+    await panel.getByRole("button", { name: /won / }).first().click();
+    await panel.waitFor({ state: "hidden", timeout: 4000 });
+    await navItem(/Fulfilment/).and(page.locator("[aria-current='page']")).waitFor({ timeout: 5000 }).catch(() => {});
+    assert((await navItem(/Fulfilment/).getAttribute("aria-current")) === "page", "Fulfilment is the open section");
+  });
+
+  await step("bell: clicking a message opens that fan's Inbox thread", async () => {
+    await bell.click();
+    await panel.waitFor({ timeout: 5000 });
+    await panel.getByRole("button", { name: /message/i }).filter({ hasText: /Demo Fan/ }).first().click();
+    await navItem(/Inbox/).and(page.locator("[aria-current='page']")).waitFor({ timeout: 5000 });
+    const thread = page.getByRole("list", { name: "Conversations" }).locator("button[aria-current='true']");
+    await thread.waitFor({ timeout: 8000 });
+    assert(/demo fan/i.test(await thread.innerText()), "the demo fan's thread is selected");
   });
 }
 
