@@ -685,6 +685,69 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     await save.click();
     await waitForBrand(original.toLowerCase());
   });
+
+  await step("fans: grant edit preview is exact per wheel for a two-wheel fan", async () => {
+    // Setup through the API: a fan with a 5-spin grant on the active wheel who
+    // has spun 3 of it, then a 4-spin top-up on another wheel. Fan total 6, but
+    // the first grant's pass only has 2 left.
+    const post = (path, data) => ctx.request.post(BASE + path, { data });
+    const created = await post("/api/passes", { name: "Two Wheel Fan", spins: 5 });
+    assert(created.ok(), "fan created");
+    const { token, fanId } = await created.json();
+    assert((await post("/api/fans/ack", { token })).ok(), "fan acknowledged the age gate");
+    for (let i = 0; i < 3; i++) assert((await post("/api/spin", { token })).ok(), `spin ${i + 1} landed`);
+    const { wheels } = await (await ctx.request.get(BASE + "/api/wheels")).json();
+    const other = wheels.find((w) => !w.isActive);
+    assert(other, "a second, inactive wheel exists");
+    assert((await post("/api/passes", { name: "Two Wheel Fan", spins: 4, fanId, wheelId: other.id })).ok(), "top-up on the other wheel");
+    const detail = async () => (await ctx.request.get(BASE + `/api/fans/${fanId}`)).json();
+    const d0 = await detail();
+    assert(d0.spinsRemaining === 6, `fan total is 2 + 4 = 6 (got ${d0.spinsRemaining})`);
+    const firstGrant = d0.grants.find((g) => g.spins === 5);
+    assert(firstGrant?.editPass?.spinsRemaining === 2, "the 5-spin grant's own pass has 2 left");
+    const wheelA = firstGrant.editPass.wheelTitle;
+
+    await goto(page, "/dashboard?debug=1", 1600);
+    await clickTab(page, "Fans");
+    await page.getByRole("button", { name: "View Two Wheel Fan" }).click();
+    const drawer = page.getByRole("dialog", { name: "Fan details" });
+    await drawer.waitFor({ timeout: 5000 });
+    const row = drawer.locator("li").filter({ hasText: /^\s*\+5\b/ });
+    await row.getByRole("button", { name: "Edit" }).click();
+    const editor = drawer.locator("li:has(input[type='number'])").first();
+    const spinsInput = editor.locator("input[type='number']").first();
+    const preview = editor.getByRole("status");
+    const saveBtn = editor.getByRole("button", { name: "Save" });
+
+    // Cutting 5 -> 1 needs 4 back from a pass holding 2. The fan total (6) would
+    // have passed it; the exact preview refuses it, like editGrant does.
+    await spinsInput.fill("1");
+    await page.waitForFunction(() => /isn't allowed/.test(document.querySelector("[role='dialog'] li [role='status']")?.textContent || "")).catch(() => {});
+    assert(
+      (await preview.innerText()).trim() ===
+        "This fan has used 3 of these 5 spins. Setting it to 1 isn't allowed: it can't go below the 3 spins already used.",
+      `refusal preview (got "${await preview.innerText()}")`,
+    );
+    assert(await saveBtn.isDisabled(), "Save is disabled for the refused cut");
+
+    // Cutting to 3 is the deepest allowed cut: it leaves that wheel's pass at 0.
+    await spinsInput.fill("3");
+    const want = `This fan has used 3 of these 5 spins. Setting it to 3 takes back 2 spins and leaves 0 spins on ${wheelA}.`;
+    await page.waitForFunction((w) => document.querySelector("[role='dialog'] li [role='status']")?.textContent?.startsWith(w), want).catch(() => {});
+    assert((await preview.innerText()).trim().startsWith(want), `allowed preview (got "${await preview.innerText()}")`);
+    assert(await saveBtn.isEnabled(), "Save is enabled for the allowed cut");
+    await saveBtn.click();
+    await page.waitForFunction(() => /Grant updated/.test(document.body.innerText), null, { timeout: 8000 });
+
+    // The server did exactly what the preview said.
+    const d1 = await detail();
+    const after = d1.grants.find((g) => g.id === firstGrant.id);
+    assert(after.spins === 3, "the grant now says 3");
+    assert(after.editPass.spinsRemaining === 0, `that wheel's pass is at 0, as previewed (got ${after.editPass.spinsRemaining})`);
+    assert(d1.spinsRemaining === 4, `the other wheel kept its 4 (fan total ${d1.spinsRemaining})`);
+    await page.keyboard.press("Escape");
+    await drawer.waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
+  });
 }
 
 // First-run (RD-5). Runs LAST of all: it wipes the demo account, so a brand-new

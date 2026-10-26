@@ -61,6 +61,8 @@ export class FakeSupabase {
     campaigns: [],
     campaign_packs: [],
     referrals: [],
+    spins: [],
+    redemptions: [],
   };
   /** Every statement executed so far, in order (for assertions on sequencing). */
   readonly statements: Statement[] = [];
@@ -219,7 +221,8 @@ class Query implements PromiseLike<Result> {
   private op: Op = "select";
   private payload: Row | Row[] | null = null;
   private filters: Filter[] = [];
-  private orderBy: { col: string; ascending: boolean } | null = null;
+  // supabase-js appends each .order() call as a further sort key.
+  private orderBy: Array<{ col: string; ascending: boolean }> = [];
   private limitN: number | null = null;
   private mode: "many" | "single" | "maybeSingle" = "many";
   private returning = false;
@@ -264,7 +267,7 @@ class Query implements PromiseLike<Result> {
     return this;
   }
   order(col: string, opts?: { ascending?: boolean }) {
-    this.orderBy = { col, ascending: opts?.ascending ?? true };
+    this.orderBy.push({ col, ascending: opts?.ascending ?? true });
     return this;
   }
   limit(n: number) {
@@ -287,11 +290,13 @@ class Query implements PromiseLike<Result> {
     const { rows, error } = this.db.execute(this.table, this.op, this.filters, this.payload);
     if (error) return { data: null, error, count: null };
     let out = rows;
-    if (this.orderBy) {
-      const { col, ascending } = this.orderBy;
+    if (this.orderBy.length > 0) {
       out = out.slice().sort((a, b) => {
-        const x = String(a[col] ?? ""), y = String(b[col] ?? "");
-        return (x < y ? -1 : x > y ? 1 : 0) * (ascending ? 1 : -1);
+        for (const { col, ascending } of this.orderBy) {
+          const x = String(a[col] ?? ""), y = String(b[col] ?? "");
+          if (x !== y) return (x < y ? -1 : 1) * (ascending ? 1 : -1);
+        }
+        return 0;
       });
     }
     if (this.limitN != null) out = out.slice(0, this.limitN);
