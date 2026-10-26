@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseUrl } from "./url";
+import { sessionCookieOptions } from "./cookies";
 
 /**
  * Pages that need the Supabase session refreshed here, before they render.
@@ -43,6 +44,10 @@ export async function updateSession(request: NextRequest) {
   if (!needsSessionRefresh(path)) return response;
 
   const supabase = createServerClient(supabaseUrl(), anon, {
+    // Same attributes as server.ts/client.ts; see cookies.ts for why not httpOnly.
+    cookieOptions: sessionCookieOptions(
+      request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol
+    ),
     cookies: {
       getAll() {
         return request.cookies.getAll();

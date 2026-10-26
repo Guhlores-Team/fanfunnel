@@ -2,24 +2,18 @@ import { redirect } from "next/navigation";
 import AdminClient from "@/components/admin/AdminClient";
 import AdminClaim from "@/components/admin/AdminClaim";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
+import { checkAdmin } from "@/lib/auth/admin";
 
-// Admin-only, cross-account control panel. Open in demo mode; role-gated in
-// production (middleware ensures a session; this checks the admin role).
+// Admin-only, cross-account control panel. Open in demo mode; gated in
+// production on is_admin() (role AND is_active) via the shared checkAdmin().
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   if (isSupabaseConfigured()) {
-    const sb = await createClient();
-    const {
-      data: { user },
-    } = await sb.auth.getUser();
-    if (!user) redirect("/login?next=/admin");
-    const { data: profile } = await sb
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (profile?.role !== "admin") {
+    const access = await checkAdmin(await createClient());
+    if (access.status === "anonymous") redirect("/login?next=/admin");
+    // Not an ACTIVE admin (a suspended admin lands here too, never in the panel).
+    if (access.status !== "admin") {
       // Not admin yet — offer the env-guarded one-time bootstrap instead of a
       // dead redirect, so the owner can claim admin without touching the DB.
       return (

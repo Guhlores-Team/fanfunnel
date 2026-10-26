@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { createCreatorAccount } from "@/lib/data";
+import { requireAdminRoute } from "@/lib/auth/admin";
 import { isAcceptablePassword } from "@/lib/api/password";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Admin creates a creator account directly (no public sign-up needed).
 export async function POST(req: Request) {
+  const admin = await requireAdminRoute();
+  if (!admin.ok) return admin.response;
   const body = await parseJsonBody<{
     email?: string;
     password?: string;

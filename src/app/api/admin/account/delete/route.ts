@@ -4,14 +4,15 @@ import {
   createClient,
   createServiceClient,
 } from "@/lib/supabase/server";
+import { requireAdminRoute } from "@/lib/auth/admin";
 
 /**
  * Hard-delete a creator account and ALL of its tenant data — irreversible.
  *
  * This is deliberately separate from the reversible "suspend" action in
  * `../route.ts`. It is guarded several ways (defense in depth):
- *   1. Caller must be an ACTIVE admin (verified server-side against
- *      `profiles.role` AND `profiles.is_active` — a suspended admin is rejected).
+ *   1. Caller must be an ACTIVE admin (the shared `requireAdminRoute()` guard:
+ *      `is_admin()`, i.e. role AND is_active — a suspended admin is rejected).
  *   2. The target's email must be passed AND match the target exactly
  *      (case-insensitive) — a typed-confirmation echoed from the client.
  *   3. An admin may not delete themselves.
@@ -27,6 +28,9 @@ import {
  * service-role admin API and let the database cascade do the rest.
  */
 export async function POST(req: Request) {
+  const admin = await requireAdminRoute();
+  if (!admin.ok) return admin.response;
+
   let body: { id?: string; email?: string };
   try {
     body = await req.json();
@@ -48,28 +52,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // (1) Caller must be a signed-in admin.
+  // (1) Caller is an ACTIVE admin — enforced by requireAdminRoute() above. This
+  // route uses the service role (bypasses RLS), so that guard is the only thing
+  // stopping a suspended admin; it must stay the first statement of the handler.
   const sb = await createClient();
-  const {
-    data: { user: caller },
-  } = await sb.auth.getUser();
-  if (!caller) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 403 });
-  }
-  const { data: callerProfile } = await sb
-    .from("profiles")
-    .select("role, is_active")
-    .eq("id", caller.id)
-    .maybeSingle();
-  // A suspended admin (is_active=false) loses destructive power, mirroring the
-  // DB is_admin() policy. This route uses the service role (bypasses RLS), so the
-  // active-state check must be enforced here in code, not just at the RLS layer.
-  if (callerProfile?.role !== "admin" || callerProfile?.is_active !== true) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 403 });
+  const callerId = admin.userId;
+  if (!callerId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   // (3) Refuse self-deletion.
-  if (id === caller.id) {
+  if (id === callerId) {
     return NextResponse.json({ error: "cannot_delete_self" }, { status: 400 });
   }
 

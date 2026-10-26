@@ -1,8 +1,9 @@
 import "server-only";
 import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { supabaseUrl } from "./url";
+import { serverRequestProtocol, sessionCookieOptions } from "./cookies";
 
 /**
  * The three env vars the real (non-mock) Supabase path needs. The service-role
@@ -59,11 +60,17 @@ export function isSupabaseConfigured(): boolean {
  * Use in Server Components, Route Handlers, and Server Actions.
  */
 export async function createClient() {
-  const cookieStore = await cookies();
+  const [cookieStore, headerStore] = await Promise.all([cookies(), headers()]);
   return createServerClient(
     supabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // Secure only on https: x-forwarded-proto (what Vercel sends), else the
+      // scheme of NEXT_PUBLIC_SITE_URL for self-hosted deploys whose proxy strips
+      // the header. See cookies.ts for why the cookie is not httpOnly.
+      cookieOptions: sessionCookieOptions(
+        serverRequestProtocol(headerStore.get("x-forwarded-proto"))
+      ),
       cookies: {
         getAll() {
           return cookieStore.getAll();
