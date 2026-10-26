@@ -542,6 +542,12 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     await menu.waitFor({ state: "hidden", timeout: 4000 });
     assert(await trigger.evaluate((el) => el === document.activeElement), "Esc closes the menu and focus returns to Copy DM");
     assert(await drawer.isVisible(), "Esc on the menu leaves the drawer open");
+    // Toasts enter transform-only (README motion rule): never an opacity-0 start.
+    await drawer.getByRole("button", { name: "Copy link" }).click();
+    const toast = page.locator("[aria-live='polite'] > button").first();
+    await toast.waitFor({ timeout: 4000 });
+    const style = await toast.evaluate((el) => ({ opacity: getComputedStyle(el).opacity, name: getComputedStyle(el).animationName }));
+    assert(style.opacity === "1" && style.name !== "ff-rise", `the toast is fully opaque from its first frame (${style.opacity}, ${style.name})`);
     await page.keyboard.press("Escape");
     await drawer.waitFor({ state: "hidden", timeout: 4000 });
   });
