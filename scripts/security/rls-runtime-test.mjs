@@ -4,19 +4,29 @@
  * running policies by acting as real authenticated users.
  *
  * Run:  node scripts/security/rls-runtime-test.mjs
- * Needs (from .env.local):
+ * Needs (from the environment, else .env.local):
  *   NEXT_PUBLIC_SUPABASE_URL
  *   NEXT_PUBLIC_SUPABASE_ANON_KEY   (the browser key — RLS applies to it)
  *   SUPABASE_SERVICE_ROLE_KEY       (to create disposable test users + cleanup)
+ * Optional:
+ *   RLS_TEST_REQUIRE_REF            (refuse to run unless the URL is this project ref; CI sets it)
  *
  * It creates two throwaway creators (A, B), gives each a fan + wheel via the
  * service role, then signs in AS each (anon key) and asserts:
  *   • A can read its own rows
  *   • A reads ZERO of B's rows (fans, wheels, prizes, spins, grants, profiles)
  *   • A cannot UPDATE or DELETE B's rows
- * Exits non-zero on any leak. Cleans up the test users/data at the end.
+ *   • A cannot promote itself to admin
+ * Exits non-zero on any leak, seed error, or cleanup failure.
+ *
+ * Safe to run repeatedly and concurrently against one shared TEST project:
+ * every user/token carries a per-run id, all reads are scoped to this run's own
+ * creator ids, the users (and, by FK cascade, all their rows) are deleted in a
+ * `finally`, and users left behind by a killed run (> 1h old) are swept first.
+ * It refuses to run against the PRODUCTION project.
  */
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 try {
@@ -26,29 +36,87 @@ try {
   }
 } catch {}
 
-const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 if (!URL_ || !ANON || !SERVICE) {
   console.error("✗ Need NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY");
   process.exit(1);
 }
 
+// This script creates and deletes users, so it must never touch production.
+const PROD_REF = "ttlogfmogcccwiraaoae";
+if (URL_.toLowerCase().includes(PROD_REF)) {
+  console.error(`✗ Refusing to run: NEXT_PUBLIC_SUPABASE_URL points at the PRODUCTION project (${PROD_REF}). Use the TEST project.`);
+  process.exit(1);
+}
+const REQUIRED_REF = process.env.RLS_TEST_REQUIRE_REF?.trim();
+if (REQUIRED_REF) {
+  let host = "";
+  try { host = new URL(URL_).hostname.toLowerCase(); } catch {}
+  if (host !== `${REQUIRED_REF.toLowerCase()}.supabase.co`) {
+    console.error(`✗ Refusing to run: NEXT_PUBLIC_SUPABASE_URL is not the expected project (${REQUIRED_REF}).`);
+    process.exit(1);
+  }
+}
+
 const admin = createClient(URL_, SERVICE, { auth: { autoRefreshToken: false, persistSession: false } });
 const PW = "RlsTest123!";
+// Unique per run so concurrent runs (two PRs at once) never collide on an email
+// or on the unique fan_passes.token.
+const RUN = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+const TEST_EMAIL = /^rlstest\+[^@]*@fanfunnel\.test$/i;
+const STALE_MS = 60 * 60 * 1000;
+const createdUserIds = [];
 let failures = 0;
 const check = (cond, msg) => {
   if (cond) console.log("  ✓", msg);
   else { failures++; console.error("  ✗ LEAK:", msg); }
 };
+// Seeding must succeed, or the "reads 0 of B's rows" checks would pass vacuously.
+const must = (res, what) => {
+  if (res.error) throw new Error(`${what}: ${res.error.message}`);
+  if (res.data == null) throw new Error(`${what}: no row returned`);
+  return res.data;
+};
+
+// Delete this script's users left behind by a run that was killed before its
+// `finally` (e.g. a cancelled CI job). Only old ones, so a concurrent run's
+// users are never touched.
+async function sweepStaleUsers() {
+  const cutoff = Date.now() - STALE_MS;
+  const stale = [];
+  for (let page = 1; ; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) { console.error("  ⚠ Skipping stale-user sweep — listUsers:", error.message); return; }
+    const users = data?.users ?? [];
+    for (const u of users) {
+      if (u.email && TEST_EMAIL.test(u.email) && Date.parse(u.created_at) < cutoff) stale.push(u.id);
+    }
+    if (users.length < 1000) break;
+  }
+  let swept = 0;
+  for (const id of stale) {
+    try {
+      const { error } = await admin.auth.admin.deleteUser(id);
+      if (error) throw error;
+      swept++;
+    } catch (e) {
+      console.error("  ⚠ Could not sweep stale test user", id, "—", e.message ?? e);
+    }
+  }
+  if (swept) console.log(`Swept ${swept} stale test user(s) from earlier killed runs.`);
+}
 
 async function makeCreator(tag) {
-  const email = `rlstest+${tag}-${Date.now()}@fanfunnel.test`;
+  const email = `rlstest+${RUN}-${tag}@fanfunnel.test`;
   const { data, error } = await admin.auth.admin.createUser({
     email, password: PW, email_confirm: true,
   });
   if (error) throw error;
   const id = data.user.id;
+  // Register for cleanup before anything else can throw.
+  createdUserIds.push(id);
   // The profiles row is created by a database trigger that may not have completed
   // yet; poll until it exists before updating to avoid flaky failures.
   let profileExists = false;
@@ -58,15 +126,15 @@ async function makeCreator(tag) {
     await new Promise((r) => setTimeout(r, 250));
   }
   if (!profileExists) throw new Error(`profiles row for ${id} was not created by trigger in time`);
-  await admin.from("profiles").update({ approval_status: "approved", is_active: true }).eq("id", id);
+  must(await admin.from("profiles").update({ approval_status: "approved", is_active: true }).eq("id", id).select("id").single(), `approve ${tag}`);
   // Seed one wheel + prize + fan + pass + grant + spin for this creator.
-  const { data: wheel } = await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single();
-  const { data: prize } = await admin.from("prizes").insert({ wheel_id: wheel.id, label: `${tag} prize`, rarity: "common", weight: 10 }).select("id").single();
-  const { data: fan } = await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, spins_remaining: 5 }).select("id").single();
-  const { data: pass } = await admin.from("fan_passes").insert({ token: `rls-${tag}-${Date.now()}`, creator_id: id, wheel_id: wheel.id, fan_id: fan.id }).select("id").single();
-  await admin.from("grants").insert({ creator_id: id, fan_id: fan.id, spins: 5, amount_cents: 1000 });
-  await admin.from("spins").insert({ fan_pass_id: pass.id, creator_id: id, wheel_id: wheel.id, fan_id: fan.id, prize_id: prize.id, prize_label: `${tag} prize`, prize_rarity: "common" });
-  return { id, email, wheelId: wheel.id, fanId: fan.id };
+  const wheel = must(await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single(), `seed ${tag} wheel`);
+  const prize = must(await admin.from("prizes").insert({ wheel_id: wheel.id, label: `${tag} prize`, rarity: "common", weight: 10 }).select("id").single(), `seed ${tag} prize`);
+  const fan = must(await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, spins_remaining: 5 }).select("id").single(), `seed ${tag} fan`);
+  const pass = must(await admin.from("fan_passes").insert({ token: `rls-${RUN}-${tag}`, creator_id: id, wheel_id: wheel.id, fan_id: fan.id }).select("id").single(), `seed ${tag} fan_pass`);
+  must(await admin.from("grants").insert({ creator_id: id, fan_id: fan.id, spins: 5, amount_cents: 1000 }).select("id").single(), `seed ${tag} grant`);
+  must(await admin.from("spins").insert({ fan_pass_id: pass.id, creator_id: id, wheel_id: wheel.id, fan_id: fan.id, prize_id: prize.id, prize_label: `${tag} prize`, prize_rarity: "common" }).select("id").single(), `seed ${tag} spin`);
+  return { id, email, wheelId: wheel.id, fanId: fan.id, fanName: `${tag} fan` };
 }
 
 async function signedClient(email) {
@@ -77,13 +145,13 @@ async function signedClient(email) {
 }
 
 async function main() {
-  const createdUserIds = [];
+  let cleanupFailed = false;
   try {
-    console.log("Creating two throwaway creators…");
+    await sweepStaleUsers();
+
+    console.log(`Creating two throwaway creators (run ${RUN})…`);
     const A = await makeCreator("a");
-    createdUserIds.push(A.id);
     const B = await makeCreator("b");
-    createdUserIds.push(B.id);
 
     const a = await signedClient(A.email);
     console.log("\nActing as Creator A — asserting isolation from B:");
@@ -109,6 +177,11 @@ async function main() {
     check((upd.data?.length ?? 0) === 0, "A cannot UPDATE B's fan");
     const del = await a.from("wheels").delete().eq("id", B.wheelId).select("id");
     check((del.data?.length ?? 0) === 0, "A cannot DELETE B's wheel");
+    // Confirm with the service role that B's rows really are untouched.
+    const { data: bFanAfter } = await admin.from("fans").select("display_name").eq("id", B.fanId).maybeSingle();
+    check(bFanAfter?.display_name === B.fanName, `B's fan is unchanged (got ${bFanAfter?.display_name})`);
+    const { data: bWheelAfter } = await admin.from("wheels").select("id").eq("id", B.wheelId);
+    check((bWheelAfter?.length ?? 0) === 1, "B's wheel still exists");
 
     // A cannot PROMOTE itself. The profiles UPDATE policy is admin-only, so a
     // creator setting its own role must match zero rows (RLS no-op), and the
@@ -124,12 +197,14 @@ async function main() {
     check(aRole?.role !== "admin", `A's role is still not admin after self-promote attempt (got ${aRole?.role})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
-    // users or seeded tenant data are left behind in the live project.
+    // users or seeded tenant data (FK-cascaded from the user) are left behind.
     console.log("\nCleaning up test users…");
     for (const id of createdUserIds) {
       try {
-        await admin.auth.admin.deleteUser(id);
+        const { error } = await admin.auth.admin.deleteUser(id);
+        if (error) throw error;
       } catch (e) {
+        cleanupFailed = true;
         console.error("  ✗ Failed to delete test user", id, "—", e.message ?? e);
       }
     }
@@ -137,6 +212,10 @@ async function main() {
 
   if (failures > 0) {
     console.error(`\n✗ RLS RUNTIME TEST FAILED — ${failures} leak(s). Do not ship.`);
+    process.exit(1);
+  }
+  if (cleanupFailed) {
+    console.error("\n✗ RLS checks passed, but cleanup failed — test users were left behind.");
     process.exit(1);
   }
   console.log("\n✓ RLS runtime test passed — tenants are isolated.");
