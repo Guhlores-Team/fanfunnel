@@ -8,6 +8,7 @@ import { formatCents, timeAgo } from "@/lib/format";
 import { copyToClipboard, useClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
+import { useSheetDrag } from "@/lib/hooks/useSheetDrag";
 import { CloseButton, Field, TagEditor, initialsOf } from "./ui";
 import PackPresets from "@/components/dashboard/PackPresets";
 import { grantImpact, grantPriceError, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
@@ -102,6 +103,8 @@ export default function FanDetailDrawer({
     onEscape: onClose,
     initialFocus: closeRef,
   });
+  // Below `lg` the panel is a bottom sheet: its grabber drags down to dismiss.
+  const sheetDrag = useSheetDrag(panelRef, onClose);
 
   // Refetch the open fan's detail (after a top-up, an inline grant edit, etc.).
   const reload = useCallback(async () => {
@@ -290,11 +293,16 @@ export default function FanDetailDrawer({
         aria-modal="true"
         aria-label="Fan details"
         tabIndex={-1}
-        className="drawer-in absolute inset-x-0 bottom-0 flex max-h-[88dvh] flex-col overflow-y-auto rounded-t-[28px] border-t border-[#2a2533] bg-surface shadow-[0_-30px_60px_-20px_rgba(0,0,0,.7)] lg:inset-x-auto lg:right-0 lg:top-0 lg:h-full lg:max-h-none lg:w-full lg:max-w-[444px] lg:rounded-none lg:border-l lg:border-t-0 lg:shadow-[-30px_0_70px_-20px_rgba(0,0,0,.75)]"
+        className="drawer-in absolute inset-x-0 bottom-0 flex max-h-[88dvh] flex-col overflow-y-auto overscroll-contain rounded-t-[28px] pb-[env(safe-area-inset-bottom)] lg:pb-0 border-t border-[#2a2533] bg-surface shadow-[0_-30px_60px_-20px_rgba(0,0,0,.7)] lg:inset-x-auto lg:right-0 lg:top-0 lg:h-full lg:max-h-none lg:w-full lg:max-w-[444px] lg:rounded-none lg:border-l lg:border-t-0 lg:shadow-[-30px_0_70px_-20px_rgba(0,0,0,.75)]"
       >
         <div className="sticky top-0 z-10 border-b border-[#1f1b27] bg-surface px-5 pb-4 pt-2.5 lg:pt-[18px]">
-          {/* Sheet grabber (hidden once the panel is a side drawer). */}
-          <div aria-hidden="true" className="mb-2.5 flex justify-center lg:hidden">
+          {/* Sheet grabber (hidden once the panel is a side drawer): drag down to
+              dismiss. Pointer only — Esc and Close stay the keyboard way out. */}
+          <div
+            {...sheetDrag}
+            aria-hidden="true"
+            className="-mx-5 -mt-2.5 mb-1 flex cursor-grab touch-none justify-center pb-1.5 pt-2.5 lg:hidden"
+          >
             <span className="h-[5px] w-[42px] rounded-full bg-[#3a3442]" />
           </div>
           <div className="flex items-center justify-between gap-3">

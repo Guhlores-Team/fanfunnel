@@ -22,8 +22,10 @@ import {
   SetupChecklistButton,
   TopBar,
   SECTION_META,
+  accountInitials,
   type Tab,
 } from "@/components/dashboard/DashboardShell";
+import MobileTabBar from "@/components/dashboard/MobileTabBar";
 import { prefersReducedMotion } from "@/lib/sound";
 import { firstStepsAllDone, isFirstRun } from "@/components/dashboard/firstSteps";
 
@@ -59,6 +61,16 @@ function useOverview() {
     { pollMs: 12000 }
   );
   return { data, loading, refresh: reload, setData };
+}
+
+// A Sign out from the phone More sheet arrives detached (the sheet closed to
+// make room for the unsaved-changes dialog), and only a connected form submits.
+function submitSignOut(form: HTMLFormElement) {
+  if (form.isConnected) return form.submit();
+  const copy = form.cloneNode(true) as HTMLFormElement;
+  copy.hidden = true;
+  document.body.appendChild(copy);
+  copy.submit();
 }
 
 export default function DashboardClient({
@@ -191,6 +203,26 @@ export default function DashboardClient({
   const account = useFetch<{ displayName: string | null }>(email ? "/api/account" : null);
   const accountName =
     account.data?.displayName?.trim() || (email ? email.split("@")[0] : "Demo creator");
+  const accountSub = email ?? "Demo workspace — connect Supabase to go live";
+
+  // Shared by the sidebar (desktop) and the More sheet (phone).
+  const onSignOut = (e: React.FormEvent<HTMLFormElement>) => {
+    if (!wheelDirty) return;
+    e.preventDefault();
+    setSignOutForm(e.currentTarget);
+  };
+  const setupOffered = !overview.loading && onboardingDismissed && !onboardingAllDone;
+  const reopenSetup = () => {
+    setOnboardingHidden(false);
+    // The checklist lives on Today: open it there and bring it into view.
+    goTab("today");
+    requestAnimationFrame(() => {
+      checklistRef.current?.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+  };
 
   // Top-bar search routes the query to the Fans panel's existing name filter.
   // The nonce remounts FansPanel so a repeat search re-applies the query.
@@ -205,10 +237,16 @@ export default function DashboardClient({
   });
 
   const [title, subtitleText] = SECTION_META[tab];
+  // Phones show just the date on Today (the compressed top bar has no room).
   const subtitle =
-    tab === "today"
-      ? `${new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })} · ${subtitleText}`
-      : subtitleText;
+    tab === "today" ? (
+      <>
+        {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+        <span className="max-lg:hidden"> · {subtitleText}</span>
+      </>
+    ) : (
+      subtitleText
+    );
 
   return (
     <ToastProvider>
@@ -229,36 +267,26 @@ export default function DashboardClient({
         // (or demo mode, decided there too). The /api/admin routes re-check.
         showAdmin={adminVisible}
         accountName={accountName}
-        accountSub={email ?? "Demo workspace — connect Supabase to go live"}
+        accountSub={accountSub}
         showSignOut={!!email}
-        onSignOut={(e) => {
-          if (!wheelDirty) return;
-          e.preventDefault();
-          setSignOutForm(e.currentTarget);
-        }}
-        footerExtra={
-          !overview.loading && onboardingDismissed && !onboardingAllDone ? (
-            <SetupChecklistButton
-              onClick={() => {
-                setOnboardingHidden(false);
-                // The checklist lives on Today: open it there and bring it into view.
-                goTab("today");
-                requestAnimationFrame(() => {
-                  checklistRef.current?.scrollIntoView({
-                    behavior: prefersReducedMotion() ? "auto" : "smooth",
-                    block: "start",
-                  });
-                });
-              }}
-            />
-          ) : null
-        }
+        onSignOut={onSignOut}
+        footerExtra={setupOffered ? <SetupChecklistButton onClick={reopenSetup} /> : null}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* Below `lg` the fixed bottom tab bar covers the last 60px (+ safe area,
+          which body already pads), so the column reserves that space. */}
+      <div className="flex min-w-0 flex-1 flex-col max-lg:pb-[60px]">
         <TopBar
           title={title}
           subtitle={subtitle}
+          mobileLead={
+            <span
+              aria-hidden="true"
+              className="grid h-10 w-10 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-brand"
+            >
+              {accountInitials(accountName)}
+            </span>
+          }
           onSearch={(q) => {
             setFanSearch((s) => ({ q, nonce: s.nonce + 1 }));
             goToSection("fans");
@@ -376,13 +404,27 @@ export default function DashboardClient({
             onKeep={() => setSignOutForm(null)}
             onDiscard={() => {
               leavingRef.current = true;
-              signOutForm.submit();
+              submitSignOut(signOutForm);
             }}
           />
         )}
       </div>
         </div>
       </div>
+
+      <MobileTabBar
+        active={tab}
+        onSelect={goTab}
+        badges={{ prizes: pending, inbox: unread }}
+        // Same server-derived gate as the sidebar (never client state).
+        showAdmin={adminVisible}
+        accountName={accountName}
+        accountSub={accountSub}
+        initials={accountInitials(accountName)}
+        showSignOut={!!email}
+        onSignOut={onSignOut}
+        onSetup={setupOffered ? reopenSetup : undefined}
+      />
     </div>
     </ToastProvider>
   );

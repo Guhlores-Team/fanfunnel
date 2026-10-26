@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE } from "./harness.mjs";
+import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -16,6 +16,19 @@ const openTab = (name) => async (page) => {
   await clickTab(page, name);
   await page.waitForTimeout(600);
 };
+const openMore = async (page) => {
+  await page.locator(MORE_BUTTON).click();
+  await page.getByRole("dialog", { name: "More" }).waitFor({ timeout: 4000 });
+  await page.waitForTimeout(500);
+};
+const openFanSheet = async (page) => {
+  await clickTab(page, "Fans");
+  await page.getByRole("button", { name: "View Demo Fan" }).click();
+  await page.getByRole("dialog", { name: "Fan details" }).waitFor({ timeout: 5000 });
+  await page.waitForTimeout(800);
+};
+const DESKTOP = { width: 1280, height: 900 };
+const PHONE = { width: 390, height: 844 };
 
 // Pages to scan + an optional prep step to reach a meaningful state.
 //
@@ -38,6 +51,10 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard (Analytics)", prep: openTab("Analytics"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Boosts)", prep: openTab("Boosts"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Settings)", prep: openTab("Settings"), advisory: DASH_ADVISORY },
+  // Phone layout (RD-6): bottom tab bar, the More sheet, the fan bottom sheet.
+  { path: "/dashboard", name: "dashboard phone (tab bar)", viewport: PHONE, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (More sheet)", viewport: PHONE, prep: openMore, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (fan sheet)", viewport: PHONE, prep: openFanSheet, advisory: DASH_ADVISORY },
   { path: "/spin/demo", name: "fan spin (age gate)" },
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
 ];
@@ -45,7 +62,8 @@ const PAGES = [
 // Impacts that fail the build vs. advisory-only.
 const BLOCKING = new Set(["critical", "serious"]);
 
-async function scan(page, { path, name, prep, advisory = [] }) {
+async function scan(page, { path, name, prep, advisory = [], viewport = DESKTOP }) {
+  await page.setViewportSize(viewport);
   await goto(page, path, 1600);
   if (prep) await prep(page);
   await page.addScriptTag({ content: AXE_SRC });
@@ -66,7 +84,7 @@ try {
   server = await startServer();
   log(`A11y scan → ${BASE}`);
   browser = await chromium.launch();
-  const page = await browser.newContext({ viewport: { width: 1280, height: 900 } }).then((c) => c.newPage());
+  const page = await browser.newContext({ viewport: DESKTOP }).then((c) => c.newPage());
 
   let blocking = 0;
   let advisories = 0;

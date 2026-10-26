@@ -57,6 +57,19 @@ body {
   overflow-x: clip;
 }
 
+/* Phone dashboard tab bar (MobileTabBar, below `lg`). While it is on the page,
+   bottom-fixed UI (toasts, the debug launcher, the wheel editor's sticky save
+   bar) sits above it: --ff-bottom-offset is the bar's full height including the
+   home-indicator inset; 0 everywhere else. 60px mirrors the bar's h-[60px]. */
+:root {
+  --ff-bottom-offset: 0px;
+}
+@media (width < 64rem) {
+  body:has([data-ff-tabbar]) {
+    --ff-bottom-offset: calc(60px + env(safe-area-inset-bottom));
+  }
+}
+
 /* Tabular figures for any metric/number so big values don't wobble. */
 .tnum {
   font-variant-numeric: tabular-nums;
