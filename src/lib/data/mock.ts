@@ -995,16 +995,20 @@ export async function mockSpin(token: string, clientSeed = "") {
   const wheelId = pass.wheelId;
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
 
-  // Happy hour: boost rare-or-better weights for the pick (the returned clone is
-  // used only for selection — stock decrement below targets the real wheel).
-  const hh = mockGetActiveHappyHour(wheel.id);
-  const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
-
   // The fan's clientSeed is mixed into the RNG so the server can't dictate the
   // outcome.
   const serverSeedHash =
     committedSeed && committedHash ? committedHash : await sha256Hex(serverSeed);
   const rng = await makeFairRng(serverSeed, clientSeed, nonce);
+
+  // Happy hour: boost rare-or-better weights for the pick (the returned clone is
+  // used only for selection — stock decrement below targets the real wheel).
+  // Built AFTER the last await above: the clone snapshots stock, and the pick +
+  // decrement below must see the same count a concurrent spin can't change in
+  // between (a snapshot taken before an await let two spins both sell the last
+  // unit — the mock mirror of the Supabase path's stock compare-and-swap).
+  const hh = mockGetActiveHappyHour(wheel.id);
+  const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
 
   let picked: ReturnType<typeof pickPrizeWithPity>;
   try {

@@ -624,6 +624,51 @@ export async function completeClaimedSpin(
   return result;
 }
 
+const MAX_STOCK_CAS_ATTEMPTS = 5;
+
+/**
+ * Take ONE unit of a limited prize's stock with a compare-and-swap on the
+ * value we read. A plain `update({ stock: read - 1 }).gt("stock", 0)` lets two
+ * concurrent spins that both read 3 both write 2: a unit vanishes from the
+ * count and the prize is awarded more times than its stock. Guarding the write
+ * on `stock = read` means exactly one spin wins each unit; a loser re-reads the
+ * row and retries from the fresh value, giving up (sold out) at 0.
+ *
+ * "taken" means the row was decremented and the caller must refund that unit
+ * on failure; "unlimited" means the prize lost its stock limit meanwhile so
+ * nothing was decremented; "sold_out" means no unit is left (or the retry
+ * budget ran out under pathological contention — the caller then excludes
+ * the prize for this spin and re-picks, never oversells); "unknown" means the
+ * UPDATE errored, so it may or may not have committed — only a clean 0-row
+ * match is a definite loss that is safe to retry (a retry after a committed
+ * decrement would take a SECOND unit while the refund covers one).
+ */
+async function takeStockUnit(
+  sb: AnyClient,
+  prizeId: string,
+  stockRead: number,
+): Promise<"taken" | "unlimited" | "sold_out" | "unknown"> {
+  let read = stockRead;
+  for (let attempt = 0; attempt < MAX_STOCK_CAS_ATTEMPTS; attempt++) {
+    if (read <= 0) return "sold_out";
+    const { data: updated, error } = await sb
+      .from("prizes")
+      .update({ stock: read - 1 })
+      .eq("id", prizeId)
+      .eq("stock", read)
+      .select("id")
+      .maybeSingle();
+    if (error) return "unknown";
+    if (updated) return "taken";
+    const { data: row } = await sb.from("prizes").select("stock").eq("id", prizeId).maybeSingle();
+    const current = (row as { stock: number | null } | null)?.stock;
+    if (current === undefined) return "sold_out"; // prize row gone
+    if (current === null) return "unlimited";
+    read = current;
+  }
+  return "sold_out";
+}
+
 async function recordClaimedSpin(
   sb: AnyClient,
   token: string,
@@ -753,18 +798,26 @@ async function recordClaimedSpin(
         chosen = pick;
         break;
       }
-      const { data: updated } = await sb
-        .from("prizes")
-        .update({ stock: pick.prize.stock - 1 })
-        .eq("id", pick.prize.id)
-        .gt("stock", 0)
-        .select("id")
-        .maybeSingle();
-      if (updated) {
+      const unit = await takeStockUnit(sb, pick.prize.id, pick.prize.stock);
+      if (unit === "taken") {
         // From here on a failed spin must give this unit back too.
         refund.prizeId = pick.prize.id;
         chosen = pick;
         break;
+      }
+      if (unit === "unlimited") {
+        // Made unlimited since our read: nothing was decremented, nothing to refund.
+        chosen = pick;
+        break;
+      }
+      if (unit === "unknown") {
+        // The decrement may or may not have committed. Fail the spin (the
+        // caller refunds the claimed spin) WITHOUT restoring this prize's unit:
+        // adding one back when the decrement never happened would oversupply
+        // the prize by a unit and let it oversell, whereas leaving it when it
+        // did commit leaks one unit of stock, never a prize. Never oversell.
+        console.error("spin: stock decrement outcome unknown", pick.prize.id);
+        return { error: "db_error" };
       }
       excluded.add(pick.prize.id);
     }
