@@ -1775,45 +1775,38 @@ export async function grantSpins(
   }
 
   const sb = await createClient();
-  const { data: pass } = await sb
-    .from("fan_passes")
-    .select("id, spins_remaining, spins_granted_total, fan:fans(id, spins_remaining, spins_granted_total)")
-    .eq("token", token)
-    .maybeSingle();
+  type PassBal = { id: string; spins_remaining: number; spins_granted_total: number };
 
-  const p = pass as unknown as {
-    id: string;
-    spins_remaining: number;
-    spins_granted_total: number;
-    fan: { id: string; spins_remaining: number; spins_granted_total: number } | null;
-  } | null;
-  if (!p || !p.fan) return { error: "not_found" };
+  // Top up THIS pass (per-wheel). The fan-level aggregate is the 0035 trigger's
+  // alone: it fires on this write, so no fans update here (a value read before
+  // the write overwrote any spin that landed in between). The pass write is a
+  // compare-and-swap on the balance just read for the same reason: claim_spin
+  // runs concurrently, and a spin landing between our read and our write makes
+  // the update match zero rows, so we re-read and retry instead of losing it.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: pass } = await sb
+      .from("fan_passes")
+      .select("id, spins_remaining, spins_granted_total")
+      .eq("token", token)
+      .maybeSingle();
+    const p = pass as PassBal | null;
+    if (!p) return { error: "not_found" };
 
-  // Top up THIS pass (per-wheel) and the fan-level aggregate.
-  const { data: updated, error } = await sb
-    .from("fan_passes")
-    .update({
-      spins_remaining: p.spins_remaining + add,
-      spins_granted_total: p.spins_granted_total + add,
-    })
-    .eq("id", p.id)
-    .select("spins_remaining")
-    .single();
-  if (error || !updated) return { error: "db_error" };
-  // The fan aggregate is also kept in sync by the 0025 DB trigger; this explicit
-  // write keeps it correct on a pre-0025 DB. Surface a failure instead of letting
-  // the two balances drift silently.
-  const { error: fanErr } = await sb
-    .from("fans")
-    .update({
-      spins_remaining: p.fan.spins_remaining + add,
-      spins_granted_total: p.fan.spins_granted_total + add,
-    })
-    .eq("id", p.fan.id);
-  if (fanErr) {
-    console.error("grantSpins: fan aggregate update failed", fanErr.message);
+    const { data: updated, error } = await sb
+      .from("fan_passes")
+      .update({
+        spins_remaining: p.spins_remaining + add,
+        spins_granted_total: p.spins_granted_total + add,
+      })
+      .eq("id", p.id)
+      .eq("spins_remaining", p.spins_remaining)
+      .eq("spins_granted_total", p.spins_granted_total)
+      .select("spins_remaining")
+      .maybeSingle();
+    if (error) return { error: "db_error" };
+    if (updated) return { spinsRemaining: (updated as { spins_remaining: number }).spins_remaining };
   }
-  return { spinsRemaining: updated.spins_remaining };
+  return { error: "db_error" }; // balance kept moving under us
 }
 
 /**
