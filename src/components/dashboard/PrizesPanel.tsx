@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import type { CreatorOverview, RedemptionItem, RedemptionStatus } from "@/lib/data/types";
 
@@ -8,7 +8,6 @@ import type { CreatorOverview, RedemptionItem, RedemptionStatus } from "@/lib/da
 const P = {
   check: "M20 6 9 17l-5-5",
   refresh: "M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5",
-  chevron: "m6 9 6 6 6-6",
 };
 
 function Glyph({ d, size = 15, className = "" }: { d: string; size?: number; className?: string }) {
@@ -32,7 +31,6 @@ function Glyph({ d, size = 15, className = "" }: { d: string; size?: number; cla
 }
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
-const recessed = "border border-[var(--hair)] [background:var(--s2)]";
 const ghostBtn =
   "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:text-ink";
 
@@ -244,8 +242,6 @@ function RedemptionRow({
   onPatch: (id: string, patch: Patch) => void;
 }) {
   const color = RARITY_COLORS[r.rarity];
-  const detailsId = useId();
-  const [open, setOpen] = useState(false);
   const [notes, setNotes] = useState(r.notes ?? "");
   // Keep the local draft in sync when the row is refreshed from the server.
   useEffect(() => {
@@ -254,17 +250,25 @@ function RedemptionRow({
   }, [r.notes]);
 
   const dueValue = r.dueAt ? r.dueAt.slice(0, 10) : "";
-  const dueLabel = r.dueAt
-    ? new Date(r.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
-    : null;
   const overdue =
     !!r.dueAt &&
     r.status !== "fulfilled" &&
     r.status !== "cancelled" &&
     // eslint-disable-next-line react-hooks/purity -- comparing a due date to "now" is inherently time-dependent
     new Date(r.dueAt).getTime() < Date.now();
-  const hasDetails = !!r.notes || !!r.dueAt;
   const subject = `${r.prizeLabel} for ${r.fanName}`;
+  const canCancel = r.status !== "cancelled" && r.status !== "fulfilled";
+  // "Cancel prize" asks first, in a full-width strip under the row header (so
+  // it can wrap on phones). Closing it with Keep/Escape refocuses the trigger.
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const cancelTriggerRef = useRef<HTMLButtonElement>(null);
+  const restoreCancelFocus = useRef(false);
+  useEffect(() => {
+    if (!confirmingCancel && restoreCancelFocus.current) {
+      restoreCancelFocus.current = false;
+      cancelTriggerRef.current?.focus();
+    }
+  }, [confirmingCancel]);
 
   function commitNotes() {
     const next = notes.trim() ? notes : null;
@@ -273,7 +277,7 @@ function RedemptionRow({
 
   return (
     <li
-      className={`lift-in rounded-[13px] px-4 py-[13px] transition-[border-color] duration-150 hover:border-[color-mix(in_oklab,var(--brand)_30%,var(--hair))] ${raised}`}
+      className={`lift-in flex flex-col gap-3 rounded-[13px] px-4 py-[13px] transition-[border-color] duration-150 hover:border-[color-mix(in_oklab,var(--brand)_30%,var(--hair))] ${raised}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2.5">
         <div className="flex min-w-0 items-center gap-3">
@@ -315,70 +319,114 @@ function RedemptionRow({
           >
             {STATUS_CTA[r.status]}
           </button>
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            aria-controls={detailsId}
-            aria-label={`Details: ${subject}${hasDetails ? " (has note or due date)" : ""}`}
-            className={ghostBtn}
-          >
-            Details
-            {hasDetails && (
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
-            )}
-            <Glyph d={P.chevron} size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
-          </button>
+          {canCancel && !confirmingCancel && (
+            <button
+              ref={cancelTriggerRef}
+              type="button"
+              onClick={() => setConfirmingCancel(true)}
+              aria-label={`Cancel prize: ${subject}`}
+              className={ghostBtn}
+            >
+              Cancel prize
+            </button>
+          )}
         </div>
       </div>
 
-      {open && (
-        <div
-          id={detailsId}
-          className={`mt-3 flex flex-col gap-3 rounded-[11px] p-3 ${recessed}`}
-        >
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-0 flex-1 basis-56 flex-col gap-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">Note</span>
-              <input
-                className="ff-input min-w-0 text-sm"
-                placeholder="Add a note (e.g. shipped via DHL #123)…"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                onBlur={commitNotes}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
-                Due{dueLabel ? <span className="tnum normal-case tracking-normal"> · {dueLabel}</span> : null}
-              </span>
-              <input
-                type="date"
-                className="ff-input tnum text-sm"
-                value={dueValue}
-                onChange={(e) =>
-                  onPatch(r.id, { dueAt: e.target.value ? e.target.value : null })
-                }
-              />
-            </label>
-          </div>
-          {r.status !== "cancelled" && r.status !== "fulfilled" && (
-            <div>
-              <button
-                type="button"
-                onClick={() => onSet(r.id, "cancelled")}
-                aria-label={`Cancel prize: ${subject}`}
-                className="inline-flex min-h-9 items-center rounded-[9px] border border-[#ef4444]/35 px-3 text-[12.5px] font-semibold text-[#fca5a5] transition-colors hover:bg-[#ef4444]/10"
-              >
-                Cancel prize
-              </button>
-            </div>
-          )}
-        </div>
+      {canCancel && confirmingCancel && (
+        <CancelConfirm
+          subject={subject}
+          onConfirm={() => onSet(r.id, "cancelled")}
+          onKeep={() => {
+            restoreCancelFocus.current = true;
+            setConfirmingCancel(false);
+          }}
+        />
       )}
+
+      {/* Note + due date sit on every row (as before the redesign), restyled. */}
+      <div className="flex flex-wrap items-end gap-2.5">
+        <label className="flex min-w-0 flex-1 basis-56 flex-col gap-1">
+          <span className="text-[10.5px] font-semibold uppercase tracking-[0.05em] text-muted">
+            Note
+          </span>
+          <input
+            className="ff-input min-w-0 py-1.5 text-[13px]"
+            placeholder="Add a note (e.g. shipped via DHL #123)…"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={commitNotes}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+        </label>
+        <label className="flex min-w-0 flex-col gap-1">
+          <span className="text-[10.5px] font-semibold uppercase tracking-[0.05em] text-muted">
+            Due
+          </span>
+          <input
+            type="date"
+            className="ff-input tnum min-w-0 py-1.5 text-[13px]"
+            value={dueValue}
+            onChange={(e) =>
+              onPatch(r.id, { dueAt: e.target.value ? e.target.value : null })
+            }
+          />
+        </label>
+      </div>
     </li>
+  );
+}
+
+/**
+ * The two-step confirm for "Cancel prize", so a stray click never cancels a
+ * win. It takes focus on open; Escape or "Keep" closes it.
+ */
+function CancelConfirm({
+  subject,
+  onConfirm,
+  onKeep,
+}: {
+  subject: string;
+  onConfirm: () => void;
+  onKeep: () => void;
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const questionId = useId();
+  useEffect(() => {
+    confirmRef.current?.focus();
+  }, []);
+
+  return (
+    <div
+      role="group"
+      aria-label="Confirm cancelling this prize"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onKeep();
+        }
+      }}
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[11px] border border-[#ef4444]/25 bg-[#ef4444]/[0.06] px-3 py-2.5"
+    >
+      <p id={questionId} className="min-w-0 flex-1 basis-48 text-[12.5px] text-ink text-pretty">
+        Cancel {subject}? It leaves the queue; you can reopen it from the Cancelled filter.
+      </p>
+      <div className="flex shrink-0 gap-2">
+        <button
+          ref={confirmRef}
+          type="button"
+          onClick={onConfirm}
+          aria-describedby={questionId}
+          className="inline-flex min-h-9 items-center rounded-[9px] border border-[#ef4444]/35 px-3 text-[12.5px] font-semibold text-[#fca5a5] transition-colors hover:bg-[#ef4444]/10"
+        >
+          Cancel prize
+        </button>
+        <button type="button" onClick={onKeep} className={`${ghostBtn} text-ink`}>
+          Keep
+        </button>
+      </div>
+    </div>
   );
 }

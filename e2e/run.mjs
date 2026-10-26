@@ -42,7 +42,7 @@ try {
   try {
     await creatorJourney(page, runner);
     await fanJourney(page, runner, ctx); // fan spins → creates a pending redemption
-    await creatorExtras(page, runner); // fulfil it + webhooks + happy hour
+    await creatorExtras(page, runner, ctx); // fulfil it + drawer→inbox + admin + webhooks + happy hour
     await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
   } catch (e) {

@@ -33,6 +33,8 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard (Today)", advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Wheel editor)", prep: openTab("Wheel"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Fans)", prep: openTab("Fans"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Fulfilment)", prep: openTab("Fulfilment"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Admin)", prep: openTab("Admin"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Analytics)", prep: openTab("Analytics"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Boosts)", prep: openTab("Boosts"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Settings)", prep: openTab("Settings"), advisory: DASH_ADVISORY },

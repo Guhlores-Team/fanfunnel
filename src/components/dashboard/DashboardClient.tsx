@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { brandVars } from "@/lib/theme";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
@@ -15,6 +15,7 @@ import MetricsPanel from "@/components/dashboard/MetricsPanel";
 import WheelEditor from "@/components/dashboard/WheelEditor";
 import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
+import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -43,6 +44,11 @@ const AnalyticsPanel = dynamic(() => import("@/components/dashboard/AnalyticsPan
 const SettingsPanel = dynamic(() => import("@/components/dashboard/SettingsPanel"), {
   loading: PanelFallback,
 });
+// Admin lives in the shell as "Account › Admin". It only renders behind the
+// server-derived `isAdmin` gate below, and every /api/admin route re-checks.
+const AdminClient = dynamic(() => import("@/components/admin/AdminClient"), {
+  loading: PanelFallback,
+});
 
 // Shared overview, polled (12s) + refreshed on tab focus so metrics + the
 // pending badge stay live. `setData` is exposed for optimistic account edits.
@@ -59,14 +65,40 @@ export default function DashboardClient({
   email,
   initialWheel,
   initialOnboardingDismissed = false,
+  initialTab,
 }: {
+  /** Server-derived (dashboard/page.tsx): an active admin per is_admin(), or
+   *  demo mode. The only input to the Admin section gate. */
   isAdmin: boolean;
   email: string | null;
   initialWheel: WheelConfig;
   initialOnboardingDismissed?: boolean;
+  /** Deep link (`/dashboard?section=admin`, used by the /admin redirect). */
+  initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("today");
+  // The Admin section exists only when the server said so (never client state).
+  const adminVisible = isAdmin;
+  const [tab, setTab] = useState<Tab>(
+    initialTab && (initialTab !== "admin" || adminVisible) ? initialTab : "today"
+  );
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
+  // Last saved/loaded wheel JSON. Lives beside `wheel` so "Unsaved changes"
+  // (and the edits themselves) survive leaving the Wheels section and coming back.
+  const [savedWheelJson, setSavedWheelJson] = useState(() => JSON.stringify(initialWheel));
+  const wheelDirty = useMemo(() => JSON.stringify(wheel) !== savedWheelJson, [wheel, savedWheelJson]);
+  // Leaving with unsaved wheel edits. Sign out asks in-app first (below); a
+  // reload/close can only get the browser's own beforeunload prompt. Lives
+  // here, not in the editor, so it holds while another section is open.
+  const leavingRef = useRef(false);
+  const [signOutForm, setSignOutForm] = useState<HTMLFormElement | null>(null);
+  useEffect(() => {
+    if (!wheelDirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      if (!leavingRef.current) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [wheelDirty]);
   // Which wheel the editor is currently editing. Lifted so it survives tab
   // switches and the WheelSwitcher highlights the right wheel. Seeded from the
   // initial active wheel's id so the switcher highlights it on first paint.
@@ -164,6 +196,12 @@ export default function DashboardClient({
   const [fanSearch, setFanSearch] = useState({ q: "", nonce: 0 });
   // "New fan link" → Fans, focus the mint form's name field.
   const [mintFocus, setMintFocus] = useState(0);
+  // Fan drawer "Message" → Inbox with that fan's thread selected. The nonce lets
+  // the same fan be re-requested after the creator picked another thread.
+  const [inboxFocus, setInboxFocus] = useState<{ fanId: string | null; nonce: number }>({
+    fanId: null,
+    nonce: 0,
+  });
 
   const [title, subtitleText] = SECTION_META[tab];
   const subtitle =
@@ -186,12 +224,17 @@ export default function DashboardClient({
         active={tab}
         onSelect={goTab}
         badges={{ prizes: pending, inbox: unread }}
-        // Same gate as before the redesign: isAdmin comes from profiles.role on
-        // the server (dashboard/page.tsx); no email = demo mode.
-        showAdmin={isAdmin || !email}
+        // Server-derived gate: is_admin() via checkAdmin in dashboard/page.tsx
+        // (or demo mode, decided there too). The /api/admin routes re-check.
+        showAdmin={adminVisible}
         accountName={accountName}
         accountSub={email ?? "Demo workspace — connect Supabase to go live"}
         showSignOut={!!email}
+        onSignOut={(e) => {
+          if (!wheelDirty) return;
+          e.preventDefault();
+          setSignOutForm(e.currentTarget);
+        }}
         footerExtra={
           !overview.loading && onboardingDismissed && !onboardingAllDone ? (
             <SetupChecklistButton
@@ -256,6 +299,10 @@ export default function DashboardClient({
             key={fanSearch.nonce}
             initialSearch={fanSearch.q}
             focusMintNonce={mintFocus}
+            onMessage={(fanId) => {
+              setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
+              goToSection("inbox");
+            }}
           />
         )}
         {tab === "campaigns" && <CampaignsPanel />}
@@ -266,7 +313,13 @@ export default function DashboardClient({
             onNavigate={(t) => setTab(t as Tab)}
           />
         )}
-        {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
+        {tab === "inbox" && (
+          <InboxPanel
+            onChanged={overview.refresh}
+            initialFanId={inboxFocus.fanId}
+            initialFanNonce={inboxFocus.nonce}
+          />
+        )}
         {tab === "analytics" && (
           /* One consolidated view: the Command Center's designed cards (stat
              strip, trends, what's landing, rarity mix) up top, then profit &
@@ -283,7 +336,8 @@ export default function DashboardClient({
           <WheelEditor
             wheel={wheel}
             setWheel={setWheel}
-            initialWheel={initialWheel}
+            savedJson={savedWheelJson}
+            setSavedJson={setSavedWheelJson}
             editingWheelId={editingWheelId}
             setEditingWheelId={setEditingWheelId}
             onWheelMutated={overview.refresh}
@@ -297,6 +351,18 @@ export default function DashboardClient({
             onBrandColorChange={(color) =>
               setWheel((w) => ({ ...w, brandColor: color }))
             }
+          />
+        )}
+        {tab === "admin" && adminVisible && <AdminClient />}
+        {signOutForm && (
+          <DiscardChangesDialog
+            what="your wheel"
+            consequence="Signing out now throws them away."
+            onKeep={() => setSignOutForm(null)}
+            onDiscard={() => {
+              leavingRef.current = true;
+              signOutForm.submit();
+            }}
           />
         )}
       </div>
