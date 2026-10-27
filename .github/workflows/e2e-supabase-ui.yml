@@ -17,9 +17,7 @@ on:
 
 jobs:
   login-ui:
-    # Pinned: ubuntu-latest is now 26.04, which Playwright 1.60 can't install
-    # Chromium on. Unpin after upgrading playwright to a release that supports it.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}

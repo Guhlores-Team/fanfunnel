@@ -10,9 +10,7 @@ on:
 
 jobs:
   verify:
-    # Pinned: ubuntu-latest is now 26.04, which Playwright 1.60 can't install
-    # Chromium on. Unpin after upgrading playwright to a release that supports it.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # The in-app debug console is only compiled in when NEXT_PUBLIC_ENABLE_DEBUG=1
     # (N9 keeps it out of prod). The mock e2e drives it to assert zero console
     # errors across the creator flow, so enable it for this test build — otherwise
@@ -75,13 +73,15 @@ jobs:
   # history is needed because the reference build starts from the original
   # schema.sql (see scripts/db/README.md).
   schema-drift:
+    # Pinned for its preinstalled PostgreSQL 16 binaries (the drift check builds
+    # throwaway clusters with initdb/pg_ctl), not for Playwright.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
