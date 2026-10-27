@@ -66,37 +66,25 @@ export default function YourPlay({
 
   return (
     <section data-testid="your-play" className="w-full rounded-2xl border border-line bg-surface/50">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-controls={panelId}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-2xl px-4 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
-      >
-        <span className="min-w-0">
-          <span className="font-semibold text-ink">Your play</span>
-          {showCounts && (
-            <span data-testid="your-play-counts" className="tnum ml-2 text-muted">
-              {playSummary(play.today, play.week)}
-            </span>
-          )}
-        </span>
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          focusable="false"
-          className={`shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}
+      {/* The counts sit beside the toggle, not inside it: the button's own
+          text stays "Your play", so it never reads as (or matches) a SPIN control. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 pr-4">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-controls={panelId}
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl px-4 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
         >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
+          Your play
+          <Chevron open={open} />
+        </button>
+        {showCounts && (
+          <span data-testid="your-play-counts" className="tnum min-w-0 py-1 pl-4 text-xs text-muted sm:pl-0">
+            {playSummary(play.today, play.week)}
+          </span>
+        )}
+      </div>
 
       {open && (
         <div id={panelId} className="space-y-4 border-t border-line px-4 pb-4 pt-3">
@@ -150,5 +138,25 @@ export default function YourPlay({
         </div>
       )}
     </section>
+  );
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className={`shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
   );
 }

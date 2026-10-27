@@ -51,6 +51,14 @@ check(
   btnClass("Keep playing") === "equalBtn" && btnClass("Take a break") === "equalBtn"
 );
 
+// No new fan-page button may read like the SPIN control: tests, assistive tech
+// and people find SPIN by its text, so "Your play" keeps its counts outside the
+// toggle and no RM-6 button says "spin".
+const buttonBlocks = surfaces.flatMap((src) => [...src.matchAll(/<button\b[\s\S]*?<\/button>/g)].map((m) => m[0]));
+const buttonTexts = buttonBlocks.map((b) => b.replace(/<[^>]*>/g, " ")).join(" | ");
+check(`no RM-6 button text mentions spins (${buttonTexts.match(/[^|]*spin[^|]*/i)?.[0] ?? "none"})`, !/spin/i.test(buttonTexts));
+check("the play counts are never rendered inside a button", buttonBlocks.every((b) => !/playSummary\(|breatherTitle\(/.test(b)));
+
 // --- once per threshold per day ----------------------------------------------------
 const mem = new Map<string, string>();
 const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) };

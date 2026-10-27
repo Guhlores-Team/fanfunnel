@@ -2,13 +2,13 @@ import assert from "node:assert";
 import { POST as breakPOST } from "./break/route";
 import { POST as reminderPOST } from "./reminder/route";
 import { POST as spinPOST } from "../spin/route";
-import { mockAckFan, mockCreatePass, mockGetFanPass, mockSelfExclude } from "@/lib/data/mock";
+import { mockAckFan, mockCreatePass, mockGetFanPass, mockSelfExclude, mockSetFanBlocked } from "@/lib/data/mock";
 import { PLAY_ROUTE_LIMIT } from "@/lib/play/config";
 
 // RM-6 negative tests for the two new fan endpoints. Fans are never
 // authenticated: the link token is the only key, so these lock the gate.
 //   - bad bodies are 400 and change nothing;
-//   - an unknown token is 404, a paused link 403;
+//   - an unknown token is 404, a paused or blocked link 403;
 //   - the client can't pick the break end, shorten a break, or name a fan;
 //   - a break makes POST /api/spin answer 403 on_break;
 //   - each route is rate-limited per IP + token.
@@ -68,6 +68,13 @@ async function main() {
   mockSelfExclude(p.token);
   check("break: a paused link is 403", (await brk({ token: p.token, duration: "24h" })).status === 403);
   check("reminder: a paused link is 403", (await rem({ token: p.token, daily: 20 })).status === 403);
+  const bl = liveFan("Route Blocked");
+  mockSetFanBlocked(bl.fanId, true);
+  check("break: a blocked fan's link is 403", (await brk({ token: bl.token, duration: "24h" })).status === 403);
+  check("reminder: a blocked fan's link is 403", (await rem({ token: bl.token, daily: 20 })).status === 403);
+  mockSetFanBlocked(bl.fanId, false);
+  const blPage = await mockGetFanPass(bl.token);
+  check("refused links changed nothing", blPage?.play?.reminder === null && blPage.play.breakUntil === null);
 
   // --- the client can't pick the end or a fan --------------------------------------
   const b = liveFan("Route B");
