@@ -1,7 +1,8 @@
 import { cache } from "react";
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
-import { getFanAppInfo, getFanPass } from "@/lib/data";
+import { getFanAppInfo, getFanLinkStatus, getFanPass } from "@/lib/data";
+import LinkGone from "@/components/fan/LinkGone";
 import { fanAppName, fanAppPaths, iconVersion } from "@/lib/pwa/manifest";
 import SpinClient from "@/components/SpinClient";
 import SafetyMenu from "@/components/fan/SafetyMenu";
@@ -50,7 +51,14 @@ export default async function SpinPage({
 }) {
   const { token } = await params;
   const pass = await getFanPass(token);
-  if (!pass) notFound();
+  if (!pass) {
+    // A link whose creator left, or whose fan deleted their data, says so.
+    // Anything else (paused, switched off, unknown) is the 404, which still
+    // offers the fan's data controls (./not-found.tsx).
+    const status = await getFanLinkStatus(token);
+    if (!status) notFound();
+    return <LinkGone status={status} />;
+  }
 
   // The creator's brand color drives the whole page — every fan page feels
   // like THEIRS, not FanFunnel's.

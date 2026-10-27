@@ -7,12 +7,13 @@ import { useToast } from "@/components/ui/Toast";
 import { useClipboard } from "@/lib/hooks/useClipboard";
 import { Field } from "./ui";
 import HomeScreenIconCard from "./HomeScreenIconCard";
+import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecurityCards";
 
 /**
  * Settings (Command Center). Two groups:
- *   • Account — profile (avatar, display name, handle, email), password and
- *     notification preferences (Supabase Auth via server routes; prefs are
- *     persisted per account).
+ *   • Account — profile (avatar, display name, handle, email), password,
+ *     two-factor sign-in and notification preferences (Supabase Auth via
+ *     server routes; prefs are persisted per account).
  *   • Public page (SFW link-in-bio) — slug / tagline / tip link / note, the brand
  *     color, and a LIVE PREVIEW of the public /c/[slug] page that updates as
  *     fields change. The avatar is edited in Profile but stored on the same
@@ -110,6 +111,7 @@ export default function SettingsPanel({
             onDisplayNameChange={onDisplayNameChange}
           />
           <SecurityCard />
+          <TwoFactorCard />
           <NotificationsCard account={account} patchAccount={patchAccount} />
         </div>
       </section>
@@ -128,6 +130,18 @@ export default function SettingsPanel({
           markSaved={markSaved}
           onBrandColorChange={onBrandColorChange}
         />
+      </section>
+
+      <section aria-labelledby="settings-data">
+        <GroupHeader
+          id="settings-data"
+          title="Your data"
+          hint="Take a copy of everything your account holds, or close the account for good."
+        />
+        <div className="max-w-[680px] space-y-[18px]">
+          <DataExportCard />
+          <CloseAccountCard />
+        </div>
       </section>
     </div>
   );

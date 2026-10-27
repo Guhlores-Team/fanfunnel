@@ -166,3 +166,5 @@ export type { NotificationFeed, NotificationItem, NotificationKind, Notification
 export { getFanAppInfo, getMyPwaIconMode, setMyPwaIconMode } from "./pwa";
 export { recordAudit, listAuditLog } from "./audit";
 export type { AuditAction, AuditEntry, AuditInput } from "./audit";
+export { exportFanData, deleteFanData, getFanLinkStatus, exportCreatorData, isPlausibleToken } from "./privacy";
+export type { FanLinkStatus } from "./privacy";
