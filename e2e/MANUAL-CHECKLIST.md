@@ -80,3 +80,58 @@ Preview is pointed at the live database (see `docs/ENVIRONMENTS.md`).
 ## 5. Load / concurrency (optional)
 - [ ] Many fans spinning at once never double-spend (the atomic `claim_spin` path). Run it
       against the test database, never production.
+
+## 6. Home-screen install (RM-4: real iPhone on iOS 16.4+ and a real Android phone, Preview)
+Automated e2e covers the manifest, icons, headers and the install card in an emulated
+browser. Only a real phone can show the install itself. **Setup:** in Settings › Public page ›
+**Home-screen icon**, leave **Neutral** selected. In Fans, mint a fan link with at least 4
+spins and send it to both phones.
+
+**iPhone (Safari, iOS 16.4 or later)**
+- [ ] Open the fan link and pass the age gate. **Before spinning**, there is no "Add to your
+      home screen" card.
+- [ ] Spin once and close the win. A card under SPIN reads **"Add Spins to your home screen ⭐"**.
+      Tap **How**: two steps appear (Share, then Add to Home Screen).
+- [ ] Follow them. Safari's Add screen proposes the name **Spins** and shows the **wheel icon in
+      your brand colour**, not your photo or name. Tap Add.
+- [ ] The home screen shows the wheel icon labelled **Spins**.
+- [ ] Tap the icon. It opens **full screen** (no Safari bars) **straight to this fan's wheel**:
+      same balance and wins, not the landing page, the dashboard or a sign-in page. The status
+      bar text is readable.
+- [ ] Spin inside the installed app: it works, and **no install card** appears there.
+- [ ] The app switcher shows **Spins**, not your creator name.
+- [ ] Back in the Safari tab, tap **Not now** on the card. It disappears. Reload and win again:
+      it stays hidden (for 14 days).
+
+**Android (Chrome)**
+- [ ] Open the fan link, pass the age gate, spin and close the win. The card shows an
+      **Install** button. If it shows **How** instead, Chrome hasn't offered an install: write
+      down what Chrome's ⋮ menu offers ("Install app" or only "Add to Home screen").
+- [ ] Tap **Install**. Chrome's own dialog shows **Spins** with the wheel icon. Install it.
+- [ ] The icon on the home screen and in the app drawer is the wheel, not cut off by the
+      round mask, labelled **Spins**.
+- [ ] Open it. It opens in its own window (no address bar), the status bar is in the brand
+      colour, and it lands on **this fan's wheel**.
+- [ ] Long-press the icon › App info: it is a real app named **Spins**. If Android shows a
+      browser shortcut (a small Chrome badge on the icon, no App info), report it: the
+      fallback in the plan (a no-fetch worker for the fan link) is then needed.
+- [ ] Install a **second** fan link the same way: it becomes a **separate** app, and each
+      opens its own fan's wheel.
+
+**Both phones**
+- [ ] **Avatar choice:** in Settings, upload a photo with Change avatar, pick **My avatar**,
+      Save. Mint a new fan link and install it: it proposes your **display name and photo**.
+      An iPhone that already added a link keeps its old icon (Apple doesn't update them).
+      On Android, note whether the existing app's icon updates within a day of reopening it.
+- [ ] **Ended link:** pause the link from the installed app (footer › Pause my link), then
+      close and reopen the app. It shows the branded "This link isn't active" page, no error.
+- [ ] **Dashboard app:** signed in as the creator, add the dashboard to the home screen
+      (iPhone: Share › Add to Home Screen; Android: ⋮ › Install app). It is named
+      **FanFunnel**, has the pink wheel icon and opens on **/dashboard**. Sign out inside it,
+      close and reopen it: you are asked to sign in. Nothing is shown from a cached session.
+
+**Privacy spot check (desktop Chrome on the Preview, once)**
+- [ ] On a fan link, DevTools › Application › Manifest shows name **Spins** and start URL
+      `/spin/<token>?src=pwa`; Application › Service workers lists **none** for that page.
+- [ ] Network tab: the manifest and icon requests show `Cache-Control: private, max-age=300`
+      and `X-Robots-Tag: noindex`. View source on `/c/<your-slug>`: no `/spin/` link anywhere.
