@@ -17,6 +17,7 @@
  *   • A reads ZERO of B's rows (fans, wheels, prizes, spins, grants, profiles)
  *   • A cannot UPDATE or DELETE B's rows
  *   • A cannot promote itself to admin
+ *   • anon and A cannot read, write or resolve app_errors (0053)
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -26,7 +27,7 @@
  * It refuses to run against the PRODUCTION project.
  */
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 try {
@@ -68,6 +69,7 @@ const RUN = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 const TEST_EMAIL = /^rlstest\+[^@]*@fanfunnel\.test$/i;
 const STALE_MS = 60 * 60 * 1000;
 const createdUserIds = [];
+const seededErrorIds = [];
 let failures = 0;
 const check = (cond, msg) => {
   if (cond) console.log("  ✓", msg);
@@ -208,9 +210,44 @@ async function main() {
     const anonClient = createClient(URL_, ANON, { auth: { persistSession: false } });
     const anonIcon = await anonClient.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!!anonIcon.error, "anon cannot execute set_pwa_icon_mode");
+
+    // 0053 error monitoring: app_errors is admin-read/resolve only and written
+    // only by the server (service role). Seed one row the way the server does.
+    const fp = createHash("sha256").update(`rls-${RUN}`).digest("hex");
+    const seeded = await admin.rpc("record_app_error", {
+      p_fingerprint: fp, p_environment: "development", p_source: "server", p_message: `rls probe ${RUN}`,
+    });
+    const errId = seeded.data?.id;
+    if (seeded.error || !errId) throw new Error(`seed app_errors: ${seeded.error?.message ?? "no id"}`);
+    seededErrorIds.push(errId);
+    console.log("\nError monitoring (app_errors) — anon and a normal creator are locked out:");
+    const anonRead = await anonClient.from("app_errors").select("id").eq("id", errId);
+    check((anonRead.data?.length ?? 0) === 0, `anon reads 0 app_errors (got ${anonRead.data?.length ?? 0})`);
+    const anonIns = await anonClient.from("app_errors").insert({ fingerprint: fp.slice(0, 32), environment: "development", source: "client", message: "x" });
+    check(!!anonIns.error, "anon cannot INSERT app_errors");
+    const anonRec = await anonClient.rpc("record_app_error", { p_fingerprint: fp, p_environment: "development", p_source: "client", p_message: "x" });
+    check(!!anonRec.error, "anon cannot execute record_app_error");
+    const aRead = await a.from("app_errors").select("id").eq("id", errId);
+    check((aRead.data?.length ?? 0) === 0, `creator A reads 0 app_errors (got ${aRead.data?.length ?? 0})`);
+    const aIns = await a.from("app_errors").insert({ fingerprint: fp.slice(0, 32), environment: "development", source: "client", message: "x" });
+    check(!!aIns.error, "creator A cannot INSERT app_errors");
+    const aResolve = await a.from("app_errors").update({ resolved: true }).eq("id", errId).select("id");
+    check((aResolve.data?.length ?? 0) === 0, "creator A cannot resolve an app_error");
+    const aRec = await a.rpc("record_app_error", { p_fingerprint: fp, p_environment: "development", p_source: "client", p_message: "x" });
+    check(!!aRec.error, "creator A cannot execute record_app_error");
+    const aClaim = await a.rpc("claim_app_error_alert", { p_limit: 100 });
+    check(!!aClaim.error, "creator A cannot execute claim_app_error_alert");
+    const aAlerts = await a.from("app_error_alerts").select("id").limit(1);
+    check((aAlerts.data?.length ?? 0) === 0, "creator A reads 0 app_error_alerts");
+    const { data: errAfter } = await admin.from("app_errors").select("resolved, count").eq("id", errId).maybeSingle();
+    check(errAfter?.resolved === false && errAfter?.count === 1, `the app_error is untouched (resolved=${errAfter?.resolved}, count=${errAfter?.count})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
+    for (const id of seededErrorIds) {
+      const { error } = await admin.from("app_errors").delete().eq("id", id);
+      if (error) { cleanupFailed = true; console.error("  ✗ Failed to delete seeded app_error", id, "—", error.message); }
+    }
     console.log("\nCleaning up test users…");
     for (const id of createdUserIds) {
       try {
