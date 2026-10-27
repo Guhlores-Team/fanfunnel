@@ -11,6 +11,11 @@ Templates** in BOTH the test and prod projects whenever it changes.
 | `magic_link.html` | Magic link | Your sign-in link |
 | `invite.html` | Invite user | You're invited |
 | `email_change.html` | Change email address | Confirm your new email |
+| `password_changed.html` | Security → Password changed (turn on) | Your password was changed |
+| `email_address_changed.html` | Security → Email address changed (turn on) | Your email address was changed |
 
-Every template shows the link twice (button + plain URL) because Gmail disables
+Reauthentication and the phone / sign-in method / MFA notices are unused (no
+phone auth, linked identities or MFA) and keep Supabase's defaults.
+
+Every link template shows the link twice (button + plain URL) because Gmail disables
 buttons in mail it files as spam, and some clients strip styled anchors.
