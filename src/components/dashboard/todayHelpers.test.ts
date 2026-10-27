@@ -9,6 +9,7 @@ import {
   trendVsAvg,
   trendVsYesterday,
 } from "./todayHelpers";
+import { requestWinbackQueue, takeWinbackQueueRequest } from "./winbackIntent";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -75,5 +76,11 @@ check("win-back queue → Re-engage", impactTag("open_winback").label === "Re-en
 check("happy hour → Timing", impactTag("schedule_happy_hour").label === "Timing");
 check("edit wheel → Tune", impactTag("edit_wheel").label === "Tune");
 check("unknown → Insight", impactTag("whatever").label === "Insight");
+
+// --- Today's "Start win-back" → the Analytics card opens its queue once ------
+check("no request → the card doesn't open the queue", takeWinbackQueueRequest() === false);
+requestWinbackQueue();
+check("a request is taken once", takeWinbackQueueRequest() === true);
+check("…and not again on the next mount", takeWinbackQueueRequest() === false);
 
 console.log(`todayHelpers.test: ${passed} checks passed`);

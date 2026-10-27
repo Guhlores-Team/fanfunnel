@@ -24,6 +24,9 @@ const calls: Call[] = [];
 let configured = true;
 let user: { id: string } | null = null;
 let insertError: { code: string; message: string } | null = null;
+// Refuse only inserts that carry a template (a template that isn't the creator's).
+let templateOnlyError = false;
+const TEMPLATE_REFUSED = { code: "42501", message: "rls" };
 
 function builder(table: string) {
   const call: Call = { table, op: "select", filters: [] };
@@ -34,7 +37,16 @@ function builder(table: string) {
       get(_t, prop: string) {
         if (prop === "then") {
           return (res: (v: unknown) => unknown) =>
-            Promise.resolve(call.op === "insert" ? { data: null, error: insertError } : { data: [], error: null }).then(res);
+            Promise.resolve(
+              call.op === "insert"
+                ? {
+                    data: null,
+                    error:
+                      insertError ??
+                      (templateOnlyError && (call.payload as Record<string, unknown>).template_id ? TEMPLATE_REFUSED : null),
+                  }
+                : { data: [], error: null },
+            ).then(res);
         }
         if (prop === "insert") {
           return (payload: unknown) => {
@@ -138,6 +150,17 @@ async function main() {
   insertError = { code: "23503", message: "fk" };
   check("an unknown fan → 404", (await post({ fanId: FAN_B, action: "contacted" })).status === 404);
   insertError = null;
+
+  // A stale or foreign template is dropped, not the contact (demo-path parity).
+  templateOnlyError = true;
+  {
+    calls.length = 0;
+    const r = await post({ fanId: FAN_A, action: "contacted", templateId: TPL });
+    const tries = inserts().map((c) => (c.payload as Record<string, unknown>).template_id);
+    check("a refused template → still 200", r.status === 200);
+    check("…retried once without the template", JSON.stringify(tries) === JSON.stringify([TPL, null]));
+  }
+  templateOnlyError = false;
 
   // --- 5. The CRM's read of the log is scoped to the signed-in creator -------
   {

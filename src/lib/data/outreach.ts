@@ -52,18 +52,25 @@ export async function recordOutreach(input: {
   if (!user) return { error: "unauthorized" };
 
   const now = Date.now();
-  const { error } = await sb.from("fan_outreach").insert({
-    creator_id: user.id,
-    fan_id: fanId,
-    template_id: templateId && UUID.test(templateId) ? templateId : null,
-    kind: "winback",
-    contacted_at: action === "contacted" ? new Date(now).toISOString() : null,
-    snoozed_until: action === "snoozed" ? new Date(now + WINBACK_SNOOZE_DAYS * DAY).toISOString() : null,
-  });
+  const insert = (template_id: string | null) =>
+    sb.from("fan_outreach").insert({
+      creator_id: user.id,
+      fan_id: fanId,
+      template_id,
+      kind: "winback",
+      contacted_at: action === "contacted" ? new Date(now).toISOString() : null,
+      snoozed_until: action === "snoozed" ? new Date(now + WINBACK_SNOOZE_DAYS * DAY).toISOString() : null,
+    });
+  const tpl = templateId && UUID.test(templateId) ? templateId : null;
+  const refused = (code?: string) => code === "42501" || code === "23503";
+  let { error } = await insert(tpl);
+  // A template that was deleted meanwhile (or isn't this creator's) must not
+  // lose the contact: log it without the template, as the demo path does.
+  if (error && tpl && refused(error.code)) ({ error } = await insert(null));
   if (!error) return { ok: true };
-  // The insert check refuses a fan (or template) that isn't this creator's:
-  // report it like a missing fan, never as a raw database message.
-  if (error.code === "42501" || error.code === "23503") return { error: "not_found" };
+  // The insert check refuses a fan that isn't this creator's: report it like
+  // a missing fan, never as a raw database message.
+  if (refused(error.code)) return { error: "not_found" };
   console.error("recordOutreach: insert failed", { code: error.code });
   return { error: "db_error" };
 }

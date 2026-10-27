@@ -135,3 +135,27 @@ spins and send it to both phones.
       `/spin/<token>?src=pwa`; Application › Service workers lists **none** for that page.
 - [ ] Network tab: the manifest and icon requests show `Cache-Control: private, max-age=300`
       and `X-Robots-Tag: noindex`. View source on `/c/<your-slug>`: no `/spin/` link anywhere.
+
+## 7. Win-back queue (RM-5, Preview on the TEST database)
+Automated e2e runs the queue in demo mode by aging fans 20 days; on Preview you need fans who
+really went quiet. **Setup:** migration 0051 is on the test database. Have at least three paying
+fans whose last spin is 14+ days old (or ask an engineer to backdate test fans' spins/grants on
+the TEST project only). Block one of them, and on another fan's link use the fan page's
+"Pause my link".
+- [ ] Analytics › Audience › **Win-back** lists the quiet paying fans, highest spend first. The
+      blocked fan and the fan who paused are **not** listed.
+- [ ] Pick a saved template under **Message** (Fans › Manage messages now lists the tokens
+      `{name}` `{lastWin}` `{days}` `{creator}` besides `{link}`). Tap **Copy DM** on a row: paste
+      it somewhere. Name, last win, days and your display name are filled in, and the link opens
+      that fan's wheel. The row disappears and **Recently contacted** shows "Contacted today".
+- [ ] **Start win-back**: the queue opens (bottom sheet on a phone, side drawer on desktop) on
+      the top spender with a filled preview. **Copy & next** copies and moves on, **Skip** moves
+      on, **Snooze 30d** moves on. The last screen shows the tally. Close it: copied and snoozed
+      fans are gone from the list, the skipped one is still there.
+- [ ] Have a contacted fan spin. Reload Analytics: their Recently contacted row says
+      **Came back ✓** and the stat reads "N contacted · 1 came back".
+- [ ] Today › Needs you now: the **"N paying fans have gone quiet"** card's **Start win-back**
+      opens Analytics with the queue already open.
+- [ ] Fans tab: **Copy link** on the paused fan says they paused their link and copies nothing;
+      on the blocked fan it says they are blocked.
+- [ ] Signed in as a **second** creator: none of the first creator's fans or contacts appear.
