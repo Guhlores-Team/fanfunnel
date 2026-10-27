@@ -17,6 +17,7 @@
  *   • A reads ZERO of B's rows (fans, wheels, prizes, spins, grants, profiles)
  *   • A cannot UPDATE or DELETE B's rows
  *   • A cannot promote itself to admin
+ *   • only the service role writes fan_checkins (RM-3); A reads none of B's
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -208,6 +209,32 @@ async function main() {
     const anonClient = createClient(URL_, ANON, { auth: { persistSession: false } });
     const anonIcon = await anonClient.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!!anonIcon.error, "anon cannot execute set_pwa_icon_mode");
+
+    // RM-3 (0050): visits are written only by the server (service role). A
+    // creator reads its own fans' visits, never B's, and nobody else can write.
+    const today = new Date().toISOString().slice(0, 10);
+    must(await admin.from("fan_checkins").insert({ fan_id: A.fanId, creator_id: A.id, day: today }).select("day").single(), "seed A check-in");
+    must(await admin.from("fan_checkins").insert({ fan_id: B.fanId, creator_id: B.id, day: today }).select("day").single(), "seed B check-in");
+    const ownVisits = await a.from("fan_checkins").select("day").eq("fan_id", A.fanId);
+    check((ownVisits.data?.length ?? 0) === 1, `A reads its own fan's check-in (got ${ownVisits.data?.length ?? 0})`);
+    const bVisits = await a.from("fan_checkins").select("day").eq("creator_id", B.id);
+    check((bVisits.data?.length ?? 0) === 0, `A reads 0 of B's check-ins (got ${bVisits.data?.length ?? 0})`);
+    const aInsert = await a.from("fan_checkins").insert({ fan_id: A.fanId, creator_id: A.id, day: "2000-01-01" }).select("day");
+    check(!!aInsert.error && (aInsert.data?.length ?? 0) === 0, "A cannot INSERT a check-in (server-only writes)");
+    const aForge = await a.from("fan_checkins").insert({ fan_id: B.fanId, creator_id: B.id, day: "2000-01-02" }).select("day");
+    check(!!aForge.error, "A cannot INSERT a check-in for B's fan");
+    const aMove = await a.from("fan_checkins").update({ day: "2000-01-03" }).eq("fan_id", B.fanId).select("day");
+    check((aMove.data?.length ?? 0) === 0, "A cannot UPDATE B's check-in");
+    const aDrop = await a.from("fan_checkins").delete().eq("fan_id", B.fanId).select("day");
+    check((aDrop.data?.length ?? 0) === 0, "A cannot DELETE B's check-in");
+    const anonInsert = await anonClient.from("fan_checkins").insert({ fan_id: A.fanId, creator_id: A.id, day: "2000-01-04" }).select("day");
+    check(!!anonInsert.error, "anon cannot INSERT a check-in");
+    const anonRead = await anonClient.from("fan_checkins").select("day");
+    check((anonRead.data?.length ?? 0) === 0, `anon reads 0 check-ins (got ${anonRead.data?.length ?? 0})`);
+    const { data: bAfter } = await admin.from("fan_checkins").select("day").eq("fan_id", B.fanId);
+    check(bAfter?.length === 1 && bAfter[0].day === today, "B's check-in is untouched");
+    const { data: forged } = await admin.from("fan_checkins").select("day").lt("day", "2001-01-01").in("fan_id", [A.fanId, B.fanId]);
+    check((forged?.length ?? 0) === 0, `no forged check-in landed (got ${forged?.length ?? 0})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

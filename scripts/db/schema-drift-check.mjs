@@ -15,6 +15,7 @@
 // Then, on A, B and C, a runtime grant probe (0044): anon calls to the
 // signed-in-only RPCs are refused, authenticated setter calls still persist,
 // and the RLS helper functions stay callable by anon.
+// Plus the fan_checkins probe (0050): only the service role writes visits.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -354,6 +355,58 @@ function probeGrants(db) {
   }
 }
 
+// 0050 (RM-3): fan_checkins is written ONLY by the service role. Supabase's
+// default table grants are emulated (granted inside the transaction), so this
+// proves RLS alone stops a creator or anon from writing a visit, and that a
+// creator reads only their own fans' visits ('view' survives a suspension by
+// design, as on fans; another creator's rows never show).
+const CK_A = "00000000-0000-4000-8000-0000000050a0";
+const CK_B = "00000000-0000-4000-8000-0000000050b0";
+const CK_FAN_A = "00000000-0000-4000-8000-0000000050fa";
+const CK_FAN_B = "00000000-0000-4000-8000-0000000050fb";
+const CK_SEED = `
+  insert into auth.users (id, email) values ('${CK_A}', 'probe-0050a@example.test'), ('${CK_B}', 'probe-0050b@example.test');
+  update public.profiles set is_active = true where id in ('${CK_A}', '${CK_B}');
+  insert into public.fans (id, creator_id, display_name) values ('${CK_FAN_A}', '${CK_A}', 'A fan'), ('${CK_FAN_B}', '${CK_B}', 'B fan');
+  insert into public.fan_checkins (fan_id, creator_id, day) values
+    ('${CK_FAN_A}', '${CK_A}', current_date), ('${CK_FAN_B}', '${CK_B}', current_date), ('${CK_FAN_B}', '${CK_B}', current_date - 1);
+  grant select, insert, update, delete on public.fan_checkins to anon, authenticated;`;
+const ckAs = (uid, stmt) =>
+  uid
+    ? `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true); ${stmt} reset role;`
+    : `set local role anon; select set_config('request.jwt.claim.sub', '', true); ${stmt} reset role;`;
+
+function probeCheckins(db) {
+  const bad = [];
+  const run = (stmts) => psql(db, ["-c", `begin; ${CK_SEED} ${stmts} rollback;`], { allowFail: true });
+  const reads = run(`
+    ${ckAs(CK_A, "select 'a-sees:' || count(*) from public.fan_checkins;")}
+    ${ckAs(CK_A, "select 'a-sees-b:' || count(*) from public.fan_checkins where creator_id = '" + CK_B + "';")}
+    ${ckAs(null, "select 'anon-sees:' || count(*) from public.fan_checkins;")}
+    ${ckAs(CK_A, "update public.fan_checkins set day = day - 30 where creator_id = '" + CK_B + "';")}
+    ${ckAs(CK_A, "delete from public.fan_checkins where creator_id = '" + CK_B + "';")}
+    select 'b-rows:' || count(*) from public.fan_checkins where creator_id = '${CK_B}' and day >= current_date - 1;
+    update public.profiles set is_active = false where id = '${CK_A}';
+    ${ckAs(CK_A, "select 'suspended-a-sees-b:' || count(*) from public.fan_checkins where creator_id = '" + CK_B + "';")}`);
+  const out = (reads.stdout || "").split("\n").map((l) => l.trim());
+  for (const want of ["a-sees:1", "a-sees-b:0", "anon-sees:0", "b-rows:2", "suspended-a-sees-b:0"]) {
+    if (!out.includes(want)) bad.push(`expected ${want} (got ${out.filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${(reads.stderr || "").trim().split("\n")[0]})`);
+  }
+  for (const [who, uid] of [["creator A", CK_A], ["anon", null]]) {
+    const ins = run(ckAs(uid, `insert into public.fan_checkins (fan_id, creator_id, day) values ('${CK_FAN_A}', '${CK_A}', current_date + 1);`));
+    if (!/row-level security|permission denied/.test(ins.stderr || "")) {
+      bad.push(`${who} could INSERT a check-in (${(ins.stderr || "no error").trim().split("\n")[0]})`);
+    }
+  }
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: fan_checkins (0050)`);
+    for (const b of bad) console.log(`  - ${b}`);
+  } else {
+    console.log(`PASS  ${db}: fan_checkins is select-only for its creator; creator and anon INSERT refused; cross-tenant rows untouched`);
+  }
+}
+
 // ----------------------------------------------------------------- builds ---
 try {
   const migrations = readdirSync(join(SUPABASE, "migrations"))
@@ -406,7 +459,10 @@ try {
   diff("A", A, "C", catalog("ffc"));
   diff("A", A, "C2", catalog("ffc2"));
 
-  for (const db of ["ffa", "ffb", "ffc"]) probeGrants(db);
+  for (const db of ["ffa", "ffb", "ffc"]) {
+    probeGrants(db);
+    probeCheckins(db);
+  }
 } catch (e) {
   failures++;
   console.error(e instanceof Error ? e.message : e);

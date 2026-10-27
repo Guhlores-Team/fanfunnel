@@ -14,6 +14,8 @@ import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import PackPresets from "@/components/dashboard/PackPresets";
 import ImportFans from "@/components/dashboard/ImportFans";
 import { prefersReducedMotion } from "@/lib/sound";
+import { isRegular } from "@/lib/glow/glow";
+import { REGULAR_MIN_VISITS } from "@/lib/glow/config";
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -59,6 +61,8 @@ export default function FansPanel({
   const [search, setSearch] = useState(initialSearch);
   const [campaignFilter, setCampaignFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
+  // RM-3: "Regulars" = visited on REGULAR_MIN_VISITS+ of the last 7 days.
+  const [regularsOnly, setRegularsOnly] = useState(false);
   const [templates, setTemplates] = useState<DmTemplate[]>([]);
   // Fans with an inbox thread, so the drawer can say whether "Message" has
   // somewhere to go (a creator can't start a thread; fans message first).
@@ -221,7 +225,8 @@ export default function FansPanel({
     const matchesCampaign =
       !campaignFilter || a.campaignNames.includes(campaignFilter);
     const matchesTag = !tagFilter || a.tags.includes(tagFilter);
-    return matchesSearch && matchesCampaign && matchesTag;
+    const matchesVisits = !regularsOnly || isRegular(a.visits7 ?? 0);
+    return matchesSearch && matchesCampaign && matchesTag && matchesVisits;
   });
   const openAccount = accounts?.find((a) => a.fanId === openFanId) ?? null;
 
@@ -361,6 +366,16 @@ export default function FansPanel({
                     {t}
                   </option>
                 ))}
+              </select>
+            </Field>
+            <Field label="Visits">
+              <select
+                className="ff-input w-full sm:w-44"
+                value={regularsOnly ? "regulars" : ""}
+                onChange={(e) => setRegularsOnly(e.target.value === "regulars")}
+              >
+                <option value="">All fans</option>
+                <option value="regulars">Regulars ({REGULAR_MIN_VISITS}+ of last 7 days)</option>
               </select>
             </Field>
           </div>

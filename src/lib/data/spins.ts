@@ -34,6 +34,7 @@ import type { AnyClient, DbWheelRow, SpinError } from "./shared";
 import { getActiveHappyHour, resolveWheelId } from "./wheels";
 import { fireWebhooks } from "./webhooks";
 import { runAfterResponse } from "@/lib/afterResponse";
+import { readFanGlow } from "./checkins";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -154,7 +155,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // The fan's win history, wishlist, and the active happy-hour are all
   // independent reads keyed off the now-known fan/wheel — fetch concurrently
   // instead of one after another (this is on every fan page load).
-  const [{ data: wins }, { data: wishRows }, happyHour] = await Promise.all([
+  const [{ data: wins }, { data: wishRows }, happyHour, glow] = await Promise.all([
     // Win history is scoped to the fan ACCOUNT, so it persists across every
     // link the creator has ever minted for them.
     sb
@@ -169,6 +170,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       .eq("fan_id", pass.fan.id)
       .order("created_at", { ascending: false }),
     getActiveHappyHour(sb, wheelId, new Date()),
+    readFanGlow(sb, pass.fan.id),
   ]);
 
   const winRows = (wins ?? []) as {
@@ -233,6 +235,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     creatorNote: pass.creator?.creator_note ?? null,
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
     nextSpinHash,
+    glow,
   };
 }
 
