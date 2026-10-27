@@ -93,6 +93,23 @@ try {
     }
   });
 
+  await step("sign-up requires the Terms clickwrap (no account is created)", async () => {
+    await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded", timeout: 45000 });
+    await page.getByRole("button", { name: /Request access$/ }).first().click();
+    const box = page.getByTestId("terms-checkbox");
+    await box.waitFor({ timeout: 5000 });
+    const submit = page.locator("button[type='submit']");
+    assert(await submit.isDisabled(), "Request access is disabled until the Terms box is ticked");
+    for (const [name, href] of [["Terms of Service", "/terms"], ["Privacy Policy", "/privacy"]]) {
+      const link = page.getByRole("link", { name });
+      assert((await link.getAttribute("href")) === href, `${name} links to ${href}`);
+      assert((await link.getAttribute("target")) === "_blank", `${name} opens in a new tab`);
+    }
+    await box.check();
+    assert(!(await submit.isDisabled()), "ticking the box enables Request access");
+    await page.getByRole("button", { name: /Sign in$/ }).click();
+  });
+
   await step("sign in through the real /login form", async () => {
     await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForTimeout(1000);
@@ -130,6 +147,25 @@ try {
     assert(path.startsWith("/dashboard"), `expected /dashboard, landed on ${path}`);
     const body = await page.locator("body").innerText();
     assert(/creator dashboard|today|wheel|fans/i.test(body), "dashboard rendered for the signed-in creator");
+  });
+
+  await step("a creator with no Terms record accepts the dashboard prompt; it is recorded server-side", async () => {
+    const prompt = page.getByTestId("terms-prompt");
+    await prompt.waitFor({ timeout: 10000 });
+    const agree = page.getByRole("button", { name: "Agree and continue" });
+    assert(await agree.isDisabled(), "Agree is disabled until the box is ticked");
+    await prompt.getByTestId("terms-checkbox").check();
+    await agree.click();
+    await prompt.waitFor({ state: "hidden", timeout: 10000 });
+    const { data: row, error } = await admin
+      .from("profiles")
+      .select("terms_version, terms_accepted_at")
+      .eq("id", userId)
+      .maybeSingle();
+    assert(!error, `read profile: ${error?.message}`);
+    assert(/^\d{4}-\d{2}-\d{2}$/.test(row?.terms_version ?? ""), `terms_version recorded (got ${row?.terms_version})`);
+    const age = Date.now() - new Date(row?.terms_accepted_at ?? 0).getTime();
+    assert(age >= -60_000 && age < 5 * 60_000, `terms_accepted_at is the server's now (got ${row?.terms_accepted_at})`);
   });
 
   await step("authenticated API works for the new creator (no errors)", async () => {

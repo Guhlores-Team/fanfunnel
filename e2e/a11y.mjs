@@ -11,6 +11,7 @@ import { chromium } from "playwright";
 import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
+import { staleTermsRoute } from "./journeys.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -36,6 +37,18 @@ const openFanSheet = async (page) => {
   await page.getByRole("button", { name: /^View / }).first().click();
   await page.getByRole("dialog", { name: "Fan details" }).waitFor({ timeout: 5000 });
   await page.waitForTimeout(800);
+};
+// 0055: the creator's Terms prompt, forced by a stale version (the demo account
+// itself stays accepted, so nothing here depends on e2e's data).
+const openTermsPrompt = (ticked) => async (page) => {
+  await staleTermsRoute(page);
+  await page.reload();
+  await page.getByTestId("terms-prompt").waitFor({ timeout: 10000 });
+  if (ticked) await page.getByTestId("terms-prompt").getByTestId("terms-checkbox").check();
+  await page.waitForTimeout(400);
+};
+const closeTermsPrompt = async (page) => {
+  await page.unroute("**/api/account/terms").catch(() => {});
 };
 const DESKTOP = { width: 1280, height: 900 };
 const PHONE = { width: 390, height: 844 };
@@ -166,6 +179,9 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard phone (Inbox)", viewport: PHONE, prep: openTab("Inbox"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (Analytics)", viewport: PHONE, prep: openTab("Analytics"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (Settings)", viewport: PHONE, prep: openTab("Settings"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Terms prompt)", prep: openTermsPrompt(false), cleanup: closeTermsPrompt, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Terms prompt, ticked)", prep: openTermsPrompt(true), cleanup: closeTermsPrompt, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Terms prompt)", viewport: PHONE, prep: openTermsPrompt(false), cleanup: closeTermsPrompt, advisory: DASH_ADVISORY },
   { path: "/spin/demo", name: "fan spin (age gate)" },
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
   { path: "/", name: "fan spin phone (legendary reveal)", viewport: PHONE, prep: openReveal("legendary"), cleanup: closeReveal },

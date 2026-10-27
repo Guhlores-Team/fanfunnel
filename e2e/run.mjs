@@ -23,6 +23,7 @@ import {
   fanExtras,
   firstRunJourney,
   notificationsJourney,
+  termsJourney,
 } from "./journeys.mjs";
 import { mobileJourney } from "./mobile.mjs";
 import { revealJourney } from "./reveal.mjs";
@@ -54,6 +55,7 @@ try {
     await notificationsJourney(page, runner, ctx); // bell: count → open marks seen → items navigate
     await mobileJourney(browser, runner, sink); // phone: tab bar + More + fan sheet (read-only)
     await pwaJourney(browser, runner, sink, ctx); // home-screen install on a fresh fan link (RM-4)
+    await termsJourney(page, runner); // creator clickwrap: stale version → prompt → accept (0055)
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));

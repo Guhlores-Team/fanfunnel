@@ -36,6 +36,10 @@ const SUMMARY = [
     about the odds.
   </>,
   <>
+    {OP} never charges fans and is free for creators today. If we ever introduce creator fees, or make a
+    material change to these terms, we will give at least {LEGAL.changeNoticeDays} days’ notice first.
+  </>,
+  <>
     These terms are governed by the law of Massachusetts, USA. Questions:{" "}
     <ContactEmail />.
   </>,
@@ -64,8 +68,9 @@ const SECTIONS: LegalSection[] = [
           </li>
         </ul>
         <p>
-          By using the Service, or by ticking “I agree” on a spin page, you agree to these Terms. If you do
-          not agree, do not use the Service. Our <a href="/privacy">Privacy Policy</a> explains how we
+          By using the Service, or by ticking “I agree” when you sign up, request access or open a spin page,
+          you agree to these Terms. We record when you agreed and which version you agreed to. If you do not
+          agree, do not use the Service. Our <a href="/privacy">Privacy Policy</a> explains how we
           handle personal information and forms part of these Terms.
         </p>
       </>
@@ -410,8 +415,9 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We are improving {OP} all the time, so features may change, be added or be removed. {OP} never
-        charges fans. If we introduce fees for creators, we will tell creators about them before they apply,
-        and nobody will be charged without agreeing first.
+        charges fans. {OP} is free for creators today. If we introduce creator fees, we will tell creators at
+        least {LEGAL.changeNoticeDays} days before any fee applies, and nobody will be charged without agreeing
+        first.
       </p>
     ),
   },
@@ -488,9 +494,11 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We may update these Terms. When we do, we will post the new version here and change the “Last
-        updated” date. If a change is significant, we will give reasonable notice before it takes effect,
-        for example in the creator dashboard, by email or on the spin page. If you keep using the Service
-        after a change takes effect, the updated Terms apply. If you do not agree, stop using the Service.
+        updated” date. If a change is material, we will give at least {LEGAL.changeNoticeDays} days’ notice
+        before it takes effect: by email to creators, and with a notice in the app or on this page for fans.
+        A change required by law, or needed to keep the Service secure, may take effect sooner. We may ask
+        you to agree to the new version before you continue. If you keep using the Service after a change
+        takes effect, the updated Terms apply. If you do not agree, stop using the Service.
       </p>
     ),
   },

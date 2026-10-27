@@ -12,6 +12,7 @@ import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicPrize, type PublicW
 import { storedWeight } from "@/lib/games/wheel/weights";
 import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
+import { LEGAL, fanNeedsAck } from "@/lib/legal";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import type { FanAppInfo } from "@/lib/pwa/manifest";
 import type {
@@ -129,6 +130,8 @@ interface MockFan {
   referralCredited: boolean; // whether this fan's referral has been credited
   // Phase 5b (#24): age-gate / ToS acknowledgement timestamp (null = not yet).
   ackedAt: string | null;
+  // 0055: the Terms version the fan agreed to at the gate (null = none recorded).
+  ackedTermsVersion: string | null;
   // Phase 5b: fan self-excluded (paused) their own link (null = active).
   selfExcludedAt: string | null;
   // The creator blocked this fan (mirrors fans.blocked_at; unset = not blocked).
@@ -501,6 +504,7 @@ for (const fan of store.fans.values()) {
   fan.referralCredited ??= false;
   // Phase 5b: default un-acked so the age-gate shows for pre-existing fans.
   fan.ackedAt ??= null;
+  fan.ackedTermsVersion ??= null;
   fan.selfExcludedAt ??= null;
   // Backfill shareId + fairness fields on any win pinned before they existed.
   for (const w of fan.wins) {
@@ -546,6 +550,7 @@ if (!store.fans.has("demo-fan")) {
     referredByFanId: null,
     referralCredited: false,
     ackedAt: null,
+    ackedTermsVersion: null,
     selfExcludedAt: null,
   });
   store.tokens.set("demo", "demo-fan");
@@ -985,7 +990,7 @@ export async function mockGetFanPass(
     happyHour: mockGetActiveHappyHour(wheel.id),
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
     chatUnlocked: chatUnlockedFor(fan),
-    needsAck: fan.ackedAt == null,
+    needsAck: fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion),
     creatorId: "demo-creator",
     leaderboardEnabled: store.leaderboardEnabled,
     leaderboardOptIn: fan.leaderboardOptIn === true,
@@ -1010,7 +1015,7 @@ export async function mockSpin(token: string, clientSeed = "") {
   // a self-excluded fan can't spin, and the age-gate/ToS must be acknowledged
   // first (the client modal is not the enforcement boundary).
   if (fan.selfExcludedAt || fan.blockedAt) return { error: "blocked" as const };
-  if (fan.ackedAt == null) return { error: "needs_ack" as const };
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" as const };
 
   // Pre-generate the NEXT commitment before touching shared state, so the
   // claim + seed consumption below has no `await` inside it: in single-threaded
@@ -1282,6 +1287,7 @@ export function mockCreatePass(
       referredByFanId,
       referralCredited: false,
       ackedAt: null,
+      ackedTermsVersion: null,
       selfExcludedAt: null,
     };
     store.fans.set(id, newFan);
@@ -2382,6 +2388,7 @@ export function mockAckFan(token: string): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   fan.ackedAt = new Date().toISOString();
+  fan.ackedTermsVersion = LEGAL.version;
   return { ok: true };
 }
 
@@ -2931,4 +2938,21 @@ export function mockGetFanAppInfo(token: string): FanAppInfo | null {
     iconMode: mockGetMyPwaIconMode(),
     avatarUrl: null,
   };
+}
+
+// --- 0055: the demo creator's Terms acceptance --------------------------------
+
+// The demo account starts accepted at the current version, so the dashboard's
+// re-accept prompt only appears when a test makes the stored version stale.
+type MockTerms = { version: string | null; acceptedAt: string | null };
+const gTerms = globalThis as unknown as { __ffTerms?: MockTerms };
+
+export function mockGetMyTerms(): MockTerms {
+  return { ...(gTerms.__ffTerms ?? { version: LEGAL.version, acceptedAt: "2026-01-01T00:00:00.000Z" }) };
+}
+
+export function mockAcceptMyTerms(): { version: string; acceptedAt: string } {
+  const rec = { version: LEGAL.version, acceptedAt: new Date().toISOString() };
+  gTerms.__ffTerms = rec;
+  return { ...rec };
 }

@@ -5,6 +5,13 @@
 import { readFileSync } from "node:fs";
 import { goto, clickTab, passAgeGate, BASE, NAV_ITEMS } from "./harness.mjs";
 
+// The legal/privacy contact lives only in src/lib/legal.ts (a one-line swap), so
+// read it from there rather than repeating the address here.
+const LEGAL_CONTACT = /contactEmail:\s*"([^"]+)"/.exec(
+  readFileSync(new URL("../src/lib/legal.ts", import.meta.url), "utf8")
+)?.[1];
+if (!LEGAL_CONTACT) throw new Error("e2e: couldn't read LEGAL.contactEmail from src/lib/legal.ts");
+
 const NAV = "nav[aria-label='Dashboard sections']";
 
 export async function creatorJourney(page, { step, assert }) {
@@ -355,7 +362,7 @@ export async function fanJourney(page, { step, assert }, ctx) {
       assert(html.includes("Last updated"), `${path} shows its last-updated date`);
       assert(html.includes("The short version"), `${path} opens with a plain-language summary`);
       assert(html.includes(clause), `${path} carries its key clause ("${clause}")`);
-      assert(html.includes("mailto:support@easysimplesites.org"), `${path} links the legal/privacy contact email`);
+      assert(html.includes(`mailto:${LEGAL_CONTACT}`), `${path} links the legal/privacy contact email (${LEGAL_CONTACT})`);
     }
   });
 
@@ -979,6 +986,69 @@ export async function notificationsJourney(page, { step, assert }, ctx) {
 
 // First-run (RD-5). Runs LAST of all: it wipes the demo account, so a brand-new
 // creator's Today can be exercised (and nothing after it needs the demo data).
+/**
+ * The status a creator would have if they agreed to an older Terms version. The
+ * demo account starts accepted, so the dashboard's prompt is forced by answering
+ * GET /api/account/terms with this; the POST still reaches the real route.
+ */
+export const STALE_TERMS = { version: "2020-01-01", acceptedAt: "2020-01-01T00:00:00.000Z", needsAcceptance: true };
+
+export async function staleTermsRoute(page) {
+  await page.route("**/api/account/terms", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const res = await route.fetch();
+    const real = await res.json().catch(() => ({}));
+    await route.fulfill({ response: res, json: { ...real, ...STALE_TERMS } });
+  });
+}
+
+// Creator clickwrap (0055): a stale Terms version shows a blocking prompt on the
+// dashboard; agreeing records the CURRENT version server-side.
+export async function termsJourney(page, { step, assert }) {
+  const prompt = page.getByTestId("terms-prompt");
+  const agree = page.getByRole("button", { name: "Agree and continue" });
+
+  try {
+    await step("terms: a stale Terms version shows the blocking accept prompt", async () => {
+      await staleTermsRoute(page);
+      await goto(page, "/dashboard", 1500);
+      await prompt.waitFor({ timeout: 10000 });
+      const dialog = page.getByRole("dialog", { name: "We’ve updated our terms" });
+      assert(await dialog.isVisible(), "the prompt is a named, modal dialog");
+      assert((await dialog.getAttribute("aria-modal")) === "true", "aria-modal is set");
+      for (const [name, href] of [["Terms of Service", "/terms"], ["Privacy Policy", "/privacy"]]) {
+        const link = prompt.getByRole("link", { name });
+        assert((await link.getAttribute("href")) === href, `${name} links to ${href}`);
+        assert((await link.getAttribute("target")) === "_blank", `${name} opens in a new tab`);
+      }
+      assert(await agree.isDisabled(), "Agree is disabled until the box is ticked");
+      const focused = await page.evaluate(() => document.activeElement?.getAttribute("data-testid"));
+      assert(focused === "terms-checkbox", "focus starts on the checkbox");
+      await page.keyboard.press("Escape");
+      assert(await prompt.isVisible(), "Escape does not dismiss it");
+    });
+
+    await step("terms: agreeing records the current version and closes the prompt", async () => {
+      await prompt.getByTestId("terms-checkbox").check();
+      const posted = page.waitForResponse(
+        (r) => r.url().includes("/api/account/terms") && r.request().method() === "POST"
+      );
+      await agree.click();
+      const res = await posted;
+      assert(res.status() === 200, `the acceptance is saved (got ${res.status()})`);
+      assert(JSON.parse(res.request().postData() || "{}").accept === true, "the request only says accept: true");
+      await prompt.waitFor({ state: "hidden", timeout: 5000 });
+      await page.unroute("**/api/account/terms");
+      const status = await (await page.request.get(BASE + "/api/account/terms")).json();
+      assert(status.needsAcceptance === false && status.version === status.current, "the server now reports the current version");
+      await goto(page, "/dashboard", 1500);
+      assert((await prompt.count()) === 0, "no prompt once the current version is accepted");
+    });
+  } finally {
+    await page.unroute("**/api/account/terms").catch(() => {});
+  }
+}
+
 export async function firstRunJourney(page, { step, assert }, ctx) {
   await step("first run: reset the account (setup)", async () => {
     const res = await ctx.request.post(BASE + "/api/account/reset", { data: { confirm: "RESET" } });

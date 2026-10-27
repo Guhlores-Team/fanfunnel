@@ -88,7 +88,8 @@ suggests OnlyFans / Fansly / Fanvue (`PendingClient.tsx:132`).
   Speech Coalition v. Paxton*, 2025), Louisiana, Utah, Virginia and a growing list of other
   states require real age verification on sites where a large share of content is "harmful to
   minors". FanFunnel's age gate is a **self-confirmation checkbox** (`SpinClient.tsx`, `AgeGate`).
-  It records only the time (`fans.acked_at`, `schema.sql:975`). Ask whether FanFunnel
+  It records the time and the Terms version agreed to (`fans.acked_at`, `fans.acked_terms_version`,
+  migration 0055), but nothing that proves age. Ask whether FanFunnel
   is in scope. The answer probably depends on keeping FanFunnel itself free of explicit
   content. The UK Online Safety Act has similar "highly effective age assurance" duties for
   pornographic content.
@@ -129,8 +130,10 @@ suggests OnlyFans / Fansly / Fanvue (`PendingClient.tsx:132`).
 - **Paperwork to keep:** a record of processing activities (Art. 30), a breach-response plan
   (72-hour notification), a retention schedule, and a procedure for verifying data requests
   from fans, who have no account.
-- **Facts to confirm for the transfers section:** the Supabase project region, the Upstash
-  region, and that Resend is in fact the email provider (see section 4).
+- **Transfers.** The Privacy Policy says the database is hosted in the United States. Neither the
+  Supabase project region nor the Upstash region is recorded in the code or config, so confirm
+  both (Supabase: Project Settings → General; Upstash: the database's details page) and correct
+  the policy if either is outside the US. Confirm them again when signing each DPA.
 
 **US state privacy laws.** The CCPA/CPRA applies only above thresholds (roughly US$26M revenue,
 100,000 consumers, or 50% of revenue from selling or sharing data), so it probably does not
@@ -140,44 +143,83 @@ once their thresholds are met.
 
 ## 4. Other exposure found in the code
 
-1. **Creators never agree to the Terms.** There is no "I agree" step at sign-up (`LoginForm.tsx`)
-   or on the access form (`PendingClient.tsx`). Add a clickwrap checkbox and store which version
-   was accepted and when. Fans tick "I agree" in the age gate, but only a timestamp is stored
-   (`fans.acked_at`), not the **version** of the Terms. Store the version (for example
-   `LEGAL.effectiveDate`) so later changes can be proven.
-2. **No registered DMCA agent.** The Terms explain how to send a takedown notice, but the
+1. **No registered DMCA agent.** The Terms explain how to send a takedown notice, but the
    US § 512 safe harbour also requires **designating an agent with the US Copyright Office**
    (an online form with a small fee, renewed every 3 years).
-3. **The access form says "For payouts & compliance"** under "Based in (country)"
-   (`PendingClient.tsx:157`). FanFunnel makes no payouts, so this contradicts the Terms.
-   Reword it.
-4. **No legal entity yet.** The documents name the brand "FanFunnel". Operating without an
+2. **No legal entity yet.** The documents name the brand "FanFunnel". Operating without an
    entity may leave the owner personally liable. When an entity exists, change
    `LEGAL.operator` in `src/lib/legal.ts`. Consider insurance (general liability, cyber and
    media).
-5. **Dispute terms.** The Terms choose Massachusetts law and Massachusetts courts and contain
+3. **Dispute terms.** The Terms choose Massachusetts law and Massachusetts courts and contain
    **no arbitration clause or class-action waiver**. Whether to add them is a lawyer's call.
    Massachusetts consumer law (G.L. c. 93A) may limit how far disclaimers and liability caps
    apply to consumers. EU and UK consumers keep their home-country protections regardless.
-6. **Spend data about fans.** Creators record what each fan paid (`grants.amount_cents`), and
+4. **Spend data about fans.** Creators record what each fan paid (`grants.amount_cents`), and
    the CRM shows "total and average spend" (`CrmPanel.tsx:64`). Combined with an adult context,
    this is sensitive and makes a breach more harmful.
-7. **Admin access to chats.** FanFunnel admins can read every creator–fan chat (RLS
+5. **Admin access to chats.** FanFunnel admins can read every creator–fan chat (RLS
    `messages_rw` allows `is_admin()`). The policy says so. Have an internal rule for when
    staff may look.
-8. **Prize tax.** In the US, prize winners may owe tax, and sponsors may have to file
+6. **Prize tax.** In the US, prize winners may owe tax, and sponsors may have to file
    information returns for high-value prizes (Form 1099-MISC). The Terms put prize obligations
    on creators. Confirm that is enough.
-9. **Error log.** An in-house error log is being added. The Privacy Policy says error reports
-   are redacted and kept briefly, and that they leave out passwords, spin links and message
-   content. Make sure the implementation does that, and set a retention period.
-10. **Email provider.** The Privacy Policy names **Resend**, as the owner stated, but no
-    Resend code is in this repository. Presumably it is set up as Supabase Auth's custom SMTP.
-    Confirm this, or remove it from the policy.
-11. **Self-service data tools.** Deletion and access requests are handled by email today
-    (`HowToRequest` in `src/app/privacy/page.tsx`). When the planned "Delete my data" /
-    "Download my data" controls ship, update that block, the summary line and the termination
-    section of the Terms.
-12. **Fees.** The Terms say FanFunnel never charges fans and will tell creators about fees
-    before charging. If billing is introduced, it needs its own terms (and see
-    `rev_share` in section 1).
+7. **Self-service data tools.** Deletion and access requests are handled by email today
+   (`HowToRequest` in `src/app/privacy/page.tsx`). When the planned "Delete my data" /
+   "Download my data" controls ship, update that block, the summary line and the termination
+   section of the Terms.
+8. **Creator fees later.** FanFunnel is free for creators today; the Terms promise
+   `LEGAL.changeNoticeDays` (30) days' notice before any fee and that fans are never charged.
+   If billing is introduced, it needs its own terms (and see `rev_share` in section 1).
+9. **Notice period.** The Terms and Privacy Policy promise 30 days' notice of material changes
+   (email to creators, an in-app or on-page notice for fans), with an exception for changes
+   required by law or needed for security. Bumping `LEGAL.version` asks every creator and fan to
+   agree again; the email to creators is a manual step today. The code holds one version at a
+   time, so the process for a material change is: (1) email creators the new text and its start
+   date at least 30 days ahead, and post a notice on the pages; (2) on the start date, publish the
+   new text and set `LEGAL.effectiveDate` and `LEGAL.version` to that date in the same deploy.
+   Ask the lawyer whether that is enough, and whether fans (who have no email on file) need more
+   than the re-shown gate.
+10. **Fans who agreed before 0055.** Fans who ticked the gate before this change have a time but no
+   version on record, so they see the gate once more and agree to the current version. That is
+   deliberate (they agreed to the earlier placeholder text), and it costs each such fan one tick.
+11. **Sign-up with email confirmation.** When Supabase asks a new creator to confirm their email,
+   there is no session at sign-up, so the sign-up tick is not stored. The same creator must tick
+   the box again on the access request (`/pending`), and that one is recorded; an account approved
+   without a request gets the dashboard prompt, which blocks the dashboard until they agree (it is
+   a prompt in the page; the dashboard's API routes are not gated on it). The record shows the
+   access-request time, not the sign-up time.
+12. **Clickwrap evidence.** The record holds the account, the version and the time, not the IP
+   address or the exact page wording. Ask whether that is enough to prove assent, and keep old
+   versions of both documents (git history does that today) so a given version can be produced.
+
+## Done in the code (kept here for the record)
+
+- Creator clickwrap at sign-up, on the access request and as a one-time dashboard prompt when the
+  recorded version is older than `LEGAL.version`. Recorded server-side in
+  `profiles.terms_accepted_at` / `terms_version` (migration 0055, `record_terms_acceptance`,
+  service-role only).
+- Fans' acceptance now stores the Terms version (`fans.acked_terms_version`); a new version shows
+  the age/terms gate again.
+- The access form no longer mentions payouts.
+- The access form says creator accounts are free for now, and its "not approved" screen gives the
+  contact address (from `LEGAL.contactEmail`).
+- The contact address appears only in `src/lib/legal.ts`; `src/lib/legal.test.ts` fails if any
+  other file in `src/` or `e2e/` spells it out. Moving to a FanFunnel domain is a one-line change.
+- Error reports: the Privacy Policy's redaction list and "90 days after the problem is resolved"
+  match the error-monitoring work on `ops/error-monitoring` (`src/lib/monitoring/scrub.ts`,
+  `APP_ERRORS_MAX_ROWS`) and `docs/DATA_RETENTION.md` on `ops/privacy-safety`. Neither branch is
+  on `main` yet; re-check the policy if either changes before it merges.
+- Resend is the email provider: team alert emails on `ops/error-monitoring` are sent through it,
+  and account emails go through Supabase Auth's SMTP settings (configured in the Supabase
+  dashboard, not in this repository, so confirm it there).
+
+## Owner answers reflected in the documents
+
+| Question | Answer | Where |
+|---|---|---|
+| Operator | "FanFunnel" (brand; no entity yet) | `LEGAL.operator`, `src/lib/legal.ts` |
+| Governing law and courts | Massachusetts | `LEGAL.governingLaw`, `LEGAL.venue` |
+| Contact | `LEGAL.contactEmail` (until a FanFunnel domain exists) | `src/lib/legal.ts`, one line |
+| Audience | Worldwide | Privacy Policy: GDPR/UK GDPR, US state rights, transfers |
+| Creator fees | Free for now; fees later with notice | Terms "Changes to the Service and fees" and summary |
+| Change notice | 30 days | `LEGAL.changeNoticeDays`; both documents' "Changes" sections |

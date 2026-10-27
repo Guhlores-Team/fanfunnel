@@ -15,6 +15,14 @@ export const LEGAL = {
   venue: "the state and federal courts located in Massachusetts",
   /** ISO date (YYYY-MM-DD) both documents took effect. */
   effectiveDate: "2026-10-27",
+  /**
+   * The Terms/Privacy version people agree to (YYYY-MM-DD). Recorded with every
+   * acceptance (profiles.terms_version, fans.acked_terms_version); bumping it
+   * asks every creator and fan to agree again. Bump it for material changes.
+   */
+  version: "2026-10-27",
+  /** Advance notice before a material change to either document, or a creator fee, takes effect. */
+  changeNoticeDays: 30,
   /** Minimum age for every user, creator or fan. */
   minimumAge: 18,
 } as const;
@@ -34,4 +42,17 @@ export function formatLegalDate(iso: string): string {
   const month = MONTHS[Number(m[2]) - 1];
   if (!month) throw new Error(`formatLegalDate: bad month in ${iso}`);
   return `${month} ${Number(m[3])}, ${m[1]}`;
+}
+
+/** Whether a stored acceptance is for the current Terms version. */
+export function acceptedCurrentTerms(version: string | null | undefined): boolean {
+  return version === LEGAL.version;
+}
+
+/**
+ * A fan must (re)confirm the age/terms gate when they never have, or when the
+ * version they agreed to is not the current one.
+ */
+export function fanNeedsAck(ackedAt: string | null | undefined, ackedVersion: string | null | undefined): boolean {
+  return ackedAt == null || !acceptedCurrentTerms(ackedVersion);
 }

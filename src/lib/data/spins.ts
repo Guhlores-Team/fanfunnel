@@ -34,6 +34,7 @@ import type { AnyClient, DbWheelRow, SpinError } from "./shared";
 import { getActiveHappyHour, resolveWheelId } from "./wheels";
 import { fireWebhooks } from "./webhooks";
 import { runAfterResponse } from "@/lib/afterResponse";
+import { fanNeedsAck } from "@/lib/legal";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -44,7 +45,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   if (!isSupabaseConfigured()) return mockGetFanPass(token);
 
   const sb = createServiceClient();
-  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, leaderboard_opt_in)`;
+  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in)`;
   const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`;
   // Per-wheel balance lives on the pass (migration 0020). If that column isn't
   // present yet (migration not run), fall back to the legacy select so the fan
@@ -100,6 +101,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       spins_granted_total: number;
       referral_code: string | null;
       acked_at: string | null;
+      acked_terms_version?: string | null;
       leaderboard_opt_in?: boolean | null;
     } | null;
     creator: {
@@ -224,7 +226,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     },
     chatUnlocked:
       pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0,
-    needsAck: pass.fan.acked_at == null,
+    needsAck: fanNeedsAck(pass.fan.acked_at, pass.fan.acked_terms_version),
     tipUrl: pass.creator?.tip_url ?? null,
     creatorId: pass.creator_id,
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
@@ -253,12 +255,14 @@ export async function spin(
   //    endpoint directly must still have acknowledged first.
   const { data: ackRow } = await sb
     .from("fan_passes")
-    .select("fan:fans(acked_at)")
+    .select("fan:fans(acked_at, acked_terms_version)")
     .eq("token", token)
     .maybeSingle();
-  const ackedAt = (ackRow as unknown as { fan: { acked_at: string | null } | null } | null)
-    ?.fan?.acked_at;
-  if (ackRow && !ackedAt) return { error: "needs_ack" };
+  // A fan who agreed to an older Terms version must agree to the current one first.
+  const ackFan = (ackRow as unknown as {
+    fan: { acked_at: string | null; acked_terms_version: string | null } | null;
+  } | null)?.fan;
+  if (ackRow && fanNeedsAck(ackFan?.acked_at, ackFan?.acked_terms_version)) return { error: "needs_ack" };
 
   // 1. Atomically claim one spin from the fan account (can't be forged).
   const { data: remaining, error: claimErr } = await sb.rpc("claim_spin", {

@@ -78,6 +78,10 @@ const SECTIONS: LegalSection[] = [
             sign-in provider) and display name.
           </li>
           <li>
+            <strong>Agreement record:</strong> when you agreed to the Terms of Service and Privacy Policy, and
+            which version you agreed to.
+          </li>
+          <li>
             <strong>Access request:</strong> the creator name, main platform, profile links and social
             handles, audience size, country, how you heard about us and any notes you send so we can review
             your request.
@@ -113,7 +117,10 @@ const SECTIONS: LegalSection[] = [
 
         <h3>From fans</h3>
         <ul>
-          <li>the date and time you confirmed you are 18 or older and agreed to the Terms;</li>
+          <li>
+            the date and time you confirmed you are 18 or older and agreed to the Terms, and which version of
+            the Terms you agreed to;
+          </li>
           <li>your leaderboard choice and, if you opt in, the board name you pick;</li>
           <li>prizes you add to your wishlist;</li>
           <li>chat messages between you and the creator;</li>
@@ -142,8 +149,10 @@ const SECTIONS: LegalSection[] = [
           </li>
           <li>
             <strong>Technical logs:</strong> our hosting provider keeps short-lived request logs, and we keep
-            redacted technical error reports so we can find and fix problems. We design these reports to
-            leave out passwords, spin links and message content.
+            redacted technical error reports so we can find and fix problems. A report holds the error, the
+            page it happened on and your browser type. Before a report is stored we remove spin links and other
+            access codes, sign-in tokens, email addresses, IP addresses, passwords and the query part of web
+            addresses, and reports never include message content.
           </li>
         </ul>
 
@@ -240,10 +249,13 @@ const SECTIONS: LegalSection[] = [
           <li>
             <strong>Service providers</strong> who process it for us under contract:
             <ul>
-              <li>Supabase: database, sign-in and file storage (for example avatars);</li>
+              <li>Supabase: database, sign-in and file storage (for example avatars), hosted in the United States;</li>
               <li>Vercel: website hosting and request logs;</li>
-              <li>Upstash: short-lived rate-limit counters keyed to IP address or link;</li>
-              <li>Resend: delivering account emails.</li>
+              <li>Upstash: rate limiting, with counters keyed to IP address or link and kept for at most an hour;</li>
+              <li>
+                Resend: delivering account emails (such as sign-up and password emails), and technical alert emails
+                to our own team.
+              </li>
             </ul>
           </li>
           <li>
@@ -334,7 +346,12 @@ const SECTIONS: LegalSection[] = [
           <strong>Rate-limit counters:</strong> expire automatically, within an hour at most.
         </li>
         <li>
-          <strong>Hosting logs and error reports:</strong> for a short period, then deleted automatically.
+          <strong>Hosting logs:</strong> for a short period, then deleted automatically by our hosting
+          provider.
+        </li>
+        <li>
+          <strong>Error reports:</strong> deleted 90 days after the problem is resolved, and the error log has a
+          fixed maximum size, so older reports are removed as new ones arrive.
         </li>
         <li>
           <strong>Backups:</strong> deleted data may stay in our providers’ backups until those backups expire
@@ -363,9 +380,11 @@ const SECTIONS: LegalSection[] = [
     title: "International transfers",
     body: (
       <p>
-        {OP} is run from the United States, and our providers may store and process information in the
-        United States and other countries. Those countries may not have the same data protection laws as
-        yours. When we transfer personal information out of the EEA, the UK or Switzerland, we rely on
+        {OP} is run from Massachusetts, in the United States. Our database is hosted in the United States.
+        Our website runs on a global hosting network, with its server functions in the United States by
+        default, and our other providers may process information in the United States and other countries.
+        Those countries may not have the same data protection laws as yours. When we transfer personal
+        information out of the EEA, the UK or Switzerland, we rely on
         safeguards such as the European Commission’s Standard Contractual Clauses (and the UK addendum) or
         an adequacy decision, such as the EU–US Data Privacy Framework where a provider is certified.
       </p>
@@ -438,9 +457,10 @@ const SECTIONS: LegalSection[] = [
     title: "Changes to this policy",
     body: (
       <p>
-        We will post any update here and change the “Last updated” date. If a change is significant, we will
-        let you know before it takes effect, for example in the creator dashboard, by email or on the spin
-        page.
+        We will post any update here and change the “Last updated” date. If a change is material, we will
+        give at least {LEGAL.changeNoticeDays} days’ notice before it takes effect: by email to creators, and
+        with a notice in the app or on this page for fans. A change required by law, or needed to keep the
+        Service secure, may take effect sooner.
       </p>
     ),
   },
