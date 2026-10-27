@@ -16,7 +16,8 @@
 -- service role, after it has sniffed, size-checked and re-encoded the file
 -- (no insert policy or grant for any client role). The creator may change a
 -- photo's caption and order (column-level grant) and delete it, on their own
--- rows only, while active. The path is pinned to "<creator_id>/<uuid>.webp".
+-- rows only, while active; an admin may delete any (moderation: "Remove
+-- photos" on the account row). The path is pinned to "<creator_id>/<uuid>.webp".
 -- A trigger caps the hub at 12 photos, and deleting the photo the theme uses
 -- as its background drops the theme back to the default background.
 --
@@ -59,7 +60,7 @@ create policy creator_media_update on public.creator_media for update
 
 drop policy if exists creator_media_delete on public.creator_media;
 create policy creator_media_delete on public.creator_media for delete
-  using (creator_id = auth.uid() and public.current_user_active());
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin());
 
 -- Anon never touches the table. A signed-in creator may read (RLS), delete
 -- (RLS) and change only the caption and order; never insert, and never move a

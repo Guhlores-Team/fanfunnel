@@ -168,3 +168,5 @@ export type { NotificationFeed, NotificationItem, NotificationKind, Notification
 export { getFanAppInfo, getMyPwaIconMode, setMyPwaIconMode } from "./pwa";
 export { recordCheckin } from "./checkins";
 export { recordOutreach, ageFanActivityForDemo } from "./outreach";
+export { getCreatorThemeView, getMyTheme, setMyTheme, addMyMedia, setMyMediaCaption, reorderMyMedia, deleteMyMedia, adminRemoveCreatorMedia } from "./creatorTheme";
+export type { CreatorThemeView, MyThemeView, ThemeMedia } from "./creatorTheme";

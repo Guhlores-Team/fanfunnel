@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { getMyPublicProfile } from "@/lib/data";
+import { isSupabaseConfigured } from "@/lib/supabase/server";
 
 /**
  * Mark the signed-in creator's public page (`/c/<slug>`, ISR at 60s) stale so
@@ -17,5 +18,19 @@ export async function revalidateMyPublicPage(): Promise<void> {
     if (slug) revalidatePath(`/c/${slug}`);
   } catch (err) {
     console.error("revalidateMyPublicPage failed", err);
+  }
+}
+
+/**
+ * After a theme or photo change (per-creator theming): mark the creator's
+ * public page stale. In demo mode every /c/<slug> renders the demo creator, so
+ * all of them are marked (the pattern form needs `type`, see revalidatePath).
+ */
+export async function revalidateMyThemedPublicPage(): Promise<void> {
+  await revalidateMyPublicPage();
+  try {
+    if (!isSupabaseConfigured()) revalidatePath("/c/[slug]", "page");
+  } catch (err) {
+    console.error("revalidateMyThemedPublicPage failed", err);
   }
 }
