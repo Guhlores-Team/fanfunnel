@@ -83,6 +83,7 @@ export function impactTag(kind: string): ImpactTag {
       return { label: "Fulfil", tone: "brand" };
     case "dm_fan":
     case "copy_link":
+    case "open_winback":
       return { label: "Re-engage", tone: "blue" };
     case "schedule_happy_hour":
       return { label: "Timing", tone: "amber" };

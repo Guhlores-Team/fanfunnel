@@ -71,6 +71,7 @@ check("sparkPoints all-zero series stays finite", !sparkPoints([0, 0]).includes(
 // --- impactTag -----------------------------------------------------------------
 check("fulfilment → Fulfil", impactTag("open_fulfilment").label === "Fulfil");
 check("dm/copy → Re-engage", impactTag("dm_fan").label === "Re-engage" && impactTag("copy_link").label === "Re-engage");
+check("win-back queue → Re-engage", impactTag("open_winback").label === "Re-engage");
 check("happy hour → Timing", impactTag("schedule_happy_hour").label === "Timing");
 check("edit wheel → Tune", impactTag("edit_wheel").label === "Tune");
 check("unknown → Insight", impactTag("whatever").label === "Insight");

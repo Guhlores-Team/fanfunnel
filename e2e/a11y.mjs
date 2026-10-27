@@ -11,6 +11,7 @@ import { chromium } from "playwright";
 import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
+import { quietSpender } from "./winback.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -130,6 +131,31 @@ const openStock = async (page) => {
   await page.waitForTimeout(400);
 };
 
+// RM-5: the win-back card (rows, stats, recently contacted) and the queue
+// sheet. Each prep makes its own quiet paying fans (aged by the demo-only
+// debug route), so nothing depends on demo data surviving e2e's wipe.
+const openWinbackCard = async (page) => {
+  const a = await quietSpender(page.request, "A11y Quiet One", 15);
+  await quietSpender(page.request, "A11y Quiet Two", 12);
+  const logged = await page.request.post(BASE + "/api/crm/outreach", { data: { fanId: a.fanId, action: "contacted" } });
+  if (!logged.ok()) throw new Error(`could not log a contact for the scan (${logged.status()})`);
+  await goto(page, "/dashboard", 1600);
+  await clickTab(page, "Analytics");
+  const card = page.getByTestId("winback-card");
+  await card.getByTestId("winback-row").first().waitFor({ timeout: 8000 });
+  await card.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(400);
+};
+const openWinbackQueue = async (page) => {
+  await quietSpender(page.request, "A11y Queue Fan", 9);
+  await goto(page, "/dashboard", 1600);
+  await clickTab(page, "Analytics");
+  await page.getByTestId("winback-card").scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "Start win-back" }).click();
+  await page.getByRole("dialog", { name: "Win-back queue" }).waitFor({ timeout: 5000 });
+  await page.waitForTimeout(500);
+};
+
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -178,6 +204,10 @@ const PAGES = [
   // switch is scanned by the Wheel editor states above.
   { path: "/", name: "fan spin (limited stock + prize book)", prep: openStock },
   { path: "/", name: "fan spin phone (limited stock + prize book)", viewport: PHONE, prep: openStock },
+  // RM-5: win-back list and queue.
+  { path: null, name: "dashboard (win-back card)", prep: openWinbackCard, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (win-back queue)", prep: openWinbackQueue, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard phone (win-back queue)", viewport: PHONE, prep: openWinbackQueue, advisory: DASH_ADVISORY },
 ];
 
 // Impacts that fail the build vs. advisory-only.
