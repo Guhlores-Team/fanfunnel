@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { WishlistItem } from "@/lib/data/types";
 
@@ -15,7 +15,7 @@ export default function WishlistSection({
   initial,
 }: {
   token: string;
-  prizes: Prize[];
+  prizes: PublicPrize[];
   initial: WishlistItem[];
 }) {
   const [wanted, setWanted] = useState<Set<string>>(

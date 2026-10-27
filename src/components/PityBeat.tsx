@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { prefersReducedMotion } from "@/lib/sound";
 
@@ -20,7 +20,7 @@ export default function PityBeat({
   prize,
   onDone,
 }: {
-  prize: Prize;
+  prize: PublicPrize;
   onDone?: () => void;
 }) {
   const [show, setShow] = useState(true);

@@ -1,8 +1,9 @@
 import { applyRareBoost, pickPrizeWithPity } from "@/lib/games/wheel/engine";
 import { makeFairRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
-import { RARITY_COLORS, RARITY_ORDER, type Prize, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicWheelConfig, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
+import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
@@ -957,7 +958,8 @@ export async function mockGetFanPass(
     fanName: fan.name,
     fanHandle: fan.handle ?? null,
     creatorTitle: CREATOR_TITLE,
-    wheel,
+    // Parity with the Supabase path: fan-safe projection (no prize costs).
+    wheel: toPublicWheel(wheel),
     spinsRemaining: pass?.spinsRemaining ?? fan.spinsRemaining,
     recentWins: fan.wins,
     wishlist: wishlistFor(fan.id),
@@ -1096,7 +1098,7 @@ export async function mockSpin(token: string, clientSeed = "") {
   });
 
   return {
-    prize: structuredClone(prize),
+    prize: structuredClone(toPublicPrize(prize)),
     prizeIndex: index,
     // Per-wheel: report THIS pass's remaining balance (not the fan aggregate),
     // so the spin page shows the right count for the wheel being played.
@@ -2792,12 +2794,12 @@ export function mockSendChatOutro(
 /** A token-less public preview of the active wheel + its happy-hour status. */
 export function mockGetPublicWheelTeaser(
   _creatorId?: string
-): { creatorTitle: string; wheel: WheelConfig; happyHour: HappyHourStatus } | null {
+): { creatorTitle: string; wheel: PublicWheelConfig; happyHour: HappyHourStatus } | null {
   const wheel = store.wheels.get(mockResolveActiveWheelId()) ?? activeWheel();
   if (!wheel) return null;
   return structuredClone({
     creatorTitle: CREATOR_TITLE,
-    wheel,
+    wheel: toPublicWheel(wheel),
     happyHour: mockGetActiveHappyHour(wheel.id),
   });
 }

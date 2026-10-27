@@ -1,4 +1,4 @@
-import type { Prize, Rarity } from "@/lib/games/wheel/types";
+import type { PublicPrize, Rarity } from "@/lib/games/wheel/types";
 
 /**
  * The high-rarity prize a fan *just* missed, plus which side of the landed
@@ -9,7 +9,7 @@ import type { Prize, Rarity } from "@/lib/games/wheel/types";
  * visual NearMissBeat that renders it is dynamically imported.
  */
 export interface NearMiss {
-  prize: Prize;
+  prize: PublicPrize;
   side: "left" | "right";
 }
 
@@ -22,7 +22,7 @@ export interface NearMiss {
  * thing the fan brushed past.
  */
 export function detectNearMiss(
-  prizes: Prize[],
+  prizes: PublicPrize[],
   landedIndex: number
 ): NearMiss | null {
   const n = prizes.length;

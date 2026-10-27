@@ -90,9 +90,26 @@ export interface WheelConfig {
   archivedAt?: string | null;
 }
 
+/**
+ * What a fan or the public may see of a prize (fan page, spin response, public
+ * wheel API). An allowlist: `cost` is creator-private (Prize ROI) and must never
+ * reach a fan, so a field added to Prize stays private until it is listed here
+ * and in toPublicPrize (./publicView.ts).
+ */
+export type PublicPrize = Pick<
+  Prize,
+  "id" | "label" | "description" | "rarity" | "weight" | "color" | "emoji" | "imageUrl" | "stock"
+>;
+
+/** The fan-/public-facing wheel: display fields only, no lifecycle or costs. */
+export interface PublicWheelConfig
+  extends Pick<WheelConfig, "id" | "title" | "subtitle" | "brandColor" | "labelColor" | "labelSize"> {
+  prizes: PublicPrize[];
+}
+
 /** Result of a single server-authoritative spin. */
 export interface SpinResult {
-  prize: Prize;
+  prize: PublicPrize;
   /** Index of the winning prize within config.prizes (for client animation). */
   prizeIndex: number;
   spinsRemaining: number;

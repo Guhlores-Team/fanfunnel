@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { brandVars } from "@/lib/theme";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
@@ -45,12 +45,12 @@ function useWheelSize() {
 export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [spinsRemaining, setSpinsRemaining] = useState(pass.spinsRemaining);
   const [result, setResult] = useState<WheelResult | null>(null);
-  const [won, setWon] = useState<Prize | null>(null);
+  const [won, setWon] = useState<PublicPrize | null>(null);
   const [wonShareId, setWonShareId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [nearMiss, setNearMiss] = useState<NearMiss | null>(null);
-  const [pity, setPity] = useState<Prize | null>(null);
+  const [pity, setPity] = useState<PublicPrize | null>(null);
   const [pityAwarded, setPityAwarded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
@@ -144,7 +144,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         return;
       }
       const data = await res.json();
-      const prize: Prize = data.prize;
+      const prize: PublicPrize = data.prize;
       setSpinsRemaining(data.spinsRemaining);
       setResult({ index: data.prizeIndex, nonce: Date.now() });
       setWon(prize);
@@ -530,7 +530,7 @@ function PrizeModal({
   shareId,
   onClose,
 }: {
-  prize: Prize;
+  prize: PublicPrize;
   shareId: string | null;
   onClose: () => void;
 }) {

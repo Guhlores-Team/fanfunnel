@@ -10,6 +10,7 @@ import {
 } from "@/lib/games/wheel/fairness";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { FanPassView, WishlistItem } from "./types";
 import { consumeCommittedSeed, freshSeed } from "./spinSeed";
 import { mockGetFanPass, mockSpin, mockCreatePass } from "./mock";
@@ -196,7 +197,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     spinsRemaining: hasPerPass
       ? pass.spins_remaining ?? 0
       : pass.fan.spins_remaining,
-    wheel: toWheelConfig(wheel),
+    // Fan-safe projection: no creator-private fields (prize cost) on the page.
+    wheel: toPublicWheel(toWheelConfig(wheel)),
     recentWins: winRows.map((w) => ({
       label: w.prize_label,
       rarity: w.prize_rarity,
@@ -596,7 +598,8 @@ async function recordClaimedSpin(
   }).catch(() => {});
 
   return {
-    prize: chosen.prize,
+    // The spin response goes to the fan's browser: fan-safe fields only.
+    prize: toPublicPrize(chosen.prize),
     prizeIndex: chosen.index,
     spinsRemaining,
     pityAwarded: chosen.pityAwarded,

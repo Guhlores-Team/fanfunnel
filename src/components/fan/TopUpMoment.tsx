@@ -1,6 +1,6 @@
 "use client";
 
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
 import { externalUrl } from "@/lib/format";
@@ -16,7 +16,7 @@ export default function TopUpMoment({
   creatorTitle,
   tipUrl,
 }: {
-  prizes: Prize[];
+  prizes: PublicPrize[];
   history: WonPrize[];
   creatorTitle: string;
   tipUrl?: string | null;

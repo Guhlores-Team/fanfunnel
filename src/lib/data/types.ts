@@ -1,4 +1,4 @@
-import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
+import type { Prize, PublicWheelConfig, Rarity } from "@/lib/games/wheel/types";
 
 // Generated Supabase schema types (`npm run gen:types`; CI fails on drift).
 // Use Tables<"name"> / Enums<"name"> for row shapes in new data-layer code.
@@ -56,7 +56,7 @@ export interface FanPassView {
   fanName: string | null;
   fanHandle?: string | null; // the fan's leaderboard handle (for "You're #X")
   creatorTitle: string;
-  wheel: WheelConfig;
+  wheel: PublicWheelConfig;
   spinsRemaining: number;
   recentWins: WonPrize[];
   /** Phase 3: optional fan-facing extras. All optional so existing callers compile. */

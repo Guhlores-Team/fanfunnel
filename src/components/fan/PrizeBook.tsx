@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
 
@@ -14,7 +14,7 @@ export default function PrizeBook({
   prizes,
   history,
 }: {
-  prizes: Prize[];
+  prizes: PublicPrize[];
   history: WonPrize[];
 }) {
   const [open, setOpen] = useState(false);
