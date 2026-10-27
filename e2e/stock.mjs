@@ -102,6 +102,8 @@ export async function stockJourney(page, { step, assert }, ctx) {
 
     await step("stock: winning it drops the count without a reload, never before the wheel stops", async () => {
       const resp = page.waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST");
+      // If the spin click throws, `resp` must not reject unhandled and kill the run.
+      resp.catch(() => {});
       await spinAndTime(page);
       const body = await (await resp).json();
       assert(body.prize?.id === epic.id, "the server awarded the limited epic");

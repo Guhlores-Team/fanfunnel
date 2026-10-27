@@ -130,7 +130,7 @@ export default function FanLeaderboard({
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
                   {e.handle}
                   {you && e.rank === you.rank && (
-                    <span className="ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                    <span className="ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--brand-ink)]">
                       You
                     </span>
                   )}
