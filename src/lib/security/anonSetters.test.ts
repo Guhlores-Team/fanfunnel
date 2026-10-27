@@ -43,6 +43,7 @@ const SIGNED_IN_ONLY = [
   "set_public_profile",
   "set_creator_note",
   "set_notifications_seen",
+  "set_pwa_icon_mode",
   "import_fans",
   "admin_account_stats",
   "admin_reserve_account_deletion",

@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
 import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
+import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -38,6 +39,22 @@ const openFanSheet = async (page) => {
 };
 const DESKTOP = { width: 1280, height: 900 };
 const PHONE = { width: 390, height: 844 };
+
+// RM-4: the fan's home-screen install card, on a freshly minted link (so it
+// doesn't depend on demo data surviving the first-run wipe), in a fresh
+// context per platform (own storage, so no earlier "Not now" hides it).
+const installNudge = (platform) => async (page) => {
+  const token = await mintFanLink(page.request, 2);
+  await goto(page, `/spin/${token}`, 1800);
+  await passAgeGate(page);
+  if (platform === "android") await fakeInstallPrompt(page);
+  await spinAndCloseWin(page);
+  const nudge = page.locator("[data-testid='install-nudge']");
+  await nudge.waitFor({ timeout: 5000 });
+  if (platform === "ios") await nudge.getByRole("button", { name: "How" }).click();
+  await page.waitForTimeout(400);
+};
+const PHONE_CTX = { isMobile: true, hasTouch: true };
 
 // RD-8: overlays and editors. Each prep only needs what survives e2e's
 // first-run wipe (the fan comes from openFanSheet, the rest is static UI).
@@ -121,6 +138,8 @@ const PAGES = [
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
   { path: "/", name: "fan spin phone (legendary reveal)", viewport: PHONE, prep: openReveal("legendary"), cleanup: closeReveal },
   { path: "/", name: "fan spin (reduced-motion reveal)", prep: openReveal("epic", { reduced: true }), cleanup: closeReveal },
+  { path: null, name: "fan spin (install nudge, Android)", viewport: PHONE, context: PHONE_CTX, prep: installNudge("android") },
+  { path: null, name: "fan spin (install nudge, iPhone guide)", viewport: PHONE, context: { ...PHONE_CTX, userAgent: IPHONE_UA }, prep: installNudge("ios") },
 ];
 
 // Impacts that fail the build vs. advisory-only.
@@ -128,7 +147,7 @@ const BLOCKING = new Set(["critical", "serious"]);
 
 async function scan(page, { path, name, prep, cleanup, advisory = [], viewport = DESKTOP }) {
   await page.setViewportSize(viewport);
-  await goto(page, path, 1600);
+  if (path) await goto(page, path, 1600);
   if (prep) await prep(page);
   await page.addScriptTag({ content: AXE_SRC });
   const result = await page.evaluate(async () => {
@@ -155,7 +174,10 @@ try {
   let advisories = 0;
   const lines = ["\n================ ACCESSIBILITY (axe wcag2a/aa) ================"];
   for (const p of PAGES) {
-    const { name, violations, advisory } = await scan(page, p);
+    // A `context` entry gets its own browser context (user agent, storage).
+    const own = p.context ? await browser.newContext({ viewport: p.viewport ?? DESKTOP, ...p.context }) : null;
+    const target = own ? await own.newPage() : page;
+    const { name, violations, advisory } = await scan(target, p).finally(() => own?.close());
     // Split serious/critical into blocking vs. advisory (per-page allow-list).
     const block = violations.filter((v) => BLOCKING.has(v.impact) && !advisory.has(v.id));
     const adv = violations.filter((v) => BLOCKING.has(v.impact) && advisory.has(v.id));

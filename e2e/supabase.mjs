@@ -304,6 +304,25 @@ try {
     assert(anonErr, "anon cannot execute set_notifications_seen");
   });
 
+  await step("set_pwa_icon_mode RPC (0046) writes only the caller's row; anon and direct writes are refused", async () => {
+    const { error } = await A.client.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
+    assert(!error, `rpc failed: ${error?.message}`);
+    const { data: a } = await A.client.from("profiles").select("pwa_icon_mode").eq("id", A.id).single();
+    assert(a.pwa_icon_mode === "avatar", "A's icon mode set");
+    const { data: b } = await B.client.from("profiles").select("pwa_icon_mode").eq("id", B.id).single();
+    assert(b.pwa_icon_mode === "neutral", "B's icon mode is unaffected (still the neutral default)");
+    const { error: badErr } = await A.client.rpc("set_pwa_icon_mode", { p_mode: "selfie" });
+    assert(badErr, "an invalid mode is refused");
+    const { data: upd } = await A.client.from("profiles").update({ pwa_icon_mode: "avatar" }).eq("id", B.id).select("id");
+    assert((upd?.length ?? 0) === 0, "A can't write B's column directly");
+    const { data: own } = await B.client.from("profiles").update({ pwa_icon_mode: "avatar" }).eq("id", B.id).select("id");
+    assert((own?.length ?? 0) === 0, "B can't write its own column directly either (profiles_update is admin-only)");
+    const anon = createClient(URL, ANON, { auth: { persistSession: false } });
+    const { error: anonErr } = await anon.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
+    assert(anonErr, "anon cannot execute set_pwa_icon_mode");
+    await A.client.rpc("set_pwa_icon_mode", { p_mode: "neutral" });
+  });
+
   await step("anon cannot execute the self-service setters (0044); the signed-in creator still can", async () => {
     const anon = createClient(URL, ANON, { auth: { persistSession: false } });
     for (const [fn, args] of [

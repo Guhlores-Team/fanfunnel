@@ -195,6 +195,19 @@ async function main() {
     check((selfPromote.data?.length ?? 0) === 0, "A cannot self-UPDATE its profile (admin-only)");
     const { data: aRole } = await admin.from("profiles").select("role").eq("id", A.id).maybeSingle();
     check(aRole?.role !== "admin", `A's role is still not admin after self-promote attempt (got ${aRole?.role})`);
+
+    // RM-4 (0046): the home-screen icon setter writes only the caller's row.
+    const setIcon = await a.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
+    check(!setIcon.error, `A can set its own home-screen icon (${setIcon.error?.message ?? "ok"})`);
+    const { data: icons } = await admin.from("profiles").select("id, pwa_icon_mode").in("id", [A.id, B.id]);
+    const iconOf = (id) => icons?.find((r) => r.id === id)?.pwa_icon_mode;
+    check(iconOf(A.id) === "avatar", `A's icon mode is avatar (got ${iconOf(A.id)})`);
+    check(iconOf(B.id) === "neutral", `B's icon mode is untouched by A (got ${iconOf(B.id)})`);
+    const directIcon = await a.from("profiles").update({ pwa_icon_mode: "avatar" }).eq("id", B.id).select("id");
+    check((directIcon.data?.length ?? 0) === 0, "A cannot UPDATE B's pwa_icon_mode directly");
+    const anonClient = createClient(URL_, ANON, { auth: { persistSession: false } });
+    const anonIcon = await anonClient.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
+    check(!!anonIcon.error, "anon cannot execute set_pwa_icon_mode");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

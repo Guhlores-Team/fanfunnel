@@ -256,6 +256,7 @@ const SIGNED_IN_ONLY = [
   "set_public_profile(text, text, text)",
   "set_creator_note(text, text)",
   "set_notifications_seen()",
+  "set_pwa_icon_mode(text)",
   "import_fans(jsonb)",
   "admin_account_stats()",
   "admin_reserve_account_deletion(uuid)",
@@ -313,12 +314,43 @@ function probeGrants(db) {
     bad.push(`authenticated setter calls did not persist (got ${got ?? "nothing"}; ${(r.stderr || "").trim().split("\n")[0]})`);
   }
 
+  // 0046 (RM-4): set_pwa_icon_mode writes ONLY the caller's own active row.
+  // Creator A sets 'avatar'; creator B (and B's default) must be untouched; an
+  // invalid value is refused; a suspended caller changes nothing; and a direct
+  // UPDATE of the column by A is not even granted (profiles_update is admin-only).
+  const A_UID = "00000000-0000-4000-8000-0000000046a0";
+  const B_UID = "00000000-0000-4000-8000-0000000046b0";
+  const asUser = (uid, stmt) =>
+    `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true); ${stmt} reset role;`;
+  const pwa = psql(db, ["-c", `
+    begin;
+    insert into auth.users (id, email) values ('${A_UID}', 'probe-0046a@example.test'), ('${B_UID}', 'probe-0046b@example.test');
+    update public.profiles set is_active = true where id in ('${A_UID}', '${B_UID}');
+    ${asUser(A_UID, "select public.set_pwa_icon_mode('avatar');")}
+    select 'after-a:' || (select pwa_icon_mode from public.profiles where id = '${A_UID}') || ',' || (select pwa_icon_mode from public.profiles where id = '${B_UID}');
+    update public.profiles set is_active = false where id = '${B_UID}';
+    ${asUser(B_UID, "select public.set_pwa_icon_mode('avatar');")}
+    select 'suspended-b:' || (select pwa_icon_mode from public.profiles where id = '${B_UID}');
+    rollback;`], { allowFail: true });
+  const pwaOut = (pwa.stdout || "").split("\n").map((l) => l.trim());
+  if (pwa.status !== 0 || !pwaOut.includes("after-a:avatar,neutral") || !pwaOut.includes("suspended-b:neutral")) {
+    bad.push(`set_pwa_icon_mode is not own-row only (got ${pwaOut.filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${(pwa.stderr || "").trim().split("\n")[0]})`);
+  }
+  const pwaBad = psql(db, ["-c", `begin; insert into auth.users (id, email) values ('${A_UID}', 'probe-0046a@example.test'); update public.profiles set is_active = true where id = '${A_UID}'; ${asUser(A_UID, "select public.set_pwa_icon_mode('selfie');")} rollback;`], { allowFail: true });
+  if (!/invalid pwa_icon_mode/.test(pwaBad.stderr || "")) {
+    bad.push(`set_pwa_icon_mode accepted an invalid value (${(pwaBad.stderr || "no error").trim().split("\n")[0]})`);
+  }
+  const pwaDirect = psql(db, ["-c", `begin; insert into auth.users (id, email) values ('${A_UID}', 'probe-0046a@example.test'), ('${B_UID}', 'probe-0046b@example.test'); set local role authenticated; select set_config('request.jwt.claim.sub', '${A_UID}', true); update public.profiles set pwa_icon_mode = 'avatar' where id = '${B_UID}'; reset role; select 'direct-b:' || pwa_icon_mode from public.profiles where id = '${B_UID}'; rollback;`], { allowFail: true });
+  if (pwaDirect.status === 0 && !(pwaDirect.stdout || "").includes("direct-b:neutral")) {
+    bad.push(`a creator's direct UPDATE changed another creator's pwa_icon_mode (${(pwaDirect.stdout || "").trim()})`);
+  }
+
   if (bad.length) {
     failures++;
     console.log(`FAIL  ${db}: signed-in-only RPC grants`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; RLS helpers still anon-callable`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable`);
   }
 }
 
