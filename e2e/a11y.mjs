@@ -162,7 +162,9 @@ const openLinkRescue = async (page) => {
 const openCloseAccount = async (page) => {
   await clickTab(page, "Settings");
   await page.getByRole("button", { name: /Close my account/ }).click();
-  await page.getByLabel("Current password").waitFor({ timeout: 4000 });
+  // Settings has other "Current password" fields (email/password change);
+  // the close form lives in the "Your data" section.
+  await page.getByRole("region", { name: "Your data" }).getByLabel("Current password").waitFor({ timeout: 4000 });
   await page.waitForTimeout(300);
 };
 

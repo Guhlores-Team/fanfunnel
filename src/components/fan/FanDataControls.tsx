@@ -84,7 +84,7 @@ export function FanDeleteFlow({
     <div>
       <p className="text-sm font-bold text-ink">Delete my data?</p>
       <p className="mt-2 text-sm text-muted">This permanently deletes, for this creator:</p>
-      <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-muted">
+      <ul className="mt-1.5 list-disc space-y-1 pl-5 text-left text-sm text-muted">
         <li>your name, handle and profile;</li>
         <li>all your links to this creator (this one stops working) and any spins you have left;</li>
         <li>your chat messages, wishlist and referrals.</li>
