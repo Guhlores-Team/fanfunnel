@@ -14,6 +14,78 @@ export type Database = {
   }
   public: {
     Tables: {
+      app_error_alerts: {
+        Row: {
+          errors: number
+          id: string
+          kind: string
+          sent_at: string
+        }
+        Insert: {
+          errors?: number
+          id?: string
+          kind: string
+          sent_at?: string
+        }
+        Update: {
+          errors?: number
+          id?: string
+          kind?: string
+          sent_at?: string
+        }
+        Relationships: []
+      }
+      app_errors: {
+        Row: {
+          alert_pending: boolean
+          count: number
+          environment: string
+          fingerprint: string
+          first_seen: string
+          id: string
+          last_seen: string
+          message: string
+          resolved: boolean
+          resolved_at: string | null
+          route: string | null
+          source: string
+          stack: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          alert_pending?: boolean
+          count?: number
+          environment: string
+          fingerprint: string
+          first_seen?: string
+          id?: string
+          last_seen?: string
+          message: string
+          resolved?: boolean
+          resolved_at?: string | null
+          route?: string | null
+          source: string
+          stack?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          alert_pending?: boolean
+          count?: number
+          environment?: string
+          fingerprint?: string
+          first_seen?: string
+          id?: string
+          last_seen?: string
+          message?: string
+          resolved?: boolean
+          resolved_at?: string | null
+          route?: string | null
+          source?: string
+          stack?: string | null
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
       autopilot_dismissals: {
         Row: {
           created_at: string
@@ -1448,6 +1520,10 @@ export type Database = {
         Args: { perm: string; target_creator: string }
         Returns: boolean
       }
+      claim_app_error_alert: {
+        Args: { p_error_id?: string; p_limit: number }
+        Returns: Json
+      }
       claim_spin: { Args: { p_token: string }; Returns: number }
       credit_pass_spins: {
         Args: { p_fan_id: string; p_spins: number }
@@ -1506,6 +1582,19 @@ export type Database = {
       org_scope_creator: {
         Args: { p_creator: string; p_member: string; p_on: boolean }
         Returns: string
+      }
+      record_app_error: {
+        Args: {
+          p_environment: string
+          p_fingerprint: string
+          p_max_rows?: number
+          p_message: string
+          p_route?: string
+          p_source: string
+          p_stack?: string
+          p_user_agent?: string
+        }
+        Returns: Json
       }
       rollback_claimed_spin: {
         Args: { p_prize_id: string; p_token: string }

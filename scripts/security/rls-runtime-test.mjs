@@ -25,6 +25,7 @@
  *   • A cannot read, write or alter B's win-back outreach log (0051)
  *   • an agency seat sees only its org's (scoped) creators, and a non-member
  *     cannot read the org or give itself a seat or org membership (0052)
+ *   • anon and A cannot read, write or resolve app_errors (0053)
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -34,7 +35,7 @@
  * It refuses to run against the PRODUCTION project.
  */
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 try {
@@ -76,6 +77,7 @@ const RUN = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 const TEST_EMAIL = /^rlstest\+[^@]*@fanfunnel\.test$/i;
 const STALE_MS = 60 * 60 * 1000;
 const createdUserIds = [];
+const seededErrorIds = [];
 let failures = 0;
 const check = (cond, msg) => {
   if (cond) console.log("  ✓", msg);
@@ -357,8 +359,8 @@ async function main() {
     check((bFansA.data?.length ?? 0) === 0, "a non-member reads 0 of the org creator's fans");
     const { data: seatsAfter } = await admin.from("org_members").select("profile_id, role").eq("org_id", org.id);
     check(seatsAfter?.length === 1 && seatsAfter[0].profile_id === SEAT.id && seatsAfter[0].role === "chatter", "the org still has exactly the one chatter seat");
-    const { data: bAfter } = await admin.from("profiles").select("org_id").eq("id", B.id).maybeSingle();
-    check(bAfter?.org_id == null, "B is still outside the org");
+    const { data: bOrgAfter } = await admin.from("profiles").select("org_id").eq("id", B.id).maybeSingle();
+    check(bOrgAfter?.org_id == null, "B is still outside the org");
 
     // Suspended accounts (0052): a suspended seat gets nothing and a suspended
     // owner can't manage the org. The sessions above stay valid; only the
@@ -379,9 +381,43 @@ async function main() {
     check((ownStatsSuspended.data?.length ?? 0) === 0, `a suspended owner's org stats are empty (got ${ownStatsSuspended.data?.length ?? 0})`);
     const { data: seatsSuspended } = await admin.from("org_members").select("id").eq("org_id", org.id);
     check(seatsSuspended?.length === 1, "the org still has exactly the one seat");
+    // 0053 error monitoring: app_errors is admin-read/resolve only and written
+    // only by the server (service role). Seed one row the way the server does.
+    const fp = createHash("sha256").update(`rls-${RUN}`).digest("hex");
+    const seeded = await admin.rpc("record_app_error", {
+      p_fingerprint: fp, p_environment: "development", p_source: "server", p_message: `rls probe ${RUN}`,
+    });
+    const errId = seeded.data?.id;
+    if (seeded.error || !errId) throw new Error(`seed app_errors: ${seeded.error?.message ?? "no id"}`);
+    seededErrorIds.push(errId);
+    console.log("\nError monitoring (app_errors) — anon and a normal creator are locked out:");
+    const anonErrRead = await anonClient.from("app_errors").select("id").eq("id", errId);
+    check((anonErrRead.data?.length ?? 0) === 0, `anon reads 0 app_errors (got ${anonErrRead.data?.length ?? 0})`);
+    const anonIns = await anonClient.from("app_errors").insert({ fingerprint: fp.slice(0, 32), environment: "development", source: "client", message: "x" });
+    check(!!anonIns.error, "anon cannot INSERT app_errors");
+    const anonRec = await anonClient.rpc("record_app_error", { p_fingerprint: fp, p_environment: "development", p_source: "client", p_message: "x" });
+    check(!!anonRec.error, "anon cannot execute record_app_error");
+    const aRead = await a.from("app_errors").select("id").eq("id", errId);
+    check((aRead.data?.length ?? 0) === 0, `creator A reads 0 app_errors (got ${aRead.data?.length ?? 0})`);
+    const aIns = await a.from("app_errors").insert({ fingerprint: fp.slice(0, 32), environment: "development", source: "client", message: "x" });
+    check(!!aIns.error, "creator A cannot INSERT app_errors");
+    const aResolve = await a.from("app_errors").update({ resolved: true }).eq("id", errId).select("id");
+    check((aResolve.data?.length ?? 0) === 0, "creator A cannot resolve an app_error");
+    const aRec = await a.rpc("record_app_error", { p_fingerprint: fp, p_environment: "development", p_source: "client", p_message: "x" });
+    check(!!aRec.error, "creator A cannot execute record_app_error");
+    const aClaim = await a.rpc("claim_app_error_alert", { p_limit: 100 });
+    check(!!aClaim.error, "creator A cannot execute claim_app_error_alert");
+    const aAlerts = await a.from("app_error_alerts").select("id").limit(1);
+    check((aAlerts.data?.length ?? 0) === 0, "creator A reads 0 app_error_alerts");
+    const { data: errAfter } = await admin.from("app_errors").select("resolved, count").eq("id", errId).maybeSingle();
+    check(errAfter?.resolved === false && errAfter?.count === 1, `the app_error is untouched (resolved=${errAfter?.resolved}, count=${errAfter?.count})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
+    for (const id of seededErrorIds) {
+      const { error } = await admin.from("app_errors").delete().eq("id", id);
+      if (error) { cleanupFailed = true; console.error("  ✗ Failed to delete seeded app_error", id, "—", error.message); }
+    }
     console.log("\nCleaning up test users…");
     for (const id of createdUserIds) {
       try {

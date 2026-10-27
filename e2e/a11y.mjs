@@ -39,6 +39,24 @@ const openFanSheet = async (page) => {
   await page.getByRole("dialog", { name: "Fan details" }).waitFor({ timeout: 5000 });
   await page.waitForTimeout(800);
 };
+// Admin › Errors with one expanded entry. The error is reported here through
+// the public endpoint, so the state does not depend on e2e's data.
+const openErrors = async (page) => {
+  await page.request.post(BASE + "/api/errors", {
+    data: { message: "A11y scan sample error", kind: "error", stack: "Error: A11y scan sample error\n    at scan (/a11y.js:1:1)", route: "/dashboard" },
+  });
+  await clickTab(page, "Admin");
+  const errors = page.getByRole("region", { name: "Errors", exact: true });
+  await errors.waitFor({ timeout: 8000 });
+  const item = errors.getByTestId("app-error").filter({ hasText: "A11y scan sample error" }).first();
+  for (let i = 0; i < 10 && !(await item.count()); i++) {
+    await errors.getByRole("button", { name: "Refresh" }).click();
+    await page.waitForTimeout(500);
+  }
+  await item.getByRole("button", { name: "Details" }).click();
+  await item.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(600);
+};
 const DESKTOP = { width: 1280, height: 900 };
 const PHONE = { width: 390, height: 844 };
 
@@ -246,6 +264,8 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard (Import fans)", prep: clickIn("Fans", /Import fans/), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (wheel Manage menu)", prep: clickIn("Wheel", /^Manage /), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Admin New account modal)", prep: clickIn("Admin", "New account"), advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard (Admin Errors)", prep: openErrors, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Admin Errors)", viewport: PHONE, prep: openErrors, advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (bell panel)", viewport: PHONE, prep: openBell, advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (Wheels)", viewport: PHONE, prep: openTab("Wheels"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (Inbox)", viewport: PHONE, prep: openTab("Inbox"), advisory: DASH_ADVISORY },

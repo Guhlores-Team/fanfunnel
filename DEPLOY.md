@@ -99,6 +99,60 @@ are not rolled back automatically. They are written to be backward-compatible (a
 idempotent), so the previous code keeps running on the newer schema. Check that is still true for
 any migration that renames or drops something before relying on a plain revert.
 
+## Monitoring (errors + e-mail alerts)
+
+FanFunnel records its own errors; there is no third-party service to sign up for.
+
+**What is captured, on every environment (Production, Preview, local):**
+- Browser errors: uncaught errors, unhandled promise rejections and React error
+  boundaries (`src/instrumentation-client.ts`, `src/app/error.tsx`,
+  `src/app/global-error.tsx`) are posted to `POST /api/errors`.
+- Server errors: route handlers, server components, server actions and the proxy,
+  through `onRequestError` in `src/instrumentation.ts`.
+- Everything is redacted before it is stored or e-mailed (fan link tokens, auth
+  tokens and cookies, e-mails, passwords and API keys, query strings, ids, IPs),
+  then grouped by fingerprint in the `app_errors` table (migration `0053`), so a
+  repeat bumps a count instead of adding a row. The table keeps at most 1000
+  groups and prunes the oldest resolved ones first.
+- `POST /api/errors` is public but rate limited per IP, size-capped (16 KB),
+  schema-checked and answers `204` with no body.
+
+**Where to read errors:** sign in as an admin → **Dashboard › Admin**, section
+**Errors** (direct link: `/dashboard?section=admin#errors`). Filter Open /
+Resolved and by environment, expand an entry for its redacted stack, and press
+**Resolve**. A resolved error that happens again reopens and alerts again.
+
+**E-mail alerts** (sent with Resend's HTTP API). Add these in Vercel → Settings →
+Environment Variables, for **Production** (and Preview too if you want Preview
+alerts). All are server-only: never prefix them with `NEXT_PUBLIC_`.
+
+| Name | Value | Notes |
+|---|---|---|
+| `RESEND_API_KEY` | your Resend API key | Required for alerts. |
+| `ALERT_EMAIL_TO` | `you@example.com,ops@example.com` | Required for alerts. Comma list, up to 10. |
+| `ALERT_EMAIL_FROM` | optional | Defaults to `FanFunnel Alerts <alerts@easysimplesites.org>` (domain verified in Resend). |
+| `ALERT_ENVIRONMENTS` | optional, e.g. `production,preview` | Defaults to `production`. |
+
+If `RESEND_API_KEY` or `ALERT_EMAIL_TO` is missing, errors are still recorded and
+alerts are silently off (the server logs that once). An alert goes out only for
+the **first** occurrence of a new error or when a resolved one comes back, at
+most **10 per hour** across all servers (`ALERT_MAX_PER_HOUR` in
+`src/lib/monitoring/config.ts`). Errors held back by that limit are summed up in
+one "N more new errors" e-mail once the hour frees up. E-mails are sent after the
+response, so they never slow down or break a request.
+
+**Create a Resend key restricted to sending:**
+1. resend.com → **API Keys** → **Create API Key**.
+2. Name it e.g. `fanfunnel-alerts`, permission **Sending access**, and restrict
+   the domain to `easysimplesites.org`.
+3. Copy the key once and paste it into Vercel as `RESEND_API_KEY` (Production;
+   Preview if wanted). Never commit it or paste it anywhere else.
+4. Redeploy so the new variables take effect.
+
+**Database:** migration `0053_app_errors.sql` must reach the TEST project before
+the Preview is tested and PROD before (or at) the merge to `main`. Only admins
+(`is_admin()`) can read or resolve errors; nobody but the server can write them.
+
 ## Notes
 - Re-running `migrations_combined.sql` is safe.
 - Realtime chat needs nothing extra: Supabase Realtime is on for the `messages` table once the

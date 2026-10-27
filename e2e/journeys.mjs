@@ -673,6 +673,71 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     }
   });
 
+  // Error monitoring: a guarded, debug-only crash trigger (the in-app debug
+  // console, compiled in only with NEXT_PUBLIC_ENABLE_DEBUG=1 and admin-gated)
+  // → POST /api/errors → Admin › Errors → Resolve. Runs on its own page with no
+  // error sink: the crash and React's console report of it are the point.
+  await step("errors: a debug-console crash is captured (setup)", async () => {
+    const other = await ctx.newPage();
+    try {
+      await goto(other, "/dashboard?debug=1", 2000);
+      const launcher = other.locator("button[aria-label='Open debug console']");
+      if (await launcher.count()) {
+        await launcher.click();
+        const reported = other.waitForResponse(
+          (r) => r.url().endsWith("/api/errors") && r.request().method() === "POST",
+          { timeout: 10000 },
+        );
+        await other.getByRole("button", { name: /Force a render crash/ }).click();
+        const res = await reported;
+        assert(res.status() === 204, `the crash was reported (POST /api/errors → ${res.status()})`);
+      } else {
+        // A prod-style build has no debug console: report through the same
+        // public endpoint the browser uses.
+        const res = await ctx.request.post(BASE + "/api/errors", {
+          data: { message: "Forced render crash (debug crash-test button)", kind: "react" },
+        });
+        assert(res.status() === 204, "fallback report accepted");
+      }
+    } finally {
+      await other.close().catch(() => {});
+    }
+  });
+
+  await step("admin: Errors lists the crash (redacted) and Resolve moves it to Resolved", async () => {
+    await goto(page, "/dashboard?section=admin", 1500);
+    const errors = page.getByRole("region", { name: "Errors", exact: true });
+    await errors.waitFor({ timeout: 8000 });
+    const item = errors.getByTestId("app-error").filter({ hasText: "Forced render crash" }).first();
+    // The write happens after the response; refresh until it shows.
+    for (let i = 0; i < 10 && !(await item.count()); i++) {
+      await errors.getByRole("button", { name: "Refresh" }).click();
+      await page.waitForTimeout(500);
+    }
+    await item.waitFor({ timeout: 5000 });
+    const text = await item.innerText();
+    assert(/Browser/.test(text) && /development|preview|production/.test(text), "source + environment pills");
+    assert(/\/dashboard/.test(text) && !/\?debug/.test(text), "route is the path, query string redacted");
+    assert(/\d+ times?/.test(text) && /last/.test(text), "count + last seen");
+    await item.getByRole("button", { name: "Details" }).click();
+    const stack = item.getByLabel("Stack trace (redacted)");
+    await stack.waitFor({ timeout: 4000 });
+    assert(!/[?&](debug|token)=/.test(await stack.innerText()), "stack has no query strings");
+    await item.getByRole("button", { name: /^Resolve: Forced render crash/ }).click();
+    await item.waitFor({ state: "detached", timeout: 8000 });
+    await errors.getByRole("button", { name: "Resolved", exact: true }).click();
+    await errors
+      .getByTestId("app-error")
+      .filter({ hasText: "Forced render crash" })
+      .first()
+      .waitFor({ timeout: 8000 });
+    assert(
+      await errors.getByRole("button", { name: /^Reopen: Forced render crash/ }).count(),
+      "the crash is listed under Resolved with a Reopen action",
+    );
+    await errors.getByRole("button", { name: "Open", exact: true }).click();
+  });
+
   await step("webhooks: add then remove", async () => {
     await goto(page, "/dashboard", 1500);
     await clickTab(page, "Boosts");

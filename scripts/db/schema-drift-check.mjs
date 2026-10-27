@@ -18,6 +18,7 @@
 // isolation probe (orgIsolationProbe.mjs, 0052) acting as owners, seats and
 // non-members.
 // Plus the fan_checkins probe (0050): only the service role writes visits.
+// And the app_errors probe (0053): admin-read/resolve only, server-write only.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -575,6 +576,122 @@ function probeOrgIsolation(db) {
   }
 }
 
+// ------------------------------------------- app_errors probe (0053) ---
+// Error monitoring is admin-read, server-write. On a real Postgres: anon has no
+// access at all; a signed-in creator reads 0 rows, cannot insert, cannot resolve
+// and cannot call either RPC; an ACTIVE admin reads and resolves but cannot edit
+// any other column; the service role upserts by fingerprint, reopens a resolved
+// error, prunes to the row cap and is throttled by the alert budget.
+const ERR_FP = "0123456789abcdef0123456789abcdef";
+const ADMIN_UID = "00000000-0000-4000-8000-0000000053a0";
+const CREATOR_UID = "00000000-0000-4000-8000-0000000053c0";
+
+function probeAppErrors(db) {
+  const bad = [];
+  const seed = `
+    insert into auth.users (id, email) values ('${ADMIN_UID}', 'probe-0053a@example.test'), ('${CREATOR_UID}', 'probe-0053c@example.test');
+    update public.profiles set is_active = true where id in ('${ADMIN_UID}', '${CREATOR_UID}');
+    update public.profiles set role = 'admin' where id = '${ADMIN_UID}';
+    set local role service_role;
+    select public.record_app_error('${ERR_FP}', 'production', 'client', 'probe boom');
+    reset role;`;
+  const as = (uid, stmt) =>
+    `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true); ${stmt}; reset role;`;
+  const run = (body) => psql(db, ["-c", `begin; ${seed} ${body} rollback;`], { allowFail: true });
+  const lastLine = (r) => (r.stdout || "").split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
+  const firstErr = (r) => (r.stderr || "no error").trim().split("\n")[0];
+
+  const denied = (label, body, re = /permission denied/) => {
+    const r = run(body);
+    if (!re.test(r.stderr || "")) bad.push(`${label} was not refused (${r.status === 0 ? "succeeded" : firstErr(r)})`);
+  };
+  denied("anon SELECT app_errors", "set local role anon; select count(*) from public.app_errors;");
+  denied("anon INSERT app_errors", `set local role anon; insert into public.app_errors (fingerprint, environment, source, message) values ('${ERR_FP}', 'preview', 'client', 'x');`);
+  denied("anon SELECT app_error_alerts", "set local role anon; select count(*) from public.app_error_alerts;");
+  denied("anon record_app_error()", `set local role anon; select public.record_app_error('${ERR_FP}', 'production', 'client', 'x');`, /permission denied for function record_app_error/);
+  denied("anon claim_app_error_alert()", "set local role anon; select public.claim_app_error_alert(10);", /permission denied for function claim_app_error_alert/);
+  denied("creator INSERT app_errors", as(CREATOR_UID, `insert into public.app_errors (fingerprint, environment, source, message) values ('${ERR_FP}', 'preview', 'client', 'x')`));
+  denied("creator DELETE app_errors", as(CREATOR_UID, "delete from public.app_errors"));
+  denied("creator record_app_error()", as(CREATOR_UID, `select public.record_app_error('${ERR_FP}', 'production', 'client', 'x')`), /permission denied for function record_app_error/);
+  denied("creator claim_app_error_alert()", as(CREATOR_UID, "select public.claim_app_error_alert(10)"), /permission denied for function claim_app_error_alert/);
+  denied("admin UPDATE of app_errors.count (resolve-only grant)", as(ADMIN_UID, "update public.app_errors set count = 99"));
+  denied("admin INSERT app_errors", as(ADMIN_UID, `insert into public.app_errors (fingerprint, environment, source, message) values ('${ERR_FP}', 'preview', 'client', 'x')`));
+
+  const creator = run(`
+    ${as(CREATOR_UID, "select 'creator-sees:' || count(*) from public.app_errors")}
+    ${as(CREATOR_UID, "update public.app_errors set resolved = true")}
+    select 'after-creator:' || bool_or(resolved) from public.app_errors;`);
+  const cOut = (creator.stdout || "").split("\n").map((l) => l.trim());
+  if (creator.status !== 0 || !cOut.includes("creator-sees:0") || !cOut.includes("after-creator:false")) {
+    bad.push(`a creator could read or resolve app_errors (got ${cOut.filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${firstErr(creator)})`);
+  }
+
+  const suspended = run(`
+    update public.profiles set is_active = false where id = '${ADMIN_UID}';
+    ${as(ADMIN_UID, "select 'suspended-sees:' || count(*) from public.app_errors")}`);
+  if (lastLine(suspended) !== "suspended-sees:0") bad.push(`a suspended admin can read app_errors (${lastLine(suspended) ?? firstErr(suspended)})`);
+
+  const admin = run(`
+    ${as(ADMIN_UID, "select 'admin-sees:' || count(*) from public.app_errors")}
+    ${as(ADMIN_UID, "update public.app_errors set resolved = true, resolved_at = now()")}
+    select 'after-admin:' || bool_and(resolved) from public.app_errors;`);
+  const aOut = (admin.stdout || "").split("\n").map((l) => l.trim());
+  if (admin.status !== 0 || !aOut.includes("admin-sees:1") || !aOut.includes("after-admin:true")) {
+    bad.push(`an active admin could not read + resolve (got ${aOut.filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${firstErr(admin)})`);
+  }
+
+  const svc = run(`
+    set local role service_role;
+    select 'repeat:' || (r->>'is_new') || ',' || (r->>'reopened') || ',' || (r->>'count') from (select public.record_app_error('${ERR_FP}', 'production', 'client', 'probe boom') r) s;
+    reset role;
+    update public.app_errors set resolved = true;
+    set local role service_role;
+    select 'reopen:' || (r->>'is_new') || ',' || (r->>'reopened') || ',' || (r->>'count') from (select public.record_app_error('${ERR_FP}', 'production', 'client', 'probe boom') r) s;
+    select 'other-env:' || (r->>'is_new') from (select public.record_app_error('${ERR_FP}', 'preview', 'client', 'probe boom') r) s;
+    reset role;
+    select set_config('probe.prod', (select id::text from public.app_errors where environment = 'production'), true) is not null;
+    select set_config('probe.prev', (select id::text from public.app_errors where environment = 'preview'), true) is not null;
+    set local role service_role;
+    select 'claim1:' || (public.claim_app_error_alert(2, current_setting('probe.prod')::uuid)->>'send');
+    select 'claim2:' || (public.claim_app_error_alert(2, current_setting('probe.prod')::uuid)->>'send');
+    select 'claim3:' || (public.claim_app_error_alert(2, current_setting('probe.prev')::uuid)->>'send');
+    select 'digest-throttled:' || (public.claim_app_error_alert(2)->>'send');
+    reset role;
+    select 'pending:' || count(*) from public.app_errors where alert_pending;
+    delete from public.app_error_alerts;
+    set local role service_role;
+    select 'digest:' || (r->>'send') || ',' || (r->>'pending') from (select public.claim_app_error_alert(2) r) s;
+    select 'prune:' || (r->>'is_new') from (select public.record_app_error('fedcba9876543210fedcba9876543210', 'production', 'server', 'other', null, null, null, 1) r) s;
+    reset role;
+    select 'rows:' || count(*) from public.app_errors;`);
+  const sOut = (svc.stdout || "").split("\n").map((l) => l.trim());
+  const want = [
+    "repeat:false,false,2",
+    "reopen:false,true,3",
+    "other-env:true",
+    "claim1:true",
+    "claim2:true",
+    "claim3:false",
+    "digest-throttled:false",
+    "pending:1",
+    "digest:true,1",
+    "prune:true",
+    "rows:1",
+  ];
+  const missing = want.filter((w) => !sOut.includes(w));
+  if (svc.status !== 0 || missing.length) {
+    bad.push(`service-role upsert/throttle/prune misbehaved (missing ${missing.join(" ")}; got ${sOut.filter((l) => /:/.test(l)).join(" ")}; ${firstErr(svc)})`);
+  }
+
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: app_errors access + behaviour`);
+    for (const b of bad) console.log(`  - ${b}`);
+  } else {
+    console.log(`PASS  ${db}: app_errors is admin-read/resolve only, server-write only; upsert, reopen, throttle and prune behave`);
+  }
+}
+
 // ----------------------------------------------------------------- builds ---
 try {
   const migrations = readdirSync(join(SUPABASE, "migrations"))
@@ -631,6 +748,7 @@ try {
     probeGrants(db);
     probeOrgIsolation(db);
     probeCheckins(db);
+    probeAppErrors(db);
   }
 } catch (e) {
   failures++;
