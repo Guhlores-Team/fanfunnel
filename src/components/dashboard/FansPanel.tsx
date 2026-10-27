@@ -9,7 +9,7 @@ import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { CloseButton, Field, initialsOf } from "./ui";
-import { fanRowMeta, threadFanIds } from "./fansHelpers";
+import { copyLinkToken, fanRowMeta, noLinkMessage, threadFanIds } from "./fansHelpers";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import PackPresets from "@/components/dashboard/PackPresets";
 import ImportFans from "@/components/dashboard/ImportFans";
@@ -201,9 +201,9 @@ export default function FansPanel({
   }
 
   async function copyLink(acc: FanAccountSummary) {
-    const token = acc.primaryToken ?? acc.links[0]?.token;
+    const token = copyLinkToken(acc);
     if (!token) {
-      toast("No link yet — top up this fan to mint one.", { tone: "error" });
+      toast(noLinkMessage(acc), { tone: "error" });
       return;
     }
     if (await copyToClipboard(`${origin}/spin/${token}`)) {

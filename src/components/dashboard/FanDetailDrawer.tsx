@@ -13,6 +13,7 @@ import { CloseButton, Field, TagEditor, initialsOf } from "./ui";
 import PackPresets from "@/components/dashboard/PackPresets";
 import { grantImpact, grantPriceError, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
+import { copyLinkToken, noLinkMessage } from "./fansHelpers";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -239,14 +240,20 @@ export default function FanDetailDrawer({
     }
   }
 
-  // The fan's primary spin link (list row first, detail as fallback).
+  // The fan's primary spin link (list row first, detail as fallback): labels
+  // the "newest" link in the list below.
   const primaryToken =
     summary?.primaryToken ?? summary?.links[0]?.token ?? detail?.links[0]?.token ?? null;
-  const primaryUrl = primaryToken ? `${origin}/spin/${primaryToken}` : null;
+  // What Copy link / Copy DM hand out: the same pick as the Fans row (never a
+  // paused or inactive link, none for a blocked fan). The drawer's own block
+  // state wins once loaded, so a block made here applies before the list reloads.
+  const linkFan = summary ? { ...summary, blocked: detail ? blocked : summary.blocked } : null;
+  const shareToken = linkFan ? copyLinkToken(linkFan) : null;
+  const primaryUrl = shareToken ? `${origin}/spin/${shareToken}` : null;
 
   async function copyLink() {
     if (!primaryUrl) {
-      toast("No link yet — top up this fan to mint one.", { tone: "error" });
+      toast(linkFan ? noLinkMessage(linkFan) : "No link yet — top up this fan to mint one.", { tone: "error" });
       return;
     }
     if (await copyToClipboard(primaryUrl)) toast("Spin link copied", { tone: "success" });
