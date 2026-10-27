@@ -40,6 +40,7 @@ import HappyHourBanner from "./fan/HappyHourBanner";
 import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";
 import TopUpMoment from "./fan/TopUpMoment";
+import InstallNudge from "./fan/InstallNudge";
 import FanLeaderboard from "./fan/FanLeaderboard";
 import CreatorNote from "./fan/CreatorNote";
 import PrizeBook from "./fan/PrizeBook";
@@ -435,6 +436,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             tipUrl={pass.tipUrl}
           />
         )}
+        <InstallNudge armed={reveal && won !== null} />
       </div>
 
       <WinsGallery history={history} />
