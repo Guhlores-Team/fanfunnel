@@ -1,22 +1,41 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
 import type { Prize } from "@/lib/games/wheel/types";
-import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
-import { brandVars } from "@/lib/theme";
+import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
-import { copyToClipboard } from "@/lib/hooks/useClipboard";
-import { playWin, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
+import { playWin, playBuildUp, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
 import { spinErrorInfo, ackErrorMessage } from "./spinErrors";
+import RewardReveal from "./reveal/RewardReveal";
+import {
+  REVEAL_IDLE,
+  SKIP_ON_BACKDROP_TAP,
+  SKIP_ON_ESCAPE,
+  SPIN_WATCHDOG_MS,
+  bumpSessionSpins,
+  canSkip,
+  readSessionSpins,
+  revealConfetti,
+  revealEntrance,
+  revealInFlight,
+  revealReducer,
+  theaterVisible,
+} from "./reveal/revealTiers";
 // Both beats pull in the motion library and only render briefly after a spin,
 // so defer them off the fan page's initial bundle.
 const NearMissBeat = dynamic(() => import("./NearMissBeat"), { ssr: false });
 const PityBeat = dynamic(() => import("./PityBeat"), { ssr: false });
+// RM-1 theater layers only render around a spin, so they load on demand too.
+const RevealTheater = dynamic(() => import("./reveal/RevealTheater"), { ssr: false });
+const WheelAura = dynamic(
+  () => import("./reveal/RevealTheater").then((m) => m.WheelAura),
+  { ssr: false }
+);
 import HappyHourBanner from "./fan/HappyHourBanner";
 import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";
@@ -48,12 +67,23 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [won, setWon] = useState<Prize | null>(null);
   const [wonShareId, setWonShareId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [reveal, setReveal] = useState(false);
+  // RM-1: the reveal runs as a small state machine (revealTiers.ts). It only
+  // starts once /api/spin has returned, and reads nothing but that result.
+  const [rv, dispatchReveal] = useReducer(revealReducer, REVEAL_IDLE);
+  const reveal = rv.phase === "revealed";
+  // Completed spins this browser session: tap-to-skip appears after the first.
+  const [sessionSpins, setSessionSpins] = useState(() =>
+    typeof window === "undefined" ? 0 : readSessionSpins()
+  );
   const [nearMiss, setNearMiss] = useState<NearMiss | null>(null);
   const [pity, setPity] = useState<Prize | null>(null);
   const [pityAwarded, setPityAwarded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const mutedRef = useRef(muted);
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
   const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
   // Phase 5b: age-gate / ToS. Blocks everything until acknowledged.
   const [needsAck, setNeedsAck] = useState(pass.needsAck ?? false);
@@ -97,6 +127,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   // forever and the SPIN button would be dead until reload. The watchdog clears
   // it well after any normal spin should have finished.
   const spinWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spinEnded = useRef(true);
+  // The latest handleSpinEnd, so the watchdog never runs a stale closure.
+  const spinEndRef = useRef<() => void>(() => {});
   // Clear a pending watchdog on unmount so it can't setBusy() after the
   // component is gone (avoids a state-update-on-unmounted-component warning).
   useEffect(
@@ -112,19 +145,20 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const { paused } = useLinkPause();
   const { canSpin, label: spinLabel, balanceLabel } = spinControl({
     spinsRemaining,
-    busy,
+    busy: busy || revealInFlight(rv.phase),
     paused,
   });
 
   const handleSpin = useCallback(async () => {
     if (!canSpin) return;
     // iOS: wake the audio context inside the tap so the win fanfare can play,
-    // and fire a haptic tick (works even on silent mode).
-    if (!muted) unlockAudio();
-    haptic(12);
+    // and fire a haptic tick. Haptics follow the same mute switch as sound.
+    if (!muted) {
+      unlockAudio();
+      haptic(12);
+    }
     setBusy(true);
     setError(null);
-    setReveal(false);
     setWon(null);
     setNearMiss(null);
     setPity(null);
@@ -146,22 +180,34 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       const data = await res.json();
       const prize: Prize = data.prize;
       setSpinsRemaining(data.spinsRemaining);
+      // The outcome is final here; the theater only presents its rarity.
+      spinEnded.current = false;
+      dispatchReveal({
+        type: "start",
+        rarity: prize.rarity,
+        reducedMotion: prefersReducedMotion(),
+        spinsBefore: sessionSpins,
+      });
+      setBusy(false);
       setResult({ index: data.prizeIndex, nonce: Date.now() });
       setWon(prize);
       setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
       setPityAwarded(data.pityAwarded === true);
       if (typeof data.nextSpinHash === "string") setNextSpinHash(data.nextSpinHash);
-      // Arm the stuck-spin watchdog (cleared by handleSpinEnd on normal finish).
+      // Arm the stuck-spin watchdog (cleared by handleSpinEnd on normal
+      // finish). If the wheel's completion never fires, land on the result as
+      // a skip would, so the button can't stay dead and the win isn't lost.
       if (spinWatchdog.current) clearTimeout(spinWatchdog.current);
       spinWatchdog.current = setTimeout(() => {
         spinWatchdog.current = null;
-        setBusy(false);
-      }, 9000);
+        dispatchReveal({ type: "skip" });
+        spinEndRef.current();
+      }, SPIN_WATCHDOG_MS);
     } catch {
       setError("Network error. Try again.");
       setBusy(false);
     }
-  }, [canSpin, pass.token, muted, clientSeed]);
+  }, [canSpin, pass.token, muted, clientSeed, sessionSpins]);
 
   // On the 1→0 spins transition (a spin that just emptied the balance), nudge
   // the fan via chat once. A later top-up (>0) re-arms the one-shot guard.
@@ -184,16 +230,21 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [boardRefresh, setBoardRefresh] = useState(0);
 
   const handleSpinEnd = useCallback(() => {
+    // Once per spin: the watchdog and the wheel can both report the end.
+    if (spinEnded.current) return;
+    spinEnded.current = true;
     if (spinWatchdog.current) {
       clearTimeout(spinWatchdog.current);
       spinWatchdog.current = null;
     }
     setBusy(false);
-    setReveal(true);
     setBoardRefresh((n) => n + 1);
+    setSessionSpins(bumpSessionSpins(sessionSpins));
     if (won) {
-      if (!muted) playWin(won.rarity);
-      haptic(won.rarity === "legendary" || won.rarity === "epic" ? [18, 40, 18] : 16);
+      if (!muted) {
+        playWin(won.rarity);
+        if (rv.tier) haptic(rv.tier.haptic);
+      }
       setHistory((h) =>
         [
           {
@@ -216,7 +267,46 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         setNearMiss(detectNearMiss(pass.wheel.prizes, result.index));
       }
     }
-  }, [won, muted, result, pass.wheel.prizes, pityAwarded]);
+    // Opens the card now, or after the tier's short hold on the landed slice.
+    dispatchReveal({ type: "stop" });
+  }, [won, muted, result, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier]);
+  useEffect(() => {
+    spinEndRef.current = handleSpinEnd;
+  }, [handleSpinEnd]);
+
+  // The build-up (epic/legendary by default) starts ~1s before the stop.
+  const handleNearStop = useCallback(() => {
+    dispatchReveal({ type: "nearStop" });
+    if (!mutedRef.current && rv.tier?.buildUp) playBuildUp(rv.tier.buildUpSound);
+  }, [rv.tier]);
+
+  // Hold on the landed slice (spotlight/burst) before the card opens.
+  useEffect(() => {
+    if (rv.phase !== "landed" || !rv.tier) return;
+    const t = setTimeout(() => dispatchReveal({ type: "beatDone" }), rv.tier.stopBeatMs);
+    return () => clearTimeout(t);
+  }, [rv.phase, rv.tier]);
+
+  const skipAvailable = canSkip({
+    phase: rv.phase,
+    skipped: rv.skipped,
+    spinsBefore: rv.spinsBefore,
+    reducedMotion: rv.tier?.animate === false,
+  });
+  const skipReveal = useCallback(() => dispatchReveal({ type: "skip" }), []);
+  useEffect(() => {
+    if (!skipAvailable || !SKIP_ON_ESCAPE) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") skipReveal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [skipAvailable, skipReveal]);
+  const theaterOn = theaterVisible(rv);
+  const spotlight =
+    rv.tier && result && (rv.phase === "landed" || rv.phase === "revealed")
+      ? { index: result.index, dim: rv.tier.spotlightDim }
+      : null;
 
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-7">
@@ -250,7 +340,10 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       {pass.happyHour && <HappyHourBanner status={pass.happyHour} />}
 
       {/* Wheel with a soft brand halo behind it for depth. */}
-      <div className="reveal-scale relative flex items-center justify-center" style={{ animationDelay: "0.15s" }}>
+      <div
+        className={`reveal-scale relative flex items-center justify-center${theaterOn ? " z-[41]" : ""}`}
+        style={{ animationDelay: "0.15s" }}
+      >
         <div
           aria-hidden
           className="ambient-glow pointer-events-none absolute h-[106%] w-[106%] rounded-full blur-2xl"
@@ -263,6 +356,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           }}
         />
         <div className="relative">
+          {rv.tier && rv.phase !== "idle" && (
+            <WheelAura key={result?.nonce} tier={rv.tier} phase={rv.phase} />
+          )}
           <Wheel
             prizes={pass.wheel.prizes}
             brandColor={brand}
@@ -272,6 +368,10 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             onSpinEnd={handleSpinEnd}
             size={size}
             muted={muted}
+            tier={rv.tier}
+            onNearStop={handleNearStop}
+            skip={rv.skipped}
+            spotlight={spotlight}
           />
         </div>
       </div>
@@ -366,19 +466,43 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         creatorTitle={pass.creatorTitle}
       />
 
-      {reveal && won && (
-        <PrizeModal
-          prize={won}
-          shareId={wonShareId}
-          onClose={() => setReveal(false)}
+      {theaterOn && rv.tier && (
+        <RevealTheater
+          tier={rv.tier}
+          onTap={SKIP_ON_BACKDROP_TAP && skipAvailable ? skipReveal : undefined}
         />
       )}
 
-      {pity && (
+      {skipAvailable && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-[42] flex justify-center px-5">
+          <button
+            type="button"
+            onClick={skipReveal}
+            data-testid="reveal-skip"
+            className="pointer-events-auto rounded-full border border-line bg-surface/90 px-5 py-2.5 text-sm font-semibold text-ink shadow-lg backdrop-blur-sm transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+          >
+            Skip <span aria-hidden="true">›</span>
+          </button>
+        </div>
+      )}
+
+      {reveal && won && rv.tier && (
+        <RewardReveal
+          prize={won}
+          tier={rv.tier}
+          shareId={wonShareId}
+          entrance={revealEntrance(rv)}
+          confetti={revealConfetti(rv)}
+          onClose={() => dispatchReveal({ type: "close" })}
+        />
+      )}
+
+      {/* The beats accompany the card, so they wait for it to open. */}
+      {pity && !revealInFlight(rv.phase) && (
         <PityBeat prize={pity} onDone={() => setPity(null)} />
       )}
 
-      {nearMiss && (
+      {nearMiss && !revealInFlight(rv.phase) && (
         <NearMissBeat
           nearMiss={nearMiss}
           onDone={() => setNearMiss(null)}
@@ -521,164 +645,6 @@ function AgeGate({
       <style>{`
         @keyframes ff-fade { from { opacity: 0 } to { opacity: 1 } }
       `}</style>
-    </div>
-  );
-}
-
-function PrizeModal({
-  prize,
-  shareId,
-  onClose,
-}: {
-  prize: Prize;
-  shareId: string | null;
-  onClose: () => void;
-}) {
-  const color = prize.color ?? RARITY_COLORS[prize.rarity];
-  const isBig = prize.rarity === "epic" || prize.rarity === "legendary";
-  const [shared, setShared] = useState(false);
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  // A11y: focus the primary action on open, close on Escape, and trap Tab
-  // within the dialog so keyboard/screen-reader users aren't stranded behind it.
-  const dialogRef = useFocusTrap<HTMLDivElement>({
-    active: true,
-    onEscape: onClose,
-    initialFocus: closeRef,
-  });
-
-  const share = async () => {
-    if (!shareId) return;
-    const url = `${window.location.origin}/share/${shareId}`;
-    const text = `I just won ${prize.label}! 🎉`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: prize.label, text, url });
-      } else if (await copyToClipboard(url)) {
-        setShared(true);
-        setTimeout(() => setShared(false), 1500);
-      }
-    } catch {
-      /* user cancelled or share unavailable */
-    }
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
-      onClick={onClose}
-      style={{ animation: "ff-fade 0.2s ease-out" }}
-    >
-      {isBig && <Confetti />}
-      {/* Screen-reader announcement — the visual modal is decorative for AT. */}
-      <p className="sr-only" role="status" aria-live="assertive">
-        You won {prize.label}, a {RARITY_LABEL[prize.rarity]} prize.
-      </p>
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`You won ${prize.label}`}
-        className="card relative w-full max-w-sm rounded-[1.75rem] p-8 text-center"
-        style={{
-          boxShadow: `0 30px 80px -20px color-mix(in oklab, ${color} 50%, transparent)`,
-          borderColor: `color-mix(in oklab, ${color} 55%, transparent)`,
-          animation: "ff-pop 0.32s cubic-bezier(0.18,0.9,0.3,1.2)",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <span
-          className="inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
-          style={{ backgroundColor: color }}
-        >
-          {RARITY_LABEL[prize.rarity]}
-        </span>
-        {/* Rarity medallion — a tinted gradient halo behind the emoji so
-            photoless wins still feel premium, scaled up for epic/legendary. */}
-        <div
-          className="mx-auto my-6 grid place-items-center rounded-full"
-          style={{
-            width: isBig ? 132 : 112,
-            height: isBig ? 132 : 112,
-            background: `radial-gradient(circle at 50% 35%, color-mix(in oklab, ${color} 45%, transparent), color-mix(in oklab, ${color} 12%, transparent) 70%)`,
-            boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${color} 45%, transparent), 0 12px 40px -12px color-mix(in oklab, ${color} 60%, transparent)`,
-          }}
-        >
-          <span style={{ fontSize: isBig ? 64 : 52 }}>{prize.emoji ?? "🎁"}</span>
-        </div>
-        <h2 className="font-[family-name:var(--font-display)] text-2xl font-extrabold text-ink text-balance">
-          {prize.label}
-        </h2>
-        {prize.description && (
-          <p className="mt-2 text-sm text-muted text-pretty">{prize.description}</p>
-        )}
-        <p className="mt-5 text-sm text-muted">
-          Screenshot this and send it to your creator to claim your prize!
-        </p>
-        {shareId && (
-          <button
-            onClick={share}
-            className="mt-6 w-full rounded-2xl border py-3 font-semibold text-ink transition hover:brightness-110"
-            style={{ borderColor: color }}
-          >
-            {shared ? "Link copied!" : "Share your win ↗"}
-          </button>
-        )}
-        <button
-          ref={closeRef}
-          onClick={onClose}
-          className="btn-brand mt-3 w-full rounded-2xl py-3 font-bold"
-          style={brandVars(color)}
-        >
-          Awesome!
-        </button>
-      </div>
-      <style>{`
-        @keyframes ff-fade { from { opacity: 0 } to { opacity: 1 } }
-        @keyframes ff-pop { from { opacity: 0; transform: translateY(12px) scale(0.94) } to { opacity: 1; transform: none } }
-      `}</style>
-    </div>
-  );
-}
-
-// Lightweight CSS confetti — no dependency. Skipped entirely for users who
-// prefer reduced motion (70 full-viewport moving elements is a vestibular risk).
-function Confetti() {
-  const reduce = prefersReducedMotion();
-  const [pieces] = useState(() =>
-    Array.from({ length: 70 }, (_, i) => ({
-      id: i,
-      left: Math.random() * 100,
-      delay: Math.random() * 0.6,
-      duration: 2 + Math.random() * 1.5,
-      color: ["#ec4899", "#f59e0b", "#3b82f6", "#22c55e", "#a855f7"][i % 5],
-      rotate: Math.random() * 360,
-    }))
-  );
-  useEffect(() => {
-    const style = document.createElement("style");
-    style.textContent = `@keyframes ff-fall {0%{transform:translateY(-10vh) rotate(0);opacity:1}100%{transform:translateY(110vh) rotate(720deg);opacity:0.9}}`;
-    document.head.appendChild(style);
-    return () => style.remove();
-  }, []);
-  if (reduce) return null;
-  return (
-    <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden">
-      {pieces.map((p) => (
-        <span
-          key={p.id}
-          style={{
-            position: "absolute",
-            left: `${p.left}%`,
-            top: 0,
-            width: 9,
-            height: 14,
-            background: p.color,
-            transform: `rotate(${p.rotate}deg)`,
-            animation: `ff-fall ${p.duration}s ${p.delay}s ease-in forwards`,
-          }}
-        />
-      ))}
     </div>
   );
 }
