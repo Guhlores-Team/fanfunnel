@@ -11,6 +11,7 @@ import { chromium } from "playwright";
 import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
+import { spinViaApi } from "./play.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -130,6 +131,50 @@ const openStock = async (page) => {
   await page.waitForTimeout(400);
 };
 
+// RM-6: the fan's "Your play" card, the reminder card and the break, each on a
+// fresh fan made here (nothing depends on demo data surviving e2e).
+const playFan = async (page, name, spins = 3) => createRevealFan(page.request, name, spins);
+const openYourPlay = async (page) => {
+  const token = await playFan(page, "A11y Play Fan");
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByRole("button", { name: /^Your play/ }).click();
+  await page.getByRole("radio", { name: "Off" }).waitFor({ timeout: 4000 });
+  await page.getByRole("button", { name: "7 days" }).click();
+  await page.getByTestId("break-confirm").waitFor({ timeout: 3000 });
+};
+const openBreather = async (page) => {
+  const token = await playFan(page, "A11y Breather Fan", 22);
+  const set = await page.request.post(BASE + "/api/fan/reminder", { data: { token, daily: 20 } });
+  if (!set.ok()) throw new Error(`could not set a reminder for the scan (${set.status()})`);
+  await spinViaApi(page.request, token, 20);
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByRole("button", { name: /^SPIN$/ }).click();
+  await page.getByTestId("breather-card").waitFor({ timeout: 4000 });
+  await page.waitForTimeout(600);
+};
+const takeBreakFor = async (page, name) => {
+  const token = await playFan(page, name);
+  const res = await page.request.post(BASE + "/api/fan/break", { data: { token, duration: "7d" } });
+  if (!res.ok()) throw new Error(`could not start a break for the scan (${res.status()})`);
+  return token;
+};
+const openOnBreak = async (page) => {
+  const token = await takeBreakFor(page, "A11y Break Fan");
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByTestId("break-status").waitFor({ timeout: 4000 });
+  await page.getByRole("button", { name: /^Your play/ }).click();
+  await page.waitForTimeout(400);
+};
+const openDrawerOnBreak = async (page) => {
+  const name = `A11y Resting Fan ${Date.now().toString(36)}`;
+  await takeBreakFor(page, name);
+  await page.reload();
+  await clickTab(page, "Fans");
+  await page.getByRole("button", { name: `View ${name}` }).first().click();
+  await page.getByRole("dialog", { name: "Fan details" }).getByTestId("fan-on-break").waitFor({ timeout: 6000 });
+  await page.waitForTimeout(600);
+};
+
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -178,6 +223,14 @@ const PAGES = [
   // switch is scanned by the Wheel editor states above.
   { path: "/", name: "fan spin (limited stock + prize book)", prep: openStock },
   { path: "/", name: "fan spin phone (limited stock + prize book)", viewport: PHONE, prep: openStock },
+  // RM-6: Your play (reminder + break confirm), the reminder card, a fan on a
+  // break, and the creator's drawer for that fan.
+  { path: "/", name: "fan spin (Your play open)", prep: openYourPlay },
+  { path: "/", name: "fan spin phone (Your play open)", viewport: PHONE, prep: openYourPlay },
+  { path: "/", name: "fan spin phone (reminder card)", viewport: PHONE, prep: openBreather },
+  { path: "/", name: "fan spin (on a break)", prep: openOnBreak },
+  { path: "/", name: "fan spin phone (on a break)", viewport: PHONE, prep: openOnBreak },
+  { path: "/dashboard", name: "dashboard (fan drawer: on a break)", prep: openDrawerOnBreak, advisory: DASH_ADVISORY },
 ];
 
 // Impacts that fail the build vs. advisory-only.

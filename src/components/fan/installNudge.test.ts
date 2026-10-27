@@ -52,7 +52,13 @@ check("no window (SSR): not snoozed", !installNudgeSnoozed(t0));
 // --- the component's guard rails (static) ------------------------------------------
 const src = readFileSync(join(import.meta.dirname, "InstallNudge.tsx"), "utf8");
 check("hidden when already installed (display-mode: standalone)", src.includes("(display-mode: standalone)") && /navigator as Navigator & \{ standalone\?: boolean \}/.test(src));
-check("hidden on a paused link", /useLinkPause\(\)/.test(src) && /!paused/.test(src));
+check(
+  "hidden on a paused link and while on a break (F6 engagement gate)",
+  /useLinkPause\(\)/.test(src) &&
+    /useFanBreak\(\)/.test(src) &&
+    /fanEngagementAllowed\(\{ selfExcluded: paused, breakUntil \}, now\)/.test(src) &&
+    /const eligible = !standalone && engaged &&/.test(src)
+);
 check("offered only once armed by a win", /armed && eligible/.test(src));
 check("uses the native prompt on Android, never on its own", /preventDefault\(\)/.test(src) && /deferred\.prompt\(\)/.test(src));
 check("never stores the token", !/token/i.test(src.replace(/\/\/.*$/gm, "")));

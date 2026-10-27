@@ -26,6 +26,15 @@ const busy = spinControl({ spinsRemaining: 3, busy: true, paused: false });
 check("busy spin is disabled and says Spinning", !busy.canSpin && busy.label === "Spinning…");
 check("live balance chip shows the count", live.balanceLabel === "5");
 
+// RM-6: a break turns SPIN off but keeps the fan's balance on show.
+const onBreak = spinControl({ spinsRemaining: 5, busy: false, paused: false, onBreak: true });
+check("on a break: cannot spin even with spins left", !onBreak.canSpin);
+check("on a break: the button says so", onBreak.label === "On a break");
+check("on a break: the balance is kept on show", onBreak.balanceLabel === "5");
+const pausedOnBreak = spinControl({ spinsRemaining: 5, busy: false, paused: true, onBreak: true });
+check("a paused link still wins over a break", pausedOnBreak.label === "Link paused");
+check("no break flag keeps today's behaviour", spinControl({ spinsRemaining: 5, busy: false, paused: false, onBreak: false }).canSpin);
+
 // Error mapping: never raw server text.
 check("rate_limited is mapped", /moment|slow|again/i.test(pauseErrorMessage("rate_limited")));
 check("not_found is mapped", /couldn.t find|already/i.test(pauseErrorMessage("not_found")));

@@ -94,6 +94,7 @@ export default function FanDetailDrawer({
   const [deleting, setDeleting] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const topUpId = useId();
+  const breakNoteId = useId();
   const toast = useToast();
   const origin = useOrigin();
   // Focus-trap the drawer while a fan is open: focus the close button, cycle Tab
@@ -279,6 +280,13 @@ export default function FanDetailDrawer({
     },
   ];
   const pending = loading || !detail;
+  // RM-6: the fan chose a break. The creator sees only that (never the fan's
+  // reminder or counts), and the "keep going" tools are off until it ends
+  // (F6 engagement gate). The server already drops a break that has ended.
+  const breakUntil = detail?.breakUntil ?? null;
+  const breakEnd = breakUntil
+    ? new Date(breakUntil).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : null;
 
   return (
     <div className="fixed inset-0 z-50">
@@ -326,6 +334,14 @@ export default function FanDetailDrawer({
                       Blocked
                     </span>
                   )}
+                  {breakEnd && (
+                    <span
+                      data-testid="fan-on-break"
+                      className="ml-2 inline-block rounded-full border border-line px-2 py-0.5 text-[10px] font-semibold text-ink"
+                    >
+                      On a break until {breakEnd}
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
@@ -364,7 +380,9 @@ export default function FanDetailDrawer({
                     onClick={() => setTopUpOpen((v) => !v)}
                     aria-expanded={topUpOpen}
                     aria-controls={topUpId}
-                    className="btn-brand inline-flex min-h-10 basis-full items-center justify-center whitespace-nowrap rounded-[10px] px-[14px] text-[13.5px] font-bold sm:flex-1 sm:basis-0"
+                    disabled={!!breakEnd}
+                    aria-describedby={breakEnd ? breakNoteId : undefined}
+                    className="btn-brand inline-flex min-h-10 basis-full items-center justify-center whitespace-nowrap rounded-[10px] px-[14px] text-[13.5px] font-bold disabled:cursor-not-allowed disabled:opacity-50 sm:flex-1 sm:basis-0"
                   >
                     Top up spins
                   </button>
@@ -392,9 +410,19 @@ export default function FanDetailDrawer({
                     </button>
                   )}
                   {primaryUrl && <QrButton url={primaryUrl} label={`${name} spin link`} className={actionBtn} />}
-                  <CopyDmMenu templates={templates} onPick={copyDm} />
+                  <CopyDmMenu
+                    templates={templates}
+                    onPick={copyDm}
+                    disabled={!!breakEnd}
+                    describedBy={breakEnd ? breakNoteId : undefined}
+                  />
                 </div>
-                {topUpOpen && (
+                {breakEnd && (
+                  <p id={breakNoteId} className="mt-2 text-[12px] text-muted">
+                    Paused by the fan: they&rsquo;re taking a break until {breakEnd}. Top-up and Copy DM are off until then.
+                  </p>
+                )}
+                {topUpOpen && !breakEnd && (
                   <TopUpForm
                     key={fanId}
                     id={topUpId}
@@ -850,9 +878,14 @@ function TopUpForm({
 function CopyDmMenu({
   templates,
   onPick,
+  disabled = false,
+  describedBy,
 }: {
   templates: DmTemplate[];
   onPick: (t: DmTemplate) => void;
+  /** RM-6: off while the fan is on a break. */
+  disabled?: boolean;
+  describedBy?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -923,14 +956,16 @@ function CopyDmMenu({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         aria-haspopup="menu"
-        className={actionBtn}
+        disabled={disabled}
+        aria-describedby={describedBy}
+        className={`${actionBtn} disabled:cursor-not-allowed disabled:opacity-50`}
       >
         Copy DM
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
-      {open && (
+      {open && !disabled && (
         <div
           ref={menuRef}
           id={menuId}
