@@ -25,6 +25,7 @@ import {
 import type { AnyClient, DbWheelRow, SpinError } from "./shared";
 import { getActiveHappyHour, resolveWheelId } from "./wheels";
 import { fireWebhooks } from "./webhooks";
+import { runAfterResponse } from "@/lib/afterResponse";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -588,14 +589,16 @@ async function recordClaimedSpin(
       error: redemptionErr.message,
     });
   }
-  // Best-effort fan-out to the creator's webhooks. Never blocks/throws — a slow
-  // or failing endpoint must not break the spin.
-  void fireWebhooks(pass.creator_id, {
+  // Best-effort fan-out to the creator's webhooks, run after the response via
+  // after() so the host can't cut it off. Never blocks/throws — a slow or
+  // failing endpoint must not break the spin.
+  const webhookPayload = {
     event: "prize_pending",
     prize: chosen.prize.label,
     rarity: chosen.prize.rarity,
     at: new Date().toISOString(),
-  }).catch(() => {});
+  };
+  runAfterResponse(() => fireWebhooks(pass.creator_id, webhookPayload));
 
   return {
     // The spin response goes to the fan's browser: fan-safe fields only.
