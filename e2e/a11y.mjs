@@ -74,6 +74,20 @@ const clickIn = (tab, name) => async (page) => {
   await page.waitForTimeout(600);
 };
 
+// Fairness v3: a fresh spin's verify page with its odds table. The fan and the
+// spin are made here, so the state doesn't depend on demo data surviving e2e.
+const openFreshVerify = async (page) => {
+  const pass = await (await page.request.post(BASE + "/api/passes", { data: { name: "A11y Verify", spins: 1 } })).json();
+  if (!pass?.token) throw new Error("could not create a fan for the verify scan");
+  const ack = await page.request.post(BASE + "/api/fans/ack", { data: { token: pass.token } });
+  if (!ack.ok()) throw new Error(`could not acknowledge the age gate (${ack.status()})`);
+  const res = await page.request.post(BASE + "/api/spin", { data: { token: pass.token, clientSeed: "a11y" } });
+  const spin = await res.json().catch(() => null);
+  if (!spin?.shareId) throw new Error(`could not spin for the verify scan (${res.status()})`);
+  await goto(page, `/verify/${spin.shareId}`, 1200);
+  await page.getByRole("table").waitFor({ timeout: 5000 });
+};
+
 // Pages to scan + an optional prep step to reach a meaningful state.
 //
 // `advisory` lists rule ids that are reported but NOT blocking for that page.
@@ -140,6 +154,8 @@ const PAGES = [
   { path: "/", name: "fan spin (reduced-motion reveal)", prep: openReveal("epic", { reduced: true }), cleanup: closeReveal },
   { path: null, name: "fan spin (install nudge, Android)", viewport: PHONE, context: PHONE_CTX, prep: installNudge("android") },
   { path: null, name: "fan spin (install nudge, iPhone guide)", viewport: PHONE, context: { ...PHONE_CTX, userAgent: IPHONE_UA }, prep: installNudge("ios") },
+  { path: "/", name: "verify (fairness v3 odds)", prep: openFreshVerify },
+  { path: "/", name: "verify phone (fairness v3 odds)", viewport: PHONE, prep: openFreshVerify },
 ];
 
 // Impacts that fail the build vs. advisory-only.

@@ -1,7 +1,14 @@
-import { applyRareBoost, pickPrizeWithPity } from "@/lib/games/wheel/engine";
-import { makeFairRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
+import { makeFairRng, makeFairRngV3, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
+import {
+  NEW_SPIN_FAIR_VERSION,
+  buildPoolSnapshot,
+  drawFromSnapshot,
+  hashPoolSnapshot,
+  type FairTrace,
+  type PoolSnapshot,
+} from "@/lib/games/wheel/fairnessV3";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
-import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicWheelConfig, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicPrize, type PublicWheelConfig, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
 import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
@@ -82,6 +89,12 @@ interface MockWin extends WonPrize {
   clientSeed?: string | null;
   // Whether the seed was pre-committed (absent on seeded demo wins).
   commitment?: SeedCommitment | null;
+  // Fairness v3 (absent on older/seeded wins, which verify as v1/v2).
+  prizeId?: string | null;
+  fairVersion?: number | null;
+  poolSnapshot?: PoolSnapshot | null;
+  poolHash?: string | null;
+  fairTrace?: FairTrace | null;
 }
 
 // A per-wheel link under a fan: its own balance + which wheel/campaign it's for.
@@ -1027,32 +1040,56 @@ export async function mockSpin(token: string, clientSeed = "") {
   const wheelId = pass.wheelId;
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
 
-  // The fan's clientSeed is mixed into the RNG so the server can't dictate the
-  // outcome.
+  // Fairness v3, same derivation as the Supabase path: snapshot the effective
+  // pool (happy hour applied, sold-out prizes left out) with the fan's pity
+  // state, and mix its hash into the RNG with the fan's clientSeed.
+  const hh = mockGetActiveHappyHour(wheel.id);
+  const snapshot = buildPoolSnapshot(wheel, {
+    happyHourMultiplier: hh.active ? hh.multiplier : null,
+    pityCounter: fan.pityCounter,
+  });
+  const v3 = NEW_SPIN_FAIR_VERSION === 3;
+  const poolHash = await hashPoolSnapshot(snapshot);
   const serverSeedHash =
     committedSeed && committedHash ? committedHash : await sha256Hex(serverSeed);
-  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
+  const rng = v3
+    ? await makeFairRngV3(serverSeed, clientSeed, nonce, poolHash)
+    : await makeFairRng(serverSeed, clientSeed, nonce);
 
-  // Happy hour: boost rare-or-better weights for the pick (the returned clone is
-  // used only for selection — stock decrement below targets the real wheel).
-  // Built AFTER the last await above: the clone snapshots stock, and the pick +
-  // decrement below must see the same count a concurrent spin can't change in
-  // between (a snapshot taken before an await let two spins both sell the last
-  // unit — the mock mirror of the Supabase path's stock compare-and-swap).
-  const hh = mockGetActiveHappyHour(wheel.id);
-  const pickWheel = hh.active ? applyRareBoost(wheel, hh.multiplier) : wheel;
-
-  let picked: ReturnType<typeof pickPrizeWithPity>;
+  // Draw + take stock with no `await` in between: in single-threaded JS that
+  // is atomic, the mock mirror of the Supabase path's stock compare-and-swap.
+  // A limited prize another spin sold out after the snapshot was taken is
+  // excluded and re-drawn, and the exclusion recorded, exactly as there.
+  let chosen: { live: Prize; shown: PublicPrize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
+  const excluded = new Set<string>();
+  const excludedOrder: string[] = [];
   try {
-    picked = pickPrizeWithPity(pickWheel, { pityCounter: fan.pityCounter }, rng);
+    for (let attempt = 0; attempt < snapshot.prizes.length + 1; attempt++) {
+      const draw = drawFromSnapshot(snapshot, excluded, rng);
+      const index = wheel.prizes.findIndex((p) => p.id === draw.prize.id);
+      const live = wheel.prizes[index];
+      if (live && (live.stock === null || live.stock === undefined || live.stock > 0)) {
+        // As read before the decrement, like the Supabase path's response.
+        const shown = structuredClone(toPublicPrize(live));
+        // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
+        if (typeof live.stock === "number") live.stock -= 1;
+        chosen = { live, shown, index, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter };
+        break;
+      }
+      excluded.add(draw.prize.id);
+      excludedOrder.push(draw.prize.id);
+    }
   } catch {
+    // Nothing left to draw: handled below.
+  }
+  if (!chosen) {
     // Every prize sold out: refund the claimed spin (parity with the Supabase
     // path's rollback_claimed_spin) instead of charging the fan for nothing.
     pass.spinsRemaining += 1;
     recomputeFanAggregate(fan);
     return { error: "no_prizes" as const };
   }
-  const { prize, index, pityAwarded, nextPityCounter } = picked;
+  const { live: prize, shown, index, pityAwarded, nextPityCounter } = chosen;
 
   // Per-wheel: the spin belongs to THIS pass's campaign directly.
   const campaignId = pass.campaignId;
@@ -1061,10 +1098,6 @@ export async function mockSpin(token: string, clientSeed = "") {
   // Spinning must NOT touch `leaderboardOptIn` — appearing on the creator's
   // public leaderboard is the fan's own explicit choice (the toggle on their
   // spin page). Mirrors the same fix in ./index.ts's spin().
-
-  // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
-  const live = wheel.prizes[index];
-  if (live && typeof live.stock === "number") live.stock -= 1;
 
   // Record the win on the fan account (persists across all their links).
   const at = new Date().toISOString();
@@ -1084,6 +1117,15 @@ export async function mockSpin(token: string, clientSeed = "") {
       nonce,
       clientSeed: clientSeed || null,
       commitment,
+      prizeId: prize.id,
+      ...(v3
+        ? {
+            fairVersion: 3,
+            poolSnapshot: snapshot,
+            poolHash,
+            fairTrace: { excluded: excludedOrder, won: prize.id },
+          }
+        : {}),
     },
     ...fan.wins,
   ].slice(0, 50);
@@ -1102,7 +1144,7 @@ export async function mockSpin(token: string, clientSeed = "") {
   });
 
   return {
-    prize: structuredClone(toPublicPrize(prize)),
+    prize: shown,
     prizeIndex: index,
     // Per-wheel: report THIS pass's remaining balance (not the fan aggregate),
     // so the spin page shows the right count for the wheel being played.
@@ -1111,6 +1153,7 @@ export async function mockSpin(token: string, clientSeed = "") {
     shareId,
     // THIS spin's rotation (not whatever a concurrent spin left on the pass).
     nextSpinHash: nextServerSeedHash,
+    ...(v3 ? { fairVersion: 3 as const, poolHash } : {}),
   };
 }
 
@@ -2270,6 +2313,17 @@ export async function mockGetSpinVerification(
       at: win.at,
       clientSeed: win.clientSeed ?? null,
       commitment: win.commitment ?? null,
+      fairVersion: win.fairVersion ?? null,
+      ...(win.fairVersion === 3
+        ? {
+            v3: {
+              prizeId: win.prizeId ?? null,
+              poolSnapshot: structuredClone(win.poolSnapshot ?? null),
+              poolHash: win.poolHash ?? null,
+              fairTrace: structuredClone(win.fairTrace ?? null),
+            },
+          }
+        : {}),
     };
   }
   return null;

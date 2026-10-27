@@ -2358,3 +2358,20 @@ $$;
 
 revoke execute on function public.set_pwa_icon_mode(text) from public, anon;
 grant execute on function public.set_pwa_icon_mode(text) to authenticated;
+
+-- 0047_fairness_v3.sql
+-- ============================================================
+-- Fairness v3: each spin records its canonical prize-pool snapshot (fan-safe
+-- fields only) and its SHA-256, mixed into the RNG, plus the sold-out re-draws
+-- (fair_trace) so /verify can replay the draw. fair_version NULL = v1/v2.
+-- Columns only; no function changes. See migrations/0047.
+alter table public.spins add column if not exists fair_version smallint
+  check (fair_version is null or fair_version in (1, 2, 3));
+alter table public.spins add column if not exists pool_snapshot jsonb;
+alter table public.spins add column if not exists pool_hash text
+  check (pool_hash is null or pool_hash ~ '^[0-9a-f]{64}$');
+alter table public.spins add column if not exists fair_trace jsonb;
+alter table public.spins drop constraint if exists spins_fair_v3_complete;
+alter table public.spins add constraint spins_fair_v3_complete
+  check (fair_version is distinct from 3
+         or (pool_snapshot is not null and pool_hash is not null and fair_trace is not null));

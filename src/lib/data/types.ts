@@ -115,6 +115,22 @@ export interface SpinVerification {
   clientSeed?: string | null;
   /** Whether the seed was pre-committed; null when the spin predates tracking. */
   commitment?: SeedCommitment | null;
+  /**
+   * Which fairness derivation the spin used: 3 = odds inside the commitment
+   * (replayable); null/1/2 = an earlier spin, verified by its seed hash only.
+   */
+  fairVersion?: number | null;
+  /**
+   * The recorded v3 inputs, exactly as stored (untrusted shapes). The verify
+   * page re-hashes and replays them with `replayV3`; present only when
+   * `fairVersion === 3`.
+   */
+  v3?: {
+    prizeId: string | null;
+    poolSnapshot: unknown;
+    poolHash: string | null;
+    fairTrace: unknown;
+  };
 }
 
 /** Phase 5b (#24): a creator's outbound webhook registration. */
