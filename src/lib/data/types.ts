@@ -1,4 +1,4 @@
-import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
+import type { Prize, PublicWheelConfig, Rarity } from "@/lib/games/wheel/types";
 
 // Generated Supabase schema types (`npm run gen:types`; CI fails on drift).
 // Use Tables<"name"> / Enums<"name"> for row shapes in new data-layer code.
@@ -56,7 +56,7 @@ export interface FanPassView {
   fanName: string | null;
   fanHandle?: string | null; // the fan's leaderboard handle (for "You're #X")
   creatorTitle: string;
-  wheel: WheelConfig;
+  wheel: PublicWheelConfig;
   spinsRemaining: number;
   recentWins: WonPrize[];
   /** Phase 3: optional fan-facing extras. All optional so existing callers compile. */
@@ -267,6 +267,11 @@ export interface FanAccountSummary {
   links: { token: string }[];
   passes: FanPassInfo[]; // per-wheel: link + balance + wheel/campaign
   lastWin: { label: string; rarity: Rarity; at: string } | null;
+  blocked: boolean; // the creator blocked this fan (fans.blocked_at set)
+  selfExcluded: boolean; // the fan paused (self-excluded) one of their links
+  // Newest link that is active and not paused (null when none). Outreach
+  // (win-back "Copy link") offers only this, never a paused link.
+  activeToken: string | null;
 }
 
 export interface FanDetail {

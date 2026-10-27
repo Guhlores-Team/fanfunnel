@@ -3,8 +3,9 @@
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { externalUrl } from "@/lib/format";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
-import type { Rarity, WheelConfig } from "@/lib/games/wheel/types";
+import type { PublicWheelConfig, Rarity } from "@/lib/games/wheel/types";
 import { RARITY_ORDER } from "@/lib/games/wheel/types";
+import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
 import { mockGetPublicWheelTeaser } from "./mock";
 import { WHEEL_SELECT, toWheelConfig } from "./shared";
@@ -19,7 +20,7 @@ import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
  */
 export async function getPublicWheelTeaser(
   creatorId: string
-): Promise<{ creatorTitle: string; wheel: WheelConfig; happyHour: HappyHourStatus } | null> {
+): Promise<{ creatorTitle: string; wheel: PublicWheelConfig; happyHour: HappyHourStatus } | null> {
   if (!isSupabaseConfigured()) return mockGetPublicWheelTeaser(creatorId);
 
   const sb = createServiceClient();
@@ -45,7 +46,8 @@ export async function getPublicWheelTeaser(
   const happyHour = await getActiveHappyHour(sb, wheelId, new Date());
   return {
     creatorTitle,
-    wheel: toWheelConfig(wheelData as unknown as DbWheelRow),
+    // Unauthenticated: fan-safe projection only (no prize costs).
+    wheel: toPublicWheel(toWheelConfig(wheelData as unknown as DbWheelRow)),
     happyHour,
   };
 }

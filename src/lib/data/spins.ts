@@ -10,6 +10,7 @@ import {
 } from "@/lib/games/wheel/fairness";
 import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { FanPassView, WishlistItem } from "./types";
 import { consumeCommittedSeed, freshSeed } from "./spinSeed";
 import { mockGetFanPass, mockSpin, mockCreatePass } from "./mock";
@@ -24,6 +25,7 @@ import {
 import type { AnyClient, DbWheelRow, SpinError } from "./shared";
 import { getActiveHappyHour, resolveWheelId } from "./wheels";
 import { fireWebhooks } from "./webhooks";
+import { runAfterResponse } from "@/lib/afterResponse";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -196,7 +198,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     spinsRemaining: hasPerPass
       ? pass.spins_remaining ?? 0
       : pass.fan.spins_remaining,
-    wheel: toWheelConfig(wheel),
+    // Fan-safe projection: no creator-private fields (prize cost) on the page.
+    wheel: toPublicWheel(toWheelConfig(wheel)),
     recentWins: winRows.map((w) => ({
       label: w.prize_label,
       rarity: w.prize_rarity,
@@ -586,17 +589,20 @@ async function recordClaimedSpin(
       error: redemptionErr.message,
     });
   }
-  // Best-effort fan-out to the creator's webhooks. Never blocks/throws — a slow
-  // or failing endpoint must not break the spin.
-  void fireWebhooks(pass.creator_id, {
+  // Best-effort fan-out to the creator's webhooks, run after the response via
+  // after() so the host can't cut it off. Never blocks/throws — a slow or
+  // failing endpoint must not break the spin.
+  const webhookPayload = {
     event: "prize_pending",
     prize: chosen.prize.label,
     rarity: chosen.prize.rarity,
     at: new Date().toISOString(),
-  }).catch(() => {});
+  };
+  runAfterResponse(() => fireWebhooks(pass.creator_id, webhookPayload));
 
   return {
-    prize: chosen.prize,
+    // The spin response goes to the fan's browser: fan-safe fields only.
+    prize: toPublicPrize(chosen.prize),
     prizeIndex: chosen.index,
     spinsRemaining,
     pityAwarded: chosen.pityAwarded,

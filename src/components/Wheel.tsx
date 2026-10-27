@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { playTick, haptic, prefersReducedMotion } from "@/lib/sound";
 
@@ -11,7 +11,7 @@ export interface WheelResult {
 }
 
 interface WheelProps {
-  prizes: Prize[];
+  prizes: PublicPrize[];
   brandColor?: string;
   /**
    * Phase 9 (#11): per-wheel color for the prize-label text rendered on the
@@ -89,7 +89,7 @@ function easeOutQuart(t: number): number {
   return 1 - Math.pow(1 - t, 4);
 }
 
-function segmentColor(p: Prize): string {
+function segmentColor(p: PublicPrize): string {
   return p.color ?? RARITY_COLORS[p.rarity] ?? "#6b7280";
 }
 
@@ -193,7 +193,7 @@ export default function Wheel({
     const angularRoom = seg * textR * 0.82; // tangential room (with edge margin)
     // Guard the label: a prize mid-edit can have an empty/undefined label, and
     // template-literal coercion would paint the string "undefined" on the slice.
-    const labelFor = (p: Prize) =>
+    const labelFor = (p: PublicPrize) =>
       `${p.emoji ? p.emoji + " " : ""}${p.label ?? ""}`.trim();
     const setLabelFont = (f: number) => {
       ctx.font = `600 ${f}px ui-sans-serif, system-ui, sans-serif`;
