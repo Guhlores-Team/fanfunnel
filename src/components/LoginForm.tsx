@@ -55,7 +55,12 @@ export default function LoginForm() {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { display_name: displayName || email } },
+          options: {
+            data: { display_name: displayName || email },
+            // Confirm link returns to THIS deployment (else Supabase uses the
+            // project's Site URL), signed in, on the access-request page.
+            emailRedirectTo: `${window.location.origin}/auth/callback?next=/pending`,
+          },
         });
         if (error) throw error;
         // If email confirmation is on, there's no session yet.
