@@ -2853,3 +2853,27 @@ grant execute on function public.org_scope_creator(uuid, uuid, boolean) to authe
 -- "where fan_id = $1 order by created_at desc limit 50". The composite also
 -- serves plain fan_id filters and the fans -> spins FK. See migrations/0045.
 create index if not exists spins_fan_created_idx on public.spins (fan_id, created_at desc);
+
+-- 0046_pwa_icon_mode.sql
+-- ============================================================
+-- Home-screen icon for a fan's installed spin link (RM-4, D8): 'neutral' (wheel
+-- glyph named "Spins", the default) or 'avatar' (creator photo + name). Written
+-- only through a SECURITY DEFINER setter on the caller's own active row
+-- (profiles_update stays admin-only); anon cannot execute it. See migrations/0046.
+alter table public.profiles
+  add column if not exists pwa_icon_mode text not null default 'neutral'
+    check (pwa_icon_mode in ('neutral', 'avatar'));
+
+create or replace function public.set_pwa_icon_mode(p_mode text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if p_mode is null or p_mode not in ('neutral', 'avatar') then
+    raise exception 'invalid pwa_icon_mode' using errcode = '22023';
+  end if;
+  update public.profiles set pwa_icon_mode = p_mode
+   where id = auth.uid() and is_active = true;
+end;
+$$;
+
+revoke execute on function public.set_pwa_icon_mode(text) from public, anon;
+grant execute on function public.set_pwa_icon_mode(text) to authenticated;

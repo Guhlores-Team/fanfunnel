@@ -834,6 +834,7 @@ export type Database = {
           org_id: string | null
           public_slug: string | null
           public_tagline: string | null
+          pwa_icon_mode: string
           role: Database["public"]["Enums"]["app_role"]
           tip_url: string | null
         }
@@ -858,6 +859,7 @@ export type Database = {
           org_id?: string | null
           public_slug?: string | null
           public_tagline?: string | null
+          pwa_icon_mode?: string
           role?: Database["public"]["Enums"]["app_role"]
           tip_url?: string | null
         }
@@ -882,6 +884,7 @@ export type Database = {
           org_id?: string | null
           public_slug?: string | null
           public_tagline?: string | null
+          pwa_icon_mode?: string
           role?: Database["public"]["Enums"]["app_role"]
           tip_url?: string | null
         }
@@ -1397,6 +1400,7 @@ export type Database = {
         Args: { p_slug: string; p_tagline: string; p_tip_url: string }
         Returns: undefined
       }
+      set_pwa_icon_mode: { Args: { p_mode: string }; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "creator"
