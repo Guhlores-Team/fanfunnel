@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { FanAccountSummary } from "../data/types";
 import { fillTemplate, templateHasLink, TEMPLATE_TOKENS } from "./template";
 import {
   contactedLabel,
@@ -130,6 +133,54 @@ const stats = winbackStats(
 eq(stats.contacted, 2, "each fan counts once; old contacts, snoozes and deleted fans don't count");
 eq(stats.cameBack, 1, "a spin after the latest contact = came back");
 eq(stats.recent.map((r) => `${r.fanId}:${r.cameBack}`).join(","), "b:false,a:true", "recent: newest contact first");
+
+// --- RM-6 seam: fans on a break never enter win-back ----------------------------
+// RM-6 (0049) fills FanAccountSummary.breakUntil. Until then every fan reads as
+// "not on a break". The CRM row's link is contactToken(summary), so a break
+// takes the link away and selectDormant drops the fan, with no other wiring.
+{
+  const summary = (over: Partial<FanAccountSummary> = {}): FanAccountSummary => ({
+    fanId: "brk",
+    name: "On Break",
+    spinsRemaining: 0,
+    grantedTotal: 3,
+    primaryToken: "tok-brk",
+    totalSpent: 5000,
+    campaignNames: [],
+    tags: [],
+    links: [{ token: "tok-brk" }],
+    passes: [],
+    lastWin: { label: "Shoutout", rarity: "common", at: iso(-20) },
+    blocked: false,
+    selfExcluded: false,
+    activeToken: "tok-brk",
+    ...over,
+  });
+  // The CRM row getCreatorCrm builds (src/lib/data/fans.ts, enrich).
+  const row = (f: FanAccountSummary): WinbackCandidate => ({
+    fanId: f.fanId,
+    name: f.name,
+    totalSpent: f.totalSpent,
+    daysSince: 20,
+    lastActiveAt: f.lastWin?.at ?? null,
+    primaryToken: contactToken(f, NOW),
+  });
+  eq(ids(selectDormant([row(summary())], [], NOW)), "brk", "seam default: a fan with no break field is listed");
+  eq(ids(selectDormant([row(summary({ breakUntil: null }))], [], NOW)), "brk", "breakUntil null = not on a break");
+  eq(row(summary({ breakUntil: iso(5) })).primaryToken, null, "a fan on a break gets no link");
+  eq(ids(selectDormant([row(summary({ breakUntil: iso(5) }))], [], NOW)), "", "a fan on a break never enters win-back");
+  eq(ids(selectDormant([row(summary({ breakUntil: iso(-1) }))], [], NOW)), "brk", "…and is back once the break has ended");
+
+  // Both hand-out paths pass the WHOLE summary to the gate, so the field RM-6
+  // adds is honoured with no change here (a field-by-field copy would drop it).
+  const ROOT = join(import.meta.dirname, "..", "..", "..");
+  const fansSrc = readFileSync(join(ROOT, "src/lib/data/fans.ts"), "utf8");
+  const crm = fansSrc.slice(fansSrc.indexOf("export async function getCreatorCrm"));
+  ok(/const enrich = \(f: FanAccountSummary\): CrmFan =>[\s\S]*?primaryToken: contactToken\(f, now\),/.test(crm), "getCreatorCrm gates each row's link on the whole summary");
+  ok(/const dormant = outreach \? selectDormant\(spenders, outreach, now\) : \[\];/.test(crm), "win-back lists only gated rows, and nobody when the log is unreadable");
+  const drawer = readFileSync(join(ROOT, "src/components/dashboard/FanDetailDrawer.tsx"), "utf8");
+  ok(/const linkFan = summary \? \{ \.\.\.summary, /.test(drawer), "the drawer gates its link on the whole summary");
+}
 
 // --- Today › "Needs you now" card ---------------------------------------------
 eq(winbackAutopilotCard([]), null, "no quiet fans → no card");

@@ -86,4 +86,61 @@ const route = readFileSync(join(ROOT, "src/app/api/crm/outreach/route.ts"), "utf
 check("the route reads no creator/user id from the body", !/creator_?id|user_?id/i.test(route.replace(/\/\/[^\n]*/g, "")));
 check("the route never imports the server Supabase module", !/@\/lib\/supabase\/server/.test(route));
 
+// --- Nothing is ever sent to a fan (D6: option (c), auto-send, is not built) ---
+// Win-back fills the creator's message in their browser and copies it when the
+// creator taps; the only server call is the outreach log. No win-back module
+// may reach the chat/messages API or table, or any other sending surface.
+{
+  const files = [
+    "src/components/dashboard/WinbackQueue.tsx",
+    "src/components/dashboard/winbackActions.ts",
+    "src/components/dashboard/winbackIntent.ts",
+    "src/components/dashboard/CrmPanel.tsx",
+    "src/lib/winback/config.ts",
+    "src/lib/winback/list.ts",
+    "src/lib/winback/template.ts",
+    "src/lib/data/outreach.ts",
+    "src/app/api/crm/outreach/route.ts",
+  ];
+  const allowedApi = new Set(["/api/crm", "/api/crm/outreach", "/api/dm-templates", "/api/account"]);
+  for (const f of files) {
+    const src = readFileSync(join(ROOT, f), "utf8").replace(/\/\/[^\n]*/g, "");
+    const apis = [...src.matchAll(/["'`](\/api\/[a-z0-9/_-]*)/gi)].map((m) => m[1]);
+    const stray = apis.filter((a) => !allowedApi.has(a));
+    check(`${f}: calls no sending API (${stray.join(", ") || "none"})`, stray.length === 0);
+    const tables = [...src.matchAll(/\.from\(["'`]([a-z_]+)["'`]\)/g)].map((m) => m[1]);
+    check(`${f}: touches no table but fan_outreach (${tables.join(", ") || "none"})`, tables.every((t) => t === "fan_outreach"));
+    check(`${f}: no message/chat/push/email send`, !/sendMessage|sendPush|sendEmail|webpush|\.rpc\(/.test(src));
+  }
+  const cfg = readFileSync(join(ROOT, "src/lib/winback/config.ts"), "utf8");
+  check("D6 has no auto-send mode: WinbackMode is copy | queue only", /export type WinbackMode = "copy" \| "queue";/.test(cfg));
+  // Copying and logging happen only in the creator's own tap: no effect does
+  // either on its own, and a contact is logged only after the copy succeeded.
+  const effects = (src: string) => {
+    const out: string[] = [];
+    for (let i = src.indexOf("useEffect("); i !== -1; i = src.indexOf("useEffect(", i + 1)) {
+      let depth = 0;
+      let j = i + "useEffect".length;
+      do {
+        if (src[j] === "(") depth++;
+        else if (src[j] === ")") depth--;
+        j++;
+      } while (depth > 0 && j < src.length);
+      out.push(src.slice(i, j));
+    }
+    return out;
+  };
+  for (const f of ["src/components/dashboard/WinbackQueue.tsx", "src/components/dashboard/CrmPanel.tsx"]) {
+    const src = readFileSync(join(ROOT, f), "utf8");
+    const auto = effects(src).filter((e) => /copyToClipboard|postOutreach|winbackMessage/.test(e));
+    check(`${f}: no effect copies or logs by itself`, auto.length === 0);
+    const contacted = [...src.matchAll(/postOutreach\([^;]*"contacted"/g)];
+    check(`${f}: logs a contact somewhere (the guard below is not vacuous)`, contacted.length > 0);
+    for (const m of contacted) {
+      const before = src.slice(Math.max(0, m.index! - 600), m.index);
+      check(`${f}: a contact is logged only after the creator's copy succeeded`, /if \(!\(await copyToClipboard\(/.test(before));
+    }
+  }
+}
+
 console.log(`fanOutreach: ${passed} checks passed`);

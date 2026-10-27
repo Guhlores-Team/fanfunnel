@@ -40,6 +40,7 @@ export function copyLinkToken(a: {
   activeToken: string | null;
   blocked: boolean;
   selfExcluded: boolean;
+  breakUntil?: string | null;
 }): string | null {
   return contactToken(a);
 }

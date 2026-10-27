@@ -288,6 +288,8 @@ export interface FanAccountSummary {
   // Newest link that is active and not paused (null when none). Outreach
   // (win-back "Copy link") offers only this, never a paused link.
   activeToken: string | null;
+  /** RM-6: when the fan's break ends (null / absent = not on a break). */
+  breakUntil?: string | null;
 }
 
 export interface FanDetail {

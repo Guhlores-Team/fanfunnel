@@ -11,8 +11,11 @@ export interface EngagementFacts {
   /** The fan paused (self-excluded) one of their links. */
   selfExcluded: boolean;
   /**
-   * The fan is taking a break until this time (RM-6, fans.break_until). Absent
-   * until RM-6 lands; a future time means "on a break".
+   * The fan is taking a break until this time (RM-6, fans.break_until): the
+   * RM-6 seam. Absent / null = not on a break, which is every fan until RM-6
+   * (0049) fills FanAccountSummary.breakUntil. Win-back (getCreatorCrm) and
+   * the Fans tab's Copy link pass the whole summary here, so once RM-6 fills
+   * it nothing else needs wiring. A future time means "on a break".
    */
   breakUntil?: string | null;
 }
