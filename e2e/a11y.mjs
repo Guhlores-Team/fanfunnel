@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
 import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
+import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -64,6 +65,22 @@ const clickIn = (tab, name) => async (page) => {
 // `--brand-ink` (readableInk) and initials avatars use ink on the brand tint,
 // so since RD-8 every rule blocks on every page, the dashboard included.
 const DASH_ADVISORY = [];
+// RM-1: the win reveal. A fresh fan each time (e2e's first-run step has wiped
+// the demo fan by now); the rarity is forced on the real spin response only.
+const openReveal = (rarity, { reduced = false } = {}) => async (page) => {
+  if (reduced) await page.emulateMedia({ reducedMotion: "reduce" });
+  const token = await createRevealFan(page.request, "A11y Reveal Fan", 2);
+  await goto(page, `/spin/${token}`, 1400);
+  await forceRarity(page, rarity);
+  await spinAndTime(page);
+  await page.getByTestId("reward-reveal").waitFor({ timeout: 9000 });
+  await page.waitForTimeout(900); // let the entrance settle
+};
+const closeReveal = async (page) => {
+  await page.emulateMedia({ reducedMotion: null }).catch(() => {});
+  await clearForcedRarity(page);
+};
+
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -102,12 +119,14 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard phone (Settings)", viewport: PHONE, prep: openTab("Settings"), advisory: DASH_ADVISORY },
   { path: "/spin/demo", name: "fan spin (age gate)" },
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
+  { path: "/", name: "fan spin phone (legendary reveal)", viewport: PHONE, prep: openReveal("legendary"), cleanup: closeReveal },
+  { path: "/", name: "fan spin (reduced-motion reveal)", prep: openReveal("epic", { reduced: true }), cleanup: closeReveal },
 ];
 
 // Impacts that fail the build vs. advisory-only.
 const BLOCKING = new Set(["critical", "serious"]);
 
-async function scan(page, { path, name, prep, advisory = [], viewport = DESKTOP }) {
+async function scan(page, { path, name, prep, cleanup, advisory = [], viewport = DESKTOP }) {
   await page.setViewportSize(viewport);
   await goto(page, path, 1600);
   if (prep) await prep(page);
@@ -118,6 +137,7 @@ async function scan(page, { path, name, prep, advisory = [], viewport = DESKTOP 
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
     });
   });
+  if (cleanup) await cleanup(page);
   const adv = new Set(advisory);
   return { name, violations: result.violations, advisory: adv };
 }
