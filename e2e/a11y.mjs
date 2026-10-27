@@ -175,6 +175,20 @@ const openDrawerOnBreak = async (page) => {
   await page.waitForTimeout(600);
 };
 
+// RM-3: the full visit glow ("Regular ✨") and the milestone toast on a fresh
+// acknowledged link. The check-in answer is the server's for a fan on day 7 of
+// 7 (the counting is unit-tested); the state's own context keeps the route
+// from leaking into later scans.
+const openGlow = async (page) => {
+  await page.route("**/api/fan/checkin", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ glow: { visits: 7, level: 3 }, milestone: "week" }) })
+  );
+  const token = await createRevealFan(page.request, "A11y Glow Fan", 2);
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByTestId("glow-milestone").waitFor({ timeout: 8000 });
+  await page.getByTestId("glow-regular").waitFor({ timeout: 4000 });
+};
+
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -231,6 +245,9 @@ const PAGES = [
   { path: "/", name: "fan spin (on a break)", prep: openOnBreak },
   { path: "/", name: "fan spin phone (on a break)", viewport: PHONE, prep: openOnBreak },
   { path: "/dashboard", name: "dashboard (fan drawer: on a break)", prep: openDrawerOnBreak, advisory: DASH_ADVISORY },
+  // RM-3: full glow + "Regular ✨" + the one-time milestone toast.
+  { path: null, name: "fan spin (visit glow + milestone)", context: {}, prep: openGlow },
+  { path: null, name: "fan spin phone (visit glow + milestone)", viewport: PHONE, context: PHONE_CTX, prep: openGlow },
 ];
 
 // Impacts that fail the build vs. advisory-only.

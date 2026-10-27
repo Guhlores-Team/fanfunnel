@@ -20,6 +20,7 @@ import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
 import { readFansOnBreak } from "./playGuard";
 import { fanEngagementAllowed, isOnBreak } from "@/lib/play/playGuard";
+import { fanVisitsLast7, visitsByFan } from "./checkins";
 
 /** Edit an existing grant's spins / amount / campaign after the fact. Adjusts
  *  the fan's balance by the spin delta (floored at 0) so totals stay consistent. */
@@ -272,6 +273,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     data = legacy.data;
   }
 
+  const visits = await visitsByFan(sb, user.id);
   const rows = (data ?? []) as unknown as {
     id: string;
     display_name: string | null;
@@ -346,6 +348,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       activeToken: links.find((p) => p.is_active === true && !p.self_excluded_at)?.token ?? null,
       // RM-6: only the break state, never the fan's reminder or counts.
       breakUntil: onBreak.get(r.id) ?? null,
+      visits7: visits.get(r.id) ?? 0,
     };
   });
 }
@@ -616,6 +619,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     links,
     grants,
     byCampaign,
+    visits7: await fanVisitsLast7(sb, fanId),
   };
 }
 

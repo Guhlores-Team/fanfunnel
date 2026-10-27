@@ -13,6 +13,7 @@ import { CloseButton, Field, TagEditor, initialsOf } from "./ui";
 import PackPresets from "@/components/dashboard/PackPresets";
 import { grantImpact, grantPriceError, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
+import { GLOW_WINDOW_DAYS } from "@/lib/glow/config";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -278,6 +279,8 @@ export default function FanDetailDrawer({
       label: "Last active",
       value: detail?.lastActive ? timeAgo(detail.lastActive) : "—",
     },
+    // RM-3: opening the link counts; a spin never does.
+    { label: `Days visited (last ${GLOW_WINDOW_DAYS})`, value: `${detail?.visits7 ?? 0} of ${GLOW_WINDOW_DAYS}` },
   ];
   const pending = loading || !detail;
   // RM-6: the fan chose a break. The creator sees only that (never the fan's

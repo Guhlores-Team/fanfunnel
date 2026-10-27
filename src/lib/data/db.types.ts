@@ -263,6 +263,42 @@ export type Database = {
           },
         ]
       }
+      fan_checkins: {
+        Row: {
+          created_at: string
+          creator_id: string
+          day: string
+          fan_id: string
+        }
+        Insert: {
+          created_at?: string
+          creator_id: string
+          day: string
+          fan_id: string
+        }
+        Update: {
+          created_at?: string
+          creator_id?: string
+          day?: string
+          fan_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fan_checkins_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_checkins_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: false
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fan_passes: {
         Row: {
           campaign_id: string | null

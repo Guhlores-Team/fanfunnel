@@ -16,6 +16,19 @@ import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import type { FanAppInfo } from "@/lib/pwa/manifest";
 import { countPlay, fanEngagementAllowed, isOnBreak, lengthenBreak, reminderDue } from "@/lib/play/playGuard";
 import { PLAY_WEEK_WINDOW_MS } from "@/lib/play/config";
+import { CHECKIN_READ_DAYS } from "@/lib/glow/config";
+import { glowGateOpen, type GlowGateInput } from "@/lib/glow/gate";
+import {
+  addDays,
+  checkinResult,
+  clampCheckinDay,
+  latestCheckinDay,
+  computeGlow,
+  glowAnchor,
+  visitsLast7,
+  type CheckinResult,
+  type FanGlow,
+} from "@/lib/glow/glow";
 import type {
   AdminAccount,
   AdminOverview,
@@ -1011,6 +1024,7 @@ export async function mockGetFanPass(
     creatorAvatarUrl: null,
     nextSpinHash: pass?.nextServerSeedHash ?? null,
     play: mockPlayState(fan),
+    glow: mockFanGlow(fan),
   });
 }
 
@@ -1400,6 +1414,7 @@ export function mockDeleteFan(fanId: string): boolean {
   }
   store.grants = store.grants.filter((g) => g.fanId !== fanId);
   store.redemptions = store.redemptions.filter((r) => r.fanId !== fanId);
+  checkinStore().delete(fanId); // fan_checkins cascades with the fan
   return true;
 }
 
@@ -1455,6 +1470,7 @@ export function mockListFans(): FanAccountSummary[] {
         : ([...f.passes].reverse().sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.token ?? null),
       // RM-6: only the break state, never the fan's reminder or counts.
       breakUntil: isOnBreak(f.breakUntil) ? f.breakUntil ?? null : null,
+      visits7: visitsLast7(checkinDays(f.id), new Date()),
     };
   });
 }
@@ -1583,6 +1599,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
     links,
     grants,
     byCampaign,
+    visits7: visitsLast7(checkinDays(fan.id), new Date()),
   };
 }
 
@@ -1907,6 +1924,7 @@ export function mockClearMyData(): { ok: true } | { error: string } {
   store.happyHours = [];
   store.referrals = [];
   store.messages = [];
+  checkinStore().clear(); // fan_checkins cascades with the fans
   // Keep one fresh starter wheel so the account isn't wheel-less. Its id is
   // stable, so stamp fresh meta too (Supabase recreates the row, so
   // updated_at = created_at and the "Build your first wheel" step un-ticks).
@@ -2991,4 +3009,54 @@ export function mockGetFanAppInfo(token: string): FanAppInfo | null {
     iconMode: mockGetMyPwaIconMode(),
     avatarUrl: null,
   };
+}
+
+// --- RM-3: visit glow (fan_checkins) ----------------------------------------
+
+// fanId -> the calendar days that fan opened a link on. Outside Store (like the
+// RM-4 state above) and pinned to globalThis so pages and routes share it.
+const gGlow = globalThis as unknown as { __ffCheckins?: Map<string, Set<string>> };
+function checkinStore(): Map<string, Set<string>> {
+  return (gGlow.__ffCheckins ??= new Map());
+}
+function checkinDays(fanId: string): Set<string> {
+  return checkinStore().get(fanId) ?? new Set();
+}
+
+/** The glow gate's view of a mock fan. */
+function mockGlowGateInput(fan: MockFan): GlowGateInput {
+  return { blockedAt: fan.blockedAt ?? null, paused: !!fan.selfExcludedAt, breakUntil: fan.breakUntil ?? null };
+}
+
+/** Parity with readFanGlow: the glow before this visit, or null when gated. */
+function mockFanGlow(fan: MockFan, now: Date = new Date()): FanGlow | null {
+  if (!glowGateOpen(mockGlowGateInput(fan), now)) return null;
+  const days = checkinDays(fan.id);
+  return computeGlow(days, glowAnchor(days, now));
+}
+
+/**
+ * Parity with recordCheckin: an unknown or paused link is not_found, a blocked
+ * fan (or one the gate closes) is not_allowed, else the day is recorded once.
+ * Touches nothing but the check-in set: no balance, pass or spin.
+ */
+export function mockRecordCheckin(
+  token: string,
+  localDate: unknown,
+  now: Date = new Date()
+): ({ ok: true } & CheckinResult) | { error: string } {
+  const fan = fanForToken(token);
+  if (!fan || fan.selfExcludedAt) return { error: "not_found" };
+  if (!glowGateOpen(mockGlowGateInput(fan), now)) return { error: "not_allowed" };
+  const day = clampCheckinDay(localDate, now);
+  const all = checkinStore();
+  const set = all.get(fan.id) ?? new Set<string>();
+  all.set(fan.id, set);
+  const fresh = !set.has(day);
+  set.add(day);
+  // Same read window as the Supabase path, so both decide milestones alike.
+  const from = addDays(day, -(CHECKIN_READ_DAYS - 1));
+  const to = latestCheckinDay(now);
+  const window = new Set([...set].filter((d) => d >= from && d <= to));
+  return { ok: true, ...checkinResult(window, day, fresh, now) };
 }

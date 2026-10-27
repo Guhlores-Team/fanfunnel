@@ -51,6 +51,8 @@ import WinsGallery from "./fan/WinsGallery";
 import YourPlay from "./fan/YourPlay";
 import BreatherCard from "./fan/BreatherCard";
 import { useFanBreak, useLinkPause } from "./fan/LinkPauseProvider";
+import { useVisitGlow } from "./fan/useVisitGlow";
+import { GlowMilestoneToast, GlowTag, glowClass } from "./fan/VisitGlow";
 import { spinControl } from "./fan/linkPause";
 import { ackReminder, breakStatus, formatBreakEnd, reminderAcked } from "./fan/yourPlay";
 import { reminderDue } from "@/lib/play/playGuard";
@@ -179,6 +181,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   }));
   const [breather, setBreather] = useState(false);
   const breakEndLabel = breakUntil && now ? formatBreakEnd(breakUntil, now) : null;
+  // RM-3: visual only. The check-in never touches spins, odds or the wheel,
+  // and a fan on a break (RM-6) gets no glow nudges.
+  const { glow, milestone, dismissMilestone } = useVisitGlow(pass.token, pass.glow, !paused && !onBreak);
   const { canSpin, label: spinLabel, balanceLabel } = spinControl({
     spinsRemaining,
     busy: busy || revealInFlight(rv.phase),
@@ -399,6 +404,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         note={pass.creatorNote}
         avatarUrl={pass.creatorAvatarUrl}
         fanName={pass.fanName}
+        glowLevel={glow?.level}
       />
 
       {pass.leaderboardEnabled && pass.creatorId && (
@@ -445,8 +451,12 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       </div>
 
       <div className="reveal flex w-full flex-col items-center gap-4" style={{ animationDelay: "0.25s" }}>
-        <div className="flex items-center gap-2">
-          <div className="rounded-full border border-line bg-surface/70 px-4 py-1.5 text-sm font-medium text-ink">
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <div
+            data-testid="spins-chip"
+            data-glow-level={glow?.level ?? 0}
+            className={`rounded-full border border-line bg-surface/70 px-4 py-1.5 text-sm font-medium text-ink${glowClass(glow?.level)}`}
+          >
             Spins left{" "}
             <span className="tnum ml-1 font-bold text-brand">
               {balanceLabel}
@@ -460,6 +470,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           >
             {muted ? "🔇 Muted" : "🔊 Sound on"}
           </button>
+          <GlowTag glow={glow} />
         </div>
 
         <YourPlay
@@ -614,6 +625,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           }}
         />
       )}
+      <GlowMilestoneToast milestone={milestone} creatorTitle={pass.creatorTitle} onDone={dismissMilestone} />
 
       {needsAck && (
         <AgeGate

@@ -1,4 +1,5 @@
 import type { Prize, PublicWheelConfig, Rarity } from "@/lib/games/wheel/types";
+import type { FanGlow } from "@/lib/glow/glow";
 
 // Generated Supabase schema types (`npm run gen:types`; CI fails on drift).
 // Use Tables<"name"> / Enums<"name"> for row shapes in new data-layer code.
@@ -83,6 +84,8 @@ export interface FanPassView {
   creatorAvatarUrl?: string | null;
   /** Commit-reveal: sha256 of the pre-committed seed for the fan's NEXT spin. */
   nextSpinHash?: string | null;
+  /** RM-3: the visit glow before this visit's check-in (null = none / gate closed). */
+  glow?: FanGlow | null;
   /** RM-6: the fan's own play (counts, their reminder, their break). */
   play?: FanPlayView;
 }
@@ -307,6 +310,8 @@ export interface FanAccountSummary {
   activeToken: string | null;
   /** RM-6: when the fan's break ends (null / absent = not on a break). */
   breakUntil?: string | null;
+  /** RM-3: days visited out of the last 7 (the "Regulars" filter). */
+  visits7?: number;
 }
 
 export interface FanDetail {
@@ -324,6 +329,8 @@ export interface FanDetail {
   links: { token: string; createdAt: string }[];
   grants: Grant[]; // newest first
   byCampaign: FanCampaignBreakdown[];
+  /** RM-3: days visited out of the last 7. */
+  visits7?: number;
 }
 
 /** A creator's saved DM template, with {link} as a placeholder for a fan URL. */

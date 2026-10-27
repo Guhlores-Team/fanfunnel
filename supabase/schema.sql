@@ -3035,3 +3035,28 @@ $$;
 
 revoke execute on function public.claim_spin(text) from public, anon, authenticated;
 grant  execute on function public.claim_spin(text) to service_role;
+
+-- 0050_fan_checkins.sql
+-- ============================================================
+-- Fan check-ins for the visit glow (RM-3): one row per fan per day they opened
+-- a link. Written only by the server (service role); no insert/update/delete
+-- policy, and those privileges are revoked. The owning creator reads them.
+-- Never read to grant spins or change odds. See migrations/0050.
+create table if not exists public.fan_checkins (
+  fan_id     uuid not null references public.fans(id) on delete cascade,
+  creator_id uuid not null references public.profiles(id) on delete cascade,
+  day        date not null,
+  created_at timestamptz not null default now(),
+  primary key (fan_id, day)
+);
+create index if not exists fan_checkins_creator_day_idx on public.fan_checkins (creator_id, day);
+
+alter table public.fan_checkins enable row level security;
+drop policy if exists fan_checkins_select on public.fan_checkins;
+create policy fan_checkins_select on public.fan_checkins for select
+  using ((creator_id = auth.uid() and public.current_user_active())
+         or public.can_act_for(creator_id, 'view')
+         or public.is_admin());
+
+revoke all on table public.fan_checkins from anon;
+revoke insert, update, delete, truncate on table public.fan_checkins from authenticated;

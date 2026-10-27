@@ -36,6 +36,7 @@ import { fireWebhooks } from "./webhooks";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { isOnBreak } from "@/lib/play/playGuard";
 import { readPlayAfterSpin, readPlayState } from "./playGuard";
+import { readFanGlow } from "./checkins";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -156,7 +157,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // The fan's win history, wishlist, and the active happy-hour are all
   // independent reads keyed off the now-known fan/wheel — fetch concurrently
   // instead of one after another (this is on every fan page load).
-  const [{ data: wins }, { data: wishRows }, happyHour, play] = await Promise.all([
+  const [{ data: wins }, { data: wishRows }, happyHour, play, glow] = await Promise.all([
     // Win history is scoped to the fan ACCOUNT, so it persists across every
     // link the creator has ever minted for them.
     sb
@@ -173,6 +174,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     getActiveHappyHour(sb, wheelId, new Date()),
     // RM-6: the fan's own counts, reminder and break (best-effort).
     readPlayState(sb, pass.fan.id),
+    readFanGlow(sb, pass.fan.id),
   ]);
 
   const winRows = (wins ?? []) as {
@@ -238,6 +240,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
     nextSpinHash,
     play,
+    glow,
   };
 }
 

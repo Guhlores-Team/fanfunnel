@@ -257,6 +257,18 @@ input[type="time"] {
 .ambient-glow { animation: ff-glow-pulse 6s ease-in-out infinite; }
 .ambient-float { animation: ff-float 7s ease-in-out infinite; }
 
+/* RM-3 visit glow: a static ring in the creator's brand colour, brighter the
+   more days the fan stopped by in the last week. No animation, no countdown. */
+.visit-glow-1 { box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 35%, transparent); }
+.visit-glow-2 {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 60%, transparent),
+    0 0 14px 2px color-mix(in oklab, var(--brand) 35%, transparent);
+}
+.visit-glow-3 {
+  box-shadow: 0 0 0 2px var(--brand),
+    0 0 22px 5px color-mix(in oklab, var(--brand) 55%, transparent);
+}
+
 /* Recent-wins ticker: continuous horizontal scroll (loops via duplicated list).
    The global reduced-motion guard above pauses it; the component also wraps. */
 @keyframes ff-ticker { to { transform: translateX(-50%); } }
