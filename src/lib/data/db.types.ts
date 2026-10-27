@@ -1001,10 +1001,14 @@ export type Database = {
           client_seed: string | null
           created_at: string
           creator_id: string
+          fair_trace: Json | null
+          fair_version: number | null
           fan_id: string | null
           fan_pass_id: string
           id: string
           nonce: number | null
+          pool_hash: string | null
+          pool_snapshot: Json | null
           prize_id: string | null
           prize_image_url: string | null
           prize_label: string
@@ -1020,10 +1024,14 @@ export type Database = {
           client_seed?: string | null
           created_at?: string
           creator_id: string
+          fair_trace?: Json | null
+          fair_version?: number | null
           fan_id?: string | null
           fan_pass_id: string
           id?: string
           nonce?: number | null
+          pool_hash?: string | null
+          pool_snapshot?: Json | null
           prize_id?: string | null
           prize_image_url?: string | null
           prize_label: string
@@ -1039,10 +1047,14 @@ export type Database = {
           client_seed?: string | null
           created_at?: string
           creator_id?: string
+          fair_trace?: Json | null
+          fair_version?: number | null
           fan_id?: string | null
           fan_pass_id?: string
           id?: string
           nonce?: number | null
+          pool_hash?: string | null
+          pool_snapshot?: Json | null
           prize_id?: string | null
           prize_image_url?: string | null
           prize_label?: string
