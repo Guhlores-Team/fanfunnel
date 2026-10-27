@@ -15,7 +15,7 @@
 import type { CSSProperties } from "react";
 
 /** App's darkest surface (globals.css --color-base) — what brand-as-text sits on. */
-const APP_BASE = "#0c0a0e";
+export const APP_BASE = "#0c0a0e";
 /** Fallback brand if a creator's value is missing/invalid (globals.css default). */
 export const DEFAULT_BRAND = "#ec4899";
 
@@ -48,7 +48,7 @@ export function parseHex(input: string | null | undefined): RGB | null {
   };
 }
 
-function toHex({ r, g, b }: RGB): string {
+export function toHex({ r, g, b }: RGB): string {
   const h = (n: number) => Math.round(clamp(n, 0, 255)).toString(16).padStart(2, "0");
   return `#${h(r)}${h(g)}${h(b)}`;
 }
@@ -95,10 +95,11 @@ export function readableInk(color: string): string {
  * Returns it unchanged when it already meets `min` contrast on --color-base;
  * otherwise mixes it toward white (preserving hue) until it does. This is what
  * fixes brand-colored accent text (odds, weights, ×multiplier) going invisible
- * when a creator picks a dark brand color.
+ * when a creator picks a dark brand color. `surface` defaults to the app base;
+ * a themed page passes its lightest background colour (creatorTheme/tokens.ts).
  */
-export function brandText(color: string, min = 4.5): string {
-  const base = parseHex(APP_BASE)!;
+export function brandText(color: string, min = 4.5, surface: string = APP_BASE): string {
+  const base = parseHex(surface) ?? parseHex(APP_BASE)!;
   const rgb = parseHex(color) ?? parseHex(DEFAULT_BRAND)!;
   if (contrastRatio(rgb, base) >= min) return toHex(rgb);
   for (let t = 0.1; t <= 1.0001; t += 0.1) {
@@ -118,11 +119,11 @@ export function brandText(color: string, min = 4.5): string {
  *
  *   <div style={brandVars(creator.brandColor)}>…</div>
  */
-export function brandVars(color: string | null | undefined): CSSProperties {
+export function brandVars(color: string | null | undefined, surface?: string): CSSProperties {
   const safe = parseHex(color) ? (color as string) : DEFAULT_BRAND;
   return {
     ["--brand"]: safe,
     ["--brand-ink"]: readableInk(safe),
-    ["--brand-text"]: brandText(safe),
+    ["--brand-text"]: brandText(safe, 4.5, surface),
   } as CSSProperties;
 }
