@@ -1,0 +1,14 @@
+-- 0045 Index spins by fan (fan page load).
+--
+-- Every fan page load reads the fan's win history with
+--   select ... from spins where fan_id = $1 order by created_at desc limit 50
+-- (getFanPass), and the creator's fan drill-in and the boosts reads filter
+-- spins by fan_id too. spins had indexes on creator_id, fan_pass_id,
+-- campaign_id and share_id but none leading on fan_id, so each of those was a
+-- scan of the table.
+--
+-- Composite (fan_id, created_at desc) rather than (fan_id) alone: it serves
+-- the fan_id equality filters (and the fans -> spins FK) exactly as well, and
+-- also returns the rows already in the order the history read asks for, so the
+-- LIMIT 50 stops after 50 index entries instead of sorting all of a fan's spins.
+create index if not exists spins_fan_created_idx on public.spins (fan_id, created_at desc);

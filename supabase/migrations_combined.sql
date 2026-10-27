@@ -2327,3 +2327,10 @@ revoke execute on function public.org_remove_member(uuid) from public, anon;
 grant execute on function public.org_remove_member(uuid) to authenticated;
 revoke execute on function public.org_scope_creator(uuid, uuid, boolean) from public, anon;
 grant execute on function public.org_scope_creator(uuid, uuid, boolean) to authenticated;
+
+-- 0045_spins_fan_id_index.sql
+-- ============================================================
+-- Index spins by fan: every fan page load reads the history with
+-- "where fan_id = $1 order by created_at desc limit 50". The composite also
+-- serves plain fan_id filters and the fans -> spins FK. See migrations/0045.
+create index if not exists spins_fan_created_idx on public.spins (fan_id, created_at desc);
