@@ -19,6 +19,8 @@
 // non-members.
 // Plus the fan_checkins probe (0050): only the service role writes visits.
 // And the app_errors probe (0053): admin-read/resolve only, server-write only.
+// And the instant-rewards probe (0057): secrets server-only, and 20 concurrent
+// spins on a 5-code prize hand out exactly 5 distinct codes.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -29,7 +31,7 @@
 //
 // Exit code 0 = all builds load, all catalogs match and the probe passes; 1 otherwise.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, chownSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -692,6 +694,203 @@ function probeAppErrors(db) {
   }
 }
 
+// ------------------------------------------ instant rewards probe (0057) ---
+// #26: reward secrets are server-only and a code is never handed out twice.
+// On a real Postgres:
+//   * anon has no access; a creator reads only its own metadata columns (never
+//     cipher/iv), can't write a reward row even with Supabase's default table
+//     grants (no write policy), and can't execute any reward function;
+//   * the service role can't attach codes to another creator's prize;
+//   * a code-list prize's stock is its unused-code count, even after a direct
+//     UPDATE; a spin insert on a code prize without a reserved code fails;
+//   * a delivered code is never released back, an unrecorded one is;
+//   * concurrency: 20 parallel spins on a 5-code prize, each in its own
+//     session, give exactly 5 winners 5 distinct codes; the other 15 find it
+//     sold out, stock ends at 0, and no spin row exists without its code.
+const RW_A = "00000000-0000-4000-8000-0000000057a0";
+const RW_B = "00000000-0000-4000-8000-0000000057b0";
+const RW_WA = "00000000-0000-4000-8000-0000000057aa";
+const RW_WB = "00000000-0000-4000-8000-0000000057bb";
+const RW_PA = "00000000-0000-4000-8000-0000000057a1";
+const RW_PB = "00000000-0000-4000-8000-0000000057b1";
+const RW_PC = "00000000-0000-4000-8000-0000000057c1";
+const RW_FAN = "00000000-0000-4000-8000-0000000057fa";
+const RW_PASS = "00000000-0000-4000-8000-0000000057f0";
+const rwCodes = (n, tag) =>
+  `'${JSON.stringify(Array.from({ length: n }, (_, i) => ({ cipher: `c-${tag}-${i}`, iv: `iv-${i}`, key_version: 1, hint: `${tag}${i}`.slice(-4) })))}'::jsonb`;
+const RW_SEED = `
+  insert into auth.users (id, email) values ('${RW_A}', 'probe-0057a@example.test'), ('${RW_B}', 'probe-0057b@example.test');
+  update public.profiles set is_active = true where id in ('${RW_A}', '${RW_B}');
+  insert into public.wheels (id, creator_id, title) values ('${RW_WA}', '${RW_A}', 'a'), ('${RW_WB}', '${RW_B}', 'b');
+  insert into public.prizes (id, wheel_id, label, weight) values
+    ('${RW_PA}', '${RW_WA}', 'A code prize', 10), ('${RW_PB}', '${RW_WB}', 'B link prize', 10), ('${RW_PC}', '${RW_WA}', 'A race prize', 10);
+  insert into public.fans (id, creator_id, display_name) values ('${RW_FAN}', '${RW_A}', 'fan');
+  insert into public.fan_passes (id, token, creator_id, wheel_id, fan_id, spins_remaining) values
+    ('${RW_PASS}', 'probe-0057', '${RW_A}', '${RW_WA}', '${RW_FAN}', 100);
+  select public.add_reward_codes('${RW_PA}', '${RW_A}', ${rwCodes(3, "A")});
+  select public.set_prize_delivery('${RW_PB}', '${RW_B}', 'link', 'cipher-b', 'iv-b', 1::smallint);`;
+const rwSpin = (id, prize) =>
+  `insert into public.spins (id, fan_pass_id, creator_id, wheel_id, fan_id, prize_id, prize_label)
+   values ('${id}', '${RW_PASS}', '${RW_A}', '${RW_WA}', '${RW_FAN}', '${prize}', 'probe');`;
+
+function psqlAsync(db, sqlText) {
+  return new Promise((resolve) => {
+    const p = spawn(
+      join(PG_BIN, "psql"),
+      ["-h", WORK, "-p", PORT, "-U", "postgres", "-d", db, "-v", "ON_ERROR_STOP=1", "-qAt", "-X", "-c", sqlText],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    p.stdout.on("data", (d) => (stdout += d));
+    p.stderr.on("data", (d) => (stderr += d));
+    p.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+async function probeInstantRewards(db) {
+  const bad = [];
+  const as = (uid, stmt) =>
+    uid
+      ? `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true); ${stmt} reset role;`
+      : `set local role anon; select set_config('request.jwt.claim.sub', '', true); ${stmt} reset role;`;
+  const run = (body) => psql(db, ["-c", `begin; ${RW_SEED} ${body} rollback;`], { allowFail: true });
+  const out = (r) => (r.stdout || "").split("\n").map((l) => l.trim());
+  const firstErr = (r) => (r.stderr || "no error").trim().split("\n")[0];
+  const refused = (label, body, re = /permission denied|row-level security/) => {
+    const r = run(body);
+    if (!re.test(r.stderr || "")) bad.push(`${label} was not refused (${r.status === 0 ? "succeeded" : firstErr(r)})`);
+  };
+
+  // --- access ------------------------------------------------------------------
+  refused("anon SELECT prize_reward_codes", as(null, "select count(*) from public.prize_reward_codes;"));
+  refused("anon SELECT spin_rewards", as(null, "select count(*) from public.spin_rewards;"));
+  refused("creator reading cipher on prize_reward_codes", as(RW_A, "select cipher from public.prize_reward_codes;"));
+  refused("creator reading cipher on prize_rewards", as(RW_B, "select cipher from public.prize_rewards;"));
+  refused("creator reading cipher on spin_rewards", as(RW_A, "select iv from public.spin_rewards;"));
+  for (const [fn, call] of [
+    ["reserve_reward_code", `public.reserve_reward_code('${RW_PA}', gen_random_uuid())`],
+    ["release_reward_code", "public.release_reward_code(gen_random_uuid())"],
+    ["add_reward_codes", `public.add_reward_codes('${RW_PA}', '${RW_A}', ${rwCodes(1, "X")})`],
+    ["set_prize_delivery", `public.set_prize_delivery('${RW_PA}', '${RW_A}', 'manual')`],
+    ["record_reward_view", "public.record_reward_view(gen_random_uuid())"],
+  ]) {
+    refused(`creator ${fn}()`, as(RW_A, `select ${call};`), new RegExp(`permission denied for function ${fn}`));
+    refused(`anon ${fn}()`, as(null, `select ${call};`), new RegExp(`permission denied for function ${fn}`));
+  }
+  const reads = run(`
+    ${as(RW_A, "select 'a-codes:' || count(*) || ',' || string_agg(hint, '' order by hint) from public.prize_reward_codes;")}
+    ${as(RW_A, "select 'a-sees-b-link:' || count(*) from public.prize_rewards;")}
+    ${as(RW_B, "select 'b-link:' || count(*) || ',' || min(kind) from public.prize_rewards;")}
+    ${as(RW_B, "select 'b-sees-a-codes:' || count(*) from public.prize_reward_codes;")}
+    update public.profiles set is_active = false where id = '${RW_A}';
+    ${as(RW_A, "select 'suspended-a-codes:' || count(*) from public.prize_reward_codes;")}`);
+  for (const want of ["a-codes:3,A0A1A2", "a-sees-b-link:0", "b-link:1,link", "b-sees-a-codes:0", "suspended-a-codes:0"]) {
+    if (!out(reads).includes(want)) bad.push(`expected ${want} (got ${out(reads).filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${firstErr(reads)})`);
+  }
+  // Supabase grants table privileges by default; even with them, no write policy = no write.
+  const grantAll = "grant select, insert, update, delete on public.prize_rewards, public.prize_reward_codes, public.spin_rewards, public.prizes, public.wheels to anon, authenticated;";
+  refused("creator INSERT of a code (default grants)", `${grantAll} ${as(RW_A, `insert into public.prize_reward_codes (prize_id, creator_id, cipher, iv) values ('${RW_PA}', '${RW_A}', 'x', 'y');`)}`);
+  refused("creator INSERT of a link onto B's prize (default grants)", `${grantAll} ${as(RW_A, `insert into public.prize_rewards (prize_id, creator_id, kind, cipher, iv) values ('${RW_PB}', '${RW_A}', 'link', 'x', 'y');`)}`);
+  const writes = run(`${grantAll}
+    ${as(RW_A, "with u as (update public.prize_reward_codes set spin_id = gen_random_uuid(), assigned_at = now() returning 1) select 'a-update-codes:' || count(*) from u;")}
+    ${as(RW_A, "with d as (delete from public.prize_reward_codes returning 1) select 'a-delete-codes:' || count(*) from d;")}
+    ${as(RW_B, "with u as (update public.prize_rewards set cipher = 'swapped' returning 1) select 'b-update-link:' || count(*) from u;")}
+    ${as(RW_A, `update public.prizes set stock = 99 where id = '${RW_PA}';`)}
+    select 'stock-after-edit:' || stock from public.prizes where id = '${RW_PA}';
+    select 'codes-intact:' || count(*) from public.prize_reward_codes where spin_id is null;`);
+  for (const want of ["a-update-codes:0", "a-delete-codes:0", "b-update-link:0", "stock-after-edit:3", "codes-intact:3"]) {
+    if (!out(writes).includes(want)) bad.push(`expected ${want} (got ${out(writes).filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${firstErr(writes)})`);
+  }
+
+  // --- service-role behaviour --------------------------------------------------
+  const cross = run(`set local role service_role; select public.add_reward_codes('${RW_PB}', '${RW_A}', ${rwCodes(1, "X")});`);
+  if (!/prize not found/.test(cross.stderr || "")) bad.push(`codes were attached to another creator's prize (${firstErr(cross)})`);
+  const crossLink = run(`set local role service_role; select public.set_prize_delivery('${RW_PB}', '${RW_A}', 'text', 'x', 'y');`);
+  if (!/prize not found/.test(crossLink.stderr || "")) bad.push(`a reward was set on another creator's prize (${firstErr(crossLink)})`);
+  const noCode = run(rwSpin("00000000-0000-4000-8000-000000005701", RW_PA));
+  if (!/no reward code reserved/.test(noCode.stderr || "")) bad.push(`a code prize was awarded without a reserved code (${firstErr(noCode)})`);
+  const S1 = "00000000-0000-4000-8000-000000005711";
+  const S2 = "00000000-0000-4000-8000-000000005712";
+  const flow = run(`
+    set local role service_role;
+    select 'reserved:' || count(*) from public.reserve_reward_code('${RW_PA}', '${S1}');
+    reset role;
+    select 'stock-1:' || stock from public.prizes where id = '${RW_PA}';
+    ${rwSpin(S1, RW_PA)}
+    select 'delivered:' || kind || ',' || (code_id is not null) || ',' || (cipher like 'c-A-%') || ',' || views from public.spin_rewards where spin_id = '${S1}';
+    set local role service_role;
+    select 'release-delivered:' || public.release_reward_code('${S1}');
+    select 'reserved-2:' || count(*) from public.reserve_reward_code('${RW_PA}', '${S2}');
+    select 'release-unrecorded:' || public.release_reward_code('${S2}');
+    select 'views:' || public.record_reward_view('${S1}');
+    reset role;
+    select 'stock-end:' || stock from public.prizes where id = '${RW_PA}';
+    select 'assigned:' || count(*) from public.prize_reward_codes where spin_id is not null;`);
+  for (const want of [
+    "reserved:1",
+    "stock-1:2",
+    "delivered:code,true,true,1",
+    "release-delivered:false",
+    "reserved-2:1",
+    "release-unrecorded:true",
+    "views:2",
+    "stock-end:2",
+    "assigned:1",
+  ]) {
+    if (!out(flow).includes(want)) bad.push(`reward flow: expected ${want} (got ${out(flow).filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${firstErr(flow)})`);
+  }
+  const twice = run(`set local role service_role; select public.reserve_reward_code('${RW_PA}', '${S1}'); select public.reserve_reward_code('${RW_PA}', '${S1}');`);
+  if (!/duplicate key|unique/.test(twice.stderr || "")) bad.push(`one spin could reserve two codes (${firstErr(twice)})`);
+  const manual = run(`
+    set local role service_role;
+    select public.set_prize_delivery('${RW_PA}', '${RW_A}', 'manual');
+    reset role;
+    select 'manual:' || delivery || ',' || stock || ',' || (select count(*) from public.prize_reward_codes) from public.prizes where id = '${RW_PA}';`);
+  if (!out(manual).includes("manual:manual,3,0")) bad.push(`leaving a code list should keep stock 3 and drop unused codes (got ${out(manual).filter((l) => /:/.test(l)).join(" ")}; ${firstErr(manual)})`);
+
+  // --- concurrency: 20 sessions race for 5 codes ---------------------------------
+  const seeded = psql(db, ["-c", `begin; ${RW_SEED} select public.add_reward_codes('${RW_PC}', '${RW_A}', ${rwCodes(5, "R")}); commit;`], { allowFail: true });
+  if (seeded.status !== 0) {
+    bad.push(`concurrency seed failed (${firstErr(seeded)})`);
+  } else {
+    const racer = `do $$ declare v_spin uuid := gen_random_uuid(); v_code uuid; begin
+      select code_id into v_code from public.reserve_reward_code('${RW_PC}', v_spin);
+      perform pg_sleep(0.05);
+      if v_code is not null then
+        insert into public.spins (id, fan_pass_id, creator_id, wheel_id, fan_id, prize_id, prize_label)
+        values (v_spin, '${RW_PASS}', '${RW_A}', '${RW_WA}', '${RW_FAN}', '${RW_PC}', 'race');
+        raise notice 'race:won:%', v_code;
+      else
+        raise notice 'race:sold-out';
+      end if;
+    end $$;`;
+    const results = await Promise.all(Array.from({ length: 20 }, () => psqlAsync(db, racer)));
+    const lines = results.map((r) => ((r.stderr || "").match(/race:(won:\S+|sold-out)/) ?? [null, `error:${firstErr(r)}`])[1]);
+    const won = lines.filter((l) => l.startsWith("won:"));
+    const errors = lines.filter((l) => l.startsWith("error:"));
+    const state = sql(db, `
+      select (select stock from public.prizes where id = '${RW_PC}') || ',' ||
+             (select count(*) from public.prize_reward_codes where prize_id = '${RW_PC}' and spin_id is not null) || ',' ||
+             (select count(distinct spin_id) from public.prize_reward_codes where prize_id = '${RW_PC}') || ',' ||
+             (select count(*) from public.spins where prize_id = '${RW_PC}') || ',' ||
+             (select count(distinct r.code_id) from public.spin_rewards r join public.spins s on s.id = r.spin_id where s.prize_id = '${RW_PC}')`);
+    if (errors.length) bad.push(`race sessions errored: ${errors.slice(0, 3).join(" | ")}`);
+    if (won.length !== 5 || new Set(won).size !== 5) bad.push(`race: expected 5 winners with 5 distinct codes, got ${won.length} (${new Set(won).size} distinct)`);
+    if (lines.filter((l) => l === "sold-out").length !== 15) bad.push(`race: expected 15 sold-out spins, got ${lines.filter((l) => l === "sold-out").length}`);
+    if (state !== "0,5,5,5,5") bad.push(`race: expected stock,assigned,distinct spins,spin rows,distinct delivered codes = 0,5,5,5,5 (got ${state})`);
+  }
+  psql(db, ["-c", `delete from auth.users where id in ('${RW_A}', '${RW_B}');`], { allowFail: true });
+
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: instant rewards (0057)`);
+    for (const b of bad) console.log(`  - ${b}`);
+  } else {
+    console.log(`PASS  ${db}: instant rewards: secrets server-only, creator metadata-only and tenant-isolated, code stock locked, no award without a code; 20 racing spins on 5 codes -> 5 distinct codes, 15 sold out`);
+  }
+}
+
 // ----------------------------------------------------------------- builds ---
 try {
   const migrations = readdirSync(join(SUPABASE, "migrations"))
@@ -749,6 +948,7 @@ try {
     probeOrgIsolation(db);
     probeCheckins(db);
     probeAppErrors(db);
+    await probeInstantRewards(db);
   }
 } catch (e) {
   failures++;
