@@ -25,6 +25,7 @@ import {
   notificationsJourney,
 } from "./journeys.mjs";
 import { mobileJourney } from "./mobile.mjs";
+import { revealJourney } from "./reveal.mjs";
 
 let server = null;
 let browser = null;
@@ -45,6 +46,7 @@ try {
     await creatorJourney(page, runner);
     await fanJourney(page, runner, ctx); // fan spins → creates a pending redemption
     await creatorExtras(page, runner, ctx); // fulfil it + drawer→inbox + admin + webhooks + happy hour
+    await revealJourney(page, runner, ctx); // RM-1: rarity reveal, tap-to-skip, reduced motion, announcement (own fan)
     await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude
     await notificationsJourney(page, runner, ctx); // bell: count → open marks seen → items navigate
     await mobileJourney(browser, runner, sink); // phone: tab bar + More + fan sheet (read-only)

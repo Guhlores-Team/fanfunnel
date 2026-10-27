@@ -4,6 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { playTick, haptic, prefersReducedMotion } from "@/lib/sound";
+import {
+  SPIN_MS,
+  REDUCED_SPIN_MS,
+  spinDurationMs,
+  nearStopAtMs,
+  type RevealTierConfig,
+} from "@/components/reveal/revealTiers";
 
 export interface WheelResult {
   index: number;
@@ -26,10 +33,21 @@ interface WheelProps {
   onSpinEnd?: () => void;
   size?: number;
   muted?: boolean;
+  /**
+   * RM-1: the reveal tier of the result being animated (from the rarity the
+   * server already returned). A build-up tier stretches the stop and fires
+   * onNearStop; without one the spin is the plain 4.4s.
+   */
+  tier?: RevealTierConfig | null;
+  /** Fires once, ~1s before the stop, for build-up tiers only. */
+  onNearStop?: () => void;
+  /** Set true mid-spin to snap straight to the result (tap-to-skip). */
+  skip?: boolean;
+  /** After the stop: dim the other slices and outline the winner. */
+  spotlight?: { index: number; dim: number } | null;
 }
 
 const TWO_PI = Math.PI * 2;
-const SPIN_MS = 4400;
 const EXTRA_TURNS = 6;
 
 // Greedy word-wrap: split into lines that each fit maxWidth at the current font.
@@ -89,6 +107,12 @@ function easeOutQuart(t: number): number {
   return 1 - Math.pow(1 - t, 4);
 }
 
+// A longer, slower tail for build-up tiers: the last stretch crawls toward the
+// winning slice so the "is it…?" moment lands before the stop.
+function easeOutQuint(t: number): number {
+  return 1 - Math.pow(1 - t, 5);
+}
+
 function segmentColor(p: PublicPrize): string {
   return p.color ?? RARITY_COLORS[p.rarity] ?? "#6b7280";
 }
@@ -136,6 +160,10 @@ export default function Wheel({
   onSpinEnd,
   size = 380,
   muted = false,
+  tier = null,
+  onNearStop,
+  skip = false,
+  spotlight = null,
 }: WheelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rotationRef = useRef(0);
@@ -144,6 +172,8 @@ export default function Wheel({
   const lastSegRef = useRef<number>(-1);
   const pegRef = useRef<HTMLDivElement>(null);
   const mutedRef = useRef(muted);
+  // Snaps the in-flight spin to its result (set while a spin runs).
+  const finishRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
@@ -302,6 +332,30 @@ export default function Wheel({
       ctx.restore();
     });
 
+    // RM-1 stop spotlight: dim every other slice and outline the winner.
+    if (spotlight && spotlight.index >= 0 && spotlight.index < prizes.length) {
+      prizes.forEach((_, i) => {
+        if (i === spotlight.index || spotlight.dim <= 0) return;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, radius, i * seg, i * seg + seg);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(0,0,0,${Math.min(0.8, spotlight.dim)})`;
+        ctx.fill();
+      });
+      const start = spotlight.index * seg;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, radius - 1.5, start, start + seg);
+      ctx.closePath();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(255,255,255,0.95)";
+      ctx.shadowColor = "rgba(255,255,255,0.6)";
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
     ctx.restore();
 
     // Center hub
@@ -329,7 +383,12 @@ export default function Wheel({
   useEffect(() => {
     draw(rotationRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prizes, brandColor, labelColor, labelSize, size]);
+  }, [prizes, brandColor, labelColor, labelSize, size, spotlight?.index, spotlight?.dim]);
+
+  // Tap-to-skip: jump the running spin to its final frame.
+  useEffect(() => {
+    if (skip) finishRef.current?.();
+  }, [skip]);
 
   useEffect(() => {
     if (!result || result.nonce === lastNonce.current) return;
@@ -353,16 +412,40 @@ export default function Wheel({
       const t = setTimeout(() => {
         setSpinning(false);
         onSpinEnd?.();
-      }, 400);
+      }, REDUCED_SPIN_MS);
       return () => clearTimeout(t);
     }
 
     const startTime = performance.now();
     lastSegRef.current = segmentAtPointer(base);
+    const duration = tier ? spinDurationMs(tier) : SPIN_MS;
+    const nearStopAt = tier ? nearStopAtMs(tier) : null;
+    const ease = tier && tier.extraMs > 0 ? easeOutQuint : easeOutQuart;
+    let nearStopFired = false;
+    let done = false;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      finishRef.current = null;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rotationRef.current = finalRotation % TWO_PI;
+      draw(rotationRef.current);
+      setSpinning(false);
+      if (!mutedRef.current) haptic([0, 30, 40, 60]);
+      onSpinEnd?.();
+    };
+    finishRef.current = finish;
 
     const tick = (now: number) => {
-      const t = Math.min(1, (now - startTime) / SPIN_MS);
-      const eased = easeOutQuart(t);
+      if (done) return;
+      const elapsed = now - startTime;
+      const t = Math.min(1, elapsed / duration);
+      const eased = ease(t);
+      if (!nearStopFired && nearStopAt != null && elapsed >= nearStopAt) {
+        nearStopFired = true;
+        onNearStop?.();
+      }
       rotationRef.current = base + (finalRotation - base) * eased;
       draw(rotationRef.current);
 
@@ -383,15 +466,14 @@ export default function Wheel({
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
-        rotationRef.current = finalRotation % TWO_PI;
-        setSpinning(false);
-        haptic([0, 30, 40, 60]);
-        onSpinEnd?.();
+        finish();
       }
     };
     rafRef.current = requestAnimationFrame(tick);
 
     return () => {
+      done = true;
+      finishRef.current = null;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
