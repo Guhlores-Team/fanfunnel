@@ -26,6 +26,7 @@
 import { createServiceClient, createClient } from "@/lib/supabase/server";
 import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { SHOW_STOCK_DEFAULT } from "@/lib/games/wheel/publicView";
 import type { Enums, Tables } from "./db.types";
 
 export function randomToken(): string {
@@ -89,12 +90,12 @@ type DbPrizeRow = Pick<
 >;
 type WheelRow = Tables<"wheels">;
 // label_color: Phase 9 (#11) prize-label color (migration 0025); label_size:
-// per-wheel label text size (0037). Lifecycle columns are optional because
-// some selects leave them out.
+// per-wheel label text size (0037); show_stock: RM-2 "Show stock to fans"
+// (0048). Lifecycle columns are optional because some selects leave them out.
 export interface DbWheelRow
   extends Pick<WheelRow, "id" | "title" | "subtitle" | "brand_color">,
     Partial<
-      Pick<WheelRow, "label_color" | "label_size" | "is_active" | "active_from" | "active_until" | "archived_at">
+      Pick<WheelRow, "label_color" | "label_size" | "show_stock" | "is_active" | "active_from" | "active_until" | "archived_at">
     > {
   prizes: DbPrizeRow[];
 }
@@ -106,7 +107,7 @@ type _RarityMatchesDb = AssertTrue<Same<Rarity, Enums<"prize_rarity">>>;
 
 // The columns we select to load a wheel's full config (prizes joined).
 export const WHEEL_SELECT =
-  `id, title, subtitle, brand_color, label_color, label_size, is_active, active_from, active_until, archived_at,
+  `id, title, subtitle, brand_color, label_color, label_size, show_stock, is_active, active_from, active_until, archived_at,
    prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
@@ -149,6 +150,8 @@ export function toWheelConfig(wheel: DbWheelRow): WheelConfig {
     // #11: undefined when unset so Wheel.tsx falls back to its auto-pick.
     labelColor: wheel.label_color ?? undefined,
     labelSize: (wheel.label_size as WheelConfig["labelSize"]) ?? undefined,
+    // RM-2: an older row/select without the column reads as the default.
+    showStock: wheel.show_stock ?? SHOW_STOCK_DEFAULT,
     prizes,
   };
 }

@@ -60,6 +60,7 @@ create table if not exists public.wheels (
   brand_color  text not null default '#ec4899',
   label_color  text,                 -- migration 0025 (per-wheel prize-label color)
   label_size   text,                 -- migration 0037 (per-wheel prize-label size)
+  show_stock   boolean not null default true, -- migration 0048 (show fans "N left")
   is_active    boolean not null default true,
   -- archived_at lives in the base table (not just the Phase-2 migration below)
   -- so functions defined further up — e.g. the admin overview, which counts
@@ -2853,3 +2854,9 @@ grant execute on function public.org_scope_creator(uuid, uuid, boolean) to authe
 -- "where fan_id = $1 order by created_at desc limit 50". The composite also
 -- serves plain fan_id filters and the fans -> spins FK. See migrations/0045.
 create index if not exists spins_fan_created_idx on public.spins (fan_id, created_at desc);
+
+-- 0048_wheel_show_stock.sql
+-- ============================================================
+-- Per-wheel "Show stock to fans" switch (RM-2). Written by the creator through
+-- the wheels_rw policy; no new function or grant. See migrations/0048.
+alter table public.wheels add column if not exists show_stock boolean not null default true;

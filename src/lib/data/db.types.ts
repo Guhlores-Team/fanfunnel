@@ -1183,6 +1183,7 @@ export type Database = {
           is_active: boolean
           label_color: string | null
           label_size: string | null
+          show_stock: boolean
           subtitle: string | null
           title: string
           updated_at: string
@@ -1198,6 +1199,7 @@ export type Database = {
           is_active?: boolean
           label_color?: string | null
           label_size?: string | null
+          show_stock?: boolean
           subtitle?: string | null
           title?: string
           updated_at?: string
@@ -1213,6 +1215,7 @@ export type Database = {
           is_active?: boolean
           label_color?: string | null
           label_size?: string | null
+          show_stock?: boolean
           subtitle?: string | null
           title?: string
           updated_at?: string

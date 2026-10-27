@@ -3,7 +3,7 @@ import { makeFairRng, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairnes
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicWheelConfig, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
-import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
+import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
 import type {
   AdminAccount,
@@ -754,6 +754,8 @@ export function mockSaveWheel(config: WheelConfig): WheelConfig {
     id: targetId,
     // Preserve lifecycle/schedule fields unless the incoming config sets them.
     isActive: config.isActive ?? existing?.isActive,
+    // RM-2: same rule as saveWheel — only a real boolean changes the switch.
+    showStock: typeof config.showStock === "boolean" ? config.showStock : existing?.showStock,
     activeFrom: config.activeFrom ?? existing?.activeFrom ?? null,
     activeUntil: config.activeUntil ?? existing?.activeUntil ?? null,
     archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
@@ -1099,9 +1101,13 @@ export async function mockSpin(token: string, clientSeed = "") {
     campaignId,
   });
 
+  // RM-2: the projection follows the wheel's "Show stock to fans" switch, and
+  // the live map (read after the decrement above) lets the page update counts.
+  const showStock = showsStock(wheel);
   return {
-    prize: structuredClone(toPublicPrize(prize)),
+    prize: structuredClone(toPublicPrize(prize, { showStock })),
     prizeIndex: index,
+    ...(hasLimitedPrize(wheel.prizes) ? { stock: toPublicStockMap(wheel.prizes, showStock) } : {}),
     // Per-wheel: report THIS pass's remaining balance (not the fan aggregate),
     // so the spin page shows the right count for the wheel being played.
     spinsRemaining: pass.spinsRemaining,

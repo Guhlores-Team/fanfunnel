@@ -6,6 +6,7 @@ import type { Prize, WheelConfig } from "@/lib/games/wheel/types";
 import { MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
 import { wheelRulesError } from "@/lib/games/wheel/validate";
+import { showsStock } from "@/lib/games/wheel/publicView";
 import type { WheelSummary, HappyHourStatus } from "./types";
 import {
   mockGetWheel,
@@ -246,6 +247,8 @@ export async function saveWheel(
   };
   // Persist lifecycle/schedule fields only when present on the incoming config.
   if (typeof config.isActive === "boolean") upd.is_active = config.isActive;
+  // RM-2 "Show stock to fans": only a real boolean changes it (else kept).
+  if (typeof config.showStock === "boolean") upd.show_stock = config.showStock;
   if (config.activeFrom !== undefined) upd.active_from = config.activeFrom;
   if (config.activeUntil !== undefined) upd.active_until = config.activeUntil;
 
@@ -503,6 +506,8 @@ export async function duplicateWheel(
       title: source.title.slice(0, 120),
       subtitle: source.subtitle?.slice(0, 200) ?? null,
       brand_color: source.brandColor ?? "#ec4899",
+      // RM-2: a copy keeps the creator's "Show stock to fans" choice (as the mock does).
+      show_stock: showsStock(source),
       is_active: false,
       active_from: null,
       active_until: null,
