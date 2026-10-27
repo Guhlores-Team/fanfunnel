@@ -167,3 +167,4 @@ export { getNotifications, markNotificationsSeen } from "./notifications";
 export type { NotificationFeed, NotificationItem, NotificationKind, NotificationTarget } from "./notifications";
 export { getFanAppInfo, getMyPwaIconMode, setMyPwaIconMode } from "./pwa";
 export { recordCheckin } from "./checkins";
+export { recordOutreach, ageFanActivityForDemo } from "./outreach";

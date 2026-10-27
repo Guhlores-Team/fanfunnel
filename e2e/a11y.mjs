@@ -12,6 +12,7 @@ import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_B
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
 import { spinViaApi } from "./play.mjs";
+import { quietSpender } from "./winback.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -189,6 +190,31 @@ const openGlow = async (page) => {
   await page.getByTestId("glow-regular").waitFor({ timeout: 4000 });
 };
 
+// RM-5: the win-back card (rows, stats, recently contacted) and the queue
+// sheet. Each prep makes its own quiet paying fans (aged by the demo-only
+// debug route), so nothing depends on demo data surviving e2e's wipe.
+const openWinbackCard = async (page) => {
+  const a = await quietSpender(page.request, "A11y Quiet One", 15);
+  await quietSpender(page.request, "A11y Quiet Two", 12);
+  const logged = await page.request.post(BASE + "/api/crm/outreach", { data: { fanId: a.fanId, action: "contacted" } });
+  if (!logged.ok()) throw new Error(`could not log a contact for the scan (${logged.status()})`);
+  await goto(page, "/dashboard", 1600);
+  await clickTab(page, "Analytics");
+  const card = page.getByTestId("winback-card");
+  await card.getByTestId("winback-row").first().waitFor({ timeout: 8000 });
+  await card.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(400);
+};
+const openWinbackQueue = async (page) => {
+  await quietSpender(page.request, "A11y Queue Fan", 9);
+  await goto(page, "/dashboard", 1600);
+  await clickTab(page, "Analytics");
+  await page.getByTestId("winback-card").scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "Start win-back" }).click();
+  await page.getByRole("dialog", { name: "Win-back queue" }).waitFor({ timeout: 5000 });
+  await page.waitForTimeout(500);
+};
+
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -248,6 +274,10 @@ const PAGES = [
   // RM-3: full glow + "Regular ✨" + the one-time milestone toast.
   { path: null, name: "fan spin (visit glow + milestone)", context: {}, prep: openGlow },
   { path: null, name: "fan spin phone (visit glow + milestone)", viewport: PHONE, context: PHONE_CTX, prep: openGlow },
+  // RM-5: win-back list and queue.
+  { path: null, name: "dashboard (win-back card)", prep: openWinbackCard, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (win-back queue)", prep: openWinbackQueue, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard phone (win-back queue)", viewport: PHONE, prep: openWinbackQueue, advisory: DASH_ADVISORY },
 ];
 
 // Impacts that fail the build vs. advisory-only.

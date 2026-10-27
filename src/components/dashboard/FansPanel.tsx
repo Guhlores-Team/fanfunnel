@@ -9,7 +9,8 @@ import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { CloseButton, Field, initialsOf } from "./ui";
-import { fanRowMeta, threadFanIds } from "./fansHelpers";
+import { copyLinkToken, fanRowMeta, noLinkMessage, threadFanIds } from "./fansHelpers";
+import { TEMPLATE_TOKENS } from "@/lib/winback/template";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import PackPresets from "@/components/dashboard/PackPresets";
 import ImportFans from "@/components/dashboard/ImportFans";
@@ -205,9 +206,9 @@ export default function FansPanel({
   }
 
   async function copyLink(acc: FanAccountSummary) {
-    const token = acc.primaryToken ?? acc.links[0]?.token;
+    const token = copyLinkToken(acc);
     if (!token) {
-      toast("No link yet — top up this fan to mint one.", { tone: "error" });
+      toast(noLinkMessage(acc), { tone: "error" });
       return;
     }
     if (await copyToClipboard(`${origin}/spin/${token}`)) {
@@ -567,8 +568,9 @@ function FanRow({
 }
 
 // ---------------------------------------------------------------------------
-// Saved DM templates: list / add / delete. `{link}` is the placeholder swapped
-// for a fan's full spin URL when the drawer's "Copy DM" control is used.
+// Saved DM templates: list / add / delete. `{link}` is swapped for a fan's full
+// spin URL (and {name} {lastWin} {days} {creator} for the rest, fillTemplate)
+// when the drawer's "Copy DM" or the win-back list uses a template.
 // ---------------------------------------------------------------------------
 function ManageMessages({
   templates,
@@ -634,7 +636,14 @@ function ManageMessages({
             <h2 className="text-[17px] font-bold text-ink">DM templates</h2>
             <p className="mt-0.5 text-xs text-muted">
               Use <code className="rounded bg-base px-1">{"{link}"}</code> where the
-              fan&rsquo;s spin link should go.
+              fan&rsquo;s spin link should go. Also:{" "}
+              {TEMPLATE_TOKENS.filter((t) => t !== "{link}").map((t, i) => (
+                <span key={t}>
+                  {i > 0 && " "}
+                  <code className="rounded bg-base px-1">{t}</code>
+                </span>
+              ))}
+              .
             </p>
           </div>
           <CloseButton onClick={onClose} />

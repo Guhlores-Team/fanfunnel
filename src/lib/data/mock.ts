@@ -29,6 +29,8 @@ import {
   type CheckinResult,
   type FanGlow,
 } from "@/lib/glow/glow";
+import { WINBACK_SNOOZE_DAYS, type OutreachAction } from "@/lib/winback/config";
+import type { OutreachRow } from "@/lib/winback/list";
 import type {
   AdminAccount,
   AdminOverview,
@@ -1415,6 +1417,7 @@ export function mockDeleteFan(fanId: string): boolean {
   store.grants = store.grants.filter((g) => g.fanId !== fanId);
   store.redemptions = store.redemptions.filter((r) => r.fanId !== fanId);
   checkinStore().delete(fanId); // fan_checkins cascades with the fan
+  clearOutreach(fanId);
   return true;
 }
 
@@ -1925,6 +1928,7 @@ export function mockClearMyData(): { ok: true } | { error: string } {
   store.referrals = [];
   store.messages = [];
   checkinStore().clear(); // fan_checkins cascades with the fans
+  clearOutreach();
   // Keep one fresh starter wheel so the account isn't wheel-less. Its id is
   // stable, so stamp fresh meta too (Supabase recreates the row, so
   // updated_at = created_at and the "Build your first wheel" step un-ticks).
@@ -3059,4 +3063,65 @@ export function mockRecordCheckin(
   const to = latestCheckinDay(now);
   const window = new Set([...set].filter((d) => d >= from && d <= to));
   return { ok: true, ...checkinResult(window, day, fresh, now) };
+}
+
+// --- RM-5: win-back outreach log (parity with public.fan_outreach) -----------
+
+// Kept outside Store (like the RM-4 state above); pinned to globalThis so pages
+// and route handlers share it. Append-only, as the table is for creators.
+interface MockOutreach extends OutreachRow {
+  templateId: string | null;
+  createdAt: string;
+}
+const gOutreach = globalThis as unknown as { __ffOutreach?: MockOutreach[] };
+function outreachLog(): MockOutreach[] {
+  return (gOutreach.__ffOutreach ??= []);
+}
+
+/** Log a win-back action for one of the demo creator's fans. */
+export function mockRecordOutreach(
+  fanId: string,
+  action: OutreachAction,
+  templateId: string | null,
+  now: number = Date.now(),
+): { ok: true } | { error: string } {
+  if (!store.fans.has(fanId)) return { error: "not_found" };
+  // Parity with the insert check: a template must be one of this creator's.
+  const tpl = templateId && store.dmTemplates.some((t) => t.id === templateId) ? templateId : null;
+  const at = new Date(now).toISOString();
+  outreachLog().push({
+    fanId,
+    templateId: tpl,
+    contactedAt: action === "contacted" ? at : null,
+    snoozedUntil: action === "snoozed" ? new Date(now + WINBACK_SNOOZE_DAYS * 86_400_000).toISOString() : null,
+    createdAt: at,
+  });
+  return { ok: true };
+}
+
+/** The outreach rows created at or after `sinceIso`, for the win-back maths. */
+export function mockListOutreach(sinceIso: string): OutreachRow[] {
+  return outreachLog()
+    .filter((o) => o.createdAt >= sinceIso && store.fans.has(o.fanId))
+    .map(({ fanId, contactedAt, snoozedUntil }) => ({ fanId, contactedAt, snoozedUntil }));
+}
+
+/** Clear the log (mockClearMyData) or one fan's rows (mockDeleteFan): the table cascades. */
+function clearOutreach(fanId?: string) {
+  gOutreach.__ffOutreach = fanId ? outreachLog().filter((o) => o.fanId !== fanId) : [];
+}
+
+/**
+ * Demo/e2e only: move a fan's activity (wins, grants, links) `days` into the
+ * past, so the win-back list can be exercised without waiting two weeks.
+ * Reachable only through the mock-mode debug route.
+ */
+export function mockAgeFanActivity(fanId: string, days: number): { ok: true } | { error: string } {
+  const fan = store.fans.get(fanId);
+  if (!fan) return { error: "not_found" };
+  const shift = (iso: string) => new Date(Date.parse(iso) - days * 86_400_000).toISOString();
+  for (const w of fan.wins) w.at = shift(w.at);
+  for (const p of fan.passes) p.createdAt = shift(p.createdAt);
+  for (const g of store.grants) if (g.fanId === fanId) g.at = shift(g.at);
+  return { ok: true };
 }

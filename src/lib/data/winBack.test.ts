@@ -119,6 +119,45 @@ async function main() {
     await data.setFanBlocked(blocked.fanId, false);
     const again = await later(20, () => data.getCreatorCrm());
     check("mock: an unblocked quiet spender returns to win-back", again.dormant.some((f) => f.fanId === blocked.fanId));
+
+    // RM-5: contacting or snoozing takes a fan off the list; "came back" is derived.
+    const inList = async (days: number, fanId: string) =>
+      (await later(days, () => data.getCreatorCrm())).dormant.some((f) => f.fanId === fanId);
+    check("mock: a dormant row carries the last win for {lastWin}", !!again.dormant.find((f) => f.fanId === active.fanId)?.lastWin);
+    check("mock: an unknown fan can't be logged", "error" in (await data.recordOutreach({ fanId: "no-such-fan", action: "contacted" })));
+    check("mock: contacting a fan is logged", "ok" in (await later(20, () => data.recordOutreach({ fanId: active.fanId, action: "contacted" }))));
+    check("mock: a contacted fan leaves the win-back list", !(await inList(20, active.fanId)));
+    check("mock: …and stays off for the whole cooldown (13 days on)", !(await inList(33, active.fanId)));
+    check("mock: …and comes back after the cooldown (15 days on)", await inList(35, active.fanId));
+    const stats = (await later(21, () => data.getCreatorCrm())).winback;
+    check("mock: the contact counts as contacted, not yet came back", stats.contacted === 1 && stats.cameBack === 0);
+    check("mock: recent contacts list the fan", stats.recent[0]?.fanId === active.fanId && stats.recent[0]?.cameBack === false);
+
+    check("mock: snoozing a fan is logged", "ok" in (await later(20, () => data.recordOutreach({ fanId: blocked.fanId, action: "snoozed" }))));
+    check("mock: a snoozed fan leaves the win-back list", !(await inList(20, blocked.fanId)));
+    check("mock: …for the whole snooze (29 days on)", !(await inList(49, blocked.fanId)));
+    check("mock: …and returns once it ends (31 days on)", await inList(51, blocked.fanId));
+    check("mock: a snooze is not a contact", (await later(21, () => data.getCreatorCrm())).winback.contacted === 1);
+
+    // A contacted fan who plays again came back. (Real time here: mockSpin
+    // stamps wins with `new Date()`, which the Date.now shift doesn't move.)
+    const ret = spender("WB Return");
+    await m.mockSpin(ret.token);
+    await data.recordOutreach({ fanId: ret.fanId, action: "contacted" });
+    let after = await data.getCreatorCrm();
+    check("mock: a contact before any new spin is not came back", after.winback.recent.find((r) => r.fanId === ret.fanId)?.cameBack === false);
+    await new Promise((r) => setTimeout(r, 5));
+    check("mock: the contacted fan spins again", !("error" in (await m.mockSpin(ret.token))));
+    after = await data.getCreatorCrm();
+    check("mock: a fan who spun after the contact counts as came back", after.winback.cameBack === 1);
+    check("mock: …and their recent row says so", after.winback.recent.find((r) => r.fanId === ret.fanId)?.cameBack === true);
+    check("mock: …and they are not on the list", !after.dormant.some((f) => f.fanId === ret.fanId));
+
+    // Deleting a fan drops their log (the table cascades).
+    check("mock: both contacts count 22 days on", (await later(22, () => data.getCreatorCrm())).winback.contacted === 2);
+    await data.deleteFan(active.fanId);
+    const gone = (await later(22, () => data.getCreatorCrm())).winback;
+    check("mock: a deleted fan's contacts are gone", gone.contacted === 1 && !gone.recent.some((r) => r.fanId === active.fanId));
   }
 
   // --- Supabase path ----------------------------------------------------------
@@ -149,6 +188,21 @@ async function main() {
         // RM-6: on a break (in force) and one whose break has ended.
         fan("on-break", [pass("ob-1", 40)], { break_until: new Date(realNow() + 5 * DAY).toISOString() }),
         fan("break-over", [pass("bo-1", 40)], { break_until: t(1) }),
+        // RM-5 outreach states.
+        fan("contacted-recently", [pass("cr-1", 40)]),
+        fan("contacted-long-ago", [pass("cl-1", 40)]),
+        fan("snoozed", [pass("sn-1", 40)]),
+        fan("snooze-over", [pass("so-1", 40)]),
+        fan("returned", [pass("re-1", 40)], {
+          spins: [{ prize_label: "Selfie", prize_rarity: "common", created_at: t(2) }],
+        }),
+      ],
+      fan_outreach: [
+        { fan_id: "contacted-recently", contacted_at: t(3), snoozed_until: null },
+        { fan_id: "contacted-long-ago", contacted_at: t(15), snoozed_until: null },
+        { fan_id: "snoozed", contacted_at: null, snoozed_until: new Date(realNow() + 5 * DAY).toISOString() },
+        { fan_id: "snooze-over", contacted_at: null, snoozed_until: t(1) },
+        { fan_id: "returned", contacted_at: t(10), snoozed_until: null },
       ],
     };
     const crm = await data.getCreatorCrm();
@@ -168,6 +222,29 @@ async function main() {
     for (const bad of ["bl-1", "pa-old", "pa-new", "in-new", "na-1", "ob-1"]) {
       check(`supabase: no CRM row offers ${bad}`, !offered.includes(bad));
     }
+
+    // RM-5: the outreach log.
+    check("supabase: a fan contacted 3 days ago is not in win-back", !dormant.has("contacted-recently"));
+    check("supabase: a fan contacted 15 days ago is back in win-back", dormant.has("contacted-long-ago"));
+    check("supabase: a snoozed fan is not in win-back", !dormant.has("snoozed"));
+    check("supabase: a fan whose snooze ended is back", dormant.has("snooze-over"));
+    check("supabase: a fan who played after the contact is not quiet", !dormant.has("returned"));
+    check(
+      "supabase: 3 fans contacted in the window, 1 came back",
+      crm.winback.contacted === 3 && crm.winback.cameBack === 1,
+    );
+    check(
+      "supabase: recent contacts are newest first with their status",
+      crm.winback.recent.map((r) => `${r.fanId}:${r.cameBack}`).join(",") ===
+        "contacted-recently:false,returned:true,contacted-long-ago:false",
+    );
+
+    // Fail closed: if the log can't be read, nobody is suggested (the contact
+    // cooldown can't be checked), but the rest of the CRM still loads.
+    delete TABLES.fan_outreach;
+    const blind = await data.getCreatorCrm();
+    check("supabase: an unreadable outreach log empties the win-back list", blind.dormant.length === 0);
+    check("supabase: …while whales still load", blind.whales.length > 0);
   }
 
   console.log(`winBack.test: ${passed} checks passed`);

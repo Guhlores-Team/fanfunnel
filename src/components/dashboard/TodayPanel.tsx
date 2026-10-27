@@ -21,6 +21,7 @@ import {
   type ImpactTag,
   type Trend,
 } from "./todayHelpers";
+import { requestWinbackQueue } from "./winbackIntent";
 
 interface Action {
   kind: string;
@@ -77,6 +78,7 @@ const KIND_ICON: Record<string, string> = {
   open_fulfilment: P.gift,
   dm_fan: P.fans,
   copy_link: P.fans,
+  open_winback: P.fans,
   schedule_happy_hour: P.clock,
   edit_wheel: P.wheel,
   open_inbox: P.inbox,
@@ -248,6 +250,10 @@ export default function TodayPanel({
         break;
       case "none":
         onNavigate("campaigns");
+        break;
+      case "open_winback":
+        requestWinbackQueue();
+        onNavigate("analytics");
         break;
       case "dm_fan":
       case "copy_link":

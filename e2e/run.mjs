@@ -30,6 +30,7 @@ import { pwaJourney } from "./pwa.mjs";
 import { stockJourney } from "./stock.mjs";
 import { playJourney } from "./play.mjs";
 import { glowJourney } from "./glow.mjs";
+import { winbackJourney } from "./winback.mjs";
 
 let server = null;
 let browser = null;
@@ -58,6 +59,7 @@ try {
     await pwaJourney(browser, runner, sink, ctx); // home-screen install on a fresh fan link (RM-4)
     await playJourney(page, runner, ctx); // RM-6: Your play counts, reminder card, a break the server enforces (own fan)
     await glowJourney(browser, runner, page, ctx); // RM-3: visit glow on a fresh fan link (no previews, clamped dates, gate)
+    await winbackJourney(page, runner, ctx); // RM-5: win-back queue, snooze, came back; Fans never copies a paused link
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));

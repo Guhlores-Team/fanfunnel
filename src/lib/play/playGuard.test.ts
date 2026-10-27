@@ -62,6 +62,7 @@ check("blocked: never", !fanEngagementAllowed({ blocked: true }, now));
 check("paused a link: never", !fanEngagementAllowed({ selfExcluded: true }, now));
 check("on a break: never", !fanEngagementAllowed({ breakUntil: iso(now + DAY) }, now));
 check("after the break ends: again", fanEngagementAllowed({ breakUntil: iso(now - HOUR) }, now));
+check("an unreadable break date fails closed", !fanEngagementAllowed({ breakUntil: "not-a-date" }, now));
 
 // --- inputs the routes accept ---------------------------------------------------
 for (const v of [null, 20, 50, 100]) check(`reminder ${v} is accepted`, isPlayReminder(v));

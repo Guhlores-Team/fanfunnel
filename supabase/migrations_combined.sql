@@ -2540,3 +2540,49 @@ create policy fan_checkins_select on public.fan_checkins for select
 
 revoke all on table public.fan_checkins from anon;
 revoke insert, update, delete, truncate on table public.fan_checkins from authenticated;
+
+-- 0051_fan_outreach.sql
+-- ============================================================
+-- Win-back outreach log (RM-5): "contacted" (contacted_at) or "snoozed"
+-- (snoozed_until only) per fan. Append-only from the client (SELECT + INSERT
+-- policies, no UPDATE/DELETE); the insert check pins the fan and any template
+-- to the same creator. No function; anon gets nothing. See migrations/0051.
+create table if not exists public.fan_outreach (
+  id            uuid primary key default gen_random_uuid(),
+  creator_id    uuid not null references public.profiles(id) on delete cascade,
+  fan_id        uuid not null references public.fans(id) on delete cascade,
+  template_id   uuid references public.dm_templates(id) on delete set null,
+  kind          text not null default 'winback' check (kind in ('winback')),
+  contacted_at  timestamptz,
+  snoozed_until timestamptz,
+  created_at    timestamptz not null default now(),
+  constraint fan_outreach_has_action check (contacted_at is not null or snoozed_until is not null)
+);
+create index if not exists fan_outreach_creator_created_idx
+  on public.fan_outreach (creator_id, created_at desc);
+create index if not exists fan_outreach_fan_idx on public.fan_outreach (fan_id);
+
+alter table public.fan_outreach enable row level security;
+
+drop policy if exists fan_outreach_select on public.fan_outreach;
+create policy fan_outreach_select on public.fan_outreach for select
+  using ((public.can_act_for(creator_id, 'view') and public.current_user_active()) or public.is_admin());
+
+drop policy if exists fan_outreach_insert on public.fan_outreach;
+create policy fan_outreach_insert on public.fan_outreach for insert
+  with check (
+    (public.can_act_for(creator_id, 'chat') or public.is_admin())
+    and exists (
+      select 1 from public.fans f
+       where f.id = fan_outreach.fan_id and f.creator_id = fan_outreach.creator_id
+    )
+    and (
+      fan_outreach.template_id is null
+      or exists (
+        select 1 from public.dm_templates t
+         where t.id = fan_outreach.template_id and t.creator_id = fan_outreach.creator_id
+      )
+    )
+  );
+
+revoke all on table public.fan_outreach from anon;

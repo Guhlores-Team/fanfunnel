@@ -41,7 +41,10 @@ export interface EngagementState {
  * False when the fan is blocked, paused a link, or is on a break.
  */
 export function fanEngagementAllowed(fan: EngagementState, now: number = Date.now()): boolean {
-  return !fan.blocked && !fan.selfExcluded && !isOnBreak(fan.breakUntil, now);
+  if (fan.blocked || fan.selfExcluded) return false;
+  // An unreadable break date fails closed: treat the fan as on a break.
+  if (fan.breakUntil && !Number.isFinite(Date.parse(fan.breakUntil))) return false;
+  return !isOnBreak(fan.breakUntil, now);
 }
 
 /** A reminder the fan may choose: null (off) or one of the offered numbers. */

@@ -14,6 +14,9 @@ import PackPresets from "@/components/dashboard/PackPresets";
 import { grantImpact, grantPriceError, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
 import { GLOW_WINDOW_DAYS } from "@/lib/glow/config";
+import { copyLinkToken, noLinkMessage } from "./fansHelpers";
+import { useFetch } from "@/lib/hooks/useFetch";
+import { fillTemplate } from "@/lib/winback/template";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -107,6 +110,10 @@ export default function FanDetailDrawer({
   });
   // Below `lg` the panel is a bottom sheet: its grabber drags down to dismiss.
   const sheetDrag = useSheetDrag(panelRef, onClose);
+  // The creator's display name, for a DM template's {creator}.
+  const { data: account } = useFetch<{ displayName: string | null }>(fanId ? "/api/account" : null, {
+    refreshOnVisible: false,
+  });
 
   // Refetch the open fan's detail (after a top-up, an inline grant edit, etc.).
   const reload = useCallback(async () => {
@@ -241,27 +248,41 @@ export default function FanDetailDrawer({
     }
   }
 
-  // The fan's primary spin link (list row first, detail as fallback).
+  // The fan's primary spin link (list row first, detail as fallback): labels
+  // the "newest" link in the list below.
   const primaryToken =
     summary?.primaryToken ?? summary?.links[0]?.token ?? detail?.links[0]?.token ?? null;
-  const primaryUrl = primaryToken ? `${origin}/spin/${primaryToken}` : null;
+  // What Copy link / Copy DM hand out: the same pick as the Fans row (never a
+  // paused or inactive link, none for a blocked fan). The drawer's own block
+  // state wins once loaded, so a block made here applies before the list reloads.
+  const linkFan = summary ? { ...summary, blocked: detail ? blocked : summary.blocked } : null;
+  const shareToken = linkFan ? copyLinkToken(linkFan) : null;
+  const primaryUrl = shareToken ? `${origin}/spin/${shareToken}` : null;
 
   async function copyLink() {
     if (!primaryUrl) {
-      toast("No link yet — top up this fan to mint one.", { tone: "error" });
+      toast(linkFan ? noLinkMessage(linkFan) : "No link yet — top up this fan to mint one.", { tone: "error" });
       return;
     }
     if (await copyToClipboard(primaryUrl)) toast("Spin link copied", { tone: "success" });
     else toast("Couldn't copy link.", { tone: "error" });
   }
 
-  // Fill {link} with the fan's full spin URL and copy the message.
+  // Fill the template's tokens ({name}, {link}, {lastWin}, {days}, {creator})
+  // for this fan and copy the message.
   async function copyDm(template: DmTemplate) {
     if (!primaryUrl) {
-      toast("No link to insert yet.", { tone: "error" });
+      toast(linkFan ? noLinkMessage(linkFan) : "No link to insert yet.", { tone: "error" });
       return;
     }
-    const text = template.body.split("{link}").join(primaryUrl);
+    const lastWinAt = summary?.lastWin?.at ?? detail?.lastActive ?? null;
+    const text = fillTemplate(template.body, {
+      name: detail?.name ?? summary?.name ?? null,
+      link: primaryUrl,
+      lastWin: summary?.lastWin?.label ?? null,
+      days: lastWinAt ? Math.max(0, Math.floor((Date.now() - Date.parse(lastWinAt)) / 86_400_000)) : null,
+      creator: account?.displayName?.trim() || null,
+    });
     if (await copyToClipboard(text)) toast("DM copied", { tone: "success" });
     else toast("Couldn't copy DM.", { tone: "error" });
   }
@@ -877,7 +898,7 @@ function TopUpForm({
   );
 }
 
-// A small dropdown of saved DM templates. Picking one fills {link} and copies.
+// A small dropdown of saved DM templates. Picking one fills its tokens and copies.
 function CopyDmMenu({
   templates,
   onPick,
