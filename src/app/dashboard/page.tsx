@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { brandVars } from "@/lib/theme";
 import DashboardClient from "@/components/dashboard/DashboardClient";
+import AppServiceWorker from "@/components/pwa/AppServiceWorker";
 import { resolveSection } from "@/components/dashboard/dashboardSection";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { checkAdmin } from "@/lib/auth/admin";
@@ -61,6 +62,7 @@ export default async function DashboardPage({
         initialOnboardingDismissed={onboardingDismissed}
         initialTab={initialTab}
       />
+      <AppServiceWorker />
     </main>
   );
 }
