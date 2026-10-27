@@ -31,6 +31,16 @@ import {
 } from "@/lib/glow/glow";
 import { WINBACK_SNOOZE_DAYS, type OutreachAction } from "@/lib/winback/config";
 import type { OutreachRow } from "@/lib/winback/list";
+import {
+  CODE_PREVIEW_COUNT,
+  MAX_CODES_PER_PRIZE,
+  codeHint,
+  maskCode,
+  rewardReviewAllowed,
+  type DeliveredReward,
+  type PrizeDeliveryView,
+  type RewardKind,
+} from "@/lib/rewards/config";
 import type {
   AdminAccount,
   AdminOverview,
@@ -215,6 +225,8 @@ interface MockGrant {
 interface MockRedemption extends RedemptionItem {
   fanId: string;
   campaignId: string | null;
+  /** #26: the winning spin, so Fulfilment can show the "Auto" tag. */
+  shareId?: string;
 }
 
 interface Store {
@@ -800,6 +812,9 @@ export function mockSaveWheel(config: WheelConfig): WheelConfig {
     archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
   };
   store.wheels.set(targetId, saved);
+  // #26: delivery comes from the reward store, never the editor; a code
+  // prize's stock is its unused-code count.
+  syncMockWheelRewards(saved);
   const meta = wheelMeta.get(targetId);
   const now = new Date().toISOString();
   if (meta) meta.updatedAt = now;
@@ -1099,7 +1114,14 @@ export async function mockSpin(token: string, clientSeed = "") {
   // is atomic, the mock mirror of the Supabase path's stock compare-and-swap.
   // A limited prize another spin sold out after the snapshot was taken is
   // excluded and re-drawn, and the exclusion recorded, exactly as there.
-  let chosen: { live: Prize; shown: PublicPrize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
+  let chosen: {
+    live: Prize;
+    shown: PublicPrize;
+    index: number;
+    pityAwarded: boolean;
+    nextPityCounter: number;
+    reward: { kind: RewardKind; value: string; code?: MockCode } | null;
+  } | null = null;
   const excluded = new Set<string>();
   const excludedOrder: string[] = [];
   try {
@@ -1107,12 +1129,17 @@ export async function mockSpin(token: string, clientSeed = "") {
       const draw = drawFromSnapshot(snapshot, excluded, rng);
       const index = wheel.prizes.findIndex((p) => p.id === draw.prize.id);
       const live = wheel.prizes[index];
-      if (live && (live.stock === null || live.stock === undefined || live.stock > 0)) {
+      // #26: an instant prize that can't be delivered right now (no code
+      // left, no reward set) counts as sold out, exactly as on Supabase.
+      const take = live && (live.stock === null || live.stock === undefined || live.stock > 0) ? mockTakeReward(live) : null;
+      if (live && take?.ok) {
         // As read before the decrement, like the Supabase path's response.
         const shown = structuredClone(toPublicPrize(live, { showStock: showsStock(wheel) }));
-        // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
-        if (typeof live.stock === "number") live.stock -= 1;
-        chosen = { live, shown, index, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter };
+        // Decrement limited stock on the RESOLVED wheel so rare prizes can sell
+        // out; a code prize's stock is its unused codes (one was just taken).
+        if (live.delivery === "codes") syncMockPrizeDelivery(live);
+        else if (typeof live.stock === "number") live.stock -= 1;
+        chosen = { live, shown, index, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter, reward: take.reward };
         break;
       }
       excluded.add(draw.prize.id);
@@ -1128,7 +1155,7 @@ export async function mockSpin(token: string, clientSeed = "") {
     recomputeFanAggregate(fan);
     return { error: "no_prizes" as const };
   }
-  const { live: prize, shown, index, pityAwarded, nextPityCounter } = chosen;
+  const { live: prize, shown, index, pityAwarded, nextPityCounter, reward } = chosen;
 
   // Per-wheel: the spin belongs to THIS pass's campaign directly.
   const campaignId = pass.campaignId;
@@ -1161,6 +1188,7 @@ export async function mockSpin(token: string, clientSeed = "") {
       clientSeed: clientSeed || null,
       commitment,
       prizeId: prize.id,
+      ...(reward ? { instant: true } : {}),
       ...(v3
         ? {
             fairVersion: 3,
@@ -1174,16 +1202,19 @@ export async function mockSpin(token: string, clientSeed = "") {
   ].slice(0, 50);
 
   // Add it to the creator's fulfilment queue (with fan + campaign attribution).
+  // #26: an instant reward is delivered right here, so its row is fulfilled.
+  if (reward) mockRecordDelivery(shareId, fan.id, reward, at);
   store.redemptions.unshift({
     id: "r-" + Math.random().toString(36).slice(2, 10),
     fanName: fan.name,
     prizeLabel: prize.label,
     rarity: prize.rarity,
     emoji: prize.emoji,
-    status: "pending",
+    status: reward ? "fulfilled" : "pending",
     at,
     fanId: fan.id,
     campaignId,
+    shareId,
   });
 
   // RM-2: the projection follows the wheel's "Show stock to fans" switch, and
@@ -1201,6 +1232,8 @@ export async function mockSpin(token: string, clientSeed = "") {
     // THIS spin's rotation (not whatever a concurrent spin left on the pass).
     nextSpinHash: nextServerSeedHash,
     ...(v3 ? { fairVersion: 3 as const, poolHash } : {}),
+    // #26: only this winner's own response carries the value.
+    ...(reward ? { reward: { kind: reward.kind, value: reward.value } } : {}),
     // RM-6: the fan's fresh counts, and whether they have reached their reminder.
     play,
     reminderDue: reminderDue(play.today, fan.playReminderDaily ?? null),
@@ -1632,6 +1665,7 @@ export function mockGetOverview(): CreatorOverview {
     at: r.at,
     notes: r.notes ?? null,
     dueAt: r.dueAt ?? null,
+    ...(mockAutoInfo(r.shareId) ? { auto: mockAutoInfo(r.shareId) } : {}),
   }));
   const unreadMessages = store.messages.filter(
     (m) => m.sender === "fan" && m.readAt === null
@@ -1929,6 +1963,9 @@ export function mockClearMyData(): { ok: true } | { error: string } {
   store.messages = [];
   checkinStore().clear(); // fan_checkins cascades with the fans
   clearOutreach();
+  // #26: spin_rewards go with the spins; the starter wheel below has no rewards.
+  rewardState().deliveries.clear();
+  rewardState().prizes.clear();
   // Keep one fresh starter wheel so the account isn't wheel-less. Its id is
   // stable, so stamp fresh meta too (Supabase recreates the row, so
   // updated_at = created_at and the "Build your first wheel" step un-ticks).
@@ -3124,4 +3161,166 @@ export function mockAgeFanActivity(fanId: string, days: number): { ok: true } | 
   for (const p of fan.passes) p.createdAt = shift(p.createdAt);
   for (const g of store.grants) if (g.fanId === fanId) g.at = shift(g.at);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// #26 instant-delivery prizes (mock mirror of migration 0057). The demo keeps
+// reward values in server memory (it has no database and no key); the
+// Supabase path encrypts them. Same rules either way: a code is handed out at
+// most once, a code prize's stock IS its unused-code count, a prize that can't
+// be delivered is never awarded, and only the winner's own link reveals it.
+// ---------------------------------------------------------------------------
+
+interface MockCode {
+  id: string;
+  value: string;
+  hint: string | null;
+  /** The winning spin's share id once delivered (null = unused). */
+  shareId: string | null;
+}
+type MockPrizeReward = { kind: "link" | "text"; value: string } | { kind: "codes"; codes: MockCode[] };
+interface MockDelivery {
+  fanId: string;
+  kind: RewardKind;
+  value: string;
+  views: number;
+  lastViewedAt: string;
+  at: string;
+}
+const gRewards = globalThis as unknown as {
+  __ffRewards?: { prizes: Map<string, MockPrizeReward>; deliveries: Map<string, MockDelivery> };
+};
+function rewardState() {
+  return (gRewards.__ffRewards ??= { prizes: new Map(), deliveries: new Map() });
+}
+
+/** The live prize object (mutable) on whichever wheel holds it. */
+function findMockPrize(prizeId: string): Prize | null {
+  for (const w of store.wheels.values()) {
+    const p = w.prizes.find((x) => x.id === prizeId);
+    if (p) return p;
+  }
+  return null;
+}
+
+const freeCodes = (r: MockPrizeReward | undefined): MockCode[] =>
+  r?.kind === "codes" ? r.codes.filter((c) => c.shareId === null) : [];
+
+/**
+ * Keep every prize's delivery (and a code prize's stock) in line with the
+ * reward store, whatever the editor sent: the mirror of saveWheel never
+ * writing `delivery` and of trg_sync_code_prize_stock.
+ */
+function syncMockPrizeDelivery(p: Prize) {
+  const r = rewardState().prizes.get(p.id);
+  if (!r) {
+    p.delivery = "manual";
+    return;
+  }
+  p.delivery = r.kind;
+  if (r.kind === "codes") p.stock = freeCodes(r).length;
+}
+
+/** After a save: delivery from the store, and rewards of removed prizes dropped. */
+function syncMockWheelRewards(wheel: WheelConfig) {
+  for (const p of wheel.prizes) syncMockPrizeDelivery(p);
+  const live = new Set([...store.wheels.values()].flatMap((w) => w.prizes.map((p) => p.id)));
+  for (const id of [...rewardState().prizes.keys()]) if (!live.has(id)) rewardState().prizes.delete(id);
+}
+
+export function mockGetPrizeDelivery(prizeId: string): PrizeDeliveryView | { error: "not_found" } {
+  const prize = findMockPrize(prizeId);
+  if (!prize) return { error: "not_found" };
+  syncMockPrizeDelivery(prize);
+  const r = rewardState().prizes.get(prizeId);
+  const free = freeCodes(r);
+  return {
+    prizeId,
+    delivery: prize.delivery ?? "manual",
+    ready: true,
+    value: r && r.kind !== "codes" ? r.value : null,
+    codesLeft: free.length,
+    codesUsed: r?.kind === "codes" ? r.codes.length - free.length : 0,
+    preview: free.slice(0, CODE_PREVIEW_COUNT).map((c) => maskCode(c.hint)),
+  };
+}
+
+/** Manual, a link or a text. Leaving a code list drops its unused codes; stock stays as a plain limit. */
+export function mockSetPrizeDelivery(
+  prizeId: string,
+  kind: "manual" | "link" | "text",
+  value: string | null,
+): PrizeDeliveryView | { error: "not_found" } {
+  const prize = findMockPrize(prizeId);
+  if (!prize) return { error: "not_found" };
+  const state = rewardState().prizes;
+  if (kind === "manual" || value === null) state.delete(prizeId);
+  else state.set(prizeId, { kind, value });
+  prize.delivery = kind === "manual" || value === null ? "manual" : kind;
+  return mockGetPrizeDelivery(prizeId);
+}
+
+/** Append codes and make the prize a code list (stock = unused codes). */
+export function mockAddPrizeCodes(
+  prizeId: string,
+  codes: string[],
+): PrizeDeliveryView | { error: "not_found" | "too_many_codes" } {
+  const prize = findMockPrize(prizeId);
+  if (!prize) return { error: "not_found" };
+  const state = rewardState().prizes;
+  const current = state.get(prizeId);
+  const kept = current?.kind === "codes" ? current.codes : [];
+  if (freeCodes(current).length + codes.length > MAX_CODES_PER_PRIZE) return { error: "too_many_codes" };
+  state.set(prizeId, {
+    kind: "codes",
+    codes: [...kept, ...codes.map((value) => ({ id: genId("code"), value, hint: codeHint(value), shareId: null }))],
+  });
+  syncMockPrizeDelivery(prize);
+  return mockGetPrizeDelivery(prizeId);
+}
+
+/**
+ * Inside mockSpin's draw (synchronous, so atomic like the prize-row lock):
+ * can this prize be delivered right now? Code prizes take their code here.
+ * `ok: false` = treat as sold out (excluded and re-drawn).
+ */
+function mockTakeReward(prize: Prize): { ok: true; reward: { kind: RewardKind; value: string; code?: MockCode } | null } | { ok: false } {
+  const delivery = prize.delivery ?? "manual";
+  if (delivery === "manual") return { ok: true, reward: null };
+  const r = rewardState().prizes.get(prize.id);
+  if (delivery === "codes") {
+    const code = freeCodes(r)[0];
+    if (!code) return { ok: false };
+    code.shareId = "reserved";
+    return { ok: true, reward: { kind: "code", value: code.value, code } };
+  }
+  if (!r || r.kind === "codes") return { ok: false };
+  return { ok: true, reward: { kind: r.kind, value: r.value } };
+}
+
+function mockRecordDelivery(shareId: string, fanId: string, reward: { kind: RewardKind; value: string; code?: MockCode }, at: string) {
+  if (reward.code) reward.code.shareId = shareId;
+  rewardState().deliveries.set(shareId, { fanId, kind: reward.kind, value: reward.value, views: 1, lastViewedAt: at, at });
+}
+
+/** A fan re-opens their own reward (F5 rules: unknown 404, paused/blocked 403). */
+export function mockGetFanReward(
+  token: string,
+  shareId: string,
+): { reward: DeliveredReward; views: number } | { error: "not_found" | "blocked" | "not_allowed" } {
+  const fan = liveFanForToken(token);
+  if ("error" in fan) return fan;
+  const d = rewardState().deliveries.get(shareId);
+  // Another fan's win looks exactly like no win: no oracle for share ids.
+  if (!d || d.fanId !== fan.id) return { error: "not_found" };
+  if (!rewardReviewAllowed(d.at)) return { error: "not_allowed" };
+  d.views += 1;
+  d.lastViewedAt = new Date().toISOString();
+  return { reward: { kind: d.kind, value: d.value }, views: d.views };
+}
+
+/** Fulfilment's "Auto" tag for a mock redemption (never the value). */
+function mockAutoInfo(shareId: string | undefined): RedemptionItem["auto"] {
+  const d = shareId ? rewardState().deliveries.get(shareId) : undefined;
+  return d ? { kind: d.kind, views: d.views, lastViewedAt: d.lastViewedAt } : undefined;
 }

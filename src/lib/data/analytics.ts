@@ -57,7 +57,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       .from("redemptions")
       .select(
         `id, status, created_at, notes, due_at,
-       spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle))`
+       spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
       )
       .eq("creator_id", user.id)
       .order("created_at", { ascending: false })
@@ -110,6 +110,8 @@ export async function getOverview(): Promise<CreatorOverview> {
       prize_label: string;
       prize_rarity: RedemptionItem["rarity"];
       fan: { display_name: string | null; handle: string | null } | null;
+      // #26 (0057): set when the win was auto-delivered (never the value).
+      reward?: { kind: "link" | "text" | "code"; views: number; last_viewed_at: string | null } | null;
     } | null;
   }[];
 
@@ -122,6 +124,9 @@ export async function getOverview(): Promise<CreatorOverview> {
     at: r.created_at,
     notes: r.notes,
     dueAt: r.due_at,
+    ...(r.spin?.reward
+      ? { auto: { kind: r.spin.reward.kind, views: r.spin.reward.views, lastViewedAt: r.spin.reward.last_viewed_at } }
+      : {}),
   }));
 
   const revenue = ((grantRows ?? []) as { amount_cents: number }[]).reduce(

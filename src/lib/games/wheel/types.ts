@@ -1,3 +1,5 @@
+import type { DeliveredReward, PrizeDelivery } from "@/lib/rewards/config";
+
 // Core types for the Spin-the-Wheel game.
 // These are intentionally framework-agnostic so the same engine powers
 // the hosted dashboard, the fan-facing page, and any future export.
@@ -60,6 +62,12 @@ export interface Prize {
    * the prize is excluded from future spins. null/undefined = unlimited.
    */
   stock?: number | null;
+  /**
+   * #26: how the prize reaches the winner (creator-only; never sent to fans).
+   * Set through the prize's Delivery panel, not by saving the wheel.
+   * Undefined = "manual".
+   */
+  delivery?: PrizeDelivery;
 }
 
 /** Per-wheel prize-label text size; undefined = Auto (smart fit). */
@@ -150,4 +158,9 @@ export interface SpinResult {
   play?: { today: number; week: number };
   /** RM-6: today's spins have reached the fan's reminder (soft; the page asks before the next spin). */
   reminderDue?: boolean;
+  /**
+   * #26: the instant reward this spin delivered, decrypted for this winner's
+   * response only (sent with Cache-Control: no-store). Absent for a manual prize.
+   */
+  reward?: DeliveredReward;
 }

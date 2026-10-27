@@ -904,6 +904,105 @@ export type Database = {
           },
         ]
       }
+      prize_reward_codes: {
+        Row: {
+          assigned_at: string | null
+          cipher: string
+          created_at: string
+          creator_id: string
+          hint: string | null
+          id: string
+          iv: string
+          key_version: number
+          prize_id: string
+          spin_id: string | null
+        }
+        Insert: {
+          assigned_at?: string | null
+          cipher: string
+          created_at?: string
+          creator_id: string
+          hint?: string | null
+          id?: string
+          iv: string
+          key_version?: number
+          prize_id: string
+          spin_id?: string | null
+        }
+        Update: {
+          assigned_at?: string | null
+          cipher?: string
+          created_at?: string
+          creator_id?: string
+          hint?: string | null
+          id?: string
+          iv?: string
+          key_version?: number
+          prize_id?: string
+          spin_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prize_reward_codes_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prize_reward_codes_prize_id_fkey"
+            columns: ["prize_id"]
+            isOneToOne: false
+            referencedRelation: "prizes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prize_rewards: {
+        Row: {
+          cipher: string
+          creator_id: string
+          iv: string
+          key_version: number
+          kind: string
+          prize_id: string
+          updated_at: string
+        }
+        Insert: {
+          cipher: string
+          creator_id: string
+          iv: string
+          key_version?: number
+          kind: string
+          prize_id: string
+          updated_at?: string
+        }
+        Update: {
+          cipher?: string
+          creator_id?: string
+          iv?: string
+          key_version?: number
+          kind?: string
+          prize_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prize_rewards_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prize_rewards_prize_id_fkey"
+            columns: ["prize_id"]
+            isOneToOne: true
+            referencedRelation: "prizes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       prize_templates: {
         Row: {
           color: string | null
@@ -953,6 +1052,7 @@ export type Database = {
           color: string | null
           cost_cents: number | null
           created_at: string
+          delivery: string
           description: string | null
           emoji: string | null
           id: string
@@ -968,6 +1068,7 @@ export type Database = {
           color?: string | null
           cost_cents?: number | null
           created_at?: string
+          delivery?: string
           description?: string | null
           emoji?: string | null
           id?: string
@@ -983,6 +1084,7 @@ export type Database = {
           color?: string | null
           cost_cents?: number | null
           created_at?: string
+          delivery?: string
           description?: string | null
           emoji?: string | null
           id?: string
@@ -1186,6 +1288,67 @@ export type Database = {
             columns: ["referrer_fan_id"]
             isOneToOne: false
             referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      spin_rewards: {
+        Row: {
+          cipher: string
+          code_id: string | null
+          created_at: string
+          creator_id: string
+          iv: string
+          key_version: number
+          kind: string
+          last_viewed_at: string
+          spin_id: string
+          views: number
+        }
+        Insert: {
+          cipher: string
+          code_id?: string | null
+          created_at?: string
+          creator_id: string
+          iv: string
+          key_version?: number
+          kind: string
+          last_viewed_at?: string
+          spin_id: string
+          views?: number
+        }
+        Update: {
+          cipher?: string
+          code_id?: string | null
+          created_at?: string
+          creator_id?: string
+          iv?: string
+          key_version?: number
+          kind?: string
+          last_viewed_at?: string
+          spin_id?: string
+          views?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spin_rewards_code_id_fkey"
+            columns: ["code_id"]
+            isOneToOne: true
+            referencedRelation: "prize_reward_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spin_rewards_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spin_rewards_spin_id_fkey"
+            columns: ["spin_id"]
+            isOneToOne: true
+            referencedRelation: "spins"
             referencedColumns: ["id"]
           },
         ]
@@ -1497,6 +1660,10 @@ export type Database = {
       _is_org_member: { Args: { p_org: string }; Returns: boolean }
       _owns_org: { Args: { p_org: string }; Returns: boolean }
       _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
+      add_reward_codes: {
+        Args: { p_codes: Json; p_creator: string; p_prize: string }
+        Returns: number
+      }
       admin_account_stats: {
         Args: never
         Returns: {
@@ -1596,6 +1763,17 @@ export type Database = {
         }
         Returns: Json
       }
+      record_reward_view: { Args: { p_spin: string }; Returns: number }
+      release_reward_code: { Args: { p_spin: string }; Returns: boolean }
+      reserve_reward_code: {
+        Args: { p_prize: string; p_spin: string }
+        Returns: {
+          code_cipher: string
+          code_id: string
+          code_iv: string
+          code_key_version: number
+        }[]
+      }
       rollback_claimed_spin: {
         Args: { p_prize_id: string; p_token: string }
         Returns: undefined
@@ -1625,6 +1803,17 @@ export type Database = {
       set_onboarding_dismissed: {
         Args: { p_dismissed: boolean }
         Returns: undefined
+      }
+      set_prize_delivery: {
+        Args: {
+          p_cipher?: string
+          p_creator: string
+          p_iv?: string
+          p_key_version?: number
+          p_kind: string
+          p_prize: string
+        }
+        Returns: string
       }
       set_public_profile: {
         Args: { p_slug: string; p_tagline: string; p_tip_url: string }

@@ -54,5 +54,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: result.error }, { status });
   }
 
-  return NextResponse.json(result);
+  // #26: a spin response can carry the winner's instant reward; never cache it.
+  return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
 }

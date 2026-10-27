@@ -37,6 +37,8 @@ import { runAfterResponse } from "@/lib/afterResponse";
 import { isOnBreak } from "@/lib/play/playGuard";
 import { readPlayAfterSpin, readPlayState } from "./playGuard";
 import { readFanGlow } from "./checkins";
+import { loadPrizeReward, releaseRewardCode, reserveRewardCode } from "./rewards";
+import type { DeliveredReward } from "@/lib/rewards/config";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -162,7 +164,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     // link the creator has ever minted for them.
     sb
       .from("spins")
-      .select("prize_label, prize_rarity, prize_image_url, share_id, created_at")
+      // #26: `reward` only says the win was instant (its kind), never the value.
+      .select("prize_label, prize_rarity, prize_image_url, share_id, created_at, reward:spin_rewards(kind)")
       .eq("fan_id", pass.fan.id)
       .order("created_at", { ascending: false })
       .limit(50),
@@ -183,6 +186,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     prize_image_url: string | null;
     share_id: string | null;
     created_at: string;
+    reward?: { kind: string } | null;
   }[];
 
   const wishlist: WishlistItem[] = (
@@ -221,6 +225,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       at: w.created_at,
       shareId: w.share_id ?? undefined,
       imageUrl: w.prize_image_url ?? null,
+      ...(w.reward ? { instant: true } : {}),
     })),
     wishlist,
     happyHour,
@@ -328,7 +333,7 @@ export async function completeClaimedSpin(
   // The fan has already paid one spin. Every exit below that is not a durably
   // recorded win refunds it — early returns and thrown errors alike — and
   // restores a limited prize's unit when one was decremented on the way.
-  const refund: { prizeId: string | null } = { prizeId: null };
+  const refund: SpinRefund = { prizeId: null, codeSpinId: null };
   let result: SpinResult | SpinError;
   try {
     result = await recordClaimedSpin(sb, token, clientSeed, spinsRemaining, refund);
@@ -338,8 +343,22 @@ export async function completeClaimedSpin(
   }
   if ("error" in result) {
     await sb.rpc("rollback_claimed_spin", { p_token: token, p_prize_id: refund.prizeId });
+    // #26: a code reserved for a spin that was never recorded goes back to the
+    // pool (release_reward_code refuses once the spin row exists).
+    if (refund.codeSpinId) await releaseRewardCode(sb, refund.codeSpinId);
   }
   return result;
+}
+
+/**
+ * What a failed spin must give back: the limited prize unit taken by the
+ * stock CAS (`prizeId`) and/or the reward code reserved for the spin about to
+ * be recorded (`codeSpinId`, the spin's pre-generated id). A code prize never
+ * sets `prizeId`: its stock is its unused-code count, restored by the release.
+ */
+interface SpinRefund {
+  prizeId: string | null;
+  codeSpinId: string | null;
 }
 
 const MAX_STOCK_CAS_ATTEMPTS = 5;
@@ -388,11 +407,11 @@ async function takeStockUnit(
 }
 
 async function recordClaimedSpin(
-  sb: AnyClient,
+  sb: ReturnType<typeof createServiceClient>,
   token: string,
   clientSeed: string,
   spinsRemaining: number,
-  refund: { prizeId: string | null },
+  refund: SpinRefund,
 ): Promise<SpinResult | SpinError> {
   // 2. Load link context, then resolve WHICH wheel this spin uses + its prizes.
   const ctx = await sb
@@ -515,7 +534,17 @@ async function recordClaimedSpin(
   //    sold out between our read and write, exclude it + re-draw; each
   //    exclusion is recorded in order so the replay can re-check it.
   const byId = new Map(config.prizes.map((p, i) => [p.id, { prize: p, index: i }]));
-  let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
+  // #26: the spin's id is fixed before the draw, so a code can be reserved for
+  // exactly this spin before its row exists (trg_attach_spin_reward then copies
+  // it onto the spin in the same INSERT, or refuses the INSERT).
+  const spinId = crypto.randomUUID();
+  let chosen: {
+    prize: Prize;
+    index: number;
+    pityAwarded: boolean;
+    nextPityCounter: number;
+    reward: DeliveredReward | null;
+  } | null = null;
   const excluded = new Set<string>();
   const excludedOrder: string[] = [];
   try {
@@ -523,7 +552,44 @@ async function recordClaimedSpin(
       const draw = drawFromSnapshot(snapshot, excluded, rng);
       const live = byId.get(draw.prize.id);
       if (!live) throw new Error("spin: drawn prize missing from the wheel config");
-      const pick = { ...live, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter };
+      const pick = { ...live, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter, reward: null as DeliveredReward | null };
+      const delivery = pick.prize.delivery ?? "manual";
+      if (delivery === "codes") {
+        // A code prize's stock IS its unused codes: taking the code is taking
+        // the unit, atomically under the prize row lock. No code = sold out.
+        const code = await reserveRewardCode(sb, pick.prize.id, spinId, pass.creator_id);
+        if (code.status === "unknown") {
+          // The reservation may or may not have committed: fail the spin and
+          // release whatever was bound to this spin id.
+          refund.codeSpinId = spinId;
+          console.error("spin: code reservation outcome unknown", pick.prize.id);
+          return { error: "db_error" };
+        }
+        if (code.status === "taken") {
+          refund.codeSpinId = spinId;
+          if (code.reward) {
+            chosen = { ...pick, reward: code.reward };
+            break;
+          }
+          // Undeliverable (the key can't open it): give the code back and
+          // treat the prize as unavailable for this spin.
+          await releaseRewardCode(sb, spinId);
+          refund.codeSpinId = null;
+        }
+        excluded.add(pick.prize.id);
+        excludedOrder.push(pick.prize.id);
+        continue;
+      }
+      if (delivery === "link" || delivery === "text") {
+        // Never award an instant prize whose reward can't be delivered.
+        const reward = await loadPrizeReward(sb, pick.prize.id, pass.creator_id);
+        if (!reward) {
+          excluded.add(pick.prize.id);
+          excludedOrder.push(pick.prize.id);
+          continue;
+        }
+        pick.reward = reward;
+      }
       if (pick.prize.stock === null || pick.prize.stock === undefined) {
         chosen = pick;
         break;
@@ -583,6 +649,7 @@ async function recordClaimedSpin(
 
   // 4. Log the spin (against the fan account) + a pending redemption.
   const spinInsert = {
+    id: spinId,
     fan_pass_id: pass.id,
     creator_id: pass.creator_id,
     wheel_id: wheelId,
@@ -630,10 +697,14 @@ async function recordClaimedSpin(
     return { error: "db_error" };
   }
 
+  // #26: the reward was delivered with the spin (trg_attach_spin_reward), so
+  // the creator has nothing to fulfil: the row is fulfilled, tagged Auto.
+  const delivered = chosen.reward;
   const { error: redemptionErr } = await sb.from("redemptions").insert({
     spin_id: spinRow.id,
     creator_id: pass.creator_id,
-    status: "pending",
+    status: delivered ? "fulfilled" : "pending",
+    ...(delivered ? { fulfilled_at: new Date().toISOString() } : {}),
   });
   if (redemptionErr) {
     // The won prize is safely recorded in `spins`, but its fulfilment-queue row
@@ -648,7 +719,8 @@ async function recordClaimedSpin(
   // after() so the host can't cut it off. Never blocks/throws — a slow or
   // failing endpoint must not break the spin.
   const webhookPayload = {
-    event: "prize_pending",
+    // #26: an instant prize is already delivered (never the value itself).
+    event: delivered ? "prize_delivered" : "prize_pending",
     prize: chosen.prize.label,
     rarity: chosen.prize.rarity,
     at: new Date().toISOString(),
@@ -668,6 +740,8 @@ async function recordClaimedSpin(
     nextSpinHash: nextServerSeedHash,
     ...(Object.keys(v3Cols).length ? { fairVersion: 3 as const, poolHash } : {}),
     ...(stock ? { stock } : {}),
+    // #26: this winner's own response only (the route sends it no-store).
+    ...(delivered ? { reward: delivered } : {}),
   };
 }
 

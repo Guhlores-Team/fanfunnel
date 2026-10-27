@@ -16,6 +16,8 @@ export interface WonPrize {
   shareId?: string;
   /** Phase 3: optional photo for the prize. null/undefined = none. */
   imageUrl?: string | null;
+  /** #26: this win delivered an instant reward the fan can reopen (never the value). */
+  instant?: boolean;
 }
 
 /** Phase 3: a render-ready shareable win card. */
@@ -279,6 +281,8 @@ export interface RedemptionItem {
   at: string; // ISO timestamp
   notes?: string | null;
   dueAt?: string | null; // ISO timestamp
+  /** #26: auto-delivered instantly (link / text / code); never the value. */
+  auto?: { kind: "link" | "text" | "code"; views: number; lastViewedAt: string | null };
 }
 
 /** One per-wheel link under a fan: its own spin balance + which wheel/campaign. */

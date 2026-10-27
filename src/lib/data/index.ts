@@ -168,3 +168,4 @@ export type { NotificationFeed, NotificationItem, NotificationKind, Notification
 export { getFanAppInfo, getMyPwaIconMode, setMyPwaIconMode } from "./pwa";
 export { recordCheckin } from "./checkins";
 export { recordOutreach, ageFanActivityForDemo } from "./outreach";
+export { getPrizeDelivery, setPrizeDelivery, addPrizeCodes, getFanReward, isShareIdShape } from "./rewards";

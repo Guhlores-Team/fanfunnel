@@ -27,6 +27,7 @@ import { createServiceClient, createClient } from "@/lib/supabase/server";
 import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { SHOW_STOCK_DEFAULT } from "@/lib/games/wheel/publicView";
+import { PRIZE_DELIVERIES, type PrizeDelivery } from "@/lib/rewards/config";
 import type { Enums, Tables } from "./db.types";
 
 export function randomToken(): string {
@@ -87,7 +88,8 @@ type DbPrizeRow = Pick<
   | "cost_cents"
   | "stock"
   | "sort_order"
->;
+> &
+  Partial<Pick<Tables<"prizes">, "delivery">>;
 type WheelRow = Tables<"wheels">;
 // label_color: Phase 9 (#11) prize-label color (migration 0025); label_size:
 // per-wheel label text size (0037); show_stock: RM-2 "Show stock to fans"
@@ -108,7 +110,7 @@ type _RarityMatchesDb = AssertTrue<Same<Rarity, Enums<"prize_rarity">>>;
 // The columns we select to load a wheel's full config (prizes joined).
 export const WHEEL_SELECT =
   `id, title, subtitle, brand_color, label_color, label_size, show_stock, is_active, active_from, active_until, archived_at,
-   prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order)`;
+   prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order, delivery)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
 export type AnyClient =
@@ -123,6 +125,9 @@ const PG_INT4_MIN = -2147483648;
 export function clampInt(n: number, min = PG_INT4_MIN, max = PG_INT4_MAX): number {
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
+
+const isPrizeDelivery = (v: unknown): v is PrizeDelivery =>
+  typeof v === "string" && (PRIZE_DELIVERIES as readonly string[]).includes(v);
 
 // ---------------------------------------------------------------------------
 export function toWheelConfig(wheel: DbWheelRow): WheelConfig {
@@ -140,6 +145,8 @@ export function toWheelConfig(wheel: DbWheelRow): WheelConfig {
       imageUrl: p.image_url ?? null,
       cost: p.cost_cents ?? null,
       stock: p.stock ?? null,
+      // #26 (migration 0057): creator-only; toPublicPrize never copies it.
+      delivery: isPrizeDelivery(p.delivery) ? p.delivery : "manual",
     }));
 
   return {

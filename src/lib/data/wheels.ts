@@ -21,7 +21,7 @@ import {
   mockSetActiveWheel,
   mockSetWheelSchedule,
 } from "./mock";
-import { WHEEL_SELECT, clampInt, toWheelConfig } from "./shared";
+import { WHEEL_SELECT, clampInt, isUuid, toWheelConfig } from "./shared";
 import type { AnyClient, DbWheelRow } from "./shared";
 
 // ---------------------------------------------------------------------------
@@ -294,14 +294,45 @@ export async function saveWheel(
     return { error: "stale_editor" };
   }
 
-  await sb.from("prizes").delete().eq("wheel_id", wheelId);
-  const { error: pErr } = await sb.from("prizes").insert(rows);
-  if (pErr) {
-    // Roll back to the pre-delete state so the wheel keeps its prizes.
-    if (prevPrizes && prevPrizes.length > 0) {
-      await sb.from("prizes").insert(prevPrizes);
+  // #26: a prize that is already on this wheel keeps its id. Its instant
+  // reward (link, text or code list, migration 0057) hangs off that id and is
+  // deleted with the prize, so replacing every row would wipe it on any save.
+  // Only ids read from THIS wheel count; anything else is a new prize.
+  const prevIds = new Set(((prevPrizes ?? []) as { id: string }[]).map((p) => p.id));
+  const keep = new Set(config.prizes.map((p) => p.id).filter((id) => isUuid(id) && prevIds.has(id)));
+
+  if (keep.size === 0) {
+    await sb.from("prizes").delete().eq("wheel_id", wheelId);
+    const { error: pErr } = await sb.from("prizes").insert(rows);
+    if (pErr) {
+      // Roll back to the pre-delete state so the wheel keeps its prizes.
+      if (prevPrizes && prevPrizes.length > 0) {
+        await sb.from("prizes").insert(prevPrizes);
+      }
+      return { error: "db_error" };
     }
-    return { error: "db_error" };
+  } else {
+    const kept = config.prizes
+      .map((p, i) => (keep.has(p.id) ? { id: p.id, ...rows[i] } : null))
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+    const added = rows.filter((_, i) => !keep.has(config.prizes[i].id));
+    // Upsert sends only these columns, so `delivery` is never touched here,
+    // and a code-list prize's stock is recounted by trg_sync_code_prize_stock.
+    const { error: upErr } = await sb.from("prizes").upsert(kept, { onConflict: "id" });
+    if (upErr) return { error: "db_error" };
+    let addedIds: string[] = [];
+    if (added.length > 0) {
+      const { data: ins, error: insErr } = await sb.from("prizes").insert(added).select("id");
+      if (insErr) {
+        // Put the kept prizes back as they were; nothing was removed yet.
+        const before = (prevPrizes ?? []).filter((p) => keep.has((p as { id: string }).id));
+        if (before.length > 0) await sb.from("prizes").upsert(before, { onConflict: "id" });
+        return { error: "db_error" };
+      }
+      addedIds = ((ins ?? []) as { id: string }[]).map((r) => r.id);
+    }
+    const removed = [...prevIds].filter((id) => !keep.has(id) && !addedIds.includes(id));
+    if (removed.length > 0) await sb.from("prizes").delete().in("id", removed);
   }
 
   const saved = await getWheelById(wheelId);
