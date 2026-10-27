@@ -180,13 +180,14 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     readFanGlow(sb, pass.fan.id),
   ]);
 
-  const winRows = (wins ?? []) as {
+  const winRows = (wins ?? []) as unknown as {
     prize_label: string;
     prize_rarity: Rarity;
     prize_image_url: string | null;
     share_id: string | null;
     created_at: string;
-    reward?: { kind: string } | null;
+    // One-to-one embed: PostgREST sends an object (or null); tolerate an array.
+    reward?: { kind: string } | { kind: string }[] | null;
   }[];
 
   const wishlist: WishlistItem[] = (
@@ -225,7 +226,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       at: w.created_at,
       shareId: w.share_id ?? undefined,
       imageUrl: w.prize_image_url ?? null,
-      ...(w.reward ? { instant: true } : {}),
+      ...(hasEmbeddedRow(w.reward) ? { instant: true } : {}),
     })),
     wishlist,
     happyHour,
@@ -305,6 +306,11 @@ export async function spin(
   if ("error" in result || !ack?.fan_id) return result;
   // RM-6: the fan's fresh counts, and whether they have reached their reminder.
   return { ...result, ...(await readPlayAfterSpin(sb, ack.fan_id)) };
+}
+
+/** A one-to-one embed that holds a row (PostgREST returns an object; arrays tolerated). */
+export function hasEmbeddedRow(v: unknown): boolean {
+  return Array.isArray(v) ? v.length > 0 : v != null;
 }
 
 /** True while the fan's break is in force. Best-effort (false on any error). */
