@@ -131,7 +131,7 @@ export function buildPoolSnapshot(
   const m = opts.happyHourMultiplier;
   const effective = m !== null ? applyRareBoost(config, m) : config;
   const prizes = availablePrizes(effective)
-    .map(toPublicPrize)
+    .map((p) => toPublicPrize(p, { showStock: false }))
     .map((p) => ({
       id: p.id,
       label: p.label,

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
+import { showsStock } from "@/lib/games/wheel/publicView";
 import {
   RARITY_COLORS,
   RARITY_LABEL,
@@ -677,6 +678,38 @@ export default function WheelEditor({
                 onChange={(e) => setWheel({ ...wheel, subtitle: e.target.value })}
               />
             </Lbl>
+          </div>
+
+          {/* RM-2: per-wheel "Show stock to fans". Saved with the wheel; off,
+              the fan-safe projection sends fans no count at all. */}
+          <div className={`mt-3.5 flex items-center justify-between gap-3 rounded-xl p-3 ${raised}`}>
+            <span className="min-w-0">
+              <span id="wf-show-stock-label" className="block text-[13.5px] font-semibold text-ink">
+                Show stock to fans
+              </span>
+              <span id="wf-show-stock-hint" className="mt-0.5 block text-[12px] leading-snug text-muted text-pretty">
+                Limited prizes show how many are left (&ldquo;3 left&rdquo;) on your fan and public
+                pages. Off hides the count; a prize that runs out still shows as claimed.
+              </span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showsStock(wheel)}
+              aria-labelledby="wf-show-stock-label"
+              aria-describedby="wf-show-stock-hint"
+              data-testid="show-stock-switch"
+              onClick={() => setWheel({ ...wheel, showStock: !showsStock(wheel) })}
+              className="shrink-0 rounded-full border border-line p-0.5 transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            >
+              <span
+                className={`relative block h-6 w-11 rounded-full transition-colors ${showsStock(wheel) ? "bg-[var(--brand)]" : "bg-line"}`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${showsStock(wheel) ? "translate-x-5" : "translate-x-0"}`}
+                />
+              </span>
+            </button>
           </div>
 
           <div className={`mt-5 rounded-xl p-3 ${raised}`}>

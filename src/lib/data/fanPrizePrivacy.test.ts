@@ -18,7 +18,8 @@ function check(label: string, cond: boolean) {
 
 // Fields a fan or the public may see on a prize / wheel. Anything else (cost,
 // lifecycle/scheduling) is creator-private.
-const PRIZE_KEYS = new Set(["id", "label", "description", "rarity", "weight", "color", "emoji", "imageUrl", "stock"]);
+// soldOut (RM-2) is fan-safe: a sold-out prize has 0% odds, and no count rides on it.
+const PRIZE_KEYS = new Set(["id", "label", "description", "rarity", "weight", "color", "emoji", "imageUrl", "stock", "soldOut"]);
 const WHEEL_KEYS = new Set(["id", "title", "subtitle", "brandColor", "labelColor", "labelSize", "prizes"]);
 
 /** Every key path in `value` whose name mentions cost (cost, cost_cents, costCents …). */

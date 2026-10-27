@@ -60,6 +60,7 @@ create table if not exists public.wheels (
   brand_color  text not null default '#ec4899',
   label_color  text,                 -- migration 0025 (per-wheel prize-label color)
   label_size   text,                 -- migration 0037 (per-wheel prize-label size)
+  show_stock   boolean not null default true, -- migration 0048 (show fans "N left")
   is_active    boolean not null default true,
   -- archived_at lives in the base table (not just the Phase-2 migration below)
   -- so functions defined further up — e.g. the admin overview, which counts
@@ -2894,3 +2895,9 @@ alter table public.spins drop constraint if exists spins_fair_v3_complete;
 alter table public.spins add constraint spins_fair_v3_complete
   check (fair_version is distinct from 3
          or (pool_snapshot is not null and pool_hash is not null and fair_trace is not null));
+
+-- 0048_wheel_show_stock.sql
+-- ============================================================
+-- Per-wheel "Show stock to fans" switch (RM-2). Written by the creator through
+-- the wheels_rw policy; no new function or grant. See migrations/0048.
+alter table public.wheels add column if not exists show_stock boolean not null default true;

@@ -4,6 +4,8 @@ import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS, RARITY_ORDER } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
 import { externalUrl } from "@/lib/format";
+import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
+import { TOPUP_SCARCITY_AT } from "./stockDisplay";
 
 /**
  * The highest-intent moment in the funnel: the fan just hit 0 spins. Instead of
@@ -22,9 +24,10 @@ export default function TopUpMoment({
   tipUrl?: string | null;
 }) {
   const wonLabels = new Set(history.map((w) => w.label));
-  // The rarest prize the fan hasn't won yet (descending rarity).
+  // The rarest prize the fan hasn't won yet (descending rarity). A sold-out
+  // prize has 0% odds, so it is never the one to chase (RM-2).
   const target = [...prizes]
-    .filter((p) => !wonLabels.has(p.label))
+    .filter((p) => !wonLabels.has(p.label) && isPublicPrizeAvailable(p))
     .sort(
       (a, b) => RARITY_ORDER.indexOf(b.rarity) - RARITY_ORDER.indexOf(a.rarity)
     )[0];
@@ -46,6 +49,9 @@ export default function TopUpMoment({
           <span className="font-bold" style={{ color }}>
             {target.emoji ?? "🎁"} {target.label}
           </span>{" "}
+          {typeof target.stock === "number" && target.stock <= TOPUP_SCARCITY_AT && (
+            <span className="tnum font-semibold text-ink">(only {target.stock} left) </span>
+          )}
           — top up and chase it.
         </p>
       ) : (

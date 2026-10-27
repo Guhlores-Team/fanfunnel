@@ -82,6 +82,12 @@ export interface WheelConfig {
    * still capped so a single line fits its slice (no overlap).
    */
   labelSize?: WheelLabelSize;
+  /**
+   * RM-2: show fans how many of each limited prize are left ("3 left").
+   * Undefined = the default (on, see SHOW_STOCK_DEFAULT in ./publicView.ts).
+   * Off, the fan-safe projection sends no count, only `soldOut`.
+   */
+  showStock?: boolean;
   prizes: Prize[];
   /** Phase 2: scheduling + lifecycle. All optional so existing callers are untouched. */
   isActive?: boolean;
@@ -99,7 +105,17 @@ export interface WheelConfig {
 export type PublicPrize = Pick<
   Prize,
   "id" | "label" | "description" | "rarity" | "weight" | "color" | "emoji" | "imageUrl" | "stock"
->;
+> & {
+  /**
+   * RM-2: set (true) only on a limited prize that has run out. It has 0% odds
+   * (engine `isAvailable`), so the fan page must not tease it. Sent even when
+   * the wheel hides its stock counts, in which case `stock` is absent.
+   */
+  soldOut?: boolean;
+};
+
+/** The stock part of a PublicPrize: `{}` for an unlimited (or hidden, in-stock) prize. */
+export type PublicStock = Pick<PublicPrize, "stock" | "soldOut">;
 
 /** The fan-/public-facing wheel: display fields only, no lifecycle or costs. */
 export interface PublicWheelConfig
@@ -123,4 +139,11 @@ export interface SpinResult {
   fairVersion?: 3;
   /** Fairness v3: sha256 of the canonical pool snapshot mixed into the RNG. */
   poolHash?: string;
+  /**
+   * RM-2: the wheel's stock right after this spin, projected like the fan page
+   * (`toPublicStockMap`): prize id -> PublicStock, listing only the prizes that
+   * have something to show. A prize missing from the map shows no stock.
+   * Absent when the wheel has no limited prize or the read failed.
+   */
+  stock?: Record<string, PublicStock>;
 }

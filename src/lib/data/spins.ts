@@ -17,7 +17,8 @@ import {
 } from "@/lib/games/wheel/fairnessV3";
 import type { Prize, Rarity, SpinResult } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
-import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
+import { showsStock, toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
+import { readLiveStock } from "./liveStock";
 import type { FanPassView, WishlistItem } from "./types";
 import { consumeCommittedSeed, freshSeed } from "./spinSeed";
 import { mockGetFanPass, mockSpin, mockCreatePass } from "./mock";
@@ -630,15 +631,19 @@ async function recordClaimedSpin(
   };
   runAfterResponse(() => fireWebhooks(pass.creator_id, webhookPayload));
 
+  // RM-2: the wheel's stock after this win, projected for the fan (see liveStock.ts).
+  const stock = await readLiveStock(sb, wheelId, config);
+
   return {
     // The spin response goes to the fan's browser: fan-safe fields only.
-    prize: toPublicPrize(chosen.prize),
+    prize: toPublicPrize(chosen.prize, { showStock: showsStock(config) }),
     prizeIndex: chosen.index,
     spinsRemaining,
     pityAwarded: chosen.pityAwarded,
     shareId: spinRow.share_id ?? undefined,
     nextSpinHash: nextServerSeedHash,
     ...(Object.keys(v3Cols).length ? { fairVersion: 3 as const, poolHash } : {}),
+    ...(stock ? { stock } : {}),
   };
 }
 

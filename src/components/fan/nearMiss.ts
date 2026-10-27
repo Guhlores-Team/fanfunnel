@@ -1,4 +1,5 @@
 import type { PublicPrize, Rarity } from "@/lib/games/wheel/types";
+import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
 
 /**
  * The high-rarity prize a fan *just* missed, plus which side of the landed
@@ -19,7 +20,8 @@ export interface NearMiss {
  * A near-miss = the landed prize is NOT legendary, but an *adjacent* slice
  * (index ± 1, wrapping) is `legendary` (preferred) or `epic`. We prefer the
  * higher-rarity / closer neighbour so "So close!" always points at the best
- * thing the fan brushed past.
+ * thing the fan brushed past. A sold-out neighbour is skipped (RM-2): it had
+ * 0% odds, so the fan was never close to it.
  */
 export function detectNearMiss(
   prizes: PublicPrize[],
@@ -45,7 +47,7 @@ export function detectNearMiss(
 
   const rank = (r: Rarity) => (r === "legendary" ? 2 : r === "epic" ? 1 : 0);
   const best = candidates
-    .filter((c) => rank(c.prize.rarity) > 0)
+    .filter((c) => rank(c.prize.rarity) > 0 && isPublicPrizeAvailable(c.prize))
     .sort((a, b) => rank(b.prize.rarity) - rank(a.prize.rarity))[0];
 
   return best ?? null;

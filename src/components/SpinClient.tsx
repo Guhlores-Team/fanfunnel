@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
-import type { PublicPrize } from "@/lib/games/wheel/types";
+import type { PublicPrize, PublicStock } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { applyStockMap } from "@/lib/games/wheel/publicView";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { playWin, playBuildUp, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./fan/nearMiss";
@@ -44,6 +45,7 @@ import InstallNudge from "./fan/InstallNudge";
 import FanLeaderboard from "./fan/FanLeaderboard";
 import CreatorNote from "./fan/CreatorNote";
 import PrizeBook from "./fan/PrizeBook";
+import LimitedStockRow from "./fan/LimitedStockRow";
 import RecentWinsTicker from "./fan/RecentWinsTicker";
 import WinsGallery from "./fan/WinsGallery";
 import { useLinkPause } from "./fan/LinkPauseProvider";
@@ -79,6 +81,25 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [nearMiss, setNearMiss] = useState<NearMiss | null>(null);
   const [pity, setPity] = useState<PublicPrize | null>(null);
   const [pityAwarded, setPityAwarded] = useState(false);
+  // A beat (pity / near-miss) belongs to this reveal: keep its row above the
+  // card reserved until the card closes, so the card never jumps.
+  const [beatRow, setBeatRow] = useState(false);
+  // RM-2: live stock. The spin response carries the wheel's stock after the
+  // win; it is held until the wheel stops (showing it earlier would give the
+  // result away) and then laid over the server-rendered prizes. A refreshed
+  // payload (new prizes array) replaces it with the server's own counts.
+  const pendingStock = useRef<Record<string, PublicStock> | null>(null);
+  const [stockPatch, setStockPatch] = useState<{
+    base: PublicPrize[];
+    map: Record<string, PublicStock>;
+  } | null>(null);
+  const prizes = useMemo(
+    () =>
+      stockPatch && stockPatch.base === pass.wheel.prizes
+        ? applyStockMap(pass.wheel.prizes, stockPatch.map)
+        : pass.wheel.prizes,
+    [stockPatch, pass.wheel.prizes]
+  );
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const mutedRef = useRef(muted);
@@ -164,6 +185,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     setNearMiss(null);
     setPity(null);
     setPityAwarded(false);
+    setBeatRow(false);
+    pendingStock.current = null;
     try {
       const res = await fetch("/api/spin", {
         method: "POST",
@@ -194,6 +217,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setWon(prize);
       setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
       setPityAwarded(data.pityAwarded === true);
+      pendingStock.current =
+        data.stock && typeof data.stock === "object" ? (data.stock as Record<string, PublicStock>) : null;
       if (typeof data.nextSpinHash === "string") setNextSpinHash(data.nextSpinHash);
       // Arm the stuck-spin watchdog (cleared by handleSpinEnd on normal
       // finish). If the wheel's completion never fires, land on the result as
@@ -262,15 +287,25 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       // celebrate it and never show the "So close!" near-miss alongside it.
       if (pityAwarded) {
         setPity(won);
+        setBeatRow(true);
       } else if (result) {
         // Near-miss beat: did the wheel stop one slice away from a legendary
-        // (or epic) prize? Derived from the landed slice index + wheel order.
-        setNearMiss(detectNearMiss(pass.wheel.prizes, result.index));
+        // (or epic) prize? Derived from the landed slice index + wheel order,
+        // using the stock the fan saw while spinning (a sold-out neighbour
+        // had 0% odds, so it is never a near miss).
+        const miss = detectNearMiss(prizes, result.index);
+        setNearMiss(miss);
+        if (miss) setBeatRow(true);
       }
+    }
+    // The wheel has stopped: now the counts may move (RM-2).
+    if (pendingStock.current) {
+      setStockPatch({ base: pass.wheel.prizes, map: pendingStock.current });
+      pendingStock.current = null;
     }
     // Opens the card now, or after the tier's short hold on the landed slice.
     dispatchReveal({ type: "stop" });
-  }, [won, muted, result, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier]);
+  }, [won, muted, result, prizes, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier]);
   useEffect(() => {
     spinEndRef.current = handleSpinEnd;
   }, [handleSpinEnd]);
@@ -430,7 +465,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         )}
         {spinsRemaining === 0 && !reveal && !paused && (
           <TopUpMoment
-            prizes={pass.wheel.prizes}
+            prizes={prizes}
             history={history}
             creatorTitle={pass.creatorTitle}
             tipUrl={pass.tipUrl}
@@ -439,9 +474,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         <InstallNudge armed={reveal && won !== null} />
       </div>
 
+      <LimitedStockRow prizes={prizes} />
+
       <WinsGallery history={history} />
 
-      <PrizeBook prizes={pass.wheel.prizes} history={history} />
+      <PrizeBook prizes={prizes} history={history} />
 
       {pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard
@@ -495,19 +532,23 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           shareId={wonShareId}
           entrance={revealEntrance(rv)}
           confetti={revealConfetti(rv)}
-          onClose={() => dispatchReveal({ type: "close" })}
-        />
-      )}
-
-      {/* The beats accompany the card, so they wait for it to open. */}
-      {pity && !revealInFlight(rv.phase) && (
-        <PityBeat prize={pity} onDone={() => setPity(null)} />
-      )}
-
-      {nearMiss && !revealInFlight(rv.phase) && (
-        <NearMissBeat
-          nearMiss={nearMiss}
-          onDone={() => setNearMiss(null)}
+          // The beats accompany the card: they open with it, in the row above
+          // it (never over it), and go when it closes. Pity still wins over a
+          // near miss (handleSpinEnd sets only one of them).
+          bannerSpace={beatRow}
+          banner={
+            pity ? (
+              <PityBeat prize={pity} onDone={() => setPity(null)} />
+            ) : nearMiss ? (
+              <NearMissBeat nearMiss={nearMiss} onDone={() => setNearMiss(null)} />
+            ) : null
+          }
+          onClose={() => {
+            dispatchReveal({ type: "close" });
+            setPity(null);
+            setNearMiss(null);
+            setBeatRow(false);
+          }}
         />
       )}
 

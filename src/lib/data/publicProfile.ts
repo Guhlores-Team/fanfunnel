@@ -2,8 +2,7 @@
 // link-in-bio profile (plus the creator's editor for it).
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { externalUrl } from "@/lib/format";
-import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
-import type { PublicWheelConfig, Rarity } from "@/lib/games/wheel/types";
+import type { PublicPrize, PublicWheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER } from "@/lib/games/wheel/types";
 import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
@@ -61,8 +60,25 @@ export interface PublicProfile {
   /** The creator's avatar — shown as the page's hero in place of the 🎡. */
   avatarUrl: string | null;
   // SFW prize teaser: labels + rarities only (no explicit media), best first.
-  prizes: { label: string; rarity: Rarity; emoji?: string }[];
+  // RM-2: plus the fan-safe stock (exact count only when the wheel shows it).
+  prizes: TeaserPrize[];
   hasTipUrl: boolean;
+}
+
+export type TeaserPrize = Pick<PublicPrize, "label" | "rarity" | "emoji" | "stock" | "soldOut">;
+
+/** The link-in-bio teaser: the six best prizes of the fan-safe wheel. */
+function teaserPrizes(prizes: PublicPrize[]): TeaserPrize[] {
+  return prizes
+    .slice()
+    .sort((a, b) => RARITY_ORDER.indexOf(b.rarity) - RARITY_ORDER.indexOf(a.rarity))
+    .slice(0, 6)
+    .map((p) => {
+      const out: TeaserPrize = { label: p.label, rarity: p.rarity, emoji: p.emoji };
+      if (p.stock !== undefined) out.stock = p.stock;
+      if (p.soldOut) out.soldOut = true;
+      return out;
+    });
 }
 
 /** Public, SFW landing data for a creator's link-in-bio page (by slug). */
@@ -76,11 +92,8 @@ export async function getPublicProfileBySlug(
         tagline: "Spin my wheel — every spin wins 🎡",
         brandColor: "#ec4899",
         avatarUrl: null,
-        prizes: SAMPLE_WHEEL.prizes.slice(0, 6).map((p) => ({
-          label: p.label,
-          rarity: p.rarity,
-          emoji: p.emoji,
-        })),
+        // Parity with the Supabase path: the demo's live wheel, fan-safe.
+        prizes: teaserPrizes(mockGetPublicWheelTeaser()?.wheel.prizes ?? []),
         hasTipUrl: true,
       },
       tipUrl: "#",
@@ -103,7 +116,7 @@ export async function getPublicProfileBySlug(
 
   const wheelId = await resolveActiveWheelId(sb, p.id, new Date());
   let brandColor = "#ec4899";
-  let prizes: { label: string; rarity: Rarity; emoji?: string }[] = [];
+  let prizes: TeaserPrize[] = [];
   if (wheelId) {
     const { data: wheelData } = await sb
       .from("wheels")
@@ -113,14 +126,7 @@ export async function getPublicProfileBySlug(
     if (wheelData) {
       const cfg = toWheelConfig(wheelData as unknown as DbWheelRow);
       brandColor = cfg.brandColor ?? "#ec4899";
-      prizes = cfg.prizes
-        .slice()
-        .sort(
-          (a, b) =>
-            RARITY_ORDER.indexOf(b.rarity) - RARITY_ORDER.indexOf(a.rarity)
-        )
-        .slice(0, 6)
-        .map((pr) => ({ label: pr.label, rarity: pr.rarity, emoji: pr.emoji }));
+      prizes = teaserPrizes(toPublicWheel(cfg).prizes);
     }
   }
 

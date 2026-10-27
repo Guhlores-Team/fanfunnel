@@ -2375,3 +2375,9 @@ alter table public.spins drop constraint if exists spins_fair_v3_complete;
 alter table public.spins add constraint spins_fair_v3_complete
   check (fair_version is distinct from 3
          or (pool_snapshot is not null and pool_hash is not null and fair_trace is not null));
+
+-- 0048_wheel_show_stock.sql
+-- ============================================================
+-- Per-wheel "Show stock to fans" switch (RM-2). Written by the creator through
+-- the wheels_rw policy; no new function or grant. See migrations/0048.
+alter table public.wheels add column if not exists show_stock boolean not null default true;

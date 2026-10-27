@@ -10,7 +10,7 @@ import {
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicPrize, type PublicWheelConfig, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
-import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
+import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import type { FanAppInfo } from "@/lib/pwa/manifest";
@@ -769,6 +769,8 @@ export function mockSaveWheel(config: WheelConfig): WheelConfig {
     id: targetId,
     // Preserve lifecycle/schedule fields unless the incoming config sets them.
     isActive: config.isActive ?? existing?.isActive,
+    // RM-2: same rule as saveWheel — only a real boolean changes the switch.
+    showStock: typeof config.showStock === "boolean" ? config.showStock : existing?.showStock,
     activeFrom: config.activeFrom ?? existing?.activeFrom ?? null,
     activeUntil: config.activeUntil ?? existing?.activeUntil ?? null,
     archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
@@ -1070,7 +1072,7 @@ export async function mockSpin(token: string, clientSeed = "") {
       const live = wheel.prizes[index];
       if (live && (live.stock === null || live.stock === undefined || live.stock > 0)) {
         // As read before the decrement, like the Supabase path's response.
-        const shown = structuredClone(toPublicPrize(live));
+        const shown = structuredClone(toPublicPrize(live, { showStock: showsStock(wheel) }));
         // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
         if (typeof live.stock === "number") live.stock -= 1;
         chosen = { live, shown, index, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter };
@@ -1143,9 +1145,13 @@ export async function mockSpin(token: string, clientSeed = "") {
     campaignId,
   });
 
+  // RM-2: the projection follows the wheel's "Show stock to fans" switch, and
+  // the live map (read after the decrement above) lets the page update counts.
+  const showStock = showsStock(wheel);
   return {
     prize: shown,
     prizeIndex: index,
+    ...(hasLimitedPrize(wheel.prizes) ? { stock: toPublicStockMap(wheel.prizes, showStock) } : {}),
     // Per-wheel: report THIS pass's remaining balance (not the fan aggregate),
     // so the spin page shows the right count for the wheel being played.
     spinsRemaining: pass.spinsRemaining,
