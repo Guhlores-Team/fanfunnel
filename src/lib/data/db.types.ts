@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_audit_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          created_at: string
+          details: Json
+          id: string
+          target_id: string | null
+          target_type: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          created_at?: string
+          details?: Json
+          id?: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          created_at?: string
+          details?: Json
+          id?: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Relationships: []
+      }
       autopilot_dismissals: {
         Row: {
           created_at: string
@@ -178,6 +208,38 @@ export type Database = {
             foreignKeyName: "creator_applications_profile_id_fkey"
             columns: ["profile_id"]
             isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creator_notices: {
+        Row: {
+          created_at: string
+          creator_id: string
+          details: Json
+          id: string
+          kind: string
+        }
+        Insert: {
+          created_at?: string
+          creator_id: string
+          details?: Json
+          id?: string
+          kind: string
+        }
+        Update: {
+          created_at?: string
+          creator_id?: string
+          details?: Json
+          id?: string
+          kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creator_notices_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
@@ -533,6 +595,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      link_tombstones: {
+        Row: {
+          created_at: string
+          reason: string
+          token_hash: string
+        }
+        Insert: {
+          created_at?: string
+          reason: string
+          token_hash: string
+        }
+        Update: {
+          created_at?: string
+          reason?: string
+          token_hash?: string
+        }
+        Relationships: []
       }
       messages: {
         Row: {
@@ -1007,7 +1087,7 @@ export type Database = {
           fair_trace: Json | null
           fair_version: number | null
           fan_id: string | null
-          fan_pass_id: string
+          fan_pass_id: string | null
           id: string
           nonce: number | null
           pool_hash: string | null
@@ -1030,7 +1110,7 @@ export type Database = {
           fair_trace?: Json | null
           fair_version?: number | null
           fan_id?: string | null
-          fan_pass_id: string
+          fan_pass_id?: string | null
           id?: string
           nonce?: number | null
           pool_hash?: string | null
@@ -1053,7 +1133,7 @@ export type Database = {
           fair_trace?: Json | null
           fair_version?: number | null
           fan_id?: string | null
-          fan_pass_id?: string
+          fan_pass_id?: string | null
           id?: string
           nonce?: number | null
           pool_hash?: string | null
@@ -1381,9 +1461,22 @@ export type Database = {
         Args: { p_creator: string; p_member: string; p_on: boolean }
         Returns: string
       }
+      reserve_self_account_deletion: {
+        Args: { p_user: string }
+        Returns: string
+      }
       rollback_claimed_spin: {
         Args: { p_prize_id: string; p_token: string }
         Returns: undefined
+      }
+      run_retention_cleanup: {
+        Args: {
+          p_app_error_days: number
+          p_audit_days: number
+          p_notice_days: number
+          p_tombstone_days: number
+        }
+        Returns: Json
       }
       set_chat_settings: {
         Args: { p_intro: string; p_outro: string }

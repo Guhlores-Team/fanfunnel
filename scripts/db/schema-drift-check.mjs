@@ -354,6 +354,120 @@ function probeGrants(db) {
   }
 }
 
+// ------------------------------------------- 0054 privacy & safety probe ---
+// The audit log is admin+aal2 read-only and server-written; creator notices are
+// own-account only; tombstones and the two server-only functions are out of
+// reach of anon/authenticated; is_admin() needs aal2; the self-close guard
+// keeps the last admin; deleting a fan anonymizes (keeps) its spins; and the
+// retention job deletes only what is past its period.
+const PS = {
+  A: "00000000-0000-4000-8000-0000000054a0",
+  B: "00000000-0000-4000-8000-0000000054b0",
+  ADM: "00000000-0000-4000-8000-0000000054d0",
+  ADM2: "00000000-0000-4000-8000-0000000054d2",
+  WHEEL: "00000000-0000-4000-8000-0000000054e0",
+  PRIZE: "00000000-0000-4000-8000-0000000054f0",
+  FAN: "00000000-0000-4000-8000-000000005401",
+  PASS: "00000000-0000-4000-8000-000000005402",
+  SPIN: "00000000-0000-4000-8000-000000005403",
+  RED: "00000000-0000-4000-8000-000000005404",
+};
+const PS_SETUP = `
+  insert into auth.users (id, email) values
+    ('${PS.A}', 'probe-0054a@example.test'), ('${PS.B}', 'probe-0054b@example.test'),
+    ('${PS.ADM}', 'probe-0054adm@example.test'), ('${PS.ADM2}', 'probe-0054adm2@example.test');
+  update public.profiles set is_active = true where id in ('${PS.A}', '${PS.B}', '${PS.ADM}', '${PS.ADM2}');
+  update public.profiles set role = 'admin' where id = '${PS.ADM}';
+  insert into public.wheels (id, creator_id, title) values ('${PS.WHEEL}', '${PS.A}', 'probe');
+  insert into public.prizes (id, wheel_id, label, rarity, weight) values ('${PS.PRIZE}', '${PS.WHEEL}', 'p', 'common', 10);
+  insert into public.fans (id, creator_id, display_name) values ('${PS.FAN}', '${PS.A}', 'probe fan');
+  insert into public.fan_passes (id, token, creator_id, wheel_id, fan_id) values ('${PS.PASS}', 'probe-0054-token', '${PS.A}', '${PS.WHEEL}', '${PS.FAN}');
+  insert into public.spins (id, fan_pass_id, creator_id, wheel_id, fan_id, prize_id, prize_label, prize_rarity)
+    values ('${PS.SPIN}', '${PS.PASS}', '${PS.A}', '${PS.WHEEL}', '${PS.FAN}', '${PS.PRIZE}', 'p', 'common');
+  insert into public.redemptions (id, creator_id, spin_id) values ('${PS.RED}', '${PS.A}', '${PS.SPIN}');
+  insert into public.admin_audit_log (actor_id, action, target_type, target_id) values ('${PS.ADM}', 'probe.entry', 'profile', '${PS.A}');
+  insert into public.creator_notices (creator_id, kind) values ('${PS.A}', 'fan_deleted_data'), ('${PS.B}', 'fan_deleted_data');
+  insert into public.link_tombstones (token_hash, reason) values (repeat('a', 64), 'creator_closed');
+`;
+const asJwt = (uid, aal) =>
+  `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true); ` +
+  `select set_config('request.jwt.claims', '{"sub":"${uid}","role":"authenticated","aal":"${aal}"}', true);`;
+
+function probePrivacy(db) {
+  const bad = [];
+  const lines = (r) => (r.stdout || "").split("\n").map((l) => l.trim()).filter((l) => /^[\w-]+:/.test(l));
+  const expectLines = (label, body, want) => {
+    const r = psql(db, ["-c", `begin; ${PS_SETUP} ${body} rollback;`], { allowFail: true });
+    const got = lines(r);
+    for (const w of want) if (!got.includes(w)) bad.push(`${label}: expected "${w}" (got ${got.join(" ") || "nothing"}; ${(r.stderr || "").trim().split("\n")[0]})`);
+  };
+  const expectError = (label, body, re) => {
+    const r = psql(db, ["-c", `begin; ${PS_SETUP} ${body} rollback;`], { allowFail: true });
+    if (!re.test(r.stderr || "")) bad.push(`${label}: was not refused (${(r.stderr || "no error").trim().split("\n")[0]})`);
+  };
+
+  // Reads: only an aal2 admin sees the log; aal1 is not an admin; notices are own-account.
+  expectLines("reads", `
+    ${asJwt(PS.ADM, "aal1")} select 'adm1-isadmin:' || public.is_admin(); select 'adm1-audit:' || count(*) from public.admin_audit_log; reset role;
+    ${asJwt(PS.ADM, "aal2")} select 'adm2-isadmin:' || public.is_admin(); select 'adm2-audit:' || count(*) from public.admin_audit_log; reset role;
+    ${asJwt(PS.A, "aal2")} select 'a-isadmin:' || public.is_admin(); select 'a-audit:' || count(*) from public.admin_audit_log; select 'a-notices:' || count(*) from public.creator_notices; reset role;
+    ${asJwt(PS.B, "aal1")} select 'b-notices:' || count(*) from public.creator_notices where creator_id = '${PS.A}'; reset role;
+    ${asJwt(PS.ADM, "aal1")} select 'adm1-reserve:' || public.admin_reserve_account_deletion('${PS.B}'); reset role;
+  `, ["adm1-isadmin:false", "adm1-audit:0", "adm2-isadmin:true", "adm2-audit:1", "a-isadmin:false", "a-audit:0", "a-notices:1", "b-notices:0", "adm1-reserve:forbidden"]);
+
+  // Writes and server-only functions are refused to anon and authenticated.
+  const denied = /permission denied/;
+  expectError("creator inserts an audit entry", `${asJwt(PS.A, "aal2")} insert into public.admin_audit_log (action) values ('x.forged');`, denied);
+  expectError("aal2 admin inserts an audit entry", `${asJwt(PS.ADM, "aal2")} insert into public.admin_audit_log (action) values ('x.forged');`, denied);
+  expectError("aal2 admin deletes audit entries", `${asJwt(PS.ADM, "aal2")} delete from public.admin_audit_log;`, denied);
+  expectError("anon reads the audit log", `set local role anon; select count(*) from public.admin_audit_log;`, denied);
+  expectError("creator inserts a notice", `${asJwt(PS.A, "aal2")} insert into public.creator_notices (creator_id, kind) values ('${PS.A}', 'fan_deleted_data');`, denied);
+  expectError("creator reads tombstones", `${asJwt(PS.A, "aal2")} select count(*) from public.link_tombstones;`, denied);
+  expectError("anon reads tombstones", `set local role anon; select count(*) from public.link_tombstones;`, denied);
+  for (const [who, role] of [["anon", "set local role anon;"], ["authenticated", asJwt(PS.ADM, "aal2")]]) {
+    expectError(`${who} runs reserve_self_account_deletion`, `${role} select public.reserve_self_account_deletion('${PS.ADM}');`, /permission denied for function reserve_self_account_deletion/);
+    expectError(`${who} runs run_retention_cleanup`, `${role} select public.run_retention_cleanup(365, 90, 365, 90);`, /permission denied for function run_retention_cleanup/);
+  }
+  expectError("an audit entry is rewritten (even by the owner)", `update public.admin_audit_log set action = 'x.rewritten';`, /append-only/);
+
+  // Server paths (service role): last-admin guard, fan delete anonymizes, retention.
+  expectLines("service role", `
+    set local role service_role;
+    select 'self-last:' || public.reserve_self_account_deletion('${PS.ADM}');
+    reset role;
+    update public.profiles set role = 'admin' where id = '${PS.ADM2}';
+    set local role service_role;
+    select 'self-two:' || public.reserve_self_account_deletion('${PS.ADM}');
+    select 'self-creator:' || public.reserve_self_account_deletion('${PS.A}');
+    reset role;
+    select 'adm-role:' || role from public.profiles where id = '${PS.ADM}';
+    delete from public.fans where id = '${PS.FAN}';
+    select 'spin-kept:' || coalesce(fan_id::text, 'null') || ',' || coalesce(fan_pass_id::text, 'null') from public.spins where id = '${PS.SPIN}';
+    select 'redemption-kept:' || count(*) from public.redemptions where id = '${PS.RED}';
+    insert into public.admin_audit_log (action, created_at) values ('probe.old', now() - interval '400 days');
+    insert into public.creator_notices (creator_id, kind, created_at) values ('${PS.A}', 'fan_deleted_data', now() - interval '100 days');
+    insert into public.link_tombstones (token_hash, reason, created_at) values (repeat('b', 64), 'fan_deleted', now() - interval '400 days');
+    set local role service_role;
+    select 'retention:' || public.run_retention_cleanup(365, 90, 365, 90)::text;
+    reset role;
+    select 'left:' || (select count(*) from public.admin_audit_log) || ',' || (select count(*) from public.creator_notices) || ',' || (select count(*) from public.link_tombstones);
+  `, [
+    "self-last:last_admin", "self-two:ok", "self-creator:ok", "adm-role:creator",
+    "spin-kept:null,null", "redemption-kept:1",
+    `retention:{"app_errors": null, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1}`,
+    "left:1,2,1",
+  ]);
+  expectError("retention with a 0-day period", `set local role service_role; select public.run_retention_cleanup(0, 90, 365, 90);`, /at least 1 day/);
+
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: 0054 privacy & safety probe`);
+    for (const b of bad) console.log(`  - ${b}`);
+  } else {
+    console.log(`PASS  ${db}: 0054 audit log admin+aal2 read-only, notices own-account, tombstones + server-only fns locked, last-admin self-close guard, fan delete keeps anonymized spins, retention by period`);
+  }
+}
+
 // ----------------------------------------------------------------- builds ---
 try {
   const migrations = readdirSync(join(SUPABASE, "migrations"))
@@ -406,7 +520,10 @@ try {
   diff("A", A, "C", catalog("ffc"));
   diff("A", A, "C2", catalog("ffc2"));
 
-  for (const db of ["ffa", "ffb", "ffc"]) probeGrants(db);
+  for (const db of ["ffa", "ffb", "ffc"]) {
+    probeGrants(db);
+    probePrivacy(db);
+  }
 } catch (e) {
   failures++;
   console.error(e instanceof Error ? e.message : e);
