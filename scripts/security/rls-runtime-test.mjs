@@ -23,6 +23,8 @@
  *     fan's private reminder is unreadable for the creator
  *   • only the service role writes fan_checkins (RM-3); A reads none of B's check-ins
  *   • A cannot read, write or alter B's win-back outreach log (0051)
+ *   • an agency seat sees only its org's (scoped) creators, and a non-member
+ *     cannot read the org or give itself a seat or org membership (0052)
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -114,7 +116,8 @@ async function sweepStaleUsers() {
   if (swept) console.log(`Swept ${swept} stale test user(s) from earlier killed runs.`);
 }
 
-async function makeCreator(tag) {
+// A throwaway, approved, active account with no tenant data.
+async function makeUser(tag) {
   const email = `rlstest+${RUN}-${tag}@fanfunnel.test`;
   const { data, error } = await admin.auth.admin.createUser({
     email, password: PW, email_confirm: true,
@@ -133,6 +136,11 @@ async function makeCreator(tag) {
   }
   if (!profileExists) throw new Error(`profiles row for ${id} was not created by trigger in time`);
   must(await admin.from("profiles").update({ approval_status: "approved", is_active: true }).eq("id", id).select("id").single(), `approve ${tag}`);
+  return { id, email };
+}
+
+async function makeCreator(tag) {
+  const { id, email } = await makeUser(tag);
   // Seed one wheel + prize + fan + pass + grant + spin for this creator.
   const wheel = must(await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single(), `seed ${tag} wheel`);
   const prize = must(await admin.from("prizes").insert({ wheel_id: wheel.id, label: `${tag} prize`, rarity: "common", weight: 10 }).select("id").single(), `seed ${tag} prize`);
@@ -161,6 +169,7 @@ async function main() {
     const B = await makeCreator("b");
 
     const a = await signedClient(A.email);
+    const b = await signedClient(B.email);
     console.log("\nActing as Creator A — asserting isolation from B:");
 
     // A sees its own rows.
@@ -297,6 +306,79 @@ async function main() {
     check((anonOut.data?.length ?? 0) === 0, `anon reads no fan_outreach rows (got ${anonOut.data?.length ?? 0})`);
     const { data: bOutAfter } = await admin.from("fan_outreach").select("id, snoozed_until").eq("creator_id", B.id);
     check((bOutAfter?.length ?? 0) === 1 && bOutAfter?.[0]?.snoozed_until === null, "B's outreach log is untouched by A");
+    // Agency / org isolation (0052, audit A2). The service role builds an org
+    // owned by OWN holding creators A and C, with a chatter seat for SEAT
+    // scoped to A only. B stays outside the org. Mirrors
+    // scripts/db/orgIsolationProbe.mjs.
+    console.log("\nAgency org — asserting seats and membership stay inside the org:");
+    const C = await makeCreator("c");
+    const OWN = await makeUser("own");
+    const SEAT = await makeUser("seat");
+    const org = must(await admin.from("orgs").insert({ name: `rls ${RUN}`, owner_id: OWN.id }).select("id").single(), "seed org");
+    const seat = must(await admin.from("org_members").insert({ org_id: org.id, profile_id: SEAT.id, role: "chatter" }).select("id").single(), "seed seat");
+    must(await admin.from("org_member_creators").insert({ member_id: seat.id, creator_id: A.id }).select("member_id").single(), "seed seat scope");
+    for (const who of [A, C]) {
+      must(await admin.from("profiles").update({ org_id: org.id }).eq("id", who.id).select("id").single(), "put a creator in the org");
+    }
+
+    const s = await signedClient(SEAT.email);
+    const sOrgs = await s.from("orgs").select("id").eq("id", org.id);
+    check(!sOrgs.error && sOrgs.data?.length === 1, `the seat can read its own org (${sOrgs.error?.message ?? `got ${sOrgs.data?.length}`})`);
+    const sFansA = await s.from("fans").select("id").eq("creator_id", A.id);
+    check((sFansA.data?.length ?? 0) === 1, `the seat reads its scoped creator A's fan (got ${sFansA.data?.length ?? 0})`);
+    const sFansB = await s.from("fans").select("id").eq("creator_id", B.id);
+    check((sFansB.data?.length ?? 0) === 0, `the seat reads 0 of B's fans; B is outside the org (got ${sFansB.data?.length ?? 0})`);
+    const sFansC = await s.from("fans").select("id").eq("creator_id", C.id);
+    check((sFansC.data?.length ?? 0) === 0, `the seat reads 0 of C's fans; C is in the org but not in its scope (got ${sFansC.data?.length ?? 0})`);
+    const sStats = await s.rpc("org_account_stats", { p_org: org.id });
+    const statIds = (sStats.data ?? []).map((r) => r.id);
+    check(!sStats.error && statIds.length === 1 && statIds[0] === A.id, `the seat's org stats list only its scoped creator A, not C (${sStats.error?.message ?? statIds.join(",")})`);
+    const ownStats = await (await signedClient(OWN.email)).rpc("org_account_stats", { p_org: org.id });
+    check(!ownStats.error && ownStats.data?.length === 2, `the org owner's stats list both of its creators (${ownStats.error?.message ?? `got ${ownStats.data?.length}`})`);
+    const sPromote = await s.from("org_members").update({ role: "owner" }).eq("id", seat.id).select("id");
+    check((sPromote.data?.length ?? 0) === 0, "the seat cannot promote its own seat");
+    const sScope = await s.from("org_member_creators").insert({ member_id: seat.id, creator_id: B.id }).select("member_id");
+    check(!!sScope.error || (sScope.data?.length ?? 0) === 0, "the seat cannot widen its own scope");
+
+    // B is signed in but holds no seat and is not in the org.
+    const bOrgs = await b.from("orgs").select("id").eq("id", org.id);
+    check((bOrgs.data?.length ?? 0) === 0, "a non-member reads 0 of the org's rows");
+    const bSeats = await b.from("org_members").select("id").eq("org_id", org.id);
+    check((bSeats.data?.length ?? 0) === 0, "a non-member reads 0 of the org's seats");
+    const bJoin = await b.from("org_members").insert({ org_id: org.id, profile_id: B.id, role: "owner" }).select("id");
+    check(!!bJoin.error || (bJoin.data?.length ?? 0) === 0, "a non-member cannot give itself a seat");
+    const bRpc = await b.rpc("org_add_member", { p_org: org.id, p_email: B.email, p_role: "owner" });
+    check(bRpc.data === "not_owner", `org_add_member refuses a non-owner (got ${bRpc.data ?? bRpc.error?.message})`);
+    const bJoinOrg = await b.from("profiles").update({ org_id: org.id }).eq("id", B.id).select("id");
+    check((bJoinOrg.data?.length ?? 0) === 0, "a non-member cannot set its own org_id");
+    const bStats = await b.rpc("org_account_stats", { p_org: org.id });
+    check((bStats.data?.length ?? 0) === 0, `a non-member's org stats are empty (got ${bStats.data?.length ?? 0})`);
+    const bFansA = await b.from("fans").select("id").eq("creator_id", A.id);
+    check((bFansA.data?.length ?? 0) === 0, "a non-member reads 0 of the org creator's fans");
+    const { data: seatsAfter } = await admin.from("org_members").select("profile_id, role").eq("org_id", org.id);
+    check(seatsAfter?.length === 1 && seatsAfter[0].profile_id === SEAT.id && seatsAfter[0].role === "chatter", "the org still has exactly the one chatter seat");
+    const { data: bAfter } = await admin.from("profiles").select("org_id").eq("id", B.id).maybeSingle();
+    check(bAfter?.org_id == null, "B is still outside the org");
+
+    // Suspended accounts (0052): a suspended seat gets nothing and a suspended
+    // owner can't manage the org. The sessions above stay valid; only the
+    // profile flag changes, exactly as an admin suspension does.
+    must(await admin.from("profiles").update({ is_active: false }).in("id", [SEAT.id, OWN.id]).select("id"), "suspend the seat and the owner");
+    const sFansAfter = await s.from("fans").select("id").eq("creator_id", A.id);
+    check((sFansAfter.data?.length ?? 0) === 0, `a suspended seat reads 0 of its scoped creator's fans (got ${sFansAfter.data?.length ?? 0})`);
+    const sOrgsAfter = await s.from("orgs").select("id").eq("id", org.id);
+    check((sOrgsAfter.data?.length ?? 0) === 0, "a suspended seat reads 0 of its org's rows");
+    const own = await signedClient(OWN.email);
+    const ownAdd = await own.rpc("org_add_member", { p_org: org.id, p_email: B.email, p_role: "manager" });
+    check(ownAdd.data === "not_owner", `a suspended owner cannot add a seat (got ${ownAdd.data ?? ownAdd.error?.message})`);
+    const ownDrop = await own.rpc("org_remove_member", { p_member: seat.id });
+    check(ownDrop.data === "not_owner", `a suspended owner cannot remove a seat (got ${ownDrop.data ?? ownDrop.error?.message})`);
+    const ownRename = await own.from("orgs").update({ name: "renamed" }).eq("id", org.id).select("id");
+    check((ownRename.data?.length ?? 0) === 0, "a suspended owner cannot rename the org");
+    const ownStatsSuspended = await own.rpc("org_account_stats", { p_org: org.id });
+    check((ownStatsSuspended.data?.length ?? 0) === 0, `a suspended owner's org stats are empty (got ${ownStatsSuspended.data?.length ?? 0})`);
+    const { data: seatsSuspended } = await admin.from("org_members").select("id").eq("org_id", org.id);
+    check(seatsSuspended?.length === 1, "the org still has exactly the one seat");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

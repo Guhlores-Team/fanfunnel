@@ -1,88 +1,107 @@
 # Deploy FanFunnel (Vercel + Supabase)
 
-Goal: live site that auto-deploys from `main`, backed by your Supabase project.
-Three connections: **GitHub→Vercel**, **Vercel→Supabase env vars**, **schema in Supabase**.
+Goal: a live site that auto-deploys from `main`, backed by the LIVE Supabase project, with
+every other branch on a Preview backed by the TEST project. See
+[`docs/ENVIRONMENTS.md`](docs/ENVIRONMENTS.md) for which is which and
+[`AGENTS.md`](AGENTS.md) for the preview-before-prod rule.
 
-> Anything in a browser dashboard (Vercel / Supabase / GitHub settings) is **yours
-> to click** — it can't be automated from the repo. The repo side (code, PR,
-> combined SQL) is done.
+**Going live for the first time?** Follow the ordered checklist in
+[`docs/GO_LIVE.md`](docs/GO_LIVE.md). This page is the reference it points to.
 
----
-
-## STEP 1 — Supabase: load the schema (two pastes, in order)
-
-1. Go to **supabase.com → your project** (the one you've been running SQL on).
-2. Left sidebar → **SQL Editor** → **New query**.
-3. **Brand-new project (recommended):** run `supabase/schema.sql` — the complete, current schema (base tables + RLS + hardened `claim_spin` + every migration folded in). It is idempotent, and running `supabase/migrations_combined.sql` on top is a harmless no-op. CI (`npm test` and the `schema-drift` job) proves the three SQL files build the same database.
-4. **Existing project that pre-dates these migrations:** new query → open **`supabase/migrations_combined.sql`**, paste it, **Run** to bring an older DB up to date. Idempotent (safe to re-run).
-5. (Optional) Authentication → Providers → Email → turn **OFF "Confirm email"** so you can sign in instantly while testing.
-
-**Get your 3 keys:** Supabase → **Project Settings → API**:
-- **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
-- **anon public** key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- **service_role** key (secret) → `SUPABASE_SERVICE_ROLE_KEY`
+> Anything in a browser dashboard (Vercel, Supabase, GitHub settings) is the owner's to click.
+> It can't be automated from the repo.
 
 ---
 
-## STEP 2 — Vercel: connect the repo (skip if already connected)
+## 1. Database schema
 
-1. **vercel.com → Add New… → Project**.
-2. **Import** `SteveGuhlore/fanfunnel`. Framework auto-detects **Next.js** — leave build/output defaults.
-3. Don't deploy yet — set env vars first (Step 3).
+Migrations are applied by CI, not by hand: `.github/workflows/supabase-migrations.yml`
+applies `supabase/migrations/` to **TEST** on every PR (`test` job) and to **LIVE** on merge to
+`main` (`production` job). That workflow needs these GitHub repository secrets:
+`SUPABASE_ACCESS_TOKEN`, `SUPABASE_TEST_PROJECT_REF`, `SUPABASE_TEST_DB_PASSWORD`,
+`SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD`. If a project was set up by pasting SQL
+before the workflow existed, run `docs/auto-migration-reconcile.sql` on it once first.
 
-If a fanfunnel project **already exists** in Vercel, open it instead and go to Step 3.
+Manual paths (a brand-new project, or recovery):
+- **Brand-new project:** run `supabase/schema.sql` in the SQL Editor. It is the complete current
+  schema and is idempotent.
+- **Existing project behind on migrations:** run `supabase/migrations_combined.sql`. Also
+  idempotent.
+
+CI (`npm test` and the `schema-drift` job) proves `migrations/`, `schema.sql` and
+`migrations_combined.sql` build the same database.
+
+**Keys:** Supabase → Project Settings → API: Project URL (`NEXT_PUBLIC_SUPABASE_URL`), anon public
+key (`NEXT_PUBLIC_SUPABASE_ANON_KEY`), service_role key (`SUPABASE_SERVICE_ROLE_KEY`, secret).
 
 ---
 
-## STEP 3 — Vercel: add the 3 environment variables
+## 2. Supabase Auth settings (both projects)
 
-Project → **Settings → Environment Variables**. Add each for **Production, Preview, AND Development**:
+Every auth email link (sign-up confirm, password reset, email change) comes back to
+`<site>/auth/callback?next=…`, built from the page's own origin
+(`src/components/LoginForm.tsx`, `src/app/forgot-password/page.tsx`,
+`src/app/api/account/email/route.ts`). Supabase only follows a link whose target is on its allow
+list, so set, under **Authentication → URL Configuration**:
 
-| Name | Value |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | your Project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon public key |
-| `SUPABASE_SERVICE_ROLE_KEY` | service_role key (keep secret) |
-
-> If they're already there from before, confirm all three exist and are spelled exactly.
-
-### Optional environment variables
-
-These aren't required to boot, but you'll want them for a real deployment:
-
-| Name | Value | What it does |
+| Project | Site URL | Redirect URLs |
 |---|---|---|
-| `ADMIN_EMAILS` | comma-separated email allowlist | Gates the one-time admin-claim bootstrap (`claimAdmin` in `src/lib/data/index.ts`). A signed-in user whose email is on this list can promote themselves to admin via the in-app "claim admin" action — no SQL needed. **If it's unset, no one can self-promote** (you'd fall back to the manual `update profiles set role='admin'` in STEP 5). |
-| `FF_REQUIRE_SUPABASE` | `1` | Self-hosted opt-in to **fail closed** instead of mock mode (`src/lib/supabase/server.ts`). On Vercel, `VERCEL_ENV=production` already forces real-Supabase mode; set this where `VERCEL_ENV` isn't present (e.g. a non-Vercel host) so a missing Supabase key throws instead of silently serving in-memory demo data. |
+| LIVE `ttlogfmogcccwiraaoae` | `https://fanfunnel.vercel.app` | `https://fanfunnel.vercel.app/**` |
+| TEST `snmcrmhgevfqggxdiomu` | the Preview URL, e.g. `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` | `https://fanfunnel-*-easy-simple-sites.vercel.app/**` (every branch Preview) and `http://localhost:3000/**` |
+
+Also, in both projects:
+- **Authentication → Emails → Templates:** paste the 5 link templates and turn on and paste the 2
+  security notices from `supabase/templates/` (see its `README.md`).
+- **Authentication → Providers → Email:** keep **Confirm email ON**. Turn on **leaked-password
+  protection**.
+- Enable **MFA** for the admin account.
 
 ---
 
-## STEP 4 — Merge to main (gets you the auto-deploy)
+## 3. Vercel project and environment variables
 
-Easiest: merge the open Pull Request (titled "Phases 3–5 + polish + realtime chat").
-- Open the PR on GitHub → **Merge pull request**.
-- Vercel auto-builds `main` and gives you the **Production URL**.
+Project → **Settings → Environment Variables**. Scope matters: Production = LIVE, Preview and
+Development = TEST.
 
-(Before merging, the PR also produces a **Preview URL** — test on that first if you want, no risk to production.)
+| Name | Production | Preview | Notes |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | LIVE URL | TEST URL | |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | LIVE anon key | TEST anon key | Browser key; RLS applies. |
+| `SUPABASE_SERVICE_ROLE_KEY` | LIVE service key | TEST service key | Server-only. Never a `NEXT_PUBLIC_*` var. |
+| `ADMIN_EMAILS` | owner email(s) | same | Comma-separated allowlist for the one-time admin claim (see step 4). Unset = nobody can claim admin. |
+| `FF_REQUIRE_SUPABASE` | `1` | `1` | Fail closed instead of falling back to the in-memory demo. `VERCEL_ENV=production` already forces this on Vercel. |
+| `NEXT_PUBLIC_ENABLE_DEBUG` | **unset** | `1` | Turns on the `?debug=1` error console and the "PREVIEW · TEST database" badge. Must never be set on Production. |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | set by the Upstash integration | same | Shared rate-limit counters across instances (`src/lib/rateLimit.ts`). `UPSTASH_REDIS_REST_URL`/`_TOKEN` also work. Unset = per-instance in-memory limits. |
+| `NEXT_PUBLIC_SITE_URL` | optional | optional | Only for self-hosting behind a proxy that strips the scheme. |
+
+Add the TEST trio as GitHub secrets too (same names), so the `E2E (real Supabase)` workflow and
+`scripts/security/rls-runtime-test.mjs` run instead of skipping.
+
+**Deployment Protection** (Settings → Deployment Protection): keep Vercel Authentication on
+**Standard Protection** (`all_except_custom_domains`), so Previews need a Vercel login and the
+production domain is public.
 
 ---
 
-## STEP 5 — First run on the live site
+## 4. Ship a change
 
-1. Visit the Vercel Production URL → **/login** → sign up (this creates your creator account).
-2. To make yourself an **admin**: Supabase → Table Editor → `profiles` → your row → set `role` = `admin`.
-3. Build a wheel in **/dashboard**, mint a fan link, open `/spin/<token>` on your phone.
+1. Work on a branch off `main`. Push it: Vercel builds a Preview on the TEST database, and CI
+   applies the branch's migrations to TEST.
+2. Test the change on the Preview with real clicks.
+3. When CI is green (`verify`, `schema-drift`, `supabase`, `login-ui`) **and** the Preview has been
+   tested, merge the PR to `main`. CI migrates LIVE, and Vercel deploys Production.
 
----
+First run on a fresh LIVE project: sign up at `/login`, confirm the email, then open `/admin`
+and use **Claim admin** (works only for an `ADMIN_EMAILS` address). No SQL is needed.
 
-## Auto-deploy from here on
-Once Steps 2–4 are done, **every push/merge to `main` auto-deploys**. Feature
-branches get their own preview URLs automatically. That's the "deploy straight
-from Vercel" flow you wanted.
+**Rollback:** revert the merge commit on `main`. Vercel redeploys the previous build. Migrations
+are not rolled back automatically. They are written to be backward-compatible (additive,
+idempotent), so the previous code keeps running on the newer schema. Check that is still true for
+any migration that renames or drops something before relying on a plain revert.
 
 ## Notes
-- **Migrations are idempotent** — re-running `migrations_combined.sql` is safe.
-- **Realtime chat** needs nothing extra: Supabase Realtime is on by default for
-  the `messages` table once the schema is loaded.
-- **Browser push notifications** prompt the creator for permission in the Inbox
-  ("🔔 Enable alerts"); full closed-tab web-push is a Phase 6 item.
+- Re-running `migrations_combined.sql` is safe.
+- Realtime chat needs nothing extra: Supabase Realtime is on for the `messages` table once the
+  schema is loaded.
+- Optional later keys: `REWARD_ENCRYPTION_KEY` (encrypted digital rewards) and a web-push VAPID
+  keypair, both only when those features ship.

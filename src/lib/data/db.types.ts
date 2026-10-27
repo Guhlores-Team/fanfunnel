@@ -1422,7 +1422,9 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      _is_org_member: { Args: { p_org: string }; Returns: boolean }
       _owns_org: { Args: { p_org: string }; Returns: boolean }
+      _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
       admin_account_stats: {
         Args: never
         Returns: {

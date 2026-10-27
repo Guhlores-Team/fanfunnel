@@ -14,7 +14,9 @@
 //
 // Then, on A, B and C, a runtime grant probe (0044): anon calls to the
 // signed-in-only RPCs are refused, authenticated setter calls still persist,
-// and the RLS helper functions stay callable by anon.
+// and the RLS helper functions stay callable by anon; and the agency/org
+// isolation probe (orgIsolationProbe.mjs, 0052) acting as owners, seats and
+// non-members.
 // Plus the fan_checkins probe (0050): only the service role writes visits.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
@@ -30,6 +32,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, chownSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -271,7 +274,10 @@ const SIGNED_IN_ONLY = [
   "org_remove_member(uuid)",
   "org_scope_creator(uuid, uuid, boolean)",
 ];
-const RLS_HELPERS = ["is_admin()", "can_act_for(uuid, text)", "current_user_active()", "_owns_org(uuid)"];
+const RLS_HELPERS = [
+  "is_admin()", "can_act_for(uuid, text)", "current_user_active()", "_owns_org(uuid)",
+  "_is_org_member(uuid)", "_owns_org_seat(uuid)",
+];
 const PROBE_UID = "00000000-0000-4000-8000-000000000044";
 
 function probeGrants(db) {
@@ -555,6 +561,20 @@ function probeOutreach(db) {
   return bad;
 }
 
+// ------------------------------------------------- org isolation probe ---
+// 0052 / audit A2: agency seats and org membership never cross tenants.
+function probeOrgIsolation(db) {
+  const r = psql(db, ["-c", ORG_PROBE_SQL], { allowFail: true });
+  const bad = r.status === 0 ? checkOrgProbe(r.stdout) : [`probe did not run: ${(r.stderr || "").trim().split("\n")[0]}`];
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: agency/org isolation`);
+    for (const b of bad) console.log(`  - ${b}`);
+  } else {
+    console.log(`PASS  ${db}: agency/org isolation (seats see only their org's / scoped creators; non-members cannot join an org, seat, scope or invite; suspended owners, seats and invitees are refused)`);
+  }
+}
+
 // ----------------------------------------------------------------- builds ---
 try {
   const migrations = readdirSync(join(SUPABASE, "migrations"))
@@ -609,6 +629,7 @@ try {
 
   for (const db of ["ffa", "ffb", "ffc"]) {
     probeGrants(db);
+    probeOrgIsolation(db);
     probeCheckins(db);
   }
 } catch (e) {

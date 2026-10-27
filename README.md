@@ -50,34 +50,29 @@ store. Links you generate in the dashboard really work and really spin.
 
 ## Going live (Supabase + Vercel)
 
-1. **Create a Supabase project**, then in the SQL Editor run
-   [`supabase/schema.sql`](supabase/schema.sql): the complete, current schema
-   (base tables, RLS, the **hardened** `claim_spin`, the auth trigger, and every
-   migration folded in). Running
-   [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql) on top
-   is harmless (both are idempotent) but adds nothing; it is the upgrade path
-   for an existing database. `npm test` and
-   `node scripts/db/schema-drift-check.mjs` keep the three equivalent.
-2. **Copy `.env.example` → `.env.local`** and fill in the URL, anon key, and
-   service-role key from Supabase → Project Settings → API. **All three are
-   required** — the app refuses to boot in production if any is missing (it will
-   not silently fall back to in-memory demo data).
-3. **Sign up** at `/login` (email + password). For the smoothest start, turn
-   OFF "Confirm email" under Supabase → Authentication → Providers → Email
-   (or leave it on and confirm via the emailed link).
-4. **Make yourself admin** (you're a creator + admin) once your row exists,
-   either by setting `ADMIN_EMAILS` (comma-separated allowlist) and using the
-   in-app admin-claim action, or directly in SQL:
-   ```sql
-   update public.profiles set role = 'admin' where email = 'you@example.com';
-   ```
-5. **Deploy to Vercel** and add the same env vars in the Vercel project
-   settings. Done. (Optional vars — `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE` — are
-   documented in [`DEPLOY.md`](DEPLOY.md).)
+The production setup (two Supabase projects, Vercel Production/Preview scopes,
+CI-applied migrations, auth URLs and email templates) is documented in
+[`DEPLOY.md`](DEPLOY.md). The ordered first-launch checklist is
+[`docs/GO_LIVE.md`](docs/GO_LIVE.md). In short:
+
+1. **Schema:** CI applies `supabase/migrations/` to the TEST project on every PR
+   and to LIVE on merge to `main`. For a brand-new project you can also run
+   [`supabase/schema.sql`](supabase/schema.sql) once in the SQL Editor (the
+   upgrade path for an existing database is
+   [`supabase/migrations_combined.sql`](supabase/migrations_combined.sql)).
+   `npm test` and `node scripts/db/schema-drift-check.mjs` keep the three
+   equivalent.
+2. **Env:** copy `.env.example` → `.env.local` and fill in the URL, anon key and
+   service-role key. All three are required in production: the app refuses to
+   boot rather than fall back to demo data.
+3. **Sign up** at `/login` and confirm the email (keep "Confirm email" ON).
+4. **Admin:** set `ADMIN_EMAILS` to your address, then open `/admin` and use
+   **Claim admin**. No SQL needed.
 
 ### Auth & access
-- Creators/admins sign in at `/login`; middleware (`src/middleware.ts`)
-  refreshes sessions and guards `/dashboard`.
+- Creators/admins sign in at `/login`; the proxy (`src/proxy.ts`) refreshes
+  sessions on the dashboard, admin, agency and auth routes, and each page
+  re-checks access server-side.
 - In demo mode (no env vars) auth is skipped and the dashboard is open.
 - Fans never authenticate — their secret link is their whole experience.
 
@@ -137,13 +132,18 @@ migration; an existing database is upgraded with
 ## Tests
 
 ```bash
-npx tsx src/lib/games/wheel/engine.test.ts
+npm run lint && npm run typecheck
+npm test                                    # every src/**/*.test.ts (unit + SQL/RLS guards)
+node scripts/db/schema-drift-check.mjs      # needs Postgres 16 binaries; builds the DB 3 ways + RLS probes
+npm run build && npx next start -p 3000 &   # then, against that server:
+export E2E_BASE_URL=http://localhost:3000; npm run e2e && npm run e2e:a11y
 ```
 
 ## Roadmap
-- ✅ Creator/admin auth + middleware (sign-in)
-- ✅ Persisted wheel editor (saves wheel + prizes to Supabase)
-- ✅ Redemption fulfilment inbox + live metrics
-- ✅ Admin panel: manage creator accounts + cross-account metrics
-- Per-creator theming (fonts, background, photo-hub) — premium feel
-- More games: scratch tickets, bingo (same prize/fan/account system)
+Shipped: creator/admin auth, persisted multi-wheel editor, fulfilment inbox and
+metrics, admin console, agency console (orgs and staff seats), boosts
+(happy hours, webhooks, link-in-bio), provably-fair v3 spins with a public
+verify page, PWA install.
+
+Next: final legal text, error monitoring, web push, more games (scratch
+tickets, bingo) on the same prize/fan/account system.
