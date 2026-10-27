@@ -271,6 +271,26 @@ async function main() {
     check(seatsAfter?.length === 1 && seatsAfter[0].profile_id === SEAT.id && seatsAfter[0].role === "chatter", "the org still has exactly the one chatter seat");
     const { data: bAfter } = await admin.from("profiles").select("org_id").eq("id", B.id).maybeSingle();
     check(bAfter?.org_id == null, "B is still outside the org");
+
+    // Suspended accounts (0052): a suspended seat gets nothing and a suspended
+    // owner can't manage the org. The sessions above stay valid; only the
+    // profile flag changes, exactly as an admin suspension does.
+    must(await admin.from("profiles").update({ is_active: false }).in("id", [SEAT.id, OWN.id]).select("id"), "suspend the seat and the owner");
+    const sFansAfter = await s.from("fans").select("id").eq("creator_id", A.id);
+    check((sFansAfter.data?.length ?? 0) === 0, `a suspended seat reads 0 of its scoped creator's fans (got ${sFansAfter.data?.length ?? 0})`);
+    const sOrgsAfter = await s.from("orgs").select("id").eq("id", org.id);
+    check((sOrgsAfter.data?.length ?? 0) === 0, "a suspended seat reads 0 of its org's rows");
+    const own = await signedClient(OWN.email);
+    const ownAdd = await own.rpc("org_add_member", { p_org: org.id, p_email: B.email, p_role: "manager" });
+    check(ownAdd.data === "not_owner", `a suspended owner cannot add a seat (got ${ownAdd.data ?? ownAdd.error?.message})`);
+    const ownDrop = await own.rpc("org_remove_member", { p_member: seat.id });
+    check(ownDrop.data === "not_owner", `a suspended owner cannot remove a seat (got ${ownDrop.data ?? ownDrop.error?.message})`);
+    const ownRename = await own.from("orgs").update({ name: "renamed" }).eq("id", org.id).select("id");
+    check((ownRename.data?.length ?? 0) === 0, "a suspended owner cannot rename the org");
+    const ownStatsSuspended = await own.rpc("org_account_stats", { p_org: org.id });
+    check((ownStatsSuspended.data?.length ?? 0) === 0, `a suspended owner's org stats are empty (got ${ownStatsSuspended.data?.length ?? 0})`);
+    const { data: seatsSuspended } = await admin.from("org_members").select("id").eq("org_id", org.id);
+    check(seatsSuspended?.length === 1, "the org still has exactly the one seat");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

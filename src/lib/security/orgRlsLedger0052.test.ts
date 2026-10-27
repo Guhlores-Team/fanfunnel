@@ -9,6 +9,10 @@
  * and both SQL snapshots, and that the runtime org isolation probe stays wired
  * into the schema-drift check (which runs it on every build path).
  *
+ * Suspended accounts: every org helper, the orgs/org_members policies and the
+ * org RPCs require an active caller; can_act_for keeps the suspended 'view'
+ * only for the caller's own account.
+ *
  * Ledger: the non-negative CHECKs are added NOT VALID, then validated only
  * when no row violates them, else dropped again (never left NOT VALID over a
  * bad row, which would make every update of that row fail).
@@ -53,6 +57,7 @@ function lastFn(sql: string, name: string): string | null {
 
 const ORG_POLICIES: [string, string][] = [
   ["orgs_read", "orgs"],
+  ["orgs_write", "orgs"],
   ["org_members_read", "org_members"],
   ["org_members_write", "org_members"],
   ["omc_rw", "org_member_creators"],
@@ -67,8 +72,20 @@ for (const [name, sql] of sources) {
     check(`${name}: ${policy} reads no org table directly`, !/\b(from|join) public\.(orgs|org_members|org_member_creators)\b/.test(p!));
   }
   check(
-    `${name}: orgs_read checks membership of THIS org via the definer helper`,
-    /using \(owner_id = auth\.uid\(\) or public\._is_org_member\(id\) or public\.is_admin\(\)\)/.test(lastPolicy(sql, "orgs_read", "orgs")!)
+    `${name}: orgs_read checks membership of THIS org via the definer helper, owner only while active`,
+    /using \(\(owner_id = auth\.uid\(\) and public\.current_user_active\(\)\) or public\._is_org_member\(id\) or public\.is_admin\(\)\)/.test(lastPolicy(sql, "orgs_read", "orgs")!)
+  );
+  check(
+    `${name}: orgs_write (create/rename/delete an org) needs an active owner`,
+    /using \(\(owner_id = auth\.uid\(\) and public\.current_user_active\(\)\) or public\.is_admin\(\)\) with check \(\(owner_id = auth\.uid\(\) and public\.current_user_active\(\)\) or public\.is_admin\(\)\)/.test(
+      lastPolicy(sql, "orgs_write", "orgs")!
+    )
+  );
+  check(
+    `${name}: a seat reads its own seat row only while active`,
+    /using \(\(profile_id = auth\.uid\(\) and public\.current_user_active\(\)\) or public\._owns_org\(org_id\) or public\.is_admin\(\)\)/.test(
+      lastPolicy(sql, "org_members_read", "org_members")!
+    )
   );
   check(
     `${name}: org_members_write is owner (or admin) only, both ways`,
@@ -83,13 +100,42 @@ for (const [name, sql] of sources) {
     )
   );
 
-  for (const helper of ["_is_org_member", "_owns_org_seat"]) {
+  for (const helper of ["_owns_org", "_is_org_member", "_owns_org_seat"]) {
     const fn = lastFn(sql, helper);
     check(`${name}: defines ${helper}`, !!fn);
+    // Like is_admin()/can_act_for(): a suspended caller has no org reach.
+    check(`${name}: ${helper} requires the caller's profile to be active`, /join public\.profiles p on p\.id = [a-z]\.(owner_id|profile_id)[\s\S]*and p\.is_active/.test(fn!));
     check(`${name}: ${helper} is SECURITY DEFINER with a pinned search_path`, /security definer set search_path = public/.test(fn!));
     check(`${name}: ${helper} keys off auth.uid()`, /auth\.uid\(\)/.test(fn!));
     // RLS helpers stay callable by anon, or anon reads of these tables error.
     check(`${name}: ${helper} is not revoked`, !new RegExp(`revoke execute on function public\\.${helper}\\b`).test(sql));
+  }
+
+  const caf = lastFn(sql, "can_act_for");
+  check(
+    `${name}: can_act_for keeps the suspended 'view' for the caller's own account only`,
+    /if target_creator = auth\.uid\(\) then return perm = 'view' or v_active; end if; if not v_active then return false; end if;/.test(caf!)
+  );
+  check(`${name}: can_act_for still requires the target to be in the seat's org`, /and p\.org_id = o\.id/.test(caf!));
+  for (const fn of ["org_remove_member", "org_scope_creator"]) {
+    check(`${name}: ${fn} checks the seat owner through the active-aware helper`, /if not public\._owns_org_seat\(p_member\) then return 'not_owner'; end if;/.test(lastFn(sql, fn)!));
+  }
+  check(
+    `${name}: org_create refuses a suspended caller`,
+    /if not public\.current_user_active\(\) then raise exception 'account is not active' using errcode = '42501'; end if;/.test(lastFn(sql, "org_create")!)
+  );
+  check(
+    `${name}: org_invite_respond refuses a suspended invitee (accept and decline)`,
+    /if not coalesce\(v_active, false\) then return 'inactive'; end if; select \* into v_inv/.test(lastFn(sql, "org_invite_respond")!)
+  );
+  // Not redefined by 0052 (they already go through _owns_org): check the
+  // effective definitions in the full snapshots.
+  if (name !== "migration 0052") {
+    for (const fn of ["org_add_member", "org_remove_creator", "org_invite_creator"]) {
+      check(`${name}: ${fn} is owner-guarded by _owns_org`, /if not public\._owns_org\(p_org\) then return 'not_owner'; end if;/.test(lastFn(sql, fn) ?? ""));
+    }
+    check(`${name}: org_invite_revoke is owner-guarded by _owns_org`, /public\._owns_org\(i\.org_id\)/.test(lastFn(sql, "org_invite_revoke") ?? ""));
+    check(`${name}: org_invites_owner is owner-guarded by _owns_org`, /using \(public\._owns_org\(org_id\) or public\.is_admin\(\)\)/.test(lastPolicy(sql, "org_invites_owner", "org_invites") ?? ""));
   }
 
   const stats = lastFn(sql, "org_account_stats");
@@ -146,6 +192,13 @@ for (const key of [
   '"out.invite.steal": "not_invitee"',
   '"out.act.c1.view": "false"',
   '"out.fans.after": ""',
+  '"so1.rpc.add_member": "not_owner"',
+  '"so1.rpc.create": "err:42501"',
+  '"so1.update.org": "ok:0"',
+  '"sch.fans": ""',
+  '"sch.act.c1.view": "false"',
+  '"scx.invite.accept": "inactive"',
+  '"sc2.self.view": "true"',
 ]) {
   check(`org probe still expects ${key}`, probe.includes(key));
 }

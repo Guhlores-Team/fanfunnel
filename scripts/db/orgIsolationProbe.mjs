@@ -13,6 +13,12 @@
 // cannot add itself to an org, a seat, a seat scope, or another person's
 // invite; a seat holder cannot widen its own role or scope; and a seat in the
 // caller's OWN org scoped to a foreign creator grants nothing over that creator.
+// Then it suspends O1, CH, CX and C2 (seat, invitee and creator checks run
+// before the owner's, so a wrongly allowed owner write can't mask them): a
+// suspended owner is refused every
+// management action (RPCs and direct writes) and reads nothing of the org; a
+// suspended seat gets nothing; a suspended invitee can't join; a suspended
+// creator keeps only the read-only view of its own account.
 
 const id = (n) => `00000000-0000-4000-8000-0000000520${n}`;
 export const U = {
@@ -134,6 +140,50 @@ ${as(U.OUT, [
   val("out.fans.after", names()),
 ].join("\n"))}
 
+-- Suspend the org owner O1, the chatter seat CH, the invitee CX and creator C2.
+update public.profiles set is_active = false where id in ('${U.O1}', '${U.CH}', '${U.CX}', '${U.C2}');
+
+${as(U.CH, [
+  val("sch.fans", names()),
+  val("sch.act.c1.view", `select public.can_act_for('${U.C1}', 'view')::text`),
+  val("sch.orgs", "select count(*)::text from public.orgs"),
+  val("sch.seats", "select count(*)::text from public.org_members"),
+  val("sch.stats", `select count(*)::text from public.org_account_stats('${ORG1}')`),
+].join("\n"))}
+
+${as(U.CX, [
+  val("scx.invite.accept", `select public.org_invite_respond('${INV}', true)`),
+  val("scx.invite.decline", `select public.org_invite_respond('${INV}', false)`),
+].join("\n"))}
+
+${as(U.C2, [
+  val("sc2.self.view", `select public.can_act_for('${U.C2}', 'view')::text`),
+  val("sc2.self.manage", `select public.can_act_for('${U.C2}', 'manage')::text`),
+  val("sc2.fans", names()),
+].join("\n"))}
+
+${as(U.O1, [
+  val("so1.rpc.add_member", `select public.org_add_member('${ORG1}', '${email("OUT")}', 'analyst')`),
+  val("so1.rpc.remove_member", `select public.org_remove_member('${SEAT_M1}')`),
+  val("so1.rpc.scope", `select public.org_scope_creator('${SEAT_CH}', '${U.C2}', true)`),
+  val("so1.rpc.invite", `select public.org_invite_creator('${ORG1}', '${email("OUT")}')`),
+  val("so1.rpc.revoke", `select public.org_invite_revoke('${INV}')`),
+  val("so1.rpc.remove_creator", `select public.org_remove_creator('${ORG1}', '${U.C2}')`),
+  val("so1.rpc.create", "select public.org_create('Another org')::text"),
+  tryq("so1.insert.seat", `insert into public.org_members (org_id, profile_id, role) values ('${ORG1}', '${U.OUT}', 'owner')`),
+  tryq("so1.delete.seat", `delete from public.org_members where id = '${SEAT_M1}'`),
+  tryq("so1.insert.scope", `insert into public.org_member_creators (member_id, creator_id) values ('${SEAT_CH}', '${U.C2}')`),
+  tryq("so1.update.org", `update public.orgs set name = 'Renamed' where id = '${ORG1}'`),
+  tryq("so1.delete.org", `delete from public.orgs where id = '${ORG1}'`),
+  tryq("so1.insert.org", `insert into public.orgs (name, owner_id) values ('Another org', '${U.O1}')`),
+  val("so1.orgs", "select count(*)::text from public.orgs"),
+  val("so1.seats", "select count(*)::text from public.org_members"),
+  val("so1.invites", "select count(*)::text from public.org_invites"),
+  val("so1.stats", `select count(*)::text from public.org_account_stats('${ORG1}')`),
+].join("\n"))}
+
+select 'P|after.org1.name=' || name from public.orgs where id = '${ORG1}';
+select 'P|after.orgs.o1=' || count(*) from public.orgs where owner_id = '${U.O1}';
 select 'P|after.org1.seats=' || string_agg(p.email || ':' || m.role, ',' order by p.email) from public.org_members m join public.profiles p on p.id = m.profile_id where m.org_id = '${ORG1}';
 select 'P|after.ch.scope=' || string_agg(creator_id::text, ',') from public.org_member_creators where member_id = '${SEAT_CH}';
 select 'P|after.org1.owner=' || (owner_id = '${U.O1}')::text from public.orgs where id = '${ORG1}';
@@ -186,6 +236,39 @@ export const ORG_PROBE_EXPECT = {
   "out.act.c1.view": "false",
   "out.act.c1.manage": "false",
   "out.fans.after": "",
+  // A suspended owner is refused every management action and sees nothing.
+  "so1.rpc.add_member": "not_owner",
+  "so1.rpc.remove_member": "not_owner",
+  "so1.rpc.scope": "not_owner",
+  "so1.rpc.invite": "not_owner",
+  "so1.rpc.revoke": "not_owner",
+  "so1.rpc.remove_creator": "not_owner",
+  "so1.rpc.create": "err:42501",
+  "so1.insert.seat": RLS_REFUSED,
+  "so1.delete.seat": "ok:0",
+  "so1.insert.scope": RLS_REFUSED,
+  "so1.update.org": "ok:0",
+  "so1.delete.org": "ok:0",
+  "so1.insert.org": RLS_REFUSED,
+  "so1.orgs": "0",
+  "so1.seats": "0",
+  "so1.invites": "0",
+  "so1.stats": "0",
+  // A suspended seat gets nothing.
+  "sch.fans": "",
+  "sch.act.c1.view": "false",
+  "sch.orgs": "0",
+  "sch.seats": "0",
+  "sch.stats": "0",
+  // A suspended invitee can't join (or decline).
+  "scx.invite.accept": "inactive",
+  "scx.invite.decline": "inactive",
+  // A suspended creator keeps a read-only view of its OWN account.
+  "sc2.self.view": "true",
+  "sc2.self.manage": "false",
+  "sc2.fans": "fan-c2",
+  "after.org1.name": "Org1",
+  "after.orgs.o1": "1",
   "after.org1.seats": `${email("CH")}:chatter,${email("M1")}:manager`,
   "after.ch.scope": U.C1,
   "after.org1.owner": "true",

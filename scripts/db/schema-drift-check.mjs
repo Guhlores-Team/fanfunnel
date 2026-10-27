@@ -370,7 +370,7 @@ function probeOrgIsolation(db) {
     console.log(`FAIL  ${db}: agency/org isolation`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: agency/org isolation (seats see only their org's / scoped creators; non-members cannot join an org, seat, scope or invite)`);
+    console.log(`PASS  ${db}: agency/org isolation (seats see only their org's / scoped creators; non-members cannot join an org, seat, scope or invite; suspended owners, seats and invitees are refused)`);
   }
 }
 

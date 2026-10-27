@@ -22,8 +22,20 @@
 --      grants it (owner/manager seats: the whole org; scoped seats: their
 --      scoped creators). Same rule the tenant-table RLS already applies.
 --
--- Who may do what is unchanged otherwise: org owners manage seats and scopes,
--- a seat reads its own seat row, admins see everything.
+--   d) Suspended accounts kept their org reach: _owns_org() and the seat/
+--      scope/invite functions never checked the caller's is_active, and
+--      can_act_for() let a suspended caller 'view' OTHER creators through a
+--      seat. Now every org helper (_owns_org, _is_org_member, _owns_org_seat),
+--      the orgs/org_members policies, org_create, org_remove_member,
+--      org_scope_creator and org_invite_respond (accept and decline) require
+--      an active caller, and can_act_for keeps the suspended 'view' only for
+--      the caller's own account. (org_add_member, org_remove_creator,
+--      org_invite_creator, org_invite_revoke and the org_invites policy go
+--      through _owns_org; org_add_creator is server-only since 0030.) There
+--      is no seat self-removal path: deleting a seat row is owner-only.
+--
+-- Who may do what is unchanged otherwise: active org owners manage seats and
+-- scopes, an active seat reads its own seat row, admins see everything.
 --
 -- PART 2 — non-negative CHECKs the code already assumes (audit A6).
 --   fan_passes.spins_granted_total  per-pass ledger history; every write adds,
@@ -54,27 +66,42 @@
 -- NON-DESTRUCTIVE: no data is changed or deleted.
 
 -- ── Part 1: org RLS without cross-table recursion ───────────────────────────
+-- Every org helper also requires the CALLER's profile to be active, like
+-- is_admin() / can_act_for(): a suspended account has no org reach at all.
 
--- Does the caller hold a seat in this org?
-create or replace function public._is_org_member(p_org uuid)
+-- Does the (active) caller own this org? (0017's helper + the active check.)
+create or replace function public._owns_org(p_org uuid)
 returns boolean language sql stable security definer set search_path = public as $$
-  select exists(select 1 from public.org_members where org_id = p_org and profile_id = auth.uid());
+  select exists(select 1 from public.orgs o join public.profiles p on p.id = o.owner_id
+                 where o.id = p_org and o.owner_id = auth.uid() and p.is_active);
 $$;
 
--- Does the caller own the org this seat belongs to?
+-- Does the (active) caller hold a seat in this org?
+create or replace function public._is_org_member(p_org uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists(select 1 from public.org_members m join public.profiles p on p.id = m.profile_id
+                 where m.org_id = p_org and m.profile_id = auth.uid() and p.is_active);
+$$;
+
+-- Does the (active) caller own the org this seat belongs to?
 create or replace function public._owns_org_seat(p_member uuid)
 returns boolean language sql stable security definer set search_path = public as $$
   select exists(select 1 from public.org_members m join public.orgs o on o.id = m.org_id
-                 where m.id = p_member and o.owner_id = auth.uid());
+                  join public.profiles p on p.id = o.owner_id
+                 where m.id = p_member and o.owner_id = auth.uid() and p.is_active);
 $$;
 
 drop policy if exists orgs_read on public.orgs;
 create policy orgs_read on public.orgs for select
-  using (owner_id = auth.uid() or public._is_org_member(id) or public.is_admin());
+  using ((owner_id = auth.uid() and public.current_user_active()) or public._is_org_member(id) or public.is_admin());
+drop policy if exists orgs_write on public.orgs;
+create policy orgs_write on public.orgs for all
+  using ((owner_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check ((owner_id = auth.uid() and public.current_user_active()) or public.is_admin());
 
 drop policy if exists org_members_read on public.org_members;
 create policy org_members_read on public.org_members for select
-  using (profile_id = auth.uid() or public._owns_org(org_id) or public.is_admin());
+  using ((profile_id = auth.uid() and public.current_user_active()) or public._owns_org(org_id) or public.is_admin());
 drop policy if exists org_members_write on public.org_members;
 create policy org_members_write on public.org_members for all
   using (public._owns_org(org_id) or public.is_admin())
@@ -105,6 +132,143 @@ language sql stable security definer set search_path = public as $$
        or public.is_admin()
        or (public._is_org_member(p_org) and public.can_act_for(p.id, 'view'))
      );
+$$;
+
+-- A suspended caller may still VIEW its own account (read-only dashboard), but
+-- acting for or viewing ANOTHER creator through an org seat needs an active
+-- caller, even for 'view'. Otherwise identical to 0032's can_act_for.
+create or replace function public.can_act_for(target_creator uuid, perm text)
+returns boolean
+language plpgsql
+stable
+security definer set search_path = public
+as $$
+declare
+  v_role org_role;
+  v_member uuid;
+  v_scoped boolean;
+  v_active boolean;
+begin
+  select exists (
+    select 1 from public.profiles where id = auth.uid() and is_active
+  ) into v_active;
+
+  -- The creator themselves: always 'view'; every mutating perm needs an
+  -- active account (a suspended creator gets a read-only dashboard).
+  if target_creator = auth.uid() then
+    return perm = 'view' or v_active;
+  end if;
+
+  -- Reaching another creator through an org seat: never while suspended.
+  if not v_active then
+    return false;
+  end if;
+
+  -- Find the caller's org membership that covers the target creator's org.
+  select m.id, m.role into v_member, v_role
+    from public.org_members m
+    join public.orgs o on o.id = m.org_id
+    join public.profiles p on p.id = target_creator
+   where m.profile_id = auth.uid()
+     and p.org_id = o.id
+   limit 1;
+  if v_member is null then
+    return false;
+  end if;
+
+  -- Owners and managers act for every creator in their org.
+  -- Other roles must be explicitly scoped to this creator.
+  if v_role in ('owner','manager') then
+    v_scoped := true;
+  else
+    select exists(
+      select 1 from public.org_member_creators mc
+       where mc.member_id = v_member and mc.creator_id = target_creator
+    ) into v_scoped;
+  end if;
+  if not v_scoped then
+    return false;
+  end if;
+
+  -- Role → permission matrix.
+  return case perm
+    when 'view'       then true
+    when 'chat'       then v_role in ('owner','manager','chatter')
+    when 'fulfil'     then v_role in ('owner','manager','fulfiller')
+    when 'grant'      then v_role in ('owner','manager')
+    when 'edit_wheel' then v_role in ('owner','manager')
+    when 'manage'     then v_role in ('owner','manager')
+    else false
+  end case;
+end;
+$$;
+
+-- A suspended account cannot create an org.
+create or replace function public.org_create(p_name text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare v_id uuid;
+begin
+  if not public.current_user_active() then
+    raise exception 'account is not active' using errcode = '42501';
+  end if;
+  select id into v_id from public.orgs where owner_id = auth.uid() limit 1;
+  if v_id is not null then return v_id; end if;
+  insert into public.orgs (name, owner_id)
+    values (coalesce(nullif(trim(p_name), ''), 'My agency'), auth.uid())
+    returning id into v_id;
+  return v_id;
+end;
+$$;
+
+-- Seat removal and scoping: owner check through the active-aware helper.
+create or replace function public.org_remove_member(p_member uuid)
+returns text language plpgsql security definer set search_path = public as $$
+begin
+  if not public._owns_org_seat(p_member) then
+    return 'not_owner';
+  end if;
+  delete from public.org_members where id = p_member;
+  return 'ok';
+end;
+$$;
+
+create or replace function public.org_scope_creator(p_member uuid, p_creator uuid, p_on boolean)
+returns text language plpgsql security definer set search_path = public as $$
+begin
+  if not public._owns_org_seat(p_member) then
+    return 'not_owner';
+  end if;
+  if p_on then
+    insert into public.org_member_creators (member_id, creator_id)
+      values (p_member, p_creator) on conflict do nothing;
+  else
+    delete from public.org_member_creators where member_id = p_member and creator_id = p_creator;
+  end if;
+  return 'ok';
+end;
+$$;
+
+-- A suspended invitee can neither accept (join the org) nor decline.
+create or replace function public.org_invite_respond(p_invite uuid, p_accept boolean)
+returns text language plpgsql security definer set search_path = public as $$
+declare v_inv record; v_my_email text; v_my_org uuid; v_active boolean;
+begin
+  select email, org_id, is_active into v_my_email, v_my_org, v_active from public.profiles where id = auth.uid();
+  if not coalesce(v_active, false) then return 'inactive'; end if;
+  select * into v_inv from public.org_invites where id = p_invite;
+  if v_inv is null then return 'gone'; end if;
+  if lower(v_inv.email) <> lower(coalesce(v_my_email, '')) then return 'not_invitee'; end if;
+  if v_inv.status <> 'pending' then return 'gone'; end if;
+
+  if p_accept then
+    if v_my_org is not null then return 'already_in_org'; end if;
+    update public.profiles set org_id = v_inv.org_id where id = auth.uid();
+    update public.org_invites set status = 'accepted' where id = p_invite;
+  else
+    update public.org_invites set status = 'declined' where id = p_invite;
+  end if;
+  return 'ok';
+end;
 $$;
 
 -- ── Part 2: non-negative CHECKs ─────────────────────────────────────────────
