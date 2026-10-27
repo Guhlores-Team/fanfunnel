@@ -2381,3 +2381,142 @@ alter table public.spins add constraint spins_fair_v3_complete
 -- Per-wheel "Show stock to fans" switch (RM-2). Written by the creator through
 -- the wheels_rw policy; no new function or grant. See migrations/0048.
 alter table public.wheels add column if not exists show_stock boolean not null default true;
+
+-- 0052_org_rls_and_ledger_checks.sql
+-- ============================================================
+-- Agency/org RLS without cross-table recursion (SECURITY DEFINER helpers),
+-- orgs_read bound to the right id, org_account_stats row-scoped to what a seat
+-- may view; non-negative CHECKs on pass/fan ledgers, rl_count, prize stock and
+-- cost (validated only when no row violates them, else dropped with a WARNING;
+-- data is never rewritten). See migrations/0052.
+-- ── Part 1: org RLS without cross-table recursion ───────────────────────────
+
+-- Does the caller hold a seat in this org?
+create or replace function public._is_org_member(p_org uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists(select 1 from public.org_members where org_id = p_org and profile_id = auth.uid());
+$$;
+
+-- Does the caller own the org this seat belongs to?
+create or replace function public._owns_org_seat(p_member uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists(select 1 from public.org_members m join public.orgs o on o.id = m.org_id
+                 where m.id = p_member and o.owner_id = auth.uid());
+$$;
+
+drop policy if exists orgs_read on public.orgs;
+create policy orgs_read on public.orgs for select
+  using (owner_id = auth.uid() or public._is_org_member(id) or public.is_admin());
+
+drop policy if exists org_members_read on public.org_members;
+create policy org_members_read on public.org_members for select
+  using (profile_id = auth.uid() or public._owns_org(org_id) or public.is_admin());
+drop policy if exists org_members_write on public.org_members;
+create policy org_members_write on public.org_members for all
+  using (public._owns_org(org_id) or public.is_admin())
+  with check (public._owns_org(org_id) or public.is_admin());
+
+drop policy if exists omc_rw on public.org_member_creators;
+create policy omc_rw on public.org_member_creators for all
+  using (public._owns_org_seat(member_id) or public.is_admin())
+  with check (public._owns_org_seat(member_id) or public.is_admin());
+
+create or replace function public.org_account_stats(p_org uuid)
+returns table (
+  id uuid, email text, display_name text, role app_role, is_active boolean,
+  features jsonb, wheels bigint, fans bigint, spins bigint, pending bigint,
+  revenue bigint
+)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.email, p.display_name, p.role, p.is_active, p.features,
+         (select count(*) from public.wheels w where w.creator_id = p.id),
+         (select count(*) from public.fans f where f.creator_id = p.id),
+         (select count(*) from public.spins s where s.creator_id = p.id),
+         (select count(*) from public.redemptions r where r.creator_id = p.id and r.status = 'pending'),
+         (select coalesce(sum(g.amount_cents),0) from public.grants g where g.creator_id = p.id)
+    from public.profiles p
+   where p.org_id = p_org
+     and (
+       public._owns_org(p_org)
+       or public.is_admin()
+       or (public._is_org_member(p_org) and public.can_act_for(p.id, 'view'))
+     );
+$$;
+
+-- ── Part 2: non-negative CHECKs ─────────────────────────────────────────────
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'fan_passes_spins_granted_total_check'
+                  and conrelid = 'public.fan_passes'::regclass) then
+    alter table public.fan_passes add constraint fan_passes_spins_granted_total_check
+      check (spins_granted_total >= 0) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fans_spins_granted_total_check'
+                  and conrelid = 'public.fans'::regclass) then
+    alter table public.fans add constraint fans_spins_granted_total_check
+      check (spins_granted_total >= 0) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fans_rl_count_check'
+                  and conrelid = 'public.fans'::regclass) then
+    alter table public.fans add constraint fans_rl_count_check
+      check (rl_count >= 0) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'prizes_stock_check'
+                  and conrelid = 'public.prizes'::regclass) then
+    alter table public.prizes add constraint prizes_stock_check
+      check (stock >= 0) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'prizes_cost_cents_check'
+                  and conrelid = 'public.prizes'::regclass) then
+    alter table public.prizes add constraint prizes_cost_cents_check
+      check (cost_cents >= 0) not valid;
+  end if;
+end;
+$$;
+
+do $$
+declare
+  v_bad bigint;
+begin
+  select count(*) into v_bad from public.fan_passes where spins_granted_total < 0;
+  if v_bad = 0 then
+    alter table public.fan_passes validate constraint fan_passes_spins_granted_total_check;
+  else
+    alter table public.fan_passes drop constraint fan_passes_spins_granted_total_check;
+    raise warning '0052: % fan_passes row(s) have spins_granted_total < 0; CHECK not added. Fix them by hand, then re-run 0052.', v_bad;
+  end if;
+
+  select count(*) into v_bad from public.fans where spins_granted_total < 0;
+  if v_bad = 0 and exists (select 1 from pg_constraint where conname = 'fan_passes_spins_granted_total_check'
+                            and conrelid = 'public.fan_passes'::regclass and convalidated) then
+    alter table public.fans validate constraint fans_spins_granted_total_check;
+  else
+    alter table public.fans drop constraint fans_spins_granted_total_check;
+    raise warning '0052: fans.spins_granted_total CHECK not added (% negative row(s), or the per-pass CHECK was not added). Fix by hand, then re-run 0052.', v_bad;
+  end if;
+
+  select count(*) into v_bad from public.fans where rl_count < 0;
+  if v_bad = 0 then
+    alter table public.fans validate constraint fans_rl_count_check;
+  else
+    alter table public.fans drop constraint fans_rl_count_check;
+    raise warning '0052: % fans row(s) have rl_count < 0; CHECK not added. Fix them by hand, then re-run 0052.', v_bad;
+  end if;
+
+  select count(*) into v_bad from public.prizes where stock < 0;
+  if v_bad = 0 then
+    alter table public.prizes validate constraint prizes_stock_check;
+  else
+    alter table public.prizes drop constraint prizes_stock_check;
+    raise warning '0052: % prizes row(s) have stock < 0; CHECK not added. Fix them by hand, then re-run 0052.', v_bad;
+  end if;
+
+  select count(*) into v_bad from public.prizes where cost_cents < 0;
+  if v_bad = 0 then
+    alter table public.prizes validate constraint prizes_cost_cents_check;
+  else
+    alter table public.prizes drop constraint prizes_cost_cents_check;
+    raise warning '0052: % prizes row(s) have cost_cents < 0; CHECK not added. Fix them by hand, then re-run 0052.', v_bad;
+  end if;
+end;
+$$;
