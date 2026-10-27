@@ -54,6 +54,7 @@ async function main() {
   check("the link says it was deleted", (await mockGetFanLinkStatus(a.token)) === "fan_deleted");
   check("a live link has no tombstone", (await mockGetFanLinkStatus(b.token)) === null);
   check("A's chat is gone from the creator export", !JSON.stringify(mockExportCreatorData()).includes("message from alice"));
+  check("the creator export never holds a full link token", !JSON.stringify(mockExportCreatorData()).includes(b.token));
 
   const feed = buildNotificationFeed(mockGetNotificationSources(), null, { newSpin: true, lowBalance: true, messages: true });
   const notice = feed.items.find((i) => i.kind === "fan_deleted");

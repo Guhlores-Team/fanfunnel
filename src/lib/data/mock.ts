@@ -3154,7 +3154,15 @@ export function mockExportCreatorData(): CreatorDataExport {
       fair_version: w.fairVersion ?? null,
     }))
   );
-  const rows = (xs: unknown[]) => structuredClone(xs) as Record<string, unknown>[];
+  // Any link token in a row (e.g. a grant's passToken) is shortened, as in the
+  // Supabase export, so the file can't open a fan's link.
+  const rows = (xs: unknown[]) =>
+    (structuredClone(xs) as Record<string, unknown>[]).map((r) => {
+      for (const k of Object.keys(r)) {
+        if (/token$/i.test(k) && typeof r[k] === "string") r[k] = maskToken(r[k] as string);
+      }
+      return r;
+    });
   return {
     format: CREATOR_EXPORT_FORMAT,
     exportedAt: new Date().toISOString(),

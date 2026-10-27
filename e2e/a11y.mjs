@@ -130,6 +130,42 @@ const openStock = async (page) => {
   await page.waitForTimeout(400);
 };
 
+// Privacy & safety: the fan's Safety menu (download/delete), the delete
+// confirm step, the page a deleted link shows, the 404 rescue controls and the
+// creator's Close-my-account form. Each uses a freshly minted fan link, so
+// none depends on demo data surviving e2e's first-run wipe.
+const openSafety = (then) => async (page) => {
+  const token = await mintFanLink(page.request, 2);
+  await goto(page, `/spin/${token}`, 1600);
+  await passAgeGate(page);
+  await page.getByRole("button", { name: "Safety & privacy" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Safety and privacy" });
+  await dialog.waitFor({ timeout: 5000 });
+  if (then === "delete") {
+    await dialog.getByRole("button", { name: /Delete my data/ }).click();
+    await dialog.getByLabel("Type DELETE to confirm").waitFor({ timeout: 4000 });
+  }
+  await page.waitForTimeout(400);
+};
+const openDeletedLink = async (page) => {
+  const token = await mintFanLink(page.request, 1);
+  const res = await page.request.post(BASE + "/api/fan-data/delete", { data: { token, confirm: "DELETE" } });
+  if (!res.ok()) throw new Error(`could not delete the scan fan (${res.status()})`);
+  await goto(page, `/spin/${token}`, 1200);
+  await page.getByRole("heading", { name: "This link was deleted" }).waitFor({ timeout: 8000 });
+};
+const openLinkRescue = async (page) => {
+  await page.getByRole("button", { name: /Was this your link/ }).click();
+  await page.getByRole("button", { name: "Delete my data" }).waitFor({ timeout: 4000 });
+  await page.waitForTimeout(300);
+};
+const openCloseAccount = async (page) => {
+  await clickTab(page, "Settings");
+  await page.getByRole("button", { name: /Close my account/ }).click();
+  await page.getByLabel("Current password").waitFor({ timeout: 4000 });
+  await page.waitForTimeout(300);
+};
+
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -178,6 +214,14 @@ const PAGES = [
   // switch is scanned by the Wheel editor states above.
   { path: "/", name: "fan spin (limited stock + prize book)", prep: openStock },
   { path: "/", name: "fan spin phone (limited stock + prize book)", viewport: PHONE, prep: openStock },
+  // Privacy & safety pack.
+  { path: null, name: "fan Safety menu (download/delete)", prep: openSafety() },
+  { path: null, name: "fan Safety menu phone (delete confirm)", viewport: PHONE, prep: openSafety("delete") },
+  { path: null, name: "fan link deleted page", prep: openDeletedLink },
+  { path: null, name: "fan link deleted page phone", viewport: PHONE, prep: openDeletedLink },
+  { path: "/spin/no-such-link-a11y", name: "fan link 404 (data rescue open)", prep: openLinkRescue },
+  { path: "/dashboard", name: "dashboard (Settings: Close my account)", prep: openCloseAccount, advisory: DASH_ADVISORY },
+  { path: "/dashboard", name: "dashboard phone (Settings: Close my account)", viewport: PHONE, prep: openCloseAccount, advisory: DASH_ADVISORY },
 ];
 
 // Impacts that fail the build vs. advisory-only.
