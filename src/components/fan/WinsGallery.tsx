@@ -4,6 +4,7 @@ import { RARITY_COLORS, RARITY_LABEL, RARITY_ORDER } from "@/lib/games/wheel/typ
 import type { WonPrize } from "@/lib/data/types";
 import { timeAgo } from "@/lib/format";
 import { useNow } from "@/lib/hooks/useNow";
+import { readableInk } from "@/lib/theme";
 
 // Relative time for a win; older than a week falls back to an absolute date.
 const ago = (iso: string, now: number) =>
@@ -74,8 +75,8 @@ export default function WinsGallery({ history }: { history: WonPrize[] }) {
             >
               {g.count > 1 && (
                 <span
-                  className="absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[10px] font-extrabold text-white"
-                  style={{ backgroundColor: c }}
+                  className="absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[10px] font-extrabold"
+                  style={{ backgroundColor: c, color: readableInk(c) }}
                 >
                   ×{g.count}
                 </span>
