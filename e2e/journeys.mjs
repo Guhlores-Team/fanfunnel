@@ -378,8 +378,23 @@ export async function fanJourney(page, { step, assert }, ctx) {
     await page.setViewportSize({ width: 1280, height: 900 });
   });
 
-  // Carries the share id from the spin to the verify step.
+  // Prize costs are creator-private. Give every demo prize a cost so the
+  // privacy step after the spin has something that could leak.
+  await step("privacy (setup): the creator sets a cost on every prize", async () => {
+    const res = await ctx.request.get(BASE + "/api/wheel");
+    assert(res.ok(), "creator wheel loads");
+    const { wheel } = await res.json();
+    const put = await ctx.request.put(BASE + "/api/wheel", {
+      data: { wheel: { ...wheel, prizes: wheel.prizes.map((p) => ({ ...p, cost: 777 })) } },
+    });
+    assert(put.ok(), `wheel with costs saves (${put.status()})`);
+    const after = (await (await ctx.request.get(BASE + "/api/wheel")).json()).wheel;
+    assert(after.prizes.every((p) => p.cost === 777), "the creator's own wheel keeps its costs");
+  });
+
+  // Carries the share id (and the won prize) from the spin to later steps.
   ctx._shareId = null;
+  ctx._spinPrize = null;
 
   await step("fan: spin decrements balance and shows a win", async () => {
     const before = (await page.locator("body").innerText()).match(/(\d+)\s*spins?\s*(left|remaining)/i);
@@ -391,6 +406,7 @@ export async function fanJourney(page, { step, assert }, ctx) {
         if (r.url().includes("/api/spin") && r.request().method() === "POST") {
           const j = await r.json();
           if (j && typeof j.shareId === "string") ctx._shareId = j.shareId;
+          if (j && j.prize) ctx._spinPrize = j.prize;
         }
       } catch {
         /* non-JSON / error response */
@@ -434,6 +450,28 @@ export async function fanJourney(page, { step, assert }, ctx) {
     await goto(page, `/verify/${ctx._shareId}`, 1200);
     const body = await page.locator("body").innerText();
     assert(/hash matches/i.test(body), "verify page confirms the commitment");
+  });
+
+  await step("privacy: no prize cost reaches the fan page, spin response or public wheel API", async () => {
+    // A JSON key named cost/cost_cents/costCents, raw or escaped inside the
+    // page's serialized props.
+    const COST_KEY = /\\?"cost(?:_cents|Cents)?\\?"\s*:/;
+    assert(ctx._spinPrize && typeof ctx._spinPrize.label === "string", "the spin response carried the won prize");
+    assert(!COST_KEY.test(JSON.stringify(ctx._spinPrize)), "spin response: the won prize has no cost");
+    const api = await ctx.request.get(BASE + "/api/public/wheel/demo-creator");
+    assert(api.ok(), `public wheel API answers (${api.status()})`);
+    const apiText = await api.text();
+    assert(/"prizes"\s*:\s*\[\s*\{/.test(apiText), "public wheel API lists prizes");
+    assert(!COST_KEY.test(apiText), "public wheel API: no cost field");
+    const html = await (await ctx.request.get(BASE + "/spin/demo")).text();
+    assert(/\\?"prizes\\?"\s*:/.test(html), "fan page payload carries the prizes");
+    assert(!COST_KEY.test(html), "fan page payload: no cost field");
+    // Put the demo wheel back the way it was (no costs) for later steps.
+    const { wheel } = await (await ctx.request.get(BASE + "/api/wheel")).json();
+    const put = await ctx.request.put(BASE + "/api/wheel", {
+      data: { wheel: { ...wheel, prizes: wheel.prizes.map(({ cost: _cost, ...p }) => p) } },
+    });
+    assert(put.ok(), "costs cleared again");
   });
 
   await step("link-in-bio page renders", async () => {
