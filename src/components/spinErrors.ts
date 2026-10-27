@@ -7,6 +7,8 @@ export interface SpinErrorInfo {
   message: string;
   /** The fan can continue by (re-)acknowledging the age gate / terms. */
   reopenAgeGate?: boolean;
+  /** RM-6: the fan is on a break; reload the page's play state to show it. */
+  refreshPlay?: boolean;
 }
 
 const GENERIC: SpinErrorInfo = { message: "Something went wrong. Try again." };
@@ -15,6 +17,7 @@ const MESSAGES: Record<string, SpinErrorInfo> = {
   no_spins: { message: "You're out of spins! Tip your creator to get more. 💖" },
   rate_limited: { message: "Whoa, slow down a sec — try again in a moment. 😅" },
   blocked: { message: "This link isn't active. Reach out to your creator." },
+  on_break: { message: "You're taking a break. Your spins and prizes are safe. 💖", refreshPlay: true },
   needs_ack: {
     message: "Please confirm your age and accept the terms to keep spinning.",
     reopenAgeGate: true,

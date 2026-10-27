@@ -9,6 +9,7 @@ import { mock } from "node:test";
 //   - blocked and self-excluded fans never appear in win-back;
 //   - the offered link is the fan's newest ACTIVE link, never a paused one;
 //   - a fan with no active link is skipped;
+//   - a fan on a break (RM-6) is skipped until it ends;
 // and no CRM row (whales included) ever carries a paused link. Both paths.
 
 let passed = 0;
@@ -97,9 +98,16 @@ async function main() {
     await m.mockSpin(paused.token);
     m.mockSelfExclude(paused.token);
 
+    // RM-6: a fan on a break (30 days, so still in force 20 days on).
+    const resting = spender("WB Resting");
+    await m.mockSpin(resting.token);
+    m.mockTakeBreak(resting.token, 30 * DAY);
+
     const crm = await later(20, () => data.getCreatorCrm());
     const dormant = new Map(crm.dormant.map((f) => [f.fanId, f]));
     check("mock: an ordinary quiet spender is in win-back", dormant.has(active.fanId));
+    check("mock: a fan on a break is not in win-back (F6)", !dormant.has(resting.fanId));
+    check("mock: no CRM row offers an on-break fan's link", !crm.whales.some((f) => f.fanId === resting.fanId && f.primaryToken !== null));
     check("mock: win-back offers the fan's newest active link", dormant.get(active.fanId)?.primaryToken === newer.token);
     check("mock: a blocked fan is not in win-back", !dormant.has(blocked.fanId));
     check("mock: a fan who paused their link is not in win-back", !dormant.has(paused.fanId));
@@ -138,6 +146,9 @@ async function main() {
         // Newest link deactivated (not by the fan): fall back to the older active one.
         fan("inactive-newest", [pass("in-old", 40), pass("in-new", 30, { is_active: false })]),
         fan("no-active", [pass("na-1", 40, { is_active: false })]),
+        // RM-6: on a break (in force) and one whose break has ended.
+        fan("on-break", [pass("ob-1", 40)], { break_until: new Date(realNow() + 5 * DAY).toISOString() }),
+        fan("break-over", [pass("bo-1", 40)], { break_until: t(1) }),
       ],
     };
     const crm = await data.getCreatorCrm();
@@ -151,8 +162,10 @@ async function main() {
       dormant.get("inactive-newest")?.primaryToken === "in-old",
     );
     check("supabase: a fan with no active link is skipped", !dormant.has("no-active"));
+    check("supabase: a fan on a break is not in win-back (F6)", !dormant.has("on-break"));
+    check("supabase: once the break is over the fan is back", dormant.has("break-over"));
     const offered = [...crm.whales, ...crm.dormant].map((f) => f.primaryToken);
-    for (const bad of ["bl-1", "pa-old", "pa-new", "in-new", "na-1"]) {
+    for (const bad of ["bl-1", "pa-old", "pa-new", "in-new", "na-1", "ob-1"]) {
       check(`supabase: no CRM row offers ${bad}`, !offered.includes(bad));
     }
   }

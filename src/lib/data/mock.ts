@@ -14,6 +14,8 @@ import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicW
 import { defaultFeatures } from "@/lib/features";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import type { FanAppInfo } from "@/lib/pwa/manifest";
+import { countPlay, fanEngagementAllowed, isOnBreak, lengthenBreak, reminderDue } from "@/lib/play/playGuard";
+import { PLAY_WEEK_WINDOW_MS } from "@/lib/play/config";
 import type {
   AdminAccount,
   AdminOverview,
@@ -32,6 +34,7 @@ import type {
   FanThread,
   DmTemplate,
   FanPassView,
+  FanPlayView,
   Grant,
   HappyHour,
   HappyHourStatus,
@@ -133,6 +136,12 @@ interface MockFan {
   selfExcludedAt: string | null;
   // The creator blocked this fan (mirrors fans.blocked_at; unset = not blocked).
   blockedAt?: string | null;
+  // RM-6 (mirrors fans.break_until / fan_play_reminders.daily): the fan's own
+  // break and private daily reminder, and their spin times for the rolling
+  // counts (fan.wins is capped at 50, so it can't count a heavy week).
+  breakUntil?: string | null;
+  playReminderDaily?: number | null;
+  spinTimes?: string[];
 }
 
 // Phase 5b (#24): a creator's registered outbound webhook (demo, in-memory).
@@ -944,6 +953,15 @@ function chatUnlockedFor(fan: MockFan): boolean {
   return fan.spinsRemaining > 0 || fan.spinsGrantedTotal > 0;
 }
 
+/** RM-6: the fan's own play, as getFanPass's readPlayState builds it. */
+function mockPlayState(fan: MockFan, now = Date.now()): FanPlayView {
+  return {
+    ...countPlay(fan.spinTimes ?? [], now),
+    reminder: fan.playReminderDaily ?? null,
+    breakUntil: isOnBreak(fan.breakUntil, now) ? fan.breakUntil ?? null : null,
+  };
+}
+
 /** A fan's wishlist, newest first. */
 function wishlistFor(fanId: string): WishlistItem[] {
   return store.wishlists
@@ -992,6 +1010,7 @@ export async function mockGetFanPass(
     creatorNote: "Hey you 😘 spin away — every spin wins!",
     creatorAvatarUrl: null,
     nextSpinHash: pass?.nextServerSeedHash ?? null,
+    play: mockPlayState(fan),
   });
 }
 
@@ -1011,6 +1030,8 @@ export async function mockSpin(token: string, clientSeed = "") {
   // first (the client modal is not the enforcement boundary).
   if (fan.selfExcludedAt || fan.blockedAt) return { error: "blocked" as const };
   if (fan.ackedAt == null) return { error: "needs_ack" as const };
+  // RM-6: claim_spin refuses a fan on a break (migration 0049).
+  if (isOnBreak(fan.breakUntil)) return { error: "on_break" as const };
 
   // Pre-generate the NEXT commitment before touching shared state, so the
   // claim + seed consumption below has no `await` inside it: in single-threaded
@@ -1097,6 +1118,10 @@ export async function mockSpin(token: string, clientSeed = "") {
   const campaignId = pass.campaignId;
 
   fan.pityCounter = nextPityCounter;
+  // RM-6: log the spin time for the rolling counts (a week is all they need).
+  const spunAt = Date.now();
+  fan.spinTimes = [...(fan.spinTimes ?? []).filter((t) => spunAt - Date.parse(t) < PLAY_WEEK_WINDOW_MS), new Date(spunAt).toISOString()];
+  const play = countPlay(fan.spinTimes, spunAt);
   // Spinning must NOT touch `leaderboardOptIn` — appearing on the creator's
   // public leaderboard is the fan's own explicit choice (the toggle on their
   // spin page). Mirrors the same fix in ./index.ts's spin().
@@ -1160,6 +1185,9 @@ export async function mockSpin(token: string, clientSeed = "") {
     // THIS spin's rotation (not whatever a concurrent spin left on the pass).
     nextSpinHash: nextServerSeedHash,
     ...(v3 ? { fairVersion: 3 as const, poolHash } : {}),
+    // RM-6: the fan's fresh counts, and whether they have reached their reminder.
+    play,
+    reminderDue: reminderDue(play.today, fan.playReminderDaily ?? null),
   };
 }
 
@@ -1425,6 +1453,8 @@ export function mockListFans(): FanAccountSummary[] {
       activeToken: f.selfExcludedAt
         ? null
         : ([...f.passes].reverse().sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.token ?? null),
+      // RM-6: only the break state, never the fan's reminder or counts.
+      breakUntil: isOnBreak(f.breakUntil) ? f.breakUntil ?? null : null,
     };
   });
 }
@@ -1540,6 +1570,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
     fanId: fan.id,
     name: fan.name,
     blocked: !!(fan as { blockedAt?: string | null }).blockedAt,
+    breakUntil: isOnBreak(fan.breakUntil) ? fan.breakUntil ?? null : null,
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spinsRemaining,
@@ -2398,6 +2429,36 @@ export function mockSetFanBlocked(fanId: string, blocked: boolean): { ok: true }
   return { ok: true };
 }
 
+/** RM-6: the fan behind a live link (unknown -> not_found; paused/blocked -> blocked). */
+function liveFanForToken(token: string): MockFan | { error: "not_found" | "blocked" } {
+  const fan = fanForToken(token);
+  if (!fan) return { error: "not_found" };
+  if (fan.selfExcludedAt || fan.blockedAt) return { error: "blocked" };
+  return fan;
+}
+
+/** RM-6: the fan sets (or, with null, turns off) their own daily reminder. */
+export function mockSetPlayReminder(
+  token: string,
+  daily: number | null,
+): { ok: true; reminder: number | null } | { error: "not_found" | "blocked" } {
+  const fan = liveFanForToken(token);
+  if ("error" in fan) return fan;
+  fan.playReminderDaily = daily;
+  return { ok: true, reminder: daily };
+}
+
+/** RM-6: the fan starts (or lengthens) a break; a shorter ask keeps the longer one. */
+export function mockTakeBreak(
+  token: string,
+  durationMs: number,
+): { ok: true; breakUntil: string } | { error: "not_found" | "blocked" } {
+  const fan = liveFanForToken(token);
+  if ("error" in fan) return fan;
+  fan.breakUntil = lengthenBreak(fan.breakUntil, durationMs);
+  return { ok: true, breakUntil: fan.breakUntil };
+}
+
 export function mockSelfExclude(token: string): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
@@ -2578,8 +2639,7 @@ export function mockGetNotificationSources(): NotificationSources {
       (f) =>
         f.spinsRemaining === 0 &&
         f.wins.length > 0 &&
-        !f.selfExcludedAt &&
-        !(f as { blockedAt?: string | null }).blockedAt &&
+        fanEngagementAllowed({ selfExcluded: !!f.selfExcludedAt, blocked: !!f.blockedAt, breakUntil: f.breakUntil }) &&
         Date.parse(f.wins[0].at) >= since
     )
     .map((f) => ({ fanId: f.id, fanName: f.name, at: f.wins[0].at }));

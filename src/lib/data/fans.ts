@@ -18,6 +18,8 @@ import {
 import { clampInt, creatorOwnsCampaign } from "./shared";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
+import { readFansOnBreak } from "./playGuard";
+import { fanEngagementAllowed, isOnBreak } from "@/lib/play/playGuard";
 
 /** Edit an existing grant's spins / amount / campaign after the fact. Adjusts
  *  the fan's balance by the spin delta (floored at 0) so totals stay consistent. */
@@ -240,6 +242,8 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
+  // RM-6: who is on a break (read on its own, so a DB without 0049 still lists).
+  const onBreakP = readFansOnBreak(sb, user.id);
   const TAIL = `spins(prize_label, prize_rarity, created_at),
        grants(amount_cents, campaign_id, campaign:campaigns(name))`;
   // Per-wheel pass columns come from migration 0020. If they're not present yet,
@@ -293,6 +297,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       | { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[]
       | null;
   }[];
+  const onBreak = await onBreakP;
 
   return rows.map((r) => {
     const wins = (r.spins ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -339,6 +344,8 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       // The legacy select can't tell a paused link from a live one, so it
       // offers none (is_active is undefined there).
       activeToken: links.find((p) => p.is_active === true && !p.self_excluded_at)?.token ?? null,
+      // RM-6: only the break state, never the fan's reminder or counts.
+      breakUntil: onBreak.get(r.id) ?? null,
     };
   });
 }
@@ -376,7 +383,8 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
   const fans = await listFans();
   const now = Date.now();
   const DAY = 86_400_000;
-  const contactable = (f: FanAccountSummary) => !f.blocked && !f.selfExcluded && f.activeToken !== null;
+  // F6 engagement gate: never suggest a fan who is blocked, paused or on a break.
+  const contactable = (f: FanAccountSummary) => fanEngagementAllowed(f) && f.activeToken !== null;
 
   const enrich = (f: FanAccountSummary): CrmFan => {
     const lastActiveAt = f.lastWin?.at ?? null;
@@ -428,11 +436,16 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     .maybeSingle();
   if (!fan) return null;
 
-  const { data: spinRows } = await sb
-    .from("spins")
-    .select("prize_label, prize_rarity, campaign_id, created_at")
-    .eq("fan_id", fanId)
-    .order("created_at", { ascending: false });
+  const [{ data: spinRows }, breakRes] = await Promise.all([
+    sb
+      .from("spins")
+      .select("prize_label, prize_rarity, campaign_id, created_at")
+      .eq("fan_id", fanId)
+      .order("created_at", { ascending: false }),
+    // RM-6: read on its own so a DB without 0049 still opens the drawer.
+    Promise.resolve(sb.from("fans").select("break_until").eq("id", fanId).maybeSingle()).catch(() => null),
+  ]);
+  const breakUntil = (breakRes?.data as { break_until?: string | null } | null)?.break_until ?? null;
 
   const spins = (spinRows ?? []) as {
     prize_label: string;
@@ -590,6 +603,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     fanId: fan.id,
     name: fan.display_name ?? fan.handle ?? "Fan",
     blocked: !!(fan as { blocked_at?: string | null }).blocked_at,
+    breakUntil: isOnBreak(breakUntil) ? breakUntil : null,
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spins_remaining,

@@ -37,7 +37,7 @@ export function randomToken(): string {
 }
 
 export type { FanPassView } from "./types";
-export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" | "needs_ack" | "db_error" };
+export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" | "on_break" | "needs_ack" | "db_error" };
 
 /** True if `s` is a canonical UUID — used to keep raw ids out of filter strings. */
 export function isUuid(s: string): boolean {

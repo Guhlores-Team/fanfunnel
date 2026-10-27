@@ -8,6 +8,7 @@
 // the SECURITY DEFINER `set_notifications_seen()` RPC (migration 0043) —
 // creators can never UPDATE their profiles row directly.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
+import { readFansOnBreak } from "./playGuard";
 import {
   mockGetNotificationSources,
   mockGetNotificationsSeenAt,
@@ -217,7 +218,8 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
   }
 
   // Out of spins: fans who spun recently and now have 0 left. A fan who paused
-  // (self-excluded) a link or is blocked is never suggested for a top-up.
+  // (self-excluded) a link, is blocked or is on a break is never suggested for
+  // a top-up.
   if (!failed("passes", passesRes.error)) {
     const passes = (passesRes.data ?? []) as {
       fan_id: string;
@@ -241,9 +243,11 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
         .eq("spins_remaining", 0)
         .is("blocked_at", null);
       if (!failed("fans", error)) {
-        sources.outOfSpins = ((fanRows ?? []) as { id: string; display_name: string | null; handle: string | null }[]).map(
-          (f) => ({ fanId: f.id, fanName: fanLabel(f), at: lastSpin.get(f.id)! })
-        );
+        // F6 engagement gate: a fan on a break (RM-6) is not nudged for a top-up.
+        const onBreak = await readFansOnBreak(sb, uid);
+        sources.outOfSpins = ((fanRows ?? []) as { id: string; display_name: string | null; handle: string | null }[])
+          .filter((f) => !onBreak.has(f.id))
+          .map((f) => ({ fanId: f.id, fanName: fanLabel(f), at: lastSpin.get(f.id)! }));
       }
     }
   }

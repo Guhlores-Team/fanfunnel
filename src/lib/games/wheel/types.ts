@@ -146,4 +146,8 @@ export interface SpinResult {
    * Absent when the wheel has no limited prize or the read failed.
    */
   stock?: Record<string, PublicStock>;
+  /** RM-6: the fan's rolling spin counts right after this spin. */
+  play?: { today: number; week: number };
+  /** RM-6: today's spins have reached the fan's reminder (soft; the page asks before the next spin). */
+  reminderDue?: boolean;
 }
