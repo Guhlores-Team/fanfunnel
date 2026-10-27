@@ -506,6 +506,8 @@ export async function duplicateWheel(
       title: source.title.slice(0, 120),
       subtitle: source.subtitle?.slice(0, 200) ?? null,
       brand_color: source.brandColor ?? "#ec4899",
+      label_color: source.labelColor ?? null,
+      label_size: source.labelSize ?? null,
       // RM-2: a copy keeps the creator's "Show stock to fans" choice (as the mock does).
       show_stock: showsStock(source),
       is_active: false,

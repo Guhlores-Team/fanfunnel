@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getShareCard } from "@/lib/data";
-import { brandVars } from "@/lib/theme";
+import { brandVars, readableInk } from "@/lib/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -57,8 +57,8 @@ export default async function SharePage({
             {card.creatorTitle}
           </p>
           <span
-            className="mt-4 inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
-            style={{ backgroundColor: card.color }}
+            className="mt-4 inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+            style={{ backgroundColor: card.color, color: readableInk(card.color) }}
           >
             {RARITY_LABEL[card.rarity] ?? card.rarity}
           </span>
