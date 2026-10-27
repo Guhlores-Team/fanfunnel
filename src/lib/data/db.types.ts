@@ -263,6 +263,61 @@ export type Database = {
           },
         ]
       }
+      fan_outreach: {
+        Row: {
+          contacted_at: string | null
+          created_at: string
+          creator_id: string
+          fan_id: string
+          id: string
+          kind: string
+          snoozed_until: string | null
+          template_id: string | null
+        }
+        Insert: {
+          contacted_at?: string | null
+          created_at?: string
+          creator_id: string
+          fan_id: string
+          id?: string
+          kind?: string
+          snoozed_until?: string | null
+          template_id?: string | null
+        }
+        Update: {
+          contacted_at?: string | null
+          created_at?: string
+          creator_id?: string
+          fan_id?: string
+          id?: string
+          kind?: string
+          snoozed_until?: string | null
+          template_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fan_outreach_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_outreach_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: false
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_outreach_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "dm_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fan_passes: {
         Row: {
           campaign_id: string | null

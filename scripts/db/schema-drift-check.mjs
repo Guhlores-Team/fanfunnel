@@ -345,13 +345,77 @@ function probeGrants(db) {
     bad.push(`a creator's direct UPDATE changed another creator's pwa_icon_mode (${(pwaDirect.stdout || "").trim()})`);
   }
 
+  bad.push(...probeOutreach(db));
+
   if (bad.length) {
     failures++;
     console.log(`FAIL  ${db}: signed-in-only RPC grants`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable; fan_outreach is tenant-isolated and append-only`);
   }
+}
+
+// 0051 (RM-5): the win-back outreach log. Creator A can log and read outreach
+// for A's own fan only: never with B's creator_id, never for B's fan or with
+// B's template, never reading B's rows, never updating or deleting (no such
+// policy), and not at all once suspended. Anon has no table privilege.
+// Supabase grants table privileges to authenticated by default; the stub does
+// not, so the probe grants them inside its own (rolled-back) transaction.
+function probeOutreach(db) {
+  const bad = [];
+  const A = "00000000-0000-4000-8000-0000000051a0";
+  const B = "00000000-0000-4000-8000-0000000051b0";
+  const FA = "00000000-0000-4000-8000-0000000051fa";
+  const FB = "00000000-0000-4000-8000-0000000051fb";
+  const TB = "00000000-0000-4000-8000-0000000051eb";
+  const asUser = (uid, stmt) =>
+    `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true); ${stmt} reset role;`;
+  const setup = `
+    begin;
+    grant select, insert, update, delete on public.fan_outreach, public.fans, public.dm_templates to authenticated;
+    insert into auth.users (id, email) values ('${A}', 'probe-0051a@example.test'), ('${B}', 'probe-0051b@example.test');
+    update public.profiles set is_active = true where id in ('${A}', '${B}');
+    insert into public.fans (id, creator_id, display_name) values ('${FA}', '${A}', 'A fan'), ('${FB}', '${B}', 'B fan');
+    insert into public.dm_templates (id, creator_id, title, body) values ('${TB}', '${B}', 'B', 'hi');
+    insert into public.fan_outreach (creator_id, fan_id, contacted_at) values ('${B}', '${FB}', now());`;
+  const run = (body) => psql(db, ["-c", `${setup} ${body} rollback;`], { allowFail: true });
+  const refused = (r) => r.status !== 0 && /row-level security|permission denied/.test(r.stderr || "");
+
+  const own = run(`
+    ${asUser(A, `insert into public.fan_outreach (creator_id, fan_id, contacted_at) values ('${A}', '${FA}', now());`)}
+    ${asUser(A, `insert into public.fan_outreach (creator_id, fan_id, snoozed_until) values ('${A}', '${FA}', now() + interval '30 days');`)}
+    ${asUser(A, `select 'own-read:' || count(*) from public.fan_outreach;`)}
+    ${asUser(A, `with u as (update public.fan_outreach set snoozed_until = null returning 1) select 'own-update:' || count(*) from u;`)}
+    ${asUser(A, `with d as (delete from public.fan_outreach returning 1) select 'own-delete:' || count(*) from d;`)}
+    select 'b-rows:' || count(*) from public.fan_outreach where creator_id = '${B}';`);
+  const out = (own.stdout || "").split("\n").map((l) => l.trim());
+  if (own.status !== 0) bad.push(`creator A could not log outreach for A's own fan (${(own.stderr || "").trim().split("\n")[0]})`);
+  else {
+    if (!out.includes("own-read:2")) bad.push(`creator A should read exactly its own 2 outreach rows, not B's (got ${out.find((l) => l.startsWith("own-read:"))})`);
+    if (!out.includes("own-update:0")) bad.push("creator A could UPDATE an outreach row (log must be append-only)");
+    if (!out.includes("own-delete:0")) bad.push("creator A could DELETE an outreach row (log must be append-only)");
+    if (!out.includes("b-rows:1")) bad.push("creator B's outreach row changed while A acted");
+  }
+  if (!refused(run(asUser(A, `insert into public.fan_outreach (creator_id, fan_id, contacted_at) values ('${B}', '${FB}', now());`))))
+    bad.push("creator A could log outreach under creator B's id");
+  if (!refused(run(asUser(A, `insert into public.fan_outreach (creator_id, fan_id, contacted_at) values ('${A}', '${FB}', now());`))))
+    bad.push("creator A could log outreach for creator B's fan");
+  if (!refused(run(asUser(A, `insert into public.fan_outreach (creator_id, fan_id, template_id, contacted_at) values ('${A}', '${FA}', '${TB}', now());`))))
+    bad.push("creator A could attach creator B's DM template to an outreach row");
+  const empty = run(asUser(A, `insert into public.fan_outreach (creator_id, fan_id) values ('${A}', '${FA}');`));
+  if (!(empty.status !== 0 && /fan_outreach_has_action/.test(empty.stderr || "")))
+    bad.push("an outreach row with neither contacted_at nor snoozed_until was accepted");
+  const suspended = run(`
+    update public.profiles set is_active = false where id = '${A}';
+    insert into public.fan_outreach (creator_id, fan_id, contacted_at) values ('${A}', '${FA}', now());
+    ${asUser(A, `select 'suspended-read:' || count(*) from public.fan_outreach;`)}`);
+  if (!(suspended.stdout || "").includes("suspended-read:0")) bad.push(`a suspended creator can still read its outreach log (${(suspended.stdout || suspended.stderr || "").trim().split("\n").pop()})`);
+  if (!refused(run(`update public.profiles set is_active = false where id = '${A}'; ${asUser(A, `insert into public.fan_outreach (creator_id, fan_id, contacted_at) values ('${A}', '${FA}', now());`)}`)))
+    bad.push("a suspended creator can still log outreach");
+  const anon = psql(db, ["-c", "begin; set local role anon; select count(*) from public.fan_outreach; rollback;"], { allowFail: true });
+  if (!/permission denied for table fan_outreach/.test(anon.stderr || "")) bad.push("anon is not refused on fan_outreach");
+  return bad;
 }
 
 // ----------------------------------------------------------------- builds ---

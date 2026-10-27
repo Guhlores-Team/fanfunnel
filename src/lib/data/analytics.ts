@@ -21,6 +21,7 @@ import {
   mockGetCohortRetention,
 } from "./mock";
 import { getCreatorCrm } from "./fans";
+import { winbackAutopilotCard } from "@/lib/winback/list";
 import { getWishlistDemand } from "./boosts";
 
 // Creator dashboard: metrics + the prize fulfilment queue.
@@ -524,6 +525,7 @@ export type AutopilotAction =
   | { kind: "schedule_happy_hour"; weekday: number; hour: number }
   | { kind: "edit_wheel" }
   | { kind: "copy_link"; token: string | null }
+  | { kind: "open_winback" }
   | { kind: "none" };
 
 export interface AutopilotCard {
@@ -589,19 +591,9 @@ export async function getAutopilot(): Promise<AutopilotCard[]> {
     });
   }
 
-  // 2. Win back dormant spenders.
-  if (crm.dormant.length > 0) {
-    const d = crm.dormant[0];
-    push({
-      key: "winback",
-      icon: "💤",
-      title: `${crm.dormant.length} paying ${crm.dormant.length === 1 ? "fan has" : "fans have"} gone quiet`,
-      body: `${d.name} last played ${d.daysSince}d ago. The cheapest revenue is a fan you already won — send a fresh link.`,
-      cta: "Win them back",
-      action: { kind: "copy_link", token: d.primaryToken },
-      score: 88,
-    });
-  }
+  // 2. Win back dormant spenders (RM-5: opens the win-back queue).
+  const winback = winbackAutopilotCard(crm.dormant);
+  if (winback) push(winback);
 
   // 3. Overdue fulfilment.
   const pending = overview.metrics.pending ?? 0;

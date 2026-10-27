@@ -18,6 +18,9 @@ import {
 import { clampInt, creatorOwnsCampaign } from "./shared";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
+import { contactToken } from "@/lib/engagement";
+import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
+import { listRecentOutreach } from "./outreach";
 
 /** Edit an existing grant's spins / amount / campaign after the fact. Adjusts
  *  the fan's balance by the spin delta (floored at 0) so totals stay consistent. */
@@ -353,30 +356,34 @@ export interface CrmFan {
   lastActiveAt: string | null;
   daysSince: number | null;
   primaryToken: string | null;
+  lastWin: string | null; // label of the fan's last win (template {lastWin})
 }
 export interface CreatorCrm {
   totalLtv: number; // cents across all fans
   avgLtv: number; // cents per fan with spend
   whales: CrmFan[]; // top spenders, desc
-  dormant: CrmFan[]; // spent before, quiet 14+ days
+  dormant: CrmFan[]; // spent before, quiet 14+ days, not contacted/snoozed: the win-back queue
+  winback: WinbackStats; // "N contacted · M came back" + recent contacts (RM-5)
 }
 
 /**
- * Whale detection + win-back, derived from existing fan data (no new tables):
+ * Whale detection + win-back, derived from fan data plus the outreach log:
  *   • LTV per fan = sum of their grant amounts (real money tied to their spins).
  *   • Whales = fans ranked by LTV desc (your highest-value relationships).
  *   • Dormant = fans who HAVE spent (LTV > 0) but whose last win/activity is
- *     14+ days ago — the cheapest revenue is a fan you already converted.
- *     Spend safety: a fan the creator blocked, a fan who paused (self-excluded)
- *     a link, and a fan with no active link are never suggested.
+ *     WINBACK_QUIET_DAYS+ ago — the cheapest revenue is a fan you already
+ *     converted (selectDormant in src/lib/winback/list.ts).
+ *     Spend safety: a fan failing the engagement gate (blocked, paused a link,
+ *     on a break), a fan with no active link, a fan contacted within the
+ *     cooldown and a snoozed fan are never suggested. If the outreach log
+ *     can't be read, nobody is suggested (fail closed).
  * The link offered on any row is the fan's newest ACTIVE link (never a paused
- * one), and none at all for a blocked or self-excluded fan.
+ * one), and none at all for a fan failing the engagement gate.
  */
 export async function getCreatorCrm(): Promise<CreatorCrm> {
-  const fans = await listFans();
   const now = Date.now();
+  const [fans, outreach] = await Promise.all([listFans(), listRecentOutreach(now)]);
   const DAY = 86_400_000;
-  const contactable = (f: FanAccountSummary) => !f.blocked && !f.selfExcluded && f.activeToken !== null;
 
   const enrich = (f: FanAccountSummary): CrmFan => {
     const lastActiveAt = f.lastWin?.at ?? null;
@@ -390,7 +397,8 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
       spinsRemaining: f.spinsRemaining,
       lastActiveAt,
       daysSince,
-      primaryToken: contactable(f) ? f.activeToken : null,
+      primaryToken: contactToken(f, now),
+      lastWin: f.lastWin?.label ?? null,
     };
   };
 
@@ -400,13 +408,11 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
   const avgLtv = spenders.length ? Math.round(totalLtv / spenders.length) : 0;
 
   const whales = [...spenders].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 10);
-  const dormant = spenders
-    // primaryToken is null exactly when the fan isn't contactable (see enrich).
-    .filter((f) => f.primaryToken !== null && f.daysSince !== null && f.daysSince >= 14)
-    .sort((a, b) => b.totalSpent - a.totalSpent)
-    .slice(0, 20);
+  // primaryToken is null exactly when the fan fails the gate (see enrich).
+  const dormant = outreach ? selectDormant(spenders, outreach, now) : [];
+  const winback = winbackStats(all, outreach ?? [], now);
 
-  return { totalLtv, avgLtv, whales, dormant };
+  return { totalLtv, avgLtv, whales, dormant, winback };
 }
 
 /**

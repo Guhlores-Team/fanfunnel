@@ -17,6 +17,7 @@
  *   • A reads ZERO of B's rows (fans, wheels, prizes, spins, grants, profiles)
  *   • A cannot UPDATE or DELETE B's rows
  *   • A cannot promote itself to admin
+ *   • A cannot read, write or alter B's win-back outreach log (0051)
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -208,6 +209,31 @@ async function main() {
     const anonClient = createClient(URL_, ANON, { auth: { persistSession: false } });
     const anonIcon = await anonClient.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!!anonIcon.error, "anon cannot execute set_pwa_icon_mode");
+
+    // RM-5 (0051): the win-back outreach log is tenant-isolated and append-only.
+    const nowIso = new Date().toISOString();
+    const bOut = must(
+      await admin.from("fan_outreach").insert({ creator_id: B.id, fan_id: B.fanId, contacted_at: nowIso }).select("id").single(),
+      "seed B outreach",
+    );
+    const ownOut = await a.from("fan_outreach").insert({ creator_id: A.id, fan_id: A.fanId, contacted_at: nowIso }).select("id");
+    check(!ownOut.error && (ownOut.data?.length ?? 0) === 1, `A can log outreach for its OWN fan (${ownOut.error?.message ?? "ok"})`);
+    const readBOut = await a.from("fan_outreach").select("id").eq("creator_id", B.id);
+    check((readBOut.data?.length ?? 0) === 0, `A reads 0 of B's fan_outreach (got ${readBOut.data?.length ?? 0})`);
+    const asB = await a.from("fan_outreach").insert({ creator_id: B.id, fan_id: B.fanId, contacted_at: nowIso }).select("id");
+    check(!!asB.error && (asB.data?.length ?? 0) === 0, "A cannot log outreach under B's creator id");
+    const forBFan = await a.from("fan_outreach").insert({ creator_id: A.id, fan_id: B.fanId, contacted_at: nowIso }).select("id");
+    check(!!forBFan.error && (forBFan.data?.length ?? 0) === 0, "A cannot log outreach for B's fan");
+    const updB = await a.from("fan_outreach").update({ snoozed_until: nowIso }).eq("id", bOut.id).select("id");
+    check((updB.data?.length ?? 0) === 0, "A cannot UPDATE B's outreach row");
+    const updOwn = await a.from("fan_outreach").update({ snoozed_until: nowIso }).eq("creator_id", A.id).select("id");
+    check((updOwn.data?.length ?? 0) === 0, "A cannot UPDATE even its own outreach row (append-only)");
+    const delOwn = await a.from("fan_outreach").delete().eq("creator_id", A.id).select("id");
+    check((delOwn.data?.length ?? 0) === 0, "A cannot DELETE its own outreach row (append-only)");
+    const anonOut = await anonClient.from("fan_outreach").select("id");
+    check((anonOut.data?.length ?? 0) === 0, `anon reads no fan_outreach rows (got ${anonOut.data?.length ?? 0})`);
+    const { data: bOutAfter } = await admin.from("fan_outreach").select("id, snoozed_until").eq("creator_id", B.id);
+    check((bOutAfter?.length ?? 0) === 1 && bOutAfter?.[0]?.snoozed_until === null, "B's outreach log is untouched by A");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
