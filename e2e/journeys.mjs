@@ -339,9 +339,9 @@ export async function fanJourney(page, { step, assert }, ctx) {
 
   await step("fan page: the age gate links to real Terms and Privacy pages", async () => {
     const gate = page.locator("[role='dialog'][aria-modal='true']");
-    for (const [name, path, heading] of [
-      ["Terms of Service", "/terms", "Terms of Service"],
-      ["Privacy Policy", "/privacy", "Privacy Policy"],
+    for (const [name, path, heading, clause] of [
+      ["Terms of Service", "/terms", "Terms of Service", "the Commonwealth of Massachusetts, USA"],
+      ["Privacy Policy", "/privacy", "Privacy Policy", "We do not sell personal information"],
     ]) {
       const link = gate.getByRole("link", { name });
       assert((await link.getAttribute("href")) === path, `${name} links to ${path}`);
@@ -350,7 +350,12 @@ export async function fanJourney(page, { step, assert }, ctx) {
       const res = await page.request.get(BASE + path);
       assert(res.status() === 200, `${path} renders (got ${res.status()})`);
       const html = await res.text();
-      assert(html.includes(heading) && html.includes("Draft placeholder"), `${path} shows its heading and the draft notice`);
+      assert(html.includes(heading), `${path} shows its heading`);
+      assert(!html.includes("Draft placeholder"), `${path} no longer shows the draft-placeholder banner`);
+      assert(html.includes("Last updated"), `${path} shows its last-updated date`);
+      assert(html.includes("The short version"), `${path} opens with a plain-language summary`);
+      assert(html.includes(clause), `${path} carries its key clause ("${clause}")`);
+      assert(html.includes("mailto:support@easysimplesites.org"), `${path} links the legal/privacy contact email`);
     }
   });
 
