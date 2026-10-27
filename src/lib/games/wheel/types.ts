@@ -119,4 +119,8 @@ export interface SpinResult {
   shareId?: string;
   /** Commit-reveal: sha256 of the NEXT spin's pre-committed server seed. */
   nextSpinHash?: string;
+  /** Fairness v3: set when this spin's odds are inside its commitment. */
+  fairVersion?: 3;
+  /** Fairness v3: sha256 of the canonical pool snapshot mixed into the RNG. */
+  poolHash?: string;
 }

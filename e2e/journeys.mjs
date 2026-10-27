@@ -407,6 +407,7 @@ export async function fanJourney(page, { step, assert }, ctx) {
           const j = await r.json();
           if (j && typeof j.shareId === "string") ctx._shareId = j.shareId;
           if (j && j.prize) ctx._spinPrize = j.prize;
+          if (j && j.poolHash) ctx._spinFair = { version: j.fairVersion, poolHash: j.poolHash };
         }
       } catch {
         /* non-JSON / error response */
@@ -450,6 +451,27 @@ export async function fanJourney(page, { step, assert }, ctx) {
     await goto(page, `/verify/${ctx._shareId}`, 1200);
     const body = await page.locator("body").innerText();
     assert(/hash matches/i.test(body), "verify page confirms the commitment");
+  });
+
+  await step("fan: a new spin verifies as fairness v3 with the odds shown", async () => {
+    assert(ctx._spinFair && ctx._spinFair.version === 3, "the spin API reports fairVersion 3");
+    assert(/^[0-9a-f]{64}$/.test(ctx._spinFair.poolHash), "the spin API returns the odds fingerprint");
+    // Still on /verify/<shareId> from the previous step.
+    const body = await page.locator("body").innerText();
+    assert(/odds used for this spin/i.test(body), "verify page shows the odds used");
+    assert(/locked in before/i.test(body), "verify page says the odds were locked in");
+    assert(/replayed: these odds and seeds draw/i.test(body), "verify page replays the draw and it passes");
+    assert(body.includes(ctx._spinFair.poolHash), "verify page shows the same fingerprint the spin returned");
+    const table = page.getByRole("table");
+    assert((await table.count()) === 1, "the odds are an accessible table");
+    assert(
+      (await table.getByRole("columnheader", { name: "Chance" }).count()) === 1,
+      "the odds table has a Chance column header",
+    );
+    assert((await table.getByRole("rowheader").count()) >= 1, "each prize is a row header");
+    // The demo prizes carry a creator cost right now: none may reach this page.
+    const html = await page.content();
+    assert(!/\\?"cost(?:_cents|Cents)?\\?"\s*:/.test(html), "verify page: no prize cost");
   });
 
   await step("privacy: no prize cost reaches the fan page, spin response or public wheel API", async () => {

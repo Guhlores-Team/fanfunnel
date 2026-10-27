@@ -193,9 +193,13 @@ export async function getSpinVerification(
     "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at";
   let res = await sb
     .from("spins")
-    .select(`${SELECT}, seed_commitment`)
+    .select(`${SELECT}, seed_commitment, prize_id, fair_version, pool_snapshot, pool_hash, fair_trace`)
     .eq("share_id", shareId)
     .maybeSingle();
+  // Pre-0047 DB (no fairness-v3 columns yet): every spin verifies as v1/v2.
+  if (res.error) {
+    res = await sb.from("spins").select(`${SELECT}, seed_commitment`).eq("share_id", shareId).maybeSingle();
+  }
   // Pre-0041 DB (no seed_commitment column yet): read the rest; the commitment
   // is then unknown, which the page states rather than claiming more.
   if (res.error) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
@@ -209,6 +213,11 @@ export async function getSpinVerification(
     client_seed: string | null;
     created_at: string;
     seed_commitment?: string | null;
+    prize_id?: string | null;
+    fair_version?: number | null;
+    pool_snapshot?: unknown;
+    pool_hash?: string | null;
+    fair_trace?: unknown;
   } | null;
   if (!row || !row.server_seed || !row.server_seed_hash) return null;
 
@@ -224,6 +233,17 @@ export async function getSpinVerification(
     at: row.created_at,
     clientSeed: row.client_seed,
     commitment: c === "published" || c === "stored" || c === "fresh" ? c : null,
+    fairVersion: row.fair_version ?? null,
+    ...(row.fair_version === 3
+      ? {
+          v3: {
+            prizeId: row.prize_id ?? null,
+            poolSnapshot: row.pool_snapshot ?? null,
+            poolHash: row.pool_hash ?? null,
+            fairTrace: row.fair_trace ?? null,
+          },
+        }
+      : {}),
   };
 }
 

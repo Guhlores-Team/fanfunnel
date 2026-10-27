@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import { getSpinVerification } from "@/lib/data";
 import { COMMITMENT_COPY, verdictColor } from "./commitmentCopy";
-import { brandVars } from "@/lib/theme";
+import { brandVars, readableInk } from "@/lib/theme";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { replayV3 } from "@/lib/games/wheel/fairnessV3";
+import { OddsUsed } from "./OddsUsed";
+import { V3_FORMULA } from "./oddsCopy";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +56,24 @@ export default async function VerifyPage({
 
   const color = RARITY_COLORS[v.rarity];
   const commitment = COMMITMENT_COPY[v.commitment ?? "unknown"];
-  const verdict = verdictColor(v.hashOk, v.commitment);
+  // fair_version selects the check: a v3 spin is replayed end to end from its
+  // recorded odds; v1/v2 (and untracked) spins are verified by their seed
+  // hash exactly as before.
+  const replay =
+    v.fairVersion === 3 && v.v3
+      ? await replayV3({
+          serverSeed: v.serverSeed,
+          clientSeed: v.clientSeed ?? null,
+          nonce: v.nonce,
+          snapshot: v.v3.poolSnapshot,
+          poolHash: v.v3.poolHash,
+          trace: v.v3.fairTrace,
+          prizeId: v.v3.prizeId,
+          prizeLabel: v.prizeLabel,
+        })
+      : null;
+  const oddsOk = replay ? replay.ok : true;
+  const verdict = verdictColor(v.hashOk && oddsOk, v.commitment);
 
   return (
     <main
@@ -73,8 +93,8 @@ export default async function VerifyPage({
 
           <div className="mt-4 text-center">
             <span
-              className="inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
-              style={{ backgroundColor: color }}
+              className="inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+              style={{ backgroundColor: color, color: readableInk(color) }}
             >
               {RARITY_LABEL[v.rarity] ?? v.rarity}
             </span>
@@ -95,14 +115,18 @@ export default async function VerifyPage({
             }}
           >
             <p className="text-sm font-bold text-ink">
-              {v.hashOk ? "✓ Hash matches" : "✗ Mismatch"}
+              {!v.hashOk ? "✗ Mismatch" : oddsOk ? "✓ Hash matches" : "✗ Odds don't replay"}
             </p>
             <p className="mt-1 text-xs text-muted text-pretty">
-              {v.hashOk
-                ? commitment.verdict
-                : "The revealed seed does not hash to the committed value. This commitment can't be trusted."}
+              {!v.hashOk
+                ? "The revealed seed does not hash to the committed value. This commitment can't be trusted."
+                : oddsOk
+                  ? commitment.verdict
+                  : "The seed hash matches, but replaying the recorded odds doesn't reproduce this result, so this spin can't be trusted."}
             </p>
           </div>
+
+          {replay ? <OddsUsed replay={replay} poolHash={v.v3?.poolHash ?? null} /> : null}
 
           {/* The commitment's provenance + hash + revealed seed + nonce. */}
           <dl className="mt-6 space-y-4 text-sm">
@@ -146,6 +170,23 @@ export default async function VerifyPage({
             </div>
           </dl>
 
+          {replay ? (
+            <p className="mt-6 text-[11px] leading-relaxed text-muted/80 text-pretty">
+              How it works: for a committed spin the server fixes the random seed
+              <strong className="text-ink"> before</strong> you spin, by publishing
+              its SHA-256 hash on your spin page. Your browser contributes its own
+              seed, so neither side can dictate the outcome alone. When the spin
+              runs, the exact odds are recorded and fingerprinted, and the result
+              is drawn from{" "}
+              <code className="font-mono text-[10px] text-ink">{V3_FORMULA}</code>
+              , where <code className="font-mono text-[10px] text-ink">poolHash</code>{" "}
+              is the odds fingerprint. This page re-hashes the seed and the odds,
+              rebuilds every random number and replays the draw; it passes only
+              when the replay lands on the prize you won. The
+              &ldquo;Commitment&rdquo; line above says whether the seed was fixed
+              before you spun.
+            </p>
+          ) : (
           <p className="mt-6 text-[11px] leading-relaxed text-muted/80 text-pretty">
             How it works: for a committed spin the server fixes the random seed
             <strong className="text-ink"> before</strong> you spin, by publishing
@@ -163,6 +204,7 @@ export default async function VerifyPage({
             <strong className="text-ink"> commitment&rsquo;s integrity</strong>;
             it does not re-simulate the full prize pool.
           </p>
+          )}
         </div>
       </div>
       <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">

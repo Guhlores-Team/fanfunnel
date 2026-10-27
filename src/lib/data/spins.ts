@@ -1,14 +1,21 @@
 // Data layer — fan passes and spins: the fan-facing pass view, the spin
 // engine's persistence (claim / record / stock), and minting passes.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
-import { pickPrizeWithPity, applyRareBoost } from "@/lib/games/wheel/engine";
 import {
   randomSeedHex,
   sha256Hex,
   makeFairRng,
+  makeFairRngV3,
   normalizeClientSeed,
 } from "@/lib/games/wheel/fairness";
-import type { Prize, Rarity, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
+import {
+  NEW_SPIN_FAIR_VERSION,
+  buildPoolSnapshot,
+  drawFromSnapshot,
+  hashPoolSnapshot,
+  type FairTrace,
+} from "@/lib/games/wheel/fairnessV3";
+import type { Prize, Rarity, SpinResult } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { FanPassView, WishlistItem } from "./types";
@@ -410,7 +417,13 @@ async function recordClaimedSpin(
   if (!wheelData) return { error: "no_prizes" };
   const config = toWheelConfig(wheelData as unknown as DbWheelRow);
   const pityCounter = (fanRow.data as { pity_counter: number } | null)?.pity_counter ?? 0;
-  const pool0 = hh.active ? applyRareBoost(config, hh.multiplier) : config;
+  // Fairness v3: the effective pool (happy hour applied, sold-out prizes left
+  // out) with every modifier in force, as a canonical snapshot. Its hash is
+  // mixed into the RNG below, so the odds are part of the derivation.
+  const snapshot = buildPoolSnapshot(config, {
+    happyHourMultiplier: hh.active ? hh.multiplier : null,
+    pityCounter,
+  });
 
   // Provably-fair commit-reveal: consume the seed that was PRE-committed on the
   // pass (its hash was published to the fan before this spin, so the server
@@ -464,22 +477,28 @@ async function recordClaimedSpin(
     return { error: "db_error" };
   }
   const { serverSeed, serverSeedHash, nextServerSeedHash, commitment } = seeds;
-  // The fan's clientSeed is mixed into the RNG so the server can't dictate the outcome.
-  const rng = await makeFairRng(serverSeed, clientSeed, nonce);
+  // The fan's clientSeed is mixed into the RNG so the server can't dictate the
+  // outcome; under v3 the pool hash is mixed in too.
+  const v3 = NEW_SPIN_FAIR_VERSION === 3;
+  const poolHash = await hashPoolSnapshot(snapshot);
+  const rng = v3
+    ? await makeFairRngV3(serverSeed, clientSeed, nonce, poolHash)
+    : await makeFairRng(serverSeed, clientSeed, nonce);
 
-  // 3. Pick a prize in TS (single source of truth), honouring pity. If a
-  //    limited prize sold out between our read and write, exclude it + re-pick.
+  // 3. Draw a prize from the snapshot in TS (single source of truth, the same
+  //    pure draw the verify page replays), honouring pity. If a limited prize
+  //    sold out between our read and write, exclude it + re-draw; each
+  //    exclusion is recorded in order so the replay can re-check it.
+  const byId = new Map(config.prizes.map((p, i) => [p.id, { prize: p, index: i }]));
   let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
   const excluded = new Set<string>();
+  const excludedOrder: string[] = [];
   try {
-    for (let attempt = 0; attempt < pool0.prizes.length + 1; attempt++) {
-      const pool: WheelConfig = {
-        ...pool0,
-        prizes: pool0.prizes.map((p) =>
-          excluded.has(p.id) ? { ...p, stock: 0 } : p
-        ),
-      };
-      const pick = pickPrizeWithPity(pool, { pityCounter }, rng);
+    for (let attempt = 0; attempt < snapshot.prizes.length + 1; attempt++) {
+      const draw = drawFromSnapshot(snapshot, excluded, rng);
+      const live = byId.get(draw.prize.id);
+      if (!live) throw new Error("spin: drawn prize missing from the wheel config");
+      const pick = { ...live, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter };
       if (pick.prize.stock === null || pick.prize.stock === undefined) {
         chosen = pick;
         break;
@@ -506,6 +525,7 @@ async function recordClaimedSpin(
         return { error: "db_error" };
       }
       excluded.add(pick.prize.id);
+      excludedOrder.push(pick.prize.id);
     }
   } catch {
     // pickPrizeWithPity throws when the pool has no available prize (every prize
@@ -554,15 +574,25 @@ async function recordClaimedSpin(
     ...(hasCommitRevealCols ? { client_seed: clientSeed || null } : {}),
   };
   // seed_commitment (migration 0041) tells /verify whether this seed's hash was
-  // published before the spin. On a 0022+ DB that lacks 0041 PostgREST rejects
-  // the unknown column: retry without it rather than refund every spin.
-  let inserted = await sb
-    .from("spins")
-    .insert({ ...spinInsert, ...(hasCommitRevealCols ? { seed_commitment: commitment } : {}) })
-    .select("id, share_id")
-    .single();
-  if (inserted.error && hasCommitRevealCols && /seed_commitment/.test(inserted.error.message)) {
-    inserted = await sb.from("spins").insert(spinInsert).select("id, share_id").single();
+  // published before the spin; the v3 columns (migration 0047) let it replay
+  // the draw. On a DB that lacks either, PostgREST rejects the unknown column:
+  // retry without that group rather than refund every spin.
+  const trace: FairTrace = { excluded: excludedOrder, won: chosen.prize.id };
+  let commitCols: Record<string, unknown> = hasCommitRevealCols ? { seed_commitment: commitment } : {};
+  let v3Cols: Record<string, unknown> =
+    hasCommitRevealCols && v3
+      ? { fair_version: 3, pool_snapshot: snapshot, pool_hash: poolHash, fair_trace: trace }
+      : {};
+  const insertSpin = () =>
+    sb.from("spins").insert({ ...spinInsert, ...commitCols, ...v3Cols }).select("id, share_id").single();
+  let inserted = await insertSpin();
+  if (inserted.error && Object.keys(v3Cols).length && /fair_version|pool_snapshot|pool_hash|fair_trace/.test(inserted.error.message)) {
+    v3Cols = {};
+    inserted = await insertSpin();
+  }
+  if (inserted.error && Object.keys(commitCols).length && /seed_commitment/.test(inserted.error.message)) {
+    commitCols = {};
+    inserted = await insertSpin();
   }
   const { data: spinRow, error: spinErr } = inserted;
 
@@ -608,6 +638,7 @@ async function recordClaimedSpin(
     pityAwarded: chosen.pityAwarded,
     shareId: spinRow.share_id ?? undefined,
     nextSpinHash: nextServerSeedHash,
+    ...(Object.keys(v3Cols).length ? { fairVersion: 3 as const, poolHash } : {}),
   };
 }
 
