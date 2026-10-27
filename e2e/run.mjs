@@ -26,6 +26,7 @@ import {
 } from "./journeys.mjs";
 import { mobileJourney } from "./mobile.mjs";
 import { revealJourney } from "./reveal.mjs";
+import { stockJourney } from "./stock.mjs";
 
 let server = null;
 let browser = null;
@@ -47,6 +48,7 @@ try {
     await fanJourney(page, runner, ctx); // fan spins → creates a pending redemption
     await creatorExtras(page, runner, ctx); // fulfil it + drawer→inbox + admin + webhooks + happy hour
     await revealJourney(page, runner, ctx); // RM-1: rarity reveal, tap-to-skip, reduced motion, announcement (own fan)
+    await stockJourney(page, runner, ctx); // RM-2: "N left", the Show-stock switch, near-miss vs card on phones (restores the wheel)
     await fanExtras(page, runner, ctx); // wishlist/chat/share/out-of-spins/self-exclude
     await notificationsJourney(page, runner, ctx); // bell: count → open marks seen → items navigate
     await mobileJourney(browser, runner, sink); // phone: tab bar + More + fan sheet (read-only)

@@ -4,6 +4,8 @@ import { getPublicProfileBySlug } from "@/lib/data";
 import { brandVars } from "@/lib/theme";
 import { externalUrl } from "@/lib/format";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
+import { hasStockToShow, stockLabel } from "@/components/fan/stockDisplay";
 
 // ISR: public, viewer-independent data (service-client read, no cookies or
 // headers), so each slug renders on first visit and is re-generated at most
@@ -86,16 +88,27 @@ export default async function PublicProfilePage({
             <div className="mt-3 flex flex-wrap justify-center gap-2">
               {profile.prizes.map((p) => {
                 const c = RARITY_COLORS[p.rarity];
+                // RM-2: the real count (only when the wheel shows stock), or
+                // the sold-out wording; sold out reads muted, not faded.
+                const gone = !isPublicPrizeAvailable(p);
                 return (
                   <span
                     key={p.label}
-                    className="rounded-full px-3 py-1 text-xs font-semibold text-ink"
-                    style={{
-                      backgroundColor: `color-mix(in oklab, ${c} 16%, transparent)`,
-                      border: `1px solid color-mix(in oklab, ${c} 50%, transparent)`,
-                    }}
+                    data-testid="teaser-prize"
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${gone ? "border border-line text-muted" : "text-ink"}`}
+                    style={
+                      gone
+                        ? undefined
+                        : {
+                            backgroundColor: `color-mix(in oklab, ${c} 16%, transparent)`,
+                            border: `1px solid color-mix(in oklab, ${c} 50%, transparent)`,
+                          }
+                    }
                   >
                     {p.emoji ?? "🎁"} {p.label}
+                    {hasStockToShow(p) && (
+                      <span className="tnum font-normal"> · {stockLabel(p)}</span>
+                    )}
                   </span>
                 );
               })}

@@ -80,6 +80,24 @@ const closeReveal = async (page) => {
   await page.emulateMedia({ reducedMotion: null }).catch(() => {});
   await clearForcedRarity(page);
 };
+// RM-2: the fan page's Limited row and the prize book's counts. The wheel is
+// set through the creator API (e2e's first-run step may have left it empty),
+// with a low-stock, a sold-out and an unlimited prize, then a fresh fan.
+const openStock = async (page) => {
+  const { wheel } = await (await page.request.get(BASE + "/api/wheel")).json();
+  const prizes = [
+    { id: "a11y-s1", label: "Signed Polaroid", rarity: "epic", weight: 5, emoji: "📸", stock: 2 },
+    { id: "a11y-s2", label: "VIP Month Free", rarity: "legendary", weight: 1, emoji: "👑", stock: 0 },
+    { id: "a11y-s3", label: "Exclusive Selfie", rarity: "common", weight: 50, emoji: "🤳" },
+  ];
+  const put = await page.request.put(BASE + "/api/wheel", { data: { wheel: { ...wheel, showStock: true, prizes } } });
+  if (!put.ok()) throw new Error(`could not set a stocked wheel for the scan (${put.status()})`);
+  const token = await createRevealFan(page.request, "A11y Stock Fan", 2);
+  await goto(page, `/spin/${token}`, 1400);
+  await page.getByTestId("limited-stock").waitFor({ timeout: 8000 });
+  await page.getByRole("button", { name: /Prize book/ }).click();
+  await page.waitForTimeout(400);
+};
 
 const PAGES = [
   { path: "/", name: "landing" },
@@ -121,6 +139,10 @@ const PAGES = [
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
   { path: "/", name: "fan spin phone (legendary reveal)", viewport: PHONE, prep: openReveal("legendary"), cleanup: closeReveal },
   { path: "/", name: "fan spin (reduced-motion reveal)", prep: openReveal("epic", { reduced: true }), cleanup: closeReveal },
+  // RM-2: "N left" chips + prize book counts. The editor's "Show stock to fans"
+  // switch is scanned by the Wheel editor states above.
+  { path: "/", name: "fan spin (limited stock + prize book)", prep: openStock },
+  { path: "/", name: "fan spin phone (limited stock + prize book)", viewport: PHONE, prep: openStock },
 ];
 
 // Impacts that fail the build vs. advisory-only.

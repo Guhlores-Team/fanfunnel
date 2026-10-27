@@ -12,6 +12,7 @@ import { prefersReducedMotion } from "@/lib/sound";
  * celebration — distinct from the "So close!" near-miss toast: a shimmering
  * badge that sweeps in near the prize.
  *
+ * Rendered in RewardReveal's banner row above the card, so it never covers it.
  * Non-blocking (pointer-events: none), transform/opacity only (no layout
  * shift), aria-live="polite", auto-dismisses. Respects prefers-reduced-motion
  * (skips the shimmer/motion, still shows the badge + text).
@@ -37,7 +38,8 @@ export default function PityBeat({
     <AnimatePresence onExitComplete={onDone}>
       {show && (
         <div
-          className="pointer-events-none fixed inset-x-0 top-[8%] z-[70] flex justify-center px-5"
+          className="pointer-events-none flex w-full justify-center"
+          data-testid="pity-beat"
           aria-live="polite"
         >
           <motion.div
