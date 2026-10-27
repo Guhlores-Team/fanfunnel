@@ -255,6 +255,50 @@ export type Database = {
           },
         ]
       }
+      creator_media: {
+        Row: {
+          caption: string | null
+          created_at: string
+          creator_id: string
+          height: number
+          id: string
+          path: string
+          sfw_attested_at: string
+          sort_order: number
+          width: number
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          creator_id: string
+          height: number
+          id?: string
+          path: string
+          sfw_attested_at: string
+          sort_order?: number
+          width: number
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          creator_id?: string
+          height?: number
+          id?: string
+          path?: string
+          sfw_attested_at?: string
+          sort_order?: number
+          width?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creator_media_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       creator_reports: {
         Row: {
           created_at: string
@@ -1028,6 +1072,7 @@ export type Database = {
           public_tagline: string | null
           pwa_icon_mode: string
           role: Database["public"]["Enums"]["app_role"]
+          theme: Json
           tip_url: string | null
         }
         Insert: {
@@ -1053,6 +1098,7 @@ export type Database = {
           public_tagline?: string | null
           pwa_icon_mode?: string
           role?: Database["public"]["Enums"]["app_role"]
+          theme?: Json
           tip_url?: string | null
         }
         Update: {
@@ -1078,6 +1124,7 @@ export type Database = {
           public_tagline?: string | null
           pwa_icon_mode?: string
           role?: Database["public"]["Enums"]["app_role"]
+          theme?: Json
           tip_url?: string | null
         }
         Relationships: [
@@ -1608,6 +1655,7 @@ export type Database = {
         Args: { p_avatar: string; p_note: string }
         Returns: undefined
       }
+      set_creator_theme: { Args: { p_theme: Json }; Returns: Json }
       set_display_name: { Args: { p_name: string }; Returns: undefined }
       set_leaderboard_enabled: {
         Args: { p_enabled: boolean }

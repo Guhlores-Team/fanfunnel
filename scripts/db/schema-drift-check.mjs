@@ -19,6 +19,8 @@
 // non-members.
 // Plus the fan_checkins probe (0050): only the service role writes visits.
 // And the app_errors probe (0053): admin-read/resolve only, server-write only.
+// And the theming probe (0058, themeProbe.mjs): own-row theme writes from an
+// allow-list only; creator_media owner-only, server-only inserts, capped at 12.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -34,6 +36,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
+import { probeTheme } from "./themeProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -262,6 +265,7 @@ const SIGNED_IN_ONLY = [
   "set_creator_note(text, text)",
   "set_notifications_seen()",
   "set_pwa_icon_mode(text)",
+  "set_creator_theme(jsonb)",
   "import_fans(jsonb)",
   "admin_account_stats()",
   "admin_reserve_account_deletion(uuid)",
@@ -355,13 +359,14 @@ function probeGrants(db) {
 
   bad.push(...probeBreaks(db, asUser));
   bad.push(...probeOutreach(db));
+  bad.push(...probeTheme(db, psql).map((b) => `0058 theming: ${b}`));
 
   if (bad.length) {
     failures++;
     console.log(`FAIL  ${db}: signed-in-only RPC grants / RM-6 break guard`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only; set_creator_theme is own-row and allow-list only, creator_media is owner-only with server-only inserts`);
   }
 }
 
