@@ -6,6 +6,7 @@ import { brandVars } from "@/lib/theme";
 import { useToast } from "@/components/ui/Toast";
 import { useClipboard } from "@/lib/hooks/useClipboard";
 import { Field } from "./ui";
+import HomeScreenIconCard from "./HomeScreenIconCard";
 
 /**
  * Settings (Command Center). Two groups:
@@ -927,6 +928,7 @@ function PublicPageSection({
             {brandColor !== savedBrand && <Unsaved />}
           </div>
         </Card>
+        <HomeScreenIconCard brandColor={savedBrand} avatarUrl={savedProfile.avatarUrl} displayName={displayName} />
       </div>
 
       {/* Live preview of the public /c/[slug] page. */}
