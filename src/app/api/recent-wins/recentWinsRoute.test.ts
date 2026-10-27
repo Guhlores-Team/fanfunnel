@@ -65,6 +65,18 @@ async function main() {
     );
   }
 
+  // --- per-IP cap at the origin; a 429 is never shared-cached ---------------
+  {
+    const ip = { "x-real-ip": "203.0.113.7" };
+    let last: Response | null = null;
+    for (let i = 0; i < 121 && (!last || last.status !== 429); i++) last = await call("demo", ip);
+    check("the 121st request in a minute from one IP gets 429", last?.status === 429);
+    check("429 carries Retry-After", Number(last?.headers.get("retry-after")) >= 1);
+    check("429 is no-store, so the CDN can't serve it to other fans", last?.headers.get("cache-control") === "no-store");
+    const other = await call("demo", { "x-real-ip": "203.0.113.8" });
+    check("another IP is unaffected", other.status === 200);
+  }
+
   console.log(`recent-wins route: ${passed} checks passed`);
 }
 
