@@ -27,6 +27,14 @@ check("empty rejected", sniffImageMime(bytes()) === null);
 check("truncated jpeg rejected", sniffImageMime(bytes(0xff, 0xd8)) === null);
 check("riff-but-not-webp rejected", sniffImageMime(ascii("RIFF    AVI ....")) === null);
 
+// Photo hub (per-creator theming): SVG in every disguise is still refused, and
+// an XML/SVG document is never mistaken for a raster image.
+check("svg behind a UTF-8 BOM rejected", sniffImageMime(bytes(0xef, 0xbb, 0xbf, ...ascii("<svg/>"))) === null);
+check("svg behind whitespace rejected", sniffImageMime(ascii("\n  <svg xmlns='http://www.w3.org/2000/svg'/>")) === null);
+check("xml prolog + svg rejected", sniffImageMime(ascii('<?xml version="1.0"?><svg/>')) === null);
+check("gzipped svg (svgz) rejected", sniffImageMime(bytes(0x1f, 0x8b, 0x08, 0x00)) === null);
+check("riff-webp lookalike with an svg body still only reads as webp by magic", sniffImageMime(ascii("RIFF    WEBP<svg/>")) === "image/webp");
+
 // Every detected MIME maps to an extension.
 check(
   "every mime has an extension",
