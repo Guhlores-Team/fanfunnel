@@ -4,6 +4,8 @@ export interface SpinControlInput {
   spinsRemaining: number;
   busy: boolean;
   paused: boolean;
+  /** RM-6: the fan is on a break (the server refuses spins until it ends). */
+  onBreak?: boolean;
 }
 
 export interface SpinControl {
@@ -14,10 +16,17 @@ export interface SpinControl {
   balanceLabel: string;
 }
 
-/** A paused link always wins: SPIN is off no matter the balance or spin state. */
-export function spinControl({ spinsRemaining, busy, paused }: SpinControlInput): SpinControl {
+/**
+ * A paused link always wins: SPIN is off no matter the balance or spin state.
+ * A break (RM-6) comes next: SPIN is off, and the balance stays on show
+ * because the fan's spins are kept for when the break ends.
+ */
+export function spinControl({ spinsRemaining, busy, paused, onBreak = false }: SpinControlInput): SpinControl {
   if (paused) {
     return { canSpin: false, label: "Link paused", balanceLabel: "Paused" };
+  }
+  if (onBreak) {
+    return { canSpin: false, label: "On a break", balanceLabel: String(spinsRemaining) };
   }
   return {
     canSpin: spinsRemaining > 0 && !busy,

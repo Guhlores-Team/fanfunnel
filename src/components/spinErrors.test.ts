@@ -14,6 +14,7 @@ const KNOWN = [
   "no_spins",
   "rate_limited",
   "blocked",
+  "on_break",
   "needs_ack",
   "no_prizes",
   "not_found",
@@ -37,6 +38,13 @@ for (const code of KNOWN) {
 check("needs_ack re-opens the age gate", spinErrorInfo("needs_ack").reopenAgeGate === true);
 for (const code of KNOWN.filter((c) => c !== "needs_ack")) {
   check(`${code} does not re-open the age gate`, !spinErrorInfo(code).reopenAgeGate);
+}
+
+// on_break (RM-6): the page reloads its play state so SPIN shows the break.
+check("on_break refreshes the play state", spinErrorInfo("on_break").refreshPlay === true);
+check("on_break reassures that spins and prizes are safe", /spins and prizes are safe/.test(spinErrorInfo("on_break").message));
+for (const code of KNOWN.filter((c) => c !== "on_break")) {
+  check(`${code} does not refresh the play state`, !spinErrorInfo(code).refreshPlay);
 }
 
 check("no_prizes says the wheel is not ready", /isn.t ready yet/i.test(spinErrorInfo("no_prizes").message));

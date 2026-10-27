@@ -48,7 +48,7 @@ export async function POST(req: Request) {
         ? 404
         : result.error === "rate_limited"
           ? 429
-          : result.error === "blocked" || result.error === "needs_ack"
+          : result.error === "blocked" || result.error === "needs_ack" || result.error === "on_break"
             ? 403
             : 409;
     return NextResponse.json({ error: result.error }, { status });

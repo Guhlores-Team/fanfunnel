@@ -61,7 +61,7 @@ export default async function SpinPage({
       className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 pt-10 pb-28"
       style={brandVars(brand)}
     >
-      <LinkPauseProvider>
+      <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null}>
         <div className="relative z-[1] flex w-full justify-center">
           <SpinClient pass={pass} />
         </div>

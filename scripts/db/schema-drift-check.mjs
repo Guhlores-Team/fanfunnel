@@ -345,13 +345,98 @@ function probeGrants(db) {
     bad.push(`a creator's direct UPDATE changed another creator's pwa_icon_mode (${(pwaDirect.stdout || "").trim()})`);
   }
 
+  bad.push(...probeBreaks(db, asUser));
+
   if (bad.length) {
     failures++;
-    console.log(`FAIL  ${db}: signed-in-only RPC grants`);
+    console.log(`FAIL  ${db}: signed-in-only RPC grants / RM-6 break guard`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only`);
   }
+}
+
+// 0049 (RM-6): a fan's break. Negative tests on a real Postgres:
+//   * claim_spin refuses a fan on a break, and spins again once it has ended;
+//   * fan_take_break only lengthens, and a token only reaches its own fan;
+//   * nobody (service role included) can shorten a break in force;
+//   * a creator's session can't set or clear break_until, even on its own fan;
+//   * fan_take_break is server-only; fan_play_reminders is unreadable and
+//     unwritable for a creator.
+function probeBreaks(db, asUser) {
+  const bad = [];
+  const A = "00000000-0000-4000-8000-0000000049a0";
+  const B = "00000000-0000-4000-8000-0000000049b0";
+  const FA = "00000000-0000-4000-8000-0000000049fa";
+  const FB = "00000000-0000-4000-8000-0000000049fb";
+  const FC = "00000000-0000-4000-8000-0000000049fc";
+  const seed = `
+    insert into auth.users (id, email) values ('${A}', 'probe-0049a@example.test'), ('${B}', 'probe-0049b@example.test');
+    update public.profiles set is_active = true where id in ('${A}', '${B}');
+    insert into public.wheels (id, creator_id, title) values
+      ('00000000-0000-4000-8000-0000000049aa', '${A}', 'a'), ('00000000-0000-4000-8000-0000000049bb', '${B}', 'b');
+    insert into public.fans (id, creator_id, display_name) values ('${FA}', '${A}', 'fa'), ('${FB}', '${B}', 'fb'), ('${FC}', '${A}', 'fc');
+    insert into public.fan_passes (token, creator_id, wheel_id, fan_id, spins_remaining) values
+      ('probe-0049-a', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FA}', 3),
+      ('probe-0049-b', '${B}', '00000000-0000-4000-8000-0000000049bb', '${FB}', 3),
+      ('probe-0049-c', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FC}', 3);
+    update public.fans set break_until = now() - interval '1 hour' where id = '${FC}';
+    -- Supabase grants table privileges to anon/authenticated by default and
+    -- leaves the rest to RLS; the stub does not, so model that here.
+    grant select, insert, update, delete on public.fans, public.fan_play_reminders to anon, authenticated;`;
+  const out = (r) => (r.stdout || "").split("\n").map((l) => l.trim());
+  const err = (r) => (r.stderr || "no error").trim().split("\n")[0];
+
+  const r = psql(db, ["-c", `
+    begin;
+    ${seed}
+    select 'take:' || (public.fan_take_break('probe-0049-a', now() + interval '1 day') = now() + interval '1 day');
+    select 'shorter:' || (public.fan_take_break('probe-0049-a', now() + interval '1 hour') = now() + interval '1 day');
+    select 'other-fan:' || coalesce((select break_until::text from public.fans where id = '${FB}'), 'none');
+    select 'claim-on-break:' || coalesce(public.claim_spin('probe-0049-a')::text, 'refused');
+    select 'claim-other:' || coalesce(public.claim_spin('probe-0049-b')::text, 'refused');
+    select 'claim-ended:' || coalesce(public.claim_spin('probe-0049-c')::text, 'refused');
+    select 'restart:' || (public.fan_take_break('probe-0049-c', now() + interval '7 days') = now() + interval '7 days');
+    select 'unknown:' || coalesce(public.fan_take_break('probe-0049-nope', now() + interval '1 day')::text, 'null');
+    rollback;`], { allowFail: true });
+  const want = ["take:true", "shorter:true", "other-fan:none", "claim-on-break:refused", "claim-other:2", "claim-ended:2", "restart:true", "unknown:null"];
+  const got = out(r);
+  const missing = want.filter((w) => !got.includes(w));
+  if (r.status !== 0 || missing.length) {
+    bad.push(`break lifecycle wrong (missing ${missing.join(", ") || "-"}; got ${got.filter((l) => /:/.test(l)).join(" ")}; ${err(r)})`);
+  }
+
+  const onBreak = `${seed} select public.fan_take_break('probe-0049-a', now() + interval '1 day');`;
+  const shorten = psql(db, ["-c", `begin; ${onBreak} update public.fans set break_until = now() where id = '${FA}'; rollback;`], { allowFail: true });
+  if (!/a break cannot be shortened/.test(shorten.stderr || "")) bad.push(`the service role shortened a break (${err(shorten)})`);
+  const lift = psql(db, ["-c", `begin; ${onBreak} update public.fans set break_until = null where id = '${FA}'; rollback;`], { allowFail: true });
+  if (!/a break cannot be shortened/.test(lift.stderr || "")) bad.push(`the service role lifted a break (${err(lift)})`);
+  for (const [label, stmt] of [
+    ["clear its fan's break", `update public.fans set break_until = null where id = '${FA}';`],
+    ["set a break on its fan", `update public.fans set break_until = now() + interval '30 days' where id = '${FC}';`],
+  ]) {
+    const c = psql(db, ["-c", `begin; ${onBreak} ${asUser(A, stmt)} rollback;`], { allowFail: true });
+    if (!/break_until is set by the fan only/.test(c.stderr || "")) bad.push(`a creator session could ${label} (${err(c)})`);
+  }
+
+  const priv = (role) => sql(db, `select has_function_privilege('${role}', 'public.fan_take_break(text, timestamptz)', 'execute')`) === "t";
+  if (priv("anon")) bad.push("anon can EXECUTE fan_take_break");
+  if (priv("authenticated")) bad.push("authenticated can EXECUTE fan_take_break");
+  if (!priv("service_role")) bad.push("service_role cannot EXECUTE fan_take_break");
+
+  const rem = psql(db, ["-c", `
+    begin;
+    ${seed}
+    insert into public.fan_play_reminders (fan_id, daily) values ('${FA}', 50);
+    set local role authenticated;
+    select set_config('request.jwt.claim.sub', '${A}', true);
+    select 'creator-reads:' || count(*) from public.fan_play_reminders;
+    reset role;
+    rollback;`], { allowFail: true });
+  if (!out(rem).includes("creator-reads:0")) bad.push(`a creator can read fan_play_reminders (${out(rem).filter((l) => /:/.test(l)).join(" ")}; ${err(rem)})`);
+  const remWrite = psql(db, ["-c", `begin; ${seed} ${asUser(A, `insert into public.fan_play_reminders (fan_id, daily) values ('${FA}', 20);`)} rollback;`], { allowFail: true });
+  if (!/row-level security|permission denied/.test(remWrite.stderr || "")) bad.push(`a creator could write fan_play_reminders (${err(remWrite)})`);
+  return bad;
 }
 
 // ----------------------------------------------------------------- builds ---

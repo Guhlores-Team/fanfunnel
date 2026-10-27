@@ -17,6 +17,10 @@
  *   • A reads ZERO of B's rows (fans, wheels, prizes, spins, grants, profiles)
  *   • A cannot UPDATE or DELETE B's rows
  *   • A cannot promote itself to admin
+ *   • RM-6 (0049): a fan's break refuses spins, can't be shortened (not even by
+ *     the service role), can't be set or lifted from a creator's session, and a
+ *     token reaches only its own fan; fan_take_break is server-only and the
+ *     fan's private reminder is unreadable for the creator
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -131,10 +135,11 @@ async function makeCreator(tag) {
   const wheel = must(await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single(), `seed ${tag} wheel`);
   const prize = must(await admin.from("prizes").insert({ wheel_id: wheel.id, label: `${tag} prize`, rarity: "common", weight: 10 }).select("id").single(), `seed ${tag} prize`);
   const fan = must(await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, spins_remaining: 5 }).select("id").single(), `seed ${tag} fan`);
-  const pass = must(await admin.from("fan_passes").insert({ token: `rls-${RUN}-${tag}`, creator_id: id, wheel_id: wheel.id, fan_id: fan.id }).select("id").single(), `seed ${tag} fan_pass`);
+  const token = `rls-${RUN}-${tag}`;
+  const pass = must(await admin.from("fan_passes").insert({ token, creator_id: id, wheel_id: wheel.id, fan_id: fan.id, spins_remaining: 5 }).select("id").single(), `seed ${tag} fan_pass`);
   must(await admin.from("grants").insert({ creator_id: id, fan_id: fan.id, spins: 5, amount_cents: 1000 }).select("id").single(), `seed ${tag} grant`);
   must(await admin.from("spins").insert({ fan_pass_id: pass.id, creator_id: id, wheel_id: wheel.id, fan_id: fan.id, prize_id: prize.id, prize_label: `${tag} prize`, prize_rarity: "common" }).select("id").single(), `seed ${tag} spin`);
-  return { id, email, wheelId: wheel.id, fanId: fan.id, fanName: `${tag} fan` };
+  return { id, email, wheelId: wheel.id, fanId: fan.id, fanName: `${tag} fan`, token };
 }
 
 async function signedClient(email) {
@@ -208,6 +213,39 @@ async function main() {
     const anonClient = createClient(URL_, ANON, { auth: { persistSession: false } });
     const anonIcon = await anonClient.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!!anonIcon.error, "anon cannot execute set_pwa_icon_mode");
+
+    // RM-6 (0049): the fan's break. The server (service role) starts it from
+    // the fan's link token; nobody can shorten it; a creator can't touch it.
+    console.log("\nRM-6: a fan's break");
+    const DAY = 86_400_000;
+    const inDays = (d) => new Date(Date.now() + d * DAY).toISOString();
+    const took = await admin.rpc("fan_take_break", { p_token: A.token, p_until: inDays(7) });
+    check(!took.error && typeof took.data === "string", `the server starts A's fan's break (${took.error?.message ?? "ok"})`);
+    const refused = await admin.rpc("claim_spin", { p_token: A.token });
+    check(!refused.error && refused.data === null, `claim_spin refuses a spin during the break (got ${refused.data})`);
+    const other = await admin.rpc("claim_spin", { p_token: B.token });
+    check(typeof other.data === "number", `B's fan (no break) still spins (got ${other.data}; ${other.error?.message ?? "ok"})`);
+    const shorter = await admin.rpc("fan_take_break", { p_token: A.token, p_until: inDays(1) });
+    check(!shorter.error && Date.parse(shorter.data) === Date.parse(took.data), "asking for a shorter break keeps the longer one");
+    const svcShorten = await admin.from("fans").update({ break_until: new Date().toISOString() }).eq("id", A.fanId).select("id");
+    check(!!svcShorten.error, "not even the service role can shorten a break in force");
+    const lift = await a.from("fans").update({ break_until: null }).eq("id", A.fanId).select("id");
+    check(!!lift.error || (lift.data?.length ?? 0) === 0, "A's session cannot lift its own fan's break");
+    const setOnB = await a.from("fans").update({ break_until: inDays(30) }).eq("id", B.fanId).select("id");
+    check(!!setOnB.error || (setOnB.data?.length ?? 0) === 0, "A's session cannot set a break on B's fan");
+    const { data: breaks } = await admin.from("fans").select("id, break_until").in("id", [A.fanId, B.fanId]);
+    const breakOf = (id) => breaks?.find((r) => r.id === id)?.break_until ?? null;
+    check(!!breakOf(A.fanId) && Date.parse(breakOf(A.fanId)) === Date.parse(took.data), "A's fan's break is unchanged");
+    check(breakOf(B.fanId) === null, `A's token never reached B's fan (got ${breakOf(B.fanId)})`);
+    const aTake = await a.rpc("fan_take_break", { p_token: B.token, p_until: inDays(1) });
+    check(!!aTake.error, "authenticated cannot execute fan_take_break");
+    const anonTake = await anonClient.rpc("fan_take_break", { p_token: B.token, p_until: inDays(1) });
+    check(!!anonTake.error, "anon cannot execute fan_take_break");
+    must(await admin.from("fan_play_reminders").insert({ fan_id: A.fanId, daily: 50 }).select("fan_id").single(), "seed A's fan's reminder");
+    const readRem = await a.from("fan_play_reminders").select("fan_id, daily");
+    check((readRem.data?.length ?? 0) === 0, `A cannot read its fan's private reminder (got ${readRem.data?.length ?? 0})`);
+    const writeRem = await a.from("fan_play_reminders").insert({ fan_id: A.fanId, daily: 20 }).select("fan_id");
+    check(!!writeRem.error || (writeRem.data?.length ?? 0) === 0, "A cannot write a fan's reminder");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

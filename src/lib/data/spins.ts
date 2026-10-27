@@ -34,6 +34,8 @@ import type { AnyClient, DbWheelRow, SpinError } from "./shared";
 import { getActiveHappyHour, resolveWheelId } from "./wheels";
 import { fireWebhooks } from "./webhooks";
 import { runAfterResponse } from "@/lib/afterResponse";
+import { isOnBreak } from "@/lib/play/playGuard";
+import { readPlayAfterSpin, readPlayState } from "./playGuard";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -154,7 +156,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // The fan's win history, wishlist, and the active happy-hour are all
   // independent reads keyed off the now-known fan/wheel — fetch concurrently
   // instead of one after another (this is on every fan page load).
-  const [{ data: wins }, { data: wishRows }, happyHour] = await Promise.all([
+  const [{ data: wins }, { data: wishRows }, happyHour, play] = await Promise.all([
     // Win history is scoped to the fan ACCOUNT, so it persists across every
     // link the creator has ever minted for them.
     sb
@@ -169,6 +171,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       .eq("fan_id", pass.fan.id)
       .order("created_at", { ascending: false }),
     getActiveHappyHour(sb, wheelId, new Date()),
+    // RM-6: the fan's own counts, reminder and break (best-effort).
+    readPlayState(sb, pass.fan.id),
   ]);
 
   const winRows = (wins ?? []) as {
@@ -233,6 +237,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     creatorNote: pass.creator?.creator_note ?? null,
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
     nextSpinHash,
+    play,
   };
 }
 
@@ -253,11 +258,11 @@ export async function spin(
   //    endpoint directly must still have acknowledged first.
   const { data: ackRow } = await sb
     .from("fan_passes")
-    .select("fan:fans(acked_at)")
+    .select("fan_id, fan:fans(acked_at)")
     .eq("token", token)
     .maybeSingle();
-  const ackedAt = (ackRow as unknown as { fan: { acked_at: string | null } | null } | null)
-    ?.fan?.acked_at;
+  const ack = ackRow as unknown as { fan_id?: string; fan: { acked_at: string | null } | null } | null;
+  const ackedAt = ack?.fan?.acked_at;
   if (ackRow && !ackedAt) return { error: "needs_ack" };
 
   // 1. Atomically claim one spin from the fan account (can't be forged).
@@ -282,10 +287,26 @@ export async function spin(
     if (!row) return { error: "not_found" };
     if (row.fan?.blocked_at || row.self_excluded_at || !row.is_active)
       return { error: "blocked" };
+    // RM-6: claim_spin also refuses a fan on a break (migration 0049). Read
+    // on its own so a DB without the column still reports no_spins.
+    if (ack?.fan_id && (await fanOnBreak(sb, ack.fan_id))) return { error: "on_break" };
     return { error: "no_spins" };
   }
   const spinsRemaining = remaining as number;
-  return completeClaimedSpin(sb, token, clientSeed, spinsRemaining);
+  const result = await completeClaimedSpin(sb, token, clientSeed, spinsRemaining);
+  if ("error" in result || !ack?.fan_id) return result;
+  // RM-6: the fan's fresh counts, and whether they have reached their reminder.
+  return { ...result, ...(await readPlayAfterSpin(sb, ack.fan_id)) };
+}
+
+/** True while the fan's break is in force. Best-effort (false on any error). */
+async function fanOnBreak(sb: AnyClient, fanId: string): Promise<boolean> {
+  try {
+    const { data } = await sb.from("fans").select("break_until").eq("id", fanId).maybeSingle();
+    return isOnBreak((data as { break_until?: string | null } | null)?.break_until);
+  } catch {
+    return false;
+  }
 }
 
 /**

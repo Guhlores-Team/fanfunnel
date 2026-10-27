@@ -48,8 +48,12 @@ import PrizeBook from "./fan/PrizeBook";
 import LimitedStockRow from "./fan/LimitedStockRow";
 import RecentWinsTicker from "./fan/RecentWinsTicker";
 import WinsGallery from "./fan/WinsGallery";
-import { useLinkPause } from "./fan/LinkPauseProvider";
+import YourPlay from "./fan/YourPlay";
+import BreatherCard from "./fan/BreatherCard";
+import { useFanBreak, useLinkPause } from "./fan/LinkPauseProvider";
 import { spinControl } from "./fan/linkPause";
+import { ackReminder, breakStatus, formatBreakEnd, reminderAcked } from "./fan/yourPlay";
+import { reminderDue } from "@/lib/play/playGuard";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -165,13 +169,24 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const brand = pass.wheel.brandColor ?? "#ec4899";
   // A fan who just paused their own link can no longer spin; no reload needed.
   const { paused } = useLinkPause();
+  // RM-6: the fan's own play (counts + reminder) and their break. A break is
+  // enforced by the server; here it turns SPIN off and says until when.
+  const { breakUntil, onBreak, now, markOnBreak } = useFanBreak();
+  const [play, setPlay] = useState(() => ({
+    today: pass.play?.today ?? 0,
+    week: pass.play?.week ?? 0,
+    reminder: pass.play?.reminder ?? null,
+  }));
+  const [breather, setBreather] = useState(false);
+  const breakEndLabel = breakUntil && now ? formatBreakEnd(breakUntil, now) : null;
   const { canSpin, label: spinLabel, balanceLabel } = spinControl({
     spinsRemaining,
     busy: busy || revealInFlight(rv.phase),
     paused,
+    onBreak,
   });
 
-  const handleSpin = useCallback(async () => {
+  const runSpin = useCallback(async () => {
     if (!canSpin) return;
     // iOS: wake the audio context inside the tap so the win fanfare can play,
     // and fire a haptic tick. Haptics follow the same mute switch as sound.
@@ -198,12 +213,17 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         const info = spinErrorInfo(body.error);
         setError(info.message);
         if (info.reopenAgeGate) setNeedsAck(true);
+        // On a break taken elsewhere (another tab or link): reload to show it.
+        if (info.refreshPlay) router.refresh();
         setBusy(false);
         return;
       }
       const data = await res.json();
       const prize: PublicPrize = data.prize;
       setSpinsRemaining(data.spinsRemaining);
+      if (data.play && typeof data.play.today === "number" && typeof data.play.week === "number") {
+        setPlay((p) => ({ ...p, today: data.play.today, week: data.play.week }));
+      }
       // The outcome is final here; the theater only presents its rarity.
       spinEnded.current = false;
       dispatchReveal({
@@ -233,7 +253,19 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setError("Network error. Try again.");
       setBusy(false);
     }
-  }, [canSpin, pass.token, muted, clientSeed, sessionSpins]);
+  }, [canSpin, pass.token, muted, clientSeed, sessionSpins, router]);
+
+  // RM-6: once today's spins reach the fan's reminder, the next SPIN tap asks
+  // first ("Want a breather?"), once per threshold per day. Soft: Keep playing
+  // spins straight away.
+  const handleSpin = useCallback(() => {
+    if (!canSpin) return;
+    if (play.reminder !== null && reminderDue(play.today, play.reminder) && !reminderAcked(play.reminder)) {
+      setBreather(true);
+      return;
+    }
+    void runSpin();
+  }, [canSpin, play, runSpin]);
 
   // On the 1→0 spins transition (a spin that just emptied the balance), nudge
   // the fan via chat once. A later top-up (>0) re-arms the one-shot guard.
@@ -430,6 +462,15 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           </button>
         </div>
 
+        <YourPlay
+          token={pass.token}
+          play={play}
+          onReminderChange={(reminder) => setPlay((p) => ({ ...p, reminder }))}
+          onBreak={onBreak}
+          breakEndLabel={breakEndLabel}
+          onBreakTaken={markOnBreak}
+        />
+
         <button
           onClick={handleSpin}
           disabled={!canSpin}
@@ -441,6 +482,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         {paused && (
           <p role="status" className="text-center text-sm text-muted">
             Your link is paused. Ask your creator for a new link to play again.
+          </p>
+        )}
+        {onBreak && !paused && (
+          <p role="status" data-testid="break-status" className="text-center text-sm text-muted text-pretty">
+            {breakStatus(breakEndLabel)}
           </p>
         )}
 
@@ -463,7 +509,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             </span>
           </p>
         )}
-        {spinsRemaining === 0 && !reveal && !paused && (
+        {spinsRemaining === 0 && !reveal && !paused && !onBreak && (
           <TopUpMoment
             prizes={prizes}
             history={history}
@@ -548,6 +594,23 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             setPity(null);
             setNearMiss(null);
             setBeatRow(false);
+          }}
+        />
+      )}
+
+      {breather && play.reminder !== null && (
+        <BreatherCard
+          token={pass.token}
+          today={play.today}
+          onClose={() => setBreather(false)}
+          onKeepPlaying={() => {
+            if (play.reminder !== null) ackReminder(play.reminder);
+            setBreather(false);
+            void runSpin();
+          }}
+          onBreakTaken={(until) => {
+            markOnBreak(until);
+            setBreather(false);
           }}
         />
       )}

@@ -343,10 +343,37 @@ export type Database = {
           },
         ]
       }
+      fan_play_reminders: {
+        Row: {
+          daily: number
+          fan_id: string
+          updated_at: string
+        }
+        Insert: {
+          daily: number
+          fan_id: string
+          updated_at?: string
+        }
+        Update: {
+          daily?: number
+          fan_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fan_play_reminders_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: true
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fans: {
         Row: {
           acked_at: string | null
           blocked_at: string | null
+          break_until: string | null
           created_at: string
           creator_id: string
           display_name: string | null
@@ -368,6 +395,7 @@ export type Database = {
         Insert: {
           acked_at?: string | null
           blocked_at?: string | null
+          break_until?: string | null
           created_at?: string
           creator_id: string
           display_name?: string | null
@@ -389,6 +417,7 @@ export type Database = {
         Update: {
           acked_at?: string | null
           blocked_at?: string | null
+          break_until?: string | null
           created_at?: string
           creator_id?: string
           display_name?: string | null
@@ -1332,6 +1361,10 @@ export type Database = {
         Returns: undefined
       }
       current_user_active: { Args: never; Returns: boolean }
+      fan_take_break: {
+        Args: { p_token: string; p_until: string }
+        Returns: string
+      }
       import_fans: { Args: { p_rows: Json }; Returns: undefined }
       is_admin: { Args: never; Returns: boolean }
       org_account_stats: {

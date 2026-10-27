@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
-import { useLinkPause } from "./LinkPauseProvider";
+import { fanEngagementAllowed } from "@/lib/play/playGuard";
+import { useFanBreak, useLinkPause } from "./LinkPauseProvider";
 import { installNudgeSnoozed, isIosDevice, snoozeInstallNudge } from "./installNudge";
 
 /** Chrome's install event (not in the DOM lib types). */
@@ -37,12 +38,13 @@ function appName(): string {
  * RM-4: after a fan's first win of the session, offer to add their link to the
  * home screen. Android/Chrome gets a real Install button (beforeinstallprompt);
  * iPhone/iPad Safari gets a two-step "How" guide. Never shown before a win (so
- * never before the age gate), when already installed, on a paused link, or for
- * 14 days after "Not now". It is a card in the flow, never a wall.
+ * never before the age gate), when already installed, on a paused link, while
+ * the fan is on a break, or for 14 days after "Not now". It is a card in the flow, never a wall.
  * Mounted with one line from SpinClient: `armed` is "a win is on screen".
  */
 export default function InstallNudge({ armed }: { armed: boolean }) {
   const { paused } = useLinkPause();
+  const { breakUntil, now } = useFanBreak();
   const standalone = useSyncExternalStore(subscribeStandalone, isStandalone, serverFalse);
   const ios = useSyncExternalStore(noSubscribe, iosSnapshot, serverFalse);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
@@ -70,8 +72,11 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
   }, []);
 
   // Latch on the first win: the card stays (below the wheel) after the prize
-  // modal closes, until installed or dismissed.
-  const eligible = !standalone && !paused && (deferred !== null || ios);
+  // modal closes, until installed or dismissed. F6 engagement gate: never on
+  // a paused link or while the fan is on a break (RM-6); it hides the moment
+  // either starts.
+  const engaged = fanEngagementAllowed({ selfExcluded: paused, breakUntil }, now);
+  const eligible = !standalone && engaged && (deferred !== null || ios);
   if (armed && eligible && !shown && !hidden) {
     if (installNudgeSnoozed()) setHidden(true);
     else {

@@ -43,7 +43,7 @@ export function badRequest(code = "bad_request"): NextResponse {
  *  - `unauthorized`            → 401 (not signed in / no capability)
  *  - `forbidden`, `blocked`,
  *    `needs_ack`, `locked`,
- *    `not_allowed`,
+ *    `not_allowed`, `on_break`,
  *    `not_configured`          → 403 (allowed-in-principle but gated)
  *  - `not_found`               → 404
  *  - `has_history`, `conflict` → 409
@@ -60,6 +60,7 @@ export function statusForError(code: string): number {
     case "locked":
     case "not_allowed":
     case "not_configured":
+    case "on_break":
       return 403;
     case "not_found":
       return 404;

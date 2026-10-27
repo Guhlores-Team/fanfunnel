@@ -16,6 +16,7 @@
 //   ./admin.ts
 //   ./account.ts
 //   ./publicProfile.ts
+//   ./playGuard.ts
 
 export type { FanPassView, SpinError } from "./shared";
 export {
@@ -34,6 +35,7 @@ export {
 } from "./wheels";
 export { listWebhooks, createWebhook, deleteWebhook, fireWebhooks } from "./webhooks";
 export { getFanPass, spin, completeClaimedSpin, createPass } from "./spins";
+export { setPlayReminder, takeBreak } from "./playGuard";
 export {
   editGrant,
   grantSpins,

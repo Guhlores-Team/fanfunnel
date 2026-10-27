@@ -83,6 +83,23 @@ export interface FanPassView {
   creatorAvatarUrl?: string | null;
   /** Commit-reveal: sha256 of the pre-committed seed for the fan's NEXT spin. */
   nextSpinHash?: string | null;
+  /** RM-6: the fan's own play (counts, their reminder, their break). */
+  play?: FanPlayView;
+}
+
+/**
+ * RM-6: what a fan sees about their own play. Fan-only: the reminder and the
+ * counts never reach the creator (the creator sees only the break state).
+ */
+export interface FanPlayView {
+  /** Spins in the last 24 hours (rolling). */
+  today: number;
+  /** Spins in the last 7 days (rolling). */
+  week: number;
+  /** The fan's daily reminder, or null when off. */
+  reminder: number | null;
+  /** When the fan's break ends; null (or past) when not on a break. */
+  breakUntil: string | null;
 }
 
 /**
@@ -288,11 +305,15 @@ export interface FanAccountSummary {
   // Newest link that is active and not paused (null when none). Outreach
   // (win-back "Copy link") offers only this, never a paused link.
   activeToken: string | null;
+  /** RM-6: when the fan's break ends (null / absent = not on a break). */
+  breakUntil?: string | null;
 }
 
 export interface FanDetail {
   fanId: string; name: string;
   blocked: boolean; // fan is currently blocked (fans.blocked_at set)
+  /** RM-6: when the fan's break ends (null / absent = not on a break). */
+  breakUntil?: string | null;
   notes: string | null; // free-form creator notes about the fan
   tags: string[]; // creator-applied labels (VIP, whale, …)
   spinsRemaining: number; grantedTotal: number; totalSpins: number;
