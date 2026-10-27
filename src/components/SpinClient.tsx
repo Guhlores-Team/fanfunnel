@@ -491,8 +491,15 @@ function AgeGate({
               className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
             />
             <span className="text-ink">
-              I agree to the Terms of Service and acknowledge prizes are subject
-              to the creator&rsquo;s fulfilment.
+              I agree to the{" "}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                Terms of Service
+              </a>{" "}
+              (see the{" "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                Privacy Policy
+              </a>
+              ) and acknowledge prizes are subject to the creator&rsquo;s fulfilment.
             </span>
           </label>
         </div>

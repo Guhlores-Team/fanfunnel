@@ -67,6 +67,8 @@ const DASH_ADVISORY = [];
 const PAGES = [
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
+  { path: "/terms", name: "terms" },
+  { path: "/privacy", name: "privacy" },
   { path: "/c/demo", name: "link-in-bio" },
   { path: "/dashboard", name: "dashboard (Today)", advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Wheel editor)", prep: openTab("Wheel"), advisory: DASH_ADVISORY },

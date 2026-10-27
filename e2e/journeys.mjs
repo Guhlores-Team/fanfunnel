@@ -337,6 +337,23 @@ export async function fanJourney(page, { step, assert }, ctx) {
     await page.setViewportSize({ width: 1280, height: 900 });
   });
 
+  await step("fan page: the age gate links to real Terms and Privacy pages", async () => {
+    const gate = page.locator("[role='dialog'][aria-modal='true']");
+    for (const [name, path, heading] of [
+      ["Terms of Service", "/terms", "Terms of Service"],
+      ["Privacy Policy", "/privacy", "Privacy Policy"],
+    ]) {
+      const link = gate.getByRole("link", { name });
+      assert((await link.getAttribute("href")) === path, `${name} links to ${path}`);
+      assert((await link.getAttribute("target")) === "_blank", `${name} opens in a new tab, keeping the gate`);
+      assert(/noreferrer/.test((await link.getAttribute("rel")) || ""), `${name} sends no Referer (the URL holds the fan's token)`);
+      const res = await page.request.get(BASE + path);
+      assert(res.status() === 200, `${path} renders (got ${res.status()})`);
+      const html = await res.text();
+      assert(html.includes(heading) && html.includes("Draft placeholder"), `${path} shows its heading and the draft notice`);
+    }
+  });
+
   await step("fan page: leaderboard visible before spinning", async () => {
     await passAgeGate(page);
     const body = await page.locator("body").innerText();
