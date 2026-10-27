@@ -267,6 +267,11 @@ export interface FanAccountSummary {
   links: { token: string }[];
   passes: FanPassInfo[]; // per-wheel: link + balance + wheel/campaign
   lastWin: { label: string; rarity: Rarity; at: string } | null;
+  blocked: boolean; // the creator blocked this fan (fans.blocked_at set)
+  selfExcluded: boolean; // the fan paused (self-excluded) one of their links
+  // Newest link that is active and not paused (null when none). Outreach
+  // (win-back "Copy link") offers only this, never a paused link.
+  activeToken: string | null;
 }
 
 export interface FanDetail {

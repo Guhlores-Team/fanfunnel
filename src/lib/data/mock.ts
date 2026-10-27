@@ -116,6 +116,8 @@ interface MockFan {
   ackedAt: string | null;
   // Phase 5b: fan self-excluded (paused) their own link (null = active).
   selfExcludedAt: string | null;
+  // The creator blocked this fan (mirrors fans.blocked_at; unset = not blocked).
+  blockedAt?: string | null;
 }
 
 // Phase 5b (#24): a creator's registered outbound webhook (demo, in-memory).
@@ -990,7 +992,7 @@ export async function mockSpin(token: string, clientSeed = "") {
   // Mirror the hardened claim_spin guards so the demo behaves like production:
   // a self-excluded fan can't spin, and the age-gate/ToS must be acknowledged
   // first (the client modal is not the enforcement boundary).
-  if (fan.selfExcludedAt) return { error: "blocked" as const };
+  if (fan.selfExcludedAt || fan.blockedAt) return { error: "blocked" as const };
   if (fan.ackedAt == null) return { error: "needs_ack" as const };
 
   // Pre-generate the NEXT commitment before touching shared state, so the
@@ -1364,6 +1366,14 @@ export function mockListFans(): FanAccountSummary[] {
       lastWin: f.wins[0]
         ? { label: f.wins[0].label, rarity: f.wins[0].rarity, at: f.wins[0].at }
         : null,
+      blocked: !!f.blockedAt,
+      selfExcluded: !!f.selfExcludedAt,
+      // Self-exclusion pauses the fan's links (mockGetFanPass 404s them), so a
+      // paused fan has no active link. Otherwise: the newest pass, as on the
+      // Supabase path (ties go to the later-created pass).
+      activeToken: f.selfExcludedAt
+        ? null
+        : ([...f.passes].reverse().sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.token ?? null),
     };
   });
 }
@@ -2318,6 +2328,14 @@ export function mockAckFan(token: string): { ok: true } | { error: string } {
  * records the exclusion so mockSpin actually blocks subsequent spins — matching
  * the Supabase path and giving the demo/tests a real guard to exercise.
  */
+/** Creator blocks / unblocks a fan (demo mirror of setFanBlocked). */
+export function mockSetFanBlocked(fanId: string, blocked: boolean): { ok: true } | { error: string } {
+  const fan = store.fans.get(fanId);
+  if (!fan) return { error: "not_found" };
+  fan.blockedAt = blocked ? new Date().toISOString() : null;
+  return { ok: true };
+}
+
 export function mockSelfExclude(token: string): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };

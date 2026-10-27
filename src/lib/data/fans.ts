@@ -12,6 +12,7 @@ import {
   mockEditGrant,
   mockAckFan,
   mockSelfExclude,
+  mockSetFanBlocked,
   mockReportCreator,
 } from "./mock";
 import { clampInt, creatorOwnsCampaign } from "./shared";
@@ -247,8 +248,8 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   const primary = await sb
     .from("fans")
     .select(
-      `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at,
-       fan_passes(token, created_at, spins_remaining, wheel_id, wheel:wheels(title), campaign:campaigns(name)),
+      `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at,
+       fan_passes(token, created_at, spins_remaining, wheel_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)),
        ${TAIL}`
     )
     .eq("creator_id", user.id)
@@ -274,12 +275,15 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     spins_remaining: number;
     spins_granted_total: number;
     tags: string[] | null;
+    blocked_at?: string | null; // absent on the legacy select
     fan_passes:
       | {
           token: string;
           created_at: string;
           spins_remaining?: number; // per-wheel fields are absent pre-0020
           wheel_id?: string;
+          is_active?: boolean; // absent on the legacy select
+          self_excluded_at?: string | null;
           wheel?: { title: string } | null;
           campaign?: { name: string } | null;
         }[]
@@ -330,6 +334,11 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       lastWin: wins[0]
         ? { label: wins[0].prize_label, rarity: wins[0].prize_rarity, at: wins[0].created_at }
         : null,
+      blocked: !!r.blocked_at,
+      selfExcluded: links.some((p) => !!p.self_excluded_at),
+      // The legacy select can't tell a paused link from a live one, so it
+      // offers none (is_active is undefined there).
+      activeToken: links.find((p) => p.is_active === true && !p.self_excluded_at)?.token ?? null,
     };
   });
 }
@@ -358,11 +367,16 @@ export interface CreatorCrm {
  *   • Whales = fans ranked by LTV desc (your highest-value relationships).
  *   • Dormant = fans who HAVE spent (LTV > 0) but whose last win/activity is
  *     14+ days ago — the cheapest revenue is a fan you already converted.
+ *     Spend safety: a fan the creator blocked, a fan who paused (self-excluded)
+ *     a link, and a fan with no active link are never suggested.
+ * The link offered on any row is the fan's newest ACTIVE link (never a paused
+ * one), and none at all for a blocked or self-excluded fan.
  */
 export async function getCreatorCrm(): Promise<CreatorCrm> {
   const fans = await listFans();
   const now = Date.now();
   const DAY = 86_400_000;
+  const contactable = (f: FanAccountSummary) => !f.blocked && !f.selfExcluded && f.activeToken !== null;
 
   const enrich = (f: FanAccountSummary): CrmFan => {
     const lastActiveAt = f.lastWin?.at ?? null;
@@ -376,7 +390,7 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
       spinsRemaining: f.spinsRemaining,
       lastActiveAt,
       daysSince,
-      primaryToken: f.primaryToken,
+      primaryToken: contactable(f) ? f.activeToken : null,
     };
   };
 
@@ -387,7 +401,8 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
 
   const whales = [...spenders].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 10);
   const dormant = spenders
-    .filter((f) => f.daysSince !== null && f.daysSince >= 14)
+    // primaryToken is null exactly when the fan isn't contactable (see enrich).
+    .filter((f) => f.primaryToken !== null && f.daysSince !== null && f.daysSince >= 14)
     .sort((a, b) => b.totalSpent - a.totalSpent)
     .slice(0, 20);
 
@@ -621,7 +636,7 @@ export async function setFanBlocked(
   fanId: string,
   blocked: boolean
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  if (!isSupabaseConfigured()) return mockSetFanBlocked(fanId, blocked);
   const sb = await createClient();
   const {
     data: { user },
