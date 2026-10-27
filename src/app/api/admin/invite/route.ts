@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createCreatorAccount } from "@/lib/data";
+import { createCreatorAccount, recordAudit } from "@/lib/data";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { isAcceptablePassword } from "@/lib/api/password";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -36,5 +36,11 @@ export async function POST(req: Request) {
     }
     return errorResponse(result.error);
   }
-  return NextResponse.json(result);
+  await recordAudit({
+    actorId: admin.userId,
+    action: "account.create",
+    targetType: "profile",
+    targetId: result.id ?? null,
+  });
+  return NextResponse.json({ ok: true });
 }

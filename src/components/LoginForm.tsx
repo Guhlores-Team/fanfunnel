@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { safeNext } from "@/lib/auth/safeNext";
 
 type Mode = "signin" | "signup";
 
@@ -33,14 +34,19 @@ function authErrorMessage(err: unknown): string {
 export default function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/dashboard";
+  const next = safeNext(params.get("next"));
 
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  // After "Close my account" the server signs the browser out and sends it here.
+  const [msg, setMsg] = useState<string | null>(
+    params.get("closed") === "1"
+      ? "Your account is closed and its data deleted. Thanks for using FanFunnel."
+      : null
+  );
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
@@ -79,6 +85,15 @@ export default function LoginForm() {
           password,
         });
         if (error) throw error;
+        // Two-factor: an account with a verified authenticator signs in at
+        // aal1 and must enter a code (aal2) before the dashboard. The proxy
+        // enforces it server-side; this just goes straight to the code step.
+        const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (aal?.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+          router.push("/mfa?next=" + encodeURIComponent(next));
+          router.refresh();
+          return;
+        }
       }
       router.push(next);
       router.refresh();

@@ -5,6 +5,8 @@ import {
   createServiceClient,
 } from "@/lib/supabase/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
+import { deleteAccountAndTombstoneLinks } from "@/lib/account/deleteAccount";
+import { recordAudit } from "@/lib/data";
 
 /**
  * Hard-delete a creator account and ALL of its tenant data — irreversible.
@@ -49,6 +51,7 @@ export async function POST(req: Request) {
   // store has no delete primitive we may touch from here, so report success and
   // let the client's optimistic removal stand for the (ephemeral) session.
   if (!isSupabaseConfigured()) {
+    await recordAudit({ actorId: null, action: "account.delete", targetType: "profile", targetId: id });
     return NextResponse.json({ ok: true });
   }
 
@@ -109,18 +112,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  // Permanently remove the auth user; FK cascades wipe all tenant data.
-  const { error: delErr } = await svc.auth.admin.deleteUser(id);
-  if (delErr) {
-    // The reservation above demoted an admin target (admin -> creator) to hold
-    // the last-admin invariant atomically. The delete failed, so compensate by
-    // restoring the role — otherwise the target is left permanently altered (and
-    // the admin count reduced) without ever being deleted.
-    if (target.role === "admin") {
-      await svc.from("profiles").update({ role: "admin" }).eq("id", id);
-    }
+  // Permanently remove the auth user; FK cascades wipe all tenant data. On a
+  // failed delete the shared helper restores an admin target's role (the
+  // reservation above demoted it); on success each fan link gets a "this
+  // creator has left" tombstone.
+  const deleted = await deleteAccountAndTombstoneLinks(svc, id, {
+    wasAdmin: target.role === "admin",
+  });
+  if ("error" in deleted) {
     return NextResponse.json({ error: "delete_failed" }, { status: 500 });
   }
 
+  await recordAudit({
+    actorId: callerId,
+    action: "account.delete",
+    targetType: "profile",
+    targetId: id,
+    details: { role: target.role === "admin" ? "admin" : "creator", fanLinks: deleted.links },
+  });
   return NextResponse.json({ ok: true });
 }

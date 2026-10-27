@@ -37,7 +37,7 @@ export async function provisionCreatorUser(
   email: string,
   password: string,
   displayName: string
-): Promise<{ ok: true } | { error: CreateUserErrorCode }> {
+): Promise<{ ok: true; id: string } | { error: CreateUserErrorCode }> {
   const { data, error } = await svc.auth.admin.createUser({
     email,
     password,
@@ -58,5 +58,5 @@ export async function provisionCreatorUser(
     .from("profiles")
     .update({ display_name: displayName || email, approval_status: "approved" })
     .eq("id", data.user.id);
-  return { ok: true };
+  return { ok: true, id: data.user.id };
 }

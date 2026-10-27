@@ -15,20 +15,38 @@ function check(label: string, cond: boolean) {
 
 let signedIn = true;
 let isAdmin = true;
-let nextResult: { ok: true } | { error: string } = { ok: true };
+let nextResult: { ok: true; id?: string } | { error: string } = { ok: true };
 const creates: unknown[][] = [];
+const audits: Record<string, unknown>[] = [];
+// The session's two-factor level (0054: admin power needs aal2).
+let aal: "aal1" | "aal2" = "aal2";
+const token = () => `h.${Buffer.from(JSON.stringify({ aal })).toString("base64url")}.s`;
 
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => true,
     createClient: async () => ({
-      auth: { getUser: async () => ({ data: { user: signedIn ? { id: "user-1" } : null }, error: null }) },
+      auth: {
+        getUser: async () => ({ data: { user: signedIn ? { id: "user-1" } : null }, error: null }),
+        getSession: async () => ({ data: { session: { access_token: token() } } }),
+      },
       rpc: async (name: string) => {
         if (name !== "is_admin") throw new Error(`unexpected rpc ${name}`);
-        return { data: isAdmin, error: null };
+        // 0054's is_admin() is false on an aal1 session.
+        return { data: isAdmin && aal === "aal2", error: null };
       },
-      from: () => {
-        throw new Error("is_admin() answered; the profiles fallback must not run");
+      from: (table: string) => {
+        // Only an aal1 session reads its own row (to say which 2FA step).
+        if (aal !== "aal1" || table !== "profiles") {
+          throw new Error("is_admin() answered; the profiles fallback must not run");
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { role: "admin", is_active: true }, error: null }),
+            }),
+          }),
+        };
       },
     }),
     createServiceClient: () => {
@@ -42,6 +60,9 @@ mock.module("@/lib/data", {
     createCreatorAccount: async (...args: unknown[]) => {
       creates.push(args);
       return nextResult;
+    },
+    recordAudit: async (entry: Record<string, unknown>) => {
+      audits.push(entry);
     },
   },
 });
@@ -86,12 +107,36 @@ async function main() {
     check("data-layer unauthorized → 401", r.status === 401 && r.data.error === "unauthorized");
   }
 
+  check("failed creates are not logged as activity", audits.length === 0);
+
   // --- success is unchanged ---------------------------------------------------
-  nextResult = { ok: true };
+  nextResult = { ok: true, id: "11111111-1111-4111-8111-111111111111" };
   {
     const r = await invite(VALID);
     check("created → 200 { ok: true }", r.status === 200 && r.data.ok === true);
+    check("the new account's id is not echoed to the client", !("id" in r.data));
+    check(
+      "the create is logged with actor + target ids only",
+      audits.length === 1 &&
+        audits[0].action === "account.create" &&
+        audits[0].actorId === "user-1" &&
+        audits[0].targetId === "11111111-1111-4111-8111-111111111111" &&
+        !JSON.stringify(audits[0]).includes("new@example.com")
+    );
   }
+
+  // --- negative: an admin on an aal1 (password-only) session is refused -------
+  creates.length = 0;
+  aal = "aal1";
+  {
+    const r = await invite(VALID);
+    check(
+      "aal1 admin → 403 mfa_required (enrol step)",
+      r.status === 403 && r.data.error === "mfa_required" && r.data.step === "enrol"
+    );
+  }
+  check("an aal1 admin never reached createCreatorAccount", creates.length === 0);
+  aal = "aal2";
 
   // --- negative: only an active admin reaches createCreatorAccount -------------
   creates.length = 0;

@@ -4,6 +4,7 @@ import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/s
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import type { AdminAccount, AdminOverview, AppRole } from "./types";
 import { provisionCreatorUser } from "./creatorAccount";
+import { recordAudit } from "./audit";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
 
 // ---------------------------------------------------------------------------
@@ -61,7 +62,9 @@ export async function claimAdmin(): Promise<{ ok: true } | { error: string }> {
     .from("profiles")
     .update({ role: "admin", approval_status: "approved", is_active: true })
     .eq("id", user.id);
-  return error ? { error: "db_error" } : { ok: true };
+  if (error) return { error: "db_error" };
+  await recordAudit({ actorId: user.id, action: "admin.bootstrap", targetType: "profile", targetId: user.id });
+  return { ok: true };
 }
 
 export async function getAdminOverview(): Promise<AdminOverview | null> {
@@ -325,7 +328,7 @@ export async function createCreatorAccount(
   email: string,
   password: string,
   displayName: string
-): Promise<{ ok: true } | { error: string }> {
+): Promise<{ ok: true; id?: string } | { error: string }> {
   if (!isSupabaseConfigured()) {
     mockCreateAccount(email, displayName);
     return { ok: true };

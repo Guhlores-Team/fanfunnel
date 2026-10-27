@@ -53,6 +53,16 @@ import type {
 } from "./types";
 import { activeFans, bucketByDay, bucketCentsByDay, clampDays } from "./metrics";
 import { pickGrantPass } from "./grantPass";
+import type { Json } from "./db.types";
+import {
+  CREATOR_EXPORT_ABOUT,
+  CREATOR_EXPORT_FORMAT,
+  FAN_EXPORT_ABOUT,
+  FAN_EXPORT_FORMAT,
+  maskToken,
+  type CreatorDataExport,
+  type FanDataExport,
+} from "@/lib/privacy/exportTypes";
 import {
   FEED_LIMIT,
   LOW_STOCK_THRESHOLD,
@@ -1370,8 +1380,24 @@ export function mockDeleteFan(fanId: string): boolean {
       store.tokenCampaign.delete(token);
     }
   }
+  // Parity with the database (0054): links, grants, chat, wishlist and
+  // referrals go with the fan; their spins stay anonymized, so their prizes
+  // stay in the fulfilment queue and stats as "Fan" with no link to them.
   store.grants = store.grants.filter((g) => g.fanId !== fanId);
-  store.redemptions = store.redemptions.filter((r) => r.fanId !== fanId);
+  store.messages = store.messages.filter((m) => m.fanId !== fanId);
+  store.wishlists = store.wishlists.filter((w) => w.fanId !== fanId);
+  store.referrals = store.referrals.filter(
+    (r) => r.referrerFanId !== fanId && r.referredFanId !== fanId
+  );
+  for (const f of store.fans.values()) {
+    if (f.referredByFanId === fanId) f.referredByFanId = null;
+  }
+  for (const r of store.redemptions) {
+    if (r.fanId === fanId) {
+      r.fanId = "";
+      r.fanName = "Fan";
+    }
+  }
   return true;
 }
 
@@ -2583,7 +2609,13 @@ export function mockGetNotificationSources(): NotificationSources {
         Date.parse(f.wins[0].at) >= since
     )
     .map((f) => ({ fanId: f.id, fanName: f.name, at: f.wins[0].at }));
-  return structuredClone({ pendingWins, unreadMessages, lowStock, outOfSpins });
+  return structuredClone({
+    pendingWins,
+    unreadMessages,
+    lowStock,
+    outOfSpins,
+    fanDeletions: mockGetFanDeletionNotices(),
+  });
 }
 
 export function mockGetNotificationsSeenAt(): string | null {
@@ -2930,5 +2962,232 @@ export function mockGetFanAppInfo(token: string): FanAppInfo | null {
     brandColor: wheel.brandColor ?? "#ec4899",
     iconMode: mockGetMyPwaIconMode(),
     avatarUrl: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Privacy & safety (0054): audit log, creator notices, link tombstones, the
+// fan's and the creator's "Download my data", and the fan's "Delete my data".
+// Kept outside Store and pinned to globalThis like it.
+// ---------------------------------------------------------------------------
+interface MockAuditRow {
+  id: string;
+  actor_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+interface MockPrivacyStore {
+  audit: MockAuditRow[];
+  notices: { id: string; spinsKept: number; at: string }[];
+  tombstones: Map<string, "creator_closed" | "fan_deleted">;
+}
+const gPrivacy = globalThis as unknown as { __ffPrivacy?: MockPrivacyStore };
+const privacy: MockPrivacyStore = (gPrivacy.__ffPrivacy ??= {
+  audit: [],
+  notices: [],
+  tombstones: new Map(),
+});
+
+export function mockRecordAudit(row: Omit<MockAuditRow, "id" | "created_at">): void {
+  privacy.audit.unshift({ ...row, id: crypto.randomUUID(), created_at: new Date().toISOString() });
+  privacy.audit.length = Math.min(privacy.audit.length, 500);
+}
+
+export function mockListAudit(limit: number) {
+  const label = (id: string | null) =>
+    id ? store.accounts.find((a) => a.id === id)?.email ?? null : null;
+  return structuredClone(
+    privacy.audit.slice(0, limit).map((r) => ({
+      id: r.id,
+      actorId: r.actor_id,
+      action: r.action,
+      targetType: r.target_type,
+      targetId: r.target_id,
+      details: r.details,
+      createdAt: r.created_at,
+      actorLabel: label(r.actor_id),
+      targetLabel: r.target_type === "profile" ? label(r.target_id) : null,
+    }))
+  );
+}
+
+export function mockGetFanDeletionNotices(): { id: string; spinsKept: number; at: string }[] {
+  return structuredClone(privacy.notices);
+}
+
+/** The fan + the pass behind a token, whatever the link's state. */
+function mockFanByAnyToken(token: string): { fan: MockFan; pass: MockPass | null } | null {
+  const hit = passForToken(token);
+  if (hit) return hit;
+  const fan = fanForToken(token);
+  return fan ? { fan, pass: fan.passes?.find((p) => p.token === token) ?? null } : null;
+}
+
+/** Why a link no longer opens, when its tombstone says (else null → 404). */
+export async function mockGetFanLinkStatus(
+  token: string
+): Promise<"creator_closed" | "fan_deleted" | null> {
+  return privacy.tombstones.get(await sha256Hex(token)) ?? null;
+}
+
+export function mockExportFanData(token: string): FanDataExport | null {
+  const hit = mockFanByAnyToken(token);
+  if (!hit) return null;
+  const { fan } = hit;
+  ensurePasses(fan);
+  const wheelTitle = (id: string) => store.wheels.get(id)?.title ?? null;
+  const wins = [...fan.wins].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const out: FanDataExport = {
+    format: FAN_EXPORT_FORMAT,
+    exportedAt: new Date().toISOString(),
+    about: FAN_EXPORT_ABOUT,
+    creator: { displayName: CREATOR_TITLE },
+    profile: {
+      displayName: fan.name ?? null,
+      handle: fan.handle ?? null,
+      joinedAt: fan.passes[0]?.createdAt ?? null,
+      spinsRemaining: fan.spinsRemaining,
+      spinsGrantedTotal: fan.spinsGrantedTotal,
+      lastSpinAt: wins[0]?.at ?? null,
+      referralCode: fan.referralCode ?? null,
+      joinedThroughAReferral: fan.referredByFanId !== null,
+      friendsReferred: store.referrals.filter((r) => r.referrerFanId === fan.id).length,
+    },
+    consents: { ageAndTermsAcceptedAt: fan.ackedAt, leaderboardOptIn: fan.leaderboardOptIn },
+    links: fan.passes.map((p) => ({
+      linkEndsWith: maskToken(p.token),
+      isThisLink: p.token === token,
+      wheel: wheelTitle(p.wheelId),
+      createdAt: p.createdAt,
+      active: !fan.selfExcludedAt,
+      pausedByYouAt: fan.selfExcludedAt,
+      spinsRemaining: p.spinsRemaining,
+      spinsGrantedTotal: p.spinsGrantedTotal,
+      lastSpinAt: null,
+    })),
+    topUps: store.grants
+      .filter((g) => g.fanId === fan.id)
+      .map((g) => ({ at: g.at, spins: g.spins, bonusSpins: g.bonusSpins })),
+    spins: wins.map((w) => ({
+      id: w.shareId,
+      at: w.at,
+      prize: w.label,
+      rarity: w.rarity,
+      wheel: null,
+      shareId: w.shareId ?? null,
+      fairness: {
+        version: w.fairVersion ?? null,
+        serverSeed: w.serverSeed ?? null,
+        serverSeedHash: w.serverSeedHash ?? null,
+        clientSeed: w.clientSeed ?? null,
+        nonce: w.nonce ?? null,
+        seedCommitment: w.commitment ? JSON.stringify(w.commitment) : null,
+        poolHash: w.poolHash ?? null,
+        poolSnapshot: (w.poolSnapshot ?? null) as unknown as Json,
+        trace: (w.fairTrace ?? null) as unknown as Json,
+      },
+    })),
+    prizes: store.redemptions
+      .filter((r) => r.fanId === fan.id)
+      .map((r) => ({ spinId: null, prize: r.prizeLabel, status: r.status, wonAt: r.at, fulfilledAt: null })),
+    wishlist: store.wishlists
+      .filter((w) => w.fanId === fan.id)
+      .map((w) => ({ prize: w.prizeLabel, rarity: w.prizeRarity, addedAt: w.at })),
+    messagesYouSent: store.messages
+      .filter((m) => m.fanId === fan.id && m.sender === "fan")
+      .map((m) => ({ at: m.at, body: m.body })),
+  };
+  return structuredClone(out);
+}
+
+/** "Delete my data" in the demo: the creator-side delete, plus a tombstone per
+ *  link and a notice for the creator. The seeded demo fan can't be deleted
+ *  (every demo journey uses its link). */
+export async function mockDeleteFanData(
+  token: string
+): Promise<{ ok: true; spinsKept: number } | { error: string }> {
+  const hit = mockFanByAnyToken(token);
+  if (!hit) return { error: "not_found" };
+  const { fan } = hit;
+  if (fan.id === "demo-fan") return { error: "not_allowed" };
+  const tokens = new Set([...store.tokens].filter(([, id]) => id === fan.id).map(([t]) => t));
+  for (const p of fan.passes ?? []) tokens.add(p.token);
+  const spinsKept = fan.wins.length;
+  mockDeleteFan(fan.id);
+  for (const t of tokens) privacy.tombstones.set(await sha256Hex(t), "fan_deleted");
+  privacy.notices.unshift({ id: crypto.randomUUID(), spinsKept, at: new Date().toISOString() });
+  return { ok: true, spinsKept };
+}
+
+/** The demo creator's "Download my data": everything in the in-memory store. */
+export function mockExportCreatorData(): CreatorDataExport {
+  const fans = [...store.fans.values()].map((f) => ({
+    id: f.id,
+    name: f.name,
+    handle: f.handle ?? null,
+    spins_remaining: f.spinsRemaining,
+    spins_granted_total: f.spinsGrantedTotal,
+    notes: f.notes,
+    tags: f.tags,
+    leaderboard_opt_in: f.leaderboardOptIn,
+    acked_at: f.ackedAt,
+    self_excluded_at: f.selfExcludedAt,
+    blocked_at: f.blockedAt ?? null,
+    links: (f.passes ?? []).map((p) => ({
+      link_ends_with: maskToken(p.token),
+      wheel_id: p.wheelId,
+      spins_remaining: p.spinsRemaining,
+      created_at: p.createdAt,
+    })),
+  }));
+  const spins = [...store.fans.values()].flatMap((f) =>
+    f.wins.map((w) => ({
+      fan_id: f.id,
+      prize_label: w.label,
+      prize_rarity: w.rarity,
+      created_at: w.at,
+      share_id: w.shareId,
+      server_seed_hash: w.serverSeedHash,
+      fair_version: w.fairVersion ?? null,
+    }))
+  );
+  const rows = (xs: unknown[]) => structuredClone(xs) as Record<string, unknown>[];
+  return {
+    format: CREATOR_EXPORT_FORMAT,
+    exportedAt: new Date().toISOString(),
+    about: CREATOR_EXPORT_ABOUT,
+    account: {
+      display_name: store.displayName,
+      leaderboard_enabled: store.leaderboardEnabled,
+      notify_new_spin: store.notifyNewSpin,
+      notify_low_balance: store.notifyLowBalance,
+      notify_messages: store.notifyMessages,
+      chat_intro: store.chatIntro,
+      chat_outro: store.chatOutro,
+      pwa_icon_mode: mockGetMyPwaIconMode(),
+      demo: true,
+    },
+    sections: {
+      wheels: rows([...store.wheels.values()]),
+      campaigns: rows(store.campaigns),
+      campaign_packs: rows(store.campaignPacks),
+      prize_templates: rows(store.prizeTemplates),
+      wheel_templates: rows(store.wheelTemplates),
+      dm_templates: rows(store.dmTemplates),
+      happy_hours: rows(store.happyHours),
+      webhooks: rows(store.webhooks),
+      fans: rows(fans),
+      grants: rows(store.grants),
+      spins: rows(spins),
+      redemptions: rows(store.redemptions),
+      referrals: rows(store.referrals),
+      messages: rows(store.messages),
+      wishlists: rows(store.wishlists),
+      creator_notices: rows(privacy.notices),
+    },
+    truncated: [],
   };
 }

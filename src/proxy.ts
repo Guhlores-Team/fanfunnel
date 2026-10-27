@@ -20,5 +20,6 @@ export const config = {
     "/pending",
     "/login",
     "/signup",
+    "/mfa",
   ],
 };

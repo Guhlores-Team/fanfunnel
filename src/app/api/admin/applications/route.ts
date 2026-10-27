@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listCreatorApplications, decideCreatorApplication } from "@/lib/data";
+import { listCreatorApplications, decideCreatorApplication, recordAudit } from "@/lib/data";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
@@ -25,5 +25,11 @@ export async function POST(req: Request) {
   }
   const result = await decideCreatorApplication(body.profileId, body.decision);
   if ("error" in result) return errorResponse(result.error);
+  await recordAudit({
+    actorId: admin.userId,
+    action: body.decision === "approved" ? "account.approve" : "account.reject",
+    targetType: "profile",
+    targetId: body.profileId,
+  });
   return NextResponse.json(result);
 }

@@ -58,7 +58,7 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
   const uid = user.id;
 
   const since = new Date(Date.now() - OUT_OF_SPINS_WINDOW_DAYS * 86_400_000).toISOString();
-  const [seenRes, prefsRes, winsRes, msgRes, wheelsRes, passesRes] = await Promise.all([
+  const [seenRes, prefsRes, winsRes, msgRes, wheelsRes, passesRes, noticesRes] = await Promise.all([
     sb.from("profiles").select("notifications_seen_at").eq("id", uid).maybeSingle(),
     // Separate read: an environment missing the notify_* columns (see 0025)
     // must still get a bell, with every toggle treated as on.
@@ -94,6 +94,14 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
       .gte("last_spin_at", since)
       .order("last_spin_at", { ascending: false })
       .limit(200),
+    // 0054: "a fan deleted their data" notices the server left for this account.
+    sb
+      .from("creator_notices")
+      .select("id, details, created_at")
+      .eq("creator_id", uid)
+      .eq("kind", "fan_deleted_data")
+      .order("created_at", { ascending: false })
+      .limit(FEED_LIMIT),
   ]);
 
   const failed = (what: string, error: { message: string } | null) => {
@@ -124,7 +132,20 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
     unreadMessages: [],
     lowStock: [],
     outOfSpins: [],
+    fanDeletions: [],
   };
+
+  if (!failed("notices", noticesRes.error)) {
+    sources.fanDeletions = ((noticesRes.data ?? []) as {
+      id: string;
+      details: { spins_kept?: unknown } | null;
+      created_at: string;
+    }[]).map((n) => ({
+      id: n.id,
+      spinsKept: Number(n.details?.spins_kept) || 0,
+      at: n.created_at,
+    }));
+  }
 
   if (!failed("wins", winsRes.error)) {
     const rows = (winsRes.data ?? []) as unknown as {

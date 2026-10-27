@@ -24,12 +24,14 @@ const KIND_ICON: Record<NotificationKind, string> = {
   message: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z",
   low_stock: "M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8",
   out_of_spins: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 8v4M12 16h.01",
+  fan_deleted: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM17 8l5 5M22 8l-5 5",
 };
 const KIND_LABEL: Record<NotificationKind, string> = {
   win: "Win to fulfil",
   message: "Message",
   low_stock: "Prize stock",
   out_of_spins: "Fan balance",
+  fan_deleted: "Fan privacy",
 };
 
 function Glyph({ d, size = 18 }: { d: string; size?: number }) {

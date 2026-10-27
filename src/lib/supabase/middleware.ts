@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseUrl } from "./url";
 import { sessionCookieOptions } from "./cookies";
+import { aalFromAccessToken, hasVerifiedFactor } from "@/lib/auth/assurance";
 
 /**
  * Pages that need the Supabase session refreshed here, before they render.
@@ -21,8 +22,15 @@ export function needsSessionRefresh(path: string): boolean {
     ) ||
     path === "/pending" ||
     path === "/login" ||
-    path === "/signup"
+    path === "/signup" ||
+    path === "/mfa"
   );
+}
+
+/** Pages a user with a verified two-factor factor may only open on an aal2
+ *  session (after entering a code); everything else about them is unchanged. */
+export function needsTwoFactorStep(path: string): boolean {
+  return ["/dashboard", "/admin", "/agency"].some((p) => path === p || path.startsWith(p + "/"));
 }
 
 // Refreshes the Supabase auth session and guards the dashboard. When Supabase
@@ -68,7 +76,7 @@ export async function updateSession(request: NextRequest) {
   // Supabase is slow/unreachable we must NOT hang the middleware (that's what
   // 504 MIDDLEWARE_INVOCATION_TIMEOUT is). On timeout/error we treat the user
   // as unauthenticated and let the redirect logic below proceed normally.
-  let user: { id?: string } | null = null;
+  let user: { id?: string; factors?: { status?: unknown }[] | null } | null = null;
   try {
     const result = await Promise.race([
       supabase.auth.getUser(),
@@ -82,7 +90,7 @@ export async function updateSession(request: NextRequest) {
     user = null; // fail-fast, never hang the edge
   }
 
-  if (!user && path.startsWith("/dashboard")) {
+  if (!user && (path.startsWith("/dashboard") || path === "/mfa")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
     redirect.searchParams.set("next", path);
@@ -116,6 +124,23 @@ export async function updateSession(request: NextRequest) {
     redirect.search = "";
     redirect.searchParams.set("suspended", "1");
     return NextResponse.redirect(redirect);
+  }
+
+  // Two-factor: a user who turned it on must enter a code (aal2) before the
+  // dashboard, admin or agency pages. getUser() above verified the session and
+  // returned its factors; the aal claim is read from that same session's token
+  // (a local read, no extra round-trip). Fails closed: no readable aal = aal1.
+  if (user && active && needsTwoFactorStep(path) && hasVerifiedFactor(user)) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (aalFromAccessToken(session?.access_token) !== "aal2") {
+      const redirect = request.nextUrl.clone();
+      redirect.pathname = "/mfa";
+      redirect.search = "";
+      redirect.searchParams.set("next", path + request.nextUrl.search);
+      return NextResponse.redirect(redirect);
+    }
   }
 
   // Already signed in (and active)? Skip the auth pages.

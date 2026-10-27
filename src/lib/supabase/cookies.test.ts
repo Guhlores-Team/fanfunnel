@@ -25,6 +25,8 @@ const NEEDS_SESSION_COOKIE = [
   "src/components/LoginForm.tsx", // signInWithPassword / signUp write the cookie
   "src/components/dashboard/InboxPanel.tsx", // auth.getUser + Realtime channel
   "src/app/forgot-password/page.tsx", // resetPasswordForEmail
+  "src/components/auth/totp.tsx", // mfa.enroll / challengeAndVerify upgrade the session to aal2
+  "src/components/dashboard/PrivacySecurityCards.tsx", // mfa.listFactors / AAL / refresh after removal
   "src/app/reset-password/page.tsx", // getSession / updateUser on the recovery link
 ];
 
@@ -121,7 +123,8 @@ passed++;
 // Each listed module really does call supabase.auth.* (otherwise it may not
 // need the cookie at all and the list is stale).
 for (const path of NEEDS_SESSION_COOKIE) {
-  assert.match(read(join(ROOT, path)), /\.auth\.\w+\(/, `${path} no longer calls supabase.auth.* — is it still on the list for a reason?`);
+  // supabase.auth.mfa.* (two-factor) counts: it reads and upgrades the session too.
+  assert.match(read(join(ROOT, path)), /\.auth\.(?:mfa\.)?\w+\(/, `${path} no longer calls supabase.auth.* — is it still on the list for a reason?`);
   passed++;
 }
 
