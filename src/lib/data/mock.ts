@@ -5,6 +5,8 @@ import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicWheelConfig, type R
 import { storedWeight } from "@/lib/games/wheel/weights";
 import { toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
+import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
+import type { FanAppInfo } from "@/lib/pwa/manifest";
 import type {
   AdminAccount,
   AdminOverview,
@@ -2837,4 +2839,36 @@ export function mockCreateAccount(email: string, displayName: string) {
   };
   store.accounts.push(acc);
   return structuredClone(acc);
+}
+
+// --- RM-4: home-screen install (per-link manifest + the creator's icon choice) --
+
+// Kept outside Store so this feature's demo state stays self-contained; pinned
+// to globalThis like the store so pages and route handlers share it.
+const gPwa = globalThis as unknown as { __ffPwaIconMode?: PwaIconMode };
+
+export function mockGetMyPwaIconMode(): PwaIconMode {
+  return gPwa.__ffPwaIconMode ?? DEFAULT_PWA_ICON_MODE;
+}
+
+export function mockSetMyPwaIconMode(mode: PwaIconMode): { ok: true } {
+  gPwa.__ffPwaIconMode = mode;
+  return { ok: true };
+}
+
+/** What a fan link's manifest/icons may show. Parity with mockGetFanPass: an
+ *  unknown or paused link gets nothing. The demo creator has no avatar. */
+export function mockGetFanAppInfo(token: string): FanAppInfo | null {
+  const fan = fanForToken(token);
+  if (!fan || fan.selfExcludedAt) return null;
+  ensurePasses(fan);
+  const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
+  const wheelId = pass?.wheelId ?? mockResolveWheelId({ campaignId: campaignForFan(fan) });
+  const wheel = store.wheels.get(wheelId) ?? activeWheel();
+  return {
+    creatorTitle: CREATOR_TITLE,
+    brandColor: wheel.brandColor ?? "#ec4899",
+    iconMode: mockGetMyPwaIconMode(),
+    avatarUrl: null,
+  };
 }

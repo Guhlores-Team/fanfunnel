@@ -1,5 +1,8 @@
+import { cache } from "react";
+import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
-import { getFanPass } from "@/lib/data";
+import { getFanAppInfo, getFanPass } from "@/lib/data";
+import { fanAppName, fanAppPaths, iconVersion } from "@/lib/pwa/manifest";
 import SpinClient from "@/components/SpinClient";
 import SafetyMenu from "@/components/fan/SafetyMenu";
 import { LinkPauseProvider } from "@/components/fan/LinkPauseProvider";
@@ -7,6 +10,38 @@ import { brandVars } from "@/lib/theme";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
 export const dynamic = "force-dynamic";
+
+// RM-4: this page links ITS OWN manifest (installs this fan's link, not the
+// dashboard app) and is never indexed. One read shared by both exports below.
+const appInfo = cache(getFanAppInfo);
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}): Promise<Metadata> {
+  const { token } = await params;
+  const robots = { index: false, follow: false };
+  const info = await appInfo(token);
+  // Unknown or ended link: no install surface at all (the page 404s).
+  if (!info) return { robots, manifest: null };
+  const paths = fanAppPaths(token);
+  return {
+    robots,
+    manifest: paths.manifest,
+    icons: { apple: `${paths.icon("180")}?v=${iconVersion(info)}` },
+    appleWebApp: { capable: true, title: fanAppName(info), statusBarStyle: "black" },
+  };
+}
+
+export async function generateViewport({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}): Promise<Viewport> {
+  const info = await appInfo((await params).token);
+  return info ? { themeColor: info.brandColor } : {};
+}
 
 export default async function SpinPage({
   params,
