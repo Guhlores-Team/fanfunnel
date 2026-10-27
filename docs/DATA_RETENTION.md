@@ -13,9 +13,21 @@ file disagree.
 | In-app notices to a creator (for example "a fan deleted their data") | `creator_notices` | **90 days** | older than the period |
 | Hashes of fan links that stopped working (so the fan sees "this creator has left" / "your data was deleted" rather than a bare 404) | `link_tombstones` | **180 days** | older than the period; after that the link is a plain 404 |
 | Error reports an admin marked resolved | `app_errors` | **90 days** after `resolved_at` | resolved and older than the period; unresolved reports are never auto-deleted |
+| Agency invites that were declined or revoked (they hold the invited email address) | `org_invites` | **90 days** after the invite was sent | declined or revoked and older than the period; pending and accepted invites are kept |
 
 `app_errors` arrives with migration 0053. Until that table exists the cleanup
 skips it and reports `app_errors: null`; nothing fails.
+
+### Nothing else to clean up
+
+- **Password-reset links** are issued and expired by Supabase Auth itself
+  (the "email OTP expiry" setting in Supabase → Authentication). The app stores
+  no reset tokens of its own.
+- **Rate-limit counters** live only in server memory (or the shared limiter
+  store, which expires each key with its window). Nothing is written to the
+  database.
+- **Error-alert throttling rows** (`app_error_alerts`, migration 0053) are
+  pruned after one day by the error-reporting function itself.
 
 ### How it runs
 

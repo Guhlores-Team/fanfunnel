@@ -61,13 +61,15 @@ async function main() {
       rpcCalls[0].args.p_audit_days === RETENTION_DAYS.adminAuditLog &&
       rpcCalls[0].args.p_notice_days === RETENTION_DAYS.creatorNotices &&
       rpcCalls[0].args.p_tombstone_days === RETENTION_DAYS.linkTombstones &&
-      rpcCalls[0].args.p_app_error_days === RETENTION_DAYS.resolvedAppErrors
+      rpcCalls[0].args.p_app_error_days === RETENTION_DAYS.resolvedAppErrors &&
+      rpcCalls[0].args.p_closed_invite_days === RETENTION_DAYS.closedAgencyInvites
   );
   check("a run that deleted nothing logs nothing", audits.length === 0);
 
-  deleted = { admin_audit_log: 3, creator_notices: 0, link_tombstones: 2, app_errors: null };
+  deleted = { admin_audit_log: 3, creator_notices: 0, link_tombstones: 2, org_invites: 4, app_errors: null };
   res = await call(`Bearer ${SECRET}`);
   check("a run that deleted rows is logged with counts", audits.length === 1 && audits[0].action === "retention.cleanup" && (audits[0].details as { adminAuditLog?: number }).adminAuditLog === 3);
+  check("closed agency invites are counted", (audits[0].details as { closedAgencyInvites?: number }).closedAgencyInvites === 4);
   check("app_errors before 0053 is reported as skipped (null)", (audits[0].details as { appErrors?: unknown }).appErrors === null);
 
   console.log(`retention cron route: ${passed} checks passed`);

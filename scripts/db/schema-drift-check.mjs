@@ -371,6 +371,7 @@ const PS = {
   PASS: "00000000-0000-4000-8000-000000005402",
   SPIN: "00000000-0000-4000-8000-000000005403",
   RED: "00000000-0000-4000-8000-000000005404",
+  ORG: "00000000-0000-4000-8000-000000005405",
 };
 const PS_SETUP = `
   insert into auth.users (id, email) values
@@ -426,7 +427,7 @@ function probePrivacy(db) {
   expectError("anon reads tombstones", `set local role anon; select count(*) from public.link_tombstones;`, denied);
   for (const [who, role] of [["anon", "set local role anon;"], ["authenticated", asJwt(PS.ADM, "aal2")]]) {
     expectError(`${who} runs reserve_self_account_deletion`, `${role} select public.reserve_self_account_deletion('${PS.ADM}');`, /permission denied for function reserve_self_account_deletion/);
-    expectError(`${who} runs run_retention_cleanup`, `${role} select public.run_retention_cleanup(365, 90, 365, 90);`, /permission denied for function run_retention_cleanup/);
+    expectError(`${who} runs run_retention_cleanup`, `${role} select public.run_retention_cleanup(365, 90, 365, 90, 90);`, /permission denied for function run_retention_cleanup/);
   }
   expectError("an audit entry is rewritten (even by the owner)", `update public.admin_audit_log set action = 'x.rewritten';`, /append-only/);
 
@@ -447,24 +448,32 @@ function probePrivacy(db) {
     insert into public.admin_audit_log (action, created_at) values ('probe.old', now() - interval '400 days');
     insert into public.creator_notices (creator_id, kind, created_at) values ('${PS.A}', 'fan_deleted_data', now() - interval '100 days');
     insert into public.link_tombstones (token_hash, reason, created_at) values (repeat('b', 64), 'fan_deleted', now() - interval '400 days');
+    insert into public.orgs (id, name, owner_id) values ('${PS.ORG}', 'probe org', '${PS.B}');
+    insert into public.org_invites (org_id, email, status, created_at) values
+      ('${PS.ORG}', 'old-declined@example.test', 'declined', now() - interval '100 days'),
+      ('${PS.ORG}', 'old-revoked@example.test', 'revoked', now() - interval '100 days'),
+      ('${PS.ORG}', 'old-pending@example.test', 'pending', now() - interval '100 days'),
+      ('${PS.ORG}', 'new-declined@example.test', 'declined', now() - interval '5 days');
     set local role service_role;
-    select 'retention:' || public.run_retention_cleanup(365, 90, 365, 90)::text;
+    select 'retention:' || public.run_retention_cleanup(365, 90, 365, 90, 90)::text;
     reset role;
     select 'left:' || (select count(*) from public.admin_audit_log) || ',' || (select count(*) from public.creator_notices) || ',' || (select count(*) from public.link_tombstones);
+    select 'invites-left:' || string_agg(email, ',' order by email) from public.org_invites where org_id = '${PS.ORG}';
   `, [
     "self-last:last_admin", "self-two:ok", "self-creator:ok", "adm-role:creator",
     "spin-kept:null,null", "redemption-kept:1",
-    `retention:{"app_errors": null, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1}`,
+    `retention:{"app_errors": null, "org_invites": 2, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1}`,
     "left:1,2,1",
+    "invites-left:new-declined@example.test,old-pending@example.test",
   ]);
-  expectError("retention with a 0-day period", `set local role service_role; select public.run_retention_cleanup(0, 90, 365, 90);`, /at least 1 day/);
+  expectError("retention with a 0-day period", `set local role service_role; select public.run_retention_cleanup(0, 90, 365, 90, 90);`, /at least 1 day/);
 
   if (bad.length) {
     failures++;
     console.log(`FAIL  ${db}: 0054 privacy & safety probe`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: 0054 audit log admin+aal2 read-only, notices own-account, tombstones + server-only fns locked, last-admin self-close guard, fan delete keeps anonymized spins, retention by period`);
+    console.log(`PASS  ${db}: 0054 audit log admin+aal2 read-only, notices own-account, tombstones + server-only fns locked, last-admin self-close guard, fan delete keeps anonymized spins, retention by period (closed agency invites too)`);
   }
 }
 

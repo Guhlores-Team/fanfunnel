@@ -80,6 +80,9 @@ export interface CreatorDataExport {
   sections: Record<string, Record<string, unknown>[]>;
   /** Sections that hit the row cap (the export is partial for those). */
   truncated: string[];
+  /** Sections that couldn't be read this time (the file is missing them; try
+   *  the download again). Empty when the export is complete. */
+  failed: string[];
 }
 
 export const FAN_EXPORT_ABOUT =

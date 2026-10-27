@@ -202,6 +202,11 @@ async function main() {
     else check(`${s.table} read filtered to creator A`, Object.values(s.filters).some((f) => f.value === CA));
   }
   check("the creator export never builds a service client", !serviceClientUsedBySession);
+  check("a complete export lists no failed sections", Array.isArray(cexp!.failed) && cexp!.failed.length === 0);
+  session.failWhen = (s) => (s.table === "messages" && s.op === "select" ? "boom" : null);
+  const partial = await exportCreatorData();
+  session.failWhen = null;
+  check("a section that can't be read is named in failed, never silently empty", partial!.failed.includes("messages") && partial!.failed.length === 1);
   signedIn = false;
   check("signed out → no export", (await exportCreatorData()) === null);
 

@@ -22,6 +22,7 @@ const TABLE: Record<keyof typeof RETENTION_DAYS, string> = {
   creatorNotices: "creator_notices",
   linkTombstones: "link_tombstones",
   resolvedAppErrors: "app_errors",
+  closedAgencyInvites: "org_invites",
 };
 
 for (const [key, days] of Object.entries(RETENTION_DAYS) as [keyof typeof RETENTION_DAYS, number][]) {

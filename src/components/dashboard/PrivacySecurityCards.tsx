@@ -291,7 +291,17 @@ export function DataExportCard() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast("Your data is downloading", { tone: "success" });
+      let failed: unknown = [];
+      try {
+        failed = (JSON.parse(await blob.text()) as { failed?: unknown }).failed ?? [];
+      } catch {
+        // Not parseable here; the file itself still downloaded.
+      }
+      if (Array.isArray(failed) && failed.length > 0) {
+        toast(`Downloaded, but some parts couldn't be read (${failed.join(", ")}). Try again in a minute for a complete file.`, { tone: "error" });
+      } else {
+        toast("Your data is downloading", { tone: "success" });
+      }
     } catch {
       toast("Couldn't prepare your download. Try again.", { tone: "error" });
     } finally {

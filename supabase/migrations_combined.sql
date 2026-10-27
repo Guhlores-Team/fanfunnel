@@ -2544,13 +2544,16 @@ alter table public.spins add constraint spins_fan_pass_id_fkey
 -- 8. Daily retention ---------------------------------------------------------
 -- Periods come from the caller (src/lib/privacy/retention.ts, documented in
 -- docs/DATA_RETENTION.md). app_errors arrives with migration 0053; until that
--- table exists this step is skipped. Fans, spins and redemptions are business
+-- table exists this step is skipped. Agency invites that were declined or
+-- revoked hold an email address and nothing else of use, so they go too;
+-- pending and accepted invites stay. Fans, spins and redemptions are business
 -- records and are never touched here.
 create or replace function public.run_retention_cleanup(
   p_audit_days integer,
   p_notice_days integer,
   p_tombstone_days integer,
-  p_app_error_days integer
+  p_app_error_days integer,
+  p_closed_invite_days integer
 )
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
@@ -2558,11 +2561,13 @@ declare
   v_notices integer := 0;
   v_tombstones integer := 0;
   v_app_errors integer := 0;
+  v_invites integer := 0;
   v_has_app_errors boolean := to_regclass('public.app_errors') is not null;
 begin
   if p_audit_days is null or p_notice_days is null or p_tombstone_days is null
-     or p_app_error_days is null
-     or least(p_audit_days, p_notice_days, p_tombstone_days, p_app_error_days) < 1 then
+     or p_app_error_days is null or p_closed_invite_days is null
+     or least(p_audit_days, p_notice_days, p_tombstone_days, p_app_error_days,
+              p_closed_invite_days) < 1 then
     raise exception 'retention periods must be at least 1 day' using errcode = '22023';
   end if;
 
@@ -2578,6 +2583,11 @@ begin
    where created_at < now() - make_interval(days => p_tombstone_days);
   get diagnostics v_tombstones = row_count;
 
+  delete from public.org_invites
+   where status in ('declined', 'revoked')
+     and created_at < now() - make_interval(days => p_closed_invite_days);
+  get diagnostics v_invites = row_count;
+
   if v_has_app_errors then
     execute 'delete from public.app_errors
               where resolved and resolved_at is not null
@@ -2590,9 +2600,10 @@ begin
     'admin_audit_log', v_audit,
     'creator_notices', v_notices,
     'link_tombstones', v_tombstones,
+    'org_invites', v_invites,
     'app_errors', case when v_has_app_errors then v_app_errors else null end
   );
 end;
 $$;
-revoke execute on function public.run_retention_cleanup(integer, integer, integer, integer) from public, anon, authenticated;
-grant execute on function public.run_retention_cleanup(integer, integer, integer, integer) to service_role;
+revoke execute on function public.run_retention_cleanup(integer, integer, integer, integer, integer) from public, anon, authenticated;
+grant execute on function public.run_retention_cleanup(integer, integer, integer, integer, integer) to service_role;

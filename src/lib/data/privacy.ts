@@ -402,7 +402,7 @@ export async function exportCreatorData(): Promise<CreatorDataExport | null> {
   if (!user) return null;
   const uid = user.id;
 
-  const { data: profile } = await sb.from("profiles").select("*").eq("id", uid).maybeSingle();
+  const { data: profile, error: profileErr } = await sb.from("profiles").select("*").eq("id", uid).maybeSingle();
   const sections: Record<string, Record<string, unknown>[]> = {};
   const truncated: string[] = [];
   const failed: string[] = [];
@@ -432,7 +432,11 @@ export async function exportCreatorData(): Promise<CreatorDataExport | null> {
   const wheelIds = (sections.wheels ?? []).map((w) => String(w.id));
   const prizes: Record<string, unknown>[] = [];
   for (let i = 0; i < wheelIds.length; i += 100) {
-    const { data } = await sb.from("prizes").select("*").in("wheel_id", wheelIds.slice(i, i + 100));
+    const { data, error } = await sb.from("prizes").select("*").in("wheel_id", wheelIds.slice(i, i + 100));
+    if (error) {
+      failed.push("prizes");
+      break;
+    }
     prizes.push(...((data ?? []) as Record<string, unknown>[]));
   }
   sections.prizes = prizes;
@@ -451,6 +455,8 @@ export async function exportCreatorData(): Promise<CreatorDataExport | null> {
     link_ends_with: maskToken(typeof token === "string" ? token : ""),
   }));
   if (links.truncated) truncated.push("fan_links");
+  if (links.failed) failed.push("fan_links");
+  if (profileErr) failed.push("account");
 
   if (failed.length > 0) console.error("exportCreatorData: sections failed", failed);
 
@@ -474,5 +480,6 @@ export async function exportCreatorData(): Promise<CreatorDataExport | null> {
     },
     sections,
     truncated,
+    failed,
   };
 }

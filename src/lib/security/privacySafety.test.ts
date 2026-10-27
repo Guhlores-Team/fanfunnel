@@ -59,12 +59,13 @@ check("is_admin(): requires the aal2 claim", /auth\.jwt\(\) ->> 'aal'/.test(isAd
 check("is_admin(): never reads metadata", !/metadata/.test(isAdmin));
 
 // --- server-only functions --------------------------------------------------
-for (const fn of ["reserve_self_account_deletion(uuid)", "run_retention_cleanup(integer, integer, integer, integer)"]) {
+for (const fn of ["reserve_self_account_deletion(uuid)", "run_retention_cleanup(integer, integer, integer, integer, integer)"]) {
   const esc = fn.replace(/[()]/g, "\\$&");
   check(`${fn}: revoked from anon/authenticated`, new RegExp(`revoke execute on function public\\.${esc} from public, anon, authenticated`).test(sql));
   check(`${fn}: no grant to a client role`, !new RegExp(`grant execute on function public\\.${esc} to [a-z_, ]*\\b(anon|authenticated)\\b`).test(sql));
 }
 check("retention never touches business records", !/delete from public\.(fans|spins|redemptions|fan_passes|grants|messages)\b/.test(sql));
+check("retention deletes only declined/revoked agency invites", /delete from public\.org_invites\s+where status in \('declined', 'revoked'\)/.test(sql) && (sql.match(/delete from public\.org_invites/g) ?? []).length === 1);
 check("fan delete keeps spins (fan_pass_id ON DELETE SET NULL)", /spins_fan_pass_id_fkey[\s\S]*?on delete set null/.test(sql));
 
 // --- every mutating admin route writes the activity log ---------------------

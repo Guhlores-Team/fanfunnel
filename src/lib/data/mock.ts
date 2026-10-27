@@ -3197,5 +3197,6 @@ export function mockExportCreatorData(): CreatorDataExport {
       creator_notices: rows(privacy.notices),
     },
     truncated: [],
+    failed: [],
   };
 }

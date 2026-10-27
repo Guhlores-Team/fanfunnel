@@ -225,13 +225,29 @@ async function main() {
     check((notices.data ?? []).every((n) => n.creator_id === A.id), "A reads only its own creator_notices");
     const selfClose = await a.rpc("reserve_self_account_deletion", { p_user: B.id });
     check(!!selfClose.error, "A cannot execute reserve_self_account_deletion");
-    const sweep = await a.rpc("run_retention_cleanup", { p_audit_days: 1, p_notice_days: 1, p_tombstone_days: 1, p_app_error_days: 1 });
+    const sweep = await a.rpc("run_retention_cleanup", { p_audit_days: 1, p_notice_days: 1, p_tombstone_days: 1, p_app_error_days: 1, p_closed_invite_days: 1 });
     check(!!sweep.error, "A cannot execute run_retention_cleanup");
-    const anonSweep = await anonClient.rpc("run_retention_cleanup", { p_audit_days: 1, p_notice_days: 1, p_tombstone_days: 1, p_app_error_days: 1 });
+    const anonSweep = await anonClient.rpc("run_retention_cleanup", { p_audit_days: 1, p_notice_days: 1, p_tombstone_days: 1, p_app_error_days: 1, p_closed_invite_days: 1 });
     check(!!anonSweep.error, "anon cannot execute run_retention_cleanup");
     // A password-only session is aal1, so is_admin() is false even for an admin.
     const aIsAdmin = await a.rpc("is_admin");
     check(aIsAdmin.data !== true, "A's is_admin() is false");
+
+    // An ADMIN on a password-only (aal1) session gets no admin power either:
+    // make A an admin server-side, then use A's existing aal1 session.
+    must(await admin.from("profiles").update({ role: "admin" }).eq("id", A.id).select("id").single(), "promote A for the aal1 check");
+    try {
+      const aal1IsAdmin = await a.rpc("is_admin");
+      check(aal1IsAdmin.data === false, `an aal1 admin's is_admin() is false (got ${aal1IsAdmin.data})`);
+      const aal1Log = await a.from("admin_audit_log").select("id").limit(5);
+      check((aal1Log.data?.length ?? 0) === 0, `an aal1 admin reads 0 activity-log rows (got ${aal1Log.data?.length ?? 0})`);
+      const aal1Cross = await a.from("fans").select("id").eq("creator_id", B.id);
+      check((aal1Cross.data?.length ?? 0) === 0, `an aal1 admin cannot read another creator's fans (got ${aal1Cross.data?.length ?? 0})`);
+      const aal1Promote = await a.from("profiles").update({ is_active: true }).eq("id", B.id).select("id");
+      check((aal1Promote.data?.length ?? 0) === 0, "an aal1 admin cannot UPDATE another profile");
+    } finally {
+      await admin.from("profiles").update({ role: "creator" }).eq("id", A.id);
+    }
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

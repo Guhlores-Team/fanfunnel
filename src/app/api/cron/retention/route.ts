@@ -30,6 +30,7 @@ export async function GET(req: Request) {
     p_notice_days: RETENTION_DAYS.creatorNotices,
     p_tombstone_days: RETENTION_DAYS.linkTombstones,
     p_app_error_days: RETENTION_DAYS.resolvedAppErrors,
+    p_closed_invite_days: RETENTION_DAYS.closedAgencyInvites,
   });
   if (error) {
     console.error("retention cleanup failed", error.message);
@@ -46,6 +47,7 @@ export async function GET(req: Request) {
         adminAuditLog: Number(deleted.admin_audit_log) || 0,
         creatorNotices: Number(deleted.creator_notices) || 0,
         linkTombstones: Number(deleted.link_tombstones) || 0,
+        closedAgencyInvites: Number(deleted.org_invites) || 0,
         appErrors: deleted.app_errors === null ? null : Number(deleted.app_errors) || 0,
       },
     });

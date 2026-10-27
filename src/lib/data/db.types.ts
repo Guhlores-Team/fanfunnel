@@ -1473,6 +1473,7 @@ export type Database = {
         Args: {
           p_app_error_days: number
           p_audit_days: number
+          p_closed_invite_days: number
           p_notice_days: number
           p_tombstone_days: number
         }
