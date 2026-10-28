@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { mock } from "node:test";
+import type { AuditInput } from "@/lib/data/audit";
 
 // Admin › Errors API. The gate is the real requireAdminRoute → checkAdmin →
 // is_admin() path driven by a fake cookie client: a signed-out caller and a
@@ -13,14 +14,23 @@ function check(label: string, cond: boolean) {
 
 let signedIn = true;
 let isAdmin = false;
+let aal: "aal1" | "aal2" = "aal2";
 const lists: unknown[] = [];
 const resolves: unknown[][] = [];
+const audits: AuditInput[] = [];
+
+mock.module("@/lib/data/audit", {
+  namedExports: { recordAudit: async (entry: AuditInput) => { audits.push(entry); } },
+});
 
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => true,
     createClient: async () => ({
-      auth: { getUser: async () => ({ data: { user: signedIn ? { id: "user-1" } : null }, error: null }) },
+      auth: {
+        getUser: async () => ({ data: { user: signedIn ? { id: "user-1" } : null }, error: null }),
+        getSession: async () => ({ data: { session: signedIn ? { access_token: `header.${Buffer.from(JSON.stringify({ aal })).toString("base64url")}.signature` } : null } }),
+      },
       rpc: async (name: string) => {
         if (name !== "is_admin") throw new Error(`unexpected rpc ${name}`);
         return { data: isAdmin, error: null };
@@ -84,6 +94,17 @@ async function main() {
   check("creator: reopen → 403", (await post({ id: ID, resolved: false })).status === 403);
   check("non-admins never reached the data layer", lists.length === 0 && resolves.length === 0);
 
+  // A password-only session must not reach error data or record an action,
+  // even if a pre-0054 database still answers true to is_admin().
+  isAdmin = true;
+  aal = "aal1";
+  const needsMfa = await get();
+  check("password-only admin: GET requires MFA", needsMfa.status === 403 && needsMfa.data.error === "mfa_required");
+  check("password-only admin: resolve refused", (await post({ id: ID, resolved: true })).status === 403);
+  check("password-only admin: reopen refused", (await post({ id: ID, resolved: false })).status === 403);
+  check("refused callers never read, write or audit", lists.length === 0 && resolves.length === 0 && audits.length === 0);
+  aal = "aal2";
+
   // --- admin ----------------------------------------------------------------------------
   isAdmin = true;
   {
@@ -98,14 +119,18 @@ async function main() {
 
   check("admin: resolve → 200", (await post({ id: ID, resolved: true })).status === 200);
   check("admin: resolve called with (id, true)", JSON.stringify(resolves.at(-1)) === JSON.stringify([ID, true]));
+  check("admin: resolve records a PII-free activity entry", JSON.stringify(audits.at(-1)) === JSON.stringify({ actorId: "user-1", action: "error.resolve", targetType: "error", targetId: ID, details: { resolved: true } }));
   check("admin: resolved defaults to true", (await post({ id: ID })).status === 200 && resolves.at(-1)?.[1] === true);
   check("admin: reopen → 200", (await post({ id: ID, resolved: false })).status === 200 && resolves.at(-1)?.[1] === false);
+  check("admin: reopen records the action", audits.at(-1)?.action === "error.reopen" && audits.at(-1)?.details?.resolved === false);
   const before = resolves.length;
+  const auditBefore = audits.length;
   check("admin: non-uuid id → 400", (await post({ id: "1; drop table" })).status === 400);
   check("admin: non-boolean resolved → 400", (await post({ id: ID, resolved: "yes" })).status === 400);
   check("admin: malformed JSON → 400", (await post("{")).status === 400);
   check("bad input never reached the data layer", resolves.length === before);
   check("admin: unknown id → 404", (await post({ id: "00000000-0000-4000-8000-00000000dead" })).status === 404);
+  check("bad input and unknown errors do not create audit entries", audits.length === auditBefore);
 
   console.log(`api/admin/errors route: ${passed} checks passed`);
 }

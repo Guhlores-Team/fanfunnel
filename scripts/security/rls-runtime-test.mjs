@@ -411,6 +411,45 @@ async function main() {
     check((aAlerts.data?.length ?? 0) === 0, "creator A reads 0 app_error_alerts");
     const { data: errAfter } = await admin.from("app_errors").select("resolved, count").eq("id", errId).maybeSingle();
     check(errAfter?.resolved === false && errAfter?.count === 1, `the app_error is untouched (resolved=${errAfter?.resolved}, count=${errAfter?.count})`);
+    // 0054: the activity log and link tombstones are admin-only, the log is
+    // append-only through the server, and the self-close / retention functions
+    // are server-only. A creator (and anon) get nothing.
+    for (const table of ["admin_audit_log", "link_tombstones"]) {
+      const r = await a.from(table).select("*").limit(5);
+      check((r.data?.length ?? 0) === 0, `A reads 0 rows of ${table} (got ${r.data?.length ?? 0})`);
+    }
+    const forgedAudit = await a
+      .from("admin_audit_log")
+      .insert({ actor_id: A.id, action: "account.delete", details: {} })
+      .select("id");
+    check(!!forgedAudit.error && (forgedAudit.data?.length ?? 0) === 0, "A cannot write the activity log");
+    const notices = await a.from("creator_notices").select("creator_id");
+    check((notices.data ?? []).every((n) => n.creator_id === A.id), "A reads only its own creator_notices");
+    const selfClose = await a.rpc("reserve_self_account_deletion", { p_user: B.id });
+    check(!!selfClose.error, "A cannot execute reserve_self_account_deletion");
+    const sweep = await a.rpc("run_retention_cleanup", { p_audit_days: 1, p_notice_days: 1, p_tombstone_days: 1, p_app_error_days: 1, p_closed_invite_days: 1 });
+    check(!!sweep.error, "A cannot execute run_retention_cleanup");
+    const anonSweep = await anonClient.rpc("run_retention_cleanup", { p_audit_days: 1, p_notice_days: 1, p_tombstone_days: 1, p_app_error_days: 1, p_closed_invite_days: 1 });
+    check(!!anonSweep.error, "anon cannot execute run_retention_cleanup");
+    // A password-only session is aal1, so is_admin() is false even for an admin.
+    const aIsAdmin = await a.rpc("is_admin");
+    check(aIsAdmin.data !== true, "A's is_admin() is false");
+
+    // An ADMIN on a password-only (aal1) session gets no admin power either:
+    // make A an admin server-side, then use A's existing aal1 session.
+    must(await admin.from("profiles").update({ role: "admin" }).eq("id", A.id).select("id").single(), "promote A for the aal1 check");
+    try {
+      const aal1IsAdmin = await a.rpc("is_admin");
+      check(aal1IsAdmin.data === false, `an aal1 admin's is_admin() is false (got ${aal1IsAdmin.data})`);
+      const aal1Log = await a.from("admin_audit_log").select("id").limit(5);
+      check((aal1Log.data?.length ?? 0) === 0, `an aal1 admin reads 0 activity-log rows (got ${aal1Log.data?.length ?? 0})`);
+      const aal1Cross = await a.from("fans").select("id").eq("creator_id", B.id);
+      check((aal1Cross.data?.length ?? 0) === 0, `an aal1 admin cannot read another creator's fans (got ${aal1Cross.data?.length ?? 0})`);
+      const aal1Promote = await a.from("profiles").update({ is_active: true }).eq("id", B.id).select("id");
+      check((aal1Promote.data?.length ?? 0) === 0, "an aal1 admin cannot UPDATE another profile");
+    } finally {
+      await admin.from("profiles").update({ role: "creator" }).eq("id", A.id);
+    }
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

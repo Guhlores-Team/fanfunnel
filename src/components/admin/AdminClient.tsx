@@ -6,9 +6,10 @@ import { MIN_PASSWORD_LENGTH } from "@/lib/api/password";
 import { useToast } from "@/components/ui/Toast";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 import Modal from "@/components/ui/Modal";
-import { deleteErrorMessage, inviteErrorMessage } from "./adminErrors";
+import { deleteErrorMessage, inviteErrorMessage, mfaResetErrorMessage } from "./adminErrors";
 import { P, Glyph, SectionTitle, raised, recessed, btnGhost, btnDanger, pill } from "./adminUi";
 import AdminErrors from "./AdminErrors";
+import AdminActivity from "./AdminActivity";
 
 interface PendingApp {
   id: string;
@@ -45,7 +46,9 @@ function initialsOf(name: string, email: string) {
 export default function AdminClient() {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
-  const [forbidden, setForbidden] = useState(false);
+  // "mfa": an admin whose session hasn't done two-factor (the server said
+  // mfa_required); "other": not an active admin / signed out.
+  const [forbidden, setForbidden] = useState<false | "mfa" | "other">(false);
   const [showInvite, setShowInvite] = useState(false);
   const [apps, setApps] = useState<PendingApp[]>([]);
   // In-flight ids so action buttons disable while their request is pending
@@ -59,7 +62,8 @@ export default function AdminClient() {
       const res = await fetch("/api/admin", { cache: "no-store" });
       // 401 = session expired while the panel was open; 403 = not an active admin.
       if (res.status === 401 || res.status === 403) {
-        setForbidden(true);
+        const body = await res.json().catch(() => null);
+        setForbidden(body?.error === "mfa_required" ? "mfa" : "other");
         return;
       }
       if (res.ok) setData(await res.json());
@@ -139,6 +143,27 @@ export default function AdminClient() {
     }
   }
 
+  // Remove every two-factor app from an account (lost phone). The server
+  // re-checks admin + aal2, refuses the caller's own account, and logs it.
+  async function resetTwoFactor(id: string) {
+    const res = await fetch("/api/admin/account/mfa-reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      const d = await res.json().catch(() => ({}));
+      toast(
+        d.removed ? "Two-factor reset. They'll set it up again at next sign-in." : "No two-factor apps to remove.",
+        { tone: "success" }
+      );
+      return true;
+    }
+    const err = (await res.json().catch(() => null))?.error as string | undefined;
+    toast(mfaResetErrorMessage(err), { tone: "error" });
+    return false;
+  }
+
   // Irreversible hard-delete. The server re-verifies admin, the typed email,
   // self-delete and last-admin guards; we only echo the email it confirmed.
   async function deleteAccount(id: string, email: string) {
@@ -157,6 +182,26 @@ export default function AdminClient() {
     const err = (await res.json().catch(() => null))?.error as string | undefined;
     toast(deleteErrorMessage(err), { tone: "error" });
     return false;
+  }
+
+  if (forbidden === "mfa") {
+    return (
+      <div className={`mx-auto max-w-md rounded-2xl px-6 py-8 text-center ${raised}`} role="alert">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-[13px] bg-[#f59e0b]/15 text-[#fcd34d]">
+          <Glyph d={P.shield} size={22} />
+        </span>
+        <h2 className="mt-4 text-xl font-bold tracking-[-0.02em] text-ink">Two-factor needed</h2>
+        <p className="mt-2 text-[13.5px] text-muted">
+          Admin tools need a two-factor sign-in. Set it up, or enter your code, to continue.
+        </p>
+        <a
+          href={"/mfa?reason=admin&next=" + encodeURIComponent("/dashboard?section=admin")}
+          className="btn-brand mt-5 inline-flex min-h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-bold"
+        >
+          Continue to two-factor
+        </a>
+      </div>
+    );
   }
 
   if (forbidden) {
@@ -309,6 +354,7 @@ export default function AdminClient() {
                   account={a}
                   onPatch={patchAccount}
                   onDelete={deleteAccount}
+                  onResetTwoFactor={resetTwoFactor}
                   busy={busyAccounts.has(a.id)}
                 />
               ))}
@@ -317,6 +363,7 @@ export default function AdminClient() {
         </section>
 
         <AdminErrors />
+        <AdminActivity />
       </div>
 
       {showInvite && (
@@ -336,6 +383,7 @@ function AccountRow({
   account,
   onPatch,
   onDelete,
+  onResetTwoFactor,
   busy,
 }: {
   account: AdminAccount;
@@ -344,8 +392,11 @@ function AccountRow({
     patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
   ) => void;
   onDelete: (id: string, email: string) => Promise<boolean>;
+  onResetTwoFactor: (id: string) => Promise<boolean>;
   busy: boolean;
 }) {
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [typedEmail, setTypedEmail] = useState("");
@@ -515,6 +566,44 @@ function AccountRow({
                 })}
               </div>
             </fieldset>
+          </div>
+
+          {/* Two-factor reset for a lost authenticator (no recovery codes exist). */}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span>Lost their authenticator app?</span>
+            {confirmingReset ? (
+              <>
+                <button
+                  type="button"
+                  disabled={resetting}
+                  onClick={async () => {
+                    setResetting(true);
+                    try {
+                      if (await onResetTwoFactor(account.id)) setConfirmingReset(false);
+                    } finally {
+                      setResetting(false);
+                    }
+                  }}
+                  className={btnDanger}
+                  aria-label={`Confirm two-factor reset for ${account.displayName}`}
+                >
+                  {resetting ? "Resetting…" : "Yes, remove their two-factor"}
+                </button>
+                <button type="button" disabled={resetting} onClick={() => setConfirmingReset(false)} className={btnGhost}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmingReset(true)}
+                className={btnGhost}
+                aria-label={`Reset two-factor for ${account.displayName}`}
+              >
+                Reset two-factor
+              </button>
+            )}
           </div>
 
           {/* Danger zone — irreversible hard-delete, kept distinct from Suspend.

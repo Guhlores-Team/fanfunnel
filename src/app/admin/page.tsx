@@ -13,6 +13,8 @@ export default async function AdminPage() {
   if (isSupabaseConfigured()) {
     const access = await checkAdmin(await createClient());
     if (access.status === "anonymous") redirect("/login?next=/admin");
+    // An admin whose session hasn't done two-factor: enrol or enter a code first.
+    if (access.status === "mfa_required") redirect("/mfa?reason=admin&next=/admin");
     // Not an ACTIVE admin (a suspended admin lands here too, never in the panel).
     if (access.status !== "admin") {
       // Not admin yet — offer the env-guarded one-time bootstrap instead of a

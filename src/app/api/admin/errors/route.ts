@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { listAppErrors, resolveAppError, type ErrorStatusFilter } from "@/lib/data/appErrors";
+import { recordAudit } from "@/lib/data/audit";
 import type { ErrorEnvironment } from "@/lib/monitoring/config";
 
 const STATUSES: readonly ErrorStatusFilter[] = ["open", "resolved"];
@@ -41,5 +42,12 @@ export async function POST(req: Request) {
   if ("error" in result) {
     return result.error === "not_found" ? errorResponse("not_found") : NextResponse.json({ error: result.error }, { status: 500 });
   }
+  await recordAudit({
+    actorId: admin.userId,
+    action: resolved ? "error.resolve" : "error.reopen",
+    targetType: "error",
+    targetId: id,
+    details: { resolved },
+  });
   return NextResponse.json({ ok: true });
 }

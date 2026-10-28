@@ -7,6 +7,7 @@ import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { checkAdmin } from "@/lib/auth/admin";
 import { getWheel, getMyApprovalStatus, getOnboardingDismissed } from "@/lib/data";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
+import AdminMfaBanner from "@/components/auth/AdminMfaBanner";
 
 // Creator/admin dashboard. With Supabase configured the middleware guards this
 // route and we resolve the signed-in user; otherwise it's an open demo.
@@ -21,7 +22,9 @@ export default async function DashboardPage({
   // an ACTIVE admin per is_admin() (via checkAdmin), or demo mode (no Supabase,
   // no accounts; the admin APIs serve the mock there too).
   let isAdmin = !isSupabaseConfigured();
+  let adminNeedsMfa = false;
   let email: string | null = null;
+  const params = await searchParams;
 
   if (isSupabaseConfigured()) {
     const sb = await createClient();
@@ -31,8 +34,16 @@ export default async function DashboardPage({
     if (user) {
       email = user.email ?? null;
       // The Admin section is server-gated on is_admin() (role AND is_active),
-      // the same predicate every /api/admin route re-checks (AGENTS.md rules 1-2).
-      isAdmin = (await checkAdmin(sb)).status === "admin";
+      // the same predicate every /api/admin route re-checks (AGENTS.md rules 1-2),
+      // on a two-factor (aal2) session.
+      const access = await checkAdmin(sb);
+      isAdmin = access.status === "admin";
+      adminNeedsMfa = access.status === "mfa_required";
+      // An admin heading for the Admin section without two-factor is sent to
+      // set it up (or enter a code) first; the rest of the dashboard stays open.
+      if (adminNeedsMfa && params.section === "admin") {
+        redirect("/mfa?reason=admin&next=" + encodeURIComponent("/dashboard?section=admin"));
+      }
     }
 
     // Gate: only approved creators (and admins) reach the dashboard. Pending /
@@ -41,10 +52,9 @@ export default async function DashboardPage({
     if (status !== "approved") redirect("/pending");
   }
 
-  const [wheelResult, onboardingDismissed, params] = await Promise.all([
+  const [wheelResult, onboardingDismissed] = await Promise.all([
     getWheel(),
     getOnboardingDismissed(),
-    searchParams,
   ]);
   const initialWheel = wheelResult ?? SAMPLE_WHEEL;
   // ?section= deep link (the /admin route redirects to ?section=admin).
@@ -55,6 +65,7 @@ export default async function DashboardPage({
       className="min-h-[100dvh] overflow-x-clip bg-base"
       style={brandVars(initialWheel.brandColor)}
     >
+      {adminNeedsMfa && <AdminMfaBanner />}
       <DashboardClient
         isAdmin={isAdmin}
         email={email}

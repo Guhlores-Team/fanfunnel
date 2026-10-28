@@ -8,7 +8,7 @@
 // when it happened after the creator last opened the bell. No server imports,
 // so the client can share the types.
 
-export type NotificationKind = "win" | "message" | "low_stock" | "out_of_spins";
+export type NotificationKind = "win" | "message" | "low_stock" | "out_of_spins" | "fan_deleted";
 
 /** Where an item takes the creator, through the dashboard's in-app navigation. */
 export interface NotificationTarget {
@@ -65,6 +65,9 @@ export interface NotificationSources {
   }[];
   /** Fans whose balance hit 0 on a recent spin (at = that spin). */
   outOfSpins: { fanId: string; fanName: string; at: string }[];
+  /** A fan used "Delete my data" (creator_notices, 0054). No fan PII: the fan
+   *  is gone, only how many of their spins stay (anonymized) in the stats. */
+  fanDeletions?: { id: string; spinsKept: number; at: string }[];
 }
 
 /** A limited prize is "low" at this many units left (0 = out of stock). */
@@ -171,6 +174,22 @@ export function buildNotificationFeed(
         target: { section: "fans", fanName: f.fanName },
       });
     }
+  }
+
+  // Always shown (no toggle): it changes the creator's fan list and they
+  // should know a fan exercised their right to erasure.
+  for (const d of src.fanDeletions ?? []) {
+    items.push({
+      id: `fandel:${d.id}`,
+      kind: "fan_deleted",
+      title: "A fan deleted their data",
+      body:
+        d.spinsKept > 0
+          ? `Their profile, links, chat and wishlist are gone. ${d.spinsKept} spin${d.spinsKept === 1 ? "" : "s"} stay in your stats without their name.`
+          : "Their profile, links, chat and wishlist are gone.",
+      at: d.at,
+      target: { section: "fans" },
+    });
   }
 
   const ranked = items

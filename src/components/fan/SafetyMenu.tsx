@@ -4,15 +4,21 @@ import { useState } from "react";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useLinkPause } from "./LinkPauseProvider";
 import { PAUSED_CONFIRMATION, pauseErrorMessage } from "./linkPause";
+import { FAN_DELETED_CONFIRMATION, FanDeleteFlow, downloadFanData } from "./FanDataControls";
 
 /**
  * A discreet safety menu on the fan page: report the creator (predatory /
- * rule-breaking) or pause your own link (self-exclusion). NOT a spend limit —
- * just a way out and a way to flag abuse.
+ * rule-breaking), pause your own link (self-exclusion), download your data or
+ * delete it. NOT a spend limit — a way out, a way to flag abuse, and the fan's
+ * privacy rights.
  */
 export default function SafetyMenu({ token }: { token: string }) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<null | "report" | "exclude">(null);
+  const [mode, setMode] = useState<null | "report" | "exclude" | "delete">(null);
+  // After "Delete my data" the link is dead: closing the dialog reloads the
+  // page, which then explains that the data was deleted.
+  const [deleted, setDeleted] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
   const [done, setDone] = useState<string | null>(null);
@@ -20,10 +26,23 @@ export default function SafetyMenu({ token }: { token: string }) {
   const { markPaused } = useLinkPause();
   // Inline failure on the pause confirm step so the fan can retry in place.
   const [pauseError, setPauseError] = useState<string | null>(null);
+  const close = () => {
+    setOpen(false);
+    if (deleted) window.location.reload();
+  };
   const panelRef = useFocusTrap<HTMLDivElement>({
     active: open,
-    onEscape: () => setOpen(false),
+    onEscape: close,
   });
+
+  const exportData = async () => {
+    setBusy(true);
+    setExportNote(null);
+    const r = await downloadFanData(token);
+    setBusy(false);
+    if ("error" in r) setExportNote(r.error);
+    else setDone("Your data is downloading. It's a JSON file you can open in any text editor.");
+  };
 
   const report = async () => {
     if (!reason.trim()) return;
@@ -73,6 +92,7 @@ export default function SafetyMenu({ token }: { token: string }) {
           setMode(null);
           setDone(null);
           setPauseError(null);
+          setExportNote(null);
         }}
         className="text-[11px] text-muted/60 underline-offset-4 transition hover:text-muted hover:underline"
       >
@@ -82,7 +102,7 @@ export default function SafetyMenu({ token }: { token: string }) {
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center"
-          onClick={() => setOpen(false)}
+          onClick={close}
         >
           <div
             ref={panelRef}
@@ -96,7 +116,7 @@ export default function SafetyMenu({ token }: { token: string }) {
               <div className="text-center">
                 <p role="status" className="text-sm text-ink">{done}</p>
                 <button
-                  onClick={() => setOpen(false)}
+                  onClick={close}
                   className="btn-brand mt-5 w-full rounded-xl py-2.5 text-sm font-bold"
                 >
                   Close
@@ -124,12 +144,46 @@ export default function SafetyMenu({ token }: { token: string }) {
                   </span>
                 </button>
                 <button
-                  onClick={() => setOpen(false)}
+                  onClick={exportData}
+                  disabled={busy}
+                  className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)] disabled:opacity-50"
+                >
+                  ⬇️ {busy ? "Preparing your data…" : "Download my data"}
+                  <span className="mt-0.5 block text-xs text-muted">
+                    A copy of everything stored about you here.
+                  </span>
+                </button>
+                <button
+                  onClick={() => setMode("delete")}
+                  className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[#ef4444]"
+                >
+                  🗑️ Delete my data
+                  <span className="mt-0.5 block text-xs text-muted">
+                    Erase your profile, links, chat and wishlist for good.
+                  </span>
+                </button>
+                {exportNote && (
+                  <p role="alert" className="mt-2 text-center text-xs text-amber-300">
+                    {exportNote}
+                  </p>
+                )}
+                <button
+                  onClick={close}
                   className="mt-4 w-full text-center text-xs text-muted hover:text-ink"
                 >
                   Cancel
                 </button>
               </>
+            ) : mode === "delete" ? (
+              <FanDeleteFlow
+                token={token}
+                onBack={() => setMode(null)}
+                onDeleted={() => {
+                  setDeleted(true);
+                  markPaused();
+                  setDone(FAN_DELETED_CONFIRMATION);
+                }}
+              />
             ) : mode === "report" ? (
               <>
                 <p className="text-sm font-bold text-ink">Report this creator</p>

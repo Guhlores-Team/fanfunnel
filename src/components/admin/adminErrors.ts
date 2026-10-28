@@ -13,6 +13,7 @@ export function inviteErrorMessage(err: unknown): string {
   const raw = typeof err === "string" ? err.trim() : "";
   const code = raw.toLowerCase();
   if (code === "unauthorized" || code === "forbidden") return "Admins only.";
+  if (code === "mfa_required") return "Sign in with your two-factor code first.";
   if (code === "rate_limited") return "Too many attempts — wait a moment and try again.";
   if (code === "bad_request" || code === "create_failed") return "Couldn't create account. Try again.";
   if (code === "email_taken") return "An account with that email already exists.";
@@ -61,5 +62,22 @@ export function claimErrorMessage(err: unknown): string {
       return "An admin already exists — ask them to grant you access.";
     default:
       return "Couldn't claim admin. Try again.";
+  }
+}
+
+/** `POST /api/admin/account/mfa-reset` — remove a user's two-factor apps. */
+export function mfaResetErrorMessage(err: unknown): string {
+  switch (err) {
+    case "cannot_reset_self":
+      return "Manage your own two-factor in Settings › Security.";
+    case "mfa_required":
+      return "Sign in with your two-factor code first.";
+    case "not_found":
+      return "That account no longer exists.";
+    case "unauthorized":
+    case "forbidden":
+      return "Admins only.";
+    default:
+      return "Couldn't reset two-factor. Try again.";
   }
 }
