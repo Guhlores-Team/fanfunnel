@@ -15,7 +15,12 @@ export type Database = {
   public: {
     Tables: {
       actor_request_cancellations: {
-        Row: { actor_id: string; created_at: string; id: string; kind: string }
+        Row: {
+          actor_id: string
+          created_at: string
+          id: string
+          kind: string
+        }
         Insert: {
           actor_id: string
           created_at?: string
