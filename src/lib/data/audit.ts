@@ -19,6 +19,8 @@ export type AuditAction =
   | "account.reactivate"
   | "account.features_change"
   | "account.mfa_reset"
+  | "account.media_remove"
+  | "account.storage_retry"
   | "account.self_close"
   | "admin.bootstrap"
   | "error.resolve"

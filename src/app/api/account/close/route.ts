@@ -54,17 +54,11 @@ export async function POST(req: Request) {
   const { data: profile } = await svc.from("profiles").select("role").eq("id", userId).maybeSingle();
   const wasAdmin = (profile as { role?: string } | null)?.role === "admin";
 
-  const { data: reserve, error: reserveErr } = await svc.rpc("reserve_self_account_deletion", {
-    p_user: userId,
-  });
-  if (reserveErr) return privateError("db_error", 500);
-  if (reserve === "last_admin") return privateError("last_admin", 409);
-  if (reserve !== "ok") return privateError("not_found", 404);
-
   const deleted = await deleteAccountAndTombstoneLinks(svc, userId, { wasAdmin });
-  if ("error" in deleted) return privateError(deleted.error, 500);
+  if ("error" in deleted) return privateError(deleted.error, deleted.error === "last_admin" ? 409 : deleted.error === "forbidden" ? 403 : deleted.error === "not_found" ? 404 : 500);
+  if ("pending" in deleted) return privateJson(deleted, 202);
 
-  await recordAudit({
+  if (!deleted.auditRecorded) await recordAudit({
     actorId: userId,
     action: "account.self_close",
     targetType: "profile",

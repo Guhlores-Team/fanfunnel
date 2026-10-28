@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { brandVars } from "@/lib/theme";
 import { useToast } from "@/components/ui/Toast";
 import { useClipboard } from "@/lib/hooks/useClipboard";
 import { Field } from "./ui";
 import HomeScreenIconCard from "./HomeScreenIconCard";
+import LookAndFeelCard from "./LookAndFeelCard";
+import ThemedProfilePreview from "./ThemedProfilePreview";
+import type { ThemePreviewValue } from "./lookAndFeel";
 import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecurityCards";
 import PushNotificationsCard from "./PushNotificationsCard";
 
@@ -765,6 +767,7 @@ function PublicPageSection({
   // Brand color drives the live preview (and the dashboard re-tint). Seeded from
   // the active wheel; saved to that wheel since /c/[slug] reads it from there.
   const [brandColor, setBrandColor] = useState("#ec4899");
+  const [look, setLook] = useState<ThemePreviewValue | null>(null);
   const [savedBrand, setSavedBrand] = useState("#ec4899");
   const [busy, setBusy] = useState(false);
   const [savingBrand, setSavingBrand] = useState(false);
@@ -947,6 +950,8 @@ function PublicPageSection({
             {brandColor !== savedBrand && <Unsaved />}
           </div>
         </Card>
+        <LookAndFeelCard displayName={displayName} brandColor={brandColor} onPreviewChange={setLook} />
+
         <HomeScreenIconCard brandColor={savedBrand} avatarUrl={savedProfile.avatarUrl} displayName={displayName} />
       </div>
 
@@ -955,87 +960,14 @@ function PublicPageSection({
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.05em] text-muted">
           Live preview
         </p>
-        <ProfilePreview
+        <ThemedProfilePreview
+          look={look}
           brandColor={brandColor}
           avatarUrl={avatarUrl}
           displayName={displayName || "Creator"}
           tagline={tagline}
           hasTipUrl={!!tipUrl.trim()}
         />
-      </div>
-    </div>
-  );
-}
-
-/**
- * A faithful, self-contained preview of the public /c/[slug] page. Mirrors that
- * page's structure (avatar/🎡 hero, title, tagline, CTA) and re-tints instantly
- * via brandVars as the creator edits — so they see the result before saving.
- */
-function ProfilePreview({
-  brandColor,
-  avatarUrl,
-  displayName,
-  tagline,
-  hasTipUrl,
-}: {
-  brandColor: string;
-  avatarUrl: string;
-  displayName: string;
-  tagline: string;
-  hasTipUrl: boolean;
-}) {
-  return (
-    <div
-      className="overflow-hidden rounded-2xl border border-[var(--hair)] shadow-[var(--lift)]"
-      style={brandVars(brandColor)}
-    >
-      <div
-        className="flex min-h-[420px] flex-col items-center justify-center px-6 py-10"
-        style={
-          {
-            background:
-              "radial-gradient(120% 80% at 50% 0%, color-mix(in oklab, var(--brand) 22%, transparent), transparent 60%), var(--color-base, #0c0a0e)",
-          } as CSSProperties
-        }
-      >
-        <div className="w-full max-w-xs text-center">
-          {avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={avatarUrl}
-              alt=""
-              className="mx-auto mb-5 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand)]"
-            />
-          ) : (
-            <div
-              aria-hidden
-              className="mx-auto mb-5 grid h-20 w-20 place-items-center rounded-full text-4xl"
-              style={{
-                background:
-                  "radial-gradient(circle, color-mix(in oklab, var(--brand) 40%, transparent), transparent 70%)",
-              }}
-            >
-              🎡
-            </div>
-          )}
-          <p className="break-words text-2xl font-extrabold text-ink">{displayName || "Creator"}</p>
-          <p className="mx-auto mt-2 max-w-xs text-sm text-muted text-pretty">
-            {tagline || "Spin my wheel — every spin wins a prize. 🎁"}
-          </p>
-          {hasTipUrl ? (
-            <span className="btn-brand mt-7 inline-block w-full rounded-2xl py-3.5 text-base font-extrabold">
-              Get your spins →
-            </span>
-          ) : (
-            <p className="mt-7 text-sm text-muted">
-              DM {displayName || "the creator"} to get your personal spin link.
-            </p>
-          )}
-          <p className="mt-3 text-xs text-muted/70">
-            Every spin wins · rare drops keep it exciting
-          </p>
-        </div>
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { recordAudit } from "@/lib/data";
 import { RETENTION_DAYS } from "@/lib/privacy/retention";
 import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
 import { cronAuthorized, MIN_CRON_SECRET_LENGTH } from "@/lib/privacy/cron";
+import { processPendingStorageWork } from "@/lib/storage/work";
 
 // Daily data-retention cleanup, run by Vercel Cron (vercel.json). Vercel sends
 // `Authorization: Bearer $CRON_SECRET`; anything else is refused, and with no
@@ -37,6 +38,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "cleanup_failed" }, { status: 500, headers: NO_STORE_HEADERS });
   }
 
+  const storage = await processPendingStorageWork(svc);
   const deleted = (data ?? {}) as Record<string, number | null>;
   const total = Object.values(deleted).reduce<number>((s, n) => s + (Number(n) || 0), 0);
   if (total > 0) {
@@ -53,5 +55,8 @@ export async function GET(req: Request) {
       },
     });
   }
-  return NextResponse.json({ ok: true, deleted, periods: RETENTION_DAYS }, { headers: NO_STORE_HEADERS });
+  const pending = storage.pending > 0 || storage.accountsPending > 0;
+  return NextResponse.json({ ok: !pending && storage.failed === 0, pending, storage, deleted, periods: RETENTION_DAYS }, {
+    status: storage.failed > 0 ? 503 : pending ? 202 : 200, headers: NO_STORE_HEADERS,
+  });
 }

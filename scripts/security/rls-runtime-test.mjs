@@ -627,12 +627,95 @@ async function main() {
       const repeated=await admin.rpc("add_reward_codes",{p_prize:rewardPrize.id,p_creator:B.id,p_codes:[encryptedCode]});
       check(!repeated.error && repeated.data===0,"re-uploading an erased delivered coupon cannot restock it");
     }
+    //0058: metadata-only fixtures. Never creates, lists or removes Storage bytes.
+    // All no-FK work rows are scoped to this run's disposable creators and
+    // explicitly deleted in finally before their Auth users are removed.
+    console.log("\n0058 theme/media + durable work isolation…");
+    must(await admin.from("profiles").update({is_active:true,approval_status:"approved"}).in("id",[A.id,B.id]).select("id"),"eligible0058 creators");
+    const mediaA=randomUUID(),mediaB=randomUUID(),objectA=randomUUID(),objectB=randomUUID(),dispatchA=randomUUID(),dispatchB=randomUUID();
+    const objectPath=(owner,id)=>`${owner}/${id}.webp`;
+    must(await admin.from("creator_media").insert([
+      {id:mediaA,creator_id:A.id,path:objectPath(A.id,mediaA),width:1,height:1,sfw_attested_at:new Date().toISOString()},
+      {id:mediaB,creator_id:B.id,path:objectPath(B.id,mediaB),width:1,height:1,sfw_attested_at:new Date().toISOString()},
+    ]).select("id"),"0058 own/foreign media metadata");
+    for(const [owner,id] of [[A.id,objectA],[B.id,objectB]]) {
+      must(await admin.rpc("creator_storage_register_upload",{p_id:id,p_owner:owner,p_bucket:"avatars",p_path:objectPath(owner,id)}),"0058 durable upload metadata");
+    }
+    must(await admin.from("creator_storage_deletions").insert([A.id,B.id].map(owner=>({owner_id:owner,state:"paused",was_role:"creator",was_active:true,actor_id:owner,action:"account.self_close",link_hashes:[]}))).select("owner_id"),"0058 retained deletion metadata");
+    must(await admin.from("creator_storage_dispatches").insert([
+      {id:dispatchA,owner_id:A.id,attempt_id:randomUUID(),kind:"auth"},
+      {id:dispatchB,owner_id:B.id,attempt_id:randomUUID(),kind:"auth"},
+    ]).select("id"),"0058 dispatch metadata");
+    const ownMedia=await a.from("creator_media").select("id").eq("id",mediaA);
+    check(!ownMedia.error&&ownMedia.data?.length===1,"0058 A reads own media metadata");
+    const foreignMedia=await a.from("creator_media").select("id").eq("id",mediaB);
+    check(!foreignMedia.error&&foreignMedia.data?.length===0,"0058 A cannot read B media metadata");
+    const anonMedia=await anonClient.from("creator_media").select("id").in("id",[mediaA,mediaB]);
+    check(!!anonMedia.error||anonMedia.data?.length===0,"0058 anon cannot read private media metadata");
+    check(!!(await a.from("creator_media").insert({creator_id:B.id,path:objectPath(B.id,randomUUID()),width:1,height:1,sfw_attested_at:new Date().toISOString()})).error,"0058 creator cannot forge a media insert");
+    check(!!(await a.from("creator_media").update({path:objectPath(A.id,randomUUID())}).eq("id",mediaA)).error,"0058 creator cannot rewrite media paths");
+    const captionOwn=await a.from("creator_media").update({caption:"own0058"}).eq("id",mediaA).select("id");
+    check(!captionOwn.error&&captionOwn.data?.length===1,"0058 approved creator can edit own caption");
+    const captionForeign=await a.from("creator_media").update({caption:"foreign0058"}).eq("id",mediaB).select("id");
+    check(captionForeign.data?.length===0,"0058 creator cannot edit another media caption");
+    check(!!(await a.from("creator_media").delete().eq("id",mediaA)).error,"0058 direct media DELETE cannot discard durable retry references");
+    const ownTheme=await a.rpc("set_creator_theme",{p_theme:{font:"syne",background:"photo",bg_media_id:mediaA}});
+    check(!ownTheme.error&&ownTheme.data?.bg_media_id===mediaA,"0058 creator may select own background photo");
+    check(!!(await a.rpc("set_creator_theme",{p_theme:{font:"syne",background:"photo",bg_media_id:mediaB}})).error,"0058 creator cannot select another creator's photo");
+    check(!!(await a.rpc("set_creator_theme",{p_theme:{font:"url(https://example.invalid)"}})).error,"0058 arbitrary CSS is refused");
+    check(!!(await anonClient.rpc("set_creator_theme",{p_theme:{font:"syne"}})).error,"0058 anon cannot set a theme");
+    for(const status of ["pending","rejected"]) {
+      must(await admin.from("profiles").update({approval_status:status}).eq("id",A.id).select("id"),"0058 approval refusal fixture");
+      try {
+        const deniedTheme=await a.rpc("set_creator_theme",{p_theme:{font:"playfair"}});
+        check(deniedTheme.error||deniedTheme.data===null,`0058 ${status} creator cannot change theme`);
+        const deniedCaption=await a.from("creator_media").update({caption:"unapproved"}).eq("id",mediaA).select("id");
+        check(deniedCaption.data?.length===0,`0058 ${status} creator cannot edit media`);
+      } finally {must(await admin.from("profiles").update({approval_status:"approved"}).eq("id",A.id).select("id"),"restore0058 approval");}
+    }
+    for(const [table,ownId,foreignId,key,payload] of [
+      ["creator_storage_objects",objectA,objectB,"id",{id:randomUUID(),owner_id:B.id,bucket:"avatars",path:objectPath(B.id,randomUUID()),upload_state:"stored"}],
+      ["creator_storage_deletions",A.id,B.id,"owner_id",{owner_id:randomUUID(),state:"paused",was_role:"creator",was_active:true,action:"account.self_close"}],
+      ["creator_storage_dispatches",dispatchA,dispatchB,"id",{id:randomUUID(),owner_id:B.id,attempt_id:randomUUID(),kind:"auth"}],
+    ]) {
+      const own=await a.from(table).select(key).eq(key,ownId),foreign=await a.from(table).select(key).eq(key,foreignId),anonymous=await anonClient.from(table).select(key).in(key,[ownId,foreignId]);
+      check(!own.error&&own.data?.length===1,`0058 creator reads own ${table}`);
+      check(!foreign.error&&foreign.data?.length===0,`0058 creator reads none of another owner ${table}`);
+      check(!!anonymous.error||anonymous.data?.length===0,`0058 anon cannot read ${table}`);
+      check(!!(await a.from(table).insert(payload)).error,`0058 creator cannot insert ${table}`);
+      check(!!(await a.from(table).update({owner_id:B.id}).eq(key,ownId)).error,`0058 creator cannot mutate ${table}`);
+      check(!!(await a.from(table).delete().eq(key,ownId)).error,`0058 creator cannot delete ${table}`);
+      if(table==="creator_storage_deletions") check(!!(await a.from(table).update({restore_allowed:true}).eq(key,ownId)).error,"0058 creator cannot re-arm a restoration fence");
+    }
+    for(const [fn,args] of [
+      ["creator_storage_register_upload",{p_id:randomUUID(),p_owner:B.id,p_bucket:"avatars",p_path:objectPath(B.id,randomUUID())}],
+      ["creator_storage_finish_upload",{p_id:objectB,p_outcome:"publish"}],
+      ["creator_storage_queue_remove",{p_owner:B.id,p_objects:[{id:mediaB,path:objectPath(B.id,mediaB)}],p_actor:A.id,p_admin:true}],
+      ["creator_storage_complete_remove",{p_id:objectB}],
+      ["creator_storage_account",{p_operation:"begin",p_owner:B.id,p_actor:A.id,p_action:"account.delete"}],
+      ["creator_storage_prune",{p_days:1}],
+      ["creator_storage_manifest",{p_owner:B.id,p_attempt:randomUUID(),p_worker:randomUUID(),p_bucket:"avatars",p_paths:[objectPath(B.id,objectB)]}],
+      ["creator_storage_dispatch",{p_operation:"begin",p_id:randomUUID(),p_owner:B.id,p_kind:"remove",p_object:objectB}],
+      ["creator_storage_publish_media",{p_id:objectB,p_caption:"forged",p_width:1,p_height:1}],
+      ["creator_storage_work_claim",{p_limit:20}],
+    ]) for(const [role,client] of [["creator",a],["anon",anonClient]]) {
+      const denied=await client.rpc(fn,args);
+      check(denied.error?.code==="42501",`0058 ${role} has no EXECUTE privilege on ${fn}`);
+    }
+    const retainedB=must(await admin.from("creator_media").select("caption,path").eq("id",mediaB).single(),"0058 foreign row remains");
+    check(retainedB.caption===null&&retainedB.path===objectPath(B.id,mediaB),"0058 foreign media remains unchanged after all forged calls");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
     for (const id of seededErrorIds) {
       const { error } = await admin.from("app_errors").delete().eq("id", id);
       if (error) { cleanupFailed = true; console.error("  ✗ Failed to delete seeded app_error", id, "—", error.message); }
+    }
+    // Durable work deliberately has no Auth/profile FK. Delete only rows
+    // belonging to this run's users, even if a preceding assertion threw.
+    if (createdUserIds.length) for (const table of ["creator_storage_dispatches","creator_storage_objects","creator_storage_deletions"]) {
+      const {error}=await admin.from(table).delete().in("owner_id",createdUserIds);
+      if(error){cleanupFailed=true;console.error("  ✗ Failed to delete this run's durable metadata",table,"—",error.message);}
     }
     console.log("\nCleaning up test users…");
     for (const id of createdUserIds) {

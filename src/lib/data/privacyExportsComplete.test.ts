@@ -30,7 +30,11 @@ const svc = new FakeTables({
   referrals: [],
 });
 const session = new FakeTables({
-  profiles: [{ id: CA, display_name: "Owner", secret: "PROFILE-SECRET" }],
+  profiles: [{ id: CA, display_name: "Owner", secret: "PROFILE-SECRET", theme: { font: "syne", background: "noir", url: "THEME-SECRET-URL", nested: { cipher: "THEME-SECRET-CIPHER" } } }],
+  creator_media: [...many(2001, (id) => ({ id, creator_id: CA, caption: `Photo ${id}`, width: 10, height: 20, sort_order: Number(id), sfw_attested_at: at, created_at: at, path: "PHOTO-INTERNAL-PATH", url: "PHOTO-SIGNED-URL", webp: "PHOTO-BYTES" })), { id: "other-photo", creator_id: CB, caption: "TENANT-B-BUSINESS" }],
+  creator_storage_dispatches: [{ id: "dispatch-own", owner_id: CA, kind: "remove", state: "uncertain", worker_id: "WORK-DISPATCH-WORKER", attempt_id: "WORK-DISPATCH-ATTEMPT" }, { id: "dispatch-other", owner_id: CB, state: "TENANT-B-BUSINESS" }],
+  creator_storage_objects: [{ id: "object-own", owner_id: CA, bucket: "avatars", path: `${CA}/photo.webp`, upload_state: "uncertain", cleanup_kind: "orphan", last_error: "upload_uncertain", created_at: at, cipher: "WORK-CIPHER" }, { id: "object-other", owner_id: CB, path: "TENANT-B-BUSINESS" }],
+  creator_storage_deletions: [{ id: "job-own", owner_id: CA, state: "paused", action: "account.self_close", created_at: at, lease_id: "WORK-LEASE", link_hashes: ["WORK-HASH"] }, { id: "job-other", owner_id: CB, state: "TENANT-B-BUSINESS" }],
   wheels: [{ id: "w-own", creator_id: CA, title: "Own wheel" }, { id: "w-other", creator_id: CB, title: "TENANT-B-BUSINESS" }],
   prizes: [...many(2001, (id) => ({ id, wheel_id: "w-own", label: `Own prize ${id}`, cost_cents: 10 })), { id: "p-other", wheel_id: "w-other", label: "TENANT-B-BUSINESS" }],
   fans: [{ id: FAN, creator_id: CA, break_until: "2026-11-01", notes: "Own creator notes" }, { id: OTHER, creator_id: CB, display_name: "TENANT-B-BUSINESS" }],
@@ -103,6 +107,11 @@ async function main() {
   check("creator agency export follows only owned memberships/orgs", creator.sections.agency_memberships.length === 1 && creator.sections.agencies_owned.length === 1 && creator.sections.agency_owned_members.length === 2 && creator.sections.agency_invitations.length === 1 && creator.sections.agency_scopes.length === 1 && creator.sections.agency_owned_scopes.length === 2);
   const creatorText = JSON.stringify(creator);
   for (const secret of [TOKEN, "NEXT-SEED-SECRET", "PROFILE-SECRET", "DEVICE-ENDPOINT", "DEVICE-AUTH", "DEVICE-KEY", "WEBHOOK-CREDENTIAL", "REWARD-VALUE", "CIPHER-SECRET", "KEY-SECRET", "TENANT-B-BUSINESS", "UNRELATED-AGENCY", "UNRELATED-INVITE", ...Object.values(material)]) check(`creator export excludes ${secret}`, !creatorText.includes(secret));
+  check("media exports survive pagination and filter other creators", creator.sections.creator_media.length === 2001 && creator.sections.creator_media[0].id === "000001");
+  check("theme exports include preset keys only", JSON.stringify(creator.account.theme) === JSON.stringify({ font: "syne", background: "noir" }));
+  check("durable work metadata is scoped and omits token hashes and leases", creator.sections.storage_objects.length === 1 && creator.sections.storage_deletions.length === 1 && creator.sections.storage_deletions[0].state === "paused");
+  for (const secret of ["PHOTO-INTERNAL-PATH", "PHOTO-SIGNED-URL", "PHOTO-BYTES", "THEME-SECRET-URL", "THEME-SECRET-CIPHER", "WORK-CIPHER", "WORK-LEASE", "WORK-HASH", "WORK-DISPATCH-WORKER", "WORK-DISPATCH-ATTEMPT"]) check(`theme/media/work export excludes ${secret}`, !creatorText.includes(secret));
+  check("durable dispatch export is tenant scoped", creator.sections.storage_dispatches.length === 1 && creator.sections.storage_dispatches[0].state === "uncertain");
   check("creator export never takes the service-role path", !serviceDuringCreator);
   check("fan-private reminders are deliberately excluded from creator queries", !session.statements.some((statement) => statement.table === "fan_play_reminders") && creator.excluded.some((reason) => reason.includes("fan-private")));
   check("safe complete creator export is marked complete", creator.complete);
@@ -132,6 +141,10 @@ async function main() {
   rewardStore.prizes.set("instant-prize", { kind: "codes", codes: [{ id: "code-own", fingerprint: "MOCK-FINGERPRINT", value: "MOCK-REDEEMABLE-SECRET", hint: "MOCK-HINT", shareId: "instant-000001", erasedAt: at }] });
   demo.mockTakeBreak(link.token, 86_400_000);
   push.mockAddPushDevice({ endpoint: "https://fcm.googleapis.com/MOCK-PRIVATE-ENDPOINT", p256dh: "MOCK-PRIVATE-KEY", auth: "MOCK-PRIVATE-AUTH" }, "Phone");
+  const themeDemo = await import("./mockTheme");
+  const photo = themeDemo.mockAddMedia({ webp: Buffer.from("MOCK-PHOTO-SECRET-BYTES"), caption: "Demo photo", width: 10, height: 20 });
+  assert.ok(!("error" in photo));
+  themeDemo.mockSetTheme({ font: "playfair", background: "photo", bgMediaId: photo.id });
   const mockFan = (await exportFanData(link.token))!;
   const mockCreator = (await exportCreatorData())!;
   check("mock and real fan export have the same top-level contract", Object.keys(mockFan).sort().join() === Object.keys(fan).sort().join());
@@ -140,6 +153,7 @@ async function main() {
   check("mock instant exports use full durable history beyond the display cap", mockFan.instantReceipts.length === 2001 && mockFan.spins.filter((row) => row.id.startsWith("instant-")).length === 2001 && mockCreator.sections.spin_rewards.length === 2002);
   check("mock fan receipts remain scoped and export never increments views", mockFan.instantReceipts.every((row) => row.views === 4) && !JSON.stringify(mockFan).includes("MOCK-OTHER-FAN-RECEIPT") && (rewardStore.deliveries.get("instant-000001") as { views: number }).views === 4);
   check("mock code erasure metadata survives without hints or values", mockCreator.sections.prize_reward_codes[0].erased_at === at && !/MOCK-REDEEMABLE-SECRET|MOCK-FINGERPRINT|MOCK-HINT/.test(JSON.stringify([mockFan, mockCreator])));
+  check("mock theme/media export uses the real preset keys and safe metadata", (mockCreator.account.theme as Record<string, string>).bg_media_id === photo.id && mockCreator.sections.creator_media[0].caption === "Demo photo" && mockCreator.sections.storage_objects.length === 0 && mockCreator.sections.storage_deletions.length === 0 && !JSON.stringify(mockCreator).includes("MOCK-PHOTO-SECRET-BYTES"));
   check("mock export credentials stay out too", !/MOCK-PRIVATE-ENDPOINT|MOCK-PRIVATE-KEY|MOCK-PRIVATE-AUTH/.test(JSON.stringify(mockCreator)));
   const demoStore = (globalThis as unknown as { __ffStore: { fans: Map<string, { wins: unknown[] }> } }).__ffStore;
   demoStore.fans.get(fanId)!.wins = [{ shareId: "instant-000001", at, label: "Instant", rarity: "common", serverSeed: "spent-only" }, ...many(49, (id) => ({ shareId: `manual-${id}`, at, label: "Manual", rarity: "common", serverSeed: "spent-only" }))];

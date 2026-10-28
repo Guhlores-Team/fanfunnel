@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
+import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/privacy/deletionResult";
 import { FEATURES } from "@/lib/features";
 import { MIN_PASSWORD_LENGTH } from "@/lib/api/password";
 import { useToast } from "@/components/ui/Toast";
@@ -9,6 +10,7 @@ import Modal from "@/components/ui/Modal";
 import { deleteErrorMessage, inviteErrorMessage, mfaResetErrorMessage } from "./adminErrors";
 import { P, Glyph, SectionTitle, raised, recessed, btnGhost, btnDanger, pill } from "./adminUi";
 import AdminErrors from "./AdminErrors";
+import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
 
 interface PendingApp {
@@ -172,14 +174,21 @@ export default function AdminClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, email }),
     });
-    if (res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const state = deletionResponseState(res.status, d);
+    if (state === "pending") {
+      toast(ACCOUNT_CLEANUP_PENDING_MESSAGE, { tone: "error" });
+      void refresh();
+      return false;
+    }
+    if (state === "complete") {
       setData((d) =>
         d ? { ...d, accounts: d.accounts.filter((a) => a.id !== id) } : d
       );
       toast("Account permanently deleted", { tone: "success" });
       return true;
     }
-    const err = (await res.json().catch(() => null))?.error as string | undefined;
+    const err = d.error as string | undefined;
     toast(deleteErrorMessage(err), { tone: "error" });
     return false;
   }
@@ -567,6 +576,8 @@ function AccountRow({
               </div>
             </fieldset>
           </div>
+
+          <RemoveCreatorPhotosButton accountId={account.id} displayName={account.displayName || account.email} />
 
           {/* Two-factor reset for a lost authenticator (no recovery codes exist). */}
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted">

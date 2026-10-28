@@ -15,6 +15,9 @@ const check = (label: string, cond: unknown) => {
 const rpcCalls: { fn: string; args: Record<string, number> }[] = [];
 const audits: Record<string, unknown>[] = [];
 let deleted: Record<string, number | null> = { admin_audit_log: 0, creator_notices: 0, link_tombstones: 0, app_errors: null };
+let storageRuns = 0;
+let storage = { completed: 0, pending: 0, failed: 0, reviewRequired: 0, accountsCompleted: 0, accountsPending: 0 };
+mock.module("@/lib/storage/work", { namedExports: { processPendingStorageWork: async () => { storageRuns++; return storage; } } });
 
 mock.module("@/lib/supabase/server", {
   namedExports: {
@@ -52,6 +55,7 @@ async function main() {
     check(`header ${JSON.stringify(h)?.slice(0, 20)} → 401`, res.status === 401);
   }
   check("nothing ran without the right header", rpcCalls.length === 0);
+  check("unauthorized requests never process durable storage work", storageRuns === 0);
 
   res = await call(`Bearer ${SECRET}`);
   check("right header → 200", res.status === 200 && /no-store/.test(res.headers.get("cache-control") ?? ""));
@@ -65,6 +69,7 @@ async function main() {
       rpcCalls[0].args.p_closed_invite_days === RETENTION_DAYS.closedAgencyInvites
   );
   check("a run that deleted nothing logs nothing", audits.length === 0);
+  check("authorized retention also processes bounded storage retries", storageRuns === 1);
 
   deleted = { push_log: 2, admin_audit_log: 3, creator_notices: 0, link_tombstones: 2, org_invites: 4, app_errors: null };
   res = await call(`Bearer ${SECRET}`);
@@ -78,6 +83,12 @@ async function main() {
   res = await call(`Bearer ${SECRET}`);
   check("push-only cleanup still produces its audit entry", res.status === 200 && audits.length === priorAudits + 1 && (audits.at(-1)?.details as { pushLog?: number }).pushLog === 1);
 
+  storage = { ...storage, accountsPending: 1, reviewRequired: 1 };
+  res = await call(`Bearer ${SECRET}`);
+  check("unresolved work returns202 with honest pending status", res.status === 202 && (await res.json()).pending === true);
+  storage = { ...storage, accountsPending: 0, failed: 1 };
+  res = await call(`Bearer ${SECRET}`);
+  check("retry failures are reported503 rather than completed cleanup", res.status === 503 && (await res.json()).ok === false);
   console.log(`retention cron route: ${passed} checks passed`);
 }
 

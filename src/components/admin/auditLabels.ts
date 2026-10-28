@@ -11,6 +11,8 @@ const ACTION_LABELS: Record<string, string> = {
   "account.reactivate": "reactivated an account",
   "account.features_change": "changed features",
   "account.mfa_reset": "reset two-factor",
+  "account.media_remove": "removed creator photos",
+  "account.storage_retry": "retried account cleanup",
   "account.self_close": "closed their own account",
   "admin.bootstrap": "claimed the first admin",
   "error.resolve": "resolved an error report",

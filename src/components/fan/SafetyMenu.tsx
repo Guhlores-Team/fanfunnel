@@ -5,6 +5,7 @@ import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useLinkPause } from "./LinkPauseProvider";
 import { PAUSED_CONFIRMATION, pauseErrorMessage } from "./linkPause";
 import { FAN_DELETED_CONFIRMATION, FanDeleteFlow, downloadFanData } from "./FanDataControls";
+import { PHOTO_REPORT_REASON } from "@/lib/creatorTheme/config";
 
 /**
  * A discreet safety menu on the fan page: report the creator (predatory /
@@ -94,7 +95,7 @@ export default function SafetyMenu({ token }: { token: string }) {
           setPauseError(null);
           setExportNote(null);
         }}
-        className="text-[11px] text-muted/60 underline-offset-4 transition hover:text-muted hover:underline"
+        className="text-[11px] text-muted underline-offset-4 transition hover:text-muted hover:underline"
       >
         Safety &amp; privacy
       </button>
@@ -198,6 +199,7 @@ export default function SafetyMenu({ token }: { token: string }) {
                   <option>Not delivering won prizes</option>
                   <option>Harassment or abuse</option>
                   <option>Illegal content or activity</option>
+                  <option>{PHOTO_REPORT_REASON}</option>
                   <option>Other</option>
                 </select>
                 <textarea

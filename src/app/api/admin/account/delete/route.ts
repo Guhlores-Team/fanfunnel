@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import {
   isSupabaseConfigured,
-  createClient,
   createServiceClient,
 } from "@/lib/supabase/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
@@ -58,7 +57,6 @@ export async function POST(req: Request) {
   // (1) Caller is an ACTIVE admin — enforced by requireAdminRoute() above. This
   // route uses the service role (bypasses RLS), so that guard is the only thing
   // stopping a suspended admin; it must stay the first statement of the handler.
-  const sb = await createClient();
   const callerId = admin.userId;
   if (!callerId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -90,40 +88,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "email_mismatch" }, { status: 400 });
   }
 
-  // (4) Atomically guard the last-admin invariant + RESERVE the deletion. The
-  // plain JS count above is TOCTOU (two concurrent deletes of the final two
-  // admins could both pass and leave zero admins). This SECURITY DEFINER RPC
-  // locks the admin rows and, for an admin target, refuses if it is the last
-  // admin or demotes it as an atomic reservation so a concurrent call sees one
-  // fewer admin. Runs as the caller (auth client) — auth.uid() is the admin.
-  const { data: reserve, error: reserveErr } = await sb.rpc(
-    "admin_reserve_account_deletion",
-    { p_target: id }
-  );
-  if (reserveErr) {
-    return NextResponse.json({ error: "db_error" }, { status: 500 });
-  }
-  if (reserve === "last_admin") {
-    return NextResponse.json({ error: "last_admin" }, { status: 400 });
-  }
-  if (reserve !== "ok") {
-    // forbidden / not_found / cannot_delete_self — already checked above; fail
-    // closed on any unexpected status rather than deleting.
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
-
   // Permanently remove the auth user; FK cascades wipe all tenant data. On a
   // failed delete the shared helper restores an admin target's role (the
   // reservation above demoted it); on success each fan link gets a "this
   // creator has left" tombstone.
   const deleted = await deleteAccountAndTombstoneLinks(svc, id, {
     wasAdmin: target.role === "admin",
+    actorId: callerId,
+    action: "account.delete",
   });
   if ("error" in deleted) {
-    return NextResponse.json({ error: deleted.error }, { status: 500 });
+    return NextResponse.json({ error: deleted.error }, { status: deleted.error === "last_admin" ? 400 : deleted.error === "forbidden" ? 403 : deleted.error === "not_found" ? 404 : 500 });
   }
+  if ("pending" in deleted) return NextResponse.json(deleted, { status: 202, headers: { "Cache-Control": "no-store" } });
 
-  await recordAudit({
+  if (!deleted.auditRecorded) await recordAudit({
     actorId: callerId,
     action: "account.delete",
     targetType: "profile",

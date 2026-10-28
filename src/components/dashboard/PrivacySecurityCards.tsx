@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { useToast } from "@/components/ui/Toast";
 import { TotpChallenge, TotpEnrol } from "@/components/auth/totp";
+import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/privacy/deletionResult";
 import { CLOSE_ACCOUNT_PHRASE } from "@/lib/privacy/config";
 import { closeAccountErrorMessage } from "@/lib/privacy/messages";
 import { Field } from "./ui";
@@ -345,7 +346,12 @@ export function CloseAccountCard() {
         body: JSON.stringify({ currentPassword: password, confirm: phrase.trim() }),
       });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      const state = deletionResponseState(res.status, d);
+      if (state === "pending") {
+        setError(ACCOUNT_CLEANUP_PENDING_MESSAGE);
+        return;
+      }
+      if (state !== "complete") {
         setError(closeAccountErrorMessage(d.error));
         return;
       }

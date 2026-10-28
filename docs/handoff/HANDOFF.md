@@ -6,9 +6,10 @@ Everything below was true at the time of writing; verify with `git` before actin
 ## 1. Where things stand
 
 - **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`). Last verified
-  Preview commit `4431546` (0056); instant delivery (0057) is integrated locally
-  for full verification. CI and TEST migration/history/type checks are green on
-  `4431546` (verify, login-ui, supabase, schema-drift, test).
+  Preview commit `2abae19` (0057). CI and TEST migration/history/type checks are
+  green (verify, login-ui, supabase, schema-drift, test). Theming (0058) has now
+  been normally merged locally with the completed UI and reviewed durable
+  storage recovery; its two full integrated verification rounds are next.
 - **Preview (TEST database `snmcrmhgevfqggxdiomu`):**
   https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
   Vercel login protection is OFF for testing (`ssoProtection` was `all_except_custom_domains`;
@@ -16,8 +17,8 @@ Everything below was true at the time of writing; verify with `git` before actin
 - **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`, us-east-2/Ohio).
   Still runs an old July build. **`main` = production. Never push or merge to `main`**
   without (a) green CI and (b) the owner's explicit "tested on Preview, go".
-- **TEST database migrations applied:** 0001–0056 (confirmed by successful CI application
-  and generated-type comparison). Prod is behind; prod gets migrations only
+- **TEST database migrations applied:** 0001–0057 (confirmed by successful CI application,
+  migration history and exact generated-type comparison). Prod is behind; prod gets migrations only
   at go-live, before or exactly at the merge.
 
 ## 2. Roadmap status (owner chose: build ALL before alpha)
@@ -33,10 +34,12 @@ Everything below was true at the time of writing; verify with `git` before actin
 | **Privacy & safety pack** | 0054 | merged as `612b606` | done; two full local verification rounds, green CI, on Preview / TEST |
 | **Terms / Privacy + clickwrap** | 0055 | merged as `c1b4098` | done; two full local verification rounds, green CI, on Preview / TEST |
 | **Web push (creators)** | 0056 | merged and hardened through `4431546` | done; two final full rounds (141 unit files, 130 browser checks, 69 accessibility states), green CI / TEST, deployed Preview |
-| **#26 instant-delivery prizes** | 0057 | normal merge of `rm/26-instant-delivery` @ `b66f49f`, completed locally | backend, creator/fan UI, exports and browser coverage implemented; full integrated verification in progress |
-| **Per-creator theming** | 0058 | `rm/theming` @ `e4e77e0` | **mostly built; last commit is WIP (Settings "Look & feel" card), unverified** |
-| **#25 focus pack → chase pity** | 0059 | not started | spec in PROPOSALS.md; fixes pity-counter race at `src/lib/data/spins.ts` (~548–551) |
-| **RM-7 scratch tickets → bingo** | 0060 | not started | needs theming merged first; spec in PROPOSALS.md |
+| **#26 instant-delivery prizes** | 0057 | normal merge of `rm/26-instant-delivery`, finished through `2abae19` | on Preview/TEST; two full local rounds (151 unit files, 140 browser checks, 76 axe states), green CI and real TEST integration/RLS tests |
+| **Per-creator theming** | 0058 | normal merge of `rm/theming` @ `e4e77e0`, completed locally | UI and durable storage recovery reviewed; targeted 11 browser checks and 16 axe states pass; full integrated rounds pending |
+| **#25 focus pack → chase pity** | 0059 | source prepared in isolated integration archive | atomic play/economic ledger, recovery and UI implemented; targeted 12 browser checks and 11 axe states pass; merge after 0058, then full release gates |
+| **RM-7 scratch tickets** | 0060 | source frozen separately | pure replay, SQL, data and UI prepared; integrated release verification remains after 0059 |
+| **RM-7 personal bingo** | 0061 | in progress in isolated archive | must follow the frozen scratch release; no TEST application yet |
+| **Account security follow-up** | 0062 | isolated preparation | enrolled creator MFA, invite expiry and last-active-admin safeguards; integrate only after 0061 |
 
 All branches are pushed to origin. Branches other than `dashboard-redesign` are based on older
 `dashboard-redesign` commits; bring them in with a normal `git merge` (never rebase/force-push
@@ -45,9 +48,10 @@ someone else's history).
 ## 3. Next steps, in order
 
 ### 3a. Merge the three finished branches, strictly in migration order
-0054–0056 are complete on Preview and TEST. The owner confirmed enabling two-factor
+0054–0057 are complete on Preview and TEST. The owner confirmed enabling two-factor
 login before 0054 was pushed. Continue with 0057; do not repeat those merges or MFA
-enrolment.
+enrolment. The 0057 type-only follow-up preserves the exact generator syntax;
+its declarations and runtime behavior are unchanged from the twice-verified tree.
 
 `supabase db push` (CI `test` job) rejects a migration numbered lower than the remote's latest,
 so **0054 → 0055 → 0056 → 0057 → 0058 → …** must reach `dashboard-redesign` in that order.
@@ -102,10 +106,10 @@ TEST application/type/history checks and all CI jobs succeed. Never deploy an
 uncommitted source directory or change a Production alias.
 
 ### 3b. Finish #26 and theming
-Each branch's builder stopped mid-task (usage limit). Read the branch's commits, finish what the
-spec in `PROPOSALS.md` asks, replace the WIP commit with real ones (local only before pushing;
-these branches are ours, a force-push of *these feature branches only* is acceptable), verify, then
-merge 0057 then 0058.
+0057 is complete on Preview. 0058 has been normally merged locally after finishing
+its Settings/admin/gallery UI and reviewing storage failure recovery. Run both full
+integrated rounds before pushing it. The historical WIP details below describe
+what had to be completed; they are not the remaining task list.
 - **#26** (`rm/26-instant-delivery`): last step in progress was the static migration guard test
   (`src/lib/security/instantRewards.test.ts`) and route authz test (`src/app/api/prizes/rewardAuthz.test.ts`).
   Reward codes are AES-256-GCM encrypted with server-only `REWARD_ENCRYPTION_KEY` (Node `crypto`).
@@ -134,7 +138,11 @@ Every "come back / keep going" surface must call F6 `fanEngagementAllowed`.
 - Server-side refusal of creator top-ups to a fan on a break (UI already disables it; owner call).
 - Debug-build "PREVIEW · DEMO DATA" banner covers the top of the win-back queue buttons at 390px.
 - Creator 2FA is enforced at login/proxy only, not in RLS (owner call; see privacy report below).
-- Pending agency invites never expire.
+- Pending agency invites never expire (0062 preparation uses a seven-day default).
+- Protect the last active admin against direct suspension/demotion/deletion and
+  both deletion reservations; inactive admins must not satisfy that invariant.
+- Hash fan bearer tokens/IPs before external rate-limit storage and bound the
+  fallback map; isolated preparation exists, not yet integrated.
 
 ### 3e. Security audit, then go-live
 - Run the audit per `docs/handoff/SEC_AUDIT_BRIEF.md` (two independent auditors + privacy-promise
@@ -168,10 +176,13 @@ Every "come back / keep going" surface must call F6 `fanEngagementAllowed`.
 | `CRON_SECRET` | retention cron (0054) | ≥16 chars, `openssl rand -hex 32` |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (Sensitive), `VAPID_SUBJECT` (`mailto:`) | web push (0056) | `npx web-push generate-vapid-keys`; Production + Preview |
 | `REWARD_ENCRYPTION_KEY` | #26 (0057) | 32 random bytes, base64; Production + Preview; never rotate without re-encrypting |
+| `REWARD_CODE_FINGERPRINT_KEY` | code uniqueness (0057) | independent stable key; never rotate or erased delivered codes could be reintroduced |
 
 Preview's VAPID trio has now been configured through the authenticated Vercel CLI;
 the private key is Sensitive. Production settings were verified unchanged. Never
-replace that existing Preview pair blindly. Vercel cron jobs run in Production;
+replace that existing Preview pair blindly. Preview's two reward keys are also
+configured as Sensitive; arrange an owner-controlled secure backup before real
+reward inventory. Production keys/settings were not changed. Vercel cron jobs run in Production;
 do not claim scheduled TEST retention is active without a separate verified setup.
 
 ## 5. How to verify (real commands)

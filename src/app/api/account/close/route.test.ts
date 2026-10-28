@@ -3,6 +3,7 @@ import { mock } from "node:test";
 import { createHash } from "node:crypto";
 import { FakeTables } from "@/lib/privacy/fakeTables";
 import { FakeStorage } from "@/lib/privacy/fakeStorage";
+import { FakeStorageWork } from "@/lib/storage/fakeWork";
 
 // AUTH-SENSITIVE: POST /api/account/close permanently deletes the caller's
 // account. Unit-tested end to end here instead of e2e (closing the demo
@@ -46,6 +47,11 @@ const svcTables = new FakeTables({
   ],
   link_tombstones: [],
 });
+const work = new FakeStorageWork(svcTables, {
+  reserve: () => reserveAnswer,
+  authExists: (id) => !deletedUsers.includes(id),
+  onAudit: (entry) => { audits.push(entry); },
+});
 
 mock.module("@/lib/supabase/server", {
   namedExports: {
@@ -62,15 +68,15 @@ mock.module("@/lib/supabase/server", {
     }),
     createServiceClient: () => ({
       storage: storage.storage,
-      from: (t: string) => svcTables.from(t),
-      rpc: async (fn: string, args: unknown) => {
-        rpcCalls.push({ fn, args });
-        return { data: reserveAnswer, error: null };
+      from: work.from,
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        if (fn === "creator_storage_account" && args.p_operation === "begin") rpcCalls.push({ fn, args });
+        return work.rpc(fn, args);
       },
       auth: {
         admin: {
           deleteUser: async (id: string) => {
-            if (deleteFails) return { error: { message: "boom" } };
+            if (deleteFails) return { error: { message: "boom", status: 400 } };
             deletedUsers.push(id);
             return { error: null };
           },
@@ -160,7 +166,7 @@ async function main() {
   res = await close({ ...GOOD, id: OTHER, userId: OTHER });
   check("success → 200 ok", res.status === 200 && (await res.json()).ok === true);
   check("no-store", /no-store/.test(res.headers.get("cache-control") ?? ""));
-  check("reserved the caller's own id", rpcCalls.length === 1 && rpcCalls[0].fn === "reserve_self_account_deletion" && (rpcCalls[0].args as { p_user: string }).p_user === ME);
+  check("atomically reserved/quiesced the caller's own id", rpcCalls.length === 1 && rpcCalls[0].fn === "creator_storage_account" && (rpcCalls[0].args as { p_owner: string }).p_owner === ME);
   check("deleted the caller's own auth user only", deletedUsers.length === 1 && deletedUsers[0] === ME);
   check("removed current and replaced photos from both buckets", storage.objects.get("avatars")!.size === 1 && storage.objects.get("creator-media")!.size === 1);
   check("other creators' photos survive closure", storage.objects.get("avatars")!.has(`${OTHER}/keep.png`) && storage.objects.get("creator-media")!.has(`${OTHER}/keep.webp`));
@@ -175,12 +181,16 @@ async function main() {
   // A failed delete restores an admin's role (the reservation demoted it).
   deletedUsers.length = 0;
   svcTables.rows("profiles")[0].role = "admin";
+  svcTables.rows("profiles")[0].is_active = true;
   svcTables.tables.link_tombstones = [];
+  svcTables.tables.creator_storage_deletions = [];
+  svcTables.tables.creator_storage_objects = [];
   deleteFails = true;
   res = await close(GOOD);
   check("delete failure → 500 delete_failed", res.status === 500 && (await res.json()).error === "delete_failed");
-  const restore = svcTables.statements.find((s) => s.table === "profiles" && s.op === "update");
+  const restore = svcTables.statements.find((s) => s.table === "profiles" && s.op === "update" && (s.payload as { role?: string }).role === "admin");
   check("…and the admin role is restored", !!restore && (restore.payload as { role?: string }).role === "admin" && restore.filters.some((f) => f.value === ME));
+  check("…and the original active state is restored", svcTables.rows("profiles")[0].is_active === true);
   check("…and no tombstones are written", svcTables.rows("link_tombstones").length === 0);
   check("…and no activity entry for a close that didn't happen", audits.length === 1);
 

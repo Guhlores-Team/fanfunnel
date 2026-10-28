@@ -10,6 +10,7 @@
 // whose RLS view spans other creators still only exports their own account.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { sha256Hex } from "@/lib/games/wheel/fairness";
+import { exportCreatorTheme } from "@/lib/privacy/themeExport";
 import type { Json } from "./db.types";
 import {
   CREATOR_EXPORT_ABOUT,
@@ -302,13 +303,17 @@ const CREATOR_TABLES: [string, string, string, string, string[]?][] = [
   ["creator_notices", "creator_notices", "creator_id", "id, creator_id, kind, details, created_at"],
   ["fan_checkins", "fan_checkins", "creator_id", "creator_id, fan_id, day, created_at", ["fan_id", "day"]],
   ["fan_outreach", "fan_outreach", "creator_id", "id, creator_id, fan_id, kind, contacted_at, snoozed_until, template_id, created_at"],
+  ["creator_media", "creator_media", "creator_id", "id, creator_id, caption, sort_order, width, height, sfw_attested_at, created_at"],
+  ["storage_dispatches", "creator_storage_dispatches", "owner_id", "id, owner_id, kind, object_id, bucket, path, state, created_at, settled_at"],
+  ["storage_objects", "creator_storage_objects", "owner_id", "id, owner_id, bucket, path, upload_state, cleanup_kind, media_id, attempts, last_error, created_at, updated_at, expires_at, settled_at, published_at, removed_at, last_attempt_at, next_attempt_at"],
+  ["storage_deletions", "creator_storage_deletions", "owner_id", "id, owner_id, state, action, attempts, last_error, created_at, updated_at, completed_at"],
   ["push_devices", "push_subscriptions", "user_id", "id, user_id, user_agent, show_details, failures, last_success_at, created_at"],
   ["push_history", "push_log", "user_id", "user_id, item_id, tag, sent_at", ["item_id"]],
   ["access_request", "creator_applications", "profile_id", "id, profile_id, email, display_name, socials, audience_size, note, status, decided_at, created_at"],
   ["agency_memberships", "org_members", "profile_id", "id, profile_id, org_id, role, created_at"],
   ["agencies_owned", "orgs", "owner_id", "id, owner_id, name, billing_model, created_at"],
 ];
-const ACCOUNT_COLUMNS = "id, email, display_name, avatar_url, creator_note, role, approval_status, is_active, features, org_id, public_slug, public_tagline, tip_url, chat_intro, chat_outro, leaderboard_enabled, notify_new_spin, notify_low_balance, notify_messages, notifications_seen_at, onboarding_dismissed, pwa_icon_mode, terms_version, terms_accepted_at, created_at";
+const ACCOUNT_COLUMNS = "theme, id, email, display_name, avatar_url, creator_note, role, approval_status, is_active, features, org_id, public_slug, public_tagline, tip_url, chat_intro, chat_outro, leaderboard_enabled, notify_new_spin, notify_low_balance, notify_messages, notifications_seen_at, onboarding_dismissed, pwa_icon_mode, terms_version, terms_accepted_at, created_at";
 
 /** Session/RLS reads only. Parent IDs are themselves limited to this account,
  * so agency access to another creator never expands the business export. */
@@ -359,7 +364,7 @@ export async function exportCreatorData(): Promise<CreatorDataExport | null> {
   return safeExportValue({
     format: CREATOR_EXPORT_FORMAT, exportedAt: new Date().toISOString(), about: CREATOR_EXPORT_ABOUT,
     ...exportStatus(failed, truncated), excluded: [...CREATOR_EXPORT_EXCLUDED],
-    account: { ...(profile ?? {}), id: uid, email: user.email ?? null, created_at: user.created_at, last_sign_in_at: user.last_sign_in_at ?? null, two_factor: (user.factors ?? []).map((factor) => ({ id: factor.id, type: factor.factor_type, name: factor.friendly_name ?? null, status: factor.status, created_at: factor.created_at })) },
+    account: { ...(profile ?? {}), theme: exportCreatorTheme((profile as ExportRow | null)?.theme), id: uid, email: user.email ?? null, created_at: user.created_at, last_sign_in_at: user.last_sign_in_at ?? null, two_factor: (user.factors ?? []).map((factor) => ({ id: factor.id, type: factor.factor_type, name: factor.friendly_name ?? null, status: factor.status, created_at: factor.created_at })) },
     sections,
   }) as CreatorDataExport;
 }

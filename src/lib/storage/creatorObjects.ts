@@ -3,7 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type CreatorStorageClient = Pick<SupabaseClient, "storage">;
 export type CreatorBucket = "avatars" | "creator-media";
-const PAGE = 1000;
+// Conservative documented page size; do not infer absence from an oversized
+// request silently capped by an older Storage server.
+const PAGE = 100;
 const MAX_OBJECTS = 100_000;
 const MAX_FOLDERS = 10_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -15,10 +17,13 @@ export function isCreatorObjectPath(userId: string, path: string): boolean {
 }
 
 type StorageResult = { error: unknown };
-async function retry<T extends StorageResult>(operation: () => PromiseLike<T>): Promise<T | null> {
+export type StorageAuthority = () => Promise<boolean>;
+async function retry<T extends StorageResult>(operation: () => PromiseLike<T>, authorize?: StorageAuthority): Promise<T | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      if (authorize && !(await authorize())) return null;
       const result = await operation();
+      if (authorize && !(await authorize())) return null;
       if (!result.error) return result;
     } catch {
       // A transport failure is retried just like a storage API failure.
@@ -43,10 +48,10 @@ export async function removeCreatorObjects(
   return true;
 }
 
-async function listBuckets(svc: CreatorStorageClient): Promise<Set<string> | null> {
+async function listBuckets(svc: CreatorStorageClient, authorize?: StorageAuthority): Promise<Set<string> | null> {
   const buckets = new Set<string>();
   for (let offset = 0; offset < MAX_FOLDERS; offset += PAGE) {
-    const result = await retry(() => svc.storage.listBuckets({ limit: PAGE, offset, sortColumn: "id", sortOrder: "asc" }));
+    const result = await retry(() => svc.storage.listBuckets({ limit: PAGE, offset, sortColumn: "id", sortOrder: "asc" }), authorize);
     if (!result || !Array.isArray(result.data)) return null;
     for (const bucket of result.data) {
       if (typeof bucket.id !== "string" || !bucket.id) return null;
@@ -57,8 +62,27 @@ async function listBuckets(svc: CreatorStorageClient): Promise<Set<string> | nul
   return null;
 }
 
+/** Observe one immutable intent path without guessing what HTTP errors mean. */
+export async function observeCreatorObject(
+  svc: CreatorStorageClient, bucket: CreatorBucket, owner: string, path: string, authorize?: StorageAuthority,
+): Promise<"present" | "absent" | "bucket_absent" | "error"> {
+  if (!isCreatorObjectPath(owner, path)) return "error";
+  const buckets = await listBuckets(svc, authorize);
+  if (!buckets) return "error";
+  if (!buckets.has(bucket)) return "bucket_absent";
+  const slash = path.lastIndexOf("/");
+  const folder = path.slice(0, slash), name = path.slice(slash + 1);
+  for (let offset = 0; offset < MAX_OBJECTS; offset += PAGE) {
+    const result = await retry(() => svc.storage.from(bucket).list(folder, { limit: PAGE, offset, search: name, sortBy: { column: "name", order: "asc" } }), authorize);
+    if (!result || !Array.isArray(result.data)) return "error";
+    if (result.data.some((object) => object.name === name && typeof object.id === "string")) return "present";
+    if (result.data.length < PAGE) return "absent";
+  }
+  return "error";
+}
+
 /** Collect before removing: deleting while paging by offset would skip objects. */
-async function listCreatorObjects(svc: CreatorStorageClient, bucket: CreatorBucket, userId: string): Promise<string[] | null> {
+async function listCreatorObjects(svc: CreatorStorageClient, bucket: CreatorBucket, userId: string, authorize?: StorageAuthority): Promise<string[] | null> {
   const folders = [userId];
   const paths: string[] = [];
   for (let next = 0; next < folders.length; next++) {
@@ -66,7 +90,7 @@ async function listCreatorObjects(svc: CreatorStorageClient, bucket: CreatorBuck
     for (let offset = 0; ; offset += PAGE) {
       const result = await retry(() => svc.storage.from(bucket).list(folder, {
         limit: PAGE, offset, sortBy: { column: "name", order: "asc" },
-      }));
+      }), authorize);
       if (!result || !Array.isArray(result.data)) return null;
       for (const object of result.data) {
         if (typeof object.name !== "string" || !segment(object.name)) return null;
@@ -81,6 +105,21 @@ async function listCreatorObjects(svc: CreatorStorageClient, bucket: CreatorBuck
     }
   }
   return paths;
+}
+
+/** Read-only discovery; a stale response never directly authorizes removal. */
+export async function scanCreatorStorage(svc: CreatorStorageClient, userId: string, authorize: StorageAuthority): Promise<{ bucket: CreatorBucket; paths: string[] }[] | null> {
+  if (!UUID.test(userId)) return null;
+  const buckets = await listBuckets(svc, authorize);
+  if (!buckets) return null;
+  const result: { bucket: CreatorBucket; paths: string[] }[] = [];
+  for (const bucket of ["avatars", "creator-media"] as const) {
+    if (!buckets.has(bucket)) continue;
+    const paths = await listCreatorObjects(svc, bucket, userId, authorize);
+    if (!paths) return null;
+    result.push({ bucket, paths });
+  }
+  return result;
 }
 
 /**

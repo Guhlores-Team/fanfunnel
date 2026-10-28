@@ -187,3 +187,5 @@ export {
 export type { PushDevice, PushError } from "./push";
 
 export { getPrizeDelivery, setPrizeDelivery, addPrizeCodes, getFanReward, getFanRewardHistory, isShareIdShape } from "./rewards";
+export { getCreatorThemeView, getMyTheme, setMyTheme, addMyMedia, setMyMediaCaption, reorderMyMedia, deleteMyMedia, adminRemoveCreatorMedia } from "./creatorTheme";
+export type { CreatorThemeView, MyThemeView, ThemeMedia } from "./creatorTheme";

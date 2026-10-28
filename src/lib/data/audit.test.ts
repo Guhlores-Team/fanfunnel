@@ -112,6 +112,8 @@ async function main() {
 
   // labels
   check("known action label", auditActionLabel("account.mfa_reset") === "reset two-factor");
+  check("media moderation action label", auditActionLabel("account.media_remove") === "removed creator photos");
+  check("storage retry label", auditActionLabel("account.storage_retry") === "retried account cleanup");
   check("unknown action falls back to its code", auditActionLabel("x.y") === "x.y");
   check("shortId", shortId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") === "bbbb…bbbb" && shortId(null) === "");
   check("details summary", auditDetailsSummary({ role: "admin", features: { raffles: true }, skip: null }) === "role: admin · features: raffles on");

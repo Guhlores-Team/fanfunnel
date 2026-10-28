@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { demoCodeFingerprint } from "@/lib/rewards/demoFingerprint";
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
+import { mockGetTheme, mockListMedia } from "./mockTheme";
+import { toDbTheme } from "@/lib/creatorTheme/config";
 import { makeFairRng, makeFairRngV3, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import {
   NEW_SPIN_FAIR_VERSION,
@@ -3456,6 +3458,8 @@ export function mockExportCreatorData(): CreatorDataExport {
     wishlists: rows("wishlists", store.wishlists), creator_notices: rows("creator_notices", privacy.notices),
     fan_checkins: rows("fan_checkins", [...checkinStore()].flatMap(([fanId, days]) => [...days].sort().map((day) => ({ creator_id: uid, fan_id: fanId, day, created_at: null })))),
     fan_outreach: rows("fan_outreach", outreachLog()),
+    creator_media: rows("creator_media", mockListMedia().map((photo) => ({ id: photo.id, creator_id: uid, caption: photo.caption, sort_order: photo.sortOrder, width: photo.width, height: photo.height, sfw_attested_at: photo.createdAt, created_at: photo.createdAt }))),
+    storage_objects: [], storage_deletions: [], storage_dispatches: [],
     push_devices: rows("push_devices", (push?.devices ?? []).map((device) => ({ id: device.id, user_id: uid, user_agent: device.userAgent, show_details: device.showDetails, failures: device.failures, last_success_at: device.lastSuccessAt, created_at: device.createdAt }))),
     push_history: rows("push_history", [...(push?.log ?? [])].map(([itemId, log]) => ({ user_id: uid, item_id: itemId, tag: log.tag, sent_at: new Date(log.sentAt).toISOString() }))),
     autopilot_dismissals: [], access_request: [], agency_memberships: [], agencies_owned: [],
@@ -3464,7 +3468,7 @@ export function mockExportCreatorData(): CreatorDataExport {
   return {
     format: CREATOR_EXPORT_FORMAT, exportedAt: new Date().toISOString(), about: CREATOR_EXPORT_ABOUT,
     ...exportStatus([], truncated), excluded: [...CREATOR_EXPORT_EXCLUDED],
-    account: { id: uid, display_name: store.displayName, leaderboard_enabled: store.leaderboardEnabled,
+    account: { id: uid, theme: toDbTheme(mockGetTheme()), display_name: store.displayName, leaderboard_enabled: store.leaderboardEnabled,
       notify_new_spin: store.notifyNewSpin, notify_low_balance: store.notifyLowBalance,
       notify_messages: store.notifyMessages, chat_intro: store.chatIntro, chat_outro: store.chatOutro,
       pwa_icon_mode: mockGetMyPwaIconMode(), terms_version: mockGetMyTerms().version,

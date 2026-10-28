@@ -40,7 +40,7 @@ export class FakeStorage {
       remove: async (paths: string[]) => {
         this.removals.push({ bucket, paths: [...paths] });
         if (this.throwOnRemove) throw new Error("transport unavailable");
-        if (this.removeFailures-- > 0) return { data: null, error: { message: "unavailable" } };
+        if (this.removeFailures-- > 0) return { data: null, error: { status: 403, message: "unavailable" } };
         paths.forEach((path) => this.objects.get(bucket)?.delete(path));
         return { data: [], error: null };
       },

@@ -8,6 +8,7 @@ import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
 import { mockGetPublicWheelTeaser } from "./mock";
 import { WHEEL_SELECT, toWheelConfig } from "./shared";
+import { getCreatorThemeView, type CreatorThemeView } from "./creatorTheme";
 import type { DbWheelRow } from "./shared";
 import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
 
@@ -63,6 +64,8 @@ export interface PublicProfile {
   // RM-2: plus the fan-safe stock (exact count only when the wheel shows it).
   prizes: TeaserPrize[];
   hasTipUrl: boolean;
+  /** Per-creator theming: headline font, background and photo hub. */
+  look: CreatorThemeView;
 }
 
 export type TeaserPrize = Pick<PublicPrize, "label" | "rarity" | "emoji" | "stock" | "soldOut">;
@@ -95,6 +98,7 @@ export async function getPublicProfileBySlug(
         // Parity with the Supabase path: the demo's live wheel, fan-safe.
         prizes: teaserPrizes(mockGetPublicWheelTeaser()?.wheel.prizes ?? []),
         hasTipUrl: true,
+        look: await getCreatorThemeView(null),
       },
       tipUrl: "#",
     };
@@ -138,6 +142,7 @@ export async function getPublicProfileBySlug(
       avatarUrl: p.avatar_url,
       prizes,
       hasTipUrl: !!p.tip_url,
+      look: await getCreatorThemeView(p.id),
     },
     tipUrl: p.tip_url,
   };

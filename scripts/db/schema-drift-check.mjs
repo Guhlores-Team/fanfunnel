@@ -21,6 +21,8 @@
 // And the app_errors probe (0053): admin-read/resolve only, server-write only.
 // And the instant-rewards probe (0057): secrets server-only, and 20 concurrent
 // spins on a 5-code prize hand out exactly 5 distinct codes.
+// And the theming probe (0058, themeProbe.mjs): own-row theme writes from an
+// allow-list only; creator_media owner-only, server-only inserts, capped at 12.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -38,6 +40,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
+import { probeTheme } from "./themeProbe.mjs";
+import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -266,6 +270,7 @@ const SIGNED_IN_ONLY = [
   "set_creator_note(text, text)",
   "set_notifications_seen()",
   "set_pwa_icon_mode(text)",
+  "set_creator_theme(jsonb)",
   "import_fans(jsonb)",
   "admin_account_stats()",
   "admin_reserve_account_deletion(uuid)",
@@ -399,13 +404,14 @@ function probeGrants(db) {
   if (!/invalid terms acceptance/.test(termsBad.stderr || "")) {
     bad.push(`record_terms_acceptance accepted a malformed version (${(termsBad.stderr || "no error").trim().split("\n")[0]})`);
   }
+  bad.push(...probeTheme(db, psql).map((b) => `0058 theming: ${b}`));
 
   if (bad.length) {
     failures++;
     console.log(`FAIL  ${db}: signed-in-only RPC grants / RM-6 break guard`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; record_terms_acceptance is service-only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; record_terms_acceptance is service-only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only; creator theme/media are owner-scoped and allowlisted`);
   }
 }
 
@@ -958,6 +964,21 @@ function probeApproval(db) {
   }
 }
 
+async function probeCreatorStorage(db) {
+  const bad = [
+    ...probeTheme(db, psql).map((message) => `theming: ${message}`),
+    ...probeStorageWork(db, psql).map((message) => `storage: ${message}`),
+    ...(await probeStorageSecurityRaces(db, psql, psqlAsync)).map((message) => `security races: ${message}`),
+  ];
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: creator theme/media and durable storage (0058)`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: theme/media ownership, durable storage RLS, quiescence, retry and idempotency`);
+  }
+}
+
 // ------------------------------------------ instant rewards probe (0057) ---
 // #26: reward secrets are server-only and a code is never handed out twice.
 // On a real Postgres:
@@ -1299,6 +1320,7 @@ try {
     probePush(db);
     probeApproval(db);
     await probeInstantRewards(db);
+    await probeCreatorStorage(db);
   }
 } catch (e) {
   failures++;

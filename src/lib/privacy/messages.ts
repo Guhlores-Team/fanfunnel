@@ -16,7 +16,7 @@ export function closeAccountErrorMessage(code: unknown): string {
     case "demo_mode":
       return "Closing an account needs Supabase configured (demo mode).";
     default:
-      return "Couldn't close your account. Nothing was deleted; try again.";
+      return "Account deletion was not confirmed. Some cleanup may already have finished. Try again or ask an administrator to check cleanup.";
   }
 }
 

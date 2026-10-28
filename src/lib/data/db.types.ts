@@ -285,6 +285,50 @@ export type Database = {
           },
         ]
       }
+      creator_media: {
+        Row: {
+          caption: string | null
+          created_at: string
+          creator_id: string
+          height: number
+          id: string
+          path: string
+          sfw_attested_at: string
+          sort_order: number
+          width: number
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          creator_id: string
+          height: number
+          id?: string
+          path: string
+          sfw_attested_at: string
+          sort_order?: number
+          width: number
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          creator_id?: string
+          height?: number
+          id?: string
+          path?: string
+          sfw_attested_at?: string
+          sort_order?: number
+          width?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creator_media_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       creator_notices: {
         Row: {
           created_at: string
@@ -364,6 +408,177 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      creator_storage_deletions: {
+        Row: {
+          action: string
+          actor_id: string | null
+          attempt_id: string
+          attempts: number
+          completed_at: string | null
+          created_at: string
+          id: string
+          last_error: string | null
+          lease_id: string | null
+          lease_until: string | null
+          link_hashes: Json
+          owner_id: string
+          restore_allowed: boolean
+          state: string
+          updated_at: string
+          was_active: boolean
+          was_role: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          attempt_id?: string
+          attempts?: number
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          lease_id?: string | null
+          lease_until?: string | null
+          link_hashes?: Json
+          owner_id: string
+          restore_allowed?: boolean
+          state: string
+          updated_at?: string
+          was_active: boolean
+          was_role: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          attempt_id?: string
+          attempts?: number
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          lease_id?: string | null
+          lease_until?: string | null
+          link_hashes?: Json
+          owner_id?: string
+          restore_allowed?: boolean
+          state?: string
+          updated_at?: string
+          was_active?: boolean
+          was_role?: string
+        }
+        Relationships: []
+      }
+      creator_storage_dispatches: {
+        Row: {
+          attempt_id: string | null
+          bucket: string | null
+          created_at: string
+          id: string
+          kind: string
+          object_id: string | null
+          owner_id: string
+          path: string | null
+          settled_at: string | null
+          state: string
+          worker_id: string | null
+        }
+        Insert: {
+          attempt_id?: string | null
+          bucket?: string | null
+          created_at?: string
+          id: string
+          kind: string
+          object_id?: string | null
+          owner_id: string
+          path?: string | null
+          settled_at?: string | null
+          state?: string
+          worker_id?: string | null
+        }
+        Update: {
+          attempt_id?: string | null
+          bucket?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          object_id?: string | null
+          owner_id?: string
+          path?: string | null
+          settled_at?: string | null
+          state?: string
+          worker_id?: string | null
+        }
+        Relationships: []
+      }
+      creator_storage_objects: {
+        Row: {
+          attempts: number
+          audit_actor: string | null
+          bucket: string
+          cleanup_kind: string
+          created_at: string
+          deletion_attempt: string | null
+          expires_at: string
+          id: string
+          last_attempt_at: string | null
+          last_error: string | null
+          media_id: string | null
+          next_attempt_at: string
+          owner_id: string
+          path: string
+          published_at: string | null
+          removed_at: string | null
+          settled_at: string | null
+          updated_at: string
+          upload_registered: boolean
+          upload_state: string
+        }
+        Insert: {
+          attempts?: number
+          audit_actor?: string | null
+          bucket: string
+          cleanup_kind?: string
+          created_at?: string
+          deletion_attempt?: string | null
+          expires_at?: string
+          id?: string
+          last_attempt_at?: string | null
+          last_error?: string | null
+          media_id?: string | null
+          next_attempt_at?: string
+          owner_id: string
+          path: string
+          published_at?: string | null
+          removed_at?: string | null
+          settled_at?: string | null
+          updated_at?: string
+          upload_registered?: boolean
+          upload_state: string
+        }
+        Update: {
+          attempts?: number
+          audit_actor?: string | null
+          bucket?: string
+          cleanup_kind?: string
+          created_at?: string
+          deletion_attempt?: string | null
+          expires_at?: string
+          id?: string
+          last_attempt_at?: string | null
+          last_error?: string | null
+          media_id?: string | null
+          next_attempt_at?: string
+          owner_id?: string
+          path?: string
+          published_at?: string | null
+          removed_at?: string | null
+          settled_at?: string | null
+          updated_at?: string
+          upload_registered?: boolean
+          upload_state?: string
+        }
+        Relationships: []
       }
       dm_templates: {
         Row: {
@@ -1221,6 +1436,7 @@ export type Database = {
           role: Database["public"]["Enums"]["app_role"]
           terms_accepted_at: string | null
           terms_version: string | null
+          theme: Json
           tip_url: string | null
         }
         Insert: {
@@ -1248,6 +1464,7 @@ export type Database = {
           role?: Database["public"]["Enums"]["app_role"]
           terms_accepted_at?: string | null
           terms_version?: string | null
+          theme?: Json
           tip_url?: string | null
         }
         Update: {
@@ -1275,6 +1492,7 @@ export type Database = {
           role?: Database["public"]["Enums"]["app_role"]
           terms_accepted_at?: string | null
           terms_version?: string | null
+          theme?: Json
           tip_url?: string | null
         }
         Relationships: [
@@ -1869,6 +2087,83 @@ export type Database = {
         Returns: Json
       }
       claim_spin: { Args: { p_token: string }; Returns: number }
+      creator_storage_account: {
+        Args: {
+          p_action?: string
+          p_actor?: string
+          p_error?: string
+          p_operation: string
+          p_owner: string
+          p_was_admin?: boolean
+          p_worker?: string
+        }
+        Returns: Json
+      }
+      creator_storage_complete_remove: {
+        Args: { p_id: string }
+        Returns: boolean
+      }
+      creator_storage_dispatch: {
+        Args: {
+          p_attempt?: string
+          p_id: string
+          p_kind?: string
+          p_object?: string
+          p_operation: string
+          p_origin_upload?: boolean
+          p_outcome?: string
+          p_owner: string
+          p_worker?: string
+        }
+        Returns: Json
+      }
+      creator_storage_finish_upload: {
+        Args: { p_id: string; p_outcome: string }
+        Returns: boolean
+      }
+      creator_storage_manifest: {
+        Args: {
+          p_attempt: string
+          p_bucket: string
+          p_owner: string
+          p_paths: Json
+          p_worker: string
+        }
+        Returns: number
+      }
+      creator_storage_prune: {
+        Args: { p_days?: number }
+        Returns: number
+      }
+      creator_storage_publish_media: {
+        Args: {
+          p_caption: string
+          p_height: number
+          p_id: string
+          p_sort_order?: number
+          p_width: number
+        }
+        Returns: Json
+      }
+      creator_storage_queue_remove: {
+        Args: {
+          p_actor?: string
+          p_admin?: boolean
+          p_objects: Json
+          p_owner: string
+        }
+        Returns: number
+      }
+      creator_storage_register_upload: {
+        Args: { p_bucket: string; p_id: string; p_owner: string; p_path: string }
+        Returns: Json
+      }
+      creator_storage_work_claim: {
+        Args: {
+          p_limit?: number
+        }
+        Returns: Json
+      }
       credit_pass_spins: {
         Args: { p_fan_id: string; p_spins: number }
         Returns: undefined
@@ -1994,6 +2289,7 @@ export type Database = {
         Args: { p_avatar: string; p_note: string }
         Returns: undefined
       }
+      set_creator_theme: { Args: { p_theme: Json }; Returns: Json }
       set_display_name: { Args: { p_name: string }; Returns: undefined }
       set_leaderboard_enabled: {
         Args: { p_enabled: boolean }

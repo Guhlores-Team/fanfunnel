@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
@@ -73,7 +73,14 @@ function useWheelSize() {
   return size;
 }
 
-export default function SpinClient({ pass }: { pass: FanPassView }) {
+export default function SpinClient({
+  pass,
+  gallery = null,
+}: {
+  pass: FanPassView;
+  /** Per-creator theming: the creator's photo strip, rendered by the page under the note. */
+  gallery?: ReactNode;
+}) {
   const [spinsRemaining, setSpinsRemaining] = useState(pass.spinsRemaining);
   const [result, setResult] = useState<WheelResult | null>(null);
   const [won, setWon] = useState<PublicPrize | null>(null);
@@ -429,6 +436,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         glowLevel={glow?.level}
       />
 
+      {gallery}
+
       {pass.leaderboardEnabled && pass.creatorId && (
         <RecentWinsTicker creatorId={pass.creatorId} refreshKey={boardRefresh} />
       )}
@@ -540,7 +549,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         )}
         {nextSpinHash && (
           <p
-            className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 text-center text-[10px] tracking-wide text-muted/60"
+            className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 text-center text-[10px] tracking-wide text-muted"
             title="The server committed to your next spin's random seed before you spin — after spinning, the verify page proves the outcome matches this commitment."
           >
             <span className="whitespace-nowrap">🔒 Provably fair · next-spin commitment</span>

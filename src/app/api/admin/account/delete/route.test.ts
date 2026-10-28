@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mock } from "node:test";
 import { FakeTables } from "@/lib/privacy/fakeTables";
 import { FakeStorage } from "@/lib/privacy/fakeStorage";
+import { FakeStorageWork } from "@/lib/storage/fakeWork";
 
 const A = "aaaaaaaa-0000-4000-8000-00000000000a";
 const B = "bbbbbbbb-0000-4000-8000-00000000000b";
@@ -12,13 +13,14 @@ let services = 0;
 const deleted: string[] = [];
 const audits: Record<string, unknown>[] = [];
 const tables = new FakeTables({
-  profiles: [{ id: B, email: "target@example.test", role: "admin" }],
+  profiles: [{ id: B, email: "target@example.test", role: "admin", is_active: true }, { id: A, role: "admin", is_active: true }],
   fan_passes: [{ id: "one", creator_id: B, token: "target-link-123" }],
   link_tombstones: [],
 });
 const storage = new FakeStorage();
 storage.add("avatars", `${B}/old.png`, `${B}/current.png`, `${A}/keep.png`);
 storage.add("creator-media", `${B}/photo.webp`, `${A}/keep.webp`);
+const work = new FakeStorageWork(tables, { authExists: (id) => !deleted.includes(id), onAudit: (entry) => { audits.push(entry); } });
 mock.module("@/lib/supabase/server", { namedExports: {
   isSupabaseConfigured: () => true,
   createClient: async () => ({
@@ -26,18 +28,16 @@ mock.module("@/lib/supabase/server", { namedExports: {
       getUser: async () => ({ data: { user } }),
       getSession: async () => ({ data: { session: { access_token: `h.${Buffer.from(JSON.stringify({ aal })).toString("base64url")}.s` } } }),
     },
-    rpc: async (name: string, args?: { p_target: string }) => {
+    rpc: async (name: string) => {
       if (name === "is_admin") return { data: isAdmin, error: null };
-      assert.equal(name, "admin_reserve_account_deletion");
-      assert.equal(args?.p_target, B);
-      tables.rows("profiles")[0].role = "creator";
-      return { data: "ok", error: null };
+      throw new Error("unexpected session RPC: " + name);
     },
   }),
   createServiceClient: () => {
     services++;
     return {
-      from: (table: string) => tables.from(table),
+      from: work.from,
+      rpc: work.rpc,
       storage: storage.storage,
       auth: { admin: { deleteUser: async (id: string) => { deleted.push(id); return { error: null }; } } },
     };
