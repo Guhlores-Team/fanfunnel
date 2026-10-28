@@ -94,6 +94,10 @@ Resolve by keeping both sides, in migration order. Watch for:
 After each merge (or after all three): run the full verify (§5) twice, then
 `git push origin HEAD:dashboard-redesign`. CI's `test` job applies the new migrations to TEST;
 confirm with Supabase `list_migrations` on `snmcrmhgevfqggxdiomu`.
+Then follow `docs/PREVIEW_DEPLOY.md`: automatic Git deployment is disabled only for
+this branch, so deploy the exact checked SHA through the authenticated CLI after
+TEST application/type/history checks and all CI jobs succeed. Never deploy an
+uncommitted source directory or change a Production alias.
 
 ### 3b. Finish #26 and theming
 Each branch's builder stopped mid-task (usage limit). Read the branch's commits, finish what the

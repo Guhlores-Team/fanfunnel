@@ -30,11 +30,8 @@ on:
     paths:
       - "supabase/migrations/**"
       - "supabase/config.toml"
+  # Even a code-only Preview gets a no-op TEST check before CLI deployment.
   pull_request:
-    paths:
-      - "supabase/migrations/**"
-      - "supabase/config.toml"
-      - "src/lib/data/db.types.ts"
 
 # Never run two migration pushes against the same target at once.
 concurrency:

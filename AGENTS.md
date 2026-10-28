@@ -56,6 +56,12 @@ real data.
 3. Only after it's verified on Preview **and** CI is green
    (`verify` / `supabase` / `login-ui`) → merge to `main` → prod deploys.
 
+`dashboard-redesign` uses the stricter gate in `docs/PREVIEW_DEPLOY.md`: its
+automatic Git deployment is disabled. After TEST migrations/type verification
+and all required CI jobs succeed, deploy an archive of that exact checked SHA
+with the authenticated CLI, explicitly targeting Preview. This ensures DB before
+code. It does not authorize a Production deployment or a merge to `main`.
+
 **Rules the agent MUST follow:**
 - **Never merge to `main`** without (a) all CI checks green AND (b) explicit user
   confirmation the change was tested on its Preview. CI passing is necessary but

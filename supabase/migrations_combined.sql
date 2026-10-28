@@ -3660,6 +3660,8 @@ begin
    where id = auth.uid() and is_active = true and public.current_user_active();
 end;
 $$;
+revoke execute on function public.set_pwa_icon_mode(text) from public, anon;
+grant execute on function public.set_pwa_icon_mode(text) to authenticated;
 
 create or replace function public.set_leaderboard_enabled(p_enabled boolean)
 returns void language sql security definer set search_path = public as $$
