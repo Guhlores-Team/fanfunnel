@@ -1,4 +1,5 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { demoCodeFingerprint } from "@/lib/rewards/demoFingerprint";
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
 import { makeFairRng, makeFairRngV3, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import {
@@ -3566,7 +3567,7 @@ function rewardState(): NonNullable<typeof gRewards.__ffRewards> {
 function mockCodeFingerprint(prizeId: string, code: string): string {
   const state = rewardState();
   const key = (state.fingerprintKey ??= randomBytes(32));
-  return createHmac("sha256", key).update(JSON.stringify(["demo", prizeId, code])).digest("hex");
+  return demoCodeFingerprint(key, prizeId, code);
 }
 
 /** The live prize object (mutable) on whichever wheel holds it. */

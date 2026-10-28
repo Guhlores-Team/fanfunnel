@@ -219,7 +219,8 @@ async function main() {
   const state = (globalThis as unknown as {__ffRewards:{deliveries:Map<string,{fanId:string;value:string}>}}).__ffRewards;
   check("erasure removes all55 secret receipts beyond the recent-win cap", [...state.deliveries.values()].every((d)=>d.fanId!==long.fanId));
   check("erasure preserves anonymous financial spin counts", mockGetOverview().metrics.spinsPlayed===financialBefore);
-  check("erasure retains anonymous Auto fulfilment metadata", mockGetOverview().redemptions.filter((r)=>r.fanName==="Deleted fan" && r.auto?.kind==="text").length===55);
+  check("erasure retains anonymous Auto fulfilment metadata", mockGetOverview().redemptions.filter((r)=>r.fanName==="Fan" && r.auto?.kind==="text").length===55);
+  check("erasure removes the named fan from retained fulfilment metadata", !mockGetOverview().redemptions.some((r)=>r.fanName==="Long reward history"));
   check("code winner erasure succeeds", mockDeleteFan(a.fanId));
   const afterErasure = mockAddPrizeCodes("rw-code", [CODES[0]]);
   check("erased delivered code stays consumed and cannot be re-uploaded", !("error" in afterErasure) && afterErasure.added===0 && afterErasure.duplicates===1);
