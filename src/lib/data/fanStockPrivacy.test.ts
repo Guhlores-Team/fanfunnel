@@ -110,7 +110,7 @@ function fakeClient() {
   };
   return {
     from: (table: string) => builder(table),
-    rpc: async () => ok(null),
+    rpc: async (name: string) => ok(name === "can_act_for" ? true : null),
     auth: { getUser: async () => ({ data: { user: { id: CREATOR } }, error: null }) },
   };
 }

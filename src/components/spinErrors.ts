@@ -9,6 +9,8 @@ export interface SpinErrorInfo {
   reopenAgeGate?: boolean;
   /** RM-6: the fan is on a break; reload the page's play state to show it. */
   refreshPlay?: boolean;
+  /** The last commit is uncertain: stop spending until the page is reloaded. */
+  checkPendingSpin?: boolean;
 }
 
 const GENERIC: SpinErrorInfo = { message: "Something went wrong. Try again." };
@@ -25,6 +27,10 @@ const MESSAGES: Record<string, SpinErrorInfo> = {
   no_prizes: { message: "This wheel isn't ready yet — check back soon. 🎡" },
   not_found: { message: "We couldn't find this link. Double-check it with your creator." },
   db_error: { message: "We hit a snag on our end. Give it another try in a moment." },
+  spin_pending: {
+    message: "We couldn't confirm that spin yet. Check your rewards, then reload this link before playing again.",
+    checkPendingSpin: true,
+  },
   bad_request: { message: "That didn't go through. Refresh the page and try again." },
 };
 

@@ -35,6 +35,16 @@ const pausedOnBreak = spinControl({ spinsRemaining: 5, busy: false, paused: true
 check("a paused link still wins over a break", pausedOnBreak.label === "Link paused");
 check("no break flag keeps today's behaviour", spinControl({ spinsRemaining: 5, busy: false, paused: false, onBreak: false }).canSpin);
 
+// An uncertain commit must be reconciled before the browser can spend again.
+for (const spinsRemaining of [0, 5]) {
+  const pending = spinControl({ spinsRemaining, busy: false, paused: false, spinPending: true });
+  check("pending spin refuses a second spend", !pending.canSpin);
+  check("pending spin has an explicit recovery label", pending.label === "Check your last spin");
+  check("pending spin does not assume a refunded balance", pending.balanceLabel === "Checking…");
+}
+check("pause still has priority during an uncertain spin", spinControl({ spinsRemaining: 5, busy: false, paused: true, spinPending: true }).label === "Link paused");
+check("break still has priority during an uncertain spin", spinControl({ spinsRemaining: 5, busy: false, paused: false, onBreak: true, spinPending: true }).label === "On a break");
+
 // Error mapping: never raw server text.
 check("rate_limited is mapped", /moment|slow|again/i.test(pauseErrorMessage("rate_limited")));
 check("not_found is mapped", /couldn.t find|already/i.test(pauseErrorMessage("not_found")));

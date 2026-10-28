@@ -39,6 +39,8 @@ import { readPlayAfterSpin, readPlayState } from "./playGuard";
 import { readFanGlow } from "./checkins";
 import { fanNeedsAck } from "@/lib/legal";
 import { notifyCreator } from "@/lib/push/notify";
+import { finalizeInstantSpin } from "@/lib/rewards/finalize";
+import type { DeliveredReward } from "@/lib/rewards/config";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -165,7 +167,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     // link the creator has ever minted for them.
     sb
       .from("spins")
-      .select("prize_label, prize_rarity, prize_image_url, share_id, created_at")
+      // #26: `reward` only says the win was instant (its kind), never the value.
+      .select("prize_label, prize_rarity, prize_image_url, share_id, created_at, reward:spin_rewards(kind)")
       .eq("fan_id", pass.fan.id)
       .order("created_at", { ascending: false })
       .limit(50),
@@ -180,12 +183,14 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     readFanGlow(sb, pass.fan.id),
   ]);
 
-  const winRows = (wins ?? []) as {
+  const winRows = (wins ?? []) as unknown as {
     prize_label: string;
     prize_rarity: Rarity;
     prize_image_url: string | null;
     share_id: string | null;
     created_at: string;
+    // One-to-one embed: PostgREST sends an object (or null); tolerate an array.
+    reward?: { kind: string } | { kind: string }[] | null;
   }[];
 
   const wishlist: WishlistItem[] = (
@@ -224,6 +229,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       at: w.created_at,
       shareId: w.share_id ?? undefined,
       imageUrl: w.prize_image_url ?? null,
+      ...(hasEmbeddedRow(w.reward) ? { instant: true } : {}),
     })),
     wishlist,
     happyHour,
@@ -315,6 +321,11 @@ export async function spin(
   return { ...result, ...(await readPlayAfterSpin(sb, ack.fan_id)) };
 }
 
+/** A one-to-one embed that holds a row (PostgREST returns an object; arrays tolerated). */
+export function hasEmbeddedRow(v: unknown): boolean {
+  return Array.isArray(v) ? v.length > 0 : v != null;
+}
+
 /** True while the fan's break is in force. Best-effort (false on any error). */
 async function fanOnBreak(sb: AnyClient, fanId: string): Promise<boolean> {
   try {
@@ -341,18 +352,28 @@ export async function completeClaimedSpin(
   // The fan has already paid one spin. Every exit below that is not a durably
   // recorded win refunds it — early returns and thrown errors alike — and
   // restores a limited prize's unit when one was decremented on the way.
-  const refund: { prizeId: string | null } = { prizeId: null };
+  const refund: SpinRefund = { prizeId: null };
   let result: SpinResult | SpinError;
   try {
     result = await recordClaimedSpin(sb, token, clientSeed, spinsRemaining, refund);
   } catch (e) {
     console.error("spin: failed after claim — rolling back", e instanceof Error ? e.message : e);
-    result = { error: "db_error" };
+    result = { error: refund.recorded || refund.outcomeUnknown ? "spin_pending" : "db_error" };
   }
-  if ("error" in result) {
+  if ("error" in result && !refund.recorded && !refund.outcomeUnknown) {
     await sb.rpc("rollback_claimed_spin", { p_token: token, p_prize_id: refund.prizeId });
   }
   return result;
+}
+
+/**
+ * Manual stock can require a compensating refund. Instant stock/receipts are
+ * atomic; a recorded or unknown commit must never be refunded blindly.
+ */
+interface SpinRefund {
+  prizeId: string | null;
+  recorded?: boolean;
+  outcomeUnknown?: boolean;
 }
 
 const MAX_STOCK_CAS_ATTEMPTS = 5;
@@ -405,11 +426,11 @@ async function takeStockUnit(
 }
 
 async function recordClaimedSpin(
-  sb: AnyClient,
+  sb: ReturnType<typeof createServiceClient>,
   token: string,
   clientSeed: string,
   spinsRemaining: number,
-  refund: { prizeId: string | null },
+  refund: SpinRefund,
 ): Promise<SpinResult | SpinError> {
   // 2. Load link context, then resolve WHICH wheel this spin uses + its prizes.
   const ctx = await sb
@@ -532,7 +553,27 @@ async function recordClaimedSpin(
   //    sold out between our read and write, exclude it + re-draw; each
   //    exclusion is recorded in order so the replay can re-check it.
   const byId = new Map(config.prizes.map((p, i) => [p.id, { prize: p, index: i }]));
-  let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
+  // #26: the spin's id is fixed before the draw, so a code can be reserved for
+  // exactly this spin before its row exists (trg_attach_spin_reward then copies
+  // it onto the spin in the same INSERT, or refuses the INSERT).
+  const spinId = crypto.randomUUID();
+  const spinCampaignId: string | null = pass.campaign_id;
+  const makeSpinInsert = (prize: Prize, excluded: string[]) => ({
+    id: spinId, fan_pass_id: pass.id, creator_id: pass.creator_id, wheel_id: wheelId, fan_id: pass.fan_id,
+    prize_id: prize.id, prize_label: prize.label, prize_rarity: prize.rarity, prize_image_url: prize.imageUrl ?? null,
+    campaign_id: spinCampaignId, server_seed: serverSeed, server_seed_hash: serverSeedHash, nonce,
+    ...(hasCommitRevealCols ? { client_seed: clientSeed || null, seed_commitment: commitment } : {}),
+    ...(hasCommitRevealCols && v3 ? { fair_version: 3, pool_snapshot: snapshot, pool_hash: poolHash,
+      fair_trace: { excluded: [...excluded], won: prize.id } } : {}),
+  });
+  let finalized: Extract<Awaited<ReturnType<typeof finalizeInstantSpin>>, { status: "recorded" }> | null = null;
+  let chosen: {
+    prize: Prize;
+    index: number;
+    pityAwarded: boolean;
+    nextPityCounter: number;
+    reward: DeliveredReward | null;
+  } | null = null;
   const excluded = new Set<string>();
   const excludedOrder: string[] = [];
   // The won prize's stock right after OUR decrement (web push: low-stock crossing).
@@ -542,7 +583,25 @@ async function recordClaimedSpin(
       const draw = drawFromSnapshot(snapshot, excluded, rng);
       const live = byId.get(draw.prize.id);
       if (!live) throw new Error("spin: drawn prize missing from the wheel config");
-      const pick = { ...live, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter };
+      const pick = { ...live, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter, reward: null as DeliveredReward | null };
+      const delivery = pick.prize.delivery ?? "manual";
+      if (delivery !== "manual") {
+        const outcome = await finalizeInstantSpin(sb, makeSpinInsert(pick.prize, excludedOrder), delivery, pass.creator_id);
+        if (outcome.status === "pending") {
+          refund.outcomeUnknown = true;
+          return { error: "spin_pending" };
+        }
+        if (outcome.status === "failed") return { error: "db_error" };
+        if (outcome.status === "recorded") {
+          refund.recorded = true;
+          finalized = outcome;
+          chosen = { ...pick, reward: outcome.reward };
+          break;
+        }
+        excluded.add(pick.prize.id);
+        excludedOrder.push(pick.prize.id);
+        continue;
+      }
       if (pick.prize.stock === null || pick.prize.stock === undefined) {
         chosen = pick;
         break;
@@ -596,12 +655,9 @@ async function recordClaimedSpin(
     console.error("spin: pity update failed", pityErr.message);
   }
 
-  // 3b. Per-wheel attribution: the spin belongs to THIS pass's campaign (the
-  //     link the fan is spinning), so spins land on the right campaign directly.
-  const spinCampaignId: string | null = pass.campaign_id;
-
   // 4. Log the spin (against the fan account) + a pending redemption.
   const spinInsert = {
+    id: spinId,
     fan_pass_id: pass.id,
     creator_id: pass.creator_id,
     wheel_id: wheelId,
@@ -629,7 +685,7 @@ async function recordClaimedSpin(
       : {};
   const insertSpin = () =>
     sb.from("spins").insert({ ...spinInsert, ...commitCols, ...v3Cols }).select("id, share_id").single();
-  let inserted = await insertSpin();
+  let inserted = finalized ? { data: { id: finalized.id, share_id: finalized.shareId }, error: null } : await insertSpin();
   if (inserted.error && Object.keys(v3Cols).length && /fair_version|pool_snapshot|pool_hash|fair_trace/.test(inserted.error.message)) {
     v3Cols = {};
     inserted = await insertSpin();
@@ -649,10 +705,14 @@ async function recordClaimedSpin(
     return { error: "db_error" };
   }
 
-  const { error: redemptionErr } = await sb.from("redemptions").insert({
+  // #26: the reward was delivered with the spin (trg_attach_spin_reward), so
+  // the creator has nothing to fulfil: the row is fulfilled, tagged Auto.
+  const delivered = chosen.reward;
+  const { error: redemptionErr } = finalized ? { error: null } : await sb.from("redemptions").insert({
     spin_id: spinRow.id,
     creator_id: pass.creator_id,
-    status: "pending",
+    status: delivered ? "fulfilled" : "pending",
+    ...(delivered ? { fulfilled_at: new Date().toISOString() } : {}),
   });
   if (redemptionErr) {
     // The won prize is safely recorded in `spins`, but its fulfilment-queue row
@@ -667,7 +727,8 @@ async function recordClaimedSpin(
   // after() so the host can't cut it off. Never blocks/throws — a slow or
   // failing endpoint must not break the spin.
   const webhookPayload = {
-    event: "prize_pending",
+    // #26: an instant prize is already delivered (never the value itself).
+    event: delivered ? "prize_delivered" : "prize_pending",
     prize: chosen.prize.label,
     rarity: chosen.prize.rarity,
     at: new Date().toISOString(),
@@ -680,7 +741,9 @@ async function recordClaimedSpin(
     spinId: spinRow.id as string,
     fanId: pass.fan_id,
     prizeId: chosen.prize.id,
-    stockAfter: refund.prizeId === chosen.prize.id && stockOut.after !== undefined ? stockOut.after : null,
+    stockAfter: finalized
+      ? finalized.stockAfter
+      : refund.prizeId === chosen.prize.id && stockOut.after !== undefined ? stockOut.after : null,
   };
   const pushCreator = pass.creator_id;
   runAfterResponse(() => notifyCreator(pushCreator, pushEvent));
@@ -698,6 +761,8 @@ async function recordClaimedSpin(
     nextSpinHash: nextServerSeedHash,
     ...(Object.keys(v3Cols).length ? { fairVersion: 3 as const, poolHash } : {}),
     ...(stock ? { stock } : {}),
+    // #26: this winner's own response only (the route sends it no-store).
+    ...(delivered ? { reward: delivered } : {}),
   };
 }
 

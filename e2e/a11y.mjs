@@ -16,6 +16,7 @@ import { quietSpender } from "./winback.mjs";
 import { staleTermsRoute } from "./journeys.mjs";
 
 import { PUSH_STUB, pushConfig, openPushCard, turnPushOn, clearPushDevices } from "./push.mjs";
+import { instantA11yStates } from "./instant-a11y.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -310,6 +311,7 @@ const openCloseAccount = async (page) => {
 };
 
 const PAGES = [
+  ...instantA11yStates(DASH_ADVISORY),
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
   { path: "/terms", name: "terms" },

@@ -56,6 +56,9 @@ import { GlowMilestoneToast, GlowTag, glowClass } from "./fan/VisitGlow";
 import { spinControl } from "./fan/linkPause";
 import { ackReminder, breakStatus, formatBreakEnd, reminderAcked } from "./fan/yourPlay";
 import { reminderDue } from "@/lib/play/playGuard";
+import type { DeliveredReward } from "@/lib/rewards/config";
+import InstantReward, { RewardUnavailable } from "./fan/InstantReward";
+import { parseDeliveredReward } from "./fan/instantReward";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -75,6 +78,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
   const [result, setResult] = useState<WheelResult | null>(null);
   const [won, setWon] = useState<PublicPrize | null>(null);
   const [wonShareId, setWonShareId] = useState<string | null>(null);
+  // Private values live only in this reveal's memory, never in win history.
+  const [wonReward, setWonReward] = useState<DeliveredReward | null>(null);
+  const [wonInstant, setWonInstant] = useState(false);
+  const [spinPending, setSpinPending] = useState(false);
+  const [rewardHistoryNonce, setRewardHistoryNonce] = useState(0);
   const [busy, setBusy] = useState(false);
   // RM-1: the reveal runs as a small state machine (revealTiers.ts). It only
   // starts once /api/spin has returned, and reads nothing but that result.
@@ -189,6 +197,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     busy: busy || revealInFlight(rv.phase),
     paused,
     onBreak,
+    spinPending,
   });
 
   const runSpin = useCallback(async () => {
@@ -202,6 +211,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     setBusy(true);
     setError(null);
     setWon(null);
+    setWonShareId(null);
+    setWonReward(null);
+    setWonInstant(false);
     setNearMiss(null);
     setPity(null);
     setPityAwarded(false);
@@ -220,6 +232,11 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
         if (info.reopenAgeGate) setNeedsAck(true);
         // On a break taken elsewhere (another tab or link): reload to show it.
         if (info.refreshPlay) router.refresh();
+        if (info.checkPendingSpin) {
+          setSpinPending(true);
+          setRewardHistoryNonce((n) => n + 1);
+          router.refresh();
+        }
         setBusy(false);
         return;
       }
@@ -241,6 +258,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
       setResult({ index: data.prizeIndex, nonce: Date.now() });
       setWon(prize);
       setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
+      setWonReward(parseDeliveredReward(data.reward));
+      setWonInstant(data.reward !== undefined && data.reward !== null);
       setPityAwarded(data.pityAwarded === true);
       pendingStock.current =
         data.stock && typeof data.stock === "object" ? (data.stock as Record<string, PublicStock>) : null;
@@ -316,6 +335,9 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             emoji: won.emoji,
             color: won.color ?? RARITY_COLORS[won.rarity],
             at: new Date().toISOString(),
+            ...(wonShareId ? { shareId: wonShareId } : {}),
+            ...(wonInstant ? { instant: true } : {}),
+            imageUrl: won.imageUrl,
           },
           ...h,
         ].slice(0, 50)
@@ -342,7 +364,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
     }
     // Opens the card now, or after the tier's short hold on the landed slice.
     dispatchReveal({ type: "stop" });
-  }, [won, muted, result, prizes, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier]);
+  }, [won, wonShareId, wonInstant, muted, result, prizes, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier]);
   useEffect(() => {
     spinEndRef.current = handleSpinEnd;
   }, [handleSpinEnd]);
@@ -506,6 +528,16 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             {error}
           </p>
         )}
+        {spinPending && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            data-testid="spin-pending-reload"
+            className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+          >
+            Reload balance and wins
+          </button>
+        )}
         {nextSpinHash && (
           <p
             className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 text-center text-[10px] tracking-wide text-muted/60"
@@ -533,7 +565,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
 
       <LimitedStockRow prizes={prizes} />
 
-      <WinsGallery history={history} />
+      <WinsGallery key={pass.token} history={history} token={pass.token} historyNonce={rewardHistoryNonce} />
 
       <PrizeBook prizes={prizes} history={history} />
 
@@ -587,6 +619,8 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
           prize={won}
           tier={rv.tier}
           shareId={wonShareId}
+          instant={wonInstant}
+          extra={wonReward ? <InstantReward reward={wonReward} /> : wonInstant ? <RewardUnavailable /> : undefined}
           entrance={revealEntrance(rv)}
           confetti={revealConfetti(rv)}
           // The beats accompany the card: they open with it, in the row above
@@ -605,6 +639,7 @@ export default function SpinClient({ pass }: { pass: FanPassView }) {
             setPity(null);
             setNearMiss(null);
             setBeatRow(false);
+            setWonReward(null);
           }}
         />
       )}

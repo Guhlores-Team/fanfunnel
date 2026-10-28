@@ -64,6 +64,7 @@ export function statusForError(code: string): number {
       return 403;
     case "not_found":
       return 404;
+    case "already_delivered":
     case "has_history":
     case "conflict":
       return 409;

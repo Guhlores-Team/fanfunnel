@@ -19,6 +19,7 @@ import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import NotificationBell from "@/components/dashboard/NotificationBell";
 import TermsPrompt from "@/components/dashboard/TermsPrompt";
 import { resolveSection } from "@/components/dashboard/dashboardSection";
+import { deliveryLeaveDecision, type DeliveryNavigationState } from "@/components/dashboard/deliveryNavigation";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -75,6 +76,12 @@ function submitSignOut(form: HTMLFormElement) {
   copy.submit();
 }
 
+interface DashboardLeaveRequest {
+  action: () => void;
+  what: string;
+  consequence: string;
+}
+
 export default function DashboardClient({
   isAdmin,
   email,
@@ -101,18 +108,58 @@ export default function DashboardClient({
   // (and the edits themselves) survive leaving the Wheels section and coming back.
   const [savedWheelJson, setSavedWheelJson] = useState(() => JSON.stringify(initialWheel));
   const wheelDirty = useMemo(() => JSON.stringify(wheel) !== savedWheelJson, [wheel, savedWheelJson]);
+  // Only flags are lifted. Private delivery text/codes stay inside the prize
+  // editor and never enter the wheel JSON or dashboard state.
+  const [deliveryDirty, setDeliveryDirty] = useState(false);
+  const [deliveryPending, setDeliveryPending] = useState(false);
+  const deliveryState = useRef<DeliveryNavigationState>({ dirty: false, pending: false });
+  const [blockedDeliveryLeave, setBlockedDeliveryLeave] = useState(false);
+  const [leaveRequest, setLeaveRequest] = useState<DashboardLeaveRequest | null>(null);
+  const leaveRequestRef = useRef<DashboardLeaveRequest | null>(null);
+  const deliveryDraftChanged = useCallback((dirty: boolean) => {
+    deliveryState.current.dirty = dirty;
+    setDeliveryDirty(dirty);
+  }, []);
+  const deliveryPendingChanged = useCallback((pending: boolean) => {
+    deliveryState.current.pending = pending;
+    setDeliveryPending(pending);
+    if (!pending) setBlockedDeliveryLeave(false);
+  }, []);
   // Leaving with unsaved wheel edits. Sign out asks in-app first (below); a
   // reload/close can only get the browser's own beforeunload prompt. Lives
   // here, not in the editor, so it holds while another section is open.
   const leavingRef = useRef(false);
-  const [signOutForm, setSignOutForm] = useState<HTMLFormElement | null>(null);
   useEffect(() => {
-    if (!wheelDirty) return;
+    if (!wheelDirty && !deliveryDirty && !deliveryPending) return;
     const warn = (e: BeforeUnloadEvent) => {
-      if (!leavingRef.current) e.preventDefault();
+      if (!leavingRef.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
+  }, [wheelDirty, deliveryDirty, deliveryPending]);
+  const requestLeave = useCallback((action: () => void, intent: "section" | "signout") => {
+    // A later push message must not replace a choice already being reviewed.
+    if (leaveRequestRef.current) return;
+    const state = deliveryState.current;
+    const decision = deliveryLeaveDecision(state, wheelDirty, intent);
+    if (decision === "wait") {
+      setBlockedDeliveryLeave(true);
+      return;
+    }
+    if (decision === "confirm") {
+      const request: DashboardLeaveRequest = {
+        action,
+        what: intent === "section" ? "this prize's delivery" : state.dirty && wheelDirty ? "your wheel and prize delivery" : state.dirty ? "your prize delivery" : "your wheel",
+        consequence: intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away the delivery changes. Your wheel edits stay here.",
+      };
+      leaveRequestRef.current = request;
+      setLeaveRequest(request);
+      return;
+    }
+    action();
   }, [wheelDirty]);
   // Which wheel the editor is currently editing. Lifted so it survives tab
   // switches and the WheelSwitcher highlights the right wheel. Seeded from the
@@ -173,16 +220,27 @@ export default function DashboardClient({
 
   // Brand-new creators land on Today, where "Your first steps" guides them
   // (RD-5) — no auto-switch to the Wheel editor any more.
-  const goTab = (t: Tab) => setTab(t);
+  const goTab = useCallback((t: Tab, after?: () => void) => {
+    if (t === "admin" && !adminVisible) return;
+    const navigate = () => {
+      setTab(t);
+      after?.();
+    };
+    // Re-selecting the current section preserves the mounted editor.
+    if (t === tab) navigate();
+    else requestLeave(navigate, "section");
+  }, [tab, adminVisible, requestLeave]);
 
   // Onboarding CTAs: switch to the relevant tab AND scroll its panel into view,
   // so a creator on a phone is actually taken to the section to act on it.
   const panelRef = useRef<HTMLDivElement>(null);
   const checklistRef = useRef<HTMLDivElement>(null);
-  const goToSection = (t: Tab) => {
-    goTab(t);
-    requestAnimationFrame(() => {
-      panelRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+  const goToSection = (t: Tab, after?: () => void) => {
+    goTab(t, () => {
+      after?.();
+      requestAnimationFrame(() => {
+        panelRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+      });
     });
   };
 
@@ -208,20 +266,25 @@ export default function DashboardClient({
   const accountSub = email ?? "Demo workspace — connect Supabase to go live";
 
   // Shared by the sidebar (desktop) and the More sheet (phone).
-  const onSignOut = (e: React.FormEvent<HTMLFormElement>) => {
-    if (!wheelDirty) return;
+  const guardSignOut = (e: React.FormEvent, form: HTMLFormElement) => {
+    if (e.defaultPrevented) return;
     e.preventDefault();
-    setSignOutForm(e.currentTarget);
+    requestLeave(() => {
+      leavingRef.current = true;
+      submitSignOut(form);
+    }, "signout");
   };
+  const onSignOut = (e: React.FormEvent<HTMLFormElement>) => guardSignOut(e, e.currentTarget);
   const setupOffered = !overview.loading && onboardingDismissed && !onboardingAllDone;
   const reopenSetup = () => {
-    setOnboardingHidden(false);
     // The checklist lives on Today: open it there and bring it into view.
-    goTab("today");
-    requestAnimationFrame(() => {
-      checklistRef.current?.scrollIntoView({
-        behavior: prefersReducedMotion() ? "auto" : "smooth",
-        block: "start",
+    goTab("today", () => {
+      setOnboardingHidden(false);
+      requestAnimationFrame(() => {
+        checklistRef.current?.scrollIntoView({
+          behavior: prefersReducedMotion() ? "auto" : "smooth",
+          block: "start",
+        });
       });
     });
   };
@@ -241,8 +304,7 @@ export default function DashboardClient({
   // open it; the nonce scrolls the card into view each time.
   const [pushFocus, setPushFocus] = useState(0);
   const openPushSettings = () => {
-    goTab("settings");
-    setPushFocus((n) => n + 1);
+    goTab("settings", () => setPushFocus((n) => n + 1));
   };
   // A tapped push notification while a dashboard is open: the service worker
   // asks it to switch section in place (no reload, unsaved edits survive).
@@ -251,12 +313,16 @@ export default function DashboardClient({
     const onMessage = (e: MessageEvent) => {
       const d = e.data as { type?: unknown; url?: unknown } | null;
       if (d?.type !== "ff:navigate" || typeof d.url !== "string") return;
-      const section = resolveSection(new URL(d.url, window.location.origin).searchParams.get("section") ?? undefined, adminVisible);
-      if (section) setTab(section);
+      let url: URL;
+      try { url = new URL(d.url, window.location.origin); }
+      catch { return; }
+      if (url.origin !== window.location.origin || url.pathname !== "/dashboard") return;
+      const section = resolveSection(url.searchParams.get("section") ?? undefined, adminVisible);
+      if (section) goTab(section);
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-  }, [adminVisible]);
+  }, [adminVisible, goTab]);
 
   const [title, subtitleText] = SECTION_META[tab];
   // Phones show just the date on Today (the compressed top bar has no room).
@@ -280,6 +346,14 @@ export default function DashboardClient({
       // brandVars also derives --brand-ink / --brand-text so text stays legible
       // on ANY brand color (#1).
       style={brandVars(wheel.brandColor)}
+      onSubmitCapture={(event) => {
+        // Covers every sign-out form, including the Terms prompt, while the
+        // sidebar/phone handlers remain compatible with their existing API.
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        const action = new URL(form.action, window.location.origin);
+        if (action.origin === window.location.origin && action.pathname === "/auth/signout") guardSignOut(event, form);
+      }}
     >
       <Sidebar
         active={tab}
@@ -310,21 +384,20 @@ export default function DashboardClient({
             </span>
           }
           onSearch={(q) => {
-            setFanSearch((s) => ({ q, nonce: s.nonce + 1 }));
-            goToSection("fans");
+            goToSection("fans", () => setFanSearch((s) => ({ q, nonce: s.nonce + 1 })));
           }}
           onNewFanLink={() => {
-            goTab("fans");
-            setMintFocus((n) => n + 1);
+            goTab("fans", () => setMintFocus((n) => n + 1));
           }}
           bell={
             <NotificationBell
               onOpenPushSettings={openPushSettings}
               // Same in-app routes as the drawer "Message" and top-bar search.
               onNavigate={({ section, fanId, fanName }) => {
-                if (section === "inbox" && fanId) setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
-                if (section === "fans" && fanName) setFanSearch((s) => ({ q: fanName, nonce: s.nonce + 1 }));
-                goToSection(section);
+                goToSection(section, () => {
+                  if (section === "inbox" && fanId) setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
+                  if (section === "fans" && fanName) setFanSearch((s) => ({ q: fanName, nonce: s.nonce + 1 }));
+                });
               }}
             />
           }
@@ -342,7 +415,7 @@ export default function DashboardClient({
       >
         {tab === "today" && (
           <TodayPanel
-            onNavigate={(t) => setTab(t as Tab)}
+            onNavigate={(t) => goTab(t as Tab)}
             overview={overview.data}
             firstSteps={firstSteps}
             firstRun={!overview.loading && isFirstRun(firstStepSignals)}
@@ -362,8 +435,7 @@ export default function DashboardClient({
             initialSearch={fanSearch.q}
             focusMintNonce={mintFocus}
             onMessage={(fanId) => {
-              setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
-              goToSection("inbox");
+              goToSection("inbox", () => setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 })));
             }}
           />
         )}
@@ -372,7 +444,7 @@ export default function DashboardClient({
           <BoostsPanel
             leaderboardEnabled={overview.data?.metrics.leaderboardEnabled ?? false}
             onLeaderboardChange={overview.refresh}
-            onNavigate={(t) => setTab(t as Tab)}
+            onNavigate={(t) => goTab(t as Tab)}
           />
         )}
         {tab === "inbox" && (
@@ -391,7 +463,7 @@ export default function DashboardClient({
           <MetricsPanel
             overview={overview.data}
             loading={overview.loading}
-            onGoTo={setTab}
+            onGoTo={goTab}
             renderDeep={() => <AnalyticsPanel />}
           />
         )}
@@ -404,6 +476,8 @@ export default function DashboardClient({
             editingWheelId={editingWheelId}
             setEditingWheelId={setEditingWheelId}
             onWheelMutated={overview.refresh}
+            onDeliveryDraftChange={deliveryDraftChanged}
+            onDeliveryPendingChange={deliveryPendingChanged}
           />
         )}
         {tab === "settings" && (
@@ -422,16 +496,24 @@ export default function DashboardClient({
           />
         )}
         {tab === "admin" && adminVisible && <AdminClient />}
-        {signOutForm && (
+        {leaveRequest && (
           <DiscardChangesDialog
-            what="your wheel"
-            consequence="Signing out now throws them away."
-            onKeep={() => setSignOutForm(null)}
+            what={leaveRequest.what}
+            consequence={leaveRequest.consequence}
+            onKeep={() => { leaveRequestRef.current = null; setLeaveRequest(null); }}
             onDiscard={() => {
-              leavingRef.current = true;
-              submitSignOut(signOutForm);
+              const next = leaveRequestRef.current;
+              leaveRequestRef.current = null;
+              setLeaveRequest(null);
+              if (deliveryState.current.pending) { setBlockedDeliveryLeave(true); return; }
+              deliveryState.current.dirty = false;
+              setDeliveryDirty(false);
+              next?.action();
             }}
           />
+        )}
+        {blockedDeliveryLeave && deliveryPending && (
+          <DiscardChangesDialog pending what="prize delivery" onKeep={() => setBlockedDeliveryLeave(false)} onDiscard={() => {}} />
         )}
       </div>
         </div>

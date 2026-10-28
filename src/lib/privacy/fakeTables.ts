@@ -11,6 +11,8 @@ export interface Statement {
   op: "select" | "insert" | "upsert" | "update" | "delete";
   filters: { kind: "eq" | "in" | "is"; col: string; value: unknown }[];
   columns?: string;
+  orders?: { column: string; ascending: boolean }[];
+  range?: [number, number];
   payload?: unknown;
 }
 
@@ -18,6 +20,8 @@ type Result = { data: unknown; error: { message: string } | null; count: number 
 
 export class FakeTables {
   readonly statements: Statement[] = [];
+  /** Model PostgREST's configured maximum page size. */
+  rowLimit = 1000;
   /** Make a statement fail (return a message) before it touches the store. */
   failWhen: ((s: Statement) => string | null) | null = null;
   /** Model ON DELETE CASCADE / SET NULL: called with the rows a delete removed. */
@@ -33,7 +37,7 @@ export class FakeTables {
     return new Builder(this, table);
   }
 
-  run(stmt: Statement, opts: { single?: "maybe" | "one"; head?: boolean; count?: boolean; range?: [number, number] }): Result {
+  run(stmt: Statement, opts: { single?: "maybe" | "one"; head?: boolean; count?: boolean; range?: [number, number]; limit?: number }): Result {
     this.statements.push(stmt);
     const fail = this.failWhen?.(stmt);
     if (fail) return { data: null, error: { message: fail }, count: null };
@@ -74,10 +78,20 @@ export class FakeTables {
             .filter(Boolean);
     const project = (r: Row): Row =>
       cols ? Object.fromEntries(cols.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r };
-    let hits = rows.filter(match).map(project);
+    const matched = rows.filter(match);
+    if (stmt.orders?.length) matched.sort((a, b) => {
+      for (const { column, ascending } of stmt.orders ?? []) {
+        if (a[column] === b[column]) continue;
+        const comparison = String(a[column] ?? "").localeCompare(String(b[column] ?? ""));
+        return ascending ? comparison : -comparison;
+      }
+      return 0;
+    });
+    let hits = matched.map(project);
     const count = hits.length;
     if (opts.range) hits = hits.slice(opts.range[0], opts.range[1] + 1);
     if (opts.head) return { data: null, error: null, count };
+    hits = hits.slice(0, Math.min(opts.limit ?? Infinity, this.rowLimit));
     if (opts.single) {
       if (hits.length > 1) return { data: null, error: { message: "multiple rows" }, count: null };
       if (opts.single === "one" && hits.length === 0) return { data: null, error: { message: "no rows" }, count: null };
@@ -89,7 +103,7 @@ export class FakeTables {
 
 class Builder implements PromiseLike<Result> {
   private stmt: Statement;
-  private opts: { single?: "maybe" | "one"; head?: boolean; count?: boolean; range?: [number, number] } = {};
+  private opts: { single?: "maybe" | "one"; head?: boolean; count?: boolean; range?: [number, number]; limit?: number } = {};
   private done: Result | null = null;
 
   constructor(private db: FakeTables, table: string) {
@@ -132,14 +146,17 @@ class Builder implements PromiseLike<Result> {
     this.stmt.filters.push({ kind: "is", col, value });
     return this;
   }
-  order() {
+  order(column: string, options: { ascending?: boolean } = {}) {
+    (this.stmt.orders ??= []).push({ column, ascending: options.ascending !== false });
     return this;
   }
-  limit() {
+  limit(value: number) {
+    this.opts.limit = value;
     return this;
   }
   range(from: number, to: number) {
     this.opts.range = [from, to];
+    this.stmt.range = [from, to];
     return this;
   }
   maybeSingle() {

@@ -28,6 +28,7 @@ export default function RewardReveal({
   tier: tierProp,
   shareId,
   extra,
+  instant = false,
   banner,
   bannerSpace = false,
   entrance,
@@ -38,6 +39,8 @@ export default function RewardReveal({
   tier?: RevealTierConfig;
   shareId: string | null;
   extra?: ReactNode;
+  /** The private instant value is shown in `extra`; no manual claim is needed. */
+  instant?: boolean;
   /** Beat shown above the card (see the doc comment). */
   banner?: ReactNode;
   /** Reserve the banner row even while `banner` is empty. */
@@ -199,8 +202,11 @@ export default function RewardReveal({
           )}
           {extra}
           <p className="mt-5 text-sm text-muted">
-            Screenshot this and send it to your creator to claim your prize!
+            {instant
+              ? "Your reward is delivered. You can reopen it from Your wins."
+              : "Screenshot this and send it to your creator to claim your prize!"}
           </p>
+          {instant && shareId && <p className="mt-2 text-xs text-muted">Your reward stays private when you share your win.</p>}
           {shareBtn}
           <button
             ref={shareFirst ? undefined : primaryRef}

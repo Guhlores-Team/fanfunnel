@@ -6,8 +6,9 @@ Everything below was true at the time of writing; verify with `git` before actin
 ## 1. Where things stand
 
 - **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`). Last verified
-  Preview commit `c1b4098` (0055); web-push integration (0056) is in progress locally.
-  CI is fully green on `c1b4098` (verify, login-ui, supabase, schema-drift, test).
+  Preview commit `4431546` (0056); instant delivery (0057) is integrated locally
+  for full verification. CI and TEST migration/history/type checks are green on
+  `4431546` (verify, login-ui, supabase, schema-drift, test).
 - **Preview (TEST database `snmcrmhgevfqggxdiomu`):**
   https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
   Vercel login protection is OFF for testing (`ssoProtection` was `all_except_custom_domains`;
@@ -15,7 +16,7 @@ Everything below was true at the time of writing; verify with `git` before actin
 - **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`, us-east-2/Ohio).
   Still runs an old July build. **`main` = production. Never push or merge to `main`**
   without (a) green CI and (b) the owner's explicit "tested on Preview, go".
-- **TEST database migrations applied:** 0001–0055 (confirmed by successful CI application
+- **TEST database migrations applied:** 0001–0056 (confirmed by successful CI application
   and generated-type comparison). Prod is behind; prod gets migrations only
   at go-live, before or exactly at the merge.
 
@@ -31,8 +32,8 @@ Everything below was true at the time of writing; verify with `git` before actin
 | Error monitoring + email alerts (Admin › Errors) | 0053 | merged | done |
 | **Privacy & safety pack** | 0054 | merged as `612b606` | done; two full local verification rounds, green CI, on Preview / TEST |
 | **Terms / Privacy + clickwrap** | 0055 | merged as `c1b4098` | done; two full local verification rounds, green CI, on Preview / TEST |
-| **Web push (creators)** | 0056 | merged locally as `cb1b776`, hardening in progress | initial two full rounds pass; additional approval/storage/retention fixes need two new rounds before push |
-| **#26 instant-delivery prizes** | 0057 | `rm/26-instant-delivery` @ `b66f49f` | **mostly built; last commit is WIP, unverified** |
+| **Web push (creators)** | 0056 | merged and hardened through `4431546` | done; two final full rounds (141 unit files, 130 browser checks, 69 accessibility states), green CI / TEST, deployed Preview |
+| **#26 instant-delivery prizes** | 0057 | normal merge of `rm/26-instant-delivery` @ `b66f49f`, completed locally | backend, creator/fan UI, exports and browser coverage implemented; full integrated verification in progress |
 | **Per-creator theming** | 0058 | `rm/theming` @ `e4e77e0` | **mostly built; last commit is WIP (Settings "Look & feel" card), unverified** |
 | **#25 focus pack → chase pity** | 0059 | not started | spec in PROPOSALS.md; fixes pity-counter race at `src/lib/data/spins.ts` (~548–551) |
 | **RM-7 scratch tickets → bingo** | 0060 | not started | needs theming merged first; spec in PROPOSALS.md |
@@ -44,8 +45,9 @@ someone else's history).
 ## 3. Next steps, in order
 
 ### 3a. Merge the three finished branches, strictly in migration order
-0054 and 0055 are complete. The owner confirmed enabling two-factor login before
-0054 was pushed. Continue with 0056; do not repeat those merges or MFA enrolment.
+0054–0056 are complete on Preview and TEST. The owner confirmed enabling two-factor
+login before 0054 was pushed. Continue with 0057; do not repeat those merges or MFA
+enrolment.
 
 `supabase db push` (CI `test` job) rejects a migration numbered lower than the remote's latest,
 so **0054 → 0055 → 0056 → 0057 → 0058 → …** must reach `dashboard-redesign` in that order.
@@ -66,8 +68,8 @@ so **0054 → 0055 → 0056 → 0057 → 0058 → …** must reach `dashboard-re
    case to `src/lib/push/notify.test.ts` (both Supabase and mock paths).
 
    Integration also uncovered an approval bypass: pending/rejected creators could
-   write their own business data and use agency/import paths. The unshipped 0056
-   now tightens the shared authorization predicates without renumbering later
+   write their own business data and use agency/import paths. 0056
+   tightens the shared authorization predicates without renumbering later
    features. The local regression has 106 assertions: 47 failures before the fix,
    zero after. Active legacy admins retain own-account operations; cross-account
    admin power still requires aal2. New TEST fixtures explicitly approve positive

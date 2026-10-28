@@ -19,6 +19,7 @@ const KNOWN = [
   "no_prizes",
   "not_found",
   "db_error",
+  "spin_pending",
   "bad_request",
 ] as const;
 
@@ -48,6 +49,11 @@ for (const code of KNOWN.filter((c) => c !== "on_break")) {
 }
 
 check("no_prizes says the wheel is not ready", /isn.t ready yet/i.test(spinErrorInfo("no_prizes").message));
+check("uncertain spin must be checked before another spin", spinErrorInfo("spin_pending").checkPendingSpin === true);
+check("uncertain spin does not promise a refund", !/refunded|try again|spins are safe/i.test(spinErrorInfo("spin_pending").message));
+for (const code of KNOWN.filter((c) => c !== "spin_pending")) {
+  check(`${code} does not lock for an uncertain spin`, !spinErrorInfo(code).checkPendingSpin);
+}
 
 // Unknown / malformed input still yields the safe generic message.
 for (const bad of [undefined, null, 42, {}, "", "totally_new_code"]) {

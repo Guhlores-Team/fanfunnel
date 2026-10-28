@@ -35,6 +35,7 @@ import { winbackJourney } from "./winback.mjs";
 import { privacyJourney } from "./privacy.mjs";
 
 import { pushJourney } from "./push.mjs";
+import { instantJourney } from "./instant.mjs";
 
 let server = null;
 let browser = null;
@@ -68,6 +69,7 @@ try {
     await termsJourney(page, runner); // creator clickwrap: stale version → prompt → accept (0055)
 
     await pushJourney(browser, runner, sink, ctx); // web push: Settings card, iPhone rule, opt-in, F8 parity (own contexts)
+    await instantJourney(page, runner, ctx); // private reward setup, winner-only delivery, complete history (own wheel/fan)
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));

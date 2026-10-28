@@ -574,6 +574,59 @@ async function main() {
     const anonList = await anonClient.from("push_subscriptions").select("id");
     check(!!anonList.error || (anonList.data?.length ?? 0) === 0, "anon cannot list push devices");
     }
+
+    // Instant reward metadata is tenant-scoped; values and fingerprints remain server-only.
+    {
+      const rewardPrize = must(await admin.from("prizes").select("id").eq("wheel_id", B.wheelId).limit(1).single(), "B reward prize");
+      must(await admin.from("prize_rewards").insert({prize_id: rewardPrize.id, creator_id:B.id, kind:"text", cipher:"runtime-cipher", iv:"runtime-iv"}).select("prize_id").single(), "B encrypted reward");
+      const ownerMetadata = await b.from("prize_rewards").select("prize_id, kind").eq("prize_id",rewardPrize.id);
+      check(!ownerMetadata.error && ownerMetadata.data?.length===1,"B reads own reward metadata");
+      const crossMetadata = await a.from("prize_rewards").select("prize_id, kind").eq("prize_id",rewardPrize.id);
+      check(!crossMetadata.error && crossMetadata.data?.length===0,"A reads none of B's reward metadata");
+      for(const table of ["prize_rewards","prize_reward_codes","spin_rewards"]) {
+        const secret = await a.from(table).select("cipher, iv");
+        check(!!secret.error,`creator cannot select ciphertext or IV from ${table}`);
+        const anonymous = await anonClient.from(table).select("*");
+        check(!!anonymous.error || anonymous.data?.length===0,`anon cannot read ${table}`);
+      }
+      check(!!(await admin.rpc("scrub_fan_reward_values",{p_fan:B.fanId})).error,"even the service API cannot invoke the trigger-only erasure helper");
+      const fingerprint = await a.from("prize_reward_codes").select("fingerprint");
+      check(!!fingerprint.error,"code fingerprints are not creator-readable");
+      const forged = await a.from("prize_rewards").insert({prize_id:rewardPrize.id,creator_id:A.id,kind:"text",cipher:"forged",iv:"x"});
+      check(!!forged.error,"A cannot insert a forged reward onto B's prize");
+      for(const [fn,args] of [
+        ["finalize_reward_spin",{p_spin:{},p_expected:{}}],
+        ["save_wheel_prizes",{p_wheel:B.wheelId,p_creator:B.id,p_prizes:[]}],
+        ["scrub_fan_reward_values",{p_fan:B.fanId}],
+        ["reserve_reward_code",{p_prize:rewardPrize.id,p_spin:randomUUID()}],
+        ["release_reward_code",{p_spin:randomUUID()}],
+        ["record_reward_view",{p_spin:randomUUID()}],
+        ["record_fan_reward_view",{p_spin:randomUUID(),p_token:B.token}],
+        ["add_reward_codes",{p_prize:rewardPrize.id,p_creator:B.id,p_codes:[]}],
+        ["set_prize_delivery",{p_prize:rewardPrize.id,p_creator:B.id,p_kind:"manual"}],
+      ]) {
+        check(!!(await a.rpc(fn,args)).error,`creator cannot execute ${fn}`);
+        check(!!(await anonClient.rpc(fn,args)).error,`anon cannot execute ${fn}`);
+      }
+      const erasedFingerprint=createHash("sha256").update(`erase-${RUN}`).digest("hex");
+      const encryptedCode={cipher:"runtime-code",iv:"runtime-code-iv",key_version:1,hint:"1234",fingerprint:erasedFingerprint};
+      must(await admin.rpc("add_reward_codes",{p_prize:rewardPrize.id,p_creator:B.id,p_codes:[encryptedCode]}),"seed delivered erasure code");
+      const candidate=must(await admin.from("prize_reward_codes").select("id,cipher,iv,key_version").eq("prize_id",rewardPrize.id).is("spin_id",null).single(),"erasure code candidate");
+      const passForReward=must(await admin.from("fan_passes").select("id").eq("token",B.token).single(),"erasure pass");
+      const erasureSpin=randomUUID();
+      const committed=must(await admin.rpc("finalize_reward_spin",{p_spin:{id:erasureSpin,fan_pass_id:passForReward.id,creator_id:B.id,wheel_id:B.wheelId,fan_id:B.fanId,prize_id:rewardPrize.id,prize_label:"erasure receipt",prize_rarity:"common"},p_expected:{delivery:"codes",codeId:candidate.id,cipher:candidate.cipher,iv:candidate.iv,keyVersion:candidate.key_version}}),"record erasure receipt");
+      check(committed.status==="recorded","erasure fixture records a real instant win");
+      const beforeErase=await admin.from("spins").select("id").eq("creator_id",B.id);
+      must(await admin.from("fans").delete().eq("id",B.fanId).select("id"),"delete reward fan");
+      const afterErase=await admin.from("spins").select("id").eq("creator_id",B.id);
+      check(!afterErase.error && afterErase.data?.length===beforeErase.data?.length,"fan erasure retains financial spin rows");
+      const receipt=must(await admin.from("spin_rewards").select("kind,cipher,iv,erased_at,views").eq("spin_id",erasureSpin).single(),"retained anonymous receipt");
+      check(receipt.kind==="code" && receipt.cipher===null && receipt.iv===null && receipt.erased_at && receipt.views===1,"fan deletion erases delivered values but retains anonymous Auto metadata");
+      const tombstone=must(await admin.from("prize_reward_codes").select("cipher,iv,hint,fingerprint,erased_at,spin_id").eq("id",candidate.id).single(),"consumed code tombstone");
+      check(tombstone.cipher===null && tombstone.iv===null && tombstone.hint===null && tombstone.erased_at && tombstone.fingerprint===erasedFingerprint && tombstone.spin_id===erasureSpin,"erasure keeps only the consumed fingerprint and no coupon value");
+      const repeated=await admin.rpc("add_reward_codes",{p_prize:rewardPrize.id,p_creator:B.id,p_codes:[encryptedCode]});
+      check(!repeated.error && repeated.data===0,"re-uploading an erased delivered coupon cannot restock it");
+    }
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

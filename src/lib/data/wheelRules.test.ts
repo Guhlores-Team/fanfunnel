@@ -17,6 +17,19 @@ function check(label: string, cond: boolean) {
 const CREATOR = "creator-1";
 const db = new FakeSupabase(CREATOR);
 db.tables.prizes = [];
+db.rpcHandlers.can_act_for = (input) => { const args=input as {target_creator:string;perm:string}; return args.target_creator===CREATOR && args.perm==="edit_wheel"; };
+// Model the service-only prize-set transaction; the PostgreSQL rollback/owner
+// probe in schema-drift-check tests the real function and reward preservation.
+let saveTransactions = 0;
+db.rpcHandlers.save_wheel_prizes = (input) => {
+  saveTransactions++;
+  const args = input as {p_wheel:string;p_creator:string;p_prizes:Record<string,unknown>[]};
+  assert.strictEqual(args.p_creator,CREATOR);
+  assert.ok(args.p_prizes.every((p)=>!("delivery" in p)),"wheel saves never set reward delivery through client data");
+  db.tables.prizes = db.rows("prizes").filter((p)=>p.wheel_id!==args.p_wheel);
+  for(const p of args.p_prizes) db.seed("prizes",{...p,id:p.id??crypto.randomUUID(),wheel_id:args.p_wheel});
+};
+
 let useSupabase = false;
 
 mock.module("@/lib/supabase/server", {
@@ -91,6 +104,15 @@ async function main() {
     check("supabase: a valid wheel still saves", "wheel" in r);
     check("supabase: wheel row updated", db.row("wheels", wheelId).title === "Changed");
     check("supabase: prizes replaced", labels() === "New A,New B");
+  }
+
+  {
+    db.rpcHandlers.can_act_for = () => false;
+    const before=saveTransactions;
+    const valid={...cfg,prizes:[prize({label:"Unauthorized A",weight:1}),prize({label:"Unauthorized B",weight:1})]};
+    const denied=await saveWheel(valid);
+    check("Supabase edit permission refusal is explicit", "error" in denied && denied.error==="forbidden");
+    check("permission refusal never reaches privileged prize transaction",saveTransactions===before);
   }
 
   console.log(`wheelRules.test: ${passed} checks passed`);

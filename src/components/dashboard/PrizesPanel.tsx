@@ -257,7 +257,7 @@ function RedemptionRow({
     // eslint-disable-next-line react-hooks/purity -- comparing a due date to "now" is inherently time-dependent
     new Date(r.dueAt).getTime() < Date.now();
   const subject = `${r.prizeLabel} for ${r.fanName}`;
-  const canCancel = r.status !== "cancelled" && r.status !== "fulfilled";
+  const canCancel = !r.auto && r.status !== "cancelled" && r.status !== "fulfilled";
   // "Cancel prize" asks first, in a full-width strip under the row header (so
   // it can wrap on phones). Closing it with Keep/Escape refocuses the trigger.
   const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -300,6 +300,14 @@ function RedemptionRow({
                 {new Date(r.at).toLocaleString()}
               </time>
             </p>
+            {r.auto && (
+              <p data-testid="reward-view-count" className="mt-1 break-words text-xs text-muted">
+                {r.auto.views > 0 ? `Viewed by fan · ${r.auto.views}×` : "Not viewed by fan yet"}
+                {r.auto.lastViewedAt && Number.isFinite(Date.parse(r.auto.lastViewedAt)) && (
+                  <> · last <time dateTime={r.auto.lastViewedAt}>{new Date(r.auto.lastViewedAt).toLocaleString()}</time></>
+                )}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -311,6 +319,8 @@ function RedemptionRow({
           <span className={`rounded-full px-[11px] py-1 text-xs font-bold ${STATUS_PILL[r.status]}`}>
             {STATUS_LABEL[r.status]}
           </span>
+          {r.auto && <span data-testid="redemption-auto" title="Reward delivered instantly to the winning fan" className="rounded-full border border-[#22c55e]/30 bg-[#22c55e]/10 px-[11px] py-1 text-xs font-bold text-[#86efac]">Auto · {r.auto.kind === "link" ? "Link" : r.auto.kind === "code" ? "Code" : "Text"}</span>}
+          {!r.auto && (
           <button
             type="button"
             onClick={() => onSet(r.id, STATUS_NEXT[r.status])}
@@ -319,6 +329,7 @@ function RedemptionRow({
           >
             {STATUS_CTA[r.status]}
           </button>
+          )}
           {canCancel && !confirmingCancel && (
             <button
               ref={cancelTriggerRef}
@@ -369,6 +380,8 @@ function RedemptionRow({
             type="date"
             className="ff-input tnum min-w-0 py-1.5 text-[13px]"
             value={dueValue}
+            disabled={!!r.auto}
+            title={r.auto ? "Already delivered instantly" : undefined}
             onChange={(e) =>
               onPatch(r.id, { dueAt: e.target.value ? e.target.value : null })
             }

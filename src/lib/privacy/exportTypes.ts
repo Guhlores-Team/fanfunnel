@@ -14,7 +14,17 @@ import { FAN_EXPORT_TOKEN_TAIL } from "./config";
 export const FAN_EXPORT_FORMAT = "fanfunnel.fan-data.v1";
 export const CREATOR_EXPORT_FORMAT = "fanfunnel.creator-data.v1";
 
-export interface FanDataExport {
+export interface ExportStatus {
+  /** Complete means no requested section failed or hit a row cap. Reads occur
+   *  while the file is prepared; concurrent changes may require another export. */
+  complete: boolean;
+  failed: string[];
+  truncated: string[];
+  /** Deliberate privacy/credential exclusions, not missing query results. */
+  excluded: string[];
+}
+
+export interface FanDataExport extends ExportStatus {
   format: typeof FAN_EXPORT_FORMAT;
   exportedAt: string;
   about: string;
@@ -68,11 +78,17 @@ export interface FanDataExport {
     };
   }[];
   prizes: { spinId: string | null; prize: string; status: string; wonAt: string; fulfilledAt: string | null }[];
+  /** Delivery metadata only; downloaded files never contain redeemable values. */
+  instantReceipts: { spinId: string; kind: string; views: number; lastViewedAt: string | null; createdAt: string; erasedAt: string | null }[];
   wishlist: { prize: string; rarity: string; addedAt: string }[];
   messagesYouSent: { at: string; body: string }[];
+  play: { breakUntil: string | null; reminderDaily: number | null; reminderUpdatedAt: string | null };
+  checkIns: { day: string; recordedAt: string | null }[];
+  outreach: { at: string; contactedAt: string | null }[];
+  reportsYouSent: { at: string; reason: string; detail: string | null }[];
 }
 
-export interface CreatorDataExport {
+export interface CreatorDataExport extends ExportStatus {
   format: typeof CREATOR_EXPORT_FORMAT;
   exportedAt: string;
   about: string;
@@ -86,16 +102,26 @@ export interface CreatorDataExport {
   failed: string[];
 }
 
+export const FAN_EXPORT_EXCLUDED = [
+  "Creator-private notes, tags, costs, due dates, queue snoozes and templates",
+  "Records of unrelated people, full personal-link tokens and future spin seeds",
+  "Device credentials, webhook destinations and reward values, hints, fingerprints and encryption material",
+];
+export const CREATOR_EXPORT_EXCLUDED = [
+  "Full personal-link tokens and future spin seeds",
+  "Push endpoints and device keys, webhook destinations and other credentials",
+  "Reward values, hints, fingerprints and encryption material; fan-private daily reminder values",
+];
 export const FAN_EXPORT_ABOUT =
-  "Everything FanFunnel stores about you for this creator: your profile, links and balances, " +
-  "every spin with its fairness proof, your prizes, wishlist, the messages you sent and your " +
-  "consents. Link codes are shortened so this file can't open your links.";
-
+  "Your records with this creator: profile, links and balances, spent-spin fairness proofs, " +
+  "prizes, instant delivery and view metadata, wishlist, messages you sent, consents, play settings, check-ins, outreach history " +
+  "and reports you submitted. Read complete, failed and truncated before relying on this file. " +
+  "Listed exclusions protect private fields and credentials. Records are read while the file is prepared.";
 export const CREATOR_EXPORT_ABOUT =
-  "Everything your FanFunnel account owns: your account and settings, wheels and prizes, " +
-  "campaigns and packs, fans (with your notes), spins, redemptions, top-ups, messages and more. " +
-  "Fan link codes are shortened so this file can't open your fans' links. Keep it private: it " +
-  "contains your fans' names and chats.";
+  "Your account, business records, play and outreach metadata, devices and agency records, read " +
+  "through your own account permissions. Read complete, failed and truncated before relying on " +
+  "this file; listed exclusions protect credentials and fan-private values. Records are read " +
+  "while the file is prepared. Keep it private: it contains your fans' names and chats.";
 
 /** "…a1b2" — the last few characters of a link token. */
 export function maskToken(token: string | null | undefined): string {

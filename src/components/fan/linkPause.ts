@@ -6,6 +6,8 @@ export interface SpinControlInput {
   paused: boolean;
   /** RM-6: the fan is on a break (the server refuses spins until it ends). */
   onBreak?: boolean;
+  /** A previous request may have committed; reconcile it before spending again. */
+  spinPending?: boolean;
 }
 
 export interface SpinControl {
@@ -21,12 +23,15 @@ export interface SpinControl {
  * A break (RM-6) comes next: SPIN is off, and the balance stays on show
  * because the fan's spins are kept for when the break ends.
  */
-export function spinControl({ spinsRemaining, busy, paused, onBreak = false }: SpinControlInput): SpinControl {
+export function spinControl({ spinsRemaining, busy, paused, onBreak = false, spinPending = false }: SpinControlInput): SpinControl {
   if (paused) {
     return { canSpin: false, label: "Link paused", balanceLabel: "Paused" };
   }
   if (onBreak) {
     return { canSpin: false, label: "On a break", balanceLabel: String(spinsRemaining) };
+  }
+  if (spinPending) {
+    return { canSpin: false, label: "Check your last spin", balanceLabel: "Checking…" };
   }
   return {
     canSpin: spinsRemaining > 0 && !busy,

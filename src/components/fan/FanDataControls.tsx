@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import { FAN_DELETE_PHRASE } from "@/lib/privacy/config";
 import { fanDataErrorMessage } from "@/lib/privacy/messages";
+import { exportDownloadWarning } from "@/lib/privacy/exportRecords";
 
 /**
  * A fan's own privacy controls: "Download my data" and "Delete my data". The
@@ -35,7 +36,8 @@ export async function downloadFanData(token: string): Promise<{ ok: true } | { e
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return { ok: true };
+    const warning = exportDownloadWarning(JSON.parse(await blob.text()));
+    return warning ? { error: warning } : { ok: true };
   } catch {
     return { error: fanDataErrorMessage(undefined, "export") };
   }

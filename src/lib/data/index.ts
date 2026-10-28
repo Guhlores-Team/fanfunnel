@@ -185,3 +185,5 @@ export {
   sendMyTestPush,
 } from "./push";
 export type { PushDevice, PushError } from "./push";
+
+export { getPrizeDelivery, setPrizeDelivery, addPrizeCodes, getFanReward, getFanRewardHistory, isShareIdShape } from "./rewards";

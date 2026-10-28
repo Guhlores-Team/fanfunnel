@@ -11,6 +11,7 @@ import Modal from "@/components/ui/Modal";
 export default function DiscardChangesDialog({
   what,
   consequence = "Switching now throws them away.",
+  pending = false,
   onKeep,
   onDiscard,
 }: {
@@ -18,6 +19,8 @@ export default function DiscardChangesDialog({
   what: string;
   /** What happens on Discard, e.g. "Signing out now throws them away." */
   consequence?: string;
+  /** An in-flight delivery cannot be safely discarded or abandoned. */
+  pending?: boolean;
   onKeep: () => void;
   onDiscard: () => void;
 }) {
@@ -33,10 +36,10 @@ export default function DiscardChangesDialog({
       <div>
         <h2 id={titleId} className="flex items-center gap-[9px] text-lg font-bold tracking-[-0.01em]">
           <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[#f59e0b]" />
-          Discard unsaved changes?
+          {pending ? "Delivery is still saving" : "Discard unsaved changes?"}
         </h2>
         <p className="mt-2 text-[13.5px] text-muted text-pretty">
-          {`You have edits to ${what} that aren’t saved. ${consequence}`}
+          {pending ? "Please keep this page open until delivery finishes saving. Then choose where to go next." : `You have edits to ${what} that aren’t saved. ${consequence}`}
         </p>
         <div className="mt-5 flex gap-2">
           <button
@@ -45,15 +48,15 @@ export default function DiscardChangesDialog({
             onClick={onKeep}
             className="flex-1 rounded-[10px] border border-line py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
           >
-            Keep editing
+            {pending ? "Keep this page open" : "Keep editing"}
           </button>
-          <button
+          {!pending && <button
             type="button"
             onClick={onDiscard}
             className="flex-1 rounded-[10px] border border-[#ef4444]/50 py-2.5 text-sm font-bold text-[#f87171] transition-colors hover:bg-[#ef4444]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ef4444]"
           >
             Discard changes
-          </button>
+          </button>}
         </div>
       </div>
     </Modal>

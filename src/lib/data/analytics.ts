@@ -57,7 +57,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       .from("redemptions")
       .select(
         `id, status, created_at, notes, due_at,
-       spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle))`
+       spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
       )
       .eq("creator_id", user.id)
       .order("created_at", { ascending: false })
@@ -110,6 +110,8 @@ export async function getOverview(): Promise<CreatorOverview> {
       prize_label: string;
       prize_rarity: RedemptionItem["rarity"];
       fan: { display_name: string | null; handle: string | null } | null;
+      // #26 (0057): set when the win was auto-delivered (never the value).
+      reward?: AutoRow | AutoRow[] | null;
     } | null;
   }[];
 
@@ -122,7 +124,13 @@ export async function getOverview(): Promise<CreatorOverview> {
     at: r.created_at,
     notes: r.notes,
     dueAt: r.due_at,
+    ...autoTag(r.spin?.reward),
   }));
+
+  function autoTag(v: AutoRow | AutoRow[] | null | undefined): Pick<RedemptionItem, "auto"> {
+    const row = Array.isArray(v) ? v[0] : v;
+    return row ? { auto: { kind: row.kind, views: row.views, lastViewedAt: row.last_viewed_at } } : {};
+  }
 
   const revenue = ((grantRows ?? []) as { amount_cents: number }[]).reduce(
     (s, g) => s + g.amount_cents,
@@ -777,4 +785,11 @@ export async function dismissAutopilotCard(
     { onConflict: "creator_id,dedupe_key" }
   );
   return error ? { error: "db_error" } : { ok: true };
+}
+
+/** #26 (0057): an auto-delivered win's spin_rewards row (never the value). */
+interface AutoRow {
+  kind: "link" | "text" | "code";
+  views: number;
+  last_viewed_at: string | null;
 }

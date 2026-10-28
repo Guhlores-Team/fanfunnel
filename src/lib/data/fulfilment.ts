@@ -1,13 +1,14 @@
 // Data layer — fulfilment: redemption (won prize) status and notes.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import type { RedemptionStatus } from "./types";
-import { mockSetRedemptionStatus, mockSetRedemptionMeta } from "./mock";
+import { mockSetRedemptionStatus, mockSetRedemptionMeta, mockIsInstantRedemption } from "./mock";
 
 export async function setRedemptionStatus(
   id: string,
   status: RedemptionStatus
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) {
+    if (status !== "fulfilled" && mockIsInstantRedemption(id)) return { error: "already_delivered" };
     return mockSetRedemptionStatus(id, status)
       ? { ok: true }
       : { error: "not_found" };
@@ -29,7 +30,7 @@ export async function setRedemptionStatus(
     .eq("creator_id", user.id)
     .select("id")
     .maybeSingle();
-  if (error) return { error: "db_error" };
+  if (error) return { error: error.code === "23514" && /already delivered/.test(error.message) ? "already_delivered" : "db_error" };
   return data ? { ok: true } : { error: "not_found" };
 }
 
@@ -39,6 +40,7 @@ export async function setRedemptionMeta(
   patch: { notes?: string | null; dueAt?: string | null }
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) {
+    if (patch.dueAt != null && mockIsInstantRedemption(id)) return { error: "already_delivered" };
     return mockSetRedemptionMeta(id, patch)
       ? { ok: true }
       : { error: "not_found" };
@@ -62,6 +64,6 @@ export async function setRedemptionMeta(
     .eq("creator_id", user.id)
     .select("id")
     .maybeSingle();
-  if (error) return { error: "db_error" };
+  if (error) return { error: error.code === "23514" && /already delivered/.test(error.message) ? "already_delivered" : "db_error" };
   return data ? { ok: true } : { error: "not_found" };
 }

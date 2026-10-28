@@ -1,6 +1,6 @@
 // Data layer — wheels: which wheel a link resolves to right now, wheel CRUD,
 // prize rows, scheduling and archiving.
-import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
+import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, WheelConfig } from "@/lib/games/wheel/types";
 import { MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
@@ -21,7 +21,8 @@ import {
   mockSetActiveWheel,
   mockSetWheelSchedule,
 } from "./mock";
-import { WHEEL_SELECT, clampInt, toWheelConfig } from "./shared";
+import { WHEEL_SELECT, clampInt, isUuid, toWheelConfig } from "./shared";
+import type { Json } from "./db.types";
 import type { AnyClient, DbWheelRow } from "./shared";
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,11 @@ export async function saveWheel(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
+  const { data: canEdit, error: permissionError } = await sb.rpc("can_act_for", {
+    target_creator: user.id, perm: "edit_wheel",
+  });
+  if (permissionError || canEdit !== true) return { error: "forbidden" };
+
   // Save the wheel identified by `config.id`. ensureWheelId is only a bootstrap
   // so a brand-new creator always has at least one wheel to edit.
   await ensureWheelId(sb, user.id);
@@ -277,10 +283,11 @@ export async function saveWheel(
   if (config.prizes.length > MAX_WHEEL_PRIZES) return { error: "too_many_prizes" };
   const rows = config.prizes.map((p, i) => prizeRow(wheelId, p, i));
 
-  const { data: prevPrizes } = await sb
+  const { data: prevPrizes, error: previousError } = await sb
     .from("prizes")
     .select("*")
     .eq("wheel_id", wheelId);
+  if (previousError) return { error: "db_error" };
 
   // Guard the catastrophic case: the editor showed the built-in SAMPLE set
   // (e.g. a failed load fell back to it) and a save would overwrite the
@@ -294,15 +301,14 @@ export async function saveWheel(
     return { error: "stale_editor" };
   }
 
-  await sb.from("prizes").delete().eq("wheel_id", wheelId);
-  const { error: pErr } = await sb.from("prizes").insert(rows);
-  if (pErr) {
-    // Roll back to the pre-delete state so the wheel keeps its prizes.
-    if (prevPrizes && prevPrizes.length > 0) {
-      await sb.from("prizes").insert(prevPrizes);
-    }
-    return { error: "db_error" };
-  }
+  // The session/RLS update above established the caller owns this wheel. The
+  // service-only transaction rechecks that owner and retains reward-bearing ids.
+  const svc = createServiceClient();
+  const payload = config.prizes.map((p, i) => ({ ...rows[i], id: isUuid(p.id) ? p.id : null }));
+  const { error: saveError } = await svc.rpc("save_wheel_prizes", {
+    p_wheel: wheelId, p_creator: user.id, p_prizes: payload as unknown as Json,
+  });
+  if (saveError) return { error: "db_error" };
 
   const saved = await getWheelById(wheelId);
   return saved ? { wheel: saved } : { error: "db_error" };

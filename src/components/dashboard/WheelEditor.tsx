@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import Wheel from "@/components/Wheel";
 import { prizeOdds } from "@/lib/games/wheel/engine";
@@ -20,6 +20,9 @@ import WheelSwitcher from "@/components/dashboard/WheelSwitcher";
 import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
 import { wheelSaveErrorMessage } from "@/components/dashboard/wheelSaveErrors";
 import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
+import PrizeDeliveryEditor from "@/components/dashboard/PrizeDeliveryEditor";
+import { applyPrizeDelivery } from "@/components/dashboard/prizeDeliveryState";
+import type { PrizeDeliveryView } from "@/lib/rewards/config";
 import {
   EMOJI_SUGGESTIONS,
   balanceOdds,
@@ -135,17 +138,22 @@ export default function WheelEditor({
   editingWheelId,
   setEditingWheelId,
   onWheelMutated,
+  onDeliveryDraftChange,
+  onDeliveryPendingChange,
 }: {
   wheel: WheelConfig;
   setWheel: Dispatch<SetStateAction<WheelConfig>>;
   /** JSON of the last saved/loaded config. Lifted with `wheel` so the dirty
    *  state survives leaving and re-entering the Wheels section. */
   savedJson: string;
-  setSavedJson: (json: string) => void;
+  setSavedJson: Dispatch<SetStateAction<string>>;
   editingWheelId: string | null;
   setEditingWheelId: (id: string | null) => void;
   /** Notify the parent (refreshes overview, incl. the wheelBuilt onboarding signal). */
   onWheelMutated: () => void;
+  /** Navigation guard: delivery drafts stay out of the wheel JSON. */
+  onDeliveryDraftChange?: (dirty: boolean) => void;
+  onDeliveryPendingChange?: (pending: boolean) => void;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
   // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
@@ -164,6 +172,38 @@ export default function WheelEditor({
   // refetches and the favorite shows up immediately — no page refresh.
   const [librarySignal, setLibrarySignal] = useState(0);
   const dirty = JSON.stringify(wheel) !== savedJson;
+  const [deliveryDrafts, setDeliveryDrafts] = useState<Record<string, boolean>>({});
+  const [deliveryRequests, setDeliveryRequests] = useState<Record<string, boolean>>({});
+  const hasDeliveryDrafts = Object.values(deliveryDrafts).some(Boolean);
+  const deliveryPending = Object.values(deliveryRequests).some(Boolean);
+  const savedPrizeIds = useMemo(() => {
+    try {
+      const saved = JSON.parse(savedJson) as WheelConfig;
+      return saved.id === wheel.id ? new Set(saved.prizes.map((p) => p.id)) : new Set<string>();
+    } catch { return new Set<string>(); }
+  }, [savedJson, wheel.id]);
+  const deliveryDirtyChanged = useCallback((id: string, value: boolean) => {
+    setDeliveryDrafts((current) => current[id] === value ? current : { ...current, [id]: value });
+  }, []);
+  const deliveryBusyChanged = useCallback((id: string, value: boolean) => {
+    setDeliveryRequests((current) => current[id] === value ? current : { ...current, [id]: value });
+  }, []);
+  useEffect(() => {
+    onDeliveryDraftChange?.(hasDeliveryDrafts);
+    return () => onDeliveryDraftChange?.(false);
+  }, [hasDeliveryDrafts, onDeliveryDraftChange]);
+  useEffect(() => {
+    onDeliveryPendingChange?.(deliveryPending);
+    return () => onDeliveryPendingChange?.(false);
+  }, [deliveryPending, onDeliveryPendingChange]);
+  const deliverySaved = useCallback((view: PrizeDeliveryView) => {
+    setWheel((current) => applyPrizeDelivery(current, view));
+    setSavedJson((current) => {
+      try { return JSON.stringify(applyPrizeDelivery(JSON.parse(current) as WheelConfig, view)); }
+      catch { return current; }
+    });
+    onWheelMutated();
+  }, [setWheel, setSavedJson, onWheelMutated]);
   // A wheel switch requested while there are unsaved edits waits here for the
   // in-app dialog's answer (the browser's own confirm() is not accessible).
   const [pendingSwitch, setPendingSwitch] = useState<{
@@ -216,6 +256,7 @@ export default function WheelEditor({
     });
   }
   function attemptSave() {
+    if (deliveryPending) return;
     if (validation.issues.length > 0) {
       setSubmitted(true);
       focusFirstIssue();
@@ -297,8 +338,12 @@ export default function WheelEditor({
   // edited. The config carries its own id, so the existing save (PUT /api/wheel
   // with the full config) targets the right wheel.
   async function loadWheel(id: string): Promise<boolean> {
+    if (deliveryPending) {
+      toast("Wait for delivery to finish saving before changing wheels.", { tone: "info" });
+      return false;
+    }
     // Switching wheels replaces the editor state: don't silently drop edits.
-    if (dirty) {
+    if (dirty || hasDeliveryDrafts) {
       // Re-opening the wheel already in the editor (its chip) must not reload
       // it over the unsaved edits: it is already open.
       if (id === wheel.id) return true;
@@ -504,10 +549,10 @@ export default function WheelEditor({
         }`}
       >
         <p className="flex items-center gap-2 text-[13.5px]" role="status">
-          {dirty ? (
+          {dirty || hasDeliveryDrafts ? (
             <>
               <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[#f59e0b]" />
-              <span className="text-[#fcd34d]">Unsaved changes</span>
+              <span className="text-[#fcd34d]">{!dirty && hasDeliveryDrafts ? "Unsaved delivery changes · save them in the prize card" : "Unsaved changes"}</span>
             </>
           ) : justSaved ? (
             <>
@@ -520,7 +565,7 @@ export default function WheelEditor({
         </p>
         <button
           onClick={attemptSave}
-          disabled={saving || !dirty}
+          disabled={saving || deliveryPending || !dirty}
           aria-describedby={showErrors ? SAVE_SUMMARY_ID : undefined}
           className="btn-brand min-h-[38px] rounded-[9px] px-5 text-[13.5px] font-bold"
         >
@@ -935,6 +980,8 @@ export default function WheelEditor({
                         placeholder="∞"
                         className="ff-input tnum w-full text-right"
                         value={p.stock ?? ""}
+                        disabled={p.delivery === "codes"}
+                        title={p.delivery === "codes" ? "Stock follows the unused code count. Add codes in Delivery below." : undefined}
                         onChange={(e) =>
                           updatePrize(p.id, {
                             stock: e.target.value === "" ? null : Number(e.target.value),
@@ -976,6 +1023,7 @@ export default function WheelEditor({
                       </span>
                     </div>
                   </div>
+                  {p.delivery === "codes" && <p className="mt-1 text-xs text-muted">Code-list stock is the unused code count. Add codes in Delivery below.</p>}
                   {numberErrors.map((f) => (
                     <FieldError key={f} id={errId(k(f))} message={errFor(k(f), pe[f])} />
                   ))}
@@ -1033,6 +1081,17 @@ export default function WheelEditor({
                       />
                     </Lbl>
                   </div>
+
+                  <PrizeDeliveryEditor
+                    prizeId={p.id}
+                    prizeLabel={p.label}
+                    delivery={p.delivery}
+                    canSave={savedPrizeIds.has(p.id) && !dirty}
+                    disabled={saving || deliveryPending}
+                    onSaved={deliverySaved}
+                    onDirtyChange={deliveryDirtyChanged}
+                    onBusyChange={deliveryBusyChanged}
+                  />
 
                   {/* "More": the emoji quick-picks (a helper, not content). */}
                   <button

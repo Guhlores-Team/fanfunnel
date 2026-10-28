@@ -1,5 +1,7 @@
 "use client";
 
+import { exportDownloadWarning } from "@/lib/privacy/exportRecords";
+
 import { useCallback, useEffect, useId, useState } from "react";
 import type { ReactNode } from "react";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -291,14 +293,9 @@ export function DataExportCard() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      let failed: unknown = [];
-      try {
-        failed = (JSON.parse(await blob.text()) as { failed?: unknown }).failed ?? [];
-      } catch {
-        // Not parseable here; the file itself still downloaded.
-      }
-      if (Array.isArray(failed) && failed.length > 0) {
-        toast(`Downloaded, but some parts couldn't be read (${failed.join(", ")}). Try again in a minute for a complete file.`, { tone: "error" });
+      const warning = exportDownloadWarning(JSON.parse(await blob.text()));
+      if (warning) {
+        toast(warning, { tone: "error" });
       } else {
         toast("Your data is downloading", { tone: "success" });
       }

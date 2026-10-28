@@ -51,8 +51,9 @@ export async function POST(req: Request) {
           : result.error === "blocked" || result.error === "needs_ack" || result.error === "on_break"
             ? 403
             : 409;
-    return NextResponse.json({ error: result.error }, { status });
+    return NextResponse.json({ error: result.error }, { status, headers: { "Cache-Control": "no-store" } });
   }
 
-  return NextResponse.json(result);
+  // #26: a spin response can carry the winner's instant reward; never cache it.
+  return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
 }

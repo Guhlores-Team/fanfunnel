@@ -1,3 +1,5 @@
+import { createHmac, randomBytes } from "node:crypto";
+import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
 import { makeFairRng, makeFairRngV3, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import {
   NEW_SPIN_FAIR_VERSION,
@@ -32,6 +34,18 @@ import {
 } from "@/lib/glow/glow";
 import { WINBACK_SNOOZE_DAYS, type OutreachAction } from "@/lib/winback/config";
 import type { OutreachRow } from "@/lib/winback/list";
+import {
+  CODE_PREVIEW_COUNT,
+  REWARD_HISTORY_PAGE_SIZE,
+  MAX_CODES_PER_PRIZE,
+  codeHint,
+  maskCode,
+  rewardReviewAllowed,
+  type InstantRewardHistory,
+  type DeliveredReward,
+  type PrizeDeliveryView,
+  type RewardKind,
+} from "@/lib/rewards/config";
 import type {
   AdminAccount,
   AdminOverview,
@@ -78,10 +92,13 @@ import {
   CREATOR_EXPORT_FORMAT,
   FAN_EXPORT_ABOUT,
   FAN_EXPORT_FORMAT,
+  FAN_EXPORT_EXCLUDED,
+  CREATOR_EXPORT_EXCLUDED,
   maskToken,
   type CreatorDataExport,
   type FanDataExport,
 } from "@/lib/privacy/exportTypes";
+import { EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
 import {
   FEED_LIMIT,
   LOW_STOCK_THRESHOLD,
@@ -226,8 +243,10 @@ interface MockGrant {
 
 // Redemptions in the mock carry the fan + FIFO campaign so stats can be exact.
 interface MockRedemption extends RedemptionItem {
-  fanId: string;
+  fanId: string | null;
   campaignId: string | null;
+  /** #26: the winning spin, so Fulfilment can show the "Auto" tag. */
+  shareId?: string;
 }
 
 interface Store {
@@ -815,6 +834,9 @@ export function mockSaveWheel(config: WheelConfig): WheelConfig {
     archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
   };
   store.wheels.set(targetId, saved);
+  // #26: delivery comes from the reward store, never the editor; a code
+  // prize's stock is its unused-code count.
+  syncMockWheelRewards(saved);
   const meta = wheelMeta.get(targetId);
   const now = new Date().toISOString();
   if (meta) meta.updatedAt = now;
@@ -1114,7 +1136,14 @@ export async function mockSpin(token: string, clientSeed = "") {
   // is atomic, the mock mirror of the Supabase path's stock compare-and-swap.
   // A limited prize another spin sold out after the snapshot was taken is
   // excluded and re-drawn, and the exclusion recorded, exactly as there.
-  let chosen: { live: Prize; shown: PublicPrize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
+  let chosen: {
+    live: Prize;
+    shown: PublicPrize;
+    index: number;
+    pityAwarded: boolean;
+    nextPityCounter: number;
+    reward: { kind: RewardKind; value: string; code?: MockCode } | null;
+  } | null = null;
   const excluded = new Set<string>();
   const excludedOrder: string[] = [];
   try {
@@ -1122,12 +1151,17 @@ export async function mockSpin(token: string, clientSeed = "") {
       const draw = drawFromSnapshot(snapshot, excluded, rng);
       const index = wheel.prizes.findIndex((p) => p.id === draw.prize.id);
       const live = wheel.prizes[index];
-      if (live && (live.stock === null || live.stock === undefined || live.stock > 0)) {
+      // #26: an instant prize that can't be delivered right now (no code
+      // left, no reward set) counts as sold out, exactly as on Supabase.
+      const take = live && (live.stock === null || live.stock === undefined || live.stock > 0) ? mockTakeReward(live) : null;
+      if (live && take?.ok) {
         // As read before the decrement, like the Supabase path's response.
         const shown = structuredClone(toPublicPrize(live, { showStock: showsStock(wheel) }));
-        // Decrement limited stock on the RESOLVED wheel so rare prizes can sell out.
-        if (typeof live.stock === "number") live.stock -= 1;
-        chosen = { live, shown, index, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter };
+        // Decrement limited stock on the RESOLVED wheel so rare prizes can sell
+        // out; a code prize's stock is its unused codes (one was just taken).
+        if (live.delivery === "codes") syncMockPrizeDelivery(live);
+        else if (typeof live.stock === "number") live.stock -= 1;
+        chosen = { live, shown, index, pityAwarded: draw.pityAwarded, nextPityCounter: draw.nextPityCounter, reward: take.reward };
         break;
       }
       excluded.add(draw.prize.id);
@@ -1143,7 +1177,7 @@ export async function mockSpin(token: string, clientSeed = "") {
     recomputeFanAggregate(fan);
     return { error: "no_prizes" as const };
   }
-  const { live: prize, shown, index, pityAwarded, nextPityCounter } = chosen;
+  const { live: prize, shown, index, pityAwarded, nextPityCounter, reward } = chosen;
 
   // Per-wheel: the spin belongs to THIS pass's campaign directly.
   const campaignId = pass.campaignId;
@@ -1176,6 +1210,7 @@ export async function mockSpin(token: string, clientSeed = "") {
       clientSeed: clientSeed || null,
       commitment,
       prizeId: prize.id,
+      ...(reward ? { instant: true } : {}),
       ...(v3
         ? {
             fairVersion: 3,
@@ -1189,16 +1224,19 @@ export async function mockSpin(token: string, clientSeed = "") {
   ].slice(0, 50);
 
   // Add it to the creator's fulfilment queue (with fan + campaign attribution).
+  // #26: an instant reward is delivered right here, so its row is fulfilled.
+  if (reward) mockRecordDelivery(shareId, fan.id, reward, at, prize);
   store.redemptions.unshift({
     id: "r-" + Math.random().toString(36).slice(2, 10),
     fanName: fan.name,
     prizeLabel: prize.label,
     rarity: prize.rarity,
     emoji: prize.emoji,
-    status: "pending",
+    status: reward ? "fulfilled" : "pending",
     at,
     fanId: fan.id,
     campaignId,
+    shareId,
   });
 
   // RM-2: the projection follows the wheel's "Show stock to fans" switch, and
@@ -1216,6 +1254,8 @@ export async function mockSpin(token: string, clientSeed = "") {
     // THIS spin's rotation (not whatever a concurrent spin left on the pass).
     nextSpinHash: nextServerSeedHash,
     ...(v3 ? { fairVersion: 3 as const, poolHash } : {}),
+    // #26: only this winner's own response carries the value.
+    ...(reward ? { reward: { kind: reward.kind, value: reward.value } } : {}),
     // RM-6: the fan's fresh counts, and whether they have reached their reminder.
     play,
     reminderDue: reminderDue(play.today, fan.playReminderDaily ?? null),
@@ -1423,6 +1463,7 @@ export function mockGrantSpins(token: string, n: number) {
  */
 export function mockDeleteFan(fanId: string): boolean {
   if (!store.fans.has(fanId)) return false;
+  mockEraseFanRewards(fanId);
   store.fans.delete(fanId);
   for (const [token, id] of store.tokens) {
     if (id === fanId) {
@@ -1664,6 +1705,7 @@ export function mockGetOverview(): CreatorOverview {
     at: r.at,
     notes: r.notes ?? null,
     dueAt: r.dueAt ?? null,
+    ...((r.auto ?? mockAutoInfo(r.shareId)) ? { auto: r.auto ?? mockAutoInfo(r.shareId) } : {}),
   }));
   const unreadMessages = store.messages.filter(
     (m) => m.sender === "fan" && m.readAt === null
@@ -1715,14 +1757,14 @@ export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
       // Per-fan funnel: fans created → fans with ≥1 spin → fans with a
       // fulfilled prize. Each redemption is one spin and carries its fanId.
       fans: store.fans.size,
-      spun: new Set(store.redemptions.map((r) => r.fanId)).size,
+      spun: new Set(store.redemptions.flatMap((r) => r.fanId ? [r.fanId] : [])).size,
       fulfilled: new Set(
-        store.redemptions.filter((r) => r.status === "fulfilled").map((r) => r.fanId)
+        store.redemptions.filter((r) => r.status === "fulfilled" && r.fanId !== null).map((r) => r.fanId)
       ).size,
     },
     revenueTrend,
     // Each redemption is one spin and carries its fanId.
-    activeFans: activeFans(store.redemptions.map((r) => ({ fanId: r.fanId, at: r.at }))),
+    activeFans: activeFans(store.redemptions.flatMap((r) => r.fanId ? [{ fanId: r.fanId, at: r.at }] : [])),
   };
 }
 
@@ -1876,7 +1918,7 @@ export function mockGetCohortRetention(): CohortRow[] {
 
 export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
   const r = store.redemptions.find((x) => x.id === id);
-  if (!r) return null;
+  if (!r || (status !== "fulfilled" && mockIsInstantRedemption(id))) return null;
   r.status = status;
   return r;
 }
@@ -1886,7 +1928,7 @@ export function mockSetRedemptionMeta(
   patch: { notes?: string | null; dueAt?: string | null }
 ) {
   const r = store.redemptions.find((x) => x.id === id);
-  if (!r) return null;
+  if (!r || (patch.dueAt != null && mockIsInstantRedemption(id))) return null;
   if ("notes" in patch) r.notes = patch.notes ?? null;
   if ("dueAt" in patch) r.dueAt = patch.dueAt ?? null;
   return r;
@@ -1961,6 +2003,10 @@ export function mockClearMyData(): { ok: true } | { error: string } {
   store.messages = [];
   checkinStore().clear(); // fan_checkins cascades with the fans
   clearOutreach();
+  // #26: spin_rewards go with the spins; the starter wheel below has no rewards.
+  rewardState().consumedFingerprints?.clear();
+  rewardState().deliveries.clear();
+  rewardState().prizes.clear();
   // Keep one fresh starter wheel so the account isn't wheel-less. Its id is
   // stable, so stamp fresh meta too (Supabase recreates the row, so
   // updated_at = created_at and the "Build your first wheel" step un-ticks).
@@ -3239,11 +3285,18 @@ export function mockExportFanData(token: string): FanDataExport | null {
   const { fan } = hit;
   ensurePasses(fan);
   const wheelTitle = (id: string) => store.wheels.get(id)?.title ?? null;
-  const wins = [...fan.wins].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  // Instant receipts outlive the recent-wins display. Read only metadata here:
+  // calling mockGetFanReward would reveal values and increment view counters.
+  const deliveries = [...rewardState().deliveries].filter(([, delivery]) => delivery.fanId === fan.id);
+  const byShare = new Map<string, Partial<MockWin> & Pick<MockWin, "shareId" | "at" | "label" | "rarity">>(fan.wins.map((win) => [win.shareId, win]));
+  for (const [shareId, delivery] of deliveries) if (!byShare.has(shareId)) byShare.set(shareId, { shareId, at: delivery.at, label: delivery.label, rarity: delivery.rarity, prizeId: delivery.prizeId });
+  const wins = [...byShare.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.shareId.localeCompare(b.shareId));
   const out: FanDataExport = {
     format: FAN_EXPORT_FORMAT,
     exportedAt: new Date().toISOString(),
     about: FAN_EXPORT_ABOUT,
+    ...exportStatus([], fan.wins.length >= 50 ? ["spins"] : []),
+    excluded: [...FAN_EXPORT_EXCLUDED],
     creator: { displayName: CREATOR_TITLE },
     profile: {
       displayName: fan.name ?? null,
@@ -3251,7 +3304,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
       joinedAt: fan.passes[0]?.createdAt ?? null,
       spinsRemaining: fan.spinsRemaining,
       spinsGrantedTotal: fan.spinsGrantedTotal,
-      lastSpinAt: wins[0]?.at ?? null,
+      lastSpinAt: wins.at(-1)?.at ?? null,
       referralCode: fan.referralCode ?? null,
       joinedThroughAReferral: fan.referredByFanId !== null,
       friendsReferred: store.referrals.filter((r) => r.referrerFanId === fan.id).length,
@@ -3297,14 +3350,26 @@ export function mockExportFanData(token: string): FanDataExport | null {
     prizes: store.redemptions
       .filter((r) => r.fanId === fan.id)
       .map((r) => ({ spinId: null, prize: r.prizeLabel, status: r.status, wonAt: r.at, fulfilledAt: null })),
+    instantReceipts: deliveries.sort(([a], [b]) => a.localeCompare(b)).map(([spinId, delivery]) => ({ spinId, kind: delivery.kind, views: delivery.views, lastViewedAt: delivery.lastViewedAt, createdAt: delivery.at, erasedAt: null })),
     wishlist: store.wishlists
       .filter((w) => w.fanId === fan.id)
       .map((w) => ({ prize: w.prizeLabel, rarity: w.prizeRarity, addedAt: w.at })),
+    play: { breakUntil: fan.breakUntil ?? null, reminderDaily: fan.playReminderDaily ?? null, reminderUpdatedAt: null },
+    checkIns: [...checkinDays(fan.id)].sort().map((day) => ({ day, recordedAt: null })),
+    outreach: outreachLog().filter((row) => row.fanId === fan.id).map((row) => ({ at: row.createdAt, contactedAt: row.contactedAt })),
+    reportsYouSent: mockReports.filter((row) => (fan.passes ?? []).some((pass) => pass.token === row.token)).map((row) => ({ at: row.at, reason: row.reason, detail: row.detail })),
     messagesYouSent: store.messages
       .filter((m) => m.fanId === fan.id && m.sender === "fan")
       .map((m) => ({ at: m.at, body: m.body })),
   };
-  return structuredClone(out);
+  for (const [name, value] of Object.entries(out)) {
+    if (Array.isArray(value) && !["failed", "truncated", "excluded"].includes(name) && value.length > EXPORT_ROW_CAP) {
+      (out as unknown as Record<string, unknown>)[name] = value.slice(0, EXPORT_ROW_CAP);
+      out.truncated.push(name);
+    }
+  }
+  Object.assign(out, exportStatus(out.failed, out.truncated));
+  return safeExportValue(structuredClone(out), true) as FanDataExport;
 }
 
 /** "Delete my data" in the demo: the creator-side delete, plus a tombstone per
@@ -3328,82 +3393,82 @@ export async function mockDeleteFanData(
 
 /** The demo creator's "Download my data": everything in the in-memory store. */
 export function mockExportCreatorData(): CreatorDataExport {
-  const fans = [...store.fans.values()].map((f) => ({
-    id: f.id,
-    name: f.name,
-    handle: f.handle ?? null,
-    spins_remaining: f.spinsRemaining,
-    spins_granted_total: f.spinsGrantedTotal,
-    notes: f.notes,
-    tags: f.tags,
-    leaderboard_opt_in: f.leaderboardOptIn,
-    acked_at: f.ackedAt,
-    self_excluded_at: f.selfExcludedAt,
-    blocked_at: f.blockedAt ?? null,
-    links: (f.passes ?? []).map((p) => ({
-      link_ends_with: maskToken(p.token),
-      wheel_id: p.wheelId,
-      spins_remaining: p.spinsRemaining,
-      created_at: p.createdAt,
-    })),
+  const uid = "demo";
+  const truncated: string[] = [];
+  // Normalize demo business rows to the database export's field names. Strip
+  // secret fields even when future demo rows acquire new nested properties.
+  const snake = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(snake);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key === "at" ? "created_at" : key.replace(/[A-Z]/g, (letter) => "_" + letter.toLowerCase()), snake(entry)]));
+  };
+  const rows = (name: string, values: unknown[]): Record<string, unknown>[] => {
+    if (values.length > EXPORT_ROW_CAP) truncated.push(name);
+    return safeExportValue(snake(structuredClone(values.slice(0, EXPORT_ROW_CAP)))) as Record<string, unknown>[];
+  };
+  const fanList = [...store.fans.values()];
+  if (fanList.some((fan) => fan.wins.length >= 50)) truncated.push("spins");
+  const fans = fanList.map((fan) => ({
+    id: fan.id, creator_id: uid, display_name: fan.name, handle: fan.handle ?? null,
+    spins_remaining: fan.spinsRemaining, spins_granted_total: fan.spinsGrantedTotal,
+    notes: fan.notes, tags: fan.tags, leaderboard_opt_in: fan.leaderboardOptIn,
+    acked_at: fan.ackedAt, acked_terms_version: fan.ackedTermsVersion,
+    blocked_at: fan.blockedAt ?? null, break_until: fan.breakUntil ?? null,
   }));
-  const spins = [...store.fans.values()].flatMap((f) =>
-    f.wins.map((w) => ({
-      fan_id: f.id,
-      prize_label: w.label,
-      prize_rarity: w.rarity,
-      created_at: w.at,
-      share_id: w.shareId,
-      server_seed_hash: w.serverSeedHash,
-      fair_version: w.fairVersion ?? null,
-    }))
-  );
-  // Any link token in a row (e.g. a grant's passToken) is shortened, as in the
-  // Supabase export, so the file can't open a fan's link.
-  const rows = (xs: unknown[]) =>
-    (structuredClone(xs) as Record<string, unknown>[]).map((r) => {
-      for (const k of Object.keys(r)) {
-        if (/token$/i.test(k) && typeof r[k] === "string") r[k] = maskToken(r[k] as string);
-      }
-      return r;
-    });
+  const links = fanList.flatMap((fan) => (fan.passes ?? []).map((pass, index) => ({
+    id: `mock-link-${fan.id}-${index}`, fan_id: fan.id, wheel_id: pass.wheelId,
+    campaign_id: pass.campaignId, created_at: pass.createdAt, is_active: !fan.selfExcludedAt,
+    self_excluded_at: fan.selfExcludedAt, spins_remaining: pass.spinsRemaining,
+    spins_granted_total: pass.spinsGrantedTotal, next_server_seed_hash: pass.nextServerSeedHash ?? null,
+    link_ends_with: maskToken(pass.token),
+  })));
+  const instant = [...rewardState().deliveries];
+  const spins = fanList.flatMap((fan) => {
+    const byShare = new Map<string, Partial<MockWin> & Pick<MockWin, "shareId" | "at" | "label" | "rarity">>(fan.wins.map((win) => [win.shareId, win]));
+    for (const [shareId, delivery] of instant) if (delivery.fanId === fan.id && !byShare.has(shareId)) byShare.set(shareId, { shareId, at: delivery.at, label: delivery.label, rarity: delivery.rarity, prizeId: delivery.prizeId });
+    return [...byShare.values()].sort((a, b) => a.shareId.localeCompare(b.shareId)).map((win) => ({
+    id: win.shareId, fan_id: fan.id, creator_id: uid, prize_id: win.prizeId,
+    prize_label: win.label, prize_rarity: win.rarity, created_at: win.at, share_id: win.shareId,
+    server_seed: win.serverSeed, server_seed_hash: win.serverSeedHash, client_seed: win.clientSeed,
+    nonce: win.nonce, seed_commitment: win.commitment ? JSON.stringify(win.commitment) : null,
+    fair_version: win.fairVersion ?? null, pool_hash: win.poolHash ?? null,
+    pool_snapshot: win.poolSnapshot ?? null, fair_trace: win.fairTrace ?? null,
+  }));
+  });
+  const push = (globalThis as unknown as { __ffPushStore?: {
+    devices: { id: string; showDetails: boolean; userAgent: string | null; failures: number; lastSuccessAt: string | null; createdAt: string }[];
+    log: Map<string, { tag: string; sentAt: number }>;
+  } }).__ffPushStore;
+  const sections = {
+    wheels: rows("wheels", [...store.wheels.values()].map(({ prizes: _prizes, ...wheel }) => ({ ...wheel, creator_id: uid }))),
+    prizes: rows("prizes", [...store.wheels.values()].flatMap((wheel) => wheel.prizes.map((prize) => ({ ...prize, wheel_id: wheel.id })))),
+    campaigns: rows("campaigns", store.campaigns), campaign_packs: rows("campaign_packs", store.campaignPacks),
+    prize_templates: rows("prize_templates", store.prizeTemplates), wheel_templates: rows("wheel_templates", store.wheelTemplates),
+    dm_templates: rows("dm_templates", store.dmTemplates), happy_hours: rows("happy_hours", store.happyHours),
+    webhooks: rows("webhooks", store.webhooks.map(({ id, event, createdAt }) => ({ id, event, createdAt }))),
+    fans: rows("fans", fans), fan_links: rows("fan_links", links), grants: rows("grants", store.grants),
+    spins: rows("spins", spins), redemptions: rows("redemptions", store.redemptions),
+    prize_rewards: rows("prize_rewards", [...rewardState().prizes].filter(([, definition]) => definition.kind !== "codes").map(([prize_id, definition]) => ({ prize_id, creator_id: uid, kind: definition.kind, updated_at: null }))),
+    prize_reward_codes: rows("prize_reward_codes", [...rewardState().prizes].flatMap(([prize_id, definition]) => definition.kind === "codes" ? definition.codes.map((code) => ({ id: code.id, prize_id, creator_id: uid, spin_id: code.shareId && code.shareId !== "reserved" ? code.shareId : null, assigned_at: code.shareId ? rewardState().deliveries.get(code.shareId)?.at ?? null : null, created_at: null, erased_at: code.erasedAt ?? null })) : [])),
+    spin_rewards: rows("spin_rewards", instant.map(([spin_id, delivery]) => ({ spin_id, creator_id: uid, kind: delivery.kind, views: delivery.views, last_viewed_at: delivery.lastViewedAt, created_at: delivery.at, erased_at: null }))),
+    referrals: rows("referrals", store.referrals), messages: rows("messages", store.messages),
+    wishlists: rows("wishlists", store.wishlists), creator_notices: rows("creator_notices", privacy.notices),
+    fan_checkins: rows("fan_checkins", [...checkinStore()].flatMap(([fanId, days]) => [...days].sort().map((day) => ({ creator_id: uid, fan_id: fanId, day, created_at: null })))),
+    fan_outreach: rows("fan_outreach", outreachLog()),
+    push_devices: rows("push_devices", (push?.devices ?? []).map((device) => ({ id: device.id, user_id: uid, user_agent: device.userAgent, show_details: device.showDetails, failures: device.failures, last_success_at: device.lastSuccessAt, created_at: device.createdAt }))),
+    push_history: rows("push_history", [...(push?.log ?? [])].map(([itemId, log]) => ({ user_id: uid, item_id: itemId, tag: log.tag, sent_at: new Date(log.sentAt).toISOString() }))),
+    autopilot_dismissals: [], access_request: [], agency_memberships: [], agencies_owned: [],
+    agency_owned_members: [], agency_owned_scopes: [], agency_scopes: [], agency_invitations: [],
+  };
   return {
-    format: CREATOR_EXPORT_FORMAT,
-    exportedAt: new Date().toISOString(),
-    about: CREATOR_EXPORT_ABOUT,
-    account: {
-      display_name: store.displayName,
-      leaderboard_enabled: store.leaderboardEnabled,
-      notify_new_spin: store.notifyNewSpin,
-      notify_low_balance: store.notifyLowBalance,
-      notify_messages: store.notifyMessages,
-      chat_intro: store.chatIntro,
-      chat_outro: store.chatOutro,
-      pwa_icon_mode: mockGetMyPwaIconMode(),
-      terms_version: mockGetMyTerms().version,
-      terms_accepted_at: mockGetMyTerms().acceptedAt,
-      demo: true,
-    },
-    sections: {
-      wheels: rows([...store.wheels.values()]),
-      campaigns: rows(store.campaigns),
-      campaign_packs: rows(store.campaignPacks),
-      prize_templates: rows(store.prizeTemplates),
-      wheel_templates: rows(store.wheelTemplates),
-      dm_templates: rows(store.dmTemplates),
-      happy_hours: rows(store.happyHours),
-      webhooks: rows(store.webhooks),
-      fans: rows(fans),
-      grants: rows(store.grants),
-      spins: rows(spins),
-      redemptions: rows(store.redemptions),
-      referrals: rows(store.referrals),
-      messages: rows(store.messages),
-      wishlists: rows(store.wishlists),
-      creator_notices: rows(privacy.notices),
-    },
-    truncated: [],
-    failed: [],
+    format: CREATOR_EXPORT_FORMAT, exportedAt: new Date().toISOString(), about: CREATOR_EXPORT_ABOUT,
+    ...exportStatus([], truncated), excluded: [...CREATOR_EXPORT_EXCLUDED],
+    account: { id: uid, display_name: store.displayName, leaderboard_enabled: store.leaderboardEnabled,
+      notify_new_spin: store.notifyNewSpin, notify_low_balance: store.notifyLowBalance,
+      notify_messages: store.notifyMessages, chat_intro: store.chatIntro, chat_outro: store.chatOutro,
+      pwa_icon_mode: mockGetMyPwaIconMode(), terms_version: mockGetMyTerms().version,
+      terms_accepted_at: mockGetMyTerms().acceptedAt, demo: true },
+    sections,
   };
 }
 
@@ -3459,4 +3524,224 @@ export function mockFanPushState(fanId: string): { blocked: boolean; selfExclude
 /** The demo fan behind a link (web push: who a new message is from). */
 export function mockFanIdForToken(token: string): string | null {
   return fanForToken(token)?.id ?? null;
+}
+
+// #26 instant-delivery prizes (mock mirror of migration 0057). The demo keeps
+// reward values in server memory (it has no database and no key); the
+// Supabase path encrypts them. Same rules either way: a code is handed out at
+// most once, a code prize's stock IS its unused-code count, a prize that can't
+// be delivered is never awarded, and only the winner's own link reveals it.
+// ---------------------------------------------------------------------------
+
+interface MockCode {
+  id: string;
+  erasedAt?: string;
+  fingerprint: string;
+  value: string;
+  hint: string | null;
+  /** The winning spin's share id once delivered (null = unused). */
+  shareId: string | null;
+}
+type MockPrizeReward = { kind: "link" | "text"; value: string } | { kind: "codes"; codes: MockCode[] };
+interface MockDelivery {
+  fanId: string;
+  prizeId: string;
+  fingerprint?: string;
+  label: string;
+  rarity: Rarity;
+  kind: RewardKind;
+  value: string;
+  views: number;
+  lastViewedAt: string;
+  at: string;
+}
+const gRewards = globalThis as unknown as {
+  __ffRewards?: { prizes: Map<string, MockPrizeReward>; deliveries: Map<string, MockDelivery>; fingerprintKey?: Buffer; consumedFingerprints?: Map<string, Set<string>> };
+};
+function rewardState(): NonNullable<typeof gRewards.__ffRewards> {
+  return (gRewards.__ffRewards ??= { prizes: new Map(), deliveries: new Map() });
+}
+
+/** Demo-only secret-keyed identity survives erasure without retaining code text. */
+function mockCodeFingerprint(prizeId: string, code: string): string {
+  const state = rewardState();
+  const key = (state.fingerprintKey ??= randomBytes(32));
+  return createHmac("sha256", key).update(JSON.stringify(["demo", prizeId, code])).digest("hex");
+}
+
+/** The live prize object (mutable) on whichever wheel holds it. */
+function findMockPrize(prizeId: string): Prize | null {
+  for (const w of store.wheels.values()) {
+    const p = w.prizes.find((x) => x.id === prizeId);
+    if (p) return p;
+  }
+  return null;
+}
+
+const freeCodes = (r: MockPrizeReward | undefined): MockCode[] =>
+  r?.kind === "codes" ? r.codes.filter((c) => c.shareId === null) : [];
+
+/**
+ * Keep every prize's delivery (and a code prize's stock) in line with the
+ * reward store, whatever the editor sent: the mirror of saveWheel never
+ * writing `delivery` and of trg_sync_code_prize_stock.
+ */
+function syncMockPrizeDelivery(p: Prize) {
+  const r = rewardState().prizes.get(p.id);
+  if (!r) {
+    p.delivery = "manual";
+    return;
+  }
+  p.delivery = r.kind;
+  if (r.kind === "codes") p.stock = freeCodes(r).length;
+}
+
+/** After a save: delivery from the store, and rewards of removed prizes dropped. */
+function syncMockWheelRewards(wheel: WheelConfig) {
+  for (const p of wheel.prizes) syncMockPrizeDelivery(p);
+  const live = new Set([...store.wheels.values()].flatMap((w) => w.prizes.map((p) => p.id)));
+  for (const id of [...rewardState().prizes.keys()]) if (!live.has(id)) rewardState().prizes.delete(id);
+}
+
+export function mockGetPrizeDelivery(prizeId: string): PrizeDeliveryView | { error: "not_found" } {
+  const prize = findMockPrize(prizeId);
+  if (!prize) return { error: "not_found" };
+  syncMockPrizeDelivery(prize);
+  const r = rewardState().prizes.get(prizeId);
+  const free = freeCodes(r);
+  return {
+    prizeId,
+    delivery: prize.delivery ?? "manual",
+    ready: true,
+    value: r && r.kind !== "codes" ? r.value : null,
+    codesLeft: free.length,
+    codesUsed: r?.kind === "codes" ? r.codes.length - free.length : 0,
+    preview: free.slice(0, CODE_PREVIEW_COUNT).map((c) => maskCode(c.hint)),
+  };
+}
+
+/** Manual, a link or a text. Leaving a code list drops its unused codes; stock stays as a plain limit. */
+export function mockSetPrizeDelivery(
+  prizeId: string,
+  kind: "manual" | "link" | "text",
+  value: string | null,
+): PrizeDeliveryView | { error: "not_found" } {
+  const prize = findMockPrize(prizeId);
+  if (!prize) return { error: "not_found" };
+  const state = rewardState().prizes;
+  if (kind === "manual" || value === null) state.delete(prizeId);
+  else state.set(prizeId, { kind, value });
+  prize.delivery = kind === "manual" || value === null ? "manual" : kind;
+  return mockGetPrizeDelivery(prizeId);
+}
+
+/** Append codes and make the prize a code list (stock = unused codes). */
+export function mockAddPrizeCodes(
+  prizeId: string,
+  codes: string[],
+): (PrizeDeliveryView & { added: number; duplicates: number }) | { error: "not_found" | "too_many_codes" } {
+  const prize = findMockPrize(prizeId);
+  if (!prize) return { error: "not_found" };
+  const state = rewardState().prizes;
+  const current = state.get(prizeId);
+  const kept = current?.kind === "codes" ? current.codes : [];
+  const known = new Set([...(rewardState().consumedFingerprints?.get(prizeId) ?? []), ...kept.map((c) => c.fingerprint)]);
+  for (const d of rewardState().deliveries.values()) if (d.kind === "code" && d.prizeId === prizeId && d.fingerprint) known.add(d.fingerprint);
+  const fresh: string[] = [];
+  for (const value of codes) {
+    const fingerprint = mockCodeFingerprint(prizeId, value);
+    if (!known.has(fingerprint)) { known.add(fingerprint); fresh.push(value); }
+  }
+  if (freeCodes(current).length + fresh.length > MAX_CODES_PER_PRIZE) return { error: "too_many_codes" };
+  state.set(prizeId, {
+    kind: "codes",
+    codes: [...kept, ...fresh.map((value) => ({ id: genId("code"), fingerprint: mockCodeFingerprint(prizeId, value), value, hint: codeHint(value), shareId: null }))],
+  });
+  syncMockPrizeDelivery(prize);
+  return { ...mockGetPrizeDelivery(prizeId) as PrizeDeliveryView, added: fresh.length, duplicates: codes.length - fresh.length };
+}
+
+/**
+ * Inside mockSpin's draw (synchronous, so atomic like the prize-row lock):
+ * can this prize be delivered right now? Code prizes take their code here.
+ * `ok: false` = treat as sold out (excluded and re-drawn).
+ */
+function mockTakeReward(prize: Prize): { ok: true; reward: { kind: RewardKind; value: string; code?: MockCode } | null } | { ok: false } {
+  const delivery = prize.delivery ?? "manual";
+  if (delivery === "manual") return { ok: true, reward: null };
+  const r = rewardState().prizes.get(prize.id);
+  if (delivery === "codes") {
+    const code = freeCodes(r)[0];
+    if (!code) return { ok: false };
+    code.shareId = "reserved";
+    return { ok: true, reward: { kind: "code", value: code.value, code } };
+  }
+  if (!r || r.kind === "codes") return { ok: false };
+  return { ok: true, reward: { kind: r.kind, value: r.value } };
+}
+
+function mockRecordDelivery(shareId: string, fanId: string, reward: { kind: RewardKind; value: string; code?: MockCode }, at: string, prize: Prize) {
+  if (reward.code) reward.code.shareId = shareId;
+  rewardState().deliveries.set(shareId, { fanId, prizeId: prize.id, ...(reward.code ? { fingerprint: reward.code.fingerprint } : {}), label: prize.label, rarity: prize.rarity, kind: reward.kind, value: reward.value, views: 1, lastViewedAt: at, at });
+}
+
+/** A fan re-opens their own reward (F5 rules: unknown 404, paused/blocked 403). */
+export function mockGetFanReward(
+  token: string,
+  shareId: string,
+): { reward: DeliveredReward; views: number } | { error: "not_found" | "blocked" | "not_allowed" } {
+  const fan = liveFanForToken(token);
+  if ("error" in fan) return fan;
+  const d = rewardState().deliveries.get(shareId);
+  // Another fan's win looks exactly like no win: no oracle for share ids.
+  if (!d || d.fanId !== fan.id) return { error: "not_found" };
+  if (!rewardReviewAllowed(d.at)) return { error: "not_allowed" };
+  d.views += 1;
+  d.lastViewedAt = new Date().toISOString();
+  return { reward: { kind: d.kind, value: d.value }, views: d.views };
+}
+
+/** Fulfilment's "Auto" tag for a mock redemption (never the value). */
+function mockAutoInfo(shareId: string | undefined): RedemptionItem["auto"] {
+  const d = shareId ? rewardState().deliveries.get(shareId) : undefined;
+  return d ? { kind: d.kind, views: d.views, lastViewedAt: d.lastViewedAt } : undefined;
+}
+
+/** Full instant history, independent of the recent-wins display cap. */
+export function mockGetFanRewardHistory(token: string, cursor?: string): InstantRewardHistory | { error: "not_found" | "blocked" | "bad_request" } {
+  const fan = liveFanForToken(token);
+  if ("error" in fan) return fan;
+  const decoded = cursor === undefined ? null : decodeRewardHistoryCursor(cursor);
+  if (cursor !== undefined && !decoded) return { error: "bad_request" };
+  const all = [...rewardState().deliveries].filter(([, d]) => d.fanId === fan.id)
+    .map(([shareId, d]) => ({ shareId, label: d.label, rarity: d.rarity, at: d.at }))
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || b.shareId.localeCompare(a.shareId));
+  const anchor = decoded ? all.findIndex((w) => w.shareId === decoded.shareId && rewardHistoryTimestamp(w.at) === decoded.at) : -1;
+  if (decoded && anchor < 0) return { error: "bad_request" };
+  const rows = all.slice(anchor + 1, anchor + 1 + REWARD_HISTORY_PAGE_SIZE + 1);
+  const wins = rows.slice(0, REWARD_HISTORY_PAGE_SIZE);
+  const last = wins.at(-1);
+  return { wins, nextCursor: rows.length > REWARD_HISTORY_PAGE_SIZE && last ? encodeRewardHistoryCursor(last) : null };
+}
+
+export function mockIsInstantRedemption(id: string): boolean {
+  const row = store.redemptions.find((r) => r.id === id);
+  return !!row?.auto || (!!row?.shareId && rewardState().deliveries.has(row.shareId));
+}
+
+/** Remove all values for this fan, including wins older than the50-row display. */
+function mockEraseFanRewards(fanId: string): void {
+  const state = rewardState();
+  const tombstones = (state.consumedFingerprints ??= new Map<string, Set<string>>());
+  for (const [shareId, d] of [...state.deliveries]) if (d.fanId === fanId) {
+    for (const row of store.redemptions) if (row.shareId === shareId) row.auto = {kind:d.kind,views:d.views,lastViewedAt:d.lastViewedAt};
+    if (d.kind === "code" && d.fingerprint) {
+      const known = tombstones.get(d.prizeId) ?? new Set<string>(); known.add(d.fingerprint); tombstones.set(d.prizeId,known);
+      const prize = state.prizes.get(d.prizeId);
+      if (prize?.kind === "codes") for (const code of prize.codes) if (code.shareId === shareId) {
+        code.value = ""; code.hint = null; code.erasedAt = new Date().toISOString();
+      }
+    }
+    state.deliveries.delete(shareId);
+  }
 }
