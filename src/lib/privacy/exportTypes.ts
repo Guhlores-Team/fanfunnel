@@ -32,6 +32,7 @@ export interface FanDataExport {
   };
   consents: {
     ageAndTermsAcceptedAt: string | null;
+    termsVersion: string | null;
     leaderboardOptIn: boolean;
   };
   links: {

@@ -24,6 +24,7 @@ import { fanVisitsLast7, visitsByFan } from "./checkins";
 import { contactToken } from "@/lib/engagement";
 import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
 import { listRecentOutreach } from "./outreach";
+import { LEGAL } from "@/lib/legal";
 
 /** Edit an existing grant's spins / amount / campaign after the fact. Adjusts
  *  the fan's balance by the spin delta (floored at 0) so totals stay consistent. */
@@ -743,7 +744,11 @@ export async function updateFanMeta(
 
 // --- Age-gate / ToS (#24) ---------------------------------------------------
 
-/** Stamp the age-gate / ToS acknowledgement on the fan behind a token. */
+/**
+ * Stamp the age-gate / ToS acknowledgement, and the Terms version agreed to, on
+ * the fan behind a token. The version always comes from the server (LEGAL), never
+ * from the request, and only the fan resolved from this token is updated.
+ */
 export async function ackFan(
   token: string
 ): Promise<{ ok: true } | { error: string }> {
@@ -755,7 +760,7 @@ export async function ackFan(
 
   const { error } = await sb
     .from("fans")
-    .update({ acked_at: new Date().toISOString() })
+    .update({ acked_at: new Date().toISOString(), acked_terms_version: LEGAL.version })
     .eq("id", resolved.fanId);
   return error ? { error: "db_error" } : { ok: true };
 }

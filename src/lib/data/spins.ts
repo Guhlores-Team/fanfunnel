@@ -37,6 +37,7 @@ import { runAfterResponse } from "@/lib/afterResponse";
 import { isOnBreak } from "@/lib/play/playGuard";
 import { readPlayAfterSpin, readPlayState } from "./playGuard";
 import { readFanGlow } from "./checkins";
+import { fanNeedsAck } from "@/lib/legal";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -47,7 +48,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   if (!isSupabaseConfigured()) return mockGetFanPass(token);
 
   const sb = createServiceClient();
-  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, leaderboard_opt_in)`;
+  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in)`;
   const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`;
   // Per-wheel balance lives on the pass (migration 0020). If that column isn't
   // present yet (migration not run), fall back to the legacy select so the fan
@@ -103,6 +104,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       spins_granted_total: number;
       referral_code: string | null;
       acked_at: string | null;
+      acked_terms_version?: string | null;
       leaderboard_opt_in?: boolean | null;
     } | null;
     creator: {
@@ -230,7 +232,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     },
     chatUnlocked:
       pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0,
-    needsAck: pass.fan.acked_at == null,
+    needsAck: fanNeedsAck(pass.fan.acked_at, pass.fan.acked_terms_version),
     tipUrl: pass.creator?.tip_url ?? null,
     creatorId: pass.creator_id,
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
@@ -259,14 +261,18 @@ export async function spin(
   // 0. Enforce the age-gate / ToS server-side BEFORE claiming a spin. The client
   //    modal is a UX affordance, not a security boundary — a fan hitting this
   //    endpoint directly must still have acknowledged first.
-  const { data: ackRow } = await sb
+  const { data: ackRow, error: ackError } = await sb
     .from("fan_passes")
-    .select("fan_id, fan:fans(acked_at)")
+    .select("fan_id, fan:fans(acked_at, acked_terms_version)")
     .eq("token", token)
     .maybeSingle();
-  const ack = ackRow as unknown as { fan_id?: string; fan: { acked_at: string | null } | null } | null;
-  const ackedAt = ack?.fan?.acked_at;
-  if (ackRow && !ackedAt) return { error: "needs_ack" };
+  if (ackError) return { error: "db_error" };
+  if (!ackRow) return { error: "not_found" };
+  const ack = ackRow as unknown as {
+    fan_id?: string;
+    fan: { acked_at: string | null; acked_terms_version: string | null } | null;
+  } | null;
+  if (fanNeedsAck(ack?.fan?.acked_at, ack?.fan?.acked_terms_version)) return { error: "needs_ack" };
 
   // 1. Atomically claim one spin from the fan account (can't be forged).
   const { data: remaining, error: claimErr } = await sb.rpc("claim_spin", {

@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { LEGAL } from "@/lib/legal";
 import { mock } from "node:test";
 import type { WheelConfig } from "@/lib/games/wheel/types";
 
@@ -68,7 +69,7 @@ const WHEEL_ROW = {
 const PASS_ROW = {
   id: "pass-1", creator_id: CREATOR, campaign_id: null, wheel_id: WHEEL_ID, fan_id: "fan-1", is_active: true,
   spins_remaining: 3, next_server_seed: "f".repeat(64), next_server_seed_hash: "0".repeat(64),
-  fan: { id: "fan-1", display_name: "Sam", handle: null, spins_remaining: 3, spins_granted_total: 3, referral_code: "ABC", acked_at: "2026-01-01T00:00:00Z", leaderboard_opt_in: false },
+  fan: { id: "fan-1", display_name: "Sam", handle: null, spins_remaining: 3, spins_granted_total: 3, referral_code: "ABC", acked_at: "2026-01-01T00:00:00Z", acked_terms_version: LEGAL.version, leaderboard_opt_in: false },
   creator: { display_name: "Creator", tip_url: null, leaderboard_enabled: false, creator_note: null, avatar_url: null },
 };
 const TABLES: Record<string, (ops: Op[]) => Resp> = {

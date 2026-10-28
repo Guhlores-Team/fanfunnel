@@ -17,6 +17,7 @@ import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
 import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import NotificationBell from "@/components/dashboard/NotificationBell";
+import TermsPrompt from "@/components/dashboard/TermsPrompt";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -425,6 +426,7 @@ export default function DashboardClient({
         onSignOut={onSignOut}
         onSetup={setupOffered ? reopenSetup : undefined}
       />
+      <TermsPrompt canSignOut={!!email} />
     </div>
     </ToastProvider>
   );

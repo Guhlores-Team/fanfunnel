@@ -109,7 +109,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     svc
       .from("fans")
       .select(
-        "display_name, handle, created_at, spins_remaining, spins_granted_total, last_spin_at, referral_code, referred_by_fan_id, acked_at, leaderboard_opt_in"
+        "display_name, handle, created_at, spins_remaining, spins_granted_total, last_spin_at, referral_code, referred_by_fan_id, acked_at, acked_terms_version, leaderboard_opt_in"
       )
       .eq("id", fanId)
       .eq("creator_id", creatorId)
@@ -158,6 +158,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     referral_code: string | null;
     referred_by_fan_id: string | null;
     acked_at: string | null;
+    acked_terms_version: string | null;
     leaderboard_opt_in: boolean | null;
   } | null;
   if (fanRes.error || !fan) return null;
@@ -248,6 +249,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     },
     consents: {
       ageAndTermsAcceptedAt: fan.acked_at,
+      termsVersion: fan.acked_terms_version ?? null,
       leaderboardOptIn: fan.leaderboard_opt_in === true,
     },
     links: passes.map((p) => ({

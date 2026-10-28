@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { LEGAL } from "@/lib/legal";
 import { mock } from "node:test";
 
 // AUTH-SENSITIVE (AGENTS.md rules 3/5 + the RM-6 negative tests): a fan's
@@ -230,7 +231,7 @@ async function main() {
     // spin(): a refused claim during a break maps to on_break; otherwise no_spins.
     handler = (table, ops) => {
       if (table === "fan_passes") {
-        if (has(ops, "select", "acked_at")) return { data: { fan_id: FAN_A, fan: { acked_at: "2026-01-01T00:00:00Z" } }, error: null };
+        if (has(ops, "select", "acked_at")) return { data: { fan_id: FAN_A, fan: { acked_at: "2026-01-01T00:00:00Z", acked_terms_version: LEGAL.version } }, error: null };
         return { data: { id: "p", is_active: true, self_excluded_at: null, fan: { blocked_at: null } }, error: null };
       }
       if (table === "fans") return { data: { break_until: breakUntil }, error: null };

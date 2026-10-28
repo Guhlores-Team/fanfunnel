@@ -355,13 +355,52 @@ function probeGrants(db) {
 
   bad.push(...probeBreaks(db, asUser));
   bad.push(...probeOutreach(db));
+  // 0055: record_terms_acceptance is server-only. anon and authenticated can't
+  // execute it; service_role writes exactly the row it names, with now(); and a
+  // creator can't write the terms columns directly, for themselves or another.
+  const TERMS_SIG = "record_terms_acceptance(uuid, text)";
+  if (priv("anon", TERMS_SIG)) bad.push(`anon can EXECUTE ${TERMS_SIG}`);
+  if (priv("authenticated", TERMS_SIG)) bad.push(`authenticated can EXECUTE ${TERMS_SIG}`);
+  if (!priv("service_role", TERMS_SIG)) bad.push(`service_role lost EXECUTE on ${TERMS_SIG}`);
+  const T_A = "00000000-0000-4000-8000-0000000055a0";
+  const T_B = "00000000-0000-4000-8000-0000000055b0";
+  const seedTerms = `insert into auth.users (id, email) values ('${T_A}', 'probe-0055a@example.test'), ('${T_B}', 'probe-0055b@example.test');`;
+  for (const role of ["anon", "authenticated"]) {
+    const r = psql(db, ["-c", `begin; ${seedTerms} set local role ${role}; select set_config('request.jwt.claim.sub', '${T_A}', true); select public.record_terms_acceptance('${T_B}', '2026-10-27'); rollback;`], { allowFail: true });
+    if (!/permission denied for function record_terms_acceptance\b/.test(r.stderr || "")) {
+      bad.push(`${role} call to record_terms_acceptance was not refused (${(r.stderr || "no error").trim().split("\n")[0]})`);
+    }
+  }
+  const terms = psql(db, ["-c", `
+    begin;
+    ${seedTerms}
+    set local role service_role;
+    select public.record_terms_acceptance('${T_A}', '2026-10-27');
+    reset role;
+    select 'svc:' || coalesce(terms_version, '-') || ',' || (terms_accepted_at is not null) || '|' || coalesce((select terms_version from public.profiles where id = '${T_B}'), '-')
+      from public.profiles where id = '${T_A}';
+    rollback;`], { allowFail: true });
+  const termsOut = (terms.stdout || "").split("\n").map((l) => l.trim());
+  if (terms.status !== 0 || !termsOut.includes("svc:2026-10-27,true|-")) {
+    bad.push(`record_terms_acceptance did not write exactly the named row (got ${termsOut.filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${(terms.stderr || "").trim().split("\n")[0]})`);
+  }
+  // A creator's direct UPDATE of the columns (own row or another's) must be
+  // refused outright or change nothing (profiles_update is admin-only).
+  const termsDirect = psql(db, ["-c", `begin; ${seedTerms} set local role authenticated; select set_config('request.jwt.claim.sub', '${T_A}', true); update public.profiles set terms_version = '2099-01-01', terms_accepted_at = '2000-01-01' where id in ('${T_A}', '${T_B}'); reset role; select 'direct:' || coalesce((select terms_version from public.profiles where id = '${T_A}'), '-') || ',' || coalesce((select terms_version from public.profiles where id = '${T_B}'), '-'); rollback;`], { allowFail: true });
+  if (termsDirect.status === 0 && !(termsDirect.stdout || "").includes("direct:-,-")) {
+    bad.push(`a creator's direct UPDATE changed terms_version (${(termsDirect.stdout || "").trim()})`);
+  }
+  const termsBad = psql(db, ["-c", `begin; ${seedTerms} set local role service_role; select public.record_terms_acceptance('${T_A}', 'latest'); rollback;`], { allowFail: true });
+  if (!/invalid terms acceptance/.test(termsBad.stderr || "")) {
+    bad.push(`record_terms_acceptance accepted a malformed version (${(termsBad.stderr || "no error").trim().split("\n")[0]})`);
+  }
 
   if (bad.length) {
     failures++;
     console.log(`FAIL  ${db}: signed-in-only RPC grants / RM-6 break guard`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; record_terms_acceptance is service-only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only`);
   }
 }
 

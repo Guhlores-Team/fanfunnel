@@ -23,6 +23,7 @@ import {
   fanExtras,
   firstRunJourney,
   notificationsJourney,
+  termsJourney,
 } from "./journeys.mjs";
 import { mobileJourney } from "./mobile.mjs";
 import { revealJourney } from "./reveal.mjs";
@@ -62,6 +63,7 @@ try {
     await glowJourney(browser, runner, page, ctx); // RM-3: visit glow on a fresh fan link (no previews, clamped dates, gate)
     await winbackJourney(page, runner, ctx); // RM-5: win-back queue, snooze, came back; Fans never copies a paused link
     await privacyJourney(page, runner, ctx); // fan export/delete on a throwaway link + creator export
+    await termsJourney(page, runner); // creator clickwrap: stale version → prompt → accept (0055)
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));

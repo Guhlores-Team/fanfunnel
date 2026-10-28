@@ -597,6 +597,7 @@ export type Database = {
       fans: {
         Row: {
           acked_at: string | null
+          acked_terms_version: string | null
           blocked_at: string | null
           break_until: string | null
           created_at: string
@@ -619,6 +620,7 @@ export type Database = {
         }
         Insert: {
           acked_at?: string | null
+          acked_terms_version?: string | null
           blocked_at?: string | null
           break_until?: string | null
           created_at?: string
@@ -641,6 +643,7 @@ export type Database = {
         }
         Update: {
           acked_at?: string | null
+          acked_terms_version?: string | null
           blocked_at?: string | null
           break_until?: string | null
           created_at?: string
@@ -1108,6 +1111,8 @@ export type Database = {
           public_tagline: string | null
           pwa_icon_mode: string
           role: Database["public"]["Enums"]["app_role"]
+          terms_accepted_at: string | null
+          terms_version: string | null
           tip_url: string | null
         }
         Insert: {
@@ -1133,6 +1138,8 @@ export type Database = {
           public_tagline?: string | null
           pwa_icon_mode?: string
           role?: Database["public"]["Enums"]["app_role"]
+          terms_accepted_at?: string | null
+          terms_version?: string | null
           tip_url?: string | null
         }
         Update: {
@@ -1158,6 +1165,8 @@ export type Database = {
           public_tagline?: string | null
           pwa_icon_mode?: string
           role?: Database["public"]["Enums"]["app_role"]
+          terms_accepted_at?: string | null
+          terms_version?: string | null
           tip_url?: string | null
         }
         Relationships: [
@@ -1675,6 +1684,10 @@ export type Database = {
           p_user_agent?: string
         }
         Returns: Json
+      }
+      record_terms_acceptance: {
+        Args: { p_user: string; p_version: string }
+        Returns: string
       }
       reserve_self_account_deletion: {
         Args: { p_user: string }

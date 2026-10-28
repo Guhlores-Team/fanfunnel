@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { safeNext } from "@/lib/auth/safeNext";
+import TermsCheckbox from "@/components/TermsCheckbox";
 
 type Mode = "signin" | "signup";
 
@@ -40,6 +41,7 @@ export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   // After "Close my account" the server signs the browser out and sends it here.
   const [msg, setMsg] = useState<string | null>(
@@ -58,6 +60,12 @@ export default function LoginForm() {
 
     try {
       if (mode === "signup") {
+        // The clickwrap is required to create an account (the button is also
+        // disabled without it).
+        if (!agreed) {
+          setError("Please agree to the Terms of Service and Privacy Policy.");
+          return;
+        }
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -75,6 +83,14 @@ export default function LoginForm() {
           setMode("signin");
           return;
         }
+        // Signed in straight away: record the acceptance now (server-side: the
+        // session user, the current Terms version, the server's clock). If this
+        // fails, the access-request form records it instead.
+        await fetch("/api/account/terms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accept: true }),
+        }).catch(() => {});
         // New accounts are pending approval → send them to the request page.
         router.push("/pending");
         router.refresh();
@@ -153,6 +169,7 @@ export default function LoginForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+        {mode === "signup" && <TermsCheckbox checked={agreed} onChange={setAgreed} disabled={busy} />}
         {mode === "signin" && (
           <div className="text-right">
             <Link
@@ -178,7 +195,7 @@ export default function LoginForm() {
 
       <button
         type="submit"
-        disabled={busy}
+        disabled={busy || (mode === "signup" && !agreed)}
         className="mt-5 w-full rounded-xl bg-pink-600 py-2.5 font-bold text-white hover:bg-pink-500 disabled:opacity-50"
       >
         {busy ? "…" : mode === "signin" ? "Sign in" : "Request access"}

@@ -3269,3 +3269,33 @@ end;
 $$;
 revoke execute on function public.run_retention_cleanup(integer, integer, integer, integer, integer) from public, anon, authenticated;
 grant execute on function public.run_retention_cleanup(integer, integer, integer, integer, integer) to service_role;
+
+-- ============================================================
+-- 0055_terms_acceptance.sql
+-- ============================================================
+-- Terms acceptance records: creators' clickwrap (time + Terms version) and the
+-- Terms version a fan agreed to at the age gate. Written only server-side:
+-- record_terms_acceptance() is service-role only. See migrations/0055.
+alter table public.profiles add column if not exists terms_accepted_at timestamptz;
+alter table public.profiles add column if not exists terms_version text;
+alter table public.fans add column if not exists acked_terms_version text;
+
+create or replace function public.record_terms_acceptance(p_user uuid, p_version text)
+returns timestamptz
+language plpgsql security definer set search_path = public as $$
+declare
+  v_at timestamptz;
+begin
+  if p_user is null or p_version is null or p_version !~ '^\d{4}-\d{2}-\d{2}$' then
+    raise exception 'invalid terms acceptance' using errcode = '22023';
+  end if;
+  update public.profiles
+     set terms_accepted_at = now(), terms_version = p_version
+   where id = p_user
+  returning terms_accepted_at into v_at;
+  return v_at;
+end;
+$$;
+
+revoke execute on function public.record_terms_acceptance(uuid, text) from public, anon, authenticated;
+grant execute on function public.record_terms_acceptance(uuid, text) to service_role;

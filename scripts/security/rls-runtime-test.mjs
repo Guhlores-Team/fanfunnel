@@ -450,6 +450,27 @@ async function main() {
     } finally {
       await admin.from("profiles").update({ role: "creator" }).eq("id", A.id);
     }
+    // 0055: Terms acceptance is server-only. A creator can't record it for
+    // another creator (or for itself) through the RPC or a direct UPDATE, and
+    // anon can't call the RPC at all. Only /api/account/terms (service role,
+    // session user, server version) writes it.
+    const termsForB = await a.rpc("record_terms_acceptance", { p_user: B.id, p_version: "2099-01-01" });
+    check(!!termsForB.error, "A cannot execute record_terms_acceptance (for B)");
+    const termsForA = await a.rpc("record_terms_acceptance", { p_user: A.id, p_version: "2099-01-01" });
+    check(!!termsForA.error, "A cannot execute record_terms_acceptance (for itself: no forged version)");
+    const anonTerms = await anonClient.rpc("record_terms_acceptance", { p_user: B.id, p_version: "2099-01-01" });
+    check(!!anonTerms.error, "anon cannot execute record_terms_acceptance");
+    const directTerms = await a
+      .from("profiles")
+      .update({ terms_version: "2099-01-01", terms_accepted_at: "2000-01-01T00:00:00Z" })
+      .in("id", [A.id, B.id])
+      .select("id");
+    check((directTerms.data?.length ?? 0) === 0, "A cannot UPDATE terms_version / terms_accepted_at directly");
+    const { data: termRows } = await admin.from("profiles").select("id, terms_version").in("id", [A.id, B.id]);
+    check(
+      (termRows ?? []).every((r) => r.terms_version == null),
+      `no acceptance was recorded by those attempts (got ${JSON.stringify(termRows)})`
+    );
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

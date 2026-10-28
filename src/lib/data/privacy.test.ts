@@ -24,7 +24,7 @@ const svc = new FakeTables({
     { id: CB, display_name: "Creator B" },
   ],
   fans: [
-    { id: "fanA", creator_id: CA, display_name: "Alice", handle: "ali", notes: "VIP whale", tags: ["whale"], spins_remaining: 2, spins_granted_total: 5, created_at: "2026-01-01", last_spin_at: null, referral_code: "R1", referred_by_fan_id: null, acked_at: "2026-01-02", leaderboard_opt_in: true },
+    { id: "fanA", creator_id: CA, display_name: "Alice", handle: "ali", notes: "VIP whale", tags: ["whale"], spins_remaining: 2, spins_granted_total: 5, created_at: "2026-01-01", last_spin_at: null, referral_code: "R1", referred_by_fan_id: null, acked_at: "2026-01-02", acked_terms_version: "2026-01-02", leaderboard_opt_in: true },
     { id: "fanA2", creator_id: CA, display_name: "Other fan", notes: "secret", spins_remaining: 9, spins_granted_total: 9 },
     { id: "fanB", creator_id: CB, display_name: "Alice", notes: "B's notes", spins_remaining: 1, spins_granted_total: 1 },
   ],
@@ -149,6 +149,7 @@ async function main() {
   check("only messages the fan SENT", exp!.messagesYouSent.length === 1 && exp!.messagesYouSent[0].body === "hi from Alice");
   check("wishlist is this fan's", exp!.wishlist.length === 1 && exp!.wishlist[0].prize === "Video");
   check("consents carried", exp!.consents.ageAndTermsAcceptedAt === "2026-01-02" && exp!.consents.leaderboardOptIn === true);
+  check("the export preserves the accepted Terms version rather than substituting today's", exp!.consents.termsVersion === "2026-01-02");
   check("top-ups without amounts", exp!.topUps.length === 1 && !("amount" in exp!.topUps[0]) && !text.includes("999"));
   check("friends referred is a count, no ids", exp!.profile.friendsReferred === 1 && !text.includes("fanA2"));
   for (const secret of ["VIP whale", "whale", "ship to his flat", "2026-02-01", "NEXT-SEED-SECRET", "Other fan", "hi from someone else", "B's notes", "hi from B's Alice", "creator reply"]) {

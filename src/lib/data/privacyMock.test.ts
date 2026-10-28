@@ -17,6 +17,7 @@ import {
   mockSpin,
 } from "./mock";
 import { buildNotificationFeed } from "./notificationFeed";
+import { LEGAL } from "@/lib/legal";
 
 let passed = 0;
 const check = (label: string, cond: unknown) => {
@@ -39,6 +40,7 @@ async function main() {
   const text = JSON.stringify(exp);
   check("A's export is A", exp.profile.displayName === "Privacy Alice");
   check("A's export has A's spin", exp.spins.length === 1);
+  check("A's export includes the Terms version actually accepted", exp.consents.termsVersion === LEGAL.version);
   check("A's export has none of B's data", !text.includes("Bob") && !text.includes("message from bob") && !text.includes(b.token));
   check("A's own token is masked", !text.includes(a.token));
 
