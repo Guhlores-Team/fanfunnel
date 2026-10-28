@@ -9,6 +9,7 @@
 // creators can never UPDATE their profiles row directly.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { readFansOnBreak } from "./playGuard";
+import type { AnyClient } from "./shared";
 import {
   mockGetNotificationSources,
   mockGetNotificationsSeenAt,
@@ -56,8 +57,26 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return null;
-  const uid = user.id;
 
+  const { sources, seenAt, prefs } = await loadNotificationSources(sb, user.id);
+  return buildNotificationFeed(sources, seenAt, prefs);
+}
+
+export interface LoadedNotificationSources {
+  sources: NotificationSources;
+  seenAt: string | null;
+  prefs: FeedPrefs;
+}
+
+/**
+ * Read one account's feed sources and toggles, every query filtered to
+ * `creator_id = uid`. The bell calls it with the creator's own session client
+ * (RLS applies too); web push (src/lib/push/notify.ts, server-only) calls it
+ * with the service client for the creator id taken from the server-side
+ * spin/message row, never from client input. Both then build items with the
+ * same F8 builder, so the push text equals the bell.
+ */
+export async function loadNotificationSources(sb: AnyClient, uid: string): Promise<LoadedNotificationSources> {
   const since = new Date(Date.now() - OUT_OF_SPINS_WINDOW_DAYS * 86_400_000).toISOString();
   const [seenRes, prefsRes, winsRes, msgRes, wheelsRes, passesRes, noticesRes] = await Promise.all([
     sb.from("profiles").select("notifications_seen_at").eq("id", uid).maybeSingle(),
@@ -273,7 +292,7 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
     }
   }
 
-  return buildNotificationFeed(sources, seenAt, prefs);
+  return { sources, seenAt, prefs };
 }
 
 /** Mark everything in the bell as seen (stamps now() on the caller's own profile). */

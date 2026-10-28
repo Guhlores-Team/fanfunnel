@@ -9,6 +9,10 @@ import { playPing, prefersReducedMotion } from "@/lib/sound";
 import { timeAgo } from "@/lib/format";
 import { useToast } from "@/components/ui/Toast";
 import { initials } from "./inboxHelpers";
+import { toNotificationItem } from "@/lib/data/notificationFeed";
+import { DEFAULT_SHOW_DETAILS } from "@/lib/push/config";
+import { toPushPayload } from "@/lib/push/payload";
+import { currentPushSubscription } from "@/lib/push/browser";
 
 /** A few one-tap canned replies the creator can drop into the composer. */
 const QUICK_REPLIES = [
@@ -68,8 +72,11 @@ export default function InboxPanel({
   onChanged,
   initialFanId = null,
   initialFanNonce = 0,
+  onOpenPushSettings,
 }: {
   onChanged?: () => void;
+  /** Settings › Notifications › push (the one alerts opt-in). */
+  onOpenPushSettings?: () => void;
   /** Open this fan's thread once the list has loaded (drawer "Message"). */
   initialFanId?: string | null;
   /** Bumped on every "Message" request so the same fan can be re-opened. */
@@ -141,58 +148,43 @@ export default function InboxPanel({
     }
   }, []);
 
-  // Notification permission state (browser only).
-  const [notifyPerm, setNotifyPerm] = useState<NotificationPermission | "unsupported">(
-    "default"
-  );
+  // Web push replaces the old in-tab "Enable alerts" opt-in: one system, set
+  // up in Settings › Notifications. Whether THIS browser already gets pushes.
+  const [pushHere, setPushHere] = useState<boolean | null>(null);
+  const pushHereRef = useRef(false);
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time capability check
-      setNotifyPerm("unsupported");
-      return;
-    }
-    setNotifyPerm(Notification.permission);
+    let live = true;
+    currentPushSubscription().then((sub) => {
+      pushHereRef.current = !!sub;
+      if (live) setPushHere(!!sub);
+    });
+    return () => {
+      live = false;
+    };
   }, []);
 
-  // Alert (ping + browser Notification) for a new inbound fan message that the
-  // creator isn't currently looking at. Never alerts for the creator's own
-  // sends. SSR-guarded.
-  const alertInbound = useCallback((fanName: string, body: string) => {
+  // Alert (ping, plus an OS notification when this browser allowed them but
+  // isn't on push) for a new inbound fan message the creator isn't looking
+  // at. A browser on push gets the push instead, so never both. The text is
+  // the F8 item under the lock-screen default (D9: generic). Never alerts for
+  // the creator's own sends. SSR-guarded.
+  const alertInbound = useCallback((fanId: string, fanName: string, body: string) => {
     playPing();
     if (
       typeof window !== "undefined" &&
       "Notification" in window &&
-      Notification.permission === "granted"
+      Notification.permission === "granted" &&
+      !pushHereRef.current
     ) {
       try {
-        new Notification(`New message from ${fanName}`, {
-          body: body.slice(0, 120),
-        });
+        const item = toNotificationItem("message", { fanId, fanName, body, at: new Date().toISOString(), count: 1 });
+        const p = toPushPayload(item, DEFAULT_SHOW_DETAILS);
+        new Notification(p.title, { body: p.body, tag: p.tag });
       } catch {
         /* notification construction can throw on some platforms */
       }
     }
   }, []);
-
-  const requestAlerts = async () => {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    try {
-      const perm = await Notification.requestPermission();
-      setNotifyPerm(perm);
-      // Confirmation/test notification so it's obvious the grant worked.
-      if (perm === "granted") {
-        try {
-          new Notification("Alerts on", {
-            body: "You'll be notified of new messages.",
-          });
-        } catch {
-          /* construction can throw on some platforms */
-        }
-      }
-    } catch {
-      /* denied / unavailable */
-    }
-  };
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial thread-list load
@@ -240,7 +232,7 @@ export default function InboxPanel({
                 row.fan_id !== openFanIdRef.current
               ) {
                 const t = threadsRef.current.find((x) => x.fanId === row.fan_id);
-                alertInbound(t?.fanName ?? "a fan", row.body ?? "");
+                alertInbound(row.fan_id ?? "", t?.fanName ?? "a fan", row.body ?? "");
               }
             }
           )
@@ -286,7 +278,7 @@ export default function InboxPanel({
               : // Brand-new thread that already has an unread fan message.
                 t.unread > 0;
             if (isNewInbound && t.fanId !== openFanIdRef.current) {
-              alertInbound(t.fanName, t.lastBody);
+              alertInbound(t.fanId, t.fanName, t.lastBody);
             }
           }
         }
@@ -323,14 +315,15 @@ export default function InboxPanel({
       <div className="flex flex-wrap items-stretch gap-2.5">
         <AutoMessagesCard />
 
-        {notifyPerm !== "granted" && notifyPerm !== "unsupported" && (
+        {pushHere === false && onOpenPushSettings && (
           <button
             type="button"
-            onClick={requestAlerts}
+            onClick={onOpenPushSettings}
+            data-testid="inbox-push-optin"
             className="flex min-h-11 items-center gap-[7px] rounded-xl border border-line bg-surface px-4 text-[13px] font-semibold text-ink transition-colors duration-150 hover:border-[var(--brand)]"
           >
             <Glyph d={P.bell} size={15} className="text-brand" />
-            Enable alerts
+            Get alerts on this device
           </button>
         )}
       </div>

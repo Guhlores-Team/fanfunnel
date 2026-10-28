@@ -174,3 +174,14 @@ export { exportFanData, deleteFanData, getFanLinkStatus, exportCreatorData, isPl
 export type { FanLinkStatus } from "./privacy";
 export { getMyTermsStatus, acceptMyTerms } from "./terms";
 export type { TermsStatus } from "./terms";
+
+export {
+  getPushConfig,
+  pushAccountId,
+  listMyPushDevices,
+  addMyPushSubscription,
+  removeMyPushDevice,
+  setMyPushDeviceDetails,
+  sendMyTestPush,
+} from "./push";
+export type { PushDevice, PushError } from "./push";

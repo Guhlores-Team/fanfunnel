@@ -70,9 +70,12 @@ const allRead = (f: NotificationFeed): NotificationFeed => ({
 
 export default function NotificationBell({
   onNavigate,
+  onOpenPushSettings,
 }: {
   /** Route an item through the dashboard's in-app navigation. */
   onNavigate: (target: NotificationTarget) => void;
+  /** Footer: Settings › Notifications › push (web push opt-in). */
+  onOpenPushSettings?: () => void;
 }) {
   const feed = useFetch<NotificationFeed>("/api/notifications", {
     pollMs: POLL_MS,
@@ -261,6 +264,23 @@ export default function NotificationBell({
                 );
               })}
             </ul>
+          )}
+          {onOpenPushSettings && (
+            <div className="border-t border-[var(--hair)] px-4 py-2.5">
+              <button
+                type="button"
+                data-testid="bell-push-link"
+                onClick={() => {
+                  openRef.current = false;
+                  setOpen(false);
+                  setFresh(new Set());
+                  onOpenPushSettings();
+                }}
+                className="min-h-10 text-[13px] font-semibold text-brand underline-offset-2 hover:underline"
+              >
+                Get these on your phone <span aria-hidden="true">→</span>
+              </button>
+            </div>
           )}
         </div>
       )}

@@ -870,6 +870,69 @@ function probePrivacy(db) {
   }
 }
 
+// ------------------------------------------------------ web push probe ---
+// 0056: push_subscriptions is own-devices-only and push_log is service-only.
+// As creator A: A sees, updates (show_details only) and deletes ONLY its own
+// devices; A can't register a device for B, rewrite a device's owner or its
+// delivery bookkeeping, or write push_log; anon can't read or subscribe; a
+// suspended A sees nothing.
+function probePush(db) {
+  const bad = [];
+  const A = "00000000-0000-4000-8000-0000000056a0";
+  const B = "00000000-0000-4000-8000-0000000056b0";
+  const EP = (x) => `'https://fcm.googleapis.com/fcm/send/probe-${x}'`;
+  const seed = `
+    insert into auth.users (id, email) values ('${A}', 'probe-0056a@example.test'), ('${B}', 'probe-0056b@example.test');
+    update public.profiles set is_active = true where id in ('${A}', '${B}');
+    insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ('${B}', ${EP("b")}, 'k', 'a');
+    insert into public.push_log (user_id, item_id, tag) values ('${B}', 'win:x@1', 'win:x');`;
+  const asA = `set local role authenticated; select set_config('request.jwt.claim.sub', '${A}', true);`;
+  const r = psql(db, ["-c", `
+    begin; ${seed}
+    ${asA}
+    insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ('${A}', ${EP("a")}, 'k', 'a');
+    select 'sees:' || count(*) from public.push_subscriptions;
+    select 'sees-b:' || count(*) from public.push_subscriptions where user_id = '${B}';
+    select 'log-b:' || count(*) from public.push_log;
+    with u as (update public.push_subscriptions set show_details = true where user_id = '${B}' returning 1) select 'upd-b:' || count(*) from u;
+    with u as (update public.push_subscriptions set show_details = true where user_id = '${A}' returning 1) select 'upd-own:' || count(*) from u;
+    with d as (delete from public.push_subscriptions where user_id = '${B}' returning 1) select 'del-b:' || count(*) from d;
+    reset role;
+    select 'b-left:' || count(*) from public.push_subscriptions where user_id = '${B}';
+    update public.profiles set is_active = false where id = '${A}';
+    ${asA}
+    select 'suspended-sees:' || count(*) from public.push_subscriptions;
+    reset role;
+    rollback;`], { allowFail: true });
+  const out = (r.stdout || "").split("\n").map((l) => l.trim());
+  const want = ["sees:1", "sees-b:0", "log-b:0", "upd-b:0", "upd-own:1", "del-b:0", "b-left:1", "suspended-sees:0"];
+  const missing = want.filter((w) => !out.includes(w));
+  if (r.status !== 0 || missing.length) {
+    bad.push(`isolation (missing ${missing.join(" ") || "-"}; got ${out.filter((l) => /:/.test(l)).join(" ")}; ${(r.stderr || "").trim().split("\n")[0]})`);
+  }
+
+  const refused = [
+    ["A registers a device for B", `${asA} insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ('${B}', ${EP("x")}, 'k', 'a');`, /row-level security/],
+    ["A moves its device to B", `${asA} insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ('${A}', ${EP("a")}, 'k', 'a'); update public.push_subscriptions set user_id = '${B}';`, /permission denied/],
+    ["A forges delivery bookkeeping", `${asA} update public.push_subscriptions set failures = 0, last_success_at = now();`, /permission denied/],
+    ["A writes push_log", `${asA} insert into public.push_log (user_id, item_id, tag) values ('${A}', 'k', 't');`, /permission denied/],
+    ["anon subscribes", `set local role anon; insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ('${A}', ${EP("anon")}, 'k', 'a');`, /permission denied/],
+    ["anon lists devices", `set local role anon; select count(*) from public.push_subscriptions;`, /permission denied/],
+  ];
+  for (const [label, stmt, re] of refused) {
+    const x = psql(db, ["-c", `begin; ${seed} ${stmt} rollback;`], { allowFail: true });
+    if (x.status === 0 || !re.test(x.stderr || "")) bad.push(`${label} was not refused (${(x.stderr || "no error").trim().split("\n")[0]})`);
+  }
+
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: web push RLS (0056)`);
+    for (const b of bad) console.log(`  - ${b}`);
+  } else {
+    console.log(`PASS  ${db}: push_subscriptions own-devices only (A can't read/update/delete/register for B, can't touch bookkeeping); push_log service-only; anon refused`);
+  }
+}
+
 // ----------------------------------------------------------------- builds ---
 try {
   const migrations = readdirSync(join(SUPABASE, "migrations"))
@@ -928,6 +991,7 @@ try {
     probeCheckins(db);
     probeAppErrors(db);
     probePrivacy(db);
+    probePush(db);
   }
 } catch (e) {
   failures++;

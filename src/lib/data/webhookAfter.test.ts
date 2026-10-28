@@ -116,15 +116,17 @@ async function main() {
 
   // Let any dangling promise make progress before looking.
   await new Promise((r) => setTimeout(r, 20));
-  check("the webhook fan-out is handed to after() exactly once", scheduled.length === 1);
-  check("after() receives a callback", typeof scheduled[0] === "function");
+  // Two side effects ride on after(): the webhook fan-out and the web push to
+  // the creator's devices (push is OFF here: no VAPID keys, so it no-ops).
+  check("the webhook fan-out and the push are each handed to after() once", scheduled.length === 2);
+  check("after() receives callbacks", scheduled.every((t) => typeof t === "function"));
   check("nothing is delivered before the response (no dangling promise)", webhookReads === 0 && fetched.length === 0);
 
-  // Next runs the callback once the response is sent and waits on its promise.
-  const ran = (scheduled[0] as () => unknown)();
-  check("the scheduled callback returns a promise for Next to wait on", ran instanceof Promise);
-  await ran;
-  check("running the scheduled work reads the creator's webhooks", webhookReads === 1);
+  // Next runs the callbacks once the response is sent and waits on their promises.
+  const ran = (scheduled as (() => unknown)[]).map((t) => t());
+  check("the scheduled callbacks return promises for Next to wait on", ran.every((r) => r instanceof Promise));
+  await Promise.all(ran);
+  check("running the scheduled work reads the creator's webhooks exactly once", webhookReads === 1);
   check("it delivers to the public endpoint", fetched.includes("https://93.184.216.34/hook"));
   check("the SSRF guard still refuses a private target", !fetched.some((u) => u.includes("127.0.0.1")));
 

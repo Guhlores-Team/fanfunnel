@@ -5,8 +5,9 @@ Everything below was true at the time of writing; verify with `git` before actin
 
 ## 1. Where things stand
 
-- **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`). HEAD `562025e`.
-  CI fully green on that commit (verify, login-ui, supabase, schema-drift, test).
+- **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`). Last verified
+  Preview commit `c1b4098` (0055); web-push integration (0056) is in progress locally.
+  CI is fully green on `c1b4098` (verify, login-ui, supabase, schema-drift, test).
 - **Preview (TEST database `snmcrmhgevfqggxdiomu`):**
   https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
   Vercel login protection is OFF for testing (`ssoProtection` was `all_except_custom_domains`;
@@ -14,7 +15,8 @@ Everything below was true at the time of writing; verify with `git` before actin
 - **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`, us-east-2/Ohio).
   Still runs an old July build. **`main` = production. Never push or merge to `main`**
   without (a) green CI and (b) the owner's explicit "tested on Preview, go".
-- **TEST database migrations applied:** 0001–0053. Prod is behind; prod gets migrations only
+- **TEST database migrations applied:** 0001–0055 (confirmed by successful CI application
+  and generated-type comparison). Prod is behind; prod gets migrations only
   at go-live, before or exactly at the merge.
 
 ## 2. Roadmap status (owner chose: build ALL before alpha)
@@ -27,9 +29,9 @@ Everything below was true at the time of writing; verify with `git` before actin
 | RM-5 win-back queue | 0051 | merged | done (`src/lib/engagement.ts` re-exports F6) |
 | Go-live hardening (agency org RLS fix, Dependabot, docs/GO_LIVE.md) | 0052 | merged | done |
 | Error monitoring + email alerts (Admin › Errors) | 0053 | merged | done |
-| **Privacy & safety pack** | 0054 | `ops/privacy-safety` @ `cd4373a` | **done + verified, NOT merged** |
-| **Terms / Privacy + clickwrap** | 0055 | `legal/terms-privacy` @ `2d06a38` | **done + verified, NOT merged** |
-| **Web push (creators)** | 0056 | `rm/web-push` @ `b33df34` | **done + verified, NOT merged** |
+| **Privacy & safety pack** | 0054 | merged as `612b606` | done; two full local verification rounds, green CI, on Preview / TEST |
+| **Terms / Privacy + clickwrap** | 0055 | merged as `c1b4098` | done; two full local verification rounds, green CI, on Preview / TEST |
+| **Web push (creators)** | 0056 | integrating `rm/web-push` @ `b33df34` | local unit and SQL checks pass; two full verification rounds and push pending |
 | **#26 instant-delivery prizes** | 0057 | `rm/26-instant-delivery` @ `b66f49f` | **mostly built; last commit is WIP, unverified** |
 | **Per-creator theming** | 0058 | `rm/theming` @ `e4e77e0` | **mostly built; last commit is WIP (Settings "Look & feel" card), unverified** |
 | **#25 focus pack → chase pity** | 0059 | not started | spec in PROPOSALS.md; fixes pity-counter race at `src/lib/data/spins.ts` (~548–551) |
@@ -42,6 +44,9 @@ someone else's history).
 ## 3. Next steps, in order
 
 ### 3a. Merge the three finished branches, strictly in migration order
+0054 and 0055 are complete. The owner confirmed enabling two-factor login before
+0054 was pushed. Continue with 0056; do not repeat those merges or MFA enrolment.
+
 `supabase db push` (CI `test` job) rejects a migration numbered lower than the remote's latest,
 so **0054 → 0055 → 0056 → 0057 → 0058 → …** must reach `dashboard-redesign` in that order.
 

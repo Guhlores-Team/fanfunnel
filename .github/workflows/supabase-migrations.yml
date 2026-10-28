@@ -57,9 +57,13 @@ jobs:
           version: 2.122.0
       - name: Apply migrations to TEST
         run: |
+          # Refuse to write if the repository secret points at another project.
+          test "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" = "snmcrmhgevfqggxdiomu"
           supabase link --project-ref "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" \
             --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
           supabase db push --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
+      - name: Confirm TEST migration history
+        run: supabase migration list --linked --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
       - name: Check src/lib/data/db.types.ts matches TEST
         # The committed row types must match the schema the migrations just
         # produced. The comparison ignores whitespace only: the file can come

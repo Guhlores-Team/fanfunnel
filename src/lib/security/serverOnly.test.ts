@@ -182,6 +182,75 @@ const files = walk(SRC);
   else for (const u of stubUsers) fail(`src must not reference scripts/test-preload.mjs: ${u}`);
 }
 
+// --- 5. Web push: web-push, the sender and VAPID_PRIVATE_KEY stay server-side -
+// The push sender signs with the VAPID private key and uses the service
+// client. None of it may be reachable from a "use client" module: not the
+// `web-push` package, not src/lib/push/{keys,send,notify}.ts or the data
+// module behind the routes, and no module that names VAPID_PRIVATE_KEY.
+{
+  const PUSH_SERVER = ["lib/push/keys.ts", "lib/push/send.ts", "lib/push/notify.ts", "lib/data/push.ts"].map((p) =>
+    join(SRC, p)
+  );
+  for (const f of PUSH_SERVER.slice(0, 3)) {
+    if (/^import\s+["']server-only["']/.test(stripComments(read(f)).trimStart())) ok(`${rel(f)} starts with import "server-only"`);
+    else fail(`${rel(f)} must begin with import "server-only"`);
+  }
+
+  /** Every local module `entry` reaches (transitively), itself included. */
+  const closure = (entry: string, get: (p: string) => string, has: (p: string) => boolean): Set<string> => {
+    const seen = new Set<string>([entry]);
+    const stack = [entry];
+    while (stack.length) {
+      const file = stack.pop()!;
+      for (const spec of importSpecifiers(get(file))) {
+        const r = resolveSpec(spec, file, has);
+        if (r && !seen.has(r)) {
+          seen.add(r);
+          stack.push(r);
+        }
+      }
+    }
+    return seen;
+  };
+  const leaks = (entry: string, get: (p: string) => string, has: (p: string) => boolean): string[] => {
+    const out: string[] = [];
+    for (const f of closure(entry, get, has)) {
+      const code = stripComments(get(f));
+      if (importSpecifiers(code).some((s) => s === "web-push" || s.startsWith("web-push/"))) out.push(`${rel(f)} imports web-push`);
+      if (/VAPID_PRIVATE_KEY/.test(code)) out.push(`${rel(f)} reads VAPID_PRIVATE_KEY`);
+      if (PUSH_SERVER.includes(f)) out.push(`reaches ${rel(f)}`);
+    }
+    return out;
+  };
+
+  const clientFiles = files.filter((f) => isUseClient(read(f)));
+  const bad = clientFiles.flatMap((f) => leaks(f, read, existsSync).map((l) => `${rel(f)}: ${l}`));
+  if (bad.length === 0) ok(`${clientFiles.length} "use client" modules reach neither web-push, the push sender nor VAPID_PRIVATE_KEY`);
+  else for (const b of bad) fail(`client bundle leak: ${b}`);
+
+  const privateKeyReaders = files
+    .filter((f) => f !== SELF && !f.endsWith(".test.ts") && /VAPID_PRIVATE_KEY/.test(stripComments(read(f))))
+    .map(rel);
+  if (privateKeyReaders.join() === "lib/push/keys.ts") ok("only lib/push/keys.ts reads VAPID_PRIVATE_KEY");
+  else fail(`VAPID_PRIVATE_KEY must be read only in lib/push/keys.ts (found: ${privateKeyReaders.join(", ") || "none"})`);
+  const publicPrivate = files.filter((f) => /NEXT_PUBLIC_VAPID_PRIVATE/.test(read(f)) && f !== SELF).map(rel);
+  if (publicPrivate.length === 0) ok("no NEXT_PUBLIC_ variant of the VAPID private key");
+  else fail(`the VAPID private key must never be NEXT_PUBLIC_: ${publicPrivate.join(", ")}`);
+
+  // The scanner catches a transitive leak (it isn't vacuous).
+  const fake = new Map<string, string>([
+    [join(SRC, "c/PushUi.tsx"), '"use client";\nimport { x } from "../h/pushHelper";'],
+    [join(SRC, "h/pushHelper.ts"), 'import webpush from "web-push";\nexport const k = process.env.VAPID_PRIVATE_KEY;'],
+    [join(SRC, "c/Fine.tsx"), '"use client";\nimport { y } from "../h/pure";'],
+    [join(SRC, "h/pure.ts"), "export const y = 1; // VAPID_PRIVATE_KEY in a comment only"],
+  ]);
+  const get = (p: string) => fake.get(p) ?? "";
+  const has = (p: string) => fake.has(p);
+  const flagged = [join(SRC, "c/PushUi.tsx"), join(SRC, "c/Fine.tsx")].filter((f) => leaks(f, get, has).length > 0).map(rel);
+  if (flagged.join() === "c/PushUi.tsx") ok("push leak scanner flags a transitive web-push / private-key import only");
+  else fail(`push leak scanner self-test wrong, flagged: ${JSON.stringify(flagged)}`);
+}
+
 if (failures > 0) {
   console.error(`\n${failures} server-only check(s) failed`);
   process.exit(1);

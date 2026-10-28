@@ -72,6 +72,9 @@ Development = TEST.
 | `FF_REQUIRE_SUPABASE` | `1` | `1` | Fail closed instead of falling back to the in-memory demo. `VERCEL_ENV=production` already forces this on Vercel. |
 | `NEXT_PUBLIC_ENABLE_DEBUG` | **unset** | `1` | Turns on the `?debug=1` error console and the "PREVIEW · TEST database" badge. Must never be set on Production. |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | set by the Upstash integration | same | Shared rate-limit counters across instances (`src/lib/rateLimit.ts`). `UPSTASH_REDIS_REST_URL`/`_TOKEN` also work. Unset = per-instance in-memory limits. |
+| `VAPID_PUBLIC_KEY` | separate public key | separate public key | Web push; see setup below. |
+| `VAPID_PRIVATE_KEY` | private key (Sensitive) | private key (Sensitive) | Server-only; never a `NEXT_PUBLIC_*` variable. |
+| `VAPID_SUBJECT` | `mailto:you@yourdomain` | same | Contact for browser push services. |
 | `NEXT_PUBLIC_SITE_URL` | optional | optional | Only for self-hosting behind a proxy that strips the scheme. |
 
 Add the TEST trio as GitHub secrets too (same names), so the `E2E (real Supabase)` workflow and
@@ -157,5 +160,56 @@ the Preview is tested and PROD before (or at) the merge to `main`. Only admins
 - Re-running `migrations_combined.sql` is safe.
 - Realtime chat needs nothing extra: Supabase Realtime is on for the `messages` table once the
   schema is loaded.
-- Optional later keys: `REWARD_ENCRYPTION_KEY` (encrypted digital rewards) and a web-push VAPID
-  keypair, both only when those features ship.
+- Optional later key: `REWARD_ENCRYPTION_KEY` (encrypted digital rewards).
+- Web push is off until the three `VAPID_*` variables are set. The Inbox alert
+  link opens the same opt-in in Settings › Notifications.
+
+---
+
+## Web push setup (closed-tab notifications)
+
+Creators can get the bell's alerts (a win to fulfil, a fan message, low prize
+stock, a fan out of spins) as phone/desktop notifications, even with FanFunnel
+closed. They turn it on per device in **Settings › Notifications › Push to this
+device**. Until you do the steps below, that card says push isn't available and
+nothing is sent.
+
+1. **Database:** migration `0056_push_subscriptions.sql` (tables
+   `push_subscriptions` + `push_log`, RLS on) must be applied: to the **test**
+   project before the Preview, to **prod** before (or exactly at) the merge to
+   `main`.
+2. **Generate one key pair per environment** (Preview and Production each get
+   their own; never reuse prod keys on Preview):
+
+   ```bash
+   npx web-push generate-vapid-keys
+   ```
+
+   It prints a **Public Key** and a **Private Key**. Don't commit them anywhere.
+   Store both in your password manager.
+3. **Vercel → Project → Settings → Environment Variables**, for **Preview** (the
+   Preview pair) and **Production** (the Production pair):
+   - `VAPID_PUBLIC_KEY` = the Public Key
+   - `VAPID_PRIVATE_KEY` = the Private Key, marked **Sensitive**
+   - `VAPID_SUBJECT` = `mailto:you@yourdomain` (same value for both is fine)
+
+   Leave them out of **Development** unless you need push locally.
+4. **Redeploy** (env changes apply to new deployments only).
+5. **Set the keys once and leave them.** Every device's subscription is tied to
+   the public key: changing it silently breaks push on every device until each
+   creator turns it on again.
+6. **Test on real devices** (Preview URL, test account):
+   - Desktop Chrome/Edge/Firefox: Settings › Notifications › Push to this
+     device → allow → **Send a test**.
+   - Android Chrome: same, in the browser.
+   - iPhone/iPad (iOS 16.4+): open the dashboard in Safari → Share → **Add to
+     Home Screen** → open FanFunnel from the icon → turn push on there (Apple
+     only allows web push in installed apps; in a Safari tab the card shows these
+     steps instead).
+   - Tap a notification: it opens the right dashboard section.
+
+Privacy default (owner decision D9): a new device's lock screen shows only
+"New activity on FanFunnel". A creator can switch **Show names and prizes on
+lock screen** on per device. The default lives in `src/lib/push/config.ts`
+(`DEFAULT_SHOW_DETAILS`) and the `push_subscriptions.show_details` column
+default.

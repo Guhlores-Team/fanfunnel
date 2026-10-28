@@ -3423,3 +3423,40 @@ export function mockAcceptMyTerms(): { version: string; acceptedAt: string } {
   gTerms.__ffTerms = rec;
   return { ...rec };
 }
+
+// --- Web push: what the demo's latest win on a link means for the creator ----
+
+/**
+ * The push event for the win mockSpin JUST recorded on this link: its
+ * redemption, the prize, and that prize's stock after the decrement (parity
+ * with the Supabase path's notifyCreator call). Null when there is no win.
+ */
+export function mockSpinPushEvent(
+  token: string
+): { fanId: string; prizeId: string; stockAfter: number | null; redemptionId?: string } | null {
+  const fan = fanForToken(token);
+  const win = fan?.wins[0];
+  if (!fan || !win?.prizeId) return null;
+  const redemption = store.redemptions.find((r) => r.fanId === fan.id && r.at === win.at && r.prizeLabel === win.label);
+  let stockAfter: number | null = null;
+  for (const w of store.wheels.values()) {
+    const p = w.prizes.find((x) => x.id === win.prizeId);
+    if (p) {
+      stockAfter = typeof p.stock === "number" ? p.stock : null;
+      break;
+    }
+  }
+  return { fanId: fan.id, prizeId: win.prizeId, stockAfter, ...(redemption ? { redemptionId: redemption.id } : {}) };
+}
+
+/** Web push engagement gate (demo): blocked, paused or on a break. Null = unknown fan. */
+export function mockFanPushState(fanId: string): { blocked: boolean; selfExcluded: boolean; breakUntil: string | null } | null {
+  const fan = store.fans.get(fanId);
+  if (!fan) return null;
+  return { blocked: !!fan.blockedAt, selfExcluded: !!fan.selfExcludedAt, breakUntil: fan.breakUntil ?? null };
+}
+
+/** The demo fan behind a link (web push: who a new message is from). */
+export function mockFanIdForToken(token: string): string | null {
+  return fanForToken(token)?.id ?? null;
+}
