@@ -144,62 +144,72 @@ export async function creatorJourney(page, { step, assert }) {
   await step("wheel editor: switching wheels with unsaved edits asks in-app (not window.confirm)", async () => {
     // A native confirm() would auto-dismiss here and fail the step; the dialog
     // must be the app's own accessible one.
-    page.once("dialog", (d) => d.dismiss().catch(() => {}));
-    const draft = await page.getByTestId("wheel-title-input").inputValue();
-    // P23: the win description is visible on every prize of the open wheel without opening "More".
-    assert(
-      (await page.getByRole("textbox", { name: "Description (shown on win)" }).count()) >= 2,
-      "each prize shows its win description field",
-    );
-    // "New wheel" creates a wheel and tries to open it → the guard must fire.
-    // exact: a wheel created with the default title is itself called "New wheel".
-    await page.getByRole("button", { name: "New wheel", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: /discard unsaved changes/i });
-    await dialog.waitFor({ timeout: 8000 });
-    assert(await dialog.count(), "an in-app discard dialog opened");
-    assert(
-      (await page.evaluate(() => document.activeElement?.textContent?.trim())) === "Keep editing",
-      "focus lands on the safe action",
-    );
-    // Focus is trapped: tabbing past the last button wraps back inside the dialog.
-    for (let i = 0; i < 3; i++) await page.keyboard.press("Tab");
-    assert(
-      await page.evaluate(() => !!document.activeElement?.closest("[role='dialog']")),
-      "Tab stays inside the discard dialog",
-    );
-    // Escape keeps the edits.
-    await page.keyboard.press("Escape");
-    await dialog.waitFor({ state: "hidden", timeout: 4000 });
-    assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "Escape kept the draft");
-    // Clicking the chip of the wheel already open must not reload it over the edits.
-    const switcher = page.locator("section[aria-label='Wheel switcher']");
-    await switcher.locator("button[title*='prize'][aria-current='true']").click();
-    await page.waitForTimeout(600);
-    assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "re-clicking the open wheel kept the draft");
-    assert((await page.getByRole("dialog").count()) === 0, "re-clicking the open wheel asks nothing");
-    // The new wheel now exists as a chip; opening it asks again, and Discard switches.
-    const chips = switcher.locator("button[title*='prize']:not([aria-current])");
-    const count = await chips.count();
-    assert(count >= 1, `expected another wheel chip, saw ${count}`);
-    // P21: "Set active" is one click on an inactive wheel's chip, not in the menu.
-    assert(
-      await page.locator("section[aria-label='Wheel switcher']").getByRole("button", { name: /^Set .+ active$/ }).count(),
-      "Set active is visible on an inactive wheel's chip",
-    );
-    await chips.first().click();
-    await dialog.waitFor({ timeout: 8000 });
-    await dialog.getByRole("button", { name: "Discard changes" }).click();
-    await dialog.waitFor({ state: "hidden", timeout: 4000 });
-    await page
-      .waitForFunction((d) => document.querySelector('[data-testid="wheel-title-input"]')?.value !== d, draft)
-      .catch(() => {});
-    assert((await page.getByTestId("wheel-title-input").inputValue()) !== draft, "Discard switched to the other wheel");
-    assert(
-      (await page.locator('[role="status"]').filter({ hasText: /unsaved changes/i }).count()) === 0,
-      "the freshly opened wheel is clean",
-    );
-    // The schedule card is always visible for the selected wheel.
-    assert(await page.locator("section[aria-label^='Schedule for']").count(), "schedule card visible");
+    let nativeDialogSeen = false;
+    const refuseNativeDialog = (dialog) => {
+      nativeDialogSeen = true;
+      void dialog.dismiss().catch(() => {});
+    };
+    page.on("dialog", refuseNativeDialog);
+    try {
+      const draft = await page.getByTestId("wheel-title-input").inputValue();
+      // P23: the win description is visible on every prize of the open wheel without opening "More".
+      assert(
+        (await page.getByRole("textbox", { name: "Description (shown on win)" }).count()) >= 2,
+        "each prize shows its win description field",
+      );
+      // "New wheel" creates a wheel and tries to open it → the guard must fire.
+      // exact: a wheel created with the default title is itself called "New wheel".
+      await page.getByRole("button", { name: "New wheel", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: /discard unsaved changes/i });
+      await dialog.waitFor({ timeout: 8000 });
+      assert(await dialog.count(), "an in-app discard dialog opened");
+      assert(
+        (await page.evaluate(() => document.activeElement?.textContent?.trim())) === "Keep editing",
+        "focus lands on the safe action",
+      );
+      // Focus is trapped: tabbing past the last button wraps back inside the dialog.
+      for (let i = 0; i < 3; i++) await page.keyboard.press("Tab");
+      assert(
+        await page.evaluate(() => !!document.activeElement?.closest("[role='dialog']")),
+        "Tab stays inside the discard dialog",
+      );
+      // Escape keeps the edits.
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden", timeout: 4000 });
+      assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "Escape kept the draft");
+      // Clicking the chip of the wheel already open must not reload it over the edits.
+      const switcher = page.locator("section[aria-label='Wheel switcher']");
+      await switcher.locator("button[title*='prize'][aria-current='true']").click();
+      await page.waitForTimeout(600);
+      assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "re-clicking the open wheel kept the draft");
+      assert((await page.getByRole("dialog").count()) === 0, "re-clicking the open wheel asks nothing");
+      // The new wheel now exists as a chip; opening it asks again, and Discard switches.
+      const chips = switcher.locator("button[title*='prize']:not([aria-current])");
+      const count = await chips.count();
+      assert(count >= 1, `expected another wheel chip, saw ${count}`);
+      // P21: "Set active" is one click on an inactive wheel's chip, not in the menu.
+      assert(
+        await page.locator("section[aria-label='Wheel switcher']").getByRole("button", { name: /^Set .+ active$/ }).count(),
+        "Set active is visible on an inactive wheel's chip",
+      );
+      await chips.first().click();
+      await dialog.waitFor({ timeout: 8000 });
+      await dialog.getByRole("button", { name: "Discard changes" }).click();
+      await dialog.waitFor({ state: "hidden", timeout: 4000 });
+      await page
+        .waitForFunction((d) => document.querySelector('[data-testid="wheel-title-input"]')?.value !== d, draft)
+        .catch(() => {});
+      assert((await page.getByTestId("wheel-title-input").inputValue()) !== draft, "Discard switched to the other wheel");
+      assert(
+        (await page.locator('[role="status"]').filter({ hasText: /unsaved changes/i }).count()) === 0,
+        "the freshly opened wheel is clean",
+      );
+      // The schedule card is always visible for the selected wheel.
+      assert(await page.locator("section[aria-label^='Schedule for']").count(), "schedule card visible");
+      assert(!nativeDialogSeen, "wheel switching never opens a native dialog");
+    } finally {
+      page.off("dialog", refuseNativeDialog);
+    }
   });
 
   await step("fans: create an account", async () => {

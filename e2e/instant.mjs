@@ -129,6 +129,7 @@ export async function instantJourney(page, { step, assert }, ctx) {
       await page.keyboard.press("Space");
       assert(await confirm.isChecked() && !(await editor.getByTestId("delivery-save").isDisabled()), "the confirmation works with the keyboard");
       await editor.getByRole("button", { name: "Discard delivery changes" }).click();
+      await page.getByText("All changes saved", { exact: true }).waitFor({ timeout: 5000 });
       const stored = await json(await ctx.request.get(endpoint(fixture.code.id)), "read intact code pool");
       assert(stored.delivery.delivery === "codes" && stored.delivery.codesLeft === 51, "discarding the replacement keeps every code");
     });
