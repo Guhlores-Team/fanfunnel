@@ -1,12 +1,15 @@
 import { cache } from "react";
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
-import { getFanAppInfo, getFanPass } from "@/lib/data";
+import { getCreatorThemeView, getFanAppInfo, getFanPass } from "@/lib/data";
 import { fanAppName, fanAppPaths, iconVersion } from "@/lib/pwa/manifest";
 import SpinClient from "@/components/SpinClient";
 import SafetyMenu from "@/components/fan/SafetyMenu";
 import { LinkPauseProvider } from "@/components/fan/LinkPauseProvider";
-import { brandVars } from "@/lib/theme";
+import { themeStyle } from "@/lib/creatorTheme/tokens";
+import { themeFontFamily } from "@/lib/creatorTheme/fonts";
+import ThemeBackdrop from "@/components/theme/ThemeBackdrop";
+import PhotoGallery from "@/components/theme/PhotoGallery";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
 export const dynamic = "force-dynamic";
@@ -53,19 +56,28 @@ export default async function SpinPage({
   if (!pass) notFound();
 
   // The creator's brand color drives the whole page — every fan page feels
-  // like THEIRS, not FanFunnel's.
+  // like THEIRS, not FanFunnel's. Their theme (headline font, background,
+  // photo hub) layers on top; tokens.ts keeps every text pairing AA.
   const brand = pass.wheel.brandColor ?? "#ec4899";
+  const look = await getCreatorThemeView(pass.creatorId);
+  const { style, plan } = themeStyle(look.theme, brand, themeFontFamily(look.theme.font));
 
   return (
     <main
-      className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 pt-10 pb-28"
-      style={brandVars(brand)}
+      className="relative flex min-h-[100dvh] flex-col items-center justify-center px-5 pt-10 pb-28"
+      style={style}
+      data-theme-font={look.theme.font}
+      data-theme-background={look.theme.background}
     >
+      <ThemeBackdrop bgUrl={look.bgUrl} heavyGrain={plan.grains.length > 1} />
       <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null}>
         <div className="relative z-[1] flex w-full justify-center">
-          <SpinClient pass={pass} />
+          <SpinClient
+            pass={pass}
+            gallery={look.media.length ? <PhotoGallery media={look.media} creatorTitle={pass.creatorTitle} /> : null}
+          />
         </div>
-        <footer className="relative z-[1] mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted/70">
+        <footer className="relative z-[1] mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted">
           <span>Powered by FanFunnel · every spin wins</span>
           <SafetyMenu token={token} />
         </footer>

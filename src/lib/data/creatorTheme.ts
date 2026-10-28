@@ -31,6 +31,7 @@ import {
   parseThemeInput,
   toDbTheme,
   type CreatorTheme,
+  type ThemeMedia,
 } from "@/lib/creatorTheme/config";
 import { processUpload } from "@/lib/creatorTheme/processImage";
 import {
@@ -45,13 +46,7 @@ import {
   mockUpdateCaption,
 } from "./mockTheme";
 
-export interface ThemeMedia {
-  id: string;
-  url: string;
-  caption: string | null;
-  width: number;
-  height: number;
-}
+export type { ThemeMedia };
 
 /** What a themed page renders: the keys, the gallery, and the background photo. */
 export interface CreatorThemeView {

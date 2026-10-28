@@ -82,6 +82,15 @@ export interface CreatorTheme {
   bgMediaId: string | null;
 }
 
+/** One photo of a creator's hub, as pages render it. */
+export interface ThemeMedia {
+  id: string;
+  url: string;
+  caption: string | null;
+  width: number;
+  height: number;
+}
+
 export const DEFAULT_THEME: CreatorTheme = { font: "bricolage", background: "glow", bgMediaId: null };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
