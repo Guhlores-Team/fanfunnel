@@ -46,6 +46,10 @@ jobs:
 
       - name: E2E + a11y (mock mode)
         run: |
+          # Throwaway VAPID keys, generated per run and never stored, so the web
+          # push journey runs end to end against the demo's simulated push
+          # service (e2e/push.mjs). Without them it covers the push-off state.
+          eval "$(node -e 'const k=require("web-push").generateVAPIDKeys();console.log(`export VAPID_PUBLIC_KEY=${k.publicKey} VAPID_PRIVATE_KEY=${k.privateKey} VAPID_SUBJECT=mailto:ci@example.invalid`)')"
           npx next start -p 3000 &
           SERVER_PID=$!
           for i in $(seq 1 30); do

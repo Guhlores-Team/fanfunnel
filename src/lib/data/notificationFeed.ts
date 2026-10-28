@@ -94,7 +94,137 @@ function preview(body: string): string {
 // Postgres and the demo store format timestamps differently; compare instants.
 const ms = (iso: string) => Date.parse(iso) || 0;
 
+
 const withEmoji = (label: string, emoji?: string | null) => (emoji ? `${emoji} ${label}` : label);
+
+// ---------------------------------------------------------------------------
+// F8: one notification item builder. The bell (this feed), the Inbox and web
+// push (src/lib/push/notify.ts) all turn a source row into an item HERE, so
+// the text can never drift between them.
+// ---------------------------------------------------------------------------
+
+/** An item before the per-reader unread flag is applied. */
+export type FeedItem = Omit<NotificationItem, "unread">;
+
+/** One unread fan→creator thread (its newest message, and how many are unread). */
+export interface MessageThreadSource {
+  fanId: string;
+  fanName: string;
+  body: string;
+  at: string;
+  count: number;
+}
+
+export interface NotificationSourceFor {
+  win: NotificationSources["pendingWins"][number];
+  message: MessageThreadSource;
+  low_stock: NotificationSources["lowStock"][number];
+  out_of_spins: NotificationSources["outOfSpins"][number];
+}
+
+/**
+ * The Settings toggle that gates each kind (null = always on). Prize stock has
+ * no toggle: running out changes what fans can win.
+ */
+export const KIND_PREF: Record<NotificationKind, keyof FeedPrefs | null> = {
+  win: "newSpin",
+  message: "messages",
+  low_stock: null,
+  out_of_spins: "lowBalance",
+};
+
+export function kindEnabled(kind: NotificationKind, prefs: FeedPrefs): boolean {
+  const pref = KIND_PREF[kind];
+  return pref === null || prefs[pref];
+}
+
+/** Build the item for one source row. The only place item text is written. */
+export function toNotificationItem<K extends NotificationKind>(
+  kind: K,
+  source: NotificationSourceFor[K]
+): FeedItem {
+  switch (kind) {
+    case "win": {
+      const w = source as NotificationSourceFor["win"];
+      return {
+        id: `win:${w.id}`,
+        kind: "win",
+        title: `${w.fanName} won ${withEmoji(w.prizeLabel, w.emoji)}`,
+        body: "Waiting for you to fulfil it.",
+        at: w.at,
+        target: { section: "prizes" },
+      };
+    }
+    case "message": {
+      const t = source as MessageThreadSource;
+      return {
+        id: `msg:${t.fanId}`,
+        kind: "message",
+        title: t.count > 1 ? `${t.fanName}: ${t.count} new messages` : `New message from ${t.fanName}`,
+        body: preview(t.body),
+        at: t.at,
+        target: { section: "inbox", fanId: t.fanId },
+      };
+    }
+    case "low_stock": {
+      const p = source as NotificationSourceFor["low_stock"];
+      return {
+        id: `stock:${p.prizeId}`,
+        kind: "low_stock",
+        title:
+          p.stock <= 0
+            ? `${withEmoji(p.label, p.emoji)} is out of stock`
+            : `Only ${p.stock} left of ${withEmoji(p.label, p.emoji)}`,
+        body:
+          p.stock <= 0
+            ? `It has left the pool on “${p.wheelTitle}”; the other prizes’ odds renormalize. Restock it to bring it back.`
+            : `On “${p.wheelTitle}”. When it hits 0 it leaves the pool.`,
+        at: p.at,
+        target: { section: "editor", wheelId: p.wheelId },
+      };
+    }
+    default: {
+      const f = source as NotificationSourceFor["out_of_spins"];
+      return {
+        id: `spins:${f.fanId}`,
+        kind: "out_of_spins",
+        title: `${f.fanName} is out of spins`,
+        body: "Top them up to keep them playing.",
+        at: f.at,
+        target: { section: "fans", fanName: f.fanName },
+      };
+    }
+  }
+}
+
+/** Group unread fan messages into one thread per fan (newest message wins). */
+export function groupMessageThreads(messages: NotificationSources["unreadMessages"]): MessageThreadSource[] {
+  const threads = new Map<string, MessageThreadSource>();
+  for (const m of messages) {
+    const t = threads.get(m.fanId);
+    if (!t) threads.set(m.fanId, { fanId: m.fanId, fanName: m.fanName, body: m.body, at: m.at, count: 1 });
+    else {
+      t.count++;
+      if (ms(m.at) > ms(t.at)) {
+        t.at = m.at;
+        t.body = m.body;
+      }
+    }
+  }
+  return [...threads.values()];
+}
+
+/** Every item the sources produce under the creator's toggles (unranked). */
+export function buildNotificationItems(src: NotificationSources, prefs: FeedPrefs): FeedItem[] {
+  const items: FeedItem[] = [];
+  if (kindEnabled("win", prefs)) for (const w of src.pendingWins) items.push(toNotificationItem("win", w));
+  if (kindEnabled("message", prefs))
+    for (const t of groupMessageThreads(src.unreadMessages)) items.push(toNotificationItem("message", t));
+  if (kindEnabled("low_stock", prefs)) for (const p of src.lowStock) items.push(toNotificationItem("low_stock", p));
+  if (kindEnabled("out_of_spins", prefs))
+    for (const f of src.outOfSpins) items.push(toNotificationItem("out_of_spins", f));
+  return items;
+}
 
 export function buildNotificationFeed(
   src: NotificationSources,
@@ -102,78 +232,7 @@ export function buildNotificationFeed(
   prefs: FeedPrefs,
   limit: number = FEED_LIMIT
 ): NotificationFeed {
-  const items: Omit<NotificationItem, "unread">[] = [];
-
-  if (prefs.newSpin) {
-    for (const w of src.pendingWins) {
-      items.push({
-        id: `win:${w.id}`,
-        kind: "win",
-        title: `${w.fanName} won ${withEmoji(w.prizeLabel, w.emoji)}`,
-        body: "Waiting for you to fulfil it.",
-        at: w.at,
-        target: { section: "prizes" },
-      });
-    }
-  }
-
-  if (prefs.messages) {
-    const threads = new Map<string, { fanName: string; body: string; at: string; n: number }>();
-    for (const m of src.unreadMessages) {
-      const t = threads.get(m.fanId);
-      if (!t) threads.set(m.fanId, { fanName: m.fanName, body: m.body, at: m.at, n: 1 });
-      else {
-        t.n++;
-        if (ms(m.at) > ms(t.at)) {
-          t.at = m.at;
-          t.body = m.body;
-        }
-      }
-    }
-    for (const [fanId, t] of threads) {
-      items.push({
-        id: `msg:${fanId}`,
-        kind: "message",
-        title: t.n > 1 ? `${t.fanName}: ${t.n} new messages` : `New message from ${t.fanName}`,
-        body: preview(t.body),
-        at: t.at,
-        target: { section: "inbox", fanId },
-      });
-    }
-  }
-
-  // Prize stock has no Settings toggle: running out changes what fans can win.
-  for (const p of src.lowStock) {
-    items.push({
-      id: `stock:${p.prizeId}`,
-      kind: "low_stock",
-      title:
-        p.stock <= 0
-          ? `${withEmoji(p.label, p.emoji)} is out of stock`
-          : `Only ${p.stock} left of ${withEmoji(p.label, p.emoji)}`,
-      body:
-        p.stock <= 0
-          ? `It has left the pool on “${p.wheelTitle}”; the other prizes’ odds renormalize. Restock it to bring it back.`
-          : `On “${p.wheelTitle}”. When it hits 0 it leaves the pool.`,
-      at: p.at,
-      target: { section: "editor", wheelId: p.wheelId },
-    });
-  }
-
-  if (prefs.lowBalance) {
-    for (const f of src.outOfSpins) {
-      items.push({
-        id: `spins:${f.fanId}`,
-        kind: "out_of_spins",
-        title: `${f.fanName} is out of spins`,
-        body: "Top them up to keep them playing.",
-        at: f.at,
-        target: { section: "fans", fanName: f.fanName },
-      });
-    }
-  }
-
-  const ranked = items
+  const ranked = buildNotificationItems(src, prefs)
     .sort((a, b) => ms(b.at) - ms(a.at) || a.id.localeCompare(b.id))
     .slice(0, Math.max(0, limit))
     .map((it) => ({ ...it, unread: isUnread(it.at, seenAt) }));

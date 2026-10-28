@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useClipboard } from "@/lib/hooks/useClipboard";
 import { Field } from "./ui";
 import HomeScreenIconCard from "./HomeScreenIconCard";
+import PushNotificationsCard from "./PushNotificationsCard";
 
 /**
  * Settings (Command Center). Two groups:
@@ -25,9 +26,12 @@ import HomeScreenIconCard from "./HomeScreenIconCard";
 export default function SettingsPanel({
   onBrandColorChange,
   onDisplayNameChange,
+  pushFocus = 0,
 }: {
   onBrandColorChange?: (color: string) => void;
   onDisplayNameChange?: (name: string) => void;
+  /** Bumped to scroll to (and focus) the push card: bell footer / Inbox. */
+  pushFocus?: number;
 }) {
   const [account, setAccount] = useState<AccountState>(INITIAL_ACCOUNT);
   const [profile, setProfile] = useState<ProfileFields>(EMPTY_PROFILE);
@@ -111,6 +115,7 @@ export default function SettingsPanel({
           />
           <SecurityCard />
           <NotificationsCard account={account} patchAccount={patchAccount} />
+          <PushNotificationsCard focusNonce={pushFocus} />
         </div>
       </section>
 

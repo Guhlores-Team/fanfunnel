@@ -28,6 +28,7 @@ import { mobileJourney } from "./mobile.mjs";
 import { revealJourney } from "./reveal.mjs";
 import { pwaJourney } from "./pwa.mjs";
 import { stockJourney } from "./stock.mjs";
+import { pushJourney } from "./push.mjs";
 
 let server = null;
 let browser = null;
@@ -54,6 +55,7 @@ try {
     await notificationsJourney(page, runner, ctx); // bell: count → open marks seen → items navigate
     await mobileJourney(browser, runner, sink); // phone: tab bar + More + fan sheet (read-only)
     await pwaJourney(browser, runner, sink, ctx); // home-screen install on a fresh fan link (RM-4)
+    await pushJourney(browser, runner, sink, ctx); // web push: Settings card, iPhone rule, opt-in, F8 parity (own contexts)
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));

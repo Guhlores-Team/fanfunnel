@@ -17,6 +17,7 @@ import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
 import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import NotificationBell from "@/components/dashboard/NotificationBell";
+import { resolveSection } from "@/components/dashboard/dashboardSection";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -235,6 +236,26 @@ export default function DashboardClient({
     fanId: null,
     nonce: 0,
   });
+  // Web push opt-in (Settings › Notifications): the bell footer and the Inbox
+  // open it; the nonce scrolls the card into view each time.
+  const [pushFocus, setPushFocus] = useState(0);
+  const openPushSettings = () => {
+    goTab("settings");
+    setPushFocus((n) => n + 1);
+  };
+  // A tapped push notification while a dashboard is open: the service worker
+  // asks it to switch section in place (no reload, unsaved edits survive).
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (e: MessageEvent) => {
+      const d = e.data as { type?: unknown; url?: unknown } | null;
+      if (d?.type !== "ff:navigate" || typeof d.url !== "string") return;
+      const section = resolveSection(new URL(d.url, window.location.origin).searchParams.get("section") ?? undefined, adminVisible);
+      if (section) setTab(section);
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [adminVisible]);
 
   const [title, subtitleText] = SECTION_META[tab];
   // Phones show just the date on Today (the compressed top bar has no room).
@@ -297,6 +318,7 @@ export default function DashboardClient({
           }}
           bell={
             <NotificationBell
+              onOpenPushSettings={openPushSettings}
               // Same in-app routes as the drawer "Message" and top-bar search.
               onNavigate={({ section, fanId, fanName }) => {
                 if (section === "inbox" && fanId) setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
@@ -357,6 +379,7 @@ export default function DashboardClient({
             onChanged={overview.refresh}
             initialFanId={inboxFocus.fanId}
             initialFanNonce={inboxFocus.nonce}
+            onOpenPushSettings={openPushSettings}
           />
         )}
         {tab === "analytics" && (
@@ -384,6 +407,7 @@ export default function DashboardClient({
         )}
         {tab === "settings" && (
           <SettingsPanel
+            pushFocus={pushFocus}
             // Re-tint the whole dashboard the instant a new brand color is saved
             // in Settings (it persists to the active wheel; mirror it locally so
             // --brand updates with no refresh — #9).

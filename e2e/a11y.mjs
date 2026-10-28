@@ -11,6 +11,7 @@ import { chromium } from "playwright";
 import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
+import { PUSH_STUB, pushConfig, openPushCard, turnPushOn, clearPushDevices } from "./push.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -55,6 +56,28 @@ const installNudge = (platform) => async (page) => {
   await page.waitForTimeout(400);
 };
 const PHONE_CTX = { isMobile: true, hasTouch: true };
+
+// Web push: the Settings card in its states. Each runs in its own context so
+// the PushManager stub and route overrides stay local; none needs demo data.
+const pushCard = async (page) => {
+  await openPushCard(page);
+  await page.waitForTimeout(400);
+};
+const pushUnavailable = async (page) => {
+  await page.route("**/api/push/config", (r) => r.fulfill({ json: { available: false, publicKey: null } }));
+  await pushCard(page);
+};
+// With server keys: on for this device + names shown. Without: the card as is.
+const pushOn = async (page) => {
+  if (!(await pushConfig(page.request)).available) return pushCard(page);
+  await clearPushDevices(page.request);
+  await page.addInitScript(PUSH_STUB);
+  await turnPushOn(page);
+  await page.getByTestId("push-details-toggle").click();
+  await page.locator("[data-testid='push-details-toggle'][aria-checked='true']").waitFor({ timeout: 5000 });
+  await page.waitForTimeout(400);
+};
+const pushCleanup = async (page) => clearPushDevices(page.request);
 
 // RD-8: overlays and editors. Each prep only needs what survives e2e's
 // first-run wipe (the fan comes from openFanSheet, the rest is static UI).
@@ -166,6 +189,10 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard phone (Inbox)", viewport: PHONE, prep: openTab("Inbox"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (Analytics)", viewport: PHONE, prep: openTab("Analytics"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (Settings)", viewport: PHONE, prep: openTab("Settings"), advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (Settings: push card)", context: {}, prep: pushCard, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (Settings: push unavailable)", context: {}, prep: pushUnavailable, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard (Settings: push on, names shown)", context: {}, prep: pushOn, cleanup: pushCleanup, advisory: DASH_ADVISORY },
+  { path: null, name: "dashboard phone (push: iPhone Home Screen guide)", viewport: PHONE, context: { ...PHONE_CTX, userAgent: IPHONE_UA }, prep: pushCard, advisory: DASH_ADVISORY },
   { path: "/spin/demo", name: "fan spin (age gate)" },
   { path: "/spin/demo", name: "fan spin (wheel)", prep: passAgeGate },
   { path: "/", name: "fan spin phone (legendary reveal)", viewport: PHONE, prep: openReveal("legendary"), cleanup: closeReveal },

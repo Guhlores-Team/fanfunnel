@@ -54,6 +54,9 @@ These aren't required to boot, but you'll want them for a real deployment:
 |---|---|---|
 | `ADMIN_EMAILS` | comma-separated email allowlist | Gates the one-time admin-claim bootstrap (`claimAdmin` in `src/lib/data/index.ts`). A signed-in user whose email is on this list can promote themselves to admin via the in-app "claim admin" action — no SQL needed. **If it's unset, no one can self-promote** (you'd fall back to the manual `update profiles set role='admin'` in STEP 5). |
 | `FF_REQUIRE_SUPABASE` | `1` | Self-hosted opt-in to **fail closed** instead of mock mode (`src/lib/supabase/server.ts`). On Vercel, `VERCEL_ENV=production` already forces real-Supabase mode; set this where `VERCEL_ENV` isn't present (e.g. a non-Vercel host) so a missing Supabase key throws instead of silently serving in-memory demo data. |
+| `VAPID_PUBLIC_KEY` | public half of a VAPID key pair | **Web push** (closed-tab notifications for creators). Served to the browser at runtime by `GET /api/push/config`. `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is accepted too. See **Web push setup** below. |
+| `VAPID_PRIVATE_KEY` | private half (mark **Sensitive**) | Signs every push. Server-only: read only by `src/lib/push/keys.ts`. **Never** a `NEXT_PUBLIC_*` variable. |
+| `VAPID_SUBJECT` | `mailto:you@yourdomain` | Contact the push services (Google, Mozilla, Apple) can reach about your sends. |
 
 ---
 
@@ -84,5 +87,56 @@ from Vercel" flow you wanted.
 - **Migrations are idempotent** — re-running `migrations_combined.sql` is safe.
 - **Realtime chat** needs nothing extra: Supabase Realtime is on by default for
   the `messages` table once the schema is loaded.
-- **Browser push notifications** prompt the creator for permission in the Inbox
-  ("🔔 Enable alerts"); full closed-tab web-push is a Phase 6 item.
+- **Web push** (closed-tab notifications for creators) is off until the three
+  `VAPID_*` variables are set; see below. The Inbox's "Get alerts on this
+  device" opens the same opt-in in Settings › Notifications.
+
+---
+
+## Web push setup (closed-tab notifications)
+
+Creators can get the bell's alerts (a win to fulfil, a fan message, low prize
+stock, a fan out of spins) as phone/desktop notifications, even with FanFunnel
+closed. They turn it on per device in **Settings › Notifications › Push to this
+device**. Until you do the steps below, that card says push isn't available and
+nothing is sent.
+
+1. **Database:** migration `0056_push_subscriptions.sql` (tables
+   `push_subscriptions` + `push_log`, RLS on) must be applied: to the **test**
+   project before the Preview, to **prod** before (or exactly at) the merge to
+   `main`.
+2. **Generate one key pair per environment** (Preview and Production each get
+   their own; never reuse prod keys on Preview):
+
+   ```bash
+   npx web-push generate-vapid-keys
+   ```
+
+   It prints a **Public Key** and a **Private Key**. Don't commit them anywhere.
+   Store both in your password manager.
+3. **Vercel → Project → Settings → Environment Variables**, for **Preview** (the
+   Preview pair) and **Production** (the Production pair):
+   - `VAPID_PUBLIC_KEY` = the Public Key
+   - `VAPID_PRIVATE_KEY` = the Private Key, marked **Sensitive**
+   - `VAPID_SUBJECT` = `mailto:you@yourdomain` (same value for both is fine)
+
+   Leave them out of **Development** unless you need push locally.
+4. **Redeploy** (env changes apply to new deployments only).
+5. **Set the keys once and leave them.** Every device's subscription is tied to
+   the public key: changing it silently breaks push on every device until each
+   creator turns it on again.
+6. **Test on real devices** (Preview URL, test account):
+   - Desktop Chrome/Edge/Firefox: Settings › Notifications › Push to this
+     device → allow → **Send a test**.
+   - Android Chrome: same, in the browser.
+   - iPhone/iPad (iOS 16.4+): open the dashboard in Safari → Share → **Add to
+     Home Screen** → open FanFunnel from the icon → turn push on there (Apple
+     only allows web push in installed apps; in a Safari tab the card shows these
+     steps instead).
+   - Tap a notification: it opens the right dashboard section.
+
+Privacy default (owner decision D9): a new device's lock screen shows only
+"New activity on FanFunnel". A creator can switch **Show names and prizes on
+lock screen** on per device. The default lives in `src/lib/push/config.ts`
+(`DEFAULT_SHOW_DETAILS`) and the `push_subscriptions.show_details` column
+default.

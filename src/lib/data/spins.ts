@@ -21,7 +21,7 @@ import { showsStock, toPublicPrize, toPublicWheel } from "@/lib/games/wheel/publ
 import { readLiveStock } from "./liveStock";
 import type { FanPassView, WishlistItem } from "./types";
 import { consumeCommittedSeed, freshSeed } from "./spinSeed";
-import { mockGetFanPass, mockSpin, mockCreatePass } from "./mock";
+import { mockGetFanPass, mockSpin, mockCreatePass, mockSpinPushEvent } from "./mock";
 import {
   REFERRAL_BONUS,
   REFERRAL_CAP,
@@ -34,6 +34,7 @@ import type { AnyClient, DbWheelRow, SpinError } from "./shared";
 import { getActiveHappyHour, resolveWheelId } from "./wheels";
 import { fireWebhooks } from "./webhooks";
 import { runAfterResponse } from "@/lib/afterResponse";
+import { notifyCreator } from "@/lib/push/notify";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -243,7 +244,13 @@ export async function spin(
   // The fan's browser contributes this seed; sanitize + bound it server-side.
   const clientSeed = normalizeClientSeed(rawClientSeed);
   if (!isSupabaseConfigured()) {
-    return mockSpin(token, clientSeed);
+    const result = await mockSpin(token, clientSeed);
+    if (!("error" in result)) {
+      // Demo parity with the push after a recorded win (below).
+      const event = mockSpinPushEvent(token);
+      if (event) runAfterResponse(() => notifyCreator("demo", { type: "spin", ...event }));
+    }
+    return result;
   }
 
   const sb = createServiceClient();
@@ -341,6 +348,7 @@ async function takeStockUnit(
   sb: AnyClient,
   prizeId: string,
   stockRead: number,
+  out?: { after?: number },
 ): Promise<"taken" | "unlimited" | "sold_out" | "unknown"> {
   let read = stockRead;
   for (let attempt = 0; attempt < MAX_STOCK_CAS_ATTEMPTS; attempt++) {
@@ -353,7 +361,10 @@ async function takeStockUnit(
       .select("id")
       .maybeSingle();
     if (error) return "unknown";
-    if (updated) return "taken";
+    if (updated) {
+      if (out) out.after = read - 1;
+      return "taken";
+    }
     const { data: row } = await sb.from("prizes").select("stock").eq("id", prizeId).maybeSingle();
     const current = (row as { stock: number | null } | null)?.stock;
     if (current === undefined) return "sold_out"; // prize row gone
@@ -494,6 +505,8 @@ async function recordClaimedSpin(
   let chosen: { prize: Prize; index: number; pityAwarded: boolean; nextPityCounter: number } | null = null;
   const excluded = new Set<string>();
   const excludedOrder: string[] = [];
+  // The won prize's stock right after OUR decrement (web push: low-stock crossing).
+  const stockOut: { after?: number } = {};
   try {
     for (let attempt = 0; attempt < snapshot.prizes.length + 1; attempt++) {
       const draw = drawFromSnapshot(snapshot, excluded, rng);
@@ -504,7 +517,7 @@ async function recordClaimedSpin(
         chosen = pick;
         break;
       }
-      const unit = await takeStockUnit(sb, pick.prize.id, pick.prize.stock);
+      const unit = await takeStockUnit(sb, pick.prize.id, pick.prize.stock, stockOut);
       if (unit === "taken") {
         // From here on a failed spin must give this unit back too.
         refund.prizeId = pick.prize.id;
@@ -630,6 +643,17 @@ async function recordClaimedSpin(
     at: new Date().toISOString(),
   };
   runAfterResponse(() => fireWebhooks(pass.creator_id, webhookPayload));
+  // Web push to the creator's devices, after the response too (F7). The
+  // creator id is the server-side pass row's, never client input.
+  const pushEvent = {
+    type: "spin" as const,
+    spinId: spinRow.id as string,
+    fanId: pass.fan_id,
+    prizeId: chosen.prize.id,
+    stockAfter: refund.prizeId === chosen.prize.id && stockOut.after !== undefined ? stockOut.after : null,
+  };
+  const pushCreator = pass.creator_id;
+  runAfterResponse(() => notifyCreator(pushCreator, pushEvent));
 
   // RM-2: the wheel's stock after this win, projected for the fan (see liveStock.ts).
   const stock = await readLiveStock(sb, wheelId, config);

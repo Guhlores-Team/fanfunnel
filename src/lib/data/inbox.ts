@@ -15,8 +15,11 @@ import {
   mockSetChatSettings,
   mockEnsureChatIntro,
   mockSendChatOutro,
+  mockFanIdForToken,
 } from "./mock";
 import { resolveFanByToken } from "./fans";
+import { runAfterResponse } from "@/lib/afterResponse";
+import { notifyCreator } from "@/lib/push/notify";
 
 // ---------------------------------------------------------------------------
 // DM templates: a creator's saved, reusable direct-message snippets. `{link}`
@@ -130,7 +133,11 @@ export async function sendFanMessage(
 ): Promise<{ ok: true } | { error: "not_found" | "locked" | "empty" | "db_error" }> {
   if (!isSupabaseConfigured()) {
     const res = mockSendFanMessage(token, body);
-    if ("ok" in res) return res;
+    if ("ok" in res) {
+      const fanId = mockFanIdForToken(token);
+      if (fanId) runAfterResponse(() => notifyCreator("demo", { type: "message", fanId }));
+      return res;
+    }
     // The mock may use its own validation code ("invalid_body"); normalize any
     // unknown error to the contract's "empty".
     const known = ["not_found", "locked", "empty", "db_error"] as const;
@@ -171,7 +178,13 @@ export async function sendFanMessage(
     sender: "fan",
     body: trimmed,
   });
-  return error ? { error: "db_error" } : { ok: true };
+  if (error) return { error: "db_error" };
+  // Web push to the creator's devices after the response (F7); the creator id
+  // is the server-side pass row's.
+  const creatorId = pass.creator_id;
+  const fanId = pass.fan.id;
+  runAfterResponse(() => notifyCreator(creatorId, { type: "message", fanId }));
+  return { ok: true };
 }
 
 export async function getFanMessages(token: string): Promise<ChatMessage[]> {
