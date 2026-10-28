@@ -2155,7 +2155,12 @@ export type Database = {
         Returns: number
       }
       creator_storage_register_upload: {
-        Args: { p_bucket: string; p_id: string; p_owner: string; p_path: string }
+        Args: {
+          p_bucket: string
+          p_id: string
+          p_owner: string
+          p_path: string
+        }
         Returns: Json
       }
       creator_storage_work_claim: {
