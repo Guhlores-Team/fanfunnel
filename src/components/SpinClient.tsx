@@ -42,7 +42,7 @@ import WishlistSection from "./fan/WishlistSection";
 import ChatPanel from "./fan/ChatPanel";
 import TopUpMoment from "./fan/TopUpMoment";
 import InstallNudge from "./fan/InstallNudge";
-import FanLeaderboard from "./fan/FanLeaderboard";
+import FanLeaderboard, { LeaderboardWithdrawal } from "./fan/FanLeaderboard";
 import CreatorNote from "./fan/CreatorNote";
 import PrizeBook from "./fan/PrizeBook";
 import LimitedStockRow from "./fan/LimitedStockRow";
@@ -442,7 +442,7 @@ export default function SpinClient({
 
       {gallery}
 
-      {pass.leaderboardEnabled && pass.creatorId && (
+      {engaged && pass.leaderboardEnabled && pass.creatorId && (
         <RecentWinsTicker creatorId={pass.creatorId} refreshKey={boardRefresh} />
       )}
 
@@ -485,7 +485,7 @@ export default function SpinClient({
         </div>
       </div>
 
-      <div className="reveal flex w-full flex-col items-center gap-4" style={{ animationDelay: "0.25s" }}>
+      <div className="lift-in flex w-full flex-col items-center gap-4" style={{ animationDelay: "0.25s", animationFillMode: "both" }}>
         <div className="flex flex-wrap items-center justify-center gap-2">
           <div
             data-testid="spins-chip"
@@ -584,8 +584,10 @@ export default function SpinClient({
 
       <PrizeBook prizes={prizes} history={history} focus={focus} odds={pass.blocked || paused ? undefined : odds} />
 
-      {pass.leaderboardEnabled && pass.creatorId && (
+      {engaged && pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard
+          key={`board:${pass.token}:${pass.leaderboardOptIn === true}`}
+          onWithdrawn={() => router.refresh()}
           creatorId={pass.creatorId}
           token={pass.token}
           optedIn={pass.leaderboardOptIn === true}
@@ -594,6 +596,10 @@ export default function SpinClient({
           youHandle={pass.fanHandle ?? null}
           refreshKey={boardRefresh}
         />
+      )}
+
+      {!(engaged && pass.leaderboardEnabled && pass.creatorId) && pass.leaderboardOptIn === true && (
+        <LeaderboardWithdrawal key={`leaderboard-withdraw:${pass.token}`} token={pass.token} onWithdrawn={() => router.refresh()} />
       )}
 
       <WishlistSection

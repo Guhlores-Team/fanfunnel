@@ -173,7 +173,7 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
           );
         })}
       </div>
-      {token && <InstantRewardHistory key={historyNonce} token={token} autoOpen={historyNonce > 0} onView={(win, label) => void openReward(win, label)} />}
+      {token && <InstantRewardHistory token={token} onView={(win, label) => void openReward(win, label)} />}
       {view && (
         <RewardDialog
           view={view}

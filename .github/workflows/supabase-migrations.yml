@@ -59,6 +59,12 @@ jobs:
           supabase link --project-ref "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" \
             --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
           supabase db push --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
+      # One-time0059 TEST prerelease correction: retire this invocation with0060.
+      # The helper only changes15 validated function search paths; no data/history.
+      - name: Correct verified0059 TEST crypto search paths
+        env:
+          SUPABASE_TEST_PROJECT_REF: ${{ secrets.SUPABASE_TEST_PROJECT_REF }}
+        run: node scripts/db/repair-test-crypto-0059.mjs
       - name: Confirm TEST migration history
         run: supabase migration list --linked --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
       - name: Check src/lib/data/db.types.ts matches TEST

@@ -3,6 +3,12 @@
 Read this first, then `AGENTS.md` (binding), then the other files in `docs/handoff/`.
 Everything below was true at the time of writing; verify with `git` before acting.
 
+**Takeover checkpoint:** read [TAKEOVER_CHECKPOINT.md](./TAKEOVER_CHECKPOINT.md)
+before the historical merge notes below. It records the current failed hosted
+check, the unreleased repair, portable remaining-feature sources and the exact
+resume gates. The owner requested a committed handoff before the usage allowance
+runs out. A local commit is not a pushed, hosted or verified release.
+
 ## 1. Where things stand
 
 - **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`). Last verified
@@ -11,8 +17,11 @@ Everything below was true at the time of writing; verify with `git` before actin
   two full rounds (163 unit files, 151 browser checks, 92 accessibility states).
   All CI, TEST migration/history/exact types, runtime negatives and login UI
   passed at `540f018`; that exact commit is now on the stable TEST Preview.
-  Focus (0059) is integrated locally; its full release rounds are next. The unit
-  runner now accepts literal Next.js bracket paths and fails process errors.
+  Focus (0059) was pushed through `6e83047`; its TEST migration is applied, but
+  the real database runtime suite fails because pgcrypto lives in `extensions`
+  on TEST. The correction is being prepared locally. **No 0059 Preview has been
+  deployed.** The unit runner accepts literal Next.js bracket paths and fails
+  process errors. See the checkpoint for precise verification boundaries.
 - **Preview (TEST database `snmcrmhgevfqggxdiomu`):**
   https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
   Vercel login protection is OFF for testing (`ssoProtection` was `all_except_custom_domains`;
@@ -20,9 +29,11 @@ Everything below was true at the time of writing; verify with `git` before actin
 - **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`, us-east-2/Ohio).
   Still runs an old July build. **`main` = production. Never push or merge to `main`**
   without (a) green CI and (b) the owner's explicit "tested on Preview, go".
-- **TEST database migrations applied:** 0001–0058 (confirmed by successful CI application,
-  migration history and exact generated-type comparison). Prod is behind; prod gets migrations only
-  at go-live, before or exactly at the merge.
+- **TEST database migrations applied:** 0001–0059. At `6e83047`, history and exact
+  generated types pass; real runtime tests fail (19/20). The stable Preview
+  still serves 0058 code against this newer schema, so it is **under repair and
+  not ready for owner acceptance**. Prod gets migrations only at go-live,
+  before or exactly at the merge.
 
 ## 2. Roadmap status (owner chose: build ALL before alpha)
 
@@ -39,14 +50,17 @@ Everything below was true at the time of writing; verify with `git` before actin
 | **Web push (creators)** | 0056 | merged and hardened through `4431546` | done; two final full rounds (141 unit files, 130 browser checks, 69 accessibility states), green CI / TEST, deployed Preview |
 | **#26 instant-delivery prizes** | 0057 | normal merge of `rm/26-instant-delivery`, finished through `2abae19` | on Preview/TEST; two full local rounds (151 unit files, 140 browser checks, 76 axe states), green CI and real TEST integration/RLS tests |
 | **Per-creator theming** | 0058 | normally merged, verified through `540f018` | on Preview/TEST; two full local rounds, exact-SHA CI, history/types/runtime and real public mobile checks pass |
-| **#25 focus pack → chase pity** | 0059 | integrated locally on `dashboard-redesign` | atomic ledger, request recovery and every-disclosure audit implemented; independent focus-read repair verified; full release rounds next; hosted Chase remains off |
+| **#25 focus pack → chase pity** | 0059 | pushed through `6e83047`; repair local | earlier source passed two full local rounds; hosted crypto lookup failed; changed repair needs two NEW full rounds and all hosted gates; no Preview release; Chase remains off |
 | **RM-7 scratch tickets** | 0060 | source frozen separately | pure replay, SQL, data and UI prepared; integrated release verification remains after 0059 |
-| **RM-7 personal bingo** | 0061 | in progress in isolated archive | must follow the frozen scratch release; no TEST application yet |
-| **Account security follow-up** | 0062 | isolated preparation | enrolled creator MFA, invite expiry and last-active-admin safeguards; integrate only after 0061 |
+| **RM-7 personal bingo** | 0061 | source frozen separately | must follow scratch; common fixes need carrying; no TEST application |
+| **Account security follow-up** | 0062 | source frozen separately | enrolled creator MFA, invite expiry and last-active-admin safeguards; integrate only after 0061 |
+| **Ledger operations / small fixes** | 0063, then code-only | source frozen separately | seven-path startup/secret-scope/legacy-count overlay required before 0063 verification; see portable checkpoint |
 
-All branches are pushed to origin. Branches other than `dashboard-redesign` are based on older
-`dashboard-redesign` commits; bring them in with a normal `git merge` (never rebase/force-push
-someone else's history).
+Historical feature branches are pushed to origin. The later frozen 0060–0063
+and final-hardening preparations are source artifacts, **not released branches**;
+preserve and reconstruct them using the checkpoint. Existing branches based on
+older integration commits require a normal merge, never a rebase/force-push of
+someone else's history.
 
 ## 3. Next steps, in order
 

@@ -5757,7 +5757,7 @@ $$;
 
 -- This function is private because context contains unrevealed seeds and codes.
 create or replace function public._spin_attempt_context(p_pass uuid)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare p public.fan_passes%rowtype; f public.fans%rowtype; w public.wheels%rowtype;
  ff public.fan_focus%rowtype; r public.chase_reservations%rowtype; v_prizes jsonb; v_hash_prizes jsonb; v jsonb; hh numeric;
 begin
@@ -5791,7 +5791,7 @@ begin
 end $$;
 
 create or replace function public.get_spin_attempt_status(p_attempt uuid,p_token text,p_request_hash text)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare a public.spin_attempts%rowtype;
 begin
  perform pg_advisory_xact_lock(hashtextextended(p_attempt::text,59));
@@ -5814,7 +5814,7 @@ begin
 end $$;
 
 create or replace function public.prepare_spin_attempt(p_attempt uuid,p_token text,p_request_hash text)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare p public.fan_passes%rowtype; f public.fans%rowtype; a public.spin_attempts%rowtype; c jsonb; fresh boolean:=false;
 begin
  if p_attempt is null or p_request_hash !~ '^[a-f0-9]{64}$' then raise exception 'invalid attempt' using errcode='22023'; end if;
@@ -5889,7 +5889,7 @@ returns boolean language sql immutable set search_path=public as $$
 $$;
 
 create or replace function public.commit_spin_attempt(p_attempt uuid,p_token text,p_request_hash text,p_context jsonb,p_spin jsonb,p_expected_reward jsonb,p_next_seed jsonb)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare a public.spin_attempts%rowtype; p public.fan_passes%rowtype; f public.fans%rowtype; ff public.fan_focus%rowtype;
  r public.chase_reservations%rowtype; pr public.prizes%rowtype; target public.prizes%rowtype;
  code public.prize_reward_codes%rowtype; reward public.prize_rewards%rowtype; s public.spins%rowtype;
@@ -6064,7 +6064,7 @@ begin
 end $$;
 
 create or replace function public._grant_pass_spins_core(p_request uuid,p_creator uuid,p_fan uuid,p_pass uuid,p_spins integer,p_bonus integer,p_amount integer,p_campaign uuid default null)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare p public.fan_passes%rowtype; f public.fans%rowtype; g public.grants%rowtype; h text; b integer;
 begin
  if p_request is null or p_spins<0 or p_bonus<0 or p_bonus>p_spins or p_amount<0 or p_spins>1000000 then raise exception 'invalid grant' using errcode='22023'; end if;
@@ -6121,7 +6121,7 @@ begin
 end $$;
 
 create or replace function public._grant_focus_pack_core(p_request uuid,p_creator uuid,p_fan uuid,p_pass uuid,p_pack uuid,p_prize uuid)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare p public.fan_passes%rowtype; f public.fans%rowtype; pack public.campaign_packs%rowtype; pr public.prizes%rowtype;
  ff public.fan_focus%rowtype; code public.prize_reward_codes%rowtype; g public.grants%rowtype; h text; b integer; n integer;
 begin
@@ -6203,7 +6203,7 @@ end $$;
 -- Token holders can initialize a commitment without spending. No general seed
 -- update privilege is required by the fan page or by old application traffic.
 create or replace function public.ensure_pass_commitment(p_token text)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare p public.fan_passes%rowtype; seed text;
 begin
  select * into p from public.fan_passes where token=p_token;
@@ -6380,7 +6380,7 @@ grant execute on function public.award_fan_referral(uuid,uuid) to service_role;
 -- is allocated before checking an existing grant; a lost response can safely
 -- be retried with the same request UUID and normalized input.
 create or replace function public._create_pass_grant_core(p_request uuid,p_creator uuid,p_fan uuid,p_wheel uuid,p_name text,p_spins integer,p_bonus integer,p_amount integer,p_campaign uuid,p_referral_code text default null,p_pack uuid default null,p_pack_units integer default 1)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare f public.fans%rowtype; p public.fan_passes%rowtype; g public.grants%rowtype; ref uuid; h text; outcome jsonb; pack public.campaign_packs%rowtype;
 begin
  if p_pack is null and p_pack_units is distinct from 1 then return jsonb_build_object('status','invalid','error','invalid_pack'); end if;
@@ -6459,7 +6459,7 @@ revoke execute on function public.guard_atomic_spin_insert() from public,anon,au
 -- A terminal tombstone also covers an absent attempt: a delayed original
 -- request can no longer arrive later and debit after the UI reports decline.
 create or replace function public.cancel_spin_attempt(p_attempt uuid,p_token text,p_request_hash text,p_error text default 'no_prizes')
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare a public.spin_attempts%rowtype; p public.fan_passes%rowtype;
 begin
  if p_attempt is null or p_request_hash is null or p_request_hash !~ '^[a-f0-9]{64}$'
@@ -6589,7 +6589,7 @@ $$;
 revoke execute on function public._fan_import_result(uuid,boolean) from public,anon,authenticated,service_role;
 
 create or replace function public._import_fans_durable_core(p_batch uuid,p_creator uuid,p_request_hash text,p_rows jsonb)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare b public.fan_import_batches%rowtype; row_input jsonb; n integer; error_code text; outcome jsonb;
  row_name text; row_spins numeric; row_amount numeric; row_campaign uuid; row_wheel uuid; request_id uuid;
 begin
@@ -6847,7 +6847,7 @@ revoke execute on function public.reconcile_creator_request(uuid,uuid,uuid,text,
 grant execute on function public.reconcile_creator_request(uuid,uuid,uuid,text,boolean,boolean) to service_role;
 
 create or replace function public.grant_pass_spins(p_request uuid,p_creator uuid,p_fan uuid,p_pass uuid,p_spins integer,p_bonus integer,p_amount integer,p_campaign uuid default null,p_actor uuid default null)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare actor uuid:=coalesce(p_actor,p_creator); h text; allowed boolean; prior jsonb; outcome jsonb;
 begin
  h:=encode(digest(jsonb_build_array(p_creator,p_fan,p_pass,p_spins,p_bonus,p_amount,p_campaign)::text,'sha256'),'hex');
@@ -6862,7 +6862,7 @@ revoke execute on function public.grant_pass_spins(uuid,uuid,uuid,uuid,integer,i
 grant execute on function public.grant_pass_spins(uuid,uuid,uuid,uuid,integer,integer,integer,uuid,uuid) to service_role;
 
 create or replace function public.grant_focus_pack(p_request uuid,p_creator uuid,p_fan uuid,p_pass uuid,p_pack uuid,p_prize uuid,p_actor uuid default null)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare actor uuid:=coalesce(p_actor,p_creator); h text; allowed boolean; prior jsonb; outcome jsonb;
 begin
  h:=encode(digest(jsonb_build_array(p_creator,p_fan,p_pass,p_pack,p_prize)::text,'sha256'),'hex');
@@ -6877,7 +6877,7 @@ revoke execute on function public.grant_focus_pack(uuid,uuid,uuid,uuid,uuid,uuid
 grant execute on function public.grant_focus_pack(uuid,uuid,uuid,uuid,uuid,uuid,uuid) to service_role;
 
 create or replace function public.create_pass_grant(p_request uuid,p_creator uuid,p_fan uuid,p_wheel uuid,p_name text,p_spins integer,p_bonus integer,p_amount integer,p_campaign uuid,p_referral_code text default null,p_pack uuid default null,p_pack_units integer default 1,p_actor uuid default null)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare actor uuid:=coalesce(p_actor,p_creator); h text; allowed boolean; prior jsonb; outcome jsonb;
 begin
  h:=encode(digest(jsonb_build_array('create-pass-v1',p_creator,p_fan,p_wheel,p_name,case when p_pack is null then p_spins else null end,case when p_pack is null then p_bonus else null end,case when p_pack is null then p_amount else null end,p_campaign,p_referral_code,p_pack,p_pack_units)::text,'sha256'),'hex');
@@ -6892,7 +6892,7 @@ revoke execute on function public.create_pass_grant(uuid,uuid,uuid,uuid,text,int
 grant execute on function public.create_pass_grant(uuid,uuid,uuid,uuid,text,integer,integer,integer,uuid,text,uuid,integer,uuid) to service_role;
 
 create or replace function public.import_fans_durable(p_batch uuid,p_creator uuid,p_request_hash text,p_rows jsonb,p_actor uuid default null)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare actor uuid:=coalesce(p_actor,p_creator); allowed boolean; prior jsonb; outcome jsonb;
 begin
  if p_request_hash is distinct from encode(digest(public._canonical_proof_json(jsonb_build_array('fan-import-v1',p_rows)),'sha256'),'hex') then raise exception 'invalid import binding' using errcode='22023'; end if;
@@ -6957,7 +6957,7 @@ end $$;
 revoke execute on function public._edit_grant_patch_core(uuid,uuid,jsonb) from public,anon,authenticated,service_role;
 
 create or replace function public.edit_pass_grant(p_request uuid,p_creator uuid,p_grant uuid,p_patch jsonb,p_actor uuid)
-returns jsonb language plpgsql security definer set search_path=public as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare h text; allowed boolean; prior jsonb; outcome jsonb;
 begin
  -- There is no creator fallback for this new public edit contract. The server

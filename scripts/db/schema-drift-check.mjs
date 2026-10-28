@@ -35,7 +35,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, chownSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, chownSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { probeFocusLedger } from "./focusLedgerProbe.mjs";
@@ -44,6 +44,7 @@ import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
 import { probeTheme } from "./themeProbe.mjs";
 import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.mjs";
+import { probeCryptoNamespace } from "./cryptoNamespaceProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -57,6 +58,10 @@ const flag = (name) => {
 const KEEP = args.includes("--keep");
 const BASE_REV = flag("--base-rev") ?? "6700699";
 const BASE_FILE = flag("--base");
+// Supabase installs pgcrypto in extensions; also retain the vanilla public layout.
+const CRYPTO_SCHEMA = flag("--crypto-schema") ?? "extensions";
+if (!["public", "extensions"].includes(CRYPTO_SCHEMA)) throw new Error("Unsupported crypto schema fixture");
+const PSQL_ENV = { ...process.env, PGOPTIONS: "-c search_path=public,extensions,pg_temp" };
 
 // ---------------------------------------------------------------- postgres ---
 function findPgBin() {
@@ -118,7 +123,7 @@ function psql(db, extra, { allowFail = false } = {}) {
   const r = spawnSync(
     join(PG_BIN, "psql"),
     ["-h", WORK, "-p", PORT, "-U", "postgres", "-d", db, "-v", "ON_ERROR_STOP=1", "-qAt", "-X", ...extra],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: PSQL_ENV },
   );
   if (r.status !== 0 && !allowFail) {
     const err = (r.stderr || "").split("\n").filter((l) => /ERROR/.test(l)).join("\n");
@@ -142,6 +147,7 @@ function loadFile(db, label, file) {
 function newDb(name) {
   sql("postgres", `drop database if exists ${name}`);
   sql("postgres", `create database ${name}`);
+  sql(name, `create schema extensions; create extension pgcrypto with schema ${CRYPTO_SCHEMA}; grant usage on schema extensions to public;`);
   loadFile(name, "stub", STUB);
 }
 
@@ -1037,7 +1043,7 @@ function psqlAsync(db, sqlText) {
     const p = spawn(
       join(PG_BIN, "psql"),
       ["-h", WORK, "-p", PORT, "-U", "postgres", "-d", db, "-v", "ON_ERROR_STOP=1", "-qAt", "-X", "-c", sqlText],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { stdio: ["ignore", "pipe", "pipe"], env: PSQL_ENV },
     );
     let stdout = "";
     let stderr = "";
@@ -1295,6 +1301,7 @@ try {
   }
 
   console.log(`A  = base section of schema.sql@${BASE_FILE ? BASE_FILE : BASE_REV} + ${migrations.length} migrations (${migrations[0]} .. ${migrations.at(-1)})`);
+  console.log(`Crypto fixture: pgcrypto in ${CRYPTO_SCHEMA}; API roles cannot CREATE in public/extensions`);
   newDb("ffa");
   loadFile("ffa", "base schema", base);
   for (const m of migrations) if (!loadFile("ffa", m, join(SUPABASE, "migrations", m))) break;
@@ -1305,17 +1312,17 @@ try {
 
   console.log("B2 = schema.sql x2");
   newDb("ffb2");
-  loadFile("ffb2", "schema.sql", schema) && loadFile("ffb2", "schema.sql (2nd run)", schema);
+  if (loadFile("ffb2", "schema.sql", schema)) loadFile("ffb2", "schema.sql (2nd run)", schema);
 
   console.log("C  = schema.sql + migrations_combined.sql");
   newDb("ffc");
-  loadFile("ffc", "schema.sql", schema) && loadFile("ffc", "migrations_combined.sql", combined);
+  if (loadFile("ffc", "schema.sql", schema)) loadFile("ffc", "migrations_combined.sql", combined);
 
   console.log("C2 = schema.sql + migrations_combined.sql x2");
   newDb("ffc2");
-  loadFile("ffc2", "schema.sql", schema) &&
-    loadFile("ffc2", "migrations_combined.sql", combined) &&
+  if (loadFile("ffc2", "schema.sql", schema) && loadFile("ffc2", "migrations_combined.sql", combined)) {
     loadFile("ffc2", "migrations_combined.sql (2nd run)", combined);
+  }
 
   const A = catalog("ffa");
   diff("A", A, "B", catalog("ffb"));
@@ -1339,6 +1346,8 @@ try {
       return r.stdout;
     });
     await probeRewardViews(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"reward view SQL failed");return r.stdout;});
+    const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
+    if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }
 } catch (e) {
   failures++;

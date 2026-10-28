@@ -29,12 +29,65 @@ const MEDAL = ["🥇", "🥈", "🥉"];
 // How many to show before the "Show all" expander kicks in.
 const PREVIEW = 10;
 
+/** The normal switch and withdrawal-only control share the same consent write. */
+async function postConsent(token: string, optIn: boolean, handle?: string): Promise<{ ok: true } | { ok: false; error?: string }> {
+  const response = await fetch("/api/leaderboard/opt-in", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, optIn, handle: optIn ? handle : undefined }),
+  });
+  const raw: unknown = await response.json().catch(() => null);
+  const value = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as { ok?: unknown; error?: unknown } : null;
+  return response.ok && value !== null && Object.hasOwn(value, "ok") && value.ok === true
+    ? { ok: true }
+    : { ok: false, ...(typeof value?.error === "string" ? { error: value.error } : {}) };
+}
+
+/** Consent withdrawal remains available while engagement surfaces are hidden. */
+export function LeaderboardWithdrawal({ token, onWithdrawn }: { token: string; onWithdrawn: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState(false);
+  const phase = useRef<"idle" | "pending" | "done">("idle");
+  const withdraw = async () => {
+    if (phase.current !== "idle") return;
+    phase.current = "pending";
+    setBusy(true);
+    setError(false);
+    try {
+      const result = await postConsent(token, false);
+      if (!result.ok) { setError(true); return; }
+      phase.current = "done";
+      setDone(true);
+      onWithdrawn();
+    } catch { setError(true); }
+    finally {
+      if (phase.current !== "done") phase.current = "idle";
+      setBusy(false);
+    }
+  };
+  return (
+    <section data-testid="leaderboard-withdrawal" aria-label="Leaderboard privacy" className="w-full rounded-xl border border-line bg-surface/40 px-3 py-3">
+      <p className="text-sm text-muted">You can withdraw your leaderboard consent here.</p>
+      <button type="button" onClick={() => void withdraw()} disabled={busy || done} data-testid="leaderboard-withdraw"
+        className="mt-2 min-h-11 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:opacity-60">
+        {busy ? "Removing…" : "Remove me from the leaderboard"}
+      </button>
+      <p role={error ? "alert" : "status"} aria-live="polite" className="mt-2 text-xs text-muted">
+        {done ? "You're off the leaderboard." : error ? "Couldn't remove you from the leaderboard. Try again." : ""}
+      </p>
+    </section>
+  );
+}
+
 export default function FanLeaderboard({
   creatorId,
   token,
   optedIn,
   youHandle,
   refreshKey = 0,
+  onWithdrawn,
 }: {
   creatorId: string;
   /** The fan link's token — the gate on the opt-in route. */
@@ -44,6 +97,7 @@ export default function FanLeaderboard({
   youHandle?: string | null;
   /** Bump to refetch (e.g. after the fan spins) so their new rank shows live. */
   refreshKey?: number;
+  onWithdrawn?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   // Mirrors the fan's persisted consent, kept here so the board reacts to the
@@ -61,7 +115,12 @@ export default function FanLeaderboard({
     { refreshOnVisible: false }
   );
 
-  if (!view || !view.enabled) return null;
+  if (!view || !view.enabled) return optIn ? (
+    <LeaderboardWithdrawal key={`leaderboard-withdraw:${token}`} token={token} onWithdrawn={() => {
+      setOptIn(false);
+      onWithdrawn?.();
+    }} />
+  ) : null;
 
   // Find the viewing fan's own row (by their board handle) to highlight + chase.
   // Only meaningful once they've opted in — otherwise they aren't on the board.
@@ -165,6 +224,7 @@ export default function FanLeaderboard({
           setOptIn(nextOptIn);
           setHandle(nextHandle);
           void reload();
+          if (!nextOptIn) onWithdrawn?.();
         }}
       />
     </div>
@@ -215,15 +275,11 @@ function LeaderboardOptIn({
     setBusy(true);
     setStatus(null);
     try {
-      const res = await fetch("/api/leaderboard/opt-in", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, optIn, handle: optIn ? trimmed : undefined }),
-      });
-      if (!res.ok) {
+      const result = await postConsent(token, optIn, trimmed);
+      if (!result.ok) {
         // The server validates the name as typed and never mangles it; relay
         // its verdict so the fan can fix the name instead of guessing.
-        const code = ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
+        const code = result.error;
         setNeedName(true);
         setStatus(
           code === "handle_invalid"
