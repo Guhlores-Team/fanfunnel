@@ -62,7 +62,7 @@ export async function POST(req: Request) {
   if (reserve !== "ok") return privateError("not_found", 404);
 
   const deleted = await deleteAccountAndTombstoneLinks(svc, userId, { wasAdmin });
-  if ("error" in deleted) return privateError("delete_failed", 500);
+  if ("error" in deleted) return privateError(deleted.error, 500);
 
   await recordAudit({
     actorId: userId,

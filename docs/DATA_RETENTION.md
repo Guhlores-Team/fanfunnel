@@ -3,12 +3,14 @@
 How long FanFunnel keeps each kind of record, and what deletes it. The numbers
 below come from `src/lib/privacy/retention.ts` (`RETENTION_DAYS`), the one place
 they are set. `src/lib/privacy/retention.test.ts` fails if this page and that
-file disagree.
+file disagree. Web-push history uses the shared `PUSH_LOG_RETENTION_DAYS`
+constant; the test also pins the SQL cleanup period to that value.
 
 ## Automatic cleanup (daily)
 
 | Record | Table | Kept for | Deleted when |
 | --- | --- | --- | --- |
+| Web-push delivery log (notification deduplication history) | `push_log` | **30 days** after `sent_at` | older than the period, even if the creator is inactive or has no new notifications |
 | Admin activity log entries | `admin_audit_log` | **365 days** | older than the period |
 | In-app notices to a creator (for example "a fan deleted their data") | `creator_notices` | **90 days** | older than the period |
 | Hashes of fan links that stopped working (so the fan sees "this creator has left" / "your data was deleted" rather than a bare 404) | `link_tombstones` | **180 days** | older than the period; after that the link is a plain 404 |

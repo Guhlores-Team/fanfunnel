@@ -120,7 +120,7 @@ export async function POST(req: Request) {
     wasAdmin: target.role === "admin",
   });
   if ("error" in deleted) {
-    return NextResponse.json({ error: "delete_failed" }, { status: 500 });
+    return NextResponse.json({ error: deleted.error }, { status: 500 });
   }
 
   await recordAudit({

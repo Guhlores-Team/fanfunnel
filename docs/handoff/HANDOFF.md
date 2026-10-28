@@ -31,7 +31,7 @@ Everything below was true at the time of writing; verify with `git` before actin
 | Error monitoring + email alerts (Admin › Errors) | 0053 | merged | done |
 | **Privacy & safety pack** | 0054 | merged as `612b606` | done; two full local verification rounds, green CI, on Preview / TEST |
 | **Terms / Privacy + clickwrap** | 0055 | merged as `c1b4098` | done; two full local verification rounds, green CI, on Preview / TEST |
-| **Web push (creators)** | 0056 | integrating `rm/web-push` @ `b33df34` | local unit and SQL checks pass; two full verification rounds and push pending |
+| **Web push (creators)** | 0056 | merged locally as `cb1b776`, hardening in progress | initial two full rounds pass; additional approval/storage/retention fixes need two new rounds before push |
 | **#26 instant-delivery prizes** | 0057 | `rm/26-instant-delivery` @ `b66f49f` | **mostly built; last commit is WIP, unverified** |
 | **Per-creator theming** | 0058 | `rm/theming` @ `e4e77e0` | **mostly built; last commit is WIP (Settings "Look & feel" card), unverified** |
 | **#25 focus pack → chase pity** | 0059 | not started | spec in PROPOSALS.md; fixes pity-counter race at `src/lib/data/spins.ts` (~548–551) |
@@ -65,6 +65,20 @@ so **0054 → 0055 → 0056 → 0057 → 0058 → …** must reach `dashboard-re
    `src/lib/play/playGuard.ts` with `breakUntil` read from `fans.break_until`; add an on-break
    case to `src/lib/push/notify.test.ts` (both Supabase and mock paths).
 
+   Integration also uncovered an approval bypass: pending/rejected creators could
+   write their own business data and use agency/import paths. The unshipped 0056
+   now tightens the shared authorization predicates without renumbering later
+   features. The local regression has 106 assertions: 47 failures before the fix,
+   zero after. Active legacy admins retain own-account operations; cross-account
+   admin power still requires aal2. New TEST fixtures explicitly approve positive
+   creator accounts and separately test pending/rejected refusals.
+
+   Other integration hardening: public-upload cleanup before account deletion,
+   avatar eligibility checks before and after upload, and deterministic daily
+   push-log retention (including inactive accounts). Storage errors retain the
+   account/metadata for retry. Durable tracking for in-flight uploads and deletion
+   retries remains an explicit requirement of the 0058 storage work.
+
 Expected conflicts (seen on every merge so far) are parallel appends in:
 `e2e/a11y.mjs`, `e2e/run.mjs`, `scripts/db/schema-drift-check.mjs`,
 `scripts/security/rls-runtime-test.mjs`, `supabase/schema.sql`, `supabase/migrations_combined.sql`,
@@ -90,10 +104,18 @@ merge 0057 then 0058.
   (`src/lib/security/instantRewards.test.ts`) and route authz test (`src/app/api/prizes/rewardAuthz.test.ts`).
   Reward codes are AES-256-GCM encrypted with server-only `REWARD_ENCRYPTION_KEY` (Node `crypto`).
   Codes must be reserved atomically with the spin claim (20-way race probe already in the drift check).
+  Reinspection found the creator editor, fan reveal/re-view, Auto fulfilment UI,
+  e2e and accessibility work were still missing; do not treat the two WIP tests as
+  the only remaining tasks. Also verify atomic/idempotent finalization, cross-paste
+  code uniqueness, immutable delivered values, full history beyond 50 wins,
+  every-view logging, and erasure of delivered secrets when a fan deletes data.
 - **Theming** (`rm/theming`): last step in progress was the Settings "Look & feel" card; then
   a11y states (themed fan page + link-in-bio, light/dark extremes), screenshots, verify.
   It uses `sharp` to re-encode uploads to WebP — confirm `sharp` is already a dependency
   (Next ships it); if it is newly added to package.json, flag it to the owner.
+  The Settings card, admin controls and browser/accessibility coverage were absent
+  on the saved branch. Integrate storage failure handling, audit hooks, exports,
+  mock resets, closed-account media cleanup and durable upload/deletion recovery.
 
 ### 3c. Build #25 then RM-7
 Specs: `docs/handoff/PROPOSALS.md` (#25 §, RM-7 §, §8 "riskiest three"). Rules:
@@ -140,6 +162,11 @@ Every "come back / keep going" surface must call F6 `fanEngagementAllowed`.
 | `CRON_SECRET` | retention cron (0054) | ≥16 chars, `openssl rand -hex 32` |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (Sensitive), `VAPID_SUBJECT` (`mailto:`) | web push (0056) | `npx web-push generate-vapid-keys`; Production + Preview |
 | `REWARD_ENCRYPTION_KEY` | #26 (0057) | 32 random bytes, base64; Production + Preview; never rotate without re-encrypting |
+
+Preview's VAPID trio has now been configured through the authenticated Vercel CLI;
+the private key is Sensitive. Production settings were verified unchanged. Never
+replace that existing Preview pair blindly. Vercel cron jobs run in Production;
+do not claim scheduled TEST retention is active without a separate verified setup.
 
 ## 5. How to verify (real commands)
 

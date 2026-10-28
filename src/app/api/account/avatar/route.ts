@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { sniffImageMime, EXT_BY_MIME } from "@/lib/api/imageSniff";
+import { removeCreatorObjects } from "@/lib/storage/creatorObjects";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -17,6 +18,15 @@ export async function POST(req: Request) {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  // The service upload bypasses RLS. Use the session's server-controlled
+  // active/approval predicate, never editable auth metadata, before any write.
+  try {
+    const { data: active, error } = await sb.rpc("current_user_active");
+    if (error || active !== true) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  } catch {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
 
   // Cap upload frequency per creator to protect storage/compute budget.
   const limited = await rateLimitOr429("avatar:" + user.id, 10, 60_000);
@@ -47,6 +57,21 @@ export async function POST(req: Request) {
     .from("avatars")
     .upload(path, bytes, { contentType: mime, upsert: true });
   if (error) return NextResponse.json({ error: "upload_failed" }, { status: 400 });
+
+  // Account closure/suspension may finish while storage is accepting bytes.
+  // Never publish the new URL after eligibility is revoked; attempt scoped,
+  // retryable cleanup of exactly this upload, and surface any cleanup failure.
+  let stillActive = false;
+  try {
+    const eligibility = await sb.rpc("current_user_active");
+    stillActive = !eligibility.error && eligibility.data === true;
+  } catch {
+    // A failed recheck is not authorization to publish a public object.
+  }
+  if (!stillActive) {
+    const removed = await removeCreatorObjects(svc, "avatars", user.id, [path]);
+    return NextResponse.json({ error: removed ? "forbidden" : "storage_cleanup_failed" }, { status: removed ? 403 : 500 });
+  }
 
   const { data } = svc.storage.from("avatars").getPublicUrl(path);
   return NextResponse.json({ url: data.publicUrl });

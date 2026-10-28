@@ -128,6 +128,9 @@ try {
     });
     assert(!error, `createUser: ${error?.message}`);
     userId = u.user.id;
+    const { data: approved, error: approvalError } = await admin.from("profiles")
+      .update({ approval_status: "approved", is_active: true }).eq("id", userId).select("id").single();
+    assert(!approvalError && !!approved, `approve spin fixture: ${approvalError?.message ?? "no profile"}`);
     wheelA = await makeWheel("Wheel A");
     wheelB = await makeWheel("Wheel B");
   });

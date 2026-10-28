@@ -48,6 +48,7 @@ export async function GET(req: Request) {
         creatorNotices: Number(deleted.creator_notices) || 0,
         linkTombstones: Number(deleted.link_tombstones) || 0,
         closedAgencyInvites: Number(deleted.org_invites) || 0,
+        pushLog: Number(deleted.push_log) || 0,
         appErrors: deleted.app_errors === null ? null : Number(deleted.app_errors) || 0,
       },
     });

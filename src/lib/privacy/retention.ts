@@ -1,3 +1,5 @@
+import { PUSH_LOG_RETENTION_DAYS } from "@/lib/push/config";
+
 /**
  * Automatic data retention: how long each kind of operational record is kept
  * before the daily cleanup (GET /api/cron/retention → run_retention_cleanup,
@@ -12,6 +14,8 @@
 export const RETENTION_DAYS = {
   /** Admin activity log entries (admin_audit_log). */
   adminAuditLog: 365,
+  /** Web-push delivery deduplication history, removed by the daily job. */
+  pushLog: PUSH_LOG_RETENTION_DAYS,
   /** In-app notices left for a creator, e.g. "a fan deleted their data". */
   creatorNotices: 90,
   /** Hashes of fan links that stopped working (account closed / fan deleted). */

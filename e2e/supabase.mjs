@@ -104,6 +104,15 @@ async function makeCreator(tag) {
   }
   if (!role) throw new Error(`profile row for ${tag} was never created`);
 
+  // Positive business tests model a reviewed creator, not a pending signup.
+  const { data: approved, error: approvalErr } = await admin
+    .from("profiles")
+    .update({ approval_status: "approved", is_active: true })
+    .eq("id", id)
+    .select("id")
+    .single();
+  if (approvalErr || !approved) throw new Error(`approve(${tag}): ${approvalErr?.message ?? "no profile"}`);
+
   const client = createClient(URL, ANON, { auth: { persistSession: false } });
   const { error: signInErr } = await client.auth.signInWithPassword({ email, password });
   if (signInErr) throw new Error(`signIn(${tag}): ${signInErr.message}`);
@@ -141,6 +150,24 @@ try {
     B = await makeCreator("b");
     assert(A.role === "creator" && B.role === "creator", `both are creators (got ${A?.role}/${B?.role})`);
   });
+
+  for (const approval of ["pending", "rejected"]) {
+    await step(`${approval} creator cannot bypass approval with direct business writes`, async () => {
+      const { error: fixtureError } = await admin.from("profiles").update({ approval_status: approval }).eq("id", A.id);
+      assert(!fixtureError, `set approval fixture: ${fixtureError?.message}`);
+      try {
+        const noWheel = await A.client.from("wheels").insert({ creator_id: A.id, title: "unapproved wheel" }).select("id");
+        assert(!!noWheel.error && (noWheel.data?.length ?? 0) === 0, "unapproved creator cannot insert a wheel");
+        const noOrg = await A.client.rpc("org_create", { p_name: "unapproved agency" });
+        assert(!!noOrg.error, "unapproved creator cannot create an agency");
+        const noImport = await A.client.rpc("import_fans", { p_rows: [] });
+        assert(!!noImport.error, "unapproved creator cannot call the business import RPC");
+      } finally {
+        const { error: restoreError } = await admin.from("profiles").update({ approval_status: "approved" }).eq("id", A.id);
+        assert(!restoreError, `restore approval fixture: ${restoreError?.message}`);
+      }
+    });
+  }
 
   await step("creator A can insert its own wheel (RLS write)", async () => {
     const { data, error } = await A.client

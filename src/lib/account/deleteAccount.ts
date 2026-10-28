@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sha256Hex } from "@/lib/games/wheel/fairness";
+import { deleteCreatorStorage } from "@/lib/storage/creatorObjects";
 
 /**
  * The irreversible part of deleting a creator account, shared by the admin
@@ -16,7 +17,7 @@ import { sha256Hex } from "@/lib/games/wheel/fairness";
  * link can afterwards say "this creator has left" (link_tombstones keeps only
  * SHA-256 hashes, never the tokens).
  */
-export type AccountDeletionClient = Pick<SupabaseClient, "auth" | "from">;
+export type AccountDeletionClient = Pick<SupabaseClient, "auth" | "from" | "storage">;
 
 const PAGE = 1000;
 const MAX_TOKENS = 100_000;
@@ -42,8 +43,16 @@ export async function deleteAccountAndTombstoneLinks(
   svc: AccountDeletionClient,
   userId: string,
   { wasAdmin }: { wasAdmin: boolean }
-): Promise<{ ok: true; links: number } | { error: "delete_failed" }> {
+): Promise<{ ok: true; links: number } | { error: "delete_failed" | "storage_cleanup_failed" }> {
   const tokens = await collectLinkTokens(svc, userId);
+
+  // Storage is independent of auth's FK cascades. Keep the account and all
+  // object references until cleanup succeeds so a failed request is retryable.
+  const storage = await deleteCreatorStorage(svc, userId);
+  if ("error" in storage) {
+    if (wasAdmin) await svc.from("profiles").update({ role: "admin" }).eq("id", userId);
+    return storage;
+  }
 
   const { error: delErr } = await svc.auth.admin.deleteUser(userId);
   if (delErr) {

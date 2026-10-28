@@ -34,6 +34,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
+import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -305,6 +306,7 @@ function probeGrants(db) {
   const r = psql(db, ["-c", `
     begin;
     insert into auth.users (id, email) values ('${PROBE_UID}', 'probe-0044@example.test');
+    update public.profiles set approval_status = 'approved' where id = '${PROBE_UID}';
     set local role authenticated;
     select set_config('request.jwt.claim.sub', '${PROBE_UID}', true);
     select public.set_display_name('Probe 0044');
@@ -333,7 +335,7 @@ function probeGrants(db) {
   const pwa = psql(db, ["-c", `
     begin;
     insert into auth.users (id, email) values ('${A_UID}', 'probe-0046a@example.test'), ('${B_UID}', 'probe-0046b@example.test');
-    update public.profiles set is_active = true where id in ('${A_UID}', '${B_UID}');
+    update public.profiles set is_active = true, approval_status = 'approved' where id in ('${A_UID}', '${B_UID}');
     ${asUser(A_UID, "select public.set_pwa_icon_mode('avatar');")}
     select 'after-a:' || (select pwa_icon_mode from public.profiles where id = '${A_UID}') || ',' || (select pwa_icon_mode from public.profiles where id = '${B_UID}');
     update public.profiles set is_active = false where id = '${B_UID}';
@@ -344,7 +346,7 @@ function probeGrants(db) {
   if (pwa.status !== 0 || !pwaOut.includes("after-a:avatar,neutral") || !pwaOut.includes("suspended-b:neutral")) {
     bad.push(`set_pwa_icon_mode is not own-row only (got ${pwaOut.filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${(pwa.stderr || "").trim().split("\n")[0]})`);
   }
-  const pwaBad = psql(db, ["-c", `begin; insert into auth.users (id, email) values ('${A_UID}', 'probe-0046a@example.test'); update public.profiles set is_active = true where id = '${A_UID}'; ${asUser(A_UID, "select public.set_pwa_icon_mode('selfie');")} rollback;`], { allowFail: true });
+  const pwaBad = psql(db, ["-c", `begin; insert into auth.users (id, email) values ('${A_UID}', 'probe-0046a@example.test'); update public.profiles set is_active = true, approval_status = 'approved' where id = '${A_UID}'; ${asUser(A_UID, "select public.set_pwa_icon_mode('selfie');")} rollback;`], { allowFail: true });
   if (!/invalid pwa_icon_mode/.test(pwaBad.stderr || "")) {
     bad.push(`set_pwa_icon_mode accepted an invalid value (${(pwaBad.stderr || "no error").trim().split("\n")[0]})`);
   }
@@ -420,7 +422,7 @@ function probeBreaks(db, asUser) {
   const FC = "00000000-0000-4000-8000-0000000049fc";
   const seed = `
     insert into auth.users (id, email) values ('${A}', 'probe-0049a@example.test'), ('${B}', 'probe-0049b@example.test');
-    update public.profiles set is_active = true where id in ('${A}', '${B}');
+    update public.profiles set is_active = true, approval_status = 'approved' where id in ('${A}', '${B}');
     insert into public.wheels (id, creator_id, title) values
       ('00000000-0000-4000-8000-0000000049aa', '${A}', 'a'), ('00000000-0000-4000-8000-0000000049bb', '${B}', 'b');
     insert into public.fans (id, creator_id, display_name) values ('${FA}', '${A}', 'fa'), ('${FB}', '${B}', 'fb'), ('${FC}', '${A}', 'fc');
@@ -498,7 +500,7 @@ const CK_FAN_A = "00000000-0000-4000-8000-0000000050fa";
 const CK_FAN_B = "00000000-0000-4000-8000-0000000050fb";
 const CK_SEED = `
   insert into auth.users (id, email) values ('${CK_A}', 'probe-0050a@example.test'), ('${CK_B}', 'probe-0050b@example.test');
-  update public.profiles set is_active = true where id in ('${CK_A}', '${CK_B}');
+  update public.profiles set is_active = true, approval_status = 'approved' where id in ('${CK_A}', '${CK_B}');
   insert into public.fans (id, creator_id, display_name) values ('${CK_FAN_A}', '${CK_A}', 'A fan'), ('${CK_FAN_B}', '${CK_B}', 'B fan');
   insert into public.fan_checkins (fan_id, creator_id, day) values
     ('${CK_FAN_A}', '${CK_A}', current_date), ('${CK_FAN_B}', '${CK_B}', current_date), ('${CK_FAN_B}', '${CK_B}', current_date - 1);
@@ -558,7 +560,7 @@ function probeOutreach(db) {
     begin;
     grant select, insert, update, delete on public.fan_outreach, public.fans, public.dm_templates to authenticated;
     insert into auth.users (id, email) values ('${A}', 'probe-0051a@example.test'), ('${B}', 'probe-0051b@example.test');
-    update public.profiles set is_active = true where id in ('${A}', '${B}');
+    update public.profiles set is_active = true, approval_status = 'approved' where id in ('${A}', '${B}');
     insert into public.fans (id, creator_id, display_name) values ('${FA}', '${A}', 'A fan'), ('${FB}', '${B}', 'B fan');
     insert into public.dm_templates (id, creator_id, title, body) values ('${TB}', '${B}', 'B', 'hi');
     insert into public.fan_outreach (creator_id, fan_id, contacted_at) values ('${B}', '${FB}', now());`;
@@ -629,7 +631,7 @@ function probeAppErrors(db) {
   const bad = [];
   const seed = `
     insert into auth.users (id, email) values ('${ADMIN_UID}', 'probe-0053a@example.test'), ('${CREATOR_UID}', 'probe-0053c@example.test');
-    update public.profiles set is_active = true where id in ('${ADMIN_UID}', '${CREATOR_UID}');
+    update public.profiles set is_active = true, approval_status = 'approved' where id in ('${ADMIN_UID}', '${CREATOR_UID}');
     update public.profiles set role = 'admin' where id = '${ADMIN_UID}';
     set local role service_role;
     select public.record_app_error('${ERR_FP}', 'production', 'client', 'probe boom');
@@ -764,7 +766,7 @@ const PS_SETUP = `
   insert into auth.users (id, email) values
     ('${PS.A}', 'probe-0054a@example.test'), ('${PS.B}', 'probe-0054b@example.test'),
     ('${PS.ADM}', 'probe-0054adm@example.test'), ('${PS.ADM2}', 'probe-0054adm2@example.test');
-  update public.profiles set is_active = true where id in ('${PS.A}', '${PS.B}', '${PS.ADM}', '${PS.ADM2}');
+  update public.profiles set is_active = true, approval_status = 'approved' where id in ('${PS.A}', '${PS.B}', '${PS.ADM}', '${PS.ADM2}');
   update public.profiles set role = 'admin' where id = '${PS.ADM}';
   insert into public.wheels (id, creator_id, title) values ('${PS.WHEEL}', '${PS.A}', 'probe');
   insert into public.prizes (id, wheel_id, label, rarity, weight) values ('${PS.PRIZE}', '${PS.WHEEL}', 'p', 'common', 10);
@@ -845,19 +847,26 @@ function probePrivacy(db) {
       (repeat('c', 32), 'preview', 'server', 'old resolved probe', now() - interval '130 days', true, now() - interval '100 days'),
       (repeat('d', 32), 'preview', 'server', 'recent resolved probe', now() - interval '130 days', true, now() - interval '5 days'),
       (repeat('e', 32), 'preview', 'server', 'old unresolved probe', now() - interval '130 days', false, null);
+    insert into public.push_log (user_id, item_id, tag, sent_at) values
+      ('${PS.A}', 'old-a', 'old-a', now() - interval '36 days'),
+      ('${PS.A}', 'recent-a', 'recent-a', now() - interval '5 days'),
+      ('${PS.B}', 'old-inactive-b', 'old-inactive-b', now() - interval '36 days');
+    update public.profiles set is_active = false where id = '${PS.B}';
     set local role service_role;
     select 'retention:' || public.run_retention_cleanup(365, 90, 365, 90, 90)::text;
     reset role;
     select 'left:' || (select count(*) from public.admin_audit_log) || ',' || (select count(*) from public.creator_notices) || ',' || (select count(*) from public.link_tombstones);
     select 'invites-left:' || string_agg(email, ',' order by email) from public.org_invites where org_id = '${PS.ORG}';
     select 'errors-left:' || string_agg(fingerprint, ',' order by fingerprint) from public.app_errors;
+    select 'push-left:' || string_agg(item_id, ',' order by item_id) from public.push_log;
   `, [
     "self-last:last_admin", "self-two:ok", "self-creator:ok", "adm-role:creator",
     "spin-kept:null,null", "redemption-kept:1",
-    `retention:{"app_errors": 1, "org_invites": 2, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1}`,
+    `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1}`,
     "left:1,2,1",
     "invites-left:new-declined@example.test,old-pending@example.test",
     `errors-left:${"d".repeat(32)},${"e".repeat(32)}`,
+    "push-left:recent-a",
   ]);
   expectError("retention with a 0-day period", `set local role service_role; select public.run_retention_cleanup(0, 90, 365, 90, 90);`, /at least 1 day/);
 
@@ -883,7 +892,7 @@ function probePush(db) {
   const EP = (x) => `'https://fcm.googleapis.com/fcm/send/probe-${x}'`;
   const seed = `
     insert into auth.users (id, email) values ('${A}', 'probe-0056a@example.test'), ('${B}', 'probe-0056b@example.test');
-    update public.profiles set is_active = true where id in ('${A}', '${B}');
+    update public.profiles set is_active = true, approval_status = 'approved' where id in ('${A}', '${B}');
     insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ('${B}', ${EP("b")}, 'k', 'a');
     insert into public.push_log (user_id, item_id, tag) values ('${B}', 'win:x@1', 'win:x');`;
   const asA = `set local role authenticated; select set_config('request.jwt.claim.sub', '${A}', true);`;
@@ -930,6 +939,19 @@ function probePush(db) {
     for (const b of bad) console.log(`  - ${b}`);
   } else {
     console.log(`PASS  ${db}: push_subscriptions own-devices only (A can't read/update/delete/register for B, can't touch bookkeeping); push_log service-only; anon refused`);
+  }
+}
+
+function probeApproval(db) {
+  const r = psql(db, ["-c", APPROVAL_PROBE_SQL], { allowFail: true });
+  const bad = checkApprovalProbe(r.stdout ?? "");
+  if (r.status !== 0 || bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: creator approval authorization (0056)`);
+    if (r.status !== 0) console.log((r.stderr ?? "").trim());
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: approval gates own writes, imports, push and agency access; approved creators, legacy admins, MFA and role scopes retain their permissions`);
   }
 }
 
@@ -992,6 +1014,7 @@ try {
     probeAppErrors(db);
     probePrivacy(db);
     probePush(db);
+    probeApproval(db);
   }
 } catch (e) {
   failures++;

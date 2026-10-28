@@ -72,7 +72,7 @@ grant select, insert, update, delete on all tables in schema public to authentic
 
 insert into auth.users (id, email) values
 ${Object.entries(U).map(([k, v]) => `  ('${v}', '${email(k)}')`).join(",\n")};
-update public.profiles set is_active = true where id in (${Object.values(U).map((v) => `'${v}'`).join(", ")});
+update public.profiles set is_active = true, approval_status = 'approved' where id in (${Object.values(U).map((v) => `'${v}'`).join(", ")});
 insert into public.orgs (id, name, owner_id) values ('${ORG1}', 'Org1', '${U.O1}'), ('${ORG2}', 'Org2', '${U.O2}');
 insert into public.org_members (id, org_id, profile_id, role) values
   ('${SEAT_M1}', '${ORG1}', '${U.M1}', 'manager'),

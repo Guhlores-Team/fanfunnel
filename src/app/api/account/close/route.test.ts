@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { mock } from "node:test";
 import { createHash } from "node:crypto";
 import { FakeTables } from "@/lib/privacy/fakeTables";
+import { FakeStorage } from "@/lib/privacy/fakeStorage";
 
 // AUTH-SENSITIVE: POST /api/account/close permanently deletes the caller's
 // account. Unit-tested end to end here instead of e2e (closing the demo
@@ -33,6 +34,9 @@ let signedOut = 0;
 const rpcCalls: { fn: string; args: unknown }[] = [];
 const deletedUsers: string[] = [];
 const audits: Record<string, unknown>[] = [];
+const storage = new FakeStorage();
+storage.add("avatars", `${ME}/current.png`, `${ME}/replaced.png`, `${OTHER}/keep.png`);
+storage.add("creator-media", `${ME}/photo.webp`, `${OTHER}/keep.webp`);
 const svcTables = new FakeTables({
   profiles: [{ id: ME, role: "creator" }],
   fan_passes: [
@@ -57,6 +61,7 @@ mock.module("@/lib/supabase/server", {
       },
     }),
     createServiceClient: () => ({
+      storage: storage.storage,
       from: (t: string) => svcTables.from(t),
       rpc: async (fn: string, args: unknown) => {
         rpcCalls.push({ fn, args });
@@ -143,12 +148,22 @@ async function main() {
   reserveAnswer = "ok";
   rpcCalls.length = 0;
 
+  storage.removeFailures = 3;
+  res = await close(GOOD);
+  check("storage failure → 500, never false success", res.status === 500 && (await res.json()).error === "storage_cleanup_failed");
+  check("storage failure preserves auth/DB retry paths", deletedUsers.length === 0 && svcTables.rows("fan_passes").length === 3);
+  check("storage failure records no success audit or signout", audits.length === 0 && signedOut === 0);
+  storage.removeFailures = 0;
+  rpcCalls.length = 0;
+
   // A forged id in the body is ignored: only the session's own id is used.
   res = await close({ ...GOOD, id: OTHER, userId: OTHER });
   check("success → 200 ok", res.status === 200 && (await res.json()).ok === true);
   check("no-store", /no-store/.test(res.headers.get("cache-control") ?? ""));
   check("reserved the caller's own id", rpcCalls.length === 1 && rpcCalls[0].fn === "reserve_self_account_deletion" && (rpcCalls[0].args as { p_user: string }).p_user === ME);
   check("deleted the caller's own auth user only", deletedUsers.length === 1 && deletedUsers[0] === ME);
+  check("removed current and replaced photos from both buckets", storage.objects.get("avatars")!.size === 1 && storage.objects.get("creator-media")!.size === 1);
+  check("other creators' photos survive closure", storage.objects.get("avatars")!.has(`${OTHER}/keep.png`) && storage.objects.get("creator-media")!.has(`${OTHER}/keep.webp`));
   const hashes = svcTables.rows("link_tombstones").map((r) => r.token_hash);
   const sha = (s: string) => createHash("sha256").update(s).digest("hex");
   check("both of the creator's links tombstoned as creator_closed", hashes.length === 2 && hashes.includes(sha("linkAAAA1111")) && hashes.includes(sha("linkBBBB2222")) && svcTables.rows("link_tombstones").every((r) => r.reason === "creator_closed"));

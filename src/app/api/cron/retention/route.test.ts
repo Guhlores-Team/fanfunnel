@@ -66,11 +66,17 @@ async function main() {
   );
   check("a run that deleted nothing logs nothing", audits.length === 0);
 
-  deleted = { admin_audit_log: 3, creator_notices: 0, link_tombstones: 2, org_invites: 4, app_errors: null };
+  deleted = { push_log: 2, admin_audit_log: 3, creator_notices: 0, link_tombstones: 2, org_invites: 4, app_errors: null };
   res = await call(`Bearer ${SECRET}`);
   check("a run that deleted rows is logged with counts", audits.length === 1 && audits[0].action === "retention.cleanup" && (audits[0].details as { adminAuditLog?: number }).adminAuditLog === 3);
+  check("push delivery log deletions are counted", (audits[0].details as { pushLog?: number }).pushLog === 2);
   check("closed agency invites are counted", (audits[0].details as { closedAgencyInvites?: number }).closedAgencyInvites === 4);
   check("app_errors before 0053 is reported as skipped (null)", (audits[0].details as { appErrors?: unknown }).appErrors === null);
+
+  deleted = { push_log: 1, admin_audit_log: 0, creator_notices: 0, link_tombstones: 0, org_invites: 0, app_errors: 0 };
+  const priorAudits = audits.length;
+  res = await call(`Bearer ${SECRET}`);
+  check("push-only cleanup still produces its audit entry", res.status === 200 && audits.length === priorAudits + 1 && (audits.at(-1)?.details as { pushLog?: number }).pushLog === 1);
 
   console.log(`retention cron route: ${passed} checks passed`);
 }

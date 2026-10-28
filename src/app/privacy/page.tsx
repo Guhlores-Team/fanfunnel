@@ -344,6 +344,11 @@ const SECTIONS: LegalSection[] = [
           account or personal spin links, so past prizes can still be fulfilled and counted.
         </li>
         <li>
+          <strong>Push delivery logs:</strong> deleted after {RETENTION_DAYS.pushLog} days, including
+          when an account has no new notifications. Device subscriptions stay until the device is
+          removed, its push service reports it is gone, or the account is closed.
+        </li>
+        <li>
           <strong>Admin activity records:</strong> deleted after {RETENTION_DAYS.adminAuditLog} days.
           These hold action types, account identifiers and small operational facts rather than passwords,
           messages or full spin links.

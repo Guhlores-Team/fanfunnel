@@ -178,6 +178,28 @@ async function main() {
     const ownFans = await a.from("fans").select("id").eq("creator_id", A.id);
     check((ownFans.data?.length ?? 0) === 1, "A can read its OWN fan");
 
+    // Approval is a database boundary. A valid session cannot bypass the
+    // review gate by calling PostgREST/RPCs directly after status changes.
+    for (const approval of ["pending", "rejected"]) {
+      must(await admin.from("profiles").update({ approval_status: approval }).eq("id", A.id).select("id").single(), "set A approval fixture");
+      try {
+        const noWheel = await a.from("wheels").insert({ creator_id: A.id, title: "unapproved write" }).select("id");
+        check(!!noWheel.error && (noWheel.data?.length ?? 0) === 0, `${approval} approval prevents own wheel writes`);
+        const noEdit = await a.from("wheels").update({ title: "unapproved edit" }).eq("id", A.wheelId).select("id");
+        check((noEdit.data?.length ?? 0) === 0, `${approval} approval prevents own wheel edits`);
+        const noPush = await a.from("push_subscriptions").insert({ user_id: A.id, endpoint: `https://fcm.googleapis.com/fcm/send/approval-${RUN}-${approval}`, p256dh: "key", auth: "auth" }).select("id");
+        check(!!noPush.error && (noPush.data?.length ?? 0) === 0, `${approval} approval prevents push registration`);
+        const noOrg = await a.rpc("org_create", { p_name: "unapproved org" });
+        check(!!noOrg.error, `${approval} approval prevents org creation`);
+        const noImport = await a.rpc("import_fans", { p_rows: [{ fan_id: randomUUID(), pass_id: randomUUID(), token: `approval-import-${RUN}-${approval}`, wheel_id: A.wheelId, campaign_id: null, name: "unapproved import", spins: 1, amount_cents: 0 }] });
+        check(!!noImport.error, `${approval} approval prevents definer fan imports`);
+      } finally {
+        must(await admin.from("profiles").update({ approval_status: "approved" }).eq("id", A.id).select("id").single(), "restore A approval");
+      }
+    }
+    const approvedAgain = await a.rpc("can_act_for", { target_creator: A.id, perm: "edit_wheel" });
+    check(approvedAgain.data === true, "approved creator retains own editing permission");
+
     // A sees none of B's, across every tenant table.
     for (const [table] of [["fans"], ["wheels"], ["grants"], ["spins"]]) {
       const r = await a.from(table).select("id").eq("creator_id", B.id);
@@ -341,6 +363,58 @@ async function main() {
     check((sPromote.data?.length ?? 0) === 0, "the seat cannot promote its own seat");
     const sScope = await s.from("org_member_creators").insert({ member_id: seat.id, creator_id: B.id }).select("member_id");
     check(!!sScope.error || (sScope.data?.length ?? 0) === 0, "the seat cannot widen its own scope");
+
+    // An existing seat and a valid JWT do not override approval of either
+    // the caller or the target creator. Restore every fixture before proceeding.
+    for (const approval of ["pending", "rejected"]) {
+      must(await admin.from("profiles").update({ approval_status: approval }).eq("id", SEAT.id).select("id").single(), "set seat approval fixture");
+      try {
+        const noSeatFans = await s.from("fans").select("id").eq("creator_id", A.id);
+        check((noSeatFans.data?.length ?? 0) === 0, `${approval} approval prevents seat access`);
+        const noSeatChat = await s.rpc("can_act_for", { target_creator: A.id, perm: "chat" });
+        check(noSeatChat.data === false, `${approval} approval prevents seat chat permission`);
+      } finally {
+        must(await admin.from("profiles").update({ approval_status: "approved" }).eq("id", SEAT.id).select("id").single(), "restore seat approval");
+      }
+      must(await admin.from("profiles").update({ approval_status: approval }).eq("id", A.id).select("id").single(), "set target approval fixture");
+      try {
+        const noTarget = await s.from("fans").select("id").eq("creator_id", A.id);
+        check((noTarget.data?.length ?? 0) === 0, `${approval} approval prevents access to an unapproved target`);
+      } finally {
+        must(await admin.from("profiles").update({ approval_status: "approved" }).eq("id", A.id).select("id").single(), "restore target approval");
+      }
+      const inv = must(await admin.from("org_invites").upsert({ org_id: org.id, email: B.email, status: "pending" }, { onConflict: "org_id,email" }).select("id").single(), "seed approval invite");
+      must(await admin.from("profiles").update({ approval_status: approval }).eq("id", B.id).select("id").single(), "set invitee approval fixture");
+      try {
+        const noAccept = await b.rpc("org_invite_respond", { p_invite: inv.id, p_accept: true });
+        check(noAccept.data === "inactive", `${approval} approval prevents invitation acceptance`);
+        const noDecline = await b.rpc("org_invite_respond", { p_invite: inv.id, p_accept: false });
+        check(noDecline.data === "inactive", `${approval} approval prevents invitation changes`);
+      } finally {
+        must(await admin.from("profiles").update({ approval_status: "approved", org_id: null }).eq("id", B.id).select("id").single(), "restore invitee approval");
+      }
+    }
+    const seatRestored = await s.rpc("can_act_for", { target_creator: A.id, perm: "chat" });
+    check(seatRestored.data === true, "approved scoped seat retains rightful chat permission");
+
+    // Delegated agency access fails closed when the agency's owner loses
+    // approval/activity, even if this seat remains approved and signed in.
+    for (const state of ["pending", "rejected", "suspended"]) {
+      must(await admin.from("profiles").update({ approval_status: state === "suspended" ? "approved" : state, is_active: state !== "suspended" }).eq("id", OWN.id).select("id").single(), "set agency owner eligibility fixture");
+      try {
+        const noOwnerFans = await s.from("fans").select("id").eq("creator_id", A.id);
+        check((noOwnerFans.data?.length ?? 0) === 0, `${state} agency owner prevents delegated seat access`);
+        const noOwnerChat = await s.rpc("can_act_for", { target_creator: A.id, perm: "chat" });
+        check(noOwnerChat.data === false, `${state} agency owner prevents delegated chat permission`);
+        const ownerInv = must(await admin.from("org_invites").upsert({ org_id: org.id, email: B.email, status: "pending" }, { onConflict: "org_id,email" }).select("id").single(), "seed ineligible owner invite");
+        const noOwnerAccept = await b.rpc("org_invite_respond", { p_invite: ownerInv.id, p_accept: true });
+        check(noOwnerAccept.data === "inactive", `${state} agency owner prevents invitation acceptance`);
+      } finally {
+        must(await admin.from("profiles").update({ approval_status: "approved", is_active: true }).eq("id", OWN.id).select("id").single(), "restore agency owner eligibility");
+      }
+    }
+    const ownerRestoredSeat = await s.rpc("can_act_for", { target_creator: A.id, perm: "chat" });
+    check(ownerRestoredSeat.data === true, "eligible agency owner restores rightful scoped seat access");
 
     // B is signed in but holds no seat and is not in the org.
     const bOrgs = await b.from("orgs").select("id").eq("id", org.id);
