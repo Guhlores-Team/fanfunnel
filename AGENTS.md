@@ -66,3 +66,8 @@ real data.
 - **DB before code:** a migration must reach the target database BEFORE the code
   that needs it goes live — apply to **test** before previewing, to **prod**
   before (or exactly at) the merge to `main`.
+
+# Current hand-off
+
+Work in progress, branch states, merge order and owner context are in
+`docs/handoff/HANDOFF.md`. Read it before starting any task.
