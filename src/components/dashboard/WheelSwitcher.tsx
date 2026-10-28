@@ -276,7 +276,7 @@ export default function WheelSwitcher({
                     current
                       ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-ink"
                       : "border-[var(--hair)] text-muted hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] hover:text-ink"
-                  } ${w.archivedAt ? "opacity-60" : ""}`}
+                  }`}
                 >
                   <button
                     type="button"
