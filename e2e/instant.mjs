@@ -1,7 +1,7 @@
 // #26: private instant rewards, real creator routes and the real mock spin
 // path. Each fixture owns a wheel and fan; odds are set through creator APIs,
 // never by replacing a spin response. Run before firstRunJourney's reset.
-import { BASE, NAV_ITEMS, clickTab, goto } from "./harness.mjs";
+import { acknowledgeFixtureFan, BASE, NAV_ITEMS, clickTab, goto } from "./harness.mjs";
 
 let fixtureNumber = 0;
 const json = async (response, operation) => {
@@ -38,7 +38,7 @@ export async function instantFixture(request, name = "Instant", codeCount = 51) 
   }), "create reward fan");
   fixture.token = pass.token;
   fixture.fanId = pass.fanId;
-  await json(await request.post(BASE + "/api/fans/ack", { data: { token: fixture.token } }), "acknowledge reward fan");
+  await json(await acknowledgeFixtureFan(request, fixture.token), "acknowledge reward fan");
   return fixture;
 }
 

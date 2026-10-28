@@ -3,7 +3,7 @@
 // Runs against MOCK mode, so data is deterministic per fresh server.
 
 import { readFileSync } from "node:fs";
-import { goto, clickTab, passAgeGate, BASE, NAV_ITEMS } from "./harness.mjs";
+import { acknowledgeFixtureFan, goto, clickTab, passAgeGate, BASE, NAV_ITEMS } from "./harness.mjs";
 
 // The legal/privacy contact lives only in src/lib/legal.ts (a one-line swap), so
 // read it from there rather than repeating the address here.
@@ -941,7 +941,7 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     const created = await post("/api/passes", { name: "Two Wheel Fan", spins: 5 });
     assert(created.ok(), "fan created");
     const { token, fanId } = await created.json();
-    assert((await post("/api/fans/ack", { token })).ok(), "fan acknowledged the age gate");
+    assert((await acknowledgeFixtureFan(ctx.request, token)).ok(), "fan acknowledged the age gate");
     for (let i = 0; i < 3; i++) assert((await post("/api/spin", { token })).ok(), `spin ${i + 1} landed`);
     const { wheels } = await (await ctx.request.get(BASE + "/api/wheels")).json();
     const other = wheels.find((w) => !w.isActive);

@@ -22,6 +22,26 @@ export const BASE = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // the broken `/C:/...` that .pathname yields, which breaks mkdir/writeFile.
 export const ARTIFACTS = fileURLToPath(new URL("./artifacts/", import.meta.url));
 
+/**
+ * Fixture setup only: respect the real age-acknowledgement IP limit when many
+ * independent accessibility states share one server. The application returns
+ * Retry-After as positive integer seconds. Never retry another status, guess a missing
+ * delay, change identity, or hide a refusal from the caller's existing checks.
+ */
+export async function acknowledgeFixtureFan(request, token, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const post = () => request.post(BASE + "/api/fans/ack", { data: { token } });
+  let response = await post();
+  for (let retry = 0; response.status() === 429 && retry < 2; retry++) {
+    const header = response.headers()["retry-after"];
+    if (typeof header !== "string" || !/^\d+$/.test(header.trim())) return response;
+    const seconds = Number(header.trim());
+    if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 60) return response;
+    await wait(seconds * 1000);
+    response = await post();
+  }
+  return response;
+}
+
 /** Start `next start` and resolve once it answers 200 (unless E2E_BASE_URL is
  *  provided, in which case we assume a server is already running). */
 export async function startServer() {

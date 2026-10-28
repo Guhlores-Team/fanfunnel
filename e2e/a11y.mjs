@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
+import { acknowledgeFixtureFan, startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
 import { spinViaApi } from "./play.mjs";
@@ -139,7 +139,7 @@ const clickIn = (tab, name) => async (page) => {
 const openFreshVerify = async (page) => {
   const pass = await (await page.request.post(BASE + "/api/passes", { data: { name: "A11y Verify", spins: 1 } })).json();
   if (!pass?.token) throw new Error("could not create a fan for the verify scan");
-  const ack = await page.request.post(BASE + "/api/fans/ack", { data: { token: pass.token } });
+  const ack = await acknowledgeFixtureFan(page.request, pass.token);
   if (!ack.ok()) throw new Error(`could not acknowledge the age gate (${ack.status()})`);
   const res = await page.request.post(BASE + "/api/spin", { data: { token: pass.token, clientSeed: "a11y" } });
   const spin = await res.json().catch(() => null);

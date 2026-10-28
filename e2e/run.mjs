@@ -52,6 +52,7 @@ try {
 
   const sink = attachSink(page);
   const runner = createRunner(sink);
+  let journeysCompleted = false;
 
   try {
     await creatorJourney(page, runner);
@@ -73,12 +74,14 @@ try {
     await instantJourney(page, runner, ctx); // private reward setup, winner-only delivery, complete history (own wheel/fan)
     await themingJourney(page, runner, ctx);
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
+    journeysCompleted = true;
   } catch (e) {
     log("Journey crashed: " + (e?.stack || e));
   }
 
   // Screenshot the final state if anything went wrong, for debugging in CI.
-  const ok = runner.report();
+  // A report containing only earlier passing steps cannot prove the run finished.
+  const ok = runner.report() && journeysCompleted;
   if (!ok) {
     try {
       const dir = ensureArtifacts();

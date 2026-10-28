@@ -14,7 +14,7 @@
 // lock-screen switch, Send a test, F8 parity (push text === bell text, generic
 // by default), a 410 device pruned, Remove.
 
-import { attachSink, goto, BASE } from "./harness.mjs";
+import { acknowledgeFixtureFan, attachSink, goto, BASE } from "./harness.mjs";
 import { IPHONE_UA } from "./pwa.mjs";
 
 const PHONE = { width: 390, height: 844 };
@@ -209,7 +209,8 @@ export async function pushJourney(browser, { step, assert }, sink, ctx) {
     // F8 parity: a real fan spin → the push says exactly what the bell says.
     const spinOnce = async () => {
       const { token } = await (await ctx.request.post(BASE + "/api/passes", { data: { name: "Push Parity Fan", spins: 2 } })).json();
-      await ctx.request.post(BASE + "/api/fans/ack", { data: { token } });
+      const ack = await acknowledgeFixtureFan(ctx.request, token);
+      if (!ack.ok()) throw new Error(`could not acknowledge the fixture fan (${ack.status()})`);
       const r = await ctx.request.post(BASE + "/api/spin", { data: { token, clientSeed: "e2e-push" } });
       if (!r.ok()) throw new Error(`spin failed (${r.status()})`);
     };

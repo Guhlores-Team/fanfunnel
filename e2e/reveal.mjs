@@ -6,7 +6,7 @@
 // the server picked. The theater reads nothing else, so this exercises exactly
 // what a fan who won that rarity would see.
 
-import { goto, BASE } from "./harness.mjs";
+import { acknowledgeFixtureFan, goto, BASE } from "./harness.mjs";
 
 const SPIN_MS = 4400;
 const MAX_THEATER_EXTRA_MS = 1500;
@@ -32,7 +32,7 @@ export async function createRevealFan(request, name = "Reveal Fan", spins = 4) {
   const created = await request.post(BASE + "/api/passes", { data: { name, spins } });
   if (!created.ok()) throw new Error(`could not create a fan (${created.status()})`);
   const { token } = await created.json();
-  const ack = await request.post(BASE + "/api/fans/ack", { data: { token } });
+  const ack = await acknowledgeFixtureFan(request, token);
   if (!ack.ok()) throw new Error(`could not acknowledge the age gate (${ack.status()})`);
   return token;
 }

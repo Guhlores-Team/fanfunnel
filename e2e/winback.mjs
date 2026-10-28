@@ -6,7 +6,7 @@
 // activity 20 days back with the demo-only /api/debug/age-fan route (a debug
 // build without Supabase), so nothing depends on other journeys' data.
 
-import { goto, clickTab, BASE } from "./harness.mjs";
+import { acknowledgeFixtureFan, goto, clickTab, BASE } from "./harness.mjs";
 
 async function json(res, what) {
   if (!res.ok()) throw new Error(`${what} failed (${res.status()})`);
@@ -19,7 +19,7 @@ export async function quietSpender(request, name, dollars, days = 20) {
     await request.post(BASE + "/api/passes", { data: { name, spins: 3, amountDollars: dollars } }),
     `create ${name}`,
   );
-  await json(await request.post(BASE + "/api/fans/ack", { data: { token } }), `ack ${name}`);
+  await json(await acknowledgeFixtureFan(request, token), `ack ${name}`);
   await json(await request.post(BASE + "/api/spin", { data: { token, clientSeed: "winback" } }), `spin ${name}`);
   if (days > 0) {
     await json(await request.post(BASE + "/api/debug/age-fan", { data: { fanId, days } }), `age ${name}`);

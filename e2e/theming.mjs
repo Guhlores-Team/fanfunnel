@@ -4,7 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
-import { ARTIFACTS, BASE, ensureArtifacts, goto } from "./harness.mjs";
+import { acknowledgeFixtureFan, ARTIFACTS, BASE, ensureArtifacts, goto } from "./harness.mjs";
 
 export const THEME_FONT_CASES = [
   ["playfair", "Playfair"], ["dm-serif", "DM_Serif"], ["syne", "Syne"],
@@ -77,7 +77,7 @@ export async function themeFixture(request, name = "Theme") {
       data: { name: `${name} fan ${suffix}`, spins: 3, wheelId: fixture.wheel.id },
     }), "create theme fixture fan");
     fixture.token = pass.token; fixture.fanId = pass.fanId;
-    await themeJson(await request.post(BASE + "/api/fans/ack", { data: { token: fixture.token } }), "acknowledge theme fixture fan");
+    await themeJson(await acknowledgeFixtureFan(request, fixture.token), "acknowledge theme fixture fan");
     return fixture;
   } catch (error) {
     await cleanupThemeFixture(request, fixture);
