@@ -898,6 +898,82 @@ export type Database = {
           },
         ]
       }
+      push_log: {
+        Row: {
+          item_id: string
+          sent_at: string
+          tag: string
+          user_id: string
+        }
+        Insert: {
+          item_id: string
+          sent_at?: string
+          tag: string
+          user_id: string
+        }
+        Update: {
+          item_id?: string
+          sent_at?: string
+          tag?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_log_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          failures: number
+          id: string
+          last_success_at: string | null
+          p256dh: string
+          show_details: boolean
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          failures?: number
+          id?: string
+          last_success_at?: string | null
+          p256dh: string
+          show_details?: boolean
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          failures?: number
+          id?: string
+          last_success_at?: string | null
+          p256dh?: string
+          show_details?: boolean
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       redemptions: {
         Row: {
           created_at: string

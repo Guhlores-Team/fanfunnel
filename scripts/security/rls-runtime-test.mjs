@@ -208,6 +208,33 @@ async function main() {
     const anonClient = createClient(URL_, ANON, { auth: { persistSession: false } });
     const anonIcon = await anonClient.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!!anonIcon.error, "anon cannot execute set_pwa_icon_mode");
+
+    // Web push (0056): devices are own-only; push_log is service-only.
+    const ep = (x) => `https://fcm.googleapis.com/fcm/send/rls-${RUN}-${x}`;
+    const bDev = must(
+      await admin.from("push_subscriptions").insert({ user_id: B.id, endpoint: ep("b"), p256dh: "k", auth: "a" }).select("id").single(),
+      "seed B push device"
+    );
+    const aIns = await a.from("push_subscriptions").insert({ user_id: A.id, endpoint: ep("a"), p256dh: "k", auth: "a" }).select("id");
+    check(!aIns.error && aIns.data?.length === 1, `A can register its own push device (${aIns.error?.message ?? "ok"})`);
+    const aList = await a.from("push_subscriptions").select("id, user_id");
+    check((aList.data ?? []).every((r) => r.user_id === A.id), `A lists only its own push devices (got ${aList.data?.length ?? 0})`);
+    const aForB = await a.from("push_subscriptions").insert({ user_id: B.id, endpoint: ep("forged"), p256dh: "k", auth: "a" }).select("id");
+    check(!!aForB.error, "A cannot register a push device for B");
+    const aUpdB = await a.from("push_subscriptions").update({ show_details: true }).eq("id", bDev.id).select("id");
+    check((aUpdB.data?.length ?? 0) === 0, "A cannot change B's lock-screen setting");
+    const aDelB = await a.from("push_subscriptions").delete().eq("id", bDev.id).select("id");
+    check((aDelB.data?.length ?? 0) === 0, "A cannot remove B's push device");
+    const { data: bDevAfter } = await admin.from("push_subscriptions").select("id, show_details").eq("id", bDev.id).maybeSingle();
+    check(bDevAfter?.show_details === false, "B's push device is still there, unchanged");
+    const aMove = await a.from("push_subscriptions").update({ user_id: B.id }).eq("user_id", A.id).select("id");
+    check(!!aMove.error || (aMove.data?.length ?? 0) === 0, "A cannot move its device to B (only show_details is writable)");
+    const aLog = await a.from("push_log").insert({ user_id: A.id, item_id: "forged", tag: "forged" });
+    check(!!aLog.error, "A cannot write push_log (service-only)");
+    const anonSub = await anonClient.from("push_subscriptions").insert({ user_id: A.id, endpoint: ep("anon"), p256dh: "k", auth: "a" });
+    check(!!anonSub.error, "anon cannot register a push device");
+    const anonList = await anonClient.from("push_subscriptions").select("id");
+    check(!!anonList.error || (anonList.data?.length ?? 0) === 0, "anon cannot list push devices");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
