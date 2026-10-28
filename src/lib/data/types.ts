@@ -55,6 +55,8 @@ export interface ChatSettings { intro: string | null; outro: string | null }
  * for them and this view is the entirety of what a fan can see.
  */
 export interface FanPassView {
+  /** This fan's own block state; history remains readable without engagement. */
+  blocked?: boolean;
   odds?: import("./focusView").FanOddsView;
   focus?: import("./focusView").FanFocusView | null;
   token: string;

@@ -50,7 +50,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   if (!isSupabaseConfigured()) return mockGetFanPass(token);
 
   const sb = createServiceClient();
-  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in)`;
+  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in, blocked_at)`;
   const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`;
   // Per-wheel balance lives on the pass (migration 0020). If that column isn't
   // present yet (migration not run), fall back to the legacy select so the fan
@@ -108,6 +108,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       acked_at: string | null;
       acked_terms_version?: string | null;
       leaderboard_opt_in?: boolean | null;
+      blocked_at?: string | null;
     } | null;
     creator: {
       display_name: string | null;
@@ -195,6 +196,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   const focusDisplay = await getFanFocusDisplay(token);
   return {
     token,
+    blocked: !!pass.fan.blocked_at,
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
     fanHandle: pass.fan.handle ?? null,
     creatorTitle: pass.creator?.display_name ?? "Creator",

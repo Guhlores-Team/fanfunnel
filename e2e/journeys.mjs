@@ -314,6 +314,18 @@ export async function creatorJourney(page, { step, assert }) {
   });
 }
 
+async function acknowledgeSpinReward(page, requestId) {
+  if (typeof requestId !== "string" || !requestId) throw new Error("Actual spin request identity is required");
+  const reveal = page.getByTestId("reward-reveal");
+  await reveal.waitFor({ state: "visible", timeout: 12000 });
+  await reveal.getByRole("button", { name: "Awesome!", exact: true }).click();
+  await reveal.waitFor({ state: "hidden", timeout: 4000 });
+  // Closing the actual reward explicitly acknowledges only this request. Never
+  // clear storage in a fixture: navigation must wait for the real acknowledgement.
+  await page.waitForFunction(id => !Object.entries(localStorage).some(([key, value]) =>
+    key.startsWith("ff-spin-intent-v1:") && JSON.parse(value).requestId === id), requestId, { timeout: 5000 });
+}
+
 export async function fanJourney(page, { step, assert }, ctx) {
   // Make sure the leaderboard is on so we can assert it renders.
   await step("enable leaderboard (setup)", async () => {
@@ -437,15 +449,13 @@ export async function fanJourney(page, { step, assert }, ctx) {
       }
     };
     page.on("response", onResp);
+    const responseReady = page.waitForResponse((r) => r.url() === BASE + "/api/spin" && r.request().method() === "POST");
+    responseReady.catch(() => {}); // A failed click must not leave an unhandled rejection.
     await page.locator("button:has-text('SPIN')").first().click();
     // Wait for the spin's POST to land (captures shareId), then for the win UI to
     // render — instead of a fixed sleep timed to the wheel animation.
-    await page
-      .waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST")
-      .catch(() => {});
-    await page
-      .waitForFunction(() => /you won|won a|congrat|prize|🎉|awesome/i.test(document.body.innerText))
-      .catch(() => {});
+    const response = await responseReady;
+    await page.getByTestId("reward-reveal").waitFor({ state: "visible", timeout: 12000 });
     page.off("response", onResp);
 
     const body = await page.locator("body").innerText();
@@ -454,19 +464,7 @@ export async function fanJourney(page, { step, assert }, ctx) {
       const after = body.match(/(\d+)\s*spins?\s*(left|remaining)/i);
       if (after) assert(Number(after[1]) === Number(before[1]) - 1, "balance decremented by 1");
     }
-    // close any prize modal
-    for (const s of ["button:has-text('Awesome')", "button:has-text('Close')"]) {
-      const el = page.locator(s).first();
-      if (await el.count()) {
-        try {
-          await el.click();
-          await el.waitFor({ state: "hidden" }).catch(() => {});
-          break;
-        } catch {
-          /* ignore */
-        }
-      }
-    }
+    await acknowledgeSpinReward(page, response.request().postDataJSON().requestId);
   });
 
   await step("fan: provably-fair verify shows 'Hash matches'", async () => {
@@ -1270,30 +1268,22 @@ export async function fanExtras(page, { step, assert }, ctx) {
     await passAgeGate(page);
     let guard = 0;
     while (guard++ < 12) {
-      const spin = page.locator("button:has-text('SPIN')").first();
-      if (!(await spin.count()) || !(await spin.isEnabled())) break;
+      const spin = page.getByTestId("fan-spin");
+      await spin.waitFor({ state: "visible", timeout: 10000 });
+      // Boot/reconciliation and explicit acknowledgement can finish after the
+      // first frame. An unexpected disabled state must fail, never end the loop.
+      await page.waitForFunction(() => {
+        const button = document.querySelector('[data-testid="fan-spin"]');
+        return button && (!button.disabled || /out of spins/i.test(button.textContent));
+      }, null, { timeout: 10000 });
       const label = (await spin.innerText()).toLowerCase();
       if (label.includes("out of spins")) break;
+      const responseReady = page.waitForResponse((r) => r.url() === BASE + "/api/spin" && r.request().method() === "POST");
+      responseReady.catch(() => {});
       await spin.click();
-      // Wait for the spin result (prize modal) instead of a fixed sleep for the animation.
-      await page
-        .locator("button:has-text('Awesome')")
-        .or(page.locator("button:has-text('Close')"))
-        .first()
-        .waitFor()
-        .catch(() => {});
-      for (const s of ["button:has-text('Awesome')", "button:has-text('Close')"]) {
-        const el = page.locator(s).first();
-        if (await el.count()) {
-          try {
-            await el.click();
-            await el.waitFor({ state: "hidden" }).catch(() => {});
-            break;
-          } catch {
-            /* ignore */
-          }
-        }
-      }
+      const response = await responseReady;
+      assert(response.ok(), `actual balance-draining spin succeeds (${response.status()})`);
+      await acknowledgeSpinReward(page, response.request().postDataJSON().requestId);
     }
     const body = await page.locator("body").innerText();
     assert(/out of spins|tip|get (more )?spins|top.?up/i.test(body), "out-of-spins / top-up prompt shown");

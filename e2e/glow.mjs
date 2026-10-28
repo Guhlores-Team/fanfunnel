@@ -139,10 +139,23 @@ export async function glowJourney(browser, { step, assert }, page, ctx) {
       const res = await checkin(ctx.request, { token, localDate: day(0) });
       const body = await res.json();
       assert(res.status() === 200 && body.glow === null, `no glow while blocked (${res.status()} ${JSON.stringify(body)})`);
-      const seen = waitCheckin(page);
-      await goto(page, `/spin/${token}`, 200);
-      await seen;
-      await page.waitForTimeout(300);
+      const unsolicited = [];
+      const record = (req) => {
+        const path = new URL(req.url()).pathname;
+        if (req.method() === "POST" && ["/api/fan/checkin", "/api/fan/focus"].includes(path)) unsolicited.push(path);
+      };
+      page.on("request", record);
+      try {
+        await goto(page, `/spin/${token}`, 200);
+        // Recovery initialization unlocks this fresh, credited fixture only
+        // after hydration; SSR alone leaves its spin control disabled.
+        await page.waitForFunction(() => {
+          const button = document.querySelector("[data-testid='fan-spin']");
+          return button instanceof HTMLButtonElement && !button.disabled;
+        });
+        await page.waitForTimeout(300);
+        assert(unsolicited.length === 0, `blocked fan sends no check-in or focus request (${unsolicited.join(", ")})`);
+      } finally { page.off("request", record); }
       assert((await page.locator(`${CHIP}[data-glow-level='0']`).count()) === 1, "the chip has no ring");
       assert((await fanRow(ctx.request, name)).visits7 === 3, "no visit recorded while blocked");
     } finally {

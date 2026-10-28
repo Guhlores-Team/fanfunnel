@@ -1073,6 +1073,7 @@ export async function mockGetFanPass(
   const modifierDisplay = mockFanFocusDisplay(token);
   return structuredClone({
     token,
+    blocked: !!fan.blockedAt,
     fanName: fan.name,
     fanHandle: fan.handle ?? null,
     creatorTitle: CREATOR_TITLE,

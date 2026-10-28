@@ -55,7 +55,7 @@ import { useVisitGlow } from "./fan/useVisitGlow";
 import { GlowMilestoneToast, GlowTag, glowClass } from "./fan/VisitGlow";
 import { spinControl } from "./fan/linkPause";
 import { ackReminder, breakStatus, formatBreakEnd, reminderAcked } from "./fan/yourPlay";
-import { reminderDue } from "@/lib/play/playGuard";
+import { fanEngagementAllowed, reminderDue } from "@/lib/play/playGuard";
 import type { DeliveredReward } from "@/lib/rewards/config";
 import InstantReward, { RewardUnavailable } from "./fan/InstantReward";
 import { parseDeliveredReward } from "./fan/instantReward";
@@ -96,6 +96,7 @@ export default function SpinClient({
   const [odds, setOdds] = useState<FanOddsView | undefined>(pass.odds);
   const [chaseComplete, setChaseComplete] = useState(false);
   const recoveredWin = useRef(false);
+  const [recoveredReveal, setRecoveredReveal] = useState(false);
   const awardedAt = useRef<string | null>(null);
   const [rewardHistoryNonce, setRewardHistoryNonce] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -207,9 +208,13 @@ export default function SpinClient({
   const breakEndLabel = breakUntil && now ? formatBreakEnd(breakUntil, now) : null;
   // RM-3: visual only. The check-in never touches spins, odds or the wheel,
   // and a fan on a break (RM-6) gets no glow nudges.
-  const { glow, milestone, dismissMilestone } = useVisitGlow(pass.token, pass.glow, !paused && !onBreak);
+  const engaged = fanEngagementAllowed({ blocked: pass.blocked, selfExcluded: paused, breakUntil }, now);
+  const { glow, milestone, dismissMilestone } = useVisitGlow(pass.token, pass.glow, engaged);
   const focusRevision = useRef(0);
   const refreshFocus = useCallback(async () => {
+    // Read-only focus progress remains available during a break. A known
+    // blocked/paused link must not send unsolicited requests that will fail.
+    if (pass.blocked || paused) { setOdds(undefined); return; }
     const revision = focusRevision.current;
     try {
       const response = await fetch("/api/fan/focus", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -220,14 +225,15 @@ export default function SpinClient({
       setFocus(body.focus ?? null);
       setOdds(body.odds);
     } catch { setOdds(undefined); }
-  }, [pass.token]);
+  }, [pass.token, pass.blocked, paused]);
   useEffect(() => {
+    if (pass.blocked || paused) return;
     const boot = setTimeout(() => void refreshFocus(), 0);
     const visible = () => { if (document.visibilityState === "visible") void refreshFocus(); };
     const timer = setInterval(visible, 30000);
     document.addEventListener("visibilitychange", visible);
     return () => { clearTimeout(boot); clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
-  }, [refreshFocus, pass.focus, pass.odds]);
+  }, [refreshFocus, pass.focus, pass.odds, pass.blocked, paused]);
 
   const onCommitted = useCallback((data: SpinResult, options: { present: boolean; recovered: boolean }) => {
     focusRevision.current++;
@@ -240,6 +246,7 @@ export default function SpinClient({
     setError(null);
     setRewardHistoryNonce(n => n + 1);
     recoveredWin.current = options.recovered;
+    setRecoveredReveal(options.recovered);
     awardedAt.current = typeof data.awardedAt === "string" && Number.isFinite(Date.parse(data.awardedAt)) ? data.awardedAt : null;
     if (options.recovered) router.refresh();
     setChaseComplete(!options.recovered && data.chaseCompleted === true);
@@ -327,7 +334,7 @@ export default function SpinClient({
     setBoardRefresh((n) => n + 1);
     if (!recoveredWin.current) setSessionSpins(bumpSessionSpins(sessionSpins));
     if (won) {
-      if (!muted) {
+      if (!muted && !recoveredWin.current) {
         playWin(won.rarity);
         if (rv.tier) haptic(rv.tier.haptic);
       }
@@ -376,7 +383,7 @@ export default function SpinClient({
   // The build-up (epic/legendary by default) starts ~1s before the stop.
   const handleNearStop = useCallback(() => {
     dispatchReveal({ type: "nearStop" });
-    if (!mutedRef.current && rv.tier?.buildUp) playBuildUp(rv.tier.buildUpSound);
+    if (!mutedRef.current && !recoveredWin.current && rv.tier?.buildUp) playBuildUp(rv.tier.buildUpSound);
   }, [rv.tier]);
 
   // Hold on the landed slice (spotlight/burst) before the card opens.
@@ -469,7 +476,7 @@ export default function SpinClient({
             result={result}
             onSpinEnd={handleSpinEnd}
             size={size}
-            muted={muted}
+            muted={muted || recoveredReveal}
             tier={rv.tier}
             onNearStop={handleNearStop}
             skip={rv.skipped}
@@ -568,14 +575,14 @@ export default function SpinClient({
             tipUrl={pass.tipUrl}
           />
         )}
-        <InstallNudge armed={reveal && won !== null && !paused && !onBreak} />
+        <InstallNudge armed={reveal && won !== null && engaged} />
       </div>
 
       <LimitedStockRow prizes={prizes} />
 
       <WinsGallery key={pass.token} history={history} token={pass.token} historyNonce={rewardHistoryNonce} />
 
-      <PrizeBook prizes={prizes} history={history} focus={focus} odds={odds} />
+      <PrizeBook prizes={prizes} history={history} focus={focus} odds={pass.blocked || paused ? undefined : odds} />
 
       {pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard
