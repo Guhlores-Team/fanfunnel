@@ -167,7 +167,14 @@ for (const [name, sql] of sources) {
     `${name}: the fan aggregate CHECK waits for the per-pass CHECK`,
     /if v_bad = 0 and exists \(select 1 from pg_constraint where conname = 'fan_passes_spins_granted_total_check' and conrelid = 'public\.fan_passes'::regclass and convalidated\) then alter table public\.fans validate constraint fans_spins_granted_total_check;/.test(sql)
   );
-  check(`${name}: 0052 rewrites no ledger data`, !/update public\.(fan_passes|fans|prizes) set/.test(sql.slice(sql.lastIndexOf("_is_org_member"))));
+  // 0052's own section only: from the last _is_org_member to where the
+  // mirrored copy of migration 0052 ends (a later migration may legitimately
+  // write these tables). If the end can't be found, the whole tail is checked.
+  const from = sql.lastIndexOf("_is_org_member");
+  const tail0052 = sources[0][1].slice(-200);
+  const end = sql.indexOf(tail0052, from);
+  const section = end < 0 ? sql.slice(from) : sql.slice(from, end + tail0052.length);
+  check(`${name}: 0052 rewrites no ledger data`, !/update public\.(fan_passes|fans|prizes) set/.test(section));
 }
 
 const mig = sources[0][1];
