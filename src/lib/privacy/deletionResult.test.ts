@@ -12,6 +12,6 @@ assert.match(closeAccountErrorMessage("storage_cleanup_failed"), /not confirmed/
 for (const file of ["src/components/dashboard/PrivacySecurityCards.tsx", "src/components/admin/AdminClient.tsx"]) {
   const source = readFileSync(file, "utf8");
   assert.match(source, /deletionResponseState\(res.status, d\)/);
-  assert.ok(source.indexOf('state === "pending"') < source.indexOf(file.includes("AdminClient") ? 'toast("Account permanently deleted"' : 'window.location.assign("/login?closed=1")'));
+  assert.ok(source.indexOf('state === "pending"') < source.indexOf(file.includes("AdminClient") ? 'toast("Account permanently deleted"' : 'window.location.replace("/login?closed=1")'));
 }
 console.log("deletion UI: explicit completion only; 202, pending bodies and malformed successes preserve account state");

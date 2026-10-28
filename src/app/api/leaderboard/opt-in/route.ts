@@ -13,7 +13,7 @@ const HANDLE_MAX = 40;
  * Returns the handle, or an error code. A name that would need sanitising is
  * rejected rather than silently mangled ("Ålïcé" must not become "lc").
  */
-export function validateHandle(
+function validateHandle(
   raw: unknown
 ): { handle: string } | { error: "handle_required" | "handle_invalid" } {
   if (typeof raw !== "string" || !raw.trim()) return { error: "handle_required" };

@@ -355,7 +355,8 @@ export function CloseAccountCard() {
         setError(closeAccountErrorMessage(d.error));
         return;
       }
-      window.location.assign("/login?closed=1");
+      // Full navigation after closure avoids keeping this closed page as the current history entry.
+      window.location.replace("/login?closed=1");
     } catch {
       setError(closeAccountErrorMessage(undefined));
     } finally {
