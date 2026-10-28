@@ -2131,10 +2131,7 @@ export type Database = {
         }
         Returns: number
       }
-      creator_storage_prune: {
-        Args: { p_days?: number }
-        Returns: number
-      }
+      creator_storage_prune: { Args: { p_days?: number }; Returns: number }
       creator_storage_publish_media: {
         Args: {
           p_caption: string
@@ -2163,12 +2160,7 @@ export type Database = {
         }
         Returns: Json
       }
-      creator_storage_work_claim: {
-        Args: {
-          p_limit?: number
-        }
-        Returns: Json
-      }
+      creator_storage_work_claim: { Args: { p_limit?: number }; Returns: Json }
       credit_pass_spins: {
         Args: { p_fan_id: string; p_spins: number }
         Returns: undefined
