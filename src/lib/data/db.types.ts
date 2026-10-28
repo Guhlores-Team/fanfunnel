@@ -1878,11 +1878,11 @@ export type Database = {
         Args: { p_token: string; p_until: string }
         Returns: string
       }
-      import_fans: { Args: { p_rows: Json }; Returns: undefined }
       finalize_reward_spin: {
         Args: { p_expected: Json; p_spin: Json }
         Returns: Json
       }
+      import_fans: { Args: { p_rows: Json }; Returns: undefined }
       is_admin: { Args: never; Returns: boolean }
       org_account_stats: {
         Args: { p_org: string }
