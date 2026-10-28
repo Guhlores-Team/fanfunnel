@@ -1,9 +1,9 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { createServiceClient } from "@/lib/supabase/server";
 import { isCreatorObjectPath, observeCreatorObject, type CreatorBucket } from "./creatorObjects";
 
-export type StorageWorkClient = Pick<SupabaseClient, "storage" | "rpc" | "from" | "auth">;
+export type StorageWorkClient = Pick<ReturnType<typeof createServiceClient>, "storage" | "rpc" | "from" | "auth">;
 export interface StorageObjectWork {
   id: string;
   owner_id: string;
@@ -51,7 +51,7 @@ export async function checkStorageFence(svc: StorageWorkClient, owner: string, f
 
 /** Register once before the call. No stale worker can authorize a new call;
  * an already-dispatched call remains durable and blocks account restoration. */
-export async function dispatchStorageEffect(svc: StorageWorkClient, input: {
+export async function dispatchStorageEffect(svc: Pick<ReturnType<typeof createServiceClient>, "storage" | "rpc" | "from" | "auth">, input: {
   owner: string; kind: "remove" | "auth"; object?: string; fence?: StorageFence; originUpload?: boolean;
   effect: () => PromiseLike<{ error: unknown }>;
 }): Promise<"acknowledged" | "rejected" | "uncertain" | "pending" | "db_failed"> {
@@ -113,7 +113,7 @@ export type TrackedUploadResult = { ok: true; id: string; path: string } | {
 };
 
 /** Register first, send bytes once with upsert:false, and publish only after SQL authorization. */
-export async function trackedCreatorUpload(svc: StorageWorkClient, input: {
+export async function trackedCreatorUpload(svc: Pick<ReturnType<typeof createServiceClient>, "storage" | "rpc" | "from" | "auth">, input: {
   owner: string; bucket: CreatorBucket; path: string; bytes: Uint8Array;
   contentType: string; cacheControl?: string; publish?: boolean; authorize: () => Promise<boolean>;
 }): Promise<TrackedUploadResult> {
@@ -176,7 +176,7 @@ export async function processMediaRemoval(svc: StorageWorkClient, owner: string,
 }
 
 /** Bounded maintenance, reachable only through authenticated server entry points. */
-export async function processPendingStorageWork(svc: StorageWorkClient, limit = STORAGE_WORK_LIMIT) {
+export async function processPendingStorageWork(svc: Pick<ReturnType<typeof createServiceClient>, "storage" | "rpc" | "from" | "auth">, limit = STORAGE_WORK_LIMIT) {
   const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), STORAGE_WORK_LIMIT);
   const stats = { completed: 0, pending: 0, failed: 0, reviewRequired: 0, accountsCompleted: 0, accountsPending: 0 };
   // A claim advances scheduling; never replay it after a lost acknowledgement.
