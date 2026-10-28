@@ -1944,7 +1944,10 @@ export type Database = {
         }
         Returns: Json
       }
-      record_fan_reward_view: { Args: { p_spin: string; p_token: string }; Returns: number }
+      record_fan_reward_view: {
+        Args: { p_spin: string; p_token: string }
+        Returns: number
+      }
       record_reward_view: { Args: { p_spin: string }; Returns: number }
       record_terms_acceptance: {
         Args: { p_user: string; p_version: string }
@@ -1978,7 +1981,10 @@ export type Database = {
         }
         Returns: Json
       }
-      save_wheel_prizes: { Args: { p_creator: string; p_prizes: Json; p_wheel: string }; Returns: undefined }
+      save_wheel_prizes: {
+        Args: { p_creator: string; p_prizes: Json; p_wheel: string }
+        Returns: undefined
+      }
       scrub_fan_reward_values: { Args: { p_fan: string }; Returns: undefined }
       set_chat_settings: {
         Args: { p_intro: string; p_outro: string }
