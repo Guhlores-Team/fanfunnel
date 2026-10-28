@@ -36,13 +36,24 @@ const fail = (message: string): Resp => ({ data: null, error: { message } });
 const has = (ops: Op[], name: string, arg?: string) =>
   ops.some((o) => o.name === name && (arg === undefined || String(o.args[0]).includes(arg)));
 
-function fakeClient(handlers: Record<string, Handler>) {
+
+// Creator-filtered list reads and tenant-scoped single-wheel reads are distinct
+// PostgREST contracts. A stored-wheel fallback must retain BOTH scope filters.
+function assertStoredWheelScope(table: string, ops: Op[], expectedWheelId: string | null) {
+  if (table !== "wheels" || !ops.some((o) => o.name === "select" && o.args[0] === "id,archived_at")) return;
+  assert.ok(has(ops, "maybeSingle"), "stored-wheel lookup expects a single row");
+  assert.ok(ops.some((o) => o.name === "eq" && o.args[0] === "id" && o.args[1] === expectedWheelId), "stored-wheel lookup retains the requested wheel id");
+  assert.ok(ops.some((o) => o.name === "eq" && o.args[0] === "creator_id" && o.args[1] === "creator-1"), "stored-wheel lookup retains the pass creator scope");
+}
+
+function fakeClient(handlers: Record<string, Handler>, expectedWheelId: string | null = "wheel-1") {
   const rpcs: { name: string; args: Record<string, unknown> }[] = [];
   const builder = (table: string) => {
     const ops: Op[] = [];
     const run = () => {
       const h = handlers[table];
       if (!h) throw new Error(`fake client: no handler for table ${table}`);
+      assertStoredWheelScope(table, ops, expectedWheelId);
       return h(ops);
     };
     const proxy: unknown = new Proxy(
@@ -125,7 +136,7 @@ function happyPath(overrides: Partial<Record<string, Handler>> = {}, pass = PASS
       return ok(pass); // ctx read and seed re-read
     },
     campaigns: () => ok(null),
-    wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(wheelRow(null))),
+    wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(wheelRow(null))),
     fans: () => ok({ pity_counter: 0 }),
     happy_hours: () => ok([]),
     prizes: () => ok({ id: "prize-1" }),
@@ -155,14 +166,14 @@ async function main() {
   }
   {
     // No wheel resolves: no campaign pin, no creator wheels, pass has no wheel_id.
-    const { sb, rpcs } = fakeClient(happyPath({ wheels: () => ok([]) }, { ...PASS, wheel_id: null as unknown as string }));
+    const { sb, rpcs } = fakeClient(happyPath({ wheels: () => ok([]) }, { ...PASS, wheel_id: null as unknown as string }), null);
     const r = await completeClaimedSpin(sb, "tok", "cs", 4);
     check("no wheel resolves → no_prizes", "error" in r && r.error === "no_prizes");
     check("no wheel resolves → refunded once", refunds(rpcs).length === 1 && refunds(rpcs)[0].args.p_token === "tok" && refunds(rpcs)[0].args.p_prize_id === null);
   }
   {
     // The wheel id resolves (pass.wheel_id) but the wheel row is gone.
-    const { sb, rpcs } = fakeClient(happyPath({ wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(null)) }));
+    const { sb, rpcs } = fakeClient(happyPath({ wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(null)) }));
     const r = await completeClaimedSpin(sb, "tok", "cs", 4);
     check("wheel row missing → no_prizes", "error" in r && r.error === "no_prizes");
     check("wheel row missing → refunded once", refunds(rpcs).length === 1 && refunds(rpcs)[0].args.p_prize_id === null);
@@ -182,7 +193,7 @@ async function main() {
   }
   {
     // Every prize sold out (only prize has stock 0): nothing can be won.
-    const { sb, rpcs } = fakeClient(happyPath({ wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(wheelRow(0))) }));
+    const { sb, rpcs } = fakeClient(happyPath({ wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(wheelRow(0))) }));
     const r = await completeClaimedSpin(sb, "tok", "cs", 4);
     check("sold out → no_prizes", "error" in r && r.error === "no_prizes");
     check("sold out → refunded once, nothing to restore", refunds(rpcs).length === 1 && refunds(rpcs)[0].args.p_prize_id === null);
@@ -192,7 +203,7 @@ async function main() {
     // the refund must also restore that unit.
     const { sb, rpcs } = fakeClient(
       happyPath({
-        wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(wheelRow(3))),
+        wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(wheelRow(3))),
         spins: () => fail("insert failed"),
       }),
     );
@@ -205,7 +216,7 @@ async function main() {
     let fansCalls = 0;
     const { sb, rpcs } = fakeClient(
       happyPath({
-        wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(wheelRow(3))),
+        wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(wheelRow(3))),
         fans: (ops) => {
           fansCalls++;
           if (has(ops, "update")) throw new Error("boom");

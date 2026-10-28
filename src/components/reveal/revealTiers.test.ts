@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
+import { spinIntentBody, type BrowserSpinIntent } from "../fan/spinIntent";
 import { RARITY_COLORS, RARITY_ORDER, type Rarity } from "@/lib/games/wheel/types";
 import {
   BUILD_UP_RARITIES,
@@ -170,18 +171,31 @@ const start = (rarity: Rarity, reducedMotion = false, spinsBefore = 0): RevealEv
 }
 
 // --- the theater cannot influence the outcome --------------------------------
-// The client only ever sends { token, clientSeed } to /api/spin, and the reveal
-// modules never talk to the network.
+// The outcome request carries only fan identity, seed and durable attempt binding.
+// Theater state must not cross the transport boundary or pick the awarded prize.
 {
   const client = readFileSync(new URL("../SpinClient.tsx", import.meta.url), "utf8");
-  const calls = [...client.matchAll(/fetch\("\/api\/spin",\s*\{[\s\S]*?body:\s*JSON\.stringify\((\{[^}]*\})\)/g)];
-  check("SpinClient has exactly one /api/spin call", calls.length === 1);
-  const keys = calls[0][1].replace(/[{}\s]/g, "").split(",").filter(Boolean).sort().join(",");
-  check(`the /api/spin body is exactly { token, clientSeed } (saw ${keys})`, keys === "clientSeed,token:pass.token");
-  const fromServer = client.search(/const prize: (?:Public)?Prize = data\.prize/);
-  check("the reveal starts only from the server's prize",
-    /dispatchReveal\(\{\s*type: "start",\s*rarity: prize\.rarity/.test(client) &&
-      fromServer >= 0 && fromServer < client.indexOf('type: "start"'));
+  const recovery = readFileSync(new URL("../fan/useSpinRecovery.ts", import.meta.url), "utf8");
+  check("SpinClient delegates spins to the recovery hook, without a second spin transport",
+    /import \{ useSpinRecovery \} from "\.\/fan\/useSpinRecovery"/.test(client) &&
+    /const recovery = useSpinRecovery\(\{[\s\S]*?onCommitted, onRefusal \}\)/.test(client) &&
+    /await recovery\.begin\(clientSeed, nextSpinHash\)/.test(client) && !/fetch\("\/api\/spin"/.test(client));
+  const calls = [...recovery.matchAll(/postIntent\("\/api\/spin", token, saved\)/g)];
+  check("the recovery hook has exactly one /api/spin call", calls.length === 1);
+  check("that transport serializes only the shared intent body",
+    /fetch\(path,[\s\S]*?body: JSON\.stringify\(spinIntentBody\(token, intent\)\)/.test(recovery));
+  const intent: BrowserSpinIntent = { v: 1, requestId: "4199c8cd-d2ea-4a3e-92b7-77fe34cdbf7a", clientSeed: "seed", publishedSeedHash: "a".repeat(64) };
+  for (const bound of [intent, { ...intent, publishedSeedHash: undefined }]) {
+    // Runtime extra fields cannot smuggle rarity, prize, timing or skip state.
+    const body = spinIntentBody("fan-token", { ...bound, rarity: "legendary", prize: "chosen", skipped: true, phase: "revealed" } as BrowserSpinIntent);
+    assert.deepEqual(body, { token: "fan-token", requestId: intent.requestId, clientSeed: intent.clientSeed,
+      ...(bound.publishedSeedHash ? { publishedSeedHash: intent.publishedSeedHash } : {}) });
+    passed++;
+  }
+  const committed = client.slice(client.indexOf("const onCommitted ="), client.indexOf("const onRefusal ="));
+  check("the reveal starts only from the committed server prize",
+    /dispatchReveal\(\{\s*type: "start", rarity: data\.prize\.rarity/.test(committed) &&
+    /setWon\(data\.prize\)/.test(committed) && /setResult\(\{ index: data\.prizeIndex/.test(committed));
   for (const f of ["revealTiers.ts", "RewardReveal.tsx", "RevealTheater.tsx"]) {
     const src = readFileSync(new URL(`./${f}`, import.meta.url), "utf8");
     check(`${f} makes no network calls`, !/\bfetch\(|XMLHttpRequest|sendBeacon|\/api\//.test(src));

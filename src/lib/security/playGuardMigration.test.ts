@@ -4,7 +4,8 @@
  *
  * Pins the shape that makes the break a real guardrail, in the migration AND
  * both SQL snapshots, and fails if app code grows a way around it:
- *   - the effective claim_spin refuses a fan on a break, still server-only;
+ *   - historical claim_spin gates remain; the effective legacy RPC is disabled,
+ *     and both active atomic stages refuse breaks before economic writes;
  *   - fan_take_break() only lengthens (greatest), is keyed by a live link
  *     token, and is server-only (revoked from public, anon, authenticated);
  *   - a trigger stops a creator's session from setting/clearing break_until
@@ -60,14 +61,55 @@ for (const [name, sql] of [
 ] as const) {
   check(`${name}: adds fans.break_until`, sql.includes("alter table public.fans add column if not exists break_until timestamptz"));
 
-  const claim = lastFn(sql, "claim_spin");
-  check(`${name}: the effective claim_spin refuses a fan on a break`, !!claim && claim.includes("and (f.break_until is null or f.break_until <= now())"));
-  check(`${name}: claim_spin still refuses blocked / paused links`, !!claim && claim.includes("and fp.self_excluded_at is null and f.blocked_at is null"));
+  // Keep the original 0049 claim contract pinned historically. In 0059 the
+  // legacy writer fails closed; both active atomic stages must gate play.
+  const claim = lastFn(mig, "claim_spin");
+  check(`0049 historical: the effective claim_spin refuses a fan on a break`, !!claim && claim.includes("and (f.break_until is null or f.break_until <= now())"));
+  check(`0049 historical: claim_spin still refuses blocked / paused links`, !!claim && claim.includes("and fp.self_excluded_at is null and f.blocked_at is null"));
   check(
-    `${name}: claim_spin stays server-only`,
-    sql.lastIndexOf("revoke execute on function public.claim_spin(text) from public, anon, authenticated;") >
-      sql.lastIndexOf("create or replace function public.claim_spin")
+    `0049 historical: claim_spin stays server-only`,
+    mig.lastIndexOf("revoke execute on function public.claim_spin(text) from public, anon, authenticated;") >
+      mig.lastIndexOf("create or replace function public.claim_spin")
   );
+
+  const retiredClaim = lastFn(sql, "claim_spin");
+  check(`${name}: legacy claim cannot spend at all`, !!retiredClaim &&
+    /begin raise exception 'spin client upgrade required' using errcode='42501'; end/.test(retiredClaim) &&
+    !/\b(update|insert|delete)\b/.test(retiredClaim));
+  check(`${name}: legacy claim is revoked from every API role, including service`,
+    /revoke execute on function public\.claim_spin\(text\) from public,\s*anon,\s*authenticated,\s*service_role;/.test(sql));
+  for (const rpc of ["prepare_spin_attempt", "commit_spin_attempt"]) {
+    const active = lastFn(sql, rpc);
+    check(`${name}: ${rpc} is SECURITY DEFINER with pinned search_path`, !!active &&
+      /security definer set search_path\s*=\s*public/.test(active));
+    check(`${name}: ${rpc} remains service-only`,
+      new RegExp(`revoke execute on function public\\.${rpc}\\([^;]+\\) from public,\\s*anon,\\s*authenticated;`).test(sql) &&
+      new RegExp(`grant execute on function public\\.${rpc}\\([^;]+\\) to service_role;`).test(sql) &&
+      !new RegExp(`grant execute on function public\\.${rpc}\\([^;]+\\) to (?:public|anon|authenticated)\\b`).test(sql));
+    const gate = (text: string) => {
+      const blocked = text.indexOf("p.self_excluded_at is not null or f.blocked_at is not null");
+      const unavailable = text.indexOf("return jsonb_build_object('status','unavailable')", blocked);
+      const broken = text.indexOf("f.break_until>now()");
+      const decline = text.indexOf("update public.spin_attempts set state='declined'");
+      const terminal = rpc === "prepare_spin_attempt"
+        ? text.indexOf("return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash);", decline)
+        : text.indexOf("return jsonb_build_object('status','declined','error',v_error);", decline);
+      const spend = rpc === "prepare_spin_attempt"
+        ? text.indexOf("perform set_config('fanfunnel.economic_write','on',true)")
+        : text.indexOf("update public.fan_passes set spins_remaining=spins_remaining-1");
+      return blocked >= 0 && unavailable > blocked && broken > unavailable && decline > broken && terminal > decline && spend > terminal &&
+        text.slice(blocked, unavailable).includes("approval_status='approved' or role='admin'") &&
+        text.slice(broken, terminal).includes("'on_break'") &&
+        (rpc === "prepare_spin_attempt"
+          ? /if f\.break_until>now\(\) or[\s\S]*?then update public\.spin_attempts set state='declined'/.test(text)
+          : /if f\.break_until>now\(\) then v_error:='on_break';/.test(text) &&
+            /if v_error is not null then update public\.spin_attempts set state='declined'/.test(text));
+    };
+    check(`${name}: ${rpc} refuses break, paused/blocked link and inactive creator before economic writes`, !!active && gate(active));
+    if (active) for (const required of ["p.self_excluded_at is not null or f.blocked_at is not null", "f.break_until>now()", "update public.spin_attempts set state='declined'"]) {
+      check(`${name}: ${rpc} proof detects removing ${required}`, !gate(active.replaceAll(required, "false")));
+    }
+  }
 
   const take = lastFn(sql, "fan_take_break");
   check(`${name}: defines fan_take_break(p_token text, p_until timestamptz)`, !!take && /fan_take_break\s*\(\s*p_token text, p_until timestamptz\s*\)/.test(take));

@@ -63,6 +63,6 @@ check("offered only once armed by a win", /armed && eligible/.test(src));
 check("uses the native prompt on Android, never on its own", /preventDefault\(\)/.test(src) && /deferred\.prompt\(\)/.test(src));
 check("never stores the token", !/token/i.test(src.replace(/\/\/.*$/gm, "")));
 const spinClient = readFileSync(join(import.meta.dirname, "..", "SpinClient.tsx"), "utf8");
-check("SpinClient mounts it once, armed by a revealed win", (spinClient.match(/<InstallNudge\b/g) ?? []).length === 1 && /<InstallNudge armed=\{reveal && won !== null\} \/>/.test(spinClient));
+check("SpinClient mounts it once, armed by a revealed win only outside pause/break", (spinClient.match(/<InstallNudge\b/g) ?? []).length === 1 && /<InstallNudge armed=\{reveal && won !== null && !paused && !onBreak\} \/>/.test(spinClient));
 
 console.log(`install nudge: ${passed} checks passed`);

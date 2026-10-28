@@ -2,8 +2,10 @@
  * AUTH-SENSITIVE (AGENTS.md rule 5): signed-in-only RPCs are not executable by
  * anon (migration 0044).
  *
- * The self-service setters (and the fan-import, admin and agency RPCs) are
- * called only through the creator's session client. Supabase's default
+ * The self-service setters (and the admin and agency RPCs) are called only
+ * through the creator's session client. Since 0059, fan import instead uses
+ * an authorized service-only durable gateway; its legacy RPC is retired.
+ * Supabase's default
  * privileges grant EXECUTE on new public functions to anon too, so each one
  * needs an explicit `revoke ... from public, anon` followed by a grant to
  * `authenticated`. This replays every grant/revoke in the migrations (last one
@@ -45,7 +47,6 @@ const SIGNED_IN_ONLY = [
   "set_notifications_seen",
   "set_pwa_icon_mode",
   "set_creator_theme",
-  "import_fans",
   "admin_account_stats",
   "admin_reserve_account_deletion",
   "org_account_stats",
@@ -62,7 +63,7 @@ const SIGNED_IN_ONLY = [
 // evaluates a policy would otherwise error instead of returning no rows).
 const RLS_HELPERS = ["is_admin", "can_act_for", "current_user_active", "_owns_org"];
 
-type Acl = { anon: boolean; authenticated: boolean };
+type Acl = { anon: boolean; authenticated: boolean; service: boolean };
 
 /** Replay grants/revokes in order. A function starts executable by everyone
  *  (PUBLIC default + Supabase's default privileges for anon/authenticated). */
@@ -73,15 +74,17 @@ function effectiveAcl(sql: string): Map<string, Acl> {
   for (const m of sql.matchAll(re)) {
     const fn = m[2];
     const roles = m[4].split(",").map((r) => r.trim());
-    const cur = acl.get(fn) ?? { anon: true, authenticated: true };
+    const cur = acl.get(fn) ?? { anon: true, authenticated: true, service: true };
     const on = m[1] === "grant";
     // On Supabase anon/authenticated hold explicit grants, so a PUBLIC revoke
     // alone does not remove them; only naming the role does.
     if (roles.includes("anon")) cur.anon = on;
     if (roles.includes("authenticated")) cur.authenticated = on;
+    if (roles.includes("service_role")) cur.service = on;
     if (on && roles.includes("public")) {
       cur.anon = true;
       cur.authenticated = true;
+      cur.service = true;
     }
     acl.set(fn, cur);
   }
@@ -98,6 +101,7 @@ const mig0044 = norm(readFileSync(join(SUPA, "migrations", "0044_revoke_anon_set
 check("0044 creates or alters no table/policy/function", !/\b(create|alter|drop)\s+(table|policy|function)\b/.test(mig0044));
 check("0044 never revokes from authenticated", !/from[^;]*\bauthenticated\b/.test(mig0044));
 check("0044 grants only to authenticated", [...mig0044.matchAll(/\bgrant\b[^;]*\bto\s+([^;]+);/g)].every((m) => m[1].trim() === "authenticated"));
+check("0044 originally kept authenticated import access", effectiveAcl(mig0044).get("import_fans")?.authenticated === true);
 for (const fn of RLS_HELPERS) {
   check(`0044 leaves RLS helper ${fn} alone`, !new RegExp(`public\\.${fn}\\s*\\(`).test(mig0044));
 }
@@ -108,16 +112,38 @@ for (const [name, sql] of [
   ["schema.sql + migrations_combined.sql", norm(readFileSync(join(SUPA, "schema.sql"), "utf8") + "\n" + readFileSync(join(SUPA, "migrations_combined.sql"), "utf8"))],
 ] as const) {
   const acl = effectiveAcl(sql);
+  // 0059 retires the old session import: its durable replacement checks both
+  // current actor authority and the immutable request journal on the server.
+  for (const fn of ["import_fans", "import_fans_durable"]) {
+    const a = acl.get(fn);
+    check(`${name}: neither browser role can execute ${fn}`, !!a && !a.anon && !a.authenticated);
+  }
+  check(`${name}: legacy import is revoked even from service_role`,
+    /revoke execute on function public\.import_fans\(jsonb\) from public,\s*anon,\s*authenticated,\s*service_role;/.test(sql) &&
+    acl.get("import_fans")?.service === false);
+  check(`${name}: durable import is granted only to service_role`,
+    /grant execute on function public\.import_fans_durable\([^;]+\) to service_role;/.test(sql) && acl.get("import_fans_durable")?.service === true &&
+    !/grant execute on function public\.import_fans_durable\([^;]+\) to (?:public|anon|authenticated)\b/.test(sql));
   for (const fn of SIGNED_IN_ONLY) {
-    const a = acl.get(fn) ?? { anon: true, authenticated: true };
+    const a = acl.get(fn) ?? { anon: true, authenticated: true, service: true };
     check(`${name}: anon cannot execute ${fn}`, !a.anon);
     check(`${name}: authenticated can execute ${fn}`, a.authenticated);
   }
   for (const fn of RLS_HELPERS) {
-    const a = acl.get(fn) ?? { anon: true, authenticated: true };
+    const a = acl.get(fn) ?? { anon: true, authenticated: true, service: true };
     check(`${name}: anon keeps EXECUTE on RLS helper ${fn}`, a.anon);
   }
 }
+
+const importRoute = readFileSync(join(ROOT, "src/app/api/fans/import/route.ts"), "utf8");
+check("import route refuses missing session and denied current grant authority",
+  /session && \(userResult\?\.error \|\| !user\)/.test(importRoute) &&
+  /session\.rpc\("can_act_for", \{ target_creator: creatorId, perm: "grant" \}\)/.test(importRoute) &&
+  /if \(error \|\| permitted !== true\) return NextResponse\.json/.test(importRoute));
+check("import route uses the durable service gateway, never legacy import",
+  /const service = createServiceClient\(\)/.test(importRoute) &&
+  /service\.rpc\("import_fans_durable", args\)/.test(importRoute) &&
+  !/\.rpc\("import_fans"/.test(importRoute));
 
 // Every RPC the app calls must be classified: signed-in-only (anon revoked),
 // an RLS helper, or server-only (revoked from authenticated too). An
@@ -140,7 +166,7 @@ for (const f of files(join(ROOT, "src"))) {
 }
 check("found the app's RPC call sites", called.size >= 10);
 for (const fn of called) {
-  const a = migAcl.get(fn) ?? { anon: true, authenticated: true };
+  const a = migAcl.get(fn) ?? { anon: true, authenticated: true, service: true };
   const serverOnly = !a.anon && !a.authenticated;
   check(
     `RPC ${fn} called by the app is signed-in-only, an RLS helper, or server-only`,

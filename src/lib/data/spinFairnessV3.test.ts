@@ -24,6 +24,16 @@ const fail = (message: string): Resp => ({ data: null, error: { message } });
 const has = (ops: Op[], name: string, arg?: string) =>
   ops.some((o) => o.name === name && (arg === undefined || String(o.args[0]).includes(arg)));
 
+
+// Creator-filtered list reads and tenant-scoped single-wheel reads are distinct
+// PostgREST contracts. A stored-wheel fallback must retain BOTH scope filters.
+function assertStoredWheelScope(table: string, ops: Op[]) {
+  if (table !== "wheels" || !ops.some((o) => o.name === "select" && o.args[0] === "id,archived_at")) return;
+  assert.ok(has(ops, "maybeSingle"), "stored-wheel lookup expects a single row");
+  assert.ok(ops.some((o) => o.name === "eq" && o.args[0] === "id" && o.args[1] === "wheel-1"), "stored-wheel lookup retains the requested wheel id");
+  assert.ok(ops.some((o) => o.name === "eq" && o.args[0] === "creator_id" && o.args[1] === "creator-1"), "stored-wheel lookup retains the pass creator scope");
+}
+
 function fakeClient(handlers: Record<string, Handler>) {
   const builder = (table: string) => {
     const ops: Op[] = [];
@@ -35,6 +45,7 @@ function fakeClient(handlers: Record<string, Handler>) {
             return (res: (v: Resp) => unknown, rej: (e: unknown) => unknown) => {
               const h = handlers[table];
               if (!h) return Promise.reject(new Error(`no handler for ${table}`)).then(res, rej);
+              assertStoredWheelScope(table, ops);
               return Promise.resolve(h(ops)).then(res, rej);
             };
           }
@@ -100,7 +111,7 @@ async function realSpin(opts: { happyHour?: number; spinsInsert?: (row: Record<s
   const sb = fakeClient({
     fan_passes: (ops) => (has(ops, "update") ? ok({ id: pass.id }) : ok(pass)),
     campaigns: () => ok(null),
-    wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(wheelRow())),
+    wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(wheelRow())),
     fans: () => ok({ pity_counter: 4 }),
     happy_hours: () =>
       ok(opts.happyHour ? [{ multiplier: opts.happyHour, ends_at: new Date(Date.now() + 60_000).toISOString() }] : []),

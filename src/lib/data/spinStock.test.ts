@@ -41,6 +41,16 @@ const fail = (message: string): Resp => ({ data: null, error: { message } });
 const has =(ops: Op[], name: string, arg?: string) =>
   ops.some((o) => o.name === name && (arg === undefined || String(o.args[0]).includes(arg)));
 
+
+// Creator-filtered list reads and tenant-scoped single-wheel reads are distinct
+// PostgREST contracts. A stored-wheel fallback must retain BOTH scope filters.
+function assertStoredWheelScope(table: string, ops: Op[]) {
+  if (table !== "wheels" || !ops.some((o) => o.name === "select" && o.args[0] === "id,archived_at")) return;
+  assert.ok(has(ops, "maybeSingle"), "stored-wheel lookup expects a single row");
+  assert.ok(ops.some((o) => o.name === "eq" && o.args[0] === "id" && o.args[1] === "wheel-1"), "stored-wheel lookup retains the requested wheel id");
+  assert.ok(ops.some((o) => o.name === "eq" && o.args[0] === "creator_id" && o.args[1] === "creator-1"), "stored-wheel lookup retains the pass creator scope");
+}
+
 function fakeClient(handlers: Record<string, Handler>, before?: Before) {
   const rpcs: { name: string; args: Record<string, unknown> }[] = [];
   const builder = (table: string) => {
@@ -48,6 +58,7 @@ function fakeClient(handlers: Record<string, Handler>, before?: Before) {
     const run = async () => {
       const h = handlers[table];
       if (!h) throw new Error(`fake client: no handler for table ${table}`);
+      assertStoredWheelScope(table, ops);
       if (before) await before(table, ops);
       return h(ops);
     };
@@ -156,7 +167,7 @@ function handlers(prizes: ReturnType<typeof prizeTable>): Record<string, Handler
   return {
     fan_passes: (ops) => (has(ops, "update") ? ok({ id: PASS.id }) : ok(PASS)),
     campaigns: () => ok(null),
-    wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(prizes.wheelRow())),
+    wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(prizes.wheelRow())),
     fans: () => ok({ pity_counter: 0 }),
     happy_hours: () => ok([]),
     prizes: prizes.handler,
