@@ -6,12 +6,13 @@ Everything below was true at the time of writing; verify with `git` before actin
 ## 1. Where things stand
 
 - **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`). Last verified
-  Preview commit `2abae19` (0057). CI and TEST migration/history/type checks are
+  Preview commit `540f018` (0058). CI and TEST migration/history/type checks are
   green (verify, login-ui, supabase, schema-drift, test). Theming (0058) passed
   two full rounds (163 unit files, 151 browser checks, 92 accessibility states).
-  Its TEST migration, exact types, runtime negatives and login UI passed at
-  `540f018`; the main CI verification and gated Preview deployment are pending.
-  Focus (0059) is now integrated locally; its full release rounds are next.
+  All CI, TEST migration/history/exact types, runtime negatives and login UI
+  passed at `540f018`; that exact commit is now on the stable TEST Preview.
+  Focus (0059) is integrated locally; its full release rounds are next. The unit
+  runner now accepts literal Next.js bracket paths and fails process errors.
 - **Preview (TEST database `snmcrmhgevfqggxdiomu`):**
   https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
   Vercel login protection is OFF for testing (`ssoProtection` was `all_except_custom_domains`;
@@ -37,7 +38,7 @@ Everything below was true at the time of writing; verify with `git` before actin
 | **Terms / Privacy + clickwrap** | 0055 | merged as `c1b4098` | done; two full local verification rounds, green CI, on Preview / TEST |
 | **Web push (creators)** | 0056 | merged and hardened through `4431546` | done; two final full rounds (141 unit files, 130 browser checks, 69 accessibility states), green CI / TEST, deployed Preview |
 | **#26 instant-delivery prizes** | 0057 | normal merge of `rm/26-instant-delivery`, finished through `2abae19` | on Preview/TEST; two full local rounds (151 unit files, 140 browser checks, 76 axe states), green CI and real TEST integration/RLS tests |
-| **Per-creator theming** | 0058 | normally merged, verified through `540f018` | two full local rounds pass; TEST history/types/runtime and login UI pass; final CI/Preview gate pending |
+| **Per-creator theming** | 0058 | normally merged, verified through `540f018` | on Preview/TEST; two full local rounds, exact-SHA CI, history/types/runtime and real public mobile checks pass |
 | **#25 focus pack → chase pity** | 0059 | integrated locally on `dashboard-redesign` | atomic ledger, request recovery and every-disclosure audit implemented; independent focus-read repair verified; full release rounds next; hosted Chase remains off |
 | **RM-7 scratch tickets** | 0060 | source frozen separately | pure replay, SQL, data and UI prepared; integrated release verification remains after 0059 |
 | **RM-7 personal bingo** | 0061 | in progress in isolated archive | must follow the frozen scratch release; no TEST application yet |
@@ -51,7 +52,7 @@ someone else's history).
 
 ### 3a. Merge the three finished branches, strictly in migration order
 0054–0057 are complete on Preview and TEST. The owner confirmed enabling two-factor
-login before 0054 was pushed. Continue the 0058 release gate, then 0059; do not repeat earlier merges or MFA
+login before 0054 was pushed. Continue with 0059; do not repeat earlier merges or MFA
 enrolment. The 0057 type-only follow-up preserves the exact generator syntax;
 its declarations and runtime behavior are unchanged from the twice-verified tree.
 
@@ -109,8 +110,8 @@ uncommitted source directory or change a Production alias.
 
 ### 3b. Finish #26 and theming
 0057 is complete on Preview. 0058 passed both full integrated rounds and has been
-pushed only to `dashboard-redesign`. TEST migration/history/types/runtime pass;
-finish the exact-commit CI and Preview gate before its release is called done. The historical WIP details below describe
+pushed only to `dashboard-redesign`. TEST migration/history/types/runtime and all
+CI jobs pass, and the exact checked commit is on Preview. Continue with 0059. The historical WIP details below describe
 what had to be completed; they are not the remaining task list.
 - **#26** (`rm/26-instant-delivery`): last step in progress was the static migration guard test
   (`src/lib/security/instantRewards.test.ts`) and route authz test (`src/app/api/prizes/rewardAuthz.test.ts`).
