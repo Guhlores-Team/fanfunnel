@@ -116,7 +116,7 @@ async function main() {
     } else if (passWritten && interleaved === 0) {
       interleaved++;
       const left = db.spin("tok-race");
-      assert.strictEqual(left, 4, "interleaved spin spent one of the 2 + 3 spins");
+      assert.strictEqual(left, 1, "concurrent spin sees only the committed 2; the credit is atomic");
     }
   };
   const raced = await createPass({
@@ -178,15 +178,14 @@ async function main() {
   check("race B: invariant holds", invariantHolds(racer2.id as string));
 
   // --- Supabase path: the grant insert fails after a spin landed -------------
-  // The top-up (7 -> 10) is rolled back. The fan spun once in between (10 -> 9),
-  // so the rollback must subtract the top-up from the current balance (9 - 3 =
-  // 6), not restore the pre-top-up value (7) and refund the spin.
+  // The failed grant and credit roll back together. A concurrent spin spends
+  // one previously committed spin (7 -> 6); uncommitted credit is never visible.
   const grantsBefore = db.rows("grants").filter((g) => g.fan_id === racer2.id).length;
   let grantFailed = 0;
   db.beforeStatement = (stmt) => {
     if (stmt.table === "grants" && stmt.op === "insert" && grantFailed === 0) {
       grantFailed++;
-      assert.strictEqual(db.spin("tok-race2"), 9, "spin after the top-up, before the grant insert");
+      assert.strictEqual(db.spin("tok-race2"), 6, "a concurrent spin sees 7 committed spins, never the failed top-up");
       return { message: "injected grant insert failure" };
     }
   };

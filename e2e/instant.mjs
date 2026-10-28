@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // #26: private instant rewards, real creator routes and the real mock spin
 // path. Each fixture owns a wheel and fan; odds are set through creator APIs,
 // never by replacing a spin response. Run before firstRunJourney's reset.
@@ -33,8 +34,13 @@ export async function instantFixture(request, name = "Instant", codeCount = 51) 
     textValue: `Private thank-you note ${suffix}. Only its winner receives this.`,
     linkValue: `https://example.test/reward/${suffix}?claim=winner-only`,
   };
+  // Model C resolves the live wheel before a pass's fallback wheel. Own a schedule,
+  // leaving every other wheel's active flag intact; archiving restores prior resolution.
+  await json(await request.patch(`${BASE}/api/wheels/${fixture.wheel.id}`, {
+    data: { activeFrom: new Date(Date.now() - 1000).toISOString(), activeUntil: null },
+  }), "schedule reward fixture wheel");
   const pass = await json(await request.post(BASE + "/api/passes", {
-    data: { name: fixture.name, spins: codeCount + 5, wheelId: fixture.wheel.id },
+    data: { requestId: randomUUID(), name: fixture.name, spins: codeCount + 5, wheelId: fixture.wheel.id },
   }), "create reward fan");
   fixture.token = pass.token;
   fixture.fanId = pass.fanId;
@@ -262,7 +268,7 @@ export async function instantJourney(page, { step, assert }, ctx) {
     });
 
     await step("instant: public views and another fan cannot reveal the code", async () => {
-      const other = await json(await ctx.request.post(BASE + "/api/passes", { data: { name: fixture.name + " other", spins: 1, wheelId: fixture.wheel.id } }), "create another reward fan");
+      const other = await json(await ctx.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: fixture.name + " other", spins: 1, wheelId: fixture.wheel.id } }), "create another reward fan");
       for (const [body, status] of [[{ shareId: firstWin.shareId }, 400], [{ token: other.token, shareId: firstWin.shareId }, 404], [{ token: fixture.token, shareId: "missing-instant-win" }, 404]]) {
         const refused = await ctx.request.post(BASE + "/api/fan/reward", { data: body });
         assert(refused.status() === status, `reward credentials refused with ${status}`);
@@ -282,7 +288,7 @@ export async function instantJourney(page, { step, assert }, ctx) {
       for (let done = 0; done < 50;) {
         const batch = Math.min(9, 50 - done);
         for (let i = 0; i < batch; i++) {
-          const result = await json(await ctx.request.post(BASE + "/api/spin", { data: { token: fixture.token, clientSeed: `instant-${done + i}` } }), "spin another private code");
+          const result = await json(await ctx.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: fixture.token, clientSeed: `instant-${done + i}` } }), "spin another private code");
           assert(result.reward?.kind === "code" && result.prize.id === fixture.code.id, "each limited stock win receives a code");
           codeWins.push(result);
         }

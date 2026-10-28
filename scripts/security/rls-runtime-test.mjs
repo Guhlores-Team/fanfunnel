@@ -146,12 +146,35 @@ async function makeCreator(tag) {
   // Seed one wheel + prize + fan + pass + grant + spin for this creator.
   const wheel = must(await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single(), `seed ${tag} wheel`);
   const prize = must(await admin.from("prizes").insert({ wheel_id: wheel.id, label: `${tag} prize`, rarity: "common", weight: 10 }).select("id").single(), `seed ${tag} prize`);
-  const fan = must(await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, spins_remaining: 5 }).select("id").single(), `seed ${tag} fan`);
-  const token = `rls-${RUN}-${tag}`;
-  const pass = must(await admin.from("fan_passes").insert({ token, creator_id: id, wheel_id: wheel.id, fan_id: fan.id, spins_remaining: 5 }).select("id").single(), `seed ${tag} fan_pass`);
-  must(await admin.from("grants").insert({ creator_id: id, fan_id: fan.id, spins: 5, amount_cents: 1000 }).select("id").single(), `seed ${tag} grant`);
-  must(await admin.from("spins").insert({ fan_pass_id: pass.id, creator_id: id, wheel_id: wheel.id, fan_id: fan.id, prize_id: prize.id, prize_label: `${tag} prize`, prize_rarity: "common" }).select("id").single(), `seed ${tag} spin`);
-  return { id, email, wheelId: wheel.id, fanId: fan.id, fanName: `${tag} fan`, token };
+  const fan = must(await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, acked_at:new Date().toISOString(),acked_terms_version:"2026-10-27" }).select("id").single(), `seed ${tag} fan`);
+  const grant=must(await admin.rpc("create_pass_grant",{p_request:randomUUID(),p_creator:id,p_fan:fan.id,p_wheel:wheel.id,p_name:`${tag} fan`,p_spins:5,p_bonus:0,p_amount:1000,p_campaign:null}),`seed ${tag} atomic grant`);
+  if(grant.status!=="granted")throw Error(`seed ${tag} grant refused: ${grant.status}`);
+  const result={id,email,wheelId:wheel.id,prizeId:prize.id,fanId:fan.id,passId:grant.passId,fanName:`${tag} fan`,token:grant.token,requestId:grant.grantId};
+  await recordRuntimeSpin(result);
+  return result;
+}
+
+const canonicalProof=(v)=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?`[${v.map(canonicalProof).join(",")}]`:`{${Object.keys(v).sort().map(k=>`${JSON.stringify(k)}:${canonicalProof(v[k])}`).join(",")}}`;
+const sha=(s)=>createHash("sha256").update(s).digest("hex");
+// Synthetic deterministic single-prize fixture, committed through the SAME
+// service-only economic RPC the application uses. No split seed/credit writes.
+async function recordRuntimeSpin(creator,expected={delivery:"manual"}) {
+  const request=randomUUID(),binding=sha(request);
+  const ready=must(await admin.rpc("prepare_spin_attempt",{p_attempt:request,p_token:creator.token,p_request_hash:binding}),"prepare runtime spin");
+  if(ready.status!=="ready")throw Error(`runtime spin not ready: ${ready.status}`);
+  const c=ready.context,p=c.prizes.find(p=>p.id===creator.prizeId),hh=c.happyHourMultiplier??1;
+  const snapshot={v:3,rules:"focus-v1",game:"wheel",prizes:c.prizes.filter(p=>p.stock==null||p.stock>0).map(p=>({id:p.id,label:p.label,emoji:p.emoji,rarity:p.rarity,w:Math.round(p.weight*(["rare","epic","legendary"].includes(p.rarity)?hh:1)),baseW:p.weight})).sort((a,b)=>a.id.localeCompare(b.id)),modifiers:{happyHour:{multiplier:hh},pity:{counter:c.pityCounter,threshold:10},focus:null,chase:null}};
+  const nextSeed=randomUUID().replaceAll("-","").repeat(2);
+  const spin={id:request,creator_id:c.creatorId,fan_id:c.fanId,fan_pass_id:c.passId,wheel_id:c.wheelId,campaign_id:c.campaignId,prize_id:p.id,prize_label:p.label,prize_rarity:p.rarity,prize_image_url:p.image_url,server_seed:c.serverSeed,server_seed_hash:c.serverSeedHash,nonce:c.nonce,client_seed:"runtime",fair_version:3,pool_snapshot:snapshot,pool_hash:sha(canonicalProof(snapshot)),fair_trace:{excluded:[],won:p.id},next_pity_counter:["rare","epic","legendary"].includes(p.rarity)?0:c.pityCounter+1,focus_consumed:false,chase_consumed:false,chase_completed:false,next_focus_spins_left:null,next_chase_counter:null,response_prize:{id:p.id,label:p.label,rarity:p.rarity,weight:p.weight},response_prize_index:c.prizes.findIndex(x=>x.id===p.id),response_show_stock:c.wheel.show_stock===true};
+  const result=must(await admin.rpc("commit_spin_attempt",{p_attempt:request,p_token:creator.token,p_request_hash:binding,p_context:{contextHash:c.contextHash},p_spin:spin,p_expected_reward:expected,p_next_seed:{seed:nextSeed,hash:sha(nextSeed)}}),"commit runtime spin");
+  if(result.status!=="committed")throw Error(`runtime spin refused: ${result.status}`);
+  // This synthetic fixture's initial delivery is an explicit value disclosure,
+  // matching the application's post-decryption logging boundary.
+  if(expected.delivery!=="manual"){
+    const logged=await admin.rpc("record_fan_reward_views",{p_spins:[request],p_token:creator.token});
+    if(logged.error||logged.data!==1)throw Error("runtime instant disclosure was not logged");
+  }
+  return {request,binding,result};
 }
 
 async function signedClient(email) {
@@ -192,7 +215,12 @@ async function main() {
         const noOrg = await a.rpc("org_create", { p_name: "unapproved org" });
         check(!!noOrg.error, `${approval} approval prevents org creation`);
         const noImport = await a.rpc("import_fans", { p_rows: [{ fan_id: randomUUID(), pass_id: randomUUID(), token: `approval-import-${RUN}-${approval}`, wheel_id: A.wheelId, campaign_id: null, name: "unapproved import", spins: 1, amount_cents: 0 }] });
-        check(!!noImport.error, `${approval} approval prevents definer fan imports`);
+        check(noImport.error?.code==="42501", `${approval} cannot execute the retired import API`);
+        const deniedRows=[{name:"Unapproved durable import",spins:1,amountCents:0,campaignId:null,wheelId:A.wheelId,error:null}];
+        const noDurableImport=await admin.rpc("import_fans_durable",{p_batch:randomUUID(),p_creator:A.id,p_actor:A.id,p_request_hash:sha(canonicalProof(["fan-import-v1",deniedRows])),p_rows:deniedRows});
+        check(!noDurableImport.error&&noDurableImport.data?.status==="unavailable",`${approval} actor cannot import through the durable service gateway`);
+        const leakedImport=await admin.from("fans").select("id").eq("creator_id",A.id).eq("display_name","Unapproved durable import");
+        check(!leakedImport.error&&leakedImport.data?.length===0,`${approval} durable import denial creates no fan`);
       } finally {
         must(await admin.from("profiles").update({ approval_status: "approved" }).eq("id", A.id).select("id").single(), "restore A approval");
       }
@@ -236,6 +264,75 @@ async function main() {
     const { data: aRole } = await admin.from("profiles").select("role").eq("id", A.id).maybeSingle();
     check(aRole?.role !== "admin", `A's role is still not admin after self-promote attempt (got ${aRole?.role})`);
 
+    // Non-vacuous own/cross-tenant promise fixtures, using only service RPCs.
+    must(await admin.from("prizes").update({boostable:true,stock:1}).eq("id",B.prizeId).select("id").single(),"prepare B boostable finite target");
+    must(await admin.from("focus_creator_config").insert({creator_id:B.id,chase_enabled:true}).select("creator_id").single(),"enable chase for disposable B only");
+    for(const kind of ["focus","chase"]) {
+      const pack=must(await admin.from("campaign_packs").insert({creator_id:B.id,label:`runtime ${kind}`,spins:10,pack_kind:kind,focus_spins:5,chase_within:5}).select("id").single(),`seed ${kind} pack`);
+      const granted=must(await admin.rpc("grant_focus_pack",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_pack:pack.id,p_prize:B.prizeId}),`grant real ${kind} fixture`);
+      check(granted.status==="granted",`real ${kind} RPC creates owned metadata`);
+      must(await admin.rpc("cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:granted.focus.id,p_actor:B.id}),`release ${kind} fixture`);
+    }
+    must(await admin.from("prizes").update({stock:null}).eq("id",B.prizeId).select("id").single(),"restore B unlimited fixture");
+    const ownConfig=await b.from("focus_creator_config").select("creator_id").eq("creator_id",B.id);
+    check(!ownConfig.error&&ownConfig.data?.length===1,"B reads its server-controlled rollout metadata");
+    const otherConfig=await a.from("focus_creator_config").select("creator_id").eq("creator_id",B.id);
+    check(!otherConfig.error&&otherConfig.data?.length===0,"A reads no B rollout settings");
+    check((await b.from("focus_creator_config").update({chase_enabled:false}).eq("creator_id",B.id)).error?.code==="42501","creator cannot change rollout settings");
+    const csvRows=[{name:"CSV runtime",spins:2,amountCents:100,campaignId:null,wheelId:null,error:null}];
+    const csv=must(await admin.rpc("import_fans_durable",{p_batch:randomUUID(),p_creator:B.id,p_request_hash:sha(canonicalProof(["fan-import-v1",csvRows])),p_rows:csvRows}),"seed real durable import metadata");
+    check(csv.status==="imported"&&csv.items[0].token,"CSV RPC creates real owned ledger metadata");
+    //0059: attempts and promise metadata follow tenant RLS; secret context is
+    // never readable by creators. Every external economic RPC is service-only.
+    for(const table of ["fan_focus","chase_reservations","spin_attempts","fan_import_batches","fan_import_items","creator_request_journal"]) {
+      const cols=table==="fan_import_items"?"batch_id,ordinal":"id";
+      const own=await b.from(table).select(cols).eq("creator_id",B.id);
+      check(!own.error && own.data?.length>0,`B can read its nonempty ${table} metadata`);
+      const cross=await a.from(table).select(cols).eq("creator_id",B.id);
+      check(!cross.error && cross.data?.length===0,`A reads none of B's ${table}`);
+      const write=await a.from(table).insert({creator_id:A.id});
+      check(write.error?.code==="42501",`creator cannot directly insert ${table}`);
+      const anonRead=await createClient(URL_,ANON,{auth:{persistSession:false}}).from(table).select(cols);
+      check(!!anonRead.error || anonRead.data?.length===0,`anon cannot read ${table}`);
+    }
+    check(!!(await a.from("spin_attempts").select("context,result,token_hash,request_hash")).error,"attempt future-seed context/bindings remain server-only");
+    check(!!(await a.from("creator_request_journal").select("request_hash,grant_id,batch_id")).error,"creator journal private bindings remain server-only");
+    check(!!(await a.from("fan_import_batches").select("request_hash")).error,"CSV raw-content hash stays server-only");
+    check(!!(await a.from("fan_passes").select("next_server_seed")).error,"unrevealed next seed is not creator-readable");
+    const actorFence=must(await admin.rpc("reconcile_creator_request",{p_request:randomUUID(),p_creator:null,p_actor:B.id,p_kind:"pass",p_cancel:true,p_authorized:false}),"record B actor cancellation fence");
+    check(actorFence.status==="cancelled","a signed actor can withdraw an opaque own intent without guessing its target");
+    const ownFences=await b.from("actor_request_cancellations").select("id").eq("actor_id",B.id);
+    const otherFences=await a.from("actor_request_cancellations").select("id").eq("actor_id",B.id);
+    check(!ownFences.error&&ownFences.data?.length>0,"B reads its own actor fence metadata");
+    check(!otherFences.error&&otherFences.data?.length===0,"A cannot read B actor fence metadata");
+    check((await a.from("actor_request_cancellations").insert({actor_id:A.id,id:randomUUID(),kind:"pass"})).error?.code==="42501","creator cannot directly write cancellation fences");
+    const anonFences=await createClient(URL_,ANON,{auth:{persistSession:false}}).from("actor_request_cancellations").select("id");
+    check(!!anonFences.error||anonFences.data?.length===0,"anon cannot read cancellation fences");
+    const binding={p_attempt:randomUUID(),p_token:B.token,p_request_hash:sha("denial")};
+    for(const [fn,args] of [
+      ["record_fan_reward_views",{p_spins:[randomUUID()],p_token:B.token}],
+      ["prepare_spin_attempt",binding],["get_spin_attempt_status",binding],["cancel_spin_attempt",{...binding,p_error:"no_prizes"}],
+      ["commit_spin_attempt",{...binding,p_context:{},p_spin:{},p_expected_reward:{},p_next_seed:{}}],
+      ["grant_focus_pack",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_pack:randomUUID(),p_prize:B.prizeId}],
+      ["cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:randomUUID()}],
+      ["cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:randomUUID(),p_actor:A.id}],["get_fan_focus_state",{p_token:B.token}],
+      ["grant_pass_spins",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_spins:1,p_bonus:0,p_amount:0}],
+      ["edit_pass_grant",{p_creator:B.id,p_grant:randomUUID(),p_spins:1,p_bonus:0,p_amount:0}],
+      ["edit_pass_grant",{p_request:randomUUID(),p_creator:B.id,p_grant:randomUUID(),p_patch:{spins:1},p_actor:A.id}],
+      ["create_pass_grant",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_wheel:B.wheelId,p_name:"forged",p_spins:1,p_bonus:0,p_amount:0,p_campaign:null}],
+      ["award_fan_referral",{p_creator:B.id,p_fan:B.fanId}],["ensure_pass_commitment",{p_token:B.token}],
+      ["import_fans_durable",{p_batch:randomUUID(),p_creator:B.id,p_request_hash:sha("denial"),p_rows:[]}],
+      ["reconcile_creator_request",{p_request:B.requestId,p_creator:B.id,p_actor:B.id,p_kind:"pass",p_cancel:false,p_authorized:true}],
+    ]) {
+      check((await a.rpc(fn,args)).error?.code==="42501",`authenticated cannot execute ${fn}`);
+      check((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc(fn,args)).error?.code==="42501",`anon cannot execute ${fn}`);
+    }
+    for(const [fn,args] of [["import_fans",{p_rows:[]}],["claim_spin",{p_token:B.token}],["credit_pass_spins",{p_fan_id:B.fanId,p_spins:1}],["finalize_reward_spin",{p_spin:{},p_expected:{}}],["reserve_reward_code",{p_prize:B.prizeId,p_spin:randomUUID()}],["release_reward_code",{p_spin:randomUUID()}]])check(!!(await admin.rpc(fn,args)).error,`service cannot execute retired ${fn}`);
+    check((await admin.rpc("edit_pass_grant",{p_creator:B.id,p_grant:randomUUID(),p_spins:1,p_bonus:0,p_amount:0})).error?.code==="42501","service cannot bypass edit journal through retired positional API");
+    check((await admin.rpc("cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:randomUUID()})).error?.code==="42501","service cannot release promises through retired actorless cancellation API");
+    check((await a.rpc("import_fans",{p_rows:[]})).error?.code==="42501","authenticated cannot bypass durable imports through the legacy API");
+    check((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc("import_fans",{p_rows:[]})).error?.code==="42501","anon cannot bypass durable imports through the legacy API");
+
     // RM-4 (0046): the home-screen icon setter writes only the caller's row.
     const setIcon = await a.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!setIcon.error, `A can set its own home-screen icon (${setIcon.error?.message ?? "ok"})`);
@@ -256,10 +353,10 @@ async function main() {
     const inDays = (d) => new Date(Date.now() + d * DAY).toISOString();
     const took = await admin.rpc("fan_take_break", { p_token: A.token, p_until: inDays(7) });
     check(!took.error && typeof took.data === "string", `the server starts A's fan's break (${took.error?.message ?? "ok"})`);
-    const refused = await admin.rpc("claim_spin", { p_token: A.token });
-    check(!refused.error && refused.data === null, `claim_spin refuses a spin during the break (got ${refused.data})`);
-    const other = await admin.rpc("claim_spin", { p_token: B.token });
-    check(typeof other.data === "number", `B's fan (no break) still spins (got ${other.data}; ${other.error?.message ?? "ok"})`);
+    const refused = await admin.rpc("prepare_spin_attempt", {p_attempt:randomUUID(),p_token:A.token,p_request_hash:sha("runtime-break")});
+    check(!refused.error && refused.data?.status==="declined" && refused.data?.error==="on_break", "atomic spin preparation refuses a fan on a break without debit");
+    const other = await recordRuntimeSpin(B);
+    check(other.result.status==="committed", "B's fan without a break still commits a fully atomic spin");
     const shorter = await admin.rpc("fan_take_break", { p_token: A.token, p_until: inDays(1) });
     check(!shorter.error && Date.parse(shorter.data) === Date.parse(took.data), "asking for a shorter break keeps the longer one");
     const svcShorten = await admin.from("fans").update({ break_until: new Date().toISOString() }).eq("id", A.fanId).select("id");
@@ -612,10 +709,9 @@ async function main() {
       const encryptedCode={cipher:"runtime-code",iv:"runtime-code-iv",key_version:1,hint:"1234",fingerprint:erasedFingerprint};
       must(await admin.rpc("add_reward_codes",{p_prize:rewardPrize.id,p_creator:B.id,p_codes:[encryptedCode]}),"seed delivered erasure code");
       const candidate=must(await admin.from("prize_reward_codes").select("id,cipher,iv,key_version").eq("prize_id",rewardPrize.id).is("spin_id",null).single(),"erasure code candidate");
-      const passForReward=must(await admin.from("fan_passes").select("id").eq("token",B.token).single(),"erasure pass");
-      const erasureSpin=randomUUID();
-      const committed=must(await admin.rpc("finalize_reward_spin",{p_spin:{id:erasureSpin,fan_pass_id:passForReward.id,creator_id:B.id,wheel_id:B.wheelId,fan_id:B.fanId,prize_id:rewardPrize.id,prize_label:"erasure receipt",prize_rarity:"common"},p_expected:{delivery:"codes",codeId:candidate.id,cipher:candidate.cipher,iv:candidate.iv,keyVersion:candidate.key_version}}),"record erasure receipt");
-      check(committed.status==="recorded","erasure fixture records a real instant win");
+      const erasure=await recordRuntimeSpin(B,{delivery:"codes",codeId:candidate.id,cipher:candidate.cipher,iv:candidate.iv,keyVersion:candidate.key_version});
+      const erasureSpin=erasure.request;
+      check(erasure.result.status==="committed","erasure fixture records a real atomic instant win");
       const beforeErase=await admin.from("spins").select("id").eq("creator_id",B.id);
       must(await admin.from("fans").delete().eq("id",B.fanId).select("id"),"delete reward fan");
       const afterErase=await admin.from("spins").select("id").eq("creator_id",B.id);
@@ -626,6 +722,10 @@ async function main() {
       check(tombstone.cipher===null && tombstone.iv===null && tombstone.hint===null && tombstone.erased_at && tombstone.fingerprint===erasedFingerprint && tombstone.spin_id===erasureSpin,"erasure keeps only the consumed fingerprint and no coupon value");
       const repeated=await admin.rpc("add_reward_codes",{p_prize:rewardPrize.id,p_creator:B.id,p_codes:[encryptedCode]});
       check(!repeated.error && repeated.data===0,"re-uploading an erased delivered coupon cannot restock it");
+      const erasedIntent=must(await admin.rpc("reconcile_creator_request",{p_request:B.requestId,p_creator:B.id,p_actor:B.id,p_kind:"pass",p_authorized:true}),"reconcile erased creator intent");
+      check(erasedIntent.status==="gone"&&!erasedIntent.receipt,"erased fan leaves a terminal creator receipt without resurrecting a link");
+      const lateCreate=must(await admin.rpc("create_pass_grant",{p_request:B.requestId,p_creator:B.id,p_fan:B.fanId,p_wheel:B.wheelId,p_name:"b fan",p_spins:5,p_bonus:0,p_amount:1000,p_campaign:null,p_actor:B.id}),"late erased creator replay");
+      check(lateCreate.status==="gone","late same-key bootstrap refuses to recreate an erased fan");
     }
     //0058: metadata-only fixtures. Never creates, lists or removes Storage bytes.
     // All no-FK work rows are scoped to this run's disposable creators and

@@ -1,0 +1,192 @@
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { FakeSupabase, type Row } from "./fakeSupabase";
+
+const OWNER = "creator-owner", OTHER = "creator-other";
+const db = new FakeSupabase(OWNER);
+db.enforceAtomicEconomy = true;
+let configured = true, signedIn = true, serviceClients = 0;
+let intercept: ((name: string, args: Row, result: unknown) => void) | null = null;
+mock.module("@/lib/supabase/server", { namedExports: {
+  isSupabaseConfigured: () => configured,
+  createClient: async () => ({ ...db.client(), auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER } : null }, error: null }) } }),
+  createServiceClient: () => {
+    serviceClients++;
+    return { ...db.client(), rpc: async (name: string, args: Row) => {
+      const result = await db.client().rpc(name, args);
+      intercept?.(name, args, result);
+      return result;
+    } };
+  },
+} });
+let checks = 0;
+const check = (label: string, condition: unknown) => { assert.ok(condition, label); checks++; };
+const isError = (value: unknown, code: string) => !!value && typeof value === "object" && "error" in value && value.error === code;
+const key = () => crypto.randomUUID();
+const balances = (fanId: string) => db.row("fans", fanId).spins_remaining === db.sumPasses(fanId) && db.row("fans", fanId).spins_granted_total === db.sumPasses(fanId, "spins_granted_total");
+async function main() {
+  const { createPass } = await import("./spins");
+  const { grantSpins, editGrant } = await import("./fans");
+  const badFan = await db.client().from("fans").insert({ creator_id: OWNER, spins_remaining: 50 });
+  const badPass = await db.client().from("fan_passes").insert({ creator_id: OWNER, spins_remaining: 50 });
+  check("the economic fixture rejects standalone nonzero fan and pass bootstrap writes", badFan.error?.code === "42501" && badPass.error?.code === "42501" && db.rows("fans").length === 0 && db.rows("fan_passes").length === 0);
+  const unknownRpc = await db.client().rpc("unmodelled_economic_write", {});
+  check("unknown RPCs never silently succeed in the transaction fixture", !!unknownRpc.error);
+  const deniedWrites = db.statements.length;
+  const wheel = db.seed("wheels", { creator_id: OWNER, is_active: true });
+  const campaign = db.seed("campaigns", { creator_id: OWNER, pinned_wheel_id: wheel.id });
+  const pack = db.seed("campaign_packs", { creator_id: OWNER, spins: 5, bonus_spins: 2, amount_cents: 900, pack_kind: "spins" });
+  const stackKey = key();
+  const stack = await createPass({ name: "Stacked pack", spins: 9999, amountCents: 1, bonusSpins: 999, packId: String(pack.id), packUnits: 3, requestId: stackKey });
+  assert.ok(!("error" in stack));
+  const stackedPass = db.rows("fan_passes").find(p => p.token === stack.token)!;
+  const stackedGrant = db.rows("grants").find(g => g.fan_id === stack.fanId)!;
+  check("ordinary stacked presets multiply only saved server economics", stackedPass.spins_remaining === 21 && stackedGrant.spins === 21 && stackedGrant.bonus_spins === 6 && stackedGrant.amount_cents === 2700);
+  const stackReplay = await createPass({ name: "Stacked pack", spins: 9999, amountCents: 1, bonusSpins: 999, packId: String(pack.id), packUnits: 3, requestId: stackKey });
+  check("stack replay keeps exactly one bundle grant", !("error" in stackReplay) && stackReplay.token === stack.token && stackedPass.spins_remaining === 21);
+  check("changed stack quantity cannot reuse an operation key", isError(await createPass({ name: "Stacked pack", spins: 9999, amountCents: 1, bonusSpins: 999, packId: String(pack.id), packUnits: 4, requestId: stackKey }), "conflict"));
+  check("pack multiplication overflow and unpacked quantities cannot mint credits", isError(await createPass({ name: "No", spins: 1, packId: String(pack.id), packUnits: 1_000_000 }), "invalid_pack") && isError(await createPass({ name: "No", spins: 1, packUnits: 2 }), "invalid_pack"));
+  check("pack units are validated before any transaction", isError(await createPass({ name: "No", spins: 1, packUnits: 0 }), "invalid") && isError(await createPass({ name: "No", spins: 1, packUnits: 1.5 }), "invalid"));
+  const intent = key();
+  const options = { name: "Atomic fan", spins: 999, amountCents: 1, bonusSpins: 88, packId: String(pack.id), campaignId: String(campaign.id), requestId: intent };
+  const first = await createPass(options);
+  assert.ok(!("error" in first), "bootstrap works under the 0059 direct economic-write guard");
+  const firstPass = db.rows("fan_passes").find(p => p.token === first.token)!;
+  const firstGrant = db.row("grants", intent);
+  check("bootstrap uses the server pack price, total spins and bonus subset", firstGrant.spins === 7 && firstGrant.bonus_spins === 2 && firstGrant.amount_cents === 900 && firstPass.spins_remaining === 7);
+  check("bootstrap returns its durable intent and preserves aggregate totals", first.requestId === intent && balances(first.fanId));
+  const sizes = Object.fromEntries(Object.entries(db.tables).map(([table, rows]) => [table, rows.length]));
+  const replay = await createPass(options);
+  check("new-fan retry returns its original token and fan without minting anything", !("error" in replay) && replay.token === first.token && replay.fanId === first.fanId && Object.entries(sizes).every(([table, size]) => db.rows(table).length === size));
+  const originalPrice = pack.amount_cents;
+  pack.amount_cents = 1500; pack.spins = 12;
+  const repricedReplay = await createPass(options);
+  check("a server-side pack price edit cannot alter a previously committed intent", !("error" in repricedReplay) && repricedReplay.fanId === first.fanId && firstPass.spins_remaining === 7 && firstGrant.amount_cents === originalPrice);
+  db.tables.campaign_packs = db.rows("campaign_packs").filter(p => p.id !== pack.id);
+  const removedReplay = await createPass(options);
+  check("a removed pack still permits recovery of its existing committed request", !("error" in removedReplay) && removedReplay.token === first.token && firstPass.spins_remaining === 7);
+  const defaultWheelIntent = key();
+  const defaultOptions = { name: "Default wheel retry", spins: 1, requestId: defaultWheelIntent };
+  const defaultFirst = await createPass(defaultOptions);
+  assert.ok(!("error" in defaultFirst));
+  wheel.is_active = false;
+  const replacementWheel = db.seed("wheels", { creator_id: OWNER, is_active: true });
+  const defaultReplay = await createPass(defaultOptions);
+  check("default wheel changes cannot redirect a committed retry", !("error" in defaultReplay) && defaultReplay.token === defaultFirst.token && db.rows("fan_passes").find(p => p.token === defaultReplay.token)?.wheel_id === wheel.id);
+  replacementWheel.is_active = false; wheel.is_active = true;
+  db.tables.campaigns = db.rows("campaigns").filter(c => c.id !== campaign.id);
+  const deletedCampaignReplay = await createPass(options);
+  check("deleted campaign metadata cannot prevent recovery of a committed request", !("error" in deletedCampaignReplay) && deletedCampaignReplay.fanId === first.fanId);
+  db.tables.campaigns.push(campaign);
+  check("changed intent cannot reuse an existing operation key", isError(await createPass({ ...options, name: "Changed identity" }), "conflict") && firstPass.spins_remaining === 7);
+  check("no client economic writes or compensating deletes occur", !db.statements.slice(deniedWrites).some(s => !s.transaction && ((s.table === "fan_passes" && s.op !== "select") || s.op === "delete")));
+
+  const grantKey = key();
+  let lost = false;
+  intercept = (name) => { if (name === "grant_pass_spins" && !lost) { lost = true; throw new Error("transport lost after commit"); } };
+  const retried = await grantSpins(first.token, 3, grantKey);
+  intercept = null;
+  check("lost grant response retries the identical committed request exactly once", !("error" in retried) && retried.spinsRemaining === 10 && firstPass.spins_remaining === 10 && db.rows("grants").filter(g => g.id === grantKey).length === 1);
+  const calls = db.rpcCalls.filter(call => call.name === "grant_pass_spins" && call.args.p_request === grantKey);
+  check("transport retries retain the same intent payload", calls.length === 2 && JSON.stringify(calls[0].args) === JSON.stringify(calls[1].args));
+  check("cross-request replay does not credit a second time", !isError(await grantSpins(first.token, 3, grantKey), "db_error") && firstPass.spins_remaining === 10);
+  check("changed top-up quantity conflicts without minting", isError(await grantSpins(first.token, 4, grantKey), "conflict") && firstPass.spins_remaining === 10);
+
+  const unknownKey = key();
+  intercept = (name) => { if (name === "grant_pass_spins") throw new Error("response remains unknown"); };
+  const unknown = await grantSpins(first.token, 2, unknownKey);
+  intercept = null;
+  check("an unknown outcome never triggers a blind subtraction", isError(unknown, "db_error") && firstPass.spins_remaining === 12 && balances(first.fanId));
+  check("retrying an unknown outcome recovers the same grant", !("error" in await grantSpins(first.token, 2, unknownKey)) && firstPass.spins_remaining === 12);
+
+  const beforeFailed = { fans: db.rows("fans").length, passes: db.rows("fan_passes").length, grants: db.rows("grants").length };
+  db.beforeStatement = stmt => stmt.transaction && stmt.table === "grants" && stmt.op === "insert" ? { code: "P0001", message: "injected grant failure" } : undefined;
+  const aborted = await createPass({ name: "Must not leak", spins: 4, wheelId: String(wheel.id), requestId: key() });
+  db.beforeStatement = null;
+  check("failed bootstrap publishes no fan, pass, grant or credit", isError(aborted, "db_error") && db.rows("fans").length === beforeFailed.fans && db.rows("fan_passes").length === beforeFailed.passes && db.rows("grants").length === beforeFailed.grants);
+  const bootstrapKey = key();
+  intercept = name => { if (name === "create_pass_grant") throw new Error("lost bootstrap reply"); };
+  const lostBootstrap = await createPass({ name: "Recoverable", spins: 4, wheelId: String(wheel.id), requestId: bootstrapKey });
+  intercept = null;
+  const recovered = await createPass({ name: "Recoverable", spins: 4, wheelId: String(wheel.id), requestId: bootstrapKey });
+  check("ambiguous new-fan creation is recovered without deletion or duplication", isError(lostBootstrap, "db_error") && !("error" in recovered) && db.rows("fans").filter(f => f.display_name === "Recoverable").length === 1 && db.rows("grants").filter(g => g.id === bootstrapKey).length === 1);
+
+  let beforeServices = serviceClients;
+  signedIn = false;
+  check("signed-out mutations fail before creating a service client", isError(await grantSpins(first.token, 1), "unauthorized") && isError(await createPass({ name: "No", spins: 1 }), "unauthorized") && isError(await editGrant(intent, { spins: 8 }), "unauthorized") && serviceClients === beforeServices);
+  signedIn = true;
+  db.permissions[OWNER] = false;
+  beforeServices = serviceClients;
+  check("revoked own grant permission fails before privileged mutation", isError(await grantSpins(first.token, 1), "unauthorized") && isError(await editGrant(intent, { spins: 8 }), "unauthorized") && isError(await createPass({ name: "No", spins: 1, fanId: first.fanId }), "unauthorized") && serviceClients === beforeServices);
+  db.permissions[OWNER] = true;
+  const otherWheel = db.seed("wheels", { creator_id: OTHER, is_active: true });
+  const otherFan = db.seed("fans", { creator_id: OTHER });
+  const otherPass = db.seed("fan_passes", { token: "other-token", creator_id: OTHER, wheel_id: otherWheel.id, fan_id: otherFan.id, spins_remaining: 2, spins_granted_total: 2 });
+  beforeServices = serviceClients;
+  check("foreign fan and token cannot invoke service grants", isError(await grantSpins("other-token", 1), "unauthorized") && isError(await createPass({ name: "No", spins: 1, fanId: String(otherFan.id), wheelId: String(otherWheel.id) }), "unauthorized") && serviceClients === beforeServices && otherPass.spins_remaining === 2);
+  db.permissions[OTHER] = true;
+  check("an explicitly authorized agency seat can grant the target's pass", !("error" in await grantSpins("other-token", 1)) && otherPass.spins_remaining === 3);
+  const agency = await createPass({ name: "Agency top-up", spins: 2, fanId: String(otherFan.id), wheelId: String(otherWheel.id) });
+  check("agency bootstrap uses the actual target creator rather than session UID", !("error" in agency) && otherPass.spins_remaining === 5 && db.rpcCalls.filter(call => call.name === "create_pass_grant").at(-1)?.args.p_creator === OTHER);
+
+  db.row("fans", first.fanId).break_until = "2999-01-01T00:00:00Z";
+  const receiptDuringBreak = await createPass(options);
+  check("a committed creation receipt remains recoverable during a later break", !("error" in receiptDuringBreak) && receiptDuringBreak.fanId === first.fanId);
+  const beforeBreak = firstPass.spins_remaining;
+  check("F6 blocks token, creator top-up and increasing grant edits", isError(await grantSpins(first.token, 1), "on_break") && isError(await createPass({ name: "No", spins: 1, fanId: first.fanId }), "on_break") && isError(await editGrant(intent, { spins: 8 }), "on_break") && firstPass.spins_remaining === beforeBreak);
+  db.row("fans", first.fanId).break_until = null;
+  firstPass.self_excluded_at = new Date().toISOString();
+  check("a paused link cannot receive economic credits", isError(await grantSpins(first.token, 1), "not_found"));
+  firstPass.self_excluded_at = null;
+  check("foreign explicit wheel and campaign are refused before a grant", isError(await createPass({ name: "No", spins: 1, wheelId: String(otherWheel.id) }), "no_wheel") && isError(await createPass({ name: "No", spins: 1, campaignId: "foreign-campaign" }), "campaign_not_found"));
+  const focusPack = db.seed("campaign_packs", { creator_id: OWNER, spins: 10, bonus_spins: 0, amount_cents: 500, pack_kind: "focus" });
+  check("a focus pack cannot be sold through ordinary untargeted creation", isError(await createPass({ name: "No", spins: 1, packId: String(focusPack.id) }), "invalid_pack"));
+  check("invalid and nonfinite numbers fail without invoking the economic RPC", isError(await grantSpins(first.token, Infinity), "invalid") && isError(await createPass({ name: "No", spins: NaN }), "invalid") && isError(await editGrant(intent, { spins: Infinity }), "invalid"));
+
+  const edited = await editGrant(intent, { spins: 8 });
+  check("legacy inclusive-bonus grant grows by its total delta only", "ok" in edited && firstGrant.spins === 8 && firstGrant.bonus_spins === 2 && firstPass.spins_remaining === Number(beforeBreak) + 1);
+  check("campaign metadata can be cleared explicitly", "ok" in await editGrant(intent, { campaignId: null }) && firstGrant.campaign_id === null);
+  firstGrant.campaign_id = campaign.id;
+  check("omitted campaign metadata stays unchanged", "ok" in await editGrant(intent, { amountCents: 999 }) && firstGrant.campaign_id === campaign.id);
+  const editCall = db.rpcCalls.filter(call => call.name === "edit_pass_grant").at(-1)!;
+  check("untouched spin and campaign fields are not overwritten by a money-only edit", JSON.stringify(editCall.args.p_patch) === JSON.stringify({ amountCents: 999 }) && editCall.args.p_actor === OWNER && typeof editCall.args.p_request === "string");
+  const noPassFan = db.seed("fans", { creator_id: OWNER });
+  const noPassGrant = db.seed("grants", { creator_id: OWNER, fan_id: noPassFan.id, spins: 3, amount_cents: 1 });
+  check("amount-only correction remains possible without an active pass", "ok" in await editGrant(String(noPassGrant.id), { amountCents: 50 }) && noPassGrant.amount_cents === 50);
+  check("an actual credit needs an active spendable pass", isError(await editGrant(String(noPassGrant.id), { spins: 4 }), "no_active_pass"));
+
+  const referrer = db.seed("fans", { creator_id: OWNER, referral_code: "REFER-OWN" });
+  const referrerPass = db.seed("fan_passes", { token: "referrer", creator_id: OWNER, fan_id: referrer.id, wheel_id: wheel.id, spins_remaining: 4, spins_granted_total: 4 });
+  const unpaid = await createPass({ name: "Referred", spins: 0, wheelId: String(wheel.id), referralCode: "REFER-OWN", requestId: key() });
+  assert.ok(!("error" in unpaid));
+  const paidKey = key();
+  const paidOptions = { name: "Referred", spins: 2, amountCents: 500, wheelId: String(wheel.id), fanId: unpaid.fanId, requestId: paidKey };
+  const paid = await createPass(paidOptions);
+  check("first paid grant atomically credits both spendable referral passes", !("error" in paid) && db.sumPasses(unpaid.fanId) === 5 && referrerPass.spins_remaining === 7 && db.row("fans", unpaid.fanId).referral_credited === true && balances(unpaid.fanId) && balances(String(referrer.id)));
+  await createPass(paidOptions);
+  check("retrying paid grant and referral cannot repeat either credit", db.sumPasses(unpaid.fanId) === 5 && referrerPass.spins_remaining === 7 && db.rows("referrals").filter(r => r.referred_fan_id === unpaid.fanId && r.credited_at).length === 1);
+  for (let index = 0; index < 3; index++) await createPass({ name: `Referred ${index}`, spins: 1, amountCents: 50, wheelId: String(wheel.id), referralCode: "REFER-OWN", requestId: key() });
+  check("the referral cap prevents a fourth award", db.rows("referrals").filter(r => r.referrer_fan_id === referrer.id && r.credited_at).length === 3 && referrerPass.spins_remaining === 13);
+
+  const retryReferrer = db.seed("fans", { creator_id: OWNER, referral_code: "REFER-RETRY" });
+  const retryPass = db.seed("fan_passes", { token: "retry-referrer", creator_id: OWNER, fan_id: retryReferrer.id, wheel_id: wheel.id, spins_remaining: 4, spins_granted_total: 4 });
+  const referralKey = key(), retryOptions = { name: "Retry referral", spins: 2, amountCents: 500, wheelId: String(wheel.id), referralCode: "REFER-RETRY", requestId: referralKey };
+  db.beforeStatement = stmt => stmt.table === "referrals" && stmt.op === "update" ? { code: "P0001", message: "fail referral commit" } : undefined;
+  const referralFailed = await createPass(retryOptions);
+  db.beforeStatement = null;
+  assert.ok(!("error" in referralFailed));
+  check("a failed referral leaves its paid grant and both bonus balances consistent", db.sumPasses(referralFailed.fanId) === 2 && retryPass.spins_remaining === 4 && !db.row("fans", referralFailed.fanId).referral_credited);
+  await createPass(retryOptions);
+  check("the same purchase retry recovers a pending referral without charging or crediting twice", db.sumPasses(referralFailed.fanId) === 5 && retryPass.spins_remaining === 7 && db.rows("grants").filter(g => g.id === referralKey).length === 1);
+
+  configured = false;
+  const mockKey = key(), mockOptions = { name: "Mock retry", spins: 2, requestId: mockKey };
+  const mockFirst = await createPass(mockOptions), mockAgain = await createPass(mockOptions);
+  assert.ok(!("error" in mockFirst) && !("error" in mockAgain));
+  check("demo bootstrap uses the same durable intent contract", mockFirst.token === mockAgain.token && mockFirst.fanId === mockAgain.fanId && isError(await createPass({ ...mockOptions, spins: 3 }), "conflict"));
+  const mockGrantKey = key();
+  const mockCredit = await grantSpins(mockFirst.token, 3, mockGrantKey), mockCreditAgain = await grantSpins(mockFirst.token, 3, mockGrantKey);
+  check("demo top-up replay and conflict match the real data path", !("error" in mockCredit) && !("error" in mockCreditAgain) && mockCredit.spinsRemaining === mockCreditAgain.spinsRemaining && isError(await grantSpins(mockFirst.token, 4, mockGrantKey), "conflict"));
+  console.log(`atomic credit callers: ${checks} checks passed`);
+}
+main().catch(error => { console.error(error); process.exit(1); });

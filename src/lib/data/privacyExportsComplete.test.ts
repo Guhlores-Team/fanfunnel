@@ -23,6 +23,8 @@ const svc = new FakeTables({
   spins: many(2001, (id) => ({ ...owned(id), prize_label: `Win ${id}`, prize_rarity: "common", server_seed: "spent-seed", pool_snapshot: { prizes: [{ label: "Public", cost_cents: 982341, notes: "SNAPSHOT-PRIVATE" }], cipher: "CIPHER-SECRET" } })),
   redemptions: many(2001, (id) => ({ id, spin_id: id, creator_id: CA, status: "fulfilled", created_at: at, notes: "PRIVATE-DELIVERY-NOTES", due_at: "PRIVATE-DUE-DATE" })),
   spin_rewards: [...many(2001, (id) => ({ spin_id: id, creator_id: CA, kind: "code", views: 3, last_viewed_at: at, created_at: at, erased_at: id === "000001" ? at : null, ...material })), { spin_id: "foreign-fan-spin", creator_id: CA, kind: "FOREIGN-RECEIPT" }, { spin_id: "000001", creator_id: CB, kind: "FOREIGN-TENANT-RECEIPT" }],
+  fan_focus: [...many(2001, id => ({ ...owned(`focus-${id}`), kind: "focus", prize_label: "Chosen prize", multiplier: 3, total_spins: 10, spins_left: 7, chase_counter: 0, status: "active" })), { ...owned("focus-other"), fan_id: OTHER, prize_label: "FOREIGN-FOCUS" }],
+  spin_attempts: many(2001, id => ({ ...owned(`attempt-${id}`), state: "committed", finished_at: at, request_hash: "REQUEST-HASH-SECRET", token_hash: "TOKEN-HASH-SECRET", context: { serverSeed: "FUTURE-CONTEXT-SECRET" }, result: { value: "RECEIPT-RESULT-SECRET" } })),
   fan_play_reminders: [{ fan_id: FAN, daily: 50, updated_at: at }, { fan_id: OTHER, daily: 100, updated_at: at }],
   fan_checkins: [{ ...owned("check-own"), day: "2026-10-01" }, { ...owned("check-other"), fan_id: OTHER, day: "2026-10-02" }],
   fan_outreach: [{ ...owned("contact-own"), contacted_at: at, snoozed_until: "PRIVATE-SNOOZE", template_id: "PRIVATE-TEMPLATE" }, { ...owned("contact-other"), fan_id: OTHER, contacted_at: "UNRELATED-CONTACT" }],
@@ -45,6 +47,9 @@ const session = new FakeTables({
   push_log: [{ user_id: CA, item_id: "win:own", tag: "win:own", sent_at: at }, { user_id: CB, item_id: "TENANT-B-BUSINESS" }],
   webhooks: [{ id: "webhook-own", creator_id: CA, event: "win", url: "https://example.test/WEBHOOK-CREDENTIAL" }],
   wheel_templates: [{ id: "template-own", creator_id: CA, prizes: [{ label: "Public template prize", reward: { value: "REWARD-VALUE", cipher: "CIPHER-SECRET" }, private_key: "KEY-SECRET" }] }],
+  creator_request_journal: [...many(2001, id => ({ id: `journal-${id}`, creator_id: CA, actor_id: CA, kind: "pass", state: "committed", created_at: at, request_hash: "REQUEST-HASH-SECRET", context: { seed: "FUTURE-CONTEXT-SECRET" }, result: { token: "RECEIPT-RESULT-SECRET" } })), { id: "journal-foreign", creator_id: CB, state: "TENANT-B-BUSINESS" }],
+  fan_import_batches: [{ id: "batch-own", creator_id: CA, created_at: at, request_hash: "REQUEST-HASH-SECRET" }],
+  fan_import_items: [{ batch_id: "batch-own", ordinal: 0, creator_id: CA, grant_id: "grant-own", created_at: at }],
   prize_rewards: [...many(2001, (id) => ({ prize_id: id, creator_id: CA, kind: "text", updated_at: at, ...material })), { prize_id: "other", creator_id: CB, kind: "TENANT-B-BUSINESS" }],
   prize_reward_codes: [...many(2001, (id) => ({ id, prize_id: "p-own", creator_id: CA, spin_id: id, assigned_at: at, created_at: at, erased_at: at, ...material })), { id: "other", creator_id: CB, prize_id: "TENANT-B-BUSINESS" }],
   spin_rewards: [...many(2001, (id) => ({ spin_id: id, creator_id: CA, kind: "code", views: 2, last_viewed_at: at, created_at: at, erased_at: at, ...material })), { spin_id: "other", creator_id: CB, kind: "TENANT-B-BUSINESS" }],
@@ -71,6 +76,7 @@ async function main() {
   check("all 2001 own instant receipt metadata rows survive paging", fan.instantReceipts?.length === 2001 && fan.instantReceipts[0].views === 3 && fan.instantReceipts[0].erasedAt === at);
   for (const statement of svc.statements.filter((row) => row.table === "spin_rewards")) check("receipts are pinned to the creator and owned spin IDs", eqValue(statement, "creator_id") === CA && !!statement.orders?.some((order) => order.column === "spin_id") && !/cipher|iv|fingerprint|hint|key_version|code_id/.test(statement.columns ?? ""));
   check("an uncapped successful export is marked complete", fan.complete && fan.failed.length === 0 && fan.truncated.length === 0);
+  check("fan focus and attempt metadata stay scoped and omit recovery secrets", fan.focusPacks.length === 2001 && fan.focusPacks[0].spinsLeft === 7 && fan.spinAttempts.length === 2001 && !/FOREIGN-FOCUS|REQUEST-HASH-SECRET|TOKEN-HASH-SECRET|FUTURE-CONTEXT-SECRET|RECEIPT-RESULT-SECRET/.test(JSON.stringify(fan)));
   check("the fan gets its own break and private reminder", fan.play.breakUntil === "2026-11-01T00:00:00Z" && fan.play.reminderDaily === 50 && fan.play.reminderUpdatedAt === at);
   check("only the fan's own check-ins and contacts are exported", fan.checkIns.length === 1 && fan.outreach.length === 1 && fan.outreach[0].contactedAt === at);
   check("the fan gets only its own submitted safety report", fan.reportsYouSent.length === 1 && fan.reportsYouSent[0].detail === "My report");
@@ -112,6 +118,12 @@ async function main() {
   check("durable work metadata is scoped and omits token hashes and leases", creator.sections.storage_objects.length === 1 && creator.sections.storage_deletions.length === 1 && creator.sections.storage_deletions[0].state === "paused");
   for (const secret of ["PHOTO-INTERNAL-PATH", "PHOTO-SIGNED-URL", "PHOTO-BYTES", "THEME-SECRET-URL", "THEME-SECRET-CIPHER", "WORK-CIPHER", "WORK-LEASE", "WORK-HASH", "WORK-DISPATCH-WORKER", "WORK-DISPATCH-ATTEMPT"]) check(`theme/media/work export excludes ${secret}`, !creatorText.includes(secret));
   check("durable dispatch export is tenant scoped", creator.sections.storage_dispatches.length === 1 && creator.sections.storage_dispatches[0].state === "uncertain");
+  check("creator request/import exports include scoped metadata and omit bindings", creator.sections.creator_request_journal.length === 2001 && creator.sections.fan_import_batches.length === 1 && creator.sections.fan_import_items.length === 1 && !/REQUEST-HASH-SECRET|FUTURE-CONTEXT-SECRET|RECEIPT-RESULT-SECRET/.test(creatorText));
+  session.rowLimit = 137;
+  session.failWhen = statement => statement.table === "creator_request_journal" && statement.range?.[0] === 137 ? "JOURNAL-QUERY-SECRET" : null;
+  const journalPartial = (await exportCreatorData())!;
+  check("creator journal paging failure is explicit with its successful prefix", !journalPartial.complete && journalPartial.failed.includes("creator_request_journal") && journalPartial.sections.creator_request_journal.length === 137 && !JSON.stringify(journalPartial).includes("JOURNAL-QUERY-SECRET"));
+  session.failWhen = () => null; session.rowLimit = 1000;
   check("creator export never takes the service-role path", !serviceDuringCreator);
   check("fan-private reminders are deliberately excluded from creator queries", !session.statements.some((statement) => statement.table === "fan_play_reminders") && creator.excluded.some((reason) => reason.includes("fan-private")));
   check("safe complete creator export is marked complete", creator.complete);
@@ -154,12 +166,13 @@ async function main() {
   check("mock fan receipts remain scoped and export never increments views", mockFan.instantReceipts.every((row) => row.views === 4) && !JSON.stringify(mockFan).includes("MOCK-OTHER-FAN-RECEIPT") && (rewardStore.deliveries.get("instant-000001") as { views: number }).views === 4);
   check("mock code erasure metadata survives without hints or values", mockCreator.sections.prize_reward_codes[0].erased_at === at && !/MOCK-REDEEMABLE-SECRET|MOCK-FINGERPRINT|MOCK-HINT/.test(JSON.stringify([mockFan, mockCreator])));
   check("mock theme/media export uses the real preset keys and safe metadata", (mockCreator.account.theme as Record<string, string>).bg_media_id === photo.id && mockCreator.sections.creator_media[0].caption === "Demo photo" && mockCreator.sections.storage_objects.length === 0 && mockCreator.sections.storage_deletions.length === 0 && !JSON.stringify(mockCreator).includes("MOCK-PHOTO-SECRET-BYTES"));
+  check("mock operation exports are metadata-only and absent from fan controls", !/request_hash|requestHash|context|result|payload|token/i.test(JSON.stringify(mockCreator.sections.creator_request_journal)) && !("creator_request_journal" in mockFan));
   check("mock export credentials stay out too", !/MOCK-PRIVATE-ENDPOINT|MOCK-PRIVATE-KEY|MOCK-PRIVATE-AUTH/.test(JSON.stringify(mockCreator)));
   const demoStore = (globalThis as unknown as { __ffStore: { fans: Map<string, { wins: unknown[] }> } }).__ffStore;
-  demoStore.fans.get(fanId)!.wins = [{ shareId: "instant-000001", at, label: "Instant", rarity: "common", serverSeed: "spent-only" }, ...many(49, (id) => ({ shareId: `manual-${id}`, at, label: "Manual", rarity: "common", serverSeed: "spent-only" }))];
+  demoStore.fans.get(fanId)!.wins = [{ shareId: "instant-000001", at, label: "Instant", rarity: "common", serverSeed: "spent-only" }, ...many(2001, (id) => ({ shareId: `manual-${id}`, at, label: "Manual", rarity: "common", serverSeed: "spent-only" }))];
   const cappedDemo = (await exportFanData(link.token))!;
-  check("instant durable refs deduplicate against the recent display", cappedDemo.spins.length === 2050 && cappedDemo.instantReceipts.length === 2001);
-  check("pre-existing manual demo history cap remains explicitly partial", !cappedDemo.complete && cappedDemo.truncated.includes("spins") && !demo.mockExportCreatorData().complete && demo.mockExportCreatorData().truncated.includes("spins"));
+  check("instant durable refs deduplicate against the recent display", cappedDemo.spins.length === 4002 && cappedDemo.instantReceipts.length === 2001);
+  check("full manual and instant demo history exports completely beyond the old cap", cappedDemo.complete && !cappedDemo.truncated.includes("spins") && demo.mockExportCreatorData().complete && !demo.mockExportCreatorData().truncated.includes("spins"));
   console.log(`privacy export completeness: ${passed} checks passed`);
 }
 main().catch((error) => { console.error(error); process.exit(1); });

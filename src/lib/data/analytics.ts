@@ -1,3 +1,4 @@
+import { focusTag } from "./focusTag";
 // Data layer — analytics: creator overview, deeper metrics (heatmap, prize
 // ROI, profit, cohorts) and the Autopilot feed.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
@@ -57,7 +58,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       .from("redemptions")
       .select(
         `id, status, created_at, notes, due_at,
-       spin:spins(prize_label, prize_rarity, fan:fans(display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
+       spin:spins(pool_snapshot, fair_trace, prize_label, prize_rarity, fan:fans(display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
       )
       .eq("creator_id", user.id)
       .order("created_at", { ascending: false })
@@ -107,6 +108,8 @@ export async function getOverview(): Promise<CreatorOverview> {
     notes: string | null;
     due_at: string | null;
     spin: {
+      pool_snapshot?: unknown;
+      fair_trace?: unknown;
       prize_label: string;
       prize_rarity: RedemptionItem["rarity"];
       fan: { display_name: string | null; handle: string | null } | null;
@@ -125,6 +128,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     notes: r.notes,
     dueAt: r.due_at,
     ...autoTag(r.spin?.reward),
+    ...focusTag(r.spin?.pool_snapshot, r.spin?.fair_trace),
   }));
 
   function autoTag(v: AutoRow | AutoRow[] | null | undefined): Pick<RedemptionItem, "auto"> {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
-import type { CampaignPack, DmTemplate, FanAccountSummary, FanDetail, Grant } from "@/lib/data/types";
+import type { CampaignPack, DmTemplate, FanAccountSummary, FanDetail } from "@/lib/data/types";
 import { formatCents, timeAgo } from "@/lib/format";
 import { copyToClipboard, useClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
@@ -11,12 +11,15 @@ import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useSheetDrag } from "@/lib/hooks/useSheetDrag";
 import { CloseButton, Field, TagEditor, initialsOf } from "./ui";
 import PackPresets from "@/components/dashboard/PackPresets";
-import { grantImpact, grantPriceError, grantSaveAmount, parseSpins, perSpinText, revenueChangeText } from "./grantImpact";
 import { useToast } from "@/components/ui/Toast";
 import { GLOW_WINDOW_DAYS } from "@/lib/glow/config";
 import { copyLinkToken, noLinkMessage } from "./fansHelpers";
 import { useFetch } from "@/lib/hooks/useFetch";
 import { fillTemplate } from "@/lib/winback/template";
+import FocusPackPanel from "./FocusPackPanel";
+import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
+import CreatorRequestRecovery from "./CreatorRequestRecovery";
+import GrantRow from "./GrantEditRow";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -29,7 +32,8 @@ export type TopUpFn = (
   amountDollars?: number,
   campaignId?: string,
   packId?: string | null,
-  wheelId?: string
+  wheelId?: string,
+  packUnits?: number,
 ) => void | Promise<void>;
 
 const well = "rounded-[10px] border border-[var(--hair)] [background:var(--s2)]";
@@ -84,6 +88,9 @@ export default function FanDetailDrawer({
   const [blocking, setBlocking] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  const [focusPreset, setFocusPreset] = useState<{ id: string | null; nonce: number }>({ id: null, nonce: 0 });
+  const leave = useCreatorLeave();
+  const closeDrawer = useCallback(() => leave(onClose, { scope: [`fan-focus:${fanId}`, `fan-topup:${fanId}`, `fan-edit:${fanId}`], consequence: "Closing discards these selections. It does not undo a grant request already sent." }), [leave, onClose, fanId]);
   // Fans with a top-up request in flight. Held here, not in TopUpForm, because
   // the form unmounts when it is collapsed, the fan changes or the drawer closes;
   // its local state would reset and let a second grant through mid-request.
@@ -96,6 +103,7 @@ export default function FanDetailDrawer({
   }, []);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  useCreatorDraft(`fan-edit:${fanId}`, "fan notes or grant edits", !!fanId && !!detail && (notes.trim() ? notes : null) !== (detail.notes ?? null), savingNotes || savingTags || blocking || deleting);
   const closeRef = useRef<HTMLButtonElement>(null);
   const topUpId = useId();
   const breakNoteId = useId();
@@ -105,11 +113,11 @@ export default function FanDetailDrawer({
   // within the panel, Escape to close, and restore focus on close.
   const panelRef = useFocusTrap<HTMLDivElement>({
     active: !!fanId,
-    onEscape: onClose,
+    onEscape: closeDrawer,
     initialFocus: closeRef,
   });
   // Below `lg` the panel is a bottom sheet: its grabber drags down to dismiss.
-  const sheetDrag = useSheetDrag(panelRef, onClose);
+  const sheetDrag = useSheetDrag(panelRef, closeDrawer);
   // The creator's display name, for a DM template's {creator}.
   const { data: account } = useFetch<{ displayName: string | null }>(fanId ? "/api/account" : null, {
     refreshOnVisible: false,
@@ -119,7 +127,10 @@ export default function FanDetailDrawer({
   const reload = useCallback(async () => {
     if (!fanId) return;
     const res = await fetch(`/api/fans/${fanId}`, { cache: "no-store" });
-    if (res.ok) setDetail(await res.json());
+    if (!res.ok) throw new Error("fan_refresh_failed");
+    const next = await res.json() as FanDetail;
+    setDetail(next);
+    return next;
   }, [fanId]);
 
   // Fetch the fan detail whenever the open fan changes. `blocked` is seeded from
@@ -134,6 +145,7 @@ export default function FanDetailDrawer({
     setNotes("");
     setBlocked(false);
     setTopUpOpen(false);
+    setFocusPreset({ id: null, nonce: 0 });
     setConfirmDelete(false);
     (async () => {
       try {
@@ -227,7 +239,10 @@ export default function FanDetailDrawer({
     }
   }
 
-  async function handleDelete() {
+  function handleDelete() {
+    leave(() => void deleteConfirmedFan(), { scope: [`fan-focus:${fanId}`, `fan-topup:${fanId}`, `fan-edit:${fanId}`], consequence: "Deleting discards these selections and removes this fan. It does not undo a grant request already sent." });
+  }
+  async function deleteConfirmedFan() {
     if (!fanId) return;
     setDeleting(true);
     try {
@@ -316,7 +331,7 @@ export default function FanDetailDrawer({
     <div className="fixed inset-0 z-50">
       <div
         className="fade-in absolute inset-0 bg-black/60"
-        onClick={onClose}
+        onClick={closeDrawer}
         aria-hidden="true"
       />
       <div
@@ -369,7 +384,7 @@ export default function FanDetailDrawer({
                 </p>
               </div>
             </div>
-            <CloseButton ref={closeRef} onClick={onClose} />
+            <CloseButton ref={closeRef} onClick={closeDrawer} />
           </div>
         </div>
 
@@ -401,10 +416,10 @@ export default function FanDetailDrawer({
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setTopUpOpen((v) => !v)}
+                    onClick={() => topUpOpen ? leave(() => setTopUpOpen(false), { scope: `fan-topup:${fanId}`, consequence: "Closing discards this top-up selection. It does not undo a grant request already sent." }) : setTopUpOpen(true)}
                     aria-expanded={topUpOpen}
                     aria-controls={topUpId}
-                    disabled={!!breakEnd}
+                    disabled={!!breakEnd || blocked}
                     aria-describedby={breakEnd ? breakNoteId : undefined}
                     className="btn-brand inline-flex min-h-10 basis-full items-center justify-center whitespace-nowrap rounded-[10px] px-[14px] text-[13.5px] font-bold disabled:cursor-not-allowed disabled:opacity-50 sm:flex-1 sm:basis-0"
                   >
@@ -446,7 +461,7 @@ export default function FanDetailDrawer({
                     Paused by the fan: they&rsquo;re taking a break until {breakEnd}. Top-up and Copy DM are off until then.
                   </p>
                 )}
-                {topUpOpen && !breakEnd && (
+                {topUpOpen && (
                   <TopUpForm
                     key={fanId}
                     id={topUpId}
@@ -455,9 +470,14 @@ export default function FanDetailDrawer({
                     campaigns={campaigns}
                     wheels={wheels}
                     onTopUp={onTopUp}
+                    engagementBlocked={!!breakEnd || blocked}
                     toppingUp={toppingUpFans.has(fanId)}
                     isToppingUp={(id) => toppingUpRef.current.has(id)}
                     onToppingUp={markToppingUp}
+                    onModifierPick={(pack) => leave(() => {
+                      setTopUpOpen(false);
+                      setFocusPreset((current) => ({ id: pack.id, nonce: current.nonce + 1 }));
+                    }, { scope: [`fan-focus:${fanId}`, `fan-topup:${fanId}`], consequence: "Changing pack flows discards these selections. No request already sent is undone." })}
                     onDone={async () => {
                       setTopUpOpen(false);
                       await reload();
@@ -465,6 +485,8 @@ export default function FanDetailDrawer({
                   />
                 )}
               </div>
+
+              {!pending && <FocusPackPanel key={`${fanId}:${focusPreset.nonce}`} fanId={fanId} initialPackId={focusPreset.id} refreshKey={`${blocked}:${detail?.spinsRemaining}:${detail?.breakUntil}`} onChanged={async () => { await reload(); onSaved?.(); }} />}
 
               {/* Tags */}
               <section>
@@ -599,9 +621,10 @@ export default function FanDetailDrawer({
                       <GrantRow
                         key={g.id}
                         g={g}
+                        draftScope={`fan-edit:${fanId}`}
                         fanSpinsRemaining={detail.spinsRemaining}
                         campaigns={campaigns}
-                        onSaved={reload}
+                        onSaved={async () => { const next = await reload(); return next?.grants.find((current) => current.id === g.id) ?? null; }}
                       />
                     ))}
                   </ul>
@@ -755,6 +778,8 @@ function TopUpForm({
   isToppingUp,
   onToppingUp,
   onDone,
+  onModifierPick,
+  engagementBlocked,
 }: {
   id: string;
   fanId: string;
@@ -766,6 +791,8 @@ function TopUpForm({
   isToppingUp: (fanId: string) => boolean;
   onToppingUp: (fanId: string, busy: boolean) => void;
   onDone: () => void | Promise<void>;
+  onModifierPick: (pack: CampaignPack) => void;
+  engagementBlocked: boolean;
 }) {
   // Which wheel the top-up targets (per-wheel spins). Default to the fan's
   // first existing wheel-pass, else the first wheel.
@@ -785,12 +812,18 @@ function TopUpForm({
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
   const [packId, setPackId] = useState<string | null>(null);
+  const [packUnits, setPackUnits] = useState(1);
+  const [error, setError] = useState("");
+  const [uncertain, setUncertain] = useState(false);
+  useCreatorDraft(`fan-topup:${fanId}`, "this top-up selection", spins !== 3 || perSpin !== "" || !!packId, toppingUp || uncertain);
 
   async function submit() {
     // In-flight guard: a double-click, or collapsing and reopening the form
     // mid-request, must not double-grant spins/spend.
-    if (isToppingUp(fanId)) return;
+    if (isToppingUp(fanId) || engagementBlocked) return;
     onToppingUp(fanId, true);
+    setError("");
+    let confirmed = false;
     try {
       await onTopUp(
         fanId,
@@ -798,11 +831,18 @@ function TopUpForm({
         amount ? Number(amount) || undefined : undefined,
         campaignId || undefined,
         packId,
-        wheelId || undefined
+        wheelId || undefined,
+        packId ? packUnits : undefined,
       );
+      confirmed = true;
+      setUncertain(false);
       setPerSpin("");
       setPackId(null);
       await onDone();
+    } catch (error) {
+      const unknown = error instanceof Error && error.message === "grant_unconfirmed";
+      setUncertain(unknown);
+      setError(confirmed ? "The top-up was confirmed, but the fan's refreshed status couldn't load. Refresh before making another grant." : unknown ? "The top-up couldn't be confirmed. Keep this selection and retry to check the same request." : "No top-up was confirmed. Review the selection and try again.");
     } finally {
       onToppingUp(fanId, false);
     }
@@ -810,6 +850,9 @@ function TopUpForm({
 
   return (
     <div id={id} className={`lift-in mt-2.5 p-3.5 ${well}`}>
+      {error && <p role="alert" className="mb-2 text-xs text-amber-200">{error}</p>}
+      <fieldset disabled={toppingUp || uncertain || engagementBlocked}>
+      <legend className="sr-only">Top up this fan</legend>
       <div className="grid grid-cols-2 gap-2.5">
         <Field label="Spins">
           <input
@@ -873,27 +916,34 @@ function TopUpForm({
         <div className="mt-2.5">
           <PackPresets
             campaignId={campaignId}
-            onPick={(p: CampaignPack) => {
+            onModifierPick={onModifierPick}
+            onPick={(p: CampaignPack, units: number) => {
               setSpins(p.spins);
               setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
               setPackId(p.id);
+              setPackUnits(units);
             }}
           />
         </div>
       )}
+      </fieldset>
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="tnum text-[11.5px] text-muted">
           {amount && Number(amount) > 0 ? `${formatCents(Math.round(Number(amount) * 100))} total` : "Free spins"}
         </p>
         <button
           type="button"
-          disabled={toppingUp}
+          disabled={toppingUp || engagementBlocked}
           onClick={submit}
           className="btn-brand min-h-9 rounded-[9px] px-4 text-[13px] font-bold disabled:opacity-50"
         >
-          {toppingUp ? "Topping up…" : `Grant ${spins} spin${spins === 1 ? "" : "s"}`}
+          {toppingUp ? "Checking…" : uncertain ? "Check this top-up again" : `Grant ${spins} spin${spins === 1 ? "" : "s"}`}
         </button>
       </div>
+      <CreatorRequestRecovery scope={`topup:${fanId}`} guardScope={`fan-topup:${fanId}`} kind="pass" refreshKey={toppingUp} disabled={toppingUp} onFound={() => setUncertain(true)} onBusyChange={(busy) => onToppingUp(fanId, busy)} onResolved={async (outcome) => {
+        setUncertain(false); setError("");
+        if (outcome === "committed" || outcome === "gone") { setPerSpin(""); setPackId(null); await onDone(); }
+      }} />
     </div>
   );
 }
@@ -1046,184 +1096,5 @@ function LinkRow({ url, newest, bare }: { url: string; newest: boolean; bare?: b
         Open
       </a>
     </div>
-  );
-}
-
-/** A grant history row that expands into an inline editor (spins / $ / campaign).
- *  Editing spins adjusts the fan's balance server-side; we refetch on save. */
-function GrantRow({
-  g,
-  fanSpinsRemaining,
-  campaigns,
-  onSaved,
-}: {
-  g: Grant;
-  fanSpinsRemaining: number;
-  campaigns: Campaign[];
-  onSaved: () => void | Promise<void>;
-}) {
-  const toast = useToast();
-  const [editing, setEditing] = useState(false);
-  const [spins, setSpins] = useState(String(g.spins));
-  const [perSpin, setPerSpin] = useState(perSpinText(g.spins, g.amountCents));
-  const [campaignId, setCampaignId] = useState(g.campaignId ?? "");
-  const [busy, setBusy] = useState(false);
-
-  // Re-sync the form when the underlying grant changes (e.g. the drawer reloads
-  // after another action), unless the user is actively editing this row.
-  useEffect(() => {
-    if (editing) return;
-    /* eslint-disable react-hooks/set-state-in-effect -- mirror persisted grant into the idle form */
-    setSpins(String(g.spins));
-    setPerSpin(perSpinText(g.spins, g.amountCents));
-    setCampaignId(g.campaignId ?? "");
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, [g.spins, g.amountCents, g.campaignId, editing]);
-
-  // Plain-language preview of what saving does (UX-3), judged on the balance of
-  // the pass editGrant will move for this grant (g.editPass), not the fan total.
-  const impact = grantImpact({
-    grantSpins: g.spins,
-    spinsInput: spins,
-    fanSpinsRemaining,
-    passSpinsRemaining: g.editPass ? g.editPass.spinsRemaining : null,
-    wheelTitle: g.editPass?.wheelTitle,
-  });
-  // Recorded revenue only changes when the price or spin count really does.
-  const newAmountCents = grantSaveAmount({ grant: g, spinsInput: spins, perSpinInput: perSpin });
-  const revenueLine = revenueChangeText(g.amountCents, newAmountCents);
-  // Negative, non-finite or over-cap prices would 400 on save.
-  const priceError = grantPriceError({ grant: g, spinsInput: spins, perSpinInput: perSpin });
-  const canSave = impact.allowed && !priceError;
-  const previewId = `grant-impact-${g.id}`;
-  const priceErrorId = `grant-price-error-${g.id}`;
-
-  async function save() {
-    if (!canSave) return;
-    setBusy(true);
-    try {
-      const nSpins = parseSpins(spins);
-      const res = await fetch(`/api/grants/${g.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spins: nSpins,
-          // Omitted when unchanged so the stored amount is never rewritten.
-          ...(newAmountCents !== g.amountCents ? { amountCents: newAmountCents } : {}),
-          campaignId: campaignId || null,
-        }),
-      });
-      if (res.ok) {
-        toast("Grant updated", { tone: "success" });
-        setEditing(false);
-        await onSaved();
-      } else {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        toast(
-          body?.error === "insufficient_spins"
-            ? "Can't cut below the spins this fan has already used."
-            : "Couldn't update grant.",
-          { tone: "error" }
-        );
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!editing) {
-    return (
-      <li className={`flex items-center gap-2.5 px-[13px] py-[9px] ${well}`}>
-        <span className="tnum shrink-0 text-sm font-bold text-ink">+{g.spins}</span>
-        <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
-          <span className="tnum font-semibold text-ink">{formatCents(g.amountCents)}</span> ·{" "}
-          {g.campaignName ?? "No campaign"}
-        </span>
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="inline-flex min-h-7 shrink-0 items-center rounded-[7px] border border-line px-[9px] text-[11.5px] font-semibold text-[#8b8494] transition-colors hover:text-ink"
-        >
-          Edit
-        </button>
-      </li>
-    );
-  }
-
-  return (
-    <li className="space-y-2 rounded-[10px] border border-[color-mix(in_oklab,var(--brand)_40%,transparent)] px-3 py-3 [background:var(--s2)]">
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Spins">
-          <input
-            type="number"
-            min={0}
-            value={spins}
-            onChange={(e) => setSpins(e.target.value)}
-            aria-invalid={!impact.allowed || undefined}
-            className="ff-input tnum w-full"
-          />
-        </Field>
-        <Field label="$ / spin">
-          <input
-            type="number"
-            min={0}
-            step={0.01}
-            value={perSpin}
-            onChange={(e) => setPerSpin(e.target.value)}
-            placeholder="0.00"
-            aria-invalid={!!priceError || undefined}
-            aria-errormessage={priceError ? priceErrorId : undefined}
-            className="ff-input tnum w-full"
-          />
-        </Field>
-        <div className="col-span-2">
-          <Field label="Campaign">
-            <select
-              value={campaignId}
-              onChange={(e) => setCampaignId(e.target.value)}
-              className="ff-input w-full"
-            >
-              <option value="">No campaign (untracked)</option>
-              {campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-      </div>
-      {priceError && (
-        <p id={priceErrorId} role="alert" className="text-xs font-semibold text-[#f87171]">
-          {priceError}
-        </p>
-      )}
-      {/* Live region only (no aria-describedby on the inputs) so it is read once. */}
-      <p
-        id={previewId}
-        role="status"
-        className={`text-xs text-pretty ${impact.allowed ? "text-muted" : "font-semibold text-[#f87171]"}`}
-      >
-        {impact.message}
-        {impact.allowed && !priceError && revenueLine && <> {revenueLine}</>}
-      </p>
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={save}
-          disabled={busy || !canSave}
-          className="btn-brand min-h-8 rounded-[9px] px-3 text-xs font-bold disabled:opacity-50"
-        >
-          {busy ? "Saving…" : "Save"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setEditing(false)}
-          className="min-h-8 rounded-[9px] border border-line px-3 text-xs font-semibold text-muted transition-colors hover:text-ink"
-        >
-          Cancel
-        </button>
-      </div>
-    </li>
   );
 }

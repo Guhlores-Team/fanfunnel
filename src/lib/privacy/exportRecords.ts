@@ -2,7 +2,7 @@
 // columns or demo rows. Database reads still use explicit column allowlists.
 export const EXPORT_PAGE_SIZE = 1000;
 export const EXPORT_ROW_CAP = 50_000;
-const SECRET_FIELD = /^(?:token|pass_?Token|nextServerSeed|next_server_seed|cipher|iv|keyVersion|key_version|fingerprint|hint|p256dh|auth|endpoint|secret|password|access_?Token|refresh_?Token|api_?Key|private_?Key|encryption_?Key|reward|reward_?Value|codes)$/i;
+const SECRET_FIELD = /^(?:token|pass_?Token|nextServerSeed|next_server_seed|request_?hash|token_?hash|context|result|payload|request_?body|cipher|iv|keyVersion|key_version|fingerprint|hint|p256dh|auth|endpoint|secret|password|access_?Token|refresh_?Token|api_?Key|private_?Key|encryption_?Key|reward|reward_?Value|codes)$/i;
 const FAN_PRIVATE_FIELD = /^(?:notes|tags|due_at|dueAt|cost_cents|costCents|amount_cents|amountCents|snoozed_until|snoozedUntil|template_id|templateId)$/;
 
 export function safeExportValue(value: unknown, fan = false): unknown {

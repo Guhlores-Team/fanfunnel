@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/Toast";
 import { formatCents } from "@/lib/format";
 import { Field } from "./ui";
 import PackEditor from "./PackEditor";
+import { useCreatorLeave } from "./CreatorDrafts";
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -228,6 +229,7 @@ function CampaignCard({
   onRefresh: () => Promise<void> | void;
 }) {
   const toast = useToast();
+  const leave = useCreatorLeave();
   const { campaign, revenue, arpu, spinsBought, spinsPlayed, uniqueFans, fulfilled, topPrize } =
     stats;
   const [showPacks, setShowPacks] = useState(false);
@@ -262,7 +264,10 @@ function CampaignCard({
     }
   }
 
-  async function remove() {
+  function remove() {
+    leave(() => void removeConfirmed(), { scope: `packs:${campaign.id}`, consequence: "Deleting this campaign discards its unsaved pack edits. It does not undo a request already sent." });
+  }
+  async function removeConfirmed() {
     setBusy(true);
     try {
       const res = await fetch(`/api/campaigns/${campaign.id}`, { method: "DELETE" });
@@ -402,7 +407,7 @@ function CampaignCard({
           {/* Spin packs (collapsible to keep the panel tidy). */}
           <button
             type="button"
-            onClick={() => setShowPacks((v) => !v)}
+            onClick={() => showPacks ? leave(() => setShowPacks(false), { scope: `packs:${campaign.id}`, consequence: "Closing spin packs discards unsaved pack edits. It does not undo a request already sent." }) : setShowPacks(true)}
             aria-expanded={showPacks}
             className={ghostBtn}
           >

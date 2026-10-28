@@ -1,3 +1,4 @@
+import type { FocusPackTerms } from "@/lib/data/focusPacks";
 import { NextResponse } from "next/server";
 import { listCampaignPacks, createCampaignPack } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -12,7 +13,7 @@ export async function GET(req: Request) {
 
 // Create a spin pack.
 export async function POST(req: Request) {
-  const body = await parseJsonBody<{
+  const body = await parseJsonBody<FocusPackTerms & {
     campaignId?: string | null;
     label?: string;
     spins?: number;
@@ -51,6 +52,7 @@ export async function POST(req: Request) {
       amountCents,
       bonusSpins,
       sortOrder,
+      packKind: body.packKind, focusMultiplier: body.focusMultiplier, focusSpins: body.focusSpins, chaseWithin: body.chaseWithin,
     });
     return NextResponse.json({ pack });
   } catch (err) {

@@ -1,9 +1,11 @@
+import { applyFocusStock } from "./focusDisplay";
+import { commitSpinAttempt, readSpinAttempt, type SpinIntent, type SpinAttemptStatus } from "./spinAttempts";
+import { getFanFocusDisplay } from "./focus";
+import { mockReadSpinAttempt } from "./mock";
 // Data layer — fan passes and spins: the fan-facing pass view, the spin
 // engine's persistence (claim / record / stock), and minting passes.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import {
-  randomSeedHex,
-  sha256Hex,
   makeFairRng,
   makeFairRngV3,
   normalizeClientSeed,
@@ -24,18 +26,15 @@ import { consumeCommittedSeed, freshSeed } from "./spinSeed";
 import { mockGetFanPass, mockSpin, mockCreatePass, mockSpinPushEvent } from "./mock";
 import {
   REFERRAL_BONUS,
-  REFERRAL_CAP,
   WHEEL_SELECT,
-  creatorOwnsCampaign,
-  randomToken,
+  isUuid,
   toWheelConfig,
 } from "./shared";
 import type { AnyClient, DbWheelRow, SpinError } from "./shared";
 import { getActiveHappyHour, resolveWheelId } from "./wheels";
 import { fireWebhooks } from "./webhooks";
 import { runAfterResponse } from "@/lib/afterResponse";
-import { isOnBreak } from "@/lib/play/playGuard";
-import { readPlayAfterSpin, readPlayState } from "./playGuard";
+import { readPlayState } from "./playGuard";
 import { readFanGlow } from "./checkins";
 import { fanNeedsAck } from "@/lib/legal";
 import { notifyCreator } from "@/lib/push/notify";
@@ -129,23 +128,9 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // Only commit when the columns exist (primary select succeeded); on a
   // pre-0022 DB we'd otherwise publish a hash the spin could never honour.
   if (!nextSpinHash && !primary.error) {
-    const seed = randomSeedHex();
-    nextSpinHash = await sha256Hex(seed);
-    await sb
-      .from("fan_passes")
-      .update({ next_server_seed: seed, next_server_seed_hash: nextSpinHash })
-      .eq("id", pass.id)
-      .is("next_server_seed", null); // never clobber a concurrent commit
-    // Re-read: if a concurrent request committed first, show THAT hash so the
-    // published commitment always matches the seed the next spin will use.
-    const { data: fresh } = await sb
-      .from("fan_passes")
-      .select("next_server_seed_hash")
-      .eq("id", pass.id)
-      .maybeSingle();
-    nextSpinHash =
-      (fresh as { next_server_seed_hash: string | null } | null)
-        ?.next_server_seed_hash ?? nextSpinHash;
+    const { data: committed, error } = await sb.rpc("ensure_pass_commitment", { p_token: token });
+    if (error) return null;
+    nextSpinHash = (committed as { hash?: string } | null)?.hash ?? null;
   }
 
   // Resolve WHICH wheel this link points at right now, then load its config.
@@ -207,6 +192,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     at: w.created_at,
   }));
 
+  const focusDisplay = await getFanFocusDisplay(token);
   return {
     token,
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
@@ -221,7 +207,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       ? pass.spins_remaining ?? 0
       : pass.fan.spins_remaining,
     // Fan-safe projection: no creator-private fields (prize cost) on the page.
-    wheel: toPublicWheel(toWheelConfig(wheel)),
+    wheel: applyFocusStock(toPublicWheel(toWheelConfig(wheel)), focusDisplay.stock),
     recentWins: winRows.map((w) => ({
       label: w.prize_label,
       rarity: w.prize_rarity,
@@ -250,90 +236,38 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     nextSpinHash,
     play,
     glow,
+    ...focusDisplay,
   };
 }
 
-export async function spin(
-  token: string,
-  rawClientSeed?: unknown
-): Promise<SpinResult | SpinError> {
-  // The fan's browser contributes this seed; sanitize + bound it server-side.
+export async function spin(token: string, rawClientSeed?: unknown, requestId = crypto.randomUUID(), publishedSeedHash?: string): Promise<SpinResult | SpinError> {
   const clientSeed = normalizeClientSeed(rawClientSeed);
   if (!isSupabaseConfigured()) {
-    const result = await mockSpin(token, clientSeed);
-    if (!("error" in result)) {
-      // Demo parity with the push after a recorded win (below).
+    const result = await mockSpin(token, clientSeed, requestId, publishedSeedHash);
+    if (!("error" in result) && !result.replayed) {
       const event = mockSpinPushEvent(token);
       if (event) runAfterResponse(() => notifyCreator("demo", { type: "spin", ...event }));
     }
     return result;
   }
-
   const sb = createServiceClient();
-
-  // 0. Enforce the age-gate / ToS server-side BEFORE claiming a spin. The client
-  //    modal is a UX affordance, not a security boundary — a fan hitting this
-  //    endpoint directly must still have acknowledged first.
-  const { data: ackRow, error: ackError } = await sb
-    .from("fan_passes")
-    .select("fan_id, fan:fans(acked_at, acked_terms_version)")
-    .eq("token", token)
-    .maybeSingle();
+  // Fail closed before opening an attempt; the transaction checks the same consent again under its locks.
+  const { data: ackRow, error: ackError } = await sb.from("fan_passes")
+    .select("fan_id, fan:fans(acked_at, acked_terms_version)").eq("token", token).maybeSingle();
   if (ackError) return { error: "db_error" };
   if (!ackRow) return { error: "not_found" };
-  const ack = ackRow as unknown as {
-    fan_id?: string;
-    fan: { acked_at: string | null; acked_terms_version: string | null } | null;
-  } | null;
-  if (fanNeedsAck(ack?.fan?.acked_at, ack?.fan?.acked_terms_version)) return { error: "needs_ack" };
+  const ack = ackRow as unknown as { fan: { acked_at: string | null; acked_terms_version: string | null } | null };
+  if (fanNeedsAck(ack.fan?.acked_at, ack.fan?.acked_terms_version)) return { error: "needs_ack" };
+  return commitSpinAttempt(token, { requestId, clientSeed, publishedSeedHash }, sb);
+}
 
-  // 1. Atomically claim one spin from the fan account (can't be forged).
-  const { data: remaining, error: claimErr } = await sb.rpc("claim_spin", {
-    p_token: token,
-  });
-  // -1 is the rate-limit sentinel from claim_spin (too many spins too fast).
-  if (remaining === -1) return { error: "rate_limited" };
-  if (claimErr || remaining === null || remaining === undefined) {
-    // Distinguish blocked/self-excluded/inactive from out-of-spins.
-    const { data: existsRow } = await sb
-      .from("fan_passes")
-      .select("id, is_active, self_excluded_at, fan:fans(blocked_at)")
-      .eq("token", token)
-      .maybeSingle();
-    const row = existsRow as unknown as {
-      id: string;
-      is_active: boolean;
-      self_excluded_at: string | null;
-      fan: { blocked_at: string | null } | null;
-    } | null;
-    if (!row) return { error: "not_found" };
-    if (row.fan?.blocked_at || row.self_excluded_at || !row.is_active)
-      return { error: "blocked" };
-    // RM-6: claim_spin also refuses a fan on a break (migration 0049). Read
-    // on its own so a DB without the column still reports no_spins.
-    if (ack?.fan_id && (await fanOnBreak(sb, ack.fan_id))) return { error: "on_break" };
-    return { error: "no_spins" };
-  }
-  const spinsRemaining = remaining as number;
-  const result = await completeClaimedSpin(sb, token, clientSeed, spinsRemaining);
-  if ("error" in result || !ack?.fan_id) return result;
-  // RM-6: the fan's fresh counts, and whether they have reached their reminder.
-  return { ...result, ...(await readPlayAfterSpin(sb, ack.fan_id)) };
+export async function getSpinAttemptStatus(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
+  return isSupabaseConfigured() ? readSpinAttempt(token, intent) : mockReadSpinAttempt(token, intent);
 }
 
 /** A one-to-one embed that holds a row (PostgREST returns an object; arrays tolerated). */
 export function hasEmbeddedRow(v: unknown): boolean {
   return Array.isArray(v) ? v.length > 0 : v != null;
-}
-
-/** True while the fan's break is in force. Best-effort (false on any error). */
-async function fanOnBreak(sb: AnyClient, fanId: string): Promise<boolean> {
-  try {
-    const { data } = await sb.from("fans").select("break_until").eq("id", fanId).maybeSingle();
-    return isOnBreak((data as { break_until?: string | null } | null)?.break_until);
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -766,54 +700,18 @@ async function recordClaimedSpin(
   };
 }
 
-/**
- * Credit `n` spins to a fan's OLDEST active pass (their original link, the same
- * convention as the `credit_pass_spins` RPC and the mock). Runs on the creator's
- * RLS-scoped session: `credit_pass_spins` is service-role only since 0027, so
- * calling it from this client was denied and the bonus silently never landed.
- * The update is a compare-and-swap on the balance just read, so a concurrent
- * spin's decrement is retried rather than overwritten. The fan aggregate is not
- * written here: the 0035 trg_sync_fan_spin_aggregate trigger recomputes it in
- * the same statement, and a separate read-sum-write would race concurrent spins.
- * Returns whether it credited.
- */
-async function creditOldestActivePass(
-  sb: Awaited<ReturnType<typeof createClient>>,
-  creatorId: string,
-  fanId: string,
-  n: number
-): Promise<boolean> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: oldest } = await sb
-      .from("fan_passes")
-      .select("id, spins_remaining, spins_granted_total")
-      .eq("fan_id", fanId)
-      .eq("creator_id", creatorId)
-      .eq("is_active", true)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    const o = oldest as
-      | { id: string; spins_remaining: number; spins_granted_total: number }
-      | null;
-    if (!o) return false; // no active pass: nothing spendable to add to
-
-    const { data: updated, error } = await sb
-      .from("fan_passes")
-      .update({
-        spins_remaining: o.spins_remaining + n,
-        spins_granted_total: o.spins_granted_total + n,
-      })
-      .eq("id", o.id)
-      .eq("spins_remaining", o.spins_remaining)
-      .eq("spins_granted_total", o.spins_granted_total)
-      .select("id")
-      .maybeSingle();
-    // Transient error or the balance moved under us: re-read and retry.
-    if (error || !updated) continue;
-    return true;
+/** Retry the same durable economic intent after an ambiguous transport error.
+ * The database owns all balances, grant rows and bootstrap cleanup atomically. */
+async function passTransaction(name: string, args: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  const service = createServiceClient() as unknown as { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { data, error } = await service.rpc(name, args);
+      if (!error) return data && typeof data === "object" ? data as Record<string, unknown> : null;
+      if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && error.code && !error.code.startsWith("PGRST")) return null;
+    } catch { /* Same request ID, never a compensating balance write. */ }
   }
-  return false;
+  return null;
 }
 
 /**
@@ -829,396 +727,73 @@ export async function createPass(opts: {
   campaignId?: string;
   amountCents?: number;
   packId?: string;
+  packUnits?: number;
   bonusSpins?: number;
   referralCode?: string;
-}): Promise<{ token: string; fanId: string } | { error: string }> {
-  let spins = Math.max(0, Math.floor(opts.spins) || 0);
-  let amountCents = Math.max(0, Math.floor(opts.amountCents ?? 0) || 0);
-  let bonusSpins = Math.max(0, Math.floor(opts.bonusSpins ?? 0) || 0);
+  /** Reuse this intent UUID when retrying a request. */
+  requestId?: string;
+}): Promise<{ token: string; fanId: string; requestId: string } | { error: string }> {
+  if (![opts.spins, opts.amountCents ?? 0, opts.bonusSpins ?? 0].every(Number.isFinite)) return { error: "invalid" };
+  if (opts.requestId !== undefined && !isUuid(opts.requestId)) return { error: "invalid" };
+  const packUnits = opts.packUnits ?? 1;
+  if (!Number.isInteger(packUnits) || packUnits < 1 || packUnits > 1_000_000) return { error: "invalid" };
+  if (!opts.packId && packUnits !== 1) return { error: "invalid_pack" };
+  const requestId = opts.requestId ?? crypto.randomUUID();
+  const spins = Math.max(0, Math.floor(opts.spins) || 0);
+  const amountCents = Math.max(0, Math.floor(opts.amountCents ?? 0) || 0);
+  const bonusSpins = Math.max(0, Math.floor(opts.bonusSpins ?? 0) || 0);
   if (!isSupabaseConfigured()) {
-    return mockCreatePass(
-      opts.name,
-      spins,
-      opts.fanId,
-      opts.campaignId,
-      amountCents,
-      bonusSpins,
-      opts.packId,
-      opts.referralCode,
-      opts.wheelId
-    );
+    try {
+      const result = mockCreatePass(opts.name, spins, opts.fanId, opts.campaignId, amountCents, bonusSpins, opts.packId, opts.referralCode, opts.wheelId, requestId, packUnits);
+      return { ...result, requestId };
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "db_error";
+      return { error: ["conflict", "invalid_pack", "blocked", "on_break", "not_found", "fan_not_found", "gone"].includes(code) ? code : "db_error" };
+    }
   }
 
   const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return { error: "unauthorized" };
-
-  // A pack is authoritative: its spins/price/bonus override any client values.
-  if (opts.packId) {
-    const { data: pack } = await sb
-      .from("campaign_packs")
-      .select("spins, amount_cents, bonus_spins")
-      .eq("id", opts.packId)
-      .eq("creator_id", user.id)
-      .maybeSingle();
-    const p = pack as
-      | { spins: number; amount_cents: number; bonus_spins: number }
-      | null;
-    if (!p) return { error: "pack_not_found" };
-    spins = Math.max(0, p.spins);
-    amountCents = Math.max(0, p.amount_cents);
-    bonusSpins = Math.max(0, p.bonus_spins);
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  let creatorId = user.id;
+  if (opts.fanId) {
+    const { data: fan, error } = await sb.from("fans").select("id, creator_id").eq("id", opts.fanId).maybeSingle();
+    if (error) return { error: "db_error" };
+    if (!fan) return { error: "fan_not_found" };
+    creatorId = fan.creator_id;
   }
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: creatorId, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "unauthorized" };
 
+  // Pack terms are resolved and locked by the transaction, after checking an
+  // existing request. A later pack edit/deletion cannot break a lost-response
+  // replay or replace the price agreed by the first committed request.
   // Effective balance added = paid spins + bonus spins.
   const balanceAdd = spins + bonusSpins;
+  if (!opts.packId && (balanceAdd > 1_000_000 || amountCents > 100_000_000)) return { error: "invalid" };
 
   const campaignId = opts.campaignId ?? null;
 
-  // A client-supplied campaign id must belong to THIS creator before any write
-  // references it; reject an unowned/unknown id up front so we never persist a
-  // cross-tenant reference (or hit an FK failure after earlier writes land).
-  if (!(await creatorOwnsCampaign(sb, user.id, campaignId)))
-    return { error: "campaign_not_found" };
+  // Keep raw wheel/campaign intent unchanged for durable retries. The database
+  // resolves default wheels and validates ownership only for a fresh request.
+  const wheelId = opts.wheelId ?? null;
 
-  // Resolve which wheel these spins are for (spins are per-wheel):
-  //   explicit wheelId > the campaign's pinned wheel > the active wheel > oldest.
-  let wheelId = opts.wheelId;
-  // A client-supplied wheelId must belong to THIS creator. The fallback paths
-  // below are already creator-scoped; this guards the explicit path so a foreign
-  // wheel id is rejected up front rather than minting a pass that references
-  // another tenant's wheel (defense in depth on top of RLS).
-  if (wheelId) {
-    const { data: ownWheel } = await sb
-      .from("wheels")
-      .select("id")
-      .eq("id", wheelId)
-      .eq("creator_id", user.id)
-      .maybeSingle();
-    if (!ownWheel) return { error: "no_wheel" };
-  }
-  if (!wheelId && campaignId) {
-    const { data: camp } = await sb
-      .from("campaigns")
-      .select("pinned_wheel_id")
-      .eq("id", campaignId)
-      .eq("creator_id", user.id)
-      .maybeSingle();
-    wheelId = (camp as { pinned_wheel_id: string | null } | null)?.pinned_wheel_id ?? undefined;
-  }
-  if (!wheelId) {
-    const { data: active } = await sb
-      .from("wheels")
-      .select("id")
-      .eq("creator_id", user.id)
-      .eq("is_active", true)
-      .is("archived_at", null)
-      .maybeSingle();
-    wheelId = (active as { id: string } | null)?.id;
-  }
-  if (!wheelId) {
-    const { data: w } = await sb
-      .from("wheels")
-      .select("id")
-      .eq("creator_id", user.id)
-      .is("archived_at", null)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    wheelId = w?.id;
-  }
-  if (!wheelId) return { error: "no_wheel" };
-
-  // createPass is not a single DB transaction: the fan/pass/top-up, grant, and
-  // referral writes land as separate statements. If a later write fails we must
-  // undo the ones that already succeeded — otherwise a usable link or a changed
-  // balance would persist even though the API reports failure. Each successful
-  // write pushes an inverse here; `fail()` runs them newest-first (so child rows
-  // are removed before their parents) before returning the error.
-  const rollbacks: Array<() => Promise<void>> = [];
-  const fail = async (error: string): Promise<{ error: string }> => {
-    for (const undo of rollbacks.reverse()) {
-      try {
-        await undo();
-      } catch {
-        // Best-effort: a failed compensation must not mask the original error.
-      }
-    }
-    return { error };
-  };
-
-  // Reuse the existing fan account (top-up) or create a new one.
-  let fanId = opts.fanId;
-  let token: string;
-  let passId: string;
-
-  if (fanId) {
-    // The fan must belong to THIS creator before we mint or top up a pass for it:
-    // reject a foreign fan id up front so we never insert a fan_pass under our own
-    // creator_id that points at another tenant's fan (defense in depth on top of RLS).
-    const { data: ownFan } = await sb
-      .from("fans")
-      .select("id")
-      .eq("id", fanId)
-      .eq("creator_id", user.id)
-      .maybeSingle();
-    if (!ownFan) return { error: "fan_not_found" };
-    // Existing fan: find this fan's pass FOR THIS WHEEL. Top it up if it exists,
-    // otherwise mint a new per-wheel link. Spins live on the pass, not the fan.
-    const { data: existing } = await sb
-      .from("fan_passes")
-      .select("id, token, spins_remaining, spins_granted_total")
-      .eq("fan_id", fanId)
-      .eq("wheel_id", wheelId)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    const ex = existing as
-      | { id: string; token: string; spins_remaining: number; spins_granted_total: number }
-      | null;
-    if (ex) {
-      passId = ex.id;
-      token = ex.token;
-      const exId = ex.id;
-      type PassBal = { spins_remaining: number; spins_granted_total: number };
-      // Compare-and-swap on the balance just read: claim_spin runs concurrently,
-      // and a spin landing between our read and an absolute write would be
-      // overwritten (the fan gets it back for free). A miss re-reads and retries.
-      let cur: PassBal | null = ex;
-      let topped = false;
-      for (let attempt = 0; attempt < 3 && !topped; attempt++) {
-        if (attempt > 0) {
-          const { data: again } = await sb
-            .from("fan_passes")
-            .select("spins_remaining, spins_granted_total")
-            .eq("id", exId)
-            .maybeSingle();
-          cur = again as PassBal | null;
-          if (!cur) return fail("db_error");
-        }
-        const { data: updated, error: topUpErr } = await sb
-          .from("fan_passes")
-          .update({
-            spins_remaining: cur.spins_remaining + balanceAdd,
-            spins_granted_total: cur.spins_granted_total + balanceAdd,
-            ...(campaignId ? { campaign_id: campaignId } : {}),
-          })
-          .eq("id", exId)
-          .eq("spins_remaining", cur.spins_remaining)
-          .eq("spins_granted_total", cur.spins_granted_total)
-          .select("id")
-          .maybeSingle();
-        if (topUpErr) return fail("db_error");
-        topped = !!updated;
-      }
-      if (!topped) return fail("db_error"); // balance kept moving under us
-      // Undo the top-up if a later write fails: subtract balanceAdd from the
-      // balance as it is THEN (a spin may have landed since), with the same
-      // compare-and-swap, so the rollback never refunds a spin. Skipped (and
-      // logged) if the fan already spent more than the top-up.
-      rollbacks.push(async () => {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const { data: now } = await sb
-            .from("fan_passes")
-            .select("spins_remaining, spins_granted_total")
-            .eq("id", exId)
-            .maybeSingle();
-          const c = now as PassBal | null;
-          if (!c || c.spins_remaining - balanceAdd < 0) break;
-          const { data: undone } = await sb
-            .from("fan_passes")
-            .update({
-              spins_remaining: c.spins_remaining - balanceAdd,
-              spins_granted_total: c.spins_granted_total - balanceAdd,
-            })
-            .eq("id", exId)
-            .eq("spins_remaining", c.spins_remaining)
-            .eq("spins_granted_total", c.spins_granted_total)
-            .select("id")
-            .maybeSingle();
-          if (undone) return;
-        }
-        console.error("createPass: top-up rollback could not be applied", {
-          fanId,
-          passId: exId,
-          balanceAdd,
-        });
-      });
-    } else {
-      token = randomToken();
-      const { data: np, error: npErr } = await sb
-        .from("fan_passes")
-        .insert({
-          token,
-          creator_id: user.id,
-          wheel_id: wheelId,
-          fan_id: fanId,
-          campaign_id: campaignId,
-          spins_remaining: balanceAdd,
-          spins_granted_total: balanceAdd,
-        })
-        .select("id")
-        .single();
-      if (npErr || !np) return fail("db_error");
-      passId = np.id;
-      const newPassId = np.id;
-      rollbacks.push(async () => {
-        await sb.from("fan_passes").delete().eq("id", newPassId);
-      });
-    }
-    // The fan-level aggregate (fans.spins_remaining / spins_granted_total) is
-    // owned by the 0035 trigger: the pass write above already set it to the
-    // SUM of this fan's active passes, and the pass-restore rollback re-fires
-    // it. Writing it here too either double-counted the spins (a re-read after
-    // the pass write) or overwrote a spin that landed in between (a value read
-    // before it), so there is deliberately no fans update in this branch.
-  } else {
-    const { data: fan, error } = await sb
-      .from("fans")
-      .insert({
-        creator_id: user.id,
-        display_name: opts.name || "Fan",
-        spins_remaining: balanceAdd,
-        spins_granted_total: balanceAdd,
-      })
-      .select("id")
-      .single();
-    if (error || !fan) return fail("db_error");
-    fanId = fan.id;
-    // Undo the new fan (cascades to its pass/grant) if a later write fails.
-    const newFanId = fan.id;
-    rollbacks.push(async () => {
-      await sb.from("fans").delete().eq("id", newFanId);
-    });
-
-    // Referral linking (dormant feature; credit awarded on first paid grant).
-    if (opts.referralCode) {
-      const { data: refRow } = await sb
-        .from("fans")
-        .select("id")
-        .eq("creator_id", user.id)
-        .eq("referral_code", opts.referralCode)
-        .maybeSingle();
-      const referrer = refRow as { id: string } | null;
-      if (referrer && referrer.id !== fanId) {
-        await sb.from("fans").update({ referred_by_fan_id: referrer.id }).eq("id", fanId);
-        await sb.from("referrals").insert({
-          creator_id: user.id,
-          referrer_fan_id: referrer.id,
-          referred_fan_id: fanId,
-          bonus_spins: REFERRAL_BONUS,
-        });
-      }
-    }
-
-    // New fan: mint their first per-wheel link with the balance on the pass.
-    token = randomToken();
-    const { data: np, error: passErr } = await sb
-      .from("fan_passes")
-      .insert({
-        token,
-        creator_id: user.id,
-        wheel_id: wheelId,
-        fan_id: fanId,
-        campaign_id: campaignId,
-        spins_remaining: balanceAdd,
-        spins_granted_total: balanceAdd,
-      })
-      .select("id")
-      .single();
-    if (passErr || !np) return fail("db_error");
-    passId = np.id;
-    const newPassId2 = np.id;
-    rollbacks.push(async () => {
-      await sb.from("fan_passes").delete().eq("id", newPassId2);
-    });
-  }
-  if (!fanId) return fail("db_error");
-
-  // Record the grant for revenue, attributed to this pass (= wheel/campaign).
-  const { error: grantErr } = await sb.from("grants").insert({
-    creator_id: user.id,
-    fan_id: fanId,
-    fan_pass_id: passId,
-    campaign_id: campaignId,
-    spins: balanceAdd,
-    amount_cents: amountCents,
-    bonus_spins: bonusSpins,
+  // The wrapper binds the complete intent before creating anything. New fan,
+  // zero-balance pass, grant and its credit either all commit or all roll back.
+  const result = await passTransaction("create_pass_grant", {
+    p_request: requestId, p_creator: creatorId,
+    p_fan: opts.fanId ?? null, p_wheel: wheelId, p_name: opts.name || "Fan",
+    p_spins: balanceAdd, p_bonus: bonusSpins, p_amount: amountCents,
+    p_campaign: campaignId, p_referral_code: !opts.fanId ? opts.referralCode ?? null : null, p_pack: opts.packId ?? null, p_pack_units: packUnits, p_actor: user.id,
   });
-  // Grant failing after the fan/pass/balance writes is the exact gap the
-  // rollbacks guard against: undo them so we never leave spendable spins or a
-  // pass without a matching grant/revenue row.
-  if (grantErr) return fail("db_error");
-
-  // Referral crediting (idempotent): the FIRST time this fan makes a PAID
-  // grant, if they were referred and haven't been credited yet, award the bonus
-  // to BOTH the fan and the referrer — capped at REFERRAL_CAP credited
-  // referrals per referrer. Guarded so it runs at most once.
-  if (amountCents > 0) {
-    const { data: meRow } = await sb
-      .from("fans")
-      .select("referred_by_fan_id, referral_credited")
-      .eq("id", fanId)
-      .maybeSingle();
-    const me = meRow as {
-      referred_by_fan_id: string | null;
-      referral_credited: boolean;
-    } | null;
-
-    if (me && me.referred_by_fan_id && !me.referral_credited) {
-      // How many referrals has the referrer already had credited?
-      const { count: creditedCount } = await sb
-        .from("referrals")
-        .select("id", { count: "exact", head: true })
-        .eq("referrer_fan_id", me.referred_by_fan_id)
-        .not("credited_at", "is", null);
-
-      if ((creditedCount ?? 0) < REFERRAL_CAP) {
-        // Mark this fan credited FIRST (idempotency guard): only proceed if the
-        // flag was still false at update time.
-        const { data: claimed } = await sb
-          .from("fans")
-          .update({ referral_credited: true })
-          .eq("id", fanId)
-          .eq("referral_credited", false)
-          .select("id")
-          .maybeSingle();
-
-        if (claimed) {
-          // Credit the bonus to a SPENDABLE pass (oldest active link) for BOTH
-          // the referred fan and the referrer, keeping each fan's aggregate
-          // equal to the sum of its passes. Adding to fans.spins_remaining alone
-          // (the old behavior) left the bonus unspendable — claim_spin
-          // decrements a PASS — and inflated the displayed balance until the
-          // next spin resynced it down.
-          const fanCredited = await creditOldestActivePass(sb, user.id, fanId, REFERRAL_BONUS);
-          const referrerCredited = await creditOldestActivePass(
-            sb,
-            user.id,
-            me.referred_by_fan_id,
-            REFERRAL_BONUS
-          );
-          if (!fanCredited || !referrerCredited) {
-            console.error("createPass: referral bonus not credited to an active pass", {
-              fanCredited,
-              referrerCredited,
-            });
-          }
-
-          // Mark the referral row credited.
-          await sb
-            .from("referrals")
-            .update({
-              credited_at: new Date().toISOString(),
-              bonus_spins: REFERRAL_BONUS,
-            })
-            .eq("referred_fan_id", fanId);
-        }
-      }
-    }
+  if (!result) return { error: "db_error" };
+  if (result.status !== "granted" || typeof result.token !== "string" || typeof result.fanId !== "string") {
+    const reason = typeof result.error === "string" ? result.error : String(result.status);
+    return { error: ["conflict", "invalid", "invalid_pack", "pack_not_found", "campaign_not_found", "no_wheel", "fan_not_found", "on_break", "blocked", "gone"].includes(reason) ? reason : "unavailable" };
   }
-
-  return { token, fanId };
+  // The helper checks for a paid grant itself, including server-priced packs.
+  // A pending referral never undoes a committed purchase; replays can retry it.
+  const referral = await passTransaction("award_fan_referral", { p_creator: creatorId, p_fan: result.fanId });
+  if (!referral) console.error("createPass: referral award pending retry");
+  return { token: result.token, fanId: result.fanId, requestId };
 }

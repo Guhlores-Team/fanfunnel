@@ -28,10 +28,11 @@ const MESSAGES: Record<string, SpinErrorInfo> = {
   not_found: { message: "We couldn't find this link. Double-check it with your creator." },
   db_error: { message: "We hit a snag on our end. Give it another try in a moment." },
   spin_pending: {
-    message: "We couldn't confirm that spin yet. Check your rewards, then reload this link before playing again.",
+    message: "We couldn't confirm this spin yet. Check this saved spin to recover its result before playing again.",
     checkPendingSpin: true,
   },
   bad_request: { message: "That didn't go through. Refresh the page and try again." },
+  upgrade_required: { message: "This page needs an update before it can save a spin safely. Reload this link." },
 };
 
 export function spinErrorInfo(code: unknown): SpinErrorInfo {

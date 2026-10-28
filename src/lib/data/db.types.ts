@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      actor_request_cancellations: {
+        Row: { actor_id: string; created_at: string; id: string; kind: string }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          id: string
+          kind: string
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "actor_request_cancellations_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       admin_audit_log: {
         Row: {
           action: string
@@ -150,10 +174,14 @@ export type Database = {
           amount_cents: number
           bonus_spins: number
           campaign_id: string | null
+          chase_within: number
           created_at: string
           creator_id: string
+          focus_multiplier: number
+          focus_spins: number
           id: string
           label: string
+          pack_kind: string
           sort_order: number
           spins: number
         }
@@ -161,10 +189,14 @@ export type Database = {
           amount_cents?: number
           bonus_spins?: number
           campaign_id?: string | null
+          chase_within?: number
           created_at?: string
           creator_id: string
+          focus_multiplier?: number
+          focus_spins?: number
           id?: string
           label: string
+          pack_kind?: string
           sort_order?: number
           spins?: number
         }
@@ -172,10 +204,14 @@ export type Database = {
           amount_cents?: number
           bonus_spins?: number
           campaign_id?: string | null
+          chase_within?: number
           created_at?: string
           creator_id?: string
+          focus_multiplier?: number
+          focus_spins?: number
           id?: string
           label?: string
+          pack_kind?: string
           sort_order?: number
           spins?: number
         }
@@ -234,6 +270,81 @@ export type Database = {
             columns: ["pinned_wheel_id"]
             isOneToOne: false
             referencedRelation: "wheels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chase_reservations: {
+        Row: {
+          code_id: string | null
+          consumed_spin_id: string | null
+          created_at: string
+          creator_id: string
+          ended_at: string | null
+          focus_id: string
+          id: string
+          kind: string
+          prize_id: string | null
+          state: string
+        }
+        Insert: {
+          code_id?: string | null
+          consumed_spin_id?: string | null
+          created_at?: string
+          creator_id: string
+          ended_at?: string | null
+          focus_id: string
+          id?: string
+          kind: string
+          prize_id?: string | null
+          state?: string
+        }
+        Update: {
+          code_id?: string | null
+          consumed_spin_id?: string | null
+          created_at?: string
+          creator_id?: string
+          ended_at?: string | null
+          focus_id?: string
+          id?: string
+          kind?: string
+          prize_id?: string | null
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chase_reservations_code_id_fkey"
+            columns: ["code_id"]
+            isOneToOne: false
+            referencedRelation: "prize_reward_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chase_reservations_consumed_spin_id_fkey"
+            columns: ["consumed_spin_id"]
+            isOneToOne: true
+            referencedRelation: "spins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chase_reservations_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chase_reservations_focus_id_fkey"
+            columns: ["focus_id"]
+            isOneToOne: true
+            referencedRelation: "fan_focus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chase_reservations_prize_id_fkey"
+            columns: ["prize_id"]
+            isOneToOne: false
+            referencedRelation: "prizes"
             referencedColumns: ["id"]
           },
         ]
@@ -405,6 +516,77 @@ export type Database = {
             columns: ["fan_id"]
             isOneToOne: false
             referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creator_request_journal: {
+        Row: {
+          actor_id: string | null
+          batch_id: string | null
+          created_at: string
+          creator_id: string
+          error: string | null
+          finished_at: string | null
+          grant_id: string | null
+          id: string
+          kind: string
+          request_hash: string | null
+          state: string
+        }
+        Insert: {
+          actor_id?: string | null
+          batch_id?: string | null
+          created_at?: string
+          creator_id: string
+          error?: string | null
+          finished_at?: string | null
+          grant_id?: string | null
+          id: string
+          kind: string
+          request_hash?: string | null
+          state: string
+        }
+        Update: {
+          actor_id?: string | null
+          batch_id?: string | null
+          created_at?: string
+          creator_id?: string
+          error?: string | null
+          finished_at?: string | null
+          grant_id?: string | null
+          id?: string
+          kind?: string
+          request_hash?: string | null
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creator_request_journal_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creator_request_journal_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "fan_import_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creator_request_journal_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creator_request_journal_grant_id_fkey"
+            columns: ["grant_id"]
+            isOneToOne: false
+            referencedRelation: "grants"
             referencedColumns: ["id"]
           },
         ]
@@ -648,6 +830,187 @@ export type Database = {
           },
         ]
       }
+      fan_focus: {
+        Row: {
+          chase_counter: number
+          created_at: string
+          creator_id: string
+          ended_at: string | null
+          fan_id: string
+          fan_pass_id: string | null
+          grant_id: string | null
+          id: string
+          kind: string
+          multiplier: number
+          prize_id: string | null
+          prize_label: string
+          spins_left: number
+          status: string
+          total_spins: number
+          version: number
+          wheel_id: string | null
+        }
+        Insert: {
+          chase_counter?: number
+          created_at?: string
+          creator_id: string
+          ended_at?: string | null
+          fan_id: string
+          fan_pass_id?: string | null
+          grant_id?: string | null
+          id?: string
+          kind: string
+          multiplier: number
+          prize_id?: string | null
+          prize_label: string
+          spins_left: number
+          status?: string
+          total_spins: number
+          version?: number
+          wheel_id?: string | null
+        }
+        Update: {
+          chase_counter?: number
+          created_at?: string
+          creator_id?: string
+          ended_at?: string | null
+          fan_id?: string
+          fan_pass_id?: string | null
+          grant_id?: string | null
+          id?: string
+          kind?: string
+          multiplier?: number
+          prize_id?: string | null
+          prize_label?: string
+          spins_left?: number
+          status?: string
+          total_spins?: number
+          version?: number
+          wheel_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fan_focus_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_focus_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: false
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_focus_fan_pass_id_fkey"
+            columns: ["fan_pass_id"]
+            isOneToOne: false
+            referencedRelation: "fan_passes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_focus_grant_id_fkey"
+            columns: ["grant_id"]
+            isOneToOne: false
+            referencedRelation: "grants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_focus_prize_id_fkey"
+            columns: ["prize_id"]
+            isOneToOne: false
+            referencedRelation: "prizes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_focus_wheel_id_fkey"
+            columns: ["wheel_id"]
+            isOneToOne: false
+            referencedRelation: "wheels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fan_import_batches: {
+        Row: {
+          created_at: string
+          creator_id: string
+          id: string
+          request_hash: string
+        }
+        Insert: {
+          created_at?: string
+          creator_id: string
+          id: string
+          request_hash: string
+        }
+        Update: {
+          created_at?: string
+          creator_id?: string
+          id?: string
+          request_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fan_import_batches_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fan_import_items: {
+        Row: {
+          batch_id: string
+          created_at: string
+          creator_id: string
+          error: string | null
+          grant_id: string | null
+          ordinal: number
+        }
+        Insert: {
+          batch_id: string
+          created_at?: string
+          creator_id: string
+          error?: string | null
+          grant_id?: string | null
+          ordinal: number
+        }
+        Update: {
+          batch_id?: string
+          created_at?: string
+          creator_id?: string
+          error?: string | null
+          grant_id?: string | null
+          ordinal?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fan_import_items_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "fan_import_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_import_items_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_import_items_grant_id_fkey"
+            columns: ["grant_id"]
+            isOneToOne: true
+            referencedRelation: "grants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fan_outreach: {
         Row: {
           contacted_at: string | null
@@ -714,6 +1077,7 @@ export type Database = {
           last_spin_at: string | null
           next_server_seed: string | null
           next_server_seed_hash: string | null
+          next_spin_nonce: number
           self_excluded_at: string | null
           spins_granted_total: number
           spins_remaining: number
@@ -730,6 +1094,7 @@ export type Database = {
           last_spin_at?: string | null
           next_server_seed?: string | null
           next_server_seed_hash?: string | null
+          next_spin_nonce?: number
           self_excluded_at?: string | null
           spins_granted_total?: number
           spins_remaining?: number
@@ -746,6 +1111,7 @@ export type Database = {
           last_spin_at?: string | null
           next_server_seed?: string | null
           next_server_seed_hash?: string | null
+          next_spin_nonce?: number
           self_excluded_at?: string | null
           spins_granted_total?: number
           spins_remaining?: number
@@ -896,6 +1262,32 @@ export type Database = {
           },
         ]
       }
+      focus_creator_config: {
+        Row: {
+          chase_enabled: boolean
+          creator_id: string
+          focus_enabled: boolean
+        }
+        Insert: {
+          chase_enabled?: boolean
+          creator_id: string
+          focus_enabled?: boolean
+        }
+        Update: {
+          chase_enabled?: boolean
+          creator_id?: string
+          focus_enabled?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "focus_creator_config_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       grants: {
         Row: {
           amount_cents: number
@@ -906,6 +1298,7 @@ export type Database = {
           fan_id: string
           fan_pass_id: string | null
           id: string
+          request_hash: string | null
           spins: number
         }
         Insert: {
@@ -917,6 +1310,7 @@ export type Database = {
           fan_id: string
           fan_pass_id?: string | null
           id?: string
+          request_hash?: string | null
           spins?: number
         }
         Update: {
@@ -928,6 +1322,7 @@ export type Database = {
           fan_id?: string
           fan_pass_id?: string | null
           id?: string
+          request_hash?: string | null
           spins?: number
         }
         Relationships: [
@@ -1215,6 +1610,7 @@ export type Database = {
           iv: string | null
           key_version: number
           prize_id: string
+          reserved_focus_id: string | null
           spin_id: string | null
         }
         Insert: {
@@ -1229,6 +1625,7 @@ export type Database = {
           iv?: string | null
           key_version?: number
           prize_id: string
+          reserved_focus_id?: string | null
           spin_id?: string | null
         }
         Update: {
@@ -1243,6 +1640,7 @@ export type Database = {
           iv?: string | null
           key_version?: number
           prize_id?: string
+          reserved_focus_id?: string | null
           spin_id?: string | null
         }
         Relationships: [
@@ -1258,6 +1656,13 @@ export type Database = {
             columns: ["prize_id"]
             isOneToOne: false
             referencedRelation: "prizes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prize_reward_codes_reserved_focus_id_fkey"
+            columns: ["reserved_focus_id"]
+            isOneToOne: false
+            referencedRelation: "fan_focus"
             referencedColumns: ["id"]
           },
         ]
@@ -1353,6 +1758,7 @@ export type Database = {
       }
       prizes: {
         Row: {
+          boostable: boolean
           color: string | null
           cost_cents: number | null
           created_at: string
@@ -1369,6 +1775,7 @@ export type Database = {
           wheel_id: string
         }
         Insert: {
+          boostable?: boolean
           color?: string | null
           cost_cents?: number | null
           created_at?: string
@@ -1385,6 +1792,7 @@ export type Database = {
           wheel_id: string
         }
         Update: {
+          boostable?: boolean
           color?: string | null
           cost_cents?: number | null
           created_at?: string
@@ -1681,6 +2089,83 @@ export type Database = {
           },
         ]
       }
+      spin_attempts: {
+        Row: {
+          context: Json | null
+          created_at: string
+          creator_id: string
+          error: string | null
+          fan_id: string | null
+          fan_pass_id: string | null
+          finished_at: string | null
+          id: string
+          request_hash: string
+          result: Json | null
+          spin_id: string | null
+          state: string
+          token_hash: string
+        }
+        Insert: {
+          context?: Json | null
+          created_at?: string
+          creator_id: string
+          error?: string | null
+          fan_id?: string | null
+          fan_pass_id?: string | null
+          finished_at?: string | null
+          id: string
+          request_hash: string
+          result?: Json | null
+          spin_id?: string | null
+          state?: string
+          token_hash: string
+        }
+        Update: {
+          context?: Json | null
+          created_at?: string
+          creator_id?: string
+          error?: string | null
+          fan_id?: string | null
+          fan_pass_id?: string | null
+          finished_at?: string | null
+          id?: string
+          request_hash?: string
+          result?: Json | null
+          spin_id?: string | null
+          state?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spin_attempts_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spin_attempts_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: false
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spin_attempts_fan_pass_id_fkey"
+            columns: ["fan_pass_id"]
+            isOneToOne: false
+            referencedRelation: "fan_passes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spin_attempts_spin_id_fkey"
+            columns: ["spin_id"]
+            isOneToOne: true
+            referencedRelation: "spins"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       spin_rewards: {
         Row: {
           cipher: string | null
@@ -1691,7 +2176,7 @@ export type Database = {
           iv: string | null
           key_version: number
           kind: string
-          last_viewed_at: string
+          last_viewed_at: string | null
           spin_id: string
           stock_after: number | null
           views: number
@@ -1705,7 +2190,7 @@ export type Database = {
           iv?: string | null
           key_version?: number
           kind: string
-          last_viewed_at?: string
+          last_viewed_at?: string | null
           spin_id: string
           stock_after?: number | null
           views?: number
@@ -1719,7 +2204,7 @@ export type Database = {
           iv?: string | null
           key_version?: number
           kind?: string
-          last_viewed_at?: string
+          last_viewed_at?: string | null
           spin_id?: string
           stock_after?: number | null
           views?: number
@@ -2052,9 +2537,102 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      _canonical_proof_json: { Args: { v: Json }; Returns: string }
+      _create_pass_grant_core: {
+        Args: {
+          p_amount: number
+          p_bonus: number
+          p_campaign: string
+          p_creator: string
+          p_fan: string
+          p_name: string
+          p_pack?: string
+          p_pack_units?: number
+          p_referral_code?: string
+          p_request: string
+          p_spins: number
+          p_wheel: string
+        }
+        Returns: Json
+      }
+      _creator_actor_grant_allowed: {
+        Args: { p_actor: string; p_creator: string }
+        Returns: boolean
+      }
+      _creator_request_finish: {
+        Args: { p_creator: string; p_outcome: Json; p_request: string }
+        Returns: Json
+      }
+      _creator_request_open: {
+        Args: {
+          p_actor: string
+          p_allowed: boolean
+          p_creator: string
+          p_hash: string
+          p_kind: string
+          p_request: string
+        }
+        Returns: Json
+      }
+      _creator_request_receipt: {
+        Args: { p_creator: string; p_request: string }
+        Returns: Json
+      }
+      _edit_grant_patch_core: {
+        Args: { p_creator: string; p_grant: string; p_patch: Json }
+        Returns: Json
+      }
+      _fan_import_result: {
+        Args: { p_batch: string; p_replayed: boolean }
+        Returns: Json
+      }
+      _focus_odds_increased: {
+        Args: { p_excluded: Json; p_snapshot: Json }
+        Returns: boolean
+      }
+      _grant_focus_pack_core: {
+        Args: {
+          p_creator: string
+          p_fan: string
+          p_pack: string
+          p_pass: string
+          p_prize: string
+          p_request: string
+        }
+        Returns: Json
+      }
+      _grant_pass_spins_core: {
+        Args: {
+          p_amount: number
+          p_bonus: number
+          p_campaign?: string
+          p_creator: string
+          p_fan: string
+          p_pass: string
+          p_request: string
+          p_spins: number
+        }
+        Returns: Json
+      }
+      _import_fans_durable_core: {
+        Args: {
+          p_batch: string
+          p_creator: string
+          p_request_hash: string
+          p_rows: Json
+        }
+        Returns: Json
+      }
       _is_org_member: { Args: { p_org: string }; Returns: boolean }
       _owns_org: { Args: { p_org: string }; Returns: boolean }
       _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
+      _release_fan_focus: { Args: { p_fan: string }; Returns: Json }
+      _resolved_spin_wheel: { Args: { p_pass: string }; Returns: string }
+      _spin_attempt_context: { Args: { p_pass: string }; Returns: Json }
+      _spin_attempt_receipt: {
+        Args: { p_attempt: string; p_replayed: boolean }
+        Returns: Json
+      }
       add_reward_codes: {
         Args: { p_codes: Json; p_creator: string; p_prize: string }
         Returns: number
@@ -2078,15 +2656,72 @@ export type Database = {
         Args: { p_target: string }
         Returns: string
       }
+      award_fan_referral: {
+        Args: { p_creator: string; p_fan: string }
+        Returns: Json
+      }
       can_act_for: {
         Args: { perm: string; target_creator: string }
         Returns: boolean
+      }
+      cancel_fan_focus:
+        | {
+            Args: { p_creator: string; p_fan: string; p_focus: string }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_actor: string
+              p_creator: string
+              p_fan: string
+              p_focus: string
+            }
+            Returns: Json
+          }
+      cancel_spin_attempt: {
+        Args: {
+          p_attempt: string
+          p_error?: string
+          p_request_hash: string
+          p_token: string
+        }
+        Returns: Json
       }
       claim_app_error_alert: {
         Args: { p_error_id?: string; p_limit: number }
         Returns: Json
       }
       claim_spin: { Args: { p_token: string }; Returns: number }
+      commit_spin_attempt: {
+        Args: {
+          p_attempt: string
+          p_context: Json
+          p_expected_reward: Json
+          p_next_seed: Json
+          p_request_hash: string
+          p_spin: Json
+          p_token: string
+        }
+        Returns: Json
+      }
+      create_pass_grant: {
+        Args: {
+          p_actor?: string
+          p_amount: number
+          p_bonus: number
+          p_campaign: string
+          p_creator: string
+          p_fan: string
+          p_name: string
+          p_pack?: string
+          p_pack_units?: number
+          p_referral_code?: string
+          p_request: string
+          p_spins: number
+          p_wheel: string
+        }
+        Returns: Json
+      }
       creator_storage_account: {
         Args: {
           p_action?: string
@@ -2166,6 +2801,32 @@ export type Database = {
         Returns: undefined
       }
       current_user_active: { Args: never; Returns: boolean }
+      edit_pass_grant:
+        | {
+            Args: {
+              p_amount: number
+              p_bonus: number
+              p_campaign?: string
+              p_creator: string
+              p_grant: string
+              p_spins: number
+              p_update_amount?: boolean
+              p_update_campaign?: boolean
+              p_update_spins?: boolean
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_actor: string
+              p_creator: string
+              p_grant: string
+              p_patch: Json
+              p_request: string
+            }
+            Returns: Json
+          }
+      ensure_pass_commitment: { Args: { p_token: string }; Returns: Json }
       fan_take_break: {
         Args: { p_token: string; p_until: string }
         Returns: string
@@ -2174,7 +2835,48 @@ export type Database = {
         Args: { p_expected: Json; p_spin: Json }
         Returns: Json
       }
+      get_fan_focus_state: { Args: { p_token: string }; Returns: Json }
+      get_spin_attempt_status: {
+        Args: { p_attempt: string; p_request_hash: string; p_token: string }
+        Returns: Json
+      }
+      grant_focus_pack: {
+        Args: {
+          p_actor?: string
+          p_creator: string
+          p_fan: string
+          p_pack: string
+          p_pass: string
+          p_prize: string
+          p_request: string
+        }
+        Returns: Json
+      }
+      grant_pass_spins: {
+        Args: {
+          p_actor?: string
+          p_amount: number
+          p_bonus: number
+          p_campaign?: string
+          p_creator: string
+          p_fan: string
+          p_pass: string
+          p_request: string
+          p_spins: number
+        }
+        Returns: Json
+      }
       import_fans: { Args: { p_rows: Json }; Returns: undefined }
+      import_fans_durable: {
+        Args: {
+          p_actor?: string
+          p_batch: string
+          p_creator: string
+          p_request_hash: string
+          p_rows: Json
+        }
+        Returns: Json
+      }
       is_admin: { Args: never; Returns: boolean }
       org_account_stats: {
         Args: { p_org: string }
@@ -2223,6 +2925,21 @@ export type Database = {
         Args: { p_creator: string; p_member: string; p_on: boolean }
         Returns: string
       }
+      prepare_spin_attempt: {
+        Args: { p_attempt: string; p_request_hash: string; p_token: string }
+        Returns: Json
+      }
+      reconcile_creator_request: {
+        Args: {
+          p_actor: string
+          p_authorized?: boolean
+          p_cancel?: boolean
+          p_creator: string
+          p_kind: string
+          p_request: string
+        }
+        Returns: Json
+      }
       record_app_error: {
         Args: {
           p_environment: string
@@ -2238,6 +2955,10 @@ export type Database = {
       }
       record_fan_reward_view: {
         Args: { p_spin: string; p_token: string }
+        Returns: number
+      }
+      record_fan_reward_views: {
+        Args: { p_spins: string[]; p_token: string }
         Returns: number
       }
       record_reward_view: { Args: { p_spin: string }; Returns: number }
@@ -2335,7 +3056,6 @@ export type Database = {
     }
   }
 }
-
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
 type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]

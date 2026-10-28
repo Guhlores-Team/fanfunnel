@@ -28,6 +28,8 @@ export type Statement = {
   op: Op;
   filters: Array<{ col: string; operator: string; value: unknown }>;
   payload: Row | Row[] | null;
+  /** Internal statements of an atomic RPC, never standalone client writes. */
+  transaction?: boolean;
 };
 
 const TABLE_DEFAULTS: Record<string, Row> = {
@@ -75,6 +77,10 @@ export class FakeSupabase {
    */
   beforeStatement: ((stmt: Statement) => DbError | void) | null = null;
   private seq = 0;
+  enforceAtomicEconomy = false;
+  readonly permissions: Record<string, boolean> = {};
+  readonly rpcCalls: { name: string; args: Row }[] = [];
+  private economicRequests = new Map<string, { intent: string; receipt: Row }>();
 
   constructor(readonly userId: string) {}
 
@@ -127,11 +133,138 @@ export class FakeSupabase {
       },
       from: (table: string) => new Query(this, table),
       rpc: async (name: string, args: unknown) => {
+        this.rpcCalls.push({ name, args: args as Row });
         const handler = this.rpcHandlers[name];
-        if (!handler) throw new Error(`fakeSupabase: rpc ${name} is not modelled`);
-        return { data: handler(args) ?? null, error: null };
+        if (handler) return { data: handler(args) ?? null, error: null };
+        try { return { data: this.economicRpc(name, args as Row), error: null }; }
+        catch (error) {
+          if (error && typeof error === "object" && "message" in error) return { data: null, error: { code: "P0001", ...error } };
+          throw error;
+        }
       },
     };
+  }
+
+  /** Before-lock probes model a separately committed concurrent spin. No
+   * uncommitted credit is exposed to spin(), even when a later SQL write fails. */
+  private probe(table: string, op: Op, payload: Row | null, equals: Row = {}) {
+    const statement: Statement = { n: this.statements.length + 1, table, op, payload, transaction: true, filters: Object.entries(equals).map(([col, value]) => ({ col, operator: "eq", value })) };
+    this.statements.push(statement);
+    const error = this.beforeStatement?.(statement);
+    if (error) throw error;
+  }
+  private eligible(fan: Row | undefined): boolean {
+    return !!fan && !fan.blocked_at && (!fan.break_until || Date.parse(String(fan.break_until)) <= Date.now());
+  }
+  private oldest(fanId: unknown): Row | undefined {
+    return this.rows("fan_passes").filter(p => p.fan_id === fanId && p.is_active && !p.self_excluded_at)
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))[0];
+  }
+  private economicRpc(name: string, args: Row): unknown {
+    if (name === "can_act_for") return this.permissions[String(args.target_creator)] ?? args.target_creator === this.userId;
+    if (!["grant_pass_spins", "create_pass_grant", "edit_pass_grant", "award_fan_referral"].includes(name)) throw new Error(`fakeSupabase: rpc ${name} is not modelled`);
+    const creator = args.p_creator;
+    if (name === "award_fan_referral") {
+      const fan = this.rows("fans").find(f => f.id === args.p_fan && f.creator_id === creator);
+      if (!fan) return { status: "unavailable" };
+      if (fan.referral_credited) return { status: "already_credited" };
+      const referrer = this.rows("fans").find(f => f.id === fan.referred_by_fan_id && f.creator_id === creator);
+      const referral = this.rows("referrals").find(r => r.referred_fan_id === fan.id && r.referrer_fan_id === referrer?.id && r.creator_id === creator);
+      if (!referral || !referrer || referrer.id === fan.id || !this.rows("grants").some(g => g.fan_id === fan.id && Number(g.amount_cents) > 0)) return { status: "pending" };
+      if (this.rows("referrals").filter(r => r.referrer_fan_id === referrer.id && r.credited_at).length >= 3) return { status: "capped" };
+      const pass = this.oldest(fan.id), refPass = this.oldest(referrer.id);
+      if (!this.eligible(fan) || !this.eligible(referrer) || !pass || !refPass) return { status: "pending" };
+      for (const p of [pass, refPass]) this.probe("fan_passes", "update", { spins_remaining: Number(p.spins_remaining) + 3 }, { id: p.id });
+      this.probe("referrals", "update", { credited_at: "now" }, { id: referral.id });
+      for (const p of [pass, refPass]) { p.spins_remaining = Number(p.spins_remaining) + 3; p.spins_granted_total = Number(p.spins_granted_total) + 3; this.syncAggregate(String(p.fan_id)); }
+      fan.referral_credited = true; referral.credited_at = new Date().toISOString(); referral.bonus_spins = 3;
+      return { status: "credited" };
+    }
+    if (name === "edit_pass_grant") {
+      if (typeof args.p_request !== "string" || args.p_actor !== this.userId || !args.p_patch || typeof args.p_patch !== "object") throw new Error("durable edit identity required");
+      const patch = args.p_patch as Row;
+      const request = `edit:${args.p_actor}:${args.p_request}`;
+      const intent = JSON.stringify([creator, args.p_grant, Object.keys(patch).sort().map(key => [key, patch[key]])]);
+      const previous = this.economicRequests.get(request);
+      const grant = this.rows("grants").find(g => g.id === args.p_grant && g.creator_id === creator);
+      const current = (replayed: boolean) => {
+        if (!grant || !this.rows("fans").some(f => f.id === grant.fan_id && f.creator_id === creator)) return { status: "gone", error: "gone" };
+        const pass = this.rows("fan_passes").find(p => p.id === grant.fan_pass_id && p.is_active && !p.self_excluded_at) ?? this.oldest(grant.fan_id);
+        return { status: "updated", grantId: grant.id, replayed, balance: pass?.spins_remaining ?? null, grant: { id: grant.id, spins: grant.spins, bonusSpins: grant.bonus_spins, amountCents: grant.amount_cents, campaignId: grant.campaign_id } };
+      };
+      if (previous) return previous.intent !== intent ? { status: "conflict" } : previous.receipt.status === "updated" ? current(true) : { ...previous.receipt };
+      const finish = (receipt: Row) => { this.economicRequests.set(request, { intent, receipt }); return receipt; };
+      if (!(this.permissions[String(creator)] ?? creator === this.userId)) return finish({ status: "unavailable", error: "forbidden" });
+      if (!grant) return finish({ status: "unavailable", error: "not_found" });
+      if (Object.hasOwn(patch, "campaignId") && patch.campaignId !== null && !this.rows("campaigns").some(c => c.id === patch.campaignId && c.creator_id === creator)) return finish({ status: "invalid", error: "campaign_not_found" });
+      this.probe("fan_passes", "select", null, { fan_id: grant.fan_id });
+      const pass = this.rows("fan_passes").find(p => p.id === grant.fan_pass_id && p.is_active && !p.self_excluded_at) ?? this.oldest(grant.fan_id);
+      const total = Object.hasOwn(patch, "spins") ? Number(patch.spins) : Number(grant.spins);
+      const delta = total - Number(grant.spins);
+      if (!pass && delta) return finish({ status: "invalid", error: "no_active_pass" });
+      const fan = this.rows("fans").find(f => f.id === grant.fan_id);
+      if (delta > 0 && !this.eligible(fan)) return finish({ status: "unavailable", error: fan?.blocked_at ? "blocked" : fan?.break_until ? "on_break" : "not_found" });
+      if (delta && pass) this.probe("fan_passes", "update", { spins_remaining: Number(pass.spins_remaining) + delta }, { id: pass.id });
+      this.probe("grants", "update", { spins: total }, { id: grant.id });
+      // Probe hooks model separately committed writes before transaction locks.
+      if (pass && Number(pass.spins_remaining) + delta < 0) return finish({ status: "invalid", error: "insufficient_spins" });
+      if (pass && delta) { pass.spins_remaining = Number(pass.spins_remaining) + delta; pass.spins_granted_total = Math.max(0, Number(pass.spins_granted_total) + delta); this.syncAggregate(String(pass.fan_id)); }
+      if (Object.hasOwn(patch, "spins")) { grant.spins = total; grant.bonus_spins = Math.min(Number(grant.bonus_spins), total); }
+      if (Object.hasOwn(patch, "amountCents")) grant.amount_cents = patch.amountCents;
+      if (Object.hasOwn(patch, "campaignId")) grant.campaign_id = patch.campaignId;
+      return finish(current(false));
+    }
+
+    const request = String(args.p_request);
+    const rawIntent = args.p_pack ? { ...args, p_spins: null, p_bonus: null, p_amount: null } : args;
+    const intent = JSON.stringify([name, rawIntent]);
+    const previous = this.economicRequests.get(request);
+    if (previous) return previous.intent === intent ? { ...previous.receipt, replayed: true, balance: this.rows("fan_passes").find(p => p.id === previous.receipt.passId)?.spins_remaining ?? previous.receipt.balance } : { status: "conflict" };
+    if (name === "create_pass_grant") {
+      const campaign = args.p_campaign == null ? null : this.rows("campaigns").find(c => c.id === args.p_campaign && c.creator_id === creator);
+      if (args.p_campaign != null && !campaign) return { status: "invalid", error: "campaign_not_found" };
+      let wheel = args.p_wheel == null ? null : this.rows("wheels").find(w => w.id === args.p_wheel && w.creator_id === creator && !w.archived_at);
+      if (args.p_wheel == null) wheel = this.rows("wheels").find(w => w.id === campaign?.pinned_wheel_id && w.creator_id === creator && !w.archived_at)
+        ?? this.rows("wheels").find(w => w.creator_id === creator && w.is_active && !w.archived_at)
+        ?? this.rows("wheels").filter(w => w.creator_id === creator && !w.archived_at).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
+      if (!wheel) return { status: "invalid", error: "no_wheel" };
+      args = { ...args, p_wheel: wheel.id };
+    }
+    if (args.p_pack) {
+      const pack = this.rows("campaign_packs").find(p => p.id === args.p_pack && p.creator_id === creator);
+      if (!pack) return { status: "pack_not_found" };
+      if (pack.pack_kind !== "spins") return { status: "invalid_pack" };
+      args = { ...args, p_spins: (Number(pack.spins) + Number(pack.bonus_spins)) * Number(args.p_pack_units ?? 1), p_bonus: Number(pack.bonus_spins) * Number(args.p_pack_units ?? 1), p_amount: Number(pack.amount_cents) * Number(args.p_pack_units ?? 1) };
+    }
+    if (Number(args.p_spins) > 1_000_000 || Number(args.p_amount) > 100_000_000) return { status: "invalid", error: "invalid_pack" };
+    let fan = this.rows("fans").find(f => f.id === args.p_fan && f.creator_id === creator);
+    let pass: Row | undefined;
+    const fresh = name === "create_pass_grant" && args.p_fan == null;
+    if (fresh) fan = this.withDefaults("fans", { creator_id: creator, display_name: args.p_name });
+    if (!fan || !this.eligible(fan)) return { status: "unavailable", error: fan?.blocked_at ? "blocked" : fan?.break_until ? "on_break" : "fan_not_found" };
+    if (name === "create_pass_grant") {
+      pass = this.rows("fan_passes").find(p => p.fan_id === fan!.id && p.wheel_id === args.p_wheel && p.is_active && !p.self_excluded_at);
+    } else pass = this.rows("fan_passes").find(p => p.id === args.p_pass && p.fan_id === fan!.id && p.creator_id === creator && p.is_active && !p.self_excluded_at);
+    const newPass = name === "create_pass_grant" && !pass;
+    if (newPass) pass = this.withDefaults("fan_passes", { creator_id: creator, fan_id: fan.id, wheel_id: args.p_wheel, token: `token-${request}`, campaign_id: args.p_campaign });
+    if (!pass) return { status: "unavailable" };
+    if (fresh) this.probe("fans", "insert", fan);
+    if (newPass) this.probe("fan_passes", "insert", pass);
+    this.probe("fan_passes", "update", { spins_remaining: Number(pass.spins_remaining) + Number(args.p_spins) }, { id: pass.id });
+    this.probe("grants", "insert", { id: request, spins: args.p_spins });
+    if (fresh) this.rows("fans").push(fan);
+    if (newPass) this.rows("fan_passes").push(pass);
+    pass.spins_remaining = Number(pass.spins_remaining) + Number(args.p_spins);
+    pass.spins_granted_total = Number(pass.spins_granted_total) + Number(args.p_spins);
+    this.seed("grants", { id: request, creator_id: creator, fan_id: fan.id, fan_pass_id: pass.id, spins: args.p_spins, bonus_spins: args.p_bonus, amount_cents: args.p_amount, campaign_id: args.p_campaign });
+    if (fresh && args.p_referral_code) {
+      const referrer = this.rows("fans").find(f => f.creator_id === creator && f.referral_code === args.p_referral_code && f.id !== fan!.id);
+      if (referrer) { fan.referred_by_fan_id = referrer.id; this.seed("referrals", { creator_id: creator, referrer_fan_id: referrer.id, referred_fan_id: fan.id, credited_at: null, bonus_spins: 3 }); }
+    }
+    this.syncAggregate(String(fan.id));
+    const receipt = { status: "granted", token: pass.token, fanId: fan.id, passId: pass.id, grantId: request, balance: pass.spins_remaining, replayed: false };
+    this.economicRequests.set(request, { intent, receipt });
+    return receipt;
   }
 
   private withDefaults(table: string, row: Row): Row {
@@ -180,6 +313,14 @@ export class FakeSupabase {
     const injected = this.beforeStatement?.(stmt);
     if (injected) return { rows: [], error: injected };
 
+    if (this.enforceAtomicEconomy && table === "fans" && (op === "insert" || op === "update")) {
+      const entries = Array.isArray(payload) ? payload : [payload ?? {}];
+      if (entries.some(row => op === "insert" ? Number(row.spins_remaining ?? 0) !== 0 || Number(row.spins_granted_total ?? 0) !== 0 || Number(row.pity_counter ?? 0) !== 0 : ["spins_remaining", "spins_granted_total", "pity_counter"].some(key => key in row))) return { rows: [], error: { message: "use atomic economic RPC", code: "42501" } };
+    }
+    if (this.enforceAtomicEconomy && table === "fan_passes" && (op === "insert" || op === "update")) {
+      const entries = Array.isArray(payload) ? payload : [payload ?? {}];
+      if (entries.some(row => op === "update" ? ["spins_remaining", "spins_granted_total", "next_server_seed", "next_server_seed_hash", "next_spin_nonce"].some(key => key in row) : Number(row.spins_remaining ?? 0) !== 0 || Number(row.spins_granted_total ?? 0) !== 0)) return { rows: [], error: { message: "use atomic grant RPC", code: "42501" } };
+    }
     const snapshot = Object.fromEntries(
       Object.entries(this.tables).map(([k, v]) => [k, v.map((r) => ({ ...r }))])
     );

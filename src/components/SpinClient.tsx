@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "./Wheel";
 import type { FanPassView, WonPrize } from "@/lib/data/types";
-import type { PublicPrize, PublicStock } from "@/lib/games/wheel/types";
+import type { PublicPrize, PublicStock, SpinResult } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { applyStockMap } from "@/lib/games/wheel/publicView";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
@@ -59,6 +59,10 @@ import { reminderDue } from "@/lib/play/playGuard";
 import type { DeliveredReward } from "@/lib/rewards/config";
 import InstantReward, { RewardUnavailable } from "./fan/InstantReward";
 import { parseDeliveredReward } from "./fan/instantReward";
+import FocusChip from "./fan/FocusChip";
+import { mergeFanWins } from "./fan/spinPresentation";
+import { useSpinRecovery } from "./fan/useSpinRecovery";
+import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -88,7 +92,11 @@ export default function SpinClient({
   // Private values live only in this reveal's memory, never in win history.
   const [wonReward, setWonReward] = useState<DeliveredReward | null>(null);
   const [wonInstant, setWonInstant] = useState(false);
-  const [spinPending, setSpinPending] = useState(false);
+  const [focus, setFocus] = useState<FanFocusView | null>(pass.focus ?? null);
+  const [odds, setOdds] = useState<FanOddsView | undefined>(pass.odds);
+  const [chaseComplete, setChaseComplete] = useState(false);
+  const recoveredWin = useRef(false);
+  const awardedAt = useRef<string | null>(null);
   const [rewardHistoryNonce, setRewardHistoryNonce] = useState(0);
   const [busy, setBusy] = useState(false);
   // RM-1: the reveal runs as a small state machine (revealTiers.ts). It only
@@ -127,7 +135,8 @@ export default function SpinClient({
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
-  const [history, setHistory] = useState<WonPrize[]>(pass.recentWins);
+  const [localHistory, setHistory] = useState<WonPrize[]>(pass.recentWins);
+  const history = useMemo(() => mergeFanWins(pass.recentWins, localHistory), [pass.recentWins, localHistory]);
   // Phase 5b: age-gate / ToS. Blocks everything until acknowledged.
   const [needsAck, setNeedsAck] = useState(pass.needsAck ?? false);
   // Commit-reveal: the server pre-committed the next spin's seed; we show its
@@ -199,92 +208,80 @@ export default function SpinClient({
   // RM-3: visual only. The check-in never touches spins, odds or the wheel,
   // and a fan on a break (RM-6) gets no glow nudges.
   const { glow, milestone, dismissMilestone } = useVisitGlow(pass.token, pass.glow, !paused && !onBreak);
-  const { canSpin, label: spinLabel, balanceLabel } = spinControl({
-    spinsRemaining,
-    busy: busy || revealInFlight(rv.phase),
-    paused,
-    onBreak,
-    spinPending,
-  });
-
-  const runSpin = useCallback(async () => {
-    if (!canSpin) return;
-    // iOS: wake the audio context inside the tap so the win fanfare can play,
-    // and fire a haptic tick. Haptics follow the same mute switch as sound.
-    if (!muted) {
-      unlockAudio();
-      haptic(12);
-    }
-    setBusy(true);
-    setError(null);
-    setWon(null);
-    setWonShareId(null);
-    setWonReward(null);
-    setWonInstant(false);
-    setNearMiss(null);
-    setPity(null);
-    setPityAwarded(false);
-    setBeatRow(false);
-    pendingStock.current = null;
+  const focusRevision = useRef(0);
+  const refreshFocus = useCallback(async () => {
+    const revision = focusRevision.current;
     try {
-      const res = await fetch("/api/spin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: pass.token, clientSeed }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const info = spinErrorInfo(body.error);
-        setError(info.message);
-        if (info.reopenAgeGate) setNeedsAck(true);
-        // On a break taken elsewhere (another tab or link): reload to show it.
-        if (info.refreshPlay) router.refresh();
-        if (info.checkPendingSpin) {
-          setSpinPending(true);
-          setRewardHistoryNonce((n) => n + 1);
-          router.refresh();
-        }
-        setBusy(false);
-        return;
-      }
-      const data = await res.json();
-      const prize: PublicPrize = data.prize;
-      setSpinsRemaining(data.spinsRemaining);
-      if (data.play && typeof data.play.today === "number" && typeof data.play.week === "number") {
-        setPlay((p) => ({ ...p, today: data.play.today, week: data.play.week }));
-      }
-      // The outcome is final here; the theater only presents its rarity.
-      spinEnded.current = false;
-      dispatchReveal({
-        type: "start",
-        rarity: prize.rarity,
-        reducedMotion: prefersReducedMotion(),
-        spinsBefore: sessionSpins,
-      });
-      setBusy(false);
-      setResult({ index: data.prizeIndex, nonce: Date.now() });
-      setWon(prize);
-      setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
-      setWonReward(parseDeliveredReward(data.reward));
-      setWonInstant(data.reward !== undefined && data.reward !== null);
-      setPityAwarded(data.pityAwarded === true);
-      pendingStock.current =
-        data.stock && typeof data.stock === "object" ? (data.stock as Record<string, PublicStock>) : null;
-      if (typeof data.nextSpinHash === "string") setNextSpinHash(data.nextSpinHash);
-      // Arm the stuck-spin watchdog (cleared by handleSpinEnd on normal
-      // finish). If the wheel's completion never fires, land on the result as
-      // a skip would, so the button can't stay dead and the win isn't lost.
-      if (spinWatchdog.current) clearTimeout(spinWatchdog.current);
-      spinWatchdog.current = setTimeout(() => {
-        spinWatchdog.current = null;
-        dispatchReveal({ type: "skip" });
-        spinEndRef.current();
-      }, SPIN_WATCHDOG_MS);
-    } catch {
-      setError("Network error. Try again.");
-      setBusy(false);
-    }
-  }, [canSpin, pass.token, muted, clientSeed, sessionSpins, router]);
+      const response = await fetch("/api/fan/focus", { method: "POST", headers: { "Content-Type": "application/json" },
+        cache: "no-store", body: JSON.stringify({ token: pass.token }) });
+      if (!response.ok) { setOdds(undefined); return; }
+      const body = await response.json();
+      if (revision !== focusRevision.current) return;
+      setFocus(body.focus ?? null);
+      setOdds(body.odds);
+    } catch { setOdds(undefined); }
+  }, [pass.token]);
+  useEffect(() => {
+    const boot = setTimeout(() => void refreshFocus(), 0);
+    const visible = () => { if (document.visibilityState === "visible") void refreshFocus(); };
+    const timer = setInterval(visible, 30000);
+    document.addEventListener("visibilitychange", visible);
+    return () => { clearTimeout(boot); clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+  }, [refreshFocus, pass.focus, pass.odds]);
+
+  const onCommitted = useCallback((data: SpinResult, options: { present: boolean; recovered: boolean }) => {
+    focusRevision.current++;
+    setSpinsRemaining(data.spinsRemaining);
+    setFocus(data.focus ?? null);
+    setOdds(data.odds);
+    if (data.play) setPlay(p => ({ ...p, today: data.play!.today, week: data.play!.week }));
+    if (typeof data.nextSpinHash === "string") setNextSpinHash(data.nextSpinHash);
+    if (!options.present) return;
+    setError(null);
+    setRewardHistoryNonce(n => n + 1);
+    recoveredWin.current = options.recovered;
+    awardedAt.current = typeof data.awardedAt === "string" && Number.isFinite(Date.parse(data.awardedAt)) ? data.awardedAt : null;
+    if (options.recovered) router.refresh();
+    setChaseComplete(!options.recovered && data.chaseCompleted === true);
+    setNearMiss(null); setPity(null); setBeatRow(false);
+    setPityAwarded(!options.recovered && data.pityAwarded === true);
+    spinEnded.current = false;
+    dispatchReveal({ type: "start", rarity: data.prize.rarity,
+      reducedMotion: options.recovered || prefersReducedMotion(), spinsBefore: sessionSpins });
+    setBusy(false);
+    setResult({ index: data.prizeIndex, nonce: Date.now() });
+    setWon(data.prize);
+    setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
+    setWonReward(parseDeliveredReward(data.reward));
+    setWonInstant(data.reward !== undefined && data.reward !== null);
+    pendingStock.current = data.stock ?? null;
+    if (spinWatchdog.current) clearTimeout(spinWatchdog.current);
+    spinWatchdog.current = setTimeout(() => {
+      spinWatchdog.current = null;
+      dispatchReveal({ type: "skip" });
+      spinEndRef.current();
+    }, SPIN_WATCHDOG_MS);
+  }, [sessionSpins, router]);
+  const onRefusal = useCallback((code: unknown) => {
+    const info = spinErrorInfo(code);
+    if (info.reopenAgeGate) setNeedsAck(true);
+    if (info.refreshPlay) router.refresh();
+    setBusy(false);
+  }, [router]);
+  const recovery = useSpinRecovery({ token: pass.token, canRetry: !paused && !onBreak && !needsAck,
+    onCommitted, onRefusal });
+  const spinPending = recovery.locked;
+  const { canSpin, label: spinLabel, balanceLabel } = spinControl({
+    spinsRemaining, busy: busy || recovery.sending || revealInFlight(rv.phase), paused, onBreak,
+    spinPending: recovery.locked && recovery.phase !== "revealing" && recovery.phase !== "sending",
+  });
+  const runSpin = useCallback(async () => {
+    if (!canSpin || recovery.locked) return;
+    if (!muted) { unlockAudio(); haptic(12); }
+    setError(null);
+    setWonReward(null);
+    await recovery.begin(clientSeed, nextSpinHash);
+  }, [canSpin, recovery, muted, clientSeed, nextSpinHash]);
 
   // RM-6: once today's spins reach the fan's reminder, the next SPIN tap asks
   // first ("Want a breather?"), once per threshold per day. Soft: Keep playing
@@ -303,7 +300,7 @@ export default function SpinClient({
   useEffect(() => {
     const prev = prevSpins.current;
     if (spinsRemaining > 0) outroFired.current = false;
-    if (prev > 0 && spinsRemaining === 0 && !outroFired.current) {
+    if (prev > 0 && spinsRemaining === 0 && !outroFired.current && !paused && !onBreak && (!spinPending || recovery.phase === "revealing")) {
       outroFired.current = true;
       void fetch("/api/messages/auto-outro", {
         method: "POST",
@@ -312,7 +309,7 @@ export default function SpinClient({
       }).catch(() => {});
     }
     prevSpins.current = spinsRemaining;
-  }, [spinsRemaining, pass.token]);
+  }, [spinsRemaining, pass.token, paused, onBreak, spinPending, recovery.phase]);
 
   // Bumped after every completed spin so the leaderboard + recent-wins ticker
   // refetch immediately — the fan sees their rank move without a reload.
@@ -328,25 +325,25 @@ export default function SpinClient({
     }
     setBusy(false);
     setBoardRefresh((n) => n + 1);
-    setSessionSpins(bumpSessionSpins(sessionSpins));
+    if (!recoveredWin.current) setSessionSpins(bumpSessionSpins(sessionSpins));
     if (won) {
       if (!muted) {
         playWin(won.rarity);
         if (rv.tier) haptic(rv.tier.haptic);
       }
       setHistory((h) =>
-        [
+        wonShareId && h.some(item => item.shareId === wonShareId) ? h : [
           {
             label: won.label,
             rarity: won.rarity,
             emoji: won.emoji,
             color: won.color ?? RARITY_COLORS[won.rarity],
-            at: new Date().toISOString(),
+            at: awardedAt.current ?? new Date().toISOString(),
             ...(wonShareId ? { shareId: wonShareId } : {}),
             ...(wonInstant ? { instant: true } : {}),
             imageUrl: won.imageUrl,
           },
-          ...h,
+          ...h.filter(item => !wonShareId || item.shareId !== wonShareId),
         ].slice(0, 50)
       );
       // Pity beat takes precedence: a pity-forced spin is a *real win*, so we
@@ -354,7 +351,7 @@ export default function SpinClient({
       if (pityAwarded) {
         setPity(won);
         setBeatRow(true);
-      } else if (result) {
+      } else if (result && !recoveredWin.current && !chaseComplete) {
         // Near-miss beat: did the wheel stop one slice away from a legendary
         // (or epic) prize? Derived from the landed slice index + wheel order,
         // using the stock the fan saw while spinning (a sold-out neighbour
@@ -371,7 +368,7 @@ export default function SpinClient({
     }
     // Opens the card now, or after the tier's short hold on the landed slice.
     dispatchReveal({ type: "stop" });
-  }, [won, wonShareId, wonInstant, muted, result, prizes, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier]);
+  }, [won, wonShareId, wonInstant, muted, result, prizes, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier, chaseComplete]);
   useEffect(() => {
     spinEndRef.current = handleSpinEnd;
   }, [handleSpinEnd]);
@@ -513,9 +510,12 @@ export default function SpinClient({
           onBreakTaken={markOnBreak}
         />
 
+        <FocusChip focus={focus} onBreak={onBreak} />
+
         <button
+          data-testid="fan-spin"
           onClick={handleSpin}
-          disabled={!canSpin}
+          disabled={!canSpin || recovery.locked}
           className="btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
         >
           {spinLabel}
@@ -537,16 +537,15 @@ export default function SpinClient({
             {error}
           </p>
         )}
-        {spinPending && (
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            data-testid="spin-pending-reload"
-            className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
-          >
-            Reload balance and wins
-          </button>
-        )}
+        {recovery.message && <p role="status" data-testid="spin-recovery-status" className="text-center text-sm text-muted">{recovery.message}</p>}
+        {recovery.phase === "pending" && <div className="flex w-full flex-wrap justify-center gap-3" data-testid="spin-recovery-controls">
+          <button type="button" onClick={() => void recovery.check()} data-testid="spin-recovery-check"
+            className="min-h-11 rounded-xl border border-line px-4 py-2 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-text)]">Check this spin</button>
+          <button type="button" onClick={() => void recovery.retry()} disabled={paused || onBreak || needsAck}
+            data-testid="spin-recovery-retry" className="min-h-11 rounded-xl border border-line px-4 py-2 font-semibold text-ink disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-text)]">Retry this same spin</button>
+        </div>}
+        {recovery.phase === "storage" && <button type="button" onClick={() => void recovery.initialize()}
+          data-testid="spin-storage-check" className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink">Check browser storage</button>}
         {nextSpinHash && (
           <p
             className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 text-center text-[10px] tracking-wide text-muted"
@@ -561,7 +560,7 @@ export default function SpinClient({
             </span>
           </p>
         )}
-        {spinsRemaining === 0 && !reveal && !paused && !onBreak && (
+        {spinsRemaining === 0 && !reveal && !paused && !onBreak && !spinPending && (
           <TopUpMoment
             prizes={prizes}
             history={history}
@@ -569,14 +568,14 @@ export default function SpinClient({
             tipUrl={pass.tipUrl}
           />
         )}
-        <InstallNudge armed={reveal && won !== null} />
+        <InstallNudge armed={reveal && won !== null && !paused && !onBreak} />
       </div>
 
       <LimitedStockRow prizes={prizes} />
 
       <WinsGallery key={pass.token} history={history} token={pass.token} historyNonce={rewardHistoryNonce} />
 
-      <PrizeBook prizes={prizes} history={history} />
+      <PrizeBook prizes={prizes} history={history} focus={focus} odds={odds} />
 
       {pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard
@@ -635,9 +634,11 @@ export default function SpinClient({
           // The beats accompany the card: they open with it, in the row above
           // it (never over it), and go when it closes. Pity still wins over a
           // near miss (handleSpinEnd sets only one of them).
-          bannerSpace={beatRow}
+          bannerSpace={beatRow || chaseComplete}
           banner={
-            pity ? (
+            chaseComplete ? (
+              <p role="status" data-testid="chase-complete" className="rounded-xl border border-line bg-surface px-4 py-3 text-center font-semibold text-ink">Chase complete! You won your selected prize.</p>
+            ) : pity ? (
               <PityBeat prize={pity} onDone={() => setPity(null)} />
             ) : nearMiss ? (
               <NearMissBeat nearMiss={nearMiss} onDone={() => setNearMiss(null)} />
@@ -649,6 +650,8 @@ export default function SpinClient({
             setNearMiss(null);
             setBeatRow(false);
             setWonReward(null);
+            setChaseComplete(false);
+            void recovery.acknowledge();
           }}
         />
       )}

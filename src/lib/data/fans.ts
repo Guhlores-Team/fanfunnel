@@ -15,7 +15,7 @@ import {
   mockSetFanBlocked,
   mockReportCreator,
 } from "./mock";
-import { clampInt, creatorOwnsCampaign } from "./shared";
+import { isUuid } from "./shared";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
 import { readFansOnBreak } from "./playGuard";
@@ -26,212 +26,102 @@ import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/li
 import { listRecentOutreach } from "./outreach";
 import { LEGAL } from "@/lib/legal";
 
-/** Edit an existing grant's spins / amount / campaign after the fact. Adjusts
- *  the fan's balance by the spin delta (floored at 0) so totals stay consistent. */
-export async function editGrant(
-  grantId: string,
-  patch: { spins?: number; amountCents?: number; campaignId?: string | null }
-): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockEditGrant(grantId, patch);
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return { error: "unauthorized" };
-
-  const { data: gRow } = await sb
-    .from("grants")
-    .select("id, fan_id, fan_pass_id, spins, amount_cents, campaign_id")
-    .eq("id", grantId)
-    .eq("creator_id", user.id)
-    .maybeSingle();
-  const grant = gRow as
-    | {
-        id: string;
-        fan_id: string;
-        fan_pass_id: string | null;
-        spins: number;
-        amount_cents: number;
-        campaign_id: string | null;
-      }
-    | null;
-  if (!grant) return { error: "not_found" };
-
-  // The grant update and the two aggregate updates below are separate
-  // statements; wire a best-effort compensation so a later failure can't leave
-  // the grant changed while the fan/pass balances stay stale.
-  const rollbacks: Array<() => Promise<void>> = [];
-  const fail = async (error: string): Promise<{ error: string }> => {
-    for (const undo of rollbacks.reverse()) {
-      try {
-        await undo();
-      } catch {
-        /* best-effort */
-      }
-    }
-    return { error };
-  };
-
-  // Validate finite, int4-bounded integers up front so a non-finite patch or an
-  // overflowing balance can't be silently written and desync the aggregates.
-  const update: Record<string, unknown> = {};
-  if (patch.amountCents != null) {
-    if (!Number.isFinite(patch.amountCents)) return { error: "invalid" };
-    update.amount_cents = clampInt(Math.round(patch.amountCents), 0);
+/** Service-only atomic economic writes. A transport retry reuses the same
+ * request payload; it never subtracts credits after an ambiguous response. */
+async function economicRpc(name: string, args: Record<string, unknown>, uncertainStatus?: string): Promise<Record<string, unknown> | null> {
+  const service = createServiceClient() as unknown as { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { data, error } = await service.rpc(name, args);
+      if (!error) return data && typeof data === "object" ? data as Record<string, unknown> : uncertainStatus ? { status: uncertainStatus } : null;
+      if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && error.code && !error.code.startsWith("PGRST")) return null;
+    } catch { /* Retry the same idempotent operation, never compensate. */ }
   }
-  if (patch.campaignId !== undefined) {
-    // Re-tagging to another campaign must stay within this creator's tenant.
-    if (!(await creatorOwnsCampaign(sb, user.id, patch.campaignId)))
-      return { error: "campaign_not_found" };
-    update.campaign_id = patch.campaignId;
-  }
-
-  let delta = 0;
-  if (patch.spins != null) {
-    if (!Number.isFinite(patch.spins)) return { error: "invalid" };
-    const newSpins = clampInt(Math.floor(patch.spins), 0);
-    delta = newSpins - grant.spins;
-    update.spins = newSpins;
-  }
-
-  // The pass this grant's spins landed on. When that row is gone (fan_pass_id
-  // is ON DELETE SET NULL) or no longer active, fall back to the fan's oldest
-  // active pass — the 0020 attribution convention — so the spins stay
-  // spendable. The choice is pickGrantPass, which getFanDetail also uses for
-  // the drawer's preview. Scoped to this creator like every other pass read.
-  type PassBal = { id: string; is_active: boolean; spins_remaining: number; spins_granted_total: number };
-  const PASS_COLS = "id, is_active, spins_remaining, spins_granted_total";
-  // A lookup error is not "pass missing": falling back on one would move the
-  // delta onto another wheel while the grant keeps its fan_pass_id.
-  const readPass = async (): Promise<PassBal | null | "db_error"> => {
-    const { data: rows, error: pErr } = await sb
-      .from("fan_passes")
-      .select(PASS_COLS)
-      .eq("fan_id", grant.fan_id)
-      .eq("creator_id", user.id)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
-    if (pErr) return "db_error";
-    const oldestFirst = ((rows ?? []) as PassBal[]).map((p) => ({ ...p, isActive: p.is_active }));
-    return pickGrantPass(oldestFirst, grant.fan_pass_id);
-  };
-
-  // Balance first, grant row second: a refused or failed balance change must
-  // leave the grant untouched, and the fan-level aggregate is the 0035
-  // trigger's alone (it fires on the pass write below), so editGrant never
-  // writes fans.spins_remaining.
-  if (delta !== 0) {
-    // Compare-and-swap on the balance just read: a spin landing between the
-    // read and the write (claim_spin runs concurrently) makes the update match
-    // zero rows, and we re-read and re-check instead of overwriting it. The
-    // over-cut check runs on every attempt, so spins the fan has already spun
-    // are never un-granted — a cut deeper than the pass's unspent balance is
-    // refused (insufficient_spins), never clamped. Clamping silently dropped
-    // the deficit and re-growing the grant then minted already-spent spins.
-    let applied: PassBal | null = null;
-    for (let attempt = 0; attempt < 3 && !applied; attempt++) {
-      const pass = await readPass();
-      if (pass === "db_error") return { error: "db_error" };
-      if (!pass) return { error: "no_active_pass" };
-      if (pass.spins_remaining + delta < 0) return { error: "insufficient_spins" };
-      const { data: updated, error: pErr } = await sb
-        .from("fan_passes")
-        .update({
-          spins_remaining: pass.spins_remaining + delta,
-          spins_granted_total: clampInt(pass.spins_granted_total + delta, 0),
-        })
-        .eq("id", pass.id)
-        .eq("spins_remaining", pass.spins_remaining)
-        .eq("spins_granted_total", pass.spins_granted_total)
-        .select("id")
-        .maybeSingle();
-      if (pErr) return { error: "db_error" };
-      if (updated) applied = pass;
-    }
-    if (!applied) return { error: "db_error" }; // balance kept moving under us
-    // Undo the balance change if the grant update below fails: same
-    // compare-and-swap on the balance as it is THEN (a spin may have landed
-    // since), up to three attempts. Skipped when it would take the pass
-    // negative (the fan already spent the spins); a skip or a miss is logged.
-    const passId = applied.id;
-    rollbacks.push(async () => {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const { data: cur } = await sb
-          .from("fan_passes")
-          .select(PASS_COLS)
-          .eq("id", passId)
-          .maybeSingle();
-        const c = cur as PassBal | null;
-        if (!c || c.spins_remaining - delta < 0) break;
-        const { data: undone } = await sb
-          .from("fan_passes")
-          .update({
-            spins_remaining: c.spins_remaining - delta,
-            spins_granted_total: clampInt(c.spins_granted_total - delta, 0),
-          })
-          .eq("id", passId)
-          .eq("spins_remaining", c.spins_remaining)
-          .eq("spins_granted_total", c.spins_granted_total)
-          .select("id")
-          .maybeSingle();
-        if (undone) return;
-      }
-      console.error("editGrant: balance rollback could not be applied", { grantId, passId, delta });
-    });
-  }
-
-  const { error: grantErr } = await sb.from("grants").update(update).eq("id", grantId);
-  if (grantErr) return fail("db_error");
-
-  return { ok: true };
+  return uncertainStatus ? { status: uncertainStatus } : null;
 }
 
-/** Top up spins on the fan account behind a token (e.g. after another tip). */
+/** Absolute grant edits and balance deltas commit in one database transaction.
+ * `grants.spins` includes its bonus subset, including pre-0059 grants. */
+export async function editGrant(
+  grantId: string,
+  patch: { spins?: number; amountCents?: number; campaignId?: string | null },
+  requestId: string = crypto.randomUUID(),
+): Promise<{ ok: true; requestId: string; grantId: string; replayed: boolean } | { error: string }> {
+  if (!isUuid(requestId) || requestId !== requestId.toLowerCase()) return { error: "invalid" };
+  // Bind the supplied patch, including presence, rather than deriving a new
+  // payload from mutable grant terms on each transport retry.
+  const exact: { spins?: number; amountCents?: number; campaignId?: string | null } = {};
+  if (patch.spins !== undefined) {
+    if (!Number.isInteger(patch.spins) || patch.spins < 0 || patch.spins > 1_000_000) return { error: "invalid" };
+    exact.spins = patch.spins;
+  }
+  if (patch.amountCents !== undefined) {
+    if (!Number.isInteger(patch.amountCents) || patch.amountCents < 0 || patch.amountCents > 100_000_000) return { error: "invalid" };
+    exact.amountCents = patch.amountCents;
+  }
+  if (patch.campaignId !== undefined) {
+    if (patch.campaignId !== null && (typeof patch.campaignId !== "string" || !patch.campaignId || patch.campaignId.length > 200)) return { error: "invalid" };
+    exact.campaignId = patch.campaignId;
+  }
+  if (!isSupabaseConfigured()) {
+    const result = mockEditGrant(grantId, exact, requestId);
+    return "error" in result ? result : { ok: true, requestId: result.requestId, grantId: result.grantId, replayed: result.replayed };
+  }
+  const sb = await createClient();
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  const { data: grant, error: readError } = await sb.from("grants")
+    .select("id, creator_id").eq("id", grantId).maybeSingle();
+  if (readError) return { error: "db_error" };
+  if (!grant) return { error: "not_found" };
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: grant.creator_id, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "unauthorized" };
+  // The transaction checks the actual actor again and recovers an existing
+  // receipt before validating live stock, break status or edited campaign rows.
+  const result = await economicRpc("edit_pass_grant", { p_request: requestId, p_creator: grant.creator_id, p_grant: grantId, p_patch: exact, p_actor: user.id }, "edit_pending");
+  if (!result) return { error: "db_error" };
+  if (result.status === "updated") {
+    if (result.grantId !== grantId || typeof result.replayed !== "boolean") return { error: "edit_pending" };
+    return { ok: true, requestId, grantId, replayed: result.replayed };
+  }
+  if (result.status === "conflict") return { error: "conflict" };
+  if (result.status === "gone" || result.status === "cancelled" || result.status === "rejected") return { error: typeof result.error === "string" ? result.error : result.status };
+  if (result.status === "invalid") return { error: ["insufficient_spins", "no_active_pass", "campaign_not_found"].includes(String(result.error)) ? String(result.error) : "invalid" };
+  if (result.status === "unavailable") return { error: ["on_break", "blocked", "forbidden"].includes(String(result.error)) ? String(result.error) : "not_found" };
+  return { error: "edit_pending" };
+}
+
+/** Top up this token's pass through an atomic, replay-safe grant transaction. */
 export async function grantSpins(
   token: string,
-  n: number
+  n: number,
+  requestId: string = crypto.randomUUID(),
 ): Promise<{ spinsRemaining: number } | { error: string }> {
+  if (!Number.isFinite(n) || n > 1_000_000 || !isUuid(requestId)) return { error: "invalid" };
   const add = Math.max(1, Math.floor(n) || 0);
   if (!isSupabaseConfigured()) {
-    const remaining = mockGrantSpins(token, add);
-    return remaining === null
-      ? { error: "not_found" }
-      : { spinsRemaining: remaining };
+    try {
+      const remaining = mockGrantSpins(token, add, requestId);
+      return remaining === null ? { error: "not_found" } : { spinsRemaining: remaining };
+    } catch (error) { return { error: error instanceof Error && error.message === "conflict" ? "conflict" : "db_error" }; }
   }
-
   const sb = await createClient();
-  type PassBal = { id: string; spins_remaining: number; spins_granted_total: number };
-
-  // Top up THIS pass (per-wheel). The fan-level aggregate is the 0035 trigger's
-  // alone: it fires on this write, so no fans update here (a value read before
-  // the write overwrote any spin that landed in between). The pass write is a
-  // compare-and-swap on the balance just read for the same reason: claim_spin
-  // runs concurrently, and a spin landing between our read and our write makes
-  // the update match zero rows, so we re-read and retry instead of losing it.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: pass } = await sb
-      .from("fan_passes")
-      .select("id, spins_remaining, spins_granted_total")
-      .eq("token", token)
-      .maybeSingle();
-    const p = pass as PassBal | null;
-    if (!p) return { error: "not_found" };
-
-    const { data: updated, error } = await sb
-      .from("fan_passes")
-      .update({
-        spins_remaining: p.spins_remaining + add,
-        spins_granted_total: p.spins_granted_total + add,
-      })
-      .eq("id", p.id)
-      .eq("spins_remaining", p.spins_remaining)
-      .eq("spins_granted_total", p.spins_granted_total)
-      .select("spins_remaining")
-      .maybeSingle();
-    if (error) return { error: "db_error" };
-    if (updated) return { spinsRemaining: (updated as { spins_remaining: number }).spins_remaining };
-  }
-  return { error: "db_error" }; // balance kept moving under us
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  const { data: pass, error: readError } = await sb.from("fan_passes")
+    .select("id, creator_id, fan_id, campaign_id").eq("token", token).maybeSingle();
+  if (readError) return { error: "db_error" };
+  if (!pass) return { error: "not_found" };
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: pass.creator_id, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "unauthorized" };
+  const { data: fan, error: fanError } = await sb.from("fans").select("blocked_at, break_until").eq("id", pass.fan_id).eq("creator_id", pass.creator_id).maybeSingle();
+  if (fanError) return { error: "db_error" };
+  if (!fan) return { error: "not_found" };
+  if (fan.blocked_at) return { error: "blocked" };
+  if (isOnBreak(fan.break_until)) return { error: "on_break" };
+  const result = await economicRpc("grant_pass_spins", { p_request: requestId, p_creator: pass.creator_id, p_fan: pass.fan_id, p_pass: pass.id, p_spins: add, p_bonus: 0, p_amount: 0, p_campaign: pass.campaign_id, p_actor: user.id });
+  if (!result) return { error: "db_error" };
+  return result.status === "granted" && typeof result.balance === "number" ? { spinsRemaining: result.balance } : { error: result.status === "conflict" ? "conflict" : "not_found" };
 }
 
 /**

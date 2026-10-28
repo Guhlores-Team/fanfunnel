@@ -17,6 +17,9 @@ import ImportFans from "@/components/dashboard/ImportFans";
 import { prefersReducedMotion } from "@/lib/sound";
 import { isRegular } from "@/lib/glow/glow";
 import { REGULAR_MIN_VISITS } from "@/lib/glow/config";
+import { creatorIntent, creatorIntentComplete } from "./creatorIntent";
+import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
+import CreatorRequestRecovery from "./CreatorRequestRecovery";
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -53,12 +56,17 @@ export default function FansPanel({
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
   const [packId, setPackId] = useState<string | null>(null);
+  const [packUnits, setPackUnits] = useState(1);
   const [campaigns, setCampaigns] = useState<
     { id: string; name: string; isActive?: boolean }[]
   >([]);
   const [wheels, setWheels] = useState<{ id: string; title: string }[]>([]);
   const [creating, setCreating] = useState(false);
+  const [newFanUncertain, setNewFanUncertain] = useState(false);
+  const creatingRef = useRef(false);
+  useCreatorDraft("new-fan", "this new fan link", !!name.trim() || perSpin !== "" || !!packId, creating || newFanUncertain);
   const [openFanId, setOpenFanId] = useState<string | null>(null);
+  const leave = useCreatorLeave();
   const [search, setSearch] = useState(initialSearch);
   const [campaignFilter, setCampaignFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
@@ -143,26 +151,47 @@ export default function FansPanel({
     return [...set].sort((x, y) => x.localeCompare(y));
   }, [accounts]);
 
-  async function call(body: object) {
+  async function call(body: Record<string, unknown>) {
+    const scope = typeof body.fanId === "string" ? `topup:${body.fanId}` : "new-fan";
+    let requestId: string;
+    try { requestId = await creatorIntent(scope, body); }
+    catch (error) {
+      const pending = error instanceof Error && error.message === "intent_pending";
+      toast(pending ? "An earlier request still needs checking. Restore its original details and retry before starting a different grant." : "Couldn't save the request safely in this browser. No grant was sent. Allow session storage and retry.", { tone: "error" });
+      // Do not lock changed fields: the creator may need to restore the original
+      // request after reloading. The durable helper still refuses a new intent.
+      return null;
+    }
+    let committed = false;
+    try {
     const res = await fetch("/api/passes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, requestId }),
     });
     const data = await res.json();
-    if (!res.ok || !data.token) {
+    if (!res.ok) {
       toast(
         data.error === "no_wheel"
           ? "Create and save a wheel first, then generate fan links."
-          : "Couldn't create link. Are you signed in?",
+          : "The server couldn't confirm this grant. Keep the selection and retry the same request.",
         { tone: "error" }
       );
-      return null;
+      throw new Error("grant_unconfirmed");
     }
+    if (!res.ok || !data.token || data.requestId !== requestId) throw new Error("grant_unconfirmed");
+    committed = true;
+    creatorIntentComplete(scope, requestId);
     return data as { token: string; fanId: string };
+    } catch {
+      toast(committed ? "The grant was confirmed, but the browser couldn't clear its receipt. Retry the same selection to check it safely." : "The grant couldn't be confirmed. Keep the selection and retry the same request to check its result.", { tone: "error" });
+      throw new Error("grant_unconfirmed");
+    }
   }
 
   async function createAccount() {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setCreating(true);
     try {
       const amountDollars = amount ? Number(amount) : undefined;
@@ -171,15 +200,18 @@ export default function FansPanel({
         spins,
         campaignId: campaignId || undefined,
         amountDollars: amountDollars || undefined,
-        ...(packId ? { packId } : {}),
+        ...(packId ? { packId, packUnits } : {}),
       });
+      setNewFanUncertain(false);
       if (data) {
         setName("");
         setPerSpin("");
         setPackId(null);
-        await load();
+        await load().catch(() => toast("Grant confirmed. Refresh the fan list to see it.", { tone: "error" }));
       }
+    } catch { setNewFanUncertain(true);
     } finally {
+      creatingRef.current = false;
       setCreating(false);
     }
   }
@@ -192,7 +224,8 @@ export default function FansPanel({
     amountDollars?: number,
     topUpCampaignId?: string,
     packId?: string | null,
-    wheelId?: string
+    wheelId?: string,
+    units = 1,
   ) {
     const data = await call({
       fanId,
@@ -200,9 +233,10 @@ export default function FansPanel({
       amountDollars: amountDollars || undefined,
       campaignId: topUpCampaignId || undefined,
       wheelId: wheelId || undefined,
-      ...(packId ? { packId } : {}),
+      ...(packId ? { packId, packUnits: units } : {}),
     });
-    if (data) await load();
+    if (!data) throw new Error("grant_rejected");
+    await load().catch(() => toast("Top-up confirmed. Refresh the fan list to see it.", { tone: "error" }));
   }
 
   async function copyLink(acc: FanAccountSummary) {
@@ -244,7 +278,9 @@ export default function FansPanel({
           You create the account; the fan never signs up. Balance and win history
           live on the account, so you can mint fresh links anytime.
         </p>
-        <div className="mt-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1.5fr_auto]">
+        {newFanUncertain && <p role="alert" className="mt-3 text-xs text-amber-200">This request is not yet confirmed. Keep these details and use Check this link again before leaving or creating another link.</p>}
+        <fieldset disabled={creating || newFanUncertain} className="mt-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1.5fr_auto]">
+          <legend className="sr-only">New fan link details</legend>
           <Field label="Fan handle">
             <input
               ref={nameRef}
@@ -300,15 +336,15 @@ export default function FansPanel({
               ))}
             </select>
           </Field>
+        </fieldset>
           <button
             type="button"
             onClick={createAccount}
             disabled={creating}
-            className="btn-brand min-h-10 rounded-[10px] px-[18px] text-sm font-bold sm:col-span-2 lg:col-span-1"
+            className="btn-brand mt-3 min-h-10 rounded-[10px] px-[18px] text-sm font-bold"
           >
-            {creating ? "Creating…" : "Create"}
+            {creating ? "Checking…" : newFanUncertain ? "Check this link again" : "Create"}
           </button>
-        </div>
         {amount && Number(amount) > 0 && spins > 0 && (
           <p className="tnum mt-2 text-[11.5px] text-muted">
             {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
@@ -316,17 +352,24 @@ export default function FansPanel({
           </p>
         )}
         {campaignId && (
-          <div className="mt-3">
+          <fieldset disabled={creating || newFanUncertain} className="mt-3">
+            <legend className="sr-only">New fan link presets</legend>
             <PackPresets
               campaignId={campaignId}
-              onPick={(p: CampaignPack) => {
+              onPick={(p: CampaignPack, units: number) => {
                 setSpins(p.spins);
                 setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
                 setPackId(p.id);
+                setPackUnits(units);
               }}
             />
-          </div>
+          </fieldset>
         )}
+        <CreatorRequestRecovery scope="new-fan" kind="pass" refreshKey={creating} disabled={creating} onFound={() => setNewFanUncertain(true)} onBusyChange={setCreating} onResolved={async (outcome) => {
+          setNewFanUncertain(false);
+          if (outcome === "committed" || outcome === "gone") { setName(""); setPerSpin(""); setPackId(null); }
+          await load();
+        }} />
       </section>
 
       {/* List controls: filters (only once there are fans) + bulk tools. */}
@@ -431,7 +474,7 @@ export default function FansPanel({
             <FanRow
               key={acc.fanId}
               account={acc}
-              onOpen={() => setOpenFanId(acc.fanId)}
+              onOpen={() => openFanId && openFanId !== acc.fanId ? leave(() => setOpenFanId(acc.fanId), { scope: [`fan-focus:${openFanId}`, `fan-topup:${openFanId}`, `fan-edit:${openFanId}`] }) : setOpenFanId(acc.fanId)}
               onCopy={() => copyLink(acc)}
             />
           ))}
@@ -452,8 +495,9 @@ export default function FansPanel({
         onMessage={
           onMessage
             ? (fanId) => {
-                setOpenFanId(null);
-                onMessage(fanId);
+                // Guard before unmounting the drawer; the Inbox navigation
+                // must not erase the very registrations it needs to inspect.
+                leave(() => { setOpenFanId(null); onMessage(fanId); });
               }
             : undefined
         }

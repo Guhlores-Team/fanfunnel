@@ -55,6 +55,8 @@ export interface ChatSettings { intro: string | null; outro: string | null }
  * for them and this view is the entirety of what a fan can see.
  */
 export interface FanPassView {
+  odds?: import("./focusView").FanOddsView;
+  focus?: import("./focusView").FanFocusView | null;
   token: string;
   fanName: string | null;
   fanHandle?: string | null; // the fan's leaderboard handle (for "You're #X")
@@ -208,6 +210,10 @@ export interface WheelSummary {
 
 /** A purchasable spin pack, optionally scoped to a campaign. */
 export interface CampaignPack {
+  packKind?: "spins" | "focus" | "chase";
+  focusMultiplier?: number;
+  focusSpins?: number;
+  chaseWithin?: number;
   id: string;
   campaignId: string | null;
   label: string;
@@ -272,6 +278,8 @@ export type RedemptionStatus =
 
 /** A won prize in the creator's fulfilment queue. */
 export interface RedemptionItem {
+  focusKind?: "focus" | "chase";
+  chaseAwarded?: boolean;
   id: string;
   fanName: string;
   prizeLabel: string;

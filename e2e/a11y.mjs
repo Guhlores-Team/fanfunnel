@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // Accessibility scan — runs axe-core (WCAG 2.0/2.1 A + AA) against the key
 // pages in mock mode and fails the build on any *critical* or *serious*
 // violation (moderate/minor are reported as advisories so the gate is
@@ -18,6 +19,7 @@ import { staleTermsRoute } from "./journeys.mjs";
 import { PUSH_STUB, pushConfig, openPushCard, turnPushOn, clearPushDevices } from "./push.mjs";
 import { instantA11yStates } from "./instant-a11y.mjs";
 import { themingA11yStates } from "./theming-a11y.mjs";
+import { focusA11yStates } from "./focus-a11y.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -35,7 +37,7 @@ const openMore = async (page) => {
 const openFanSheet = async (page) => {
   const { fans } = await (await page.request.get(BASE + "/api/fans")).json().catch(() => ({ fans: [] }));
   if (!fans?.length) {
-    const res = await page.request.post(BASE + "/api/passes", { data: { name: "A11y Fan", spins: 3 } });
+    const res = await page.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "A11y Fan", spins: 3 } });
     if (!res.ok()) throw new Error(`could not create a fan for the scan (${res.status()})`);
     await page.reload();
   }
@@ -137,11 +139,11 @@ const clickIn = (tab, name) => async (page) => {
 // Fairness v3: a fresh spin's verify page with its odds table. The fan and the
 // spin are made here, so the state doesn't depend on demo data surviving e2e.
 const openFreshVerify = async (page) => {
-  const pass = await (await page.request.post(BASE + "/api/passes", { data: { name: "A11y Verify", spins: 1 } })).json();
+  const pass = await (await page.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "A11y Verify", spins: 1 } })).json();
   if (!pass?.token) throw new Error("could not create a fan for the verify scan");
   const ack = await acknowledgeFixtureFan(page.request, pass.token);
   if (!ack.ok()) throw new Error(`could not acknowledge the age gate (${ack.status()})`);
-  const res = await page.request.post(BASE + "/api/spin", { data: { token: pass.token, clientSeed: "a11y" } });
+  const res = await page.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: pass.token, clientSeed: "a11y" } });
   const spin = await res.json().catch(() => null);
   if (!spin?.shareId) throw new Error(`could not spin for the verify scan (${res.status()})`);
   await goto(page, `/verify/${spin.shareId}`, 1200);
@@ -312,6 +314,7 @@ const openCloseAccount = async (page) => {
 };
 
 const PAGES = [
+  ...focusA11yStates(),
   ...instantA11yStates(DASH_ADVISORY),
   ...themingA11yStates(DASH_ADVISORY),
   { path: "/", name: "landing" },

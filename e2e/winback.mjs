@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // RM-5 win-back: the Analytics win-back card, "Start win-back" queue (Copy &
 // next / Skip / Snooze), snoozed and contacted fans leaving the list, "Came
 // back" after a spin, plus the Fans tab never copying a paused link.
@@ -16,11 +17,11 @@ async function json(res, what) {
 /** A paying fan who won once, then went quiet `days` ago. */
 export async function quietSpender(request, name, dollars, days = 20) {
   const { token, fanId } = await json(
-    await request.post(BASE + "/api/passes", { data: { name, spins: 3, amountDollars: dollars } }),
+    await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins: 3, amountDollars: dollars } }),
     `create ${name}`,
   );
   await json(await acknowledgeFixtureFan(request, token), `ack ${name}`);
-  await json(await request.post(BASE + "/api/spin", { data: { token, clientSeed: "winback" } }), `spin ${name}`);
+  await json(await request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token, clientSeed: "winback" } }), `spin ${name}`);
   if (days > 0) {
     await json(await request.post(BASE + "/api/debug/age-fan", { data: { fanId, days } }), `age ${name}`);
   }
@@ -112,7 +113,7 @@ export async function winbackJourney(page, { step, assert }, ctx) {
   });
 
   await step("win-back: a contacted fan who spins again shows 'Came back'", async () => {
-    await json(await ctx.request.post(BASE + "/api/spin", { data: { token: ava.token, clientSeed: "back" } }), "spin again");
+    await json(await ctx.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: ava.token, clientSeed: "back" } }), "spin again");
     const card = await openWinbackCard(page);
     const recent = card.getByTestId("winback-recent");
     await recent.waitFor({ timeout: 8000 });

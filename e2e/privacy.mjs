@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // Privacy self-service journey (privacy & safety pack). Runs on its own
 // throwaway fan link, never the demo link, and before the first-run wipe.
 //
@@ -26,7 +27,7 @@ export async function privacyJourney(page, { step, assert }, ctx) {
   const dialog = () => page.getByRole("dialog", { name: "Safety and privacy" });
 
   await step("privacy: mint a throwaway fan link (setup)", async () => {
-    const res = await ctx.request.post(BASE + "/api/passes", { data: { name: FAN_NAME, spins: 2 } });
+    const res = await ctx.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: FAN_NAME, spins: 2 } });
     assert(res.ok(), `minted a link (${res.status()})`);
     token = (await res.json()).token;
     assert(typeof token === "string" && token.length > 8, "got a token");

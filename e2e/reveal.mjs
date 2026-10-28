@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // RM-1 reveal theater: the rarity-tiered win reveal on the fan page.
 //
 // The rarity under test is forced by rewriting only the `prize.rarity` of the
@@ -29,7 +30,7 @@ export async function clearForcedRarity(page) {
 
 /** A fresh fan (own spins, gate already acknowledged) so no other journey's data is needed. */
 export async function createRevealFan(request, name = "Reveal Fan", spins = 4) {
-  const created = await request.post(BASE + "/api/passes", { data: { name, spins } });
+  const created = await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins } });
   if (!created.ok()) throw new Error(`could not create a fan (${created.status()})`);
   const { token } = await created.json();
   const ack = await acknowledgeFixtureFan(request, token);

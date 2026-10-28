@@ -47,6 +47,9 @@ export function OddsUsed({ replay, poolHash }: { replay: V3Replay; poolHash: str
               <li key={line}>{line}</li>
             ))}
           </ul>
+          {s.modifiers.focus?.applied && !replay.focusConsumed && (
+            <p className="mt-2 text-xs text-muted">The stock re-draw removed the focus benefit, so this win did not use a focused spin.</p>
+          )}
 
           <table className="mt-4 w-full table-fixed border-collapse text-left text-xs">
             <caption className="sr-only">
@@ -58,7 +61,7 @@ export function OddsUsed({ replay, poolHash }: { replay: V3Replay; poolHash: str
                   Prize
                 </th>
                 <th scope="col" className="py-2 pr-2 text-right font-medium">
-                  Tickets
+                  {s.rules ? "Tickets used" : "Tickets"}
                 </th>
                 <th scope="col" className="py-2 text-right font-medium">
                   Chance
@@ -81,7 +84,10 @@ export function OddsUsed({ replay, poolHash }: { replay: V3Replay; poolHash: str
                         {won ? " · your prize" : ""}
                       </span>
                     </th>
-                    <td className="tnum py-2 pr-2 text-right align-top">{prize.w}</td>
+                    <td className="tnum break-all py-2 pr-2 text-right align-top">
+                      {prize.w}
+                      {prize.baseW !== undefined && <span className="mt-0.5 block text-[10px] font-normal text-muted">Base {prize.baseW}</span>}
+                    </td>
                     <td className="tnum py-2 text-right align-top">{formatChance(chance)}</td>
                   </tr>
                 );

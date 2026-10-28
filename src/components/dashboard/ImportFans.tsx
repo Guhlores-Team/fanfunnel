@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useToast } from "@/components/ui/Toast";
+import { submitFanImport } from "./importIntent";
+import CreatorRequestRecovery from "./CreatorRequestRecovery";
+import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 
 interface ParsedRow {
   name: string;
@@ -90,42 +93,34 @@ export default function ImportFans({
   const toast = useToast();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const leave = useCreatorLeave();
+  useCreatorDraft("fan-import", "a fan import", text.trim().length > 0, submitting || pending || checking);
 
   const parsed = useMemo(() => parseCsv(text), [text]);
 
   async function submit() {
-    if (parsed.rows.length === 0) return;
+    if (parsed.rows.length === 0 || pending || checking || submitting) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/fans/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rows: parsed.rows.map((r) => ({
-            name: r.name,
-            spins: r.spins,
-            amountCents: r.amountCents,
-            campaignId: campaignId || undefined,
-          })),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast(
-          data.error === "too_many_rows"
-            ? `Too many rows (max ${MAX_ROWS}).`
-            : "Import failed. Are you signed in?",
-          { tone: "error" }
-        );
+      const rows = parsed.rows.map(row => ({ name: row.name, spins: row.spins, amountCents: row.amountCents, campaignId: campaignId || undefined }));
+      const outcome = await submitFanImport(window.sessionStorage, "current", rows, body => fetch("/api/fans/import", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }));
+      if (outcome.status !== "confirmed") {
+        setPending(true);
+        toast("Import could not be confirmed. Retry these same rows before starting another import.", { tone: "error" });
         return;
       }
-      const { created = 0, failed = 0 } = data as { created: number; failed: number };
-      toast(`${created} created, ${failed} failed`, {
-        tone: failed > 0 ? "info" : "success",
-      });
+      toast(outcome.replayed ? `Import recovered: ${outcome.created} fan links, ${outcome.failed} failed` : `${outcome.created} created, ${outcome.failed} failed`, { tone: outcome.failed > 0 ? "info" : "success" });
+      setPending(false);
       setText("");
       onClose();
       onImported();
+    } catch {
+      setPending(true);
+      toast("Import could not be confirmed. Retry these same rows before starting another import.", { tone: "error" });
     } finally {
       setSubmitting(false);
     }
@@ -158,7 +153,7 @@ export default function ImportFans({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => leave(onClose, { scope: "fan-import", consequence: "Closing the import discards its unsent rows." })}
           className="min-h-9 shrink-0 rounded-[9px] border border-line px-3 text-xs font-semibold text-muted transition-colors hover:text-ink"
         >
           Close
@@ -170,6 +165,7 @@ export default function ImportFans({
         aria-label="CSV rows"
         placeholder={"@bigfan, 5, 25\n@superfan, 3\nJamie, 10, 100"}
         value={text}
+        disabled={submitting || pending || checking}
         onChange={(e) => setText(e.target.value)}
       />
 
@@ -178,7 +174,7 @@ export default function ImportFans({
           <span className="inline-flex min-h-8 cursor-pointer items-center rounded-[9px] border border-line px-3 transition-colors hover:text-ink">
             Choose .csv file
           </span>
-          <input type="file" accept=".csv" onChange={onFile} className="sr-only" />
+          <input type="file" accept=".csv" disabled={submitting || pending || checking} onChange={onFile} className="sr-only" />
         </label>
         <span className="tnum text-xs text-muted">
           {parsed.rows.length} valid row{parsed.rows.length === 1 ? "" : "s"}
@@ -221,10 +217,19 @@ export default function ImportFans({
         </div>
       )}
 
+      <CreatorRequestRecovery scope="fan-import:current" kind="import" guardScope="fan-import" refreshKey={submitting} disabled={submitting} onFound={() => setPending(true)} onBusyChange={setChecking} onResolved={(status) => {
+        setPending(false);
+        if (status === "committed" || status === "gone") {
+          setText("");
+          onImported();
+          toast(status === "committed" ? "The previous import completed. The fan list has been refreshed." : "The previous result was removed. It will not be recreated.", { tone: "info" });
+        }
+      }} />
+
       <button
         type="button"
         onClick={submit}
-        disabled={submitting || parsed.rows.length === 0}
+        disabled={submitting || pending || checking || parsed.rows.length === 0}
         className="btn-brand mt-3 min-h-10 rounded-[10px] px-[18px] text-sm font-bold disabled:opacity-50"
       >
         {submitting

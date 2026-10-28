@@ -80,6 +80,8 @@ export interface FanDataExport extends ExportStatus {
   prizes: { spinId: string | null; prize: string; status: string; wonAt: string; fulfilledAt: string | null }[];
   /** Delivery metadata only; downloaded files never contain redeemable values. */
   instantReceipts: { spinId: string; kind: string; views: number; lastViewedAt: string | null; createdAt: string; erasedAt: string | null }[];
+  focusPacks: { kind: string; prize: string; multiplier: number; totalSpins: number; spinsLeft: number; chaseCounter: number; status: string; at: string | null; endedAt: string | null }[];
+  spinAttempts: { status: string; error: string | null; at: string | null; finishedAt: string | null }[];
   wishlist: { prize: string; rarity: string; addedAt: string }[];
   messagesYouSent: { at: string; body: string }[];
   play: { breakUntil: string | null; reminderDaily: number | null; reminderUpdatedAt: string | null };
@@ -109,6 +111,7 @@ export const FAN_EXPORT_EXCLUDED = [
 ];
 export const CREATOR_EXPORT_EXCLUDED = [
   "Full personal-link tokens and future spin seeds",
+  "Request hashes, private retry contexts and encrypted attempt receipts",
   "Push endpoints and device keys, webhook destinations and other credentials",
   "Reward values, hints, fingerprints and encryption material; fan-private daily reminder values",
 ];

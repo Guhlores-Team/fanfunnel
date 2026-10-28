@@ -66,7 +66,7 @@ function world(specs: PrizeSpec[], opts: { codes?: Record<string, string[]>; lin
         : ok({ id: "pass-1", creator_id: CREATOR, campaign_id: null, wheel_id: "wheel-1", fan_id: "fan-1", next_server_seed: "f".repeat(64), next_server_seed_hash: "0".repeat(64) }),
     campaigns: () => ok(null),
     wheels: (ops) =>
-      has(ops, "eq", "creator") ? ok([]) : ok({
+      has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok({
         id: "wheel-1", title: "W", subtitle: null, brand_color: null, label_color: null, label_size: null,
         show_stock: true, is_active: true, active_from: null, active_until: null, archived_at: null,
         prizes: specs.map((p, i) => ({

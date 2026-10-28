@@ -118,7 +118,7 @@ async function realSpinInsert(pass: Record<string, unknown>, swapWins: boolean) 
       return ok(pass);
     },
     campaigns: () => ok(null),
-    wheels: (ops) => (has(ops, "eq", "creator") ? ok([]) : ok(wheelRow())),
+    wheels: (ops) => (has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok(wheelRow())),
     fans: () => ok({ pity_counter: 0 }),
     happy_hours: () => ok([]),
     prizes: () => ok({ id: "prize-1" }),
@@ -198,7 +198,7 @@ async function main() {
     // Loading the spin page commits the next seed; that spin IS pre-committed.
     const view = await mockGetFanPass(token);
     assert.ok(view?.nextSpinHash, "spin page published a commitment");
-    const committed = await mockSpin(token, "cs");
+    const committed = await mockSpin(token, "cs", crypto.randomUUID(), view.nextSpinHash);
     assert.ok(!("error" in committed), "mock spin (committed) succeeded");
     const vCommitted = await mockGetSpinVerification(committed.shareId);
     check("mock: spin on a committed pass → published", vCommitted?.commitment === "published");

@@ -1,3 +1,4 @@
+import { focusPackTerms, type FocusPackTerms } from "./focusPacks";
 // Data layer — campaigns and campaign packs.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import type { Campaign, CampaignPack, CampaignStats } from "./types";
@@ -142,6 +143,7 @@ function toCampaignPack(r: {
   bonus_spins: number;
   sort_order: number;
   created_at: string;
+  pack_kind?: string; focus_multiplier?: number; focus_spins?: number; chase_within?: number;
 }): CampaignPack {
   return {
     id: r.id,
@@ -152,11 +154,13 @@ function toCampaignPack(r: {
     bonusSpins: r.bonus_spins,
     sortOrder: r.sort_order,
     createdAt: r.created_at,
+    packKind: (r.pack_kind ?? "spins") as CampaignPack["packKind"],
+    focusMultiplier: Number(r.focus_multiplier ?? 3), focusSpins: r.focus_spins ?? 10, chaseWithin: r.chase_within ?? 10,
   };
 }
 
 const PACK_SELECT =
-  "id, campaign_id, label, spins, amount_cents, bonus_spins, sort_order, created_at";
+  "id, campaign_id, label, spins, amount_cents, bonus_spins, sort_order, created_at, pack_kind, focus_multiplier, focus_spins, chase_within";
 
 /**
  * The creator's packs. With a campaignId, returns that campaign's packs plus any
@@ -189,7 +193,7 @@ export async function listCampaignPacks(
   return rows.map(toCampaignPack);
 }
 
-export async function createCampaignPack(input: {
+export async function createCampaignPack(input: FocusPackTerms & {
   campaignId: string | null;
   label: string;
   spins: number;
@@ -197,6 +201,8 @@ export async function createCampaignPack(input: {
   bonusSpins?: number;
   sortOrder?: number;
 }): Promise<CampaignPack> {
+  const terms = focusPackTerms(input);
+  if (!terms) throw new Error("bad_request");
   if (!isSupabaseConfigured()) return mockCreateCampaignPack(input);
 
   const sb = await createClient();
@@ -219,6 +225,7 @@ export async function createCampaignPack(input: {
       amount_cents: Math.max(0, Math.floor(input.amountCents) || 0),
       bonus_spins: Math.max(0, Math.floor(input.bonusSpins ?? 0) || 0),
       sort_order: Math.floor(input.sortOrder ?? 0) || 0,
+      pack_kind: terms.packKind, focus_multiplier: terms.focusMultiplier, focus_spins: terms.focusSpins, chase_within: terms.chaseWithin,
     })
     .select(PACK_SELECT)
     .single();
@@ -228,7 +235,7 @@ export async function createCampaignPack(input: {
 
 export async function updateCampaignPack(
   id: string,
-  patch: Partial<{
+  patch: Partial<FocusPackTerms & {
     campaignId: string | null;
     label: string;
     spins: number;
@@ -245,7 +252,13 @@ export async function updateCampaignPack(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const upd: Record<string, unknown> = {};
+  const { data: current, error: currentError } = await sb.from("campaign_packs").select(PACK_SELECT).eq("id", id).eq("creator_id", user.id).maybeSingle();
+  if (currentError || !current) return { error: "not_found" };
+  const terms = focusPackTerms({ ...toCampaignPack(current as Parameters<typeof toCampaignPack>[0]), ...patch });
+  if (!terms) return { error: "bad_request" };
+  const upd: Record<string, unknown> = {
+    pack_kind: terms.packKind, focus_multiplier: terms.focusMultiplier, focus_spins: terms.focusSpins, chase_within: terms.chaseWithin,
+  };
   if ("campaignId" in patch) {
     // Re-tagging the pack must stay within this creator's own campaigns.
     if (!(await creatorOwnsCampaign(sb, user.id, patch.campaignId)))

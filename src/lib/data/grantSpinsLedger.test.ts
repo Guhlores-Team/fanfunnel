@@ -71,7 +71,7 @@ async function main() {
       passWritten = true;
     } else if (passWritten && interleaved === 0) {
       interleaved++;
-      assert.strictEqual(db.spin("tok-tip"), 7, "interleaved spin spent one of the 5 + 3");
+      assert.strictEqual(db.spin("tok-tip"), 4, "concurrent spin sees only the committed 5, never the in-flight credit");
     }
   };
   const afterPass = await grantSpins("tok-tip", 3);

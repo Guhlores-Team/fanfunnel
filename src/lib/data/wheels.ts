@@ -61,7 +61,7 @@ export async function resolveActiveWheelId(
   const inWindow = rows.filter((w) => {
     const fromOk = !w.active_from || new Date(w.active_from).getTime() <= nowMs;
     const untilOk = !w.active_until || new Date(w.active_until).getTime() > nowMs;
-    return fromOk && untilOk;
+    return (w.active_from != null || w.active_until != null) && fromOk && untilOk;
   });
   if (inWindow.length > 0) {
     inWindow.sort((a, b) => {
@@ -70,18 +70,18 @@ export async function resolveActiveWheelId(
       const bf = b.active_from ? new Date(b.active_from).getTime() : -Infinity;
       if (af !== bf) return bf - af;
       // Tie-break: newest created_at first.
-      return b.created_at.localeCompare(a.created_at);
+      return b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
     });
     return inWindow[0].id;
   }
 
-  const active = rows.find((w) => w.is_active);
+  const active = rows.filter((w) => w.is_active).sort((a, b) => a.id.localeCompare(b.id))[0];
   if (active) return active.id;
 
   // Oldest non-archived wheel.
   return rows
     .slice()
-    .sort((a, b) => a.created_at.localeCompare(b.created_at))[0].id;
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0].id;
 }
 
 /**
@@ -99,6 +99,7 @@ export async function resolveWheelId(
       .from("campaigns")
       .select("pinned_wheel_id")
       .eq("id", pass.campaign_id)
+      .eq("creator_id", pass.creator_id)
       .maybeSingle();
     const pinnedId = (campaign as { pinned_wheel_id: string | null } | null)
       ?.pinned_wheel_id;
@@ -107,6 +108,7 @@ export async function resolveWheelId(
         .from("wheels")
         .select("id, archived_at")
         .eq("id", pinnedId)
+        .eq("creator_id", pass.creator_id)
         .maybeSingle();
       const row = pinned as { id: string; archived_at: string | null } | null;
       if (row && !row.archived_at) return row.id;
@@ -114,7 +116,10 @@ export async function resolveWheelId(
   }
 
   const active = await resolveActiveWheelId(sb, pass.creator_id, now);
-  return active ?? pass.wheel_id;
+  if (active) return active;
+  const { data: stored } = await sb.from("wheels").select("id,archived_at").eq("id", pass.wheel_id).eq("creator_id", pass.creator_id).maybeSingle();
+  const row = stored as { id: string; archived_at: string | null } | null;
+  return row && !row.archived_at ? row.id : null;
 }
 
 /**
@@ -332,6 +337,7 @@ export function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
     stock:
       p.stock != null && Number.isFinite(p.stock) ? clampInt(p.stock, 0) : null,
     sort_order: sortOrder,
+    boostable: p.boostable === true,
   };
 }
 

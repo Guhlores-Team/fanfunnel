@@ -25,6 +25,11 @@ import { RARITY_ORDER } from "./types";
 import { PITY_THRESHOLD, applyRareBoost, availablePrizes, pickPrizeWithPity } from "./engine";
 import { makeFairRngV3, sha256Hex } from "./fairness";
 import { toPublicPrize } from "./publicView";
+import { FOCUS_WEIGHT_RULE, isFocusLength, isFocusMultiplier, MAX_COMBINED_BOOST } from "@/lib/focus/config";
+import {
+  boostedWeight, composeModifiers, effectiveOdds, isRarePrize, pickEffectivePrize,
+  type ChaseProof, type FocusProof, type ModifierOptions,
+} from "@/lib/focus/modifiers";
 
 /**
  * The fairness version new spins are recorded with. 3 = odds in the
@@ -45,6 +50,8 @@ export interface SnapshotPrize {
   rarity: Rarity;
   /** Effective integer weight (tickets) used for the draw, after modifiers. */
   w: number;
+  /** Present only for the explicit focus-v1 rules; old proofs omit this key. */
+  baseW?: number;
 }
 
 /**
@@ -56,10 +63,8 @@ export interface SnapshotModifiers {
   happyHour: { multiplier: number } | null;
   /** The fan's pity state going into the spin. */
   pity: { counter: number; threshold: number };
-  /** #25 focus pack. Null until focus ships; this verifier refuses any other value. */
-  focus: null;
-  /** #25 chase pity. Null until chase ships; this verifier refuses any other value. */
-  chase: null;
+  focus: FocusProof | null;
+  chase: ChaseProof | null;
 }
 
 export interface PoolSnapshot {
@@ -68,6 +73,8 @@ export interface PoolSnapshot {
   /** Available prizes only, ordered by id. */
   prizes: SnapshotPrize[];
   modifiers: SnapshotModifiers;
+  /** Absent on historical v3 records; never injected while parsing them. */
+  rules?: typeof FOCUS_WEIGHT_RULE;
 }
 
 /**
@@ -80,6 +87,19 @@ export interface PoolSnapshot {
 export interface FairTrace {
   excluded: string[];
   won: string;
+}
+
+export interface SnapshotDraw {
+  prize: SnapshotPrize;
+  pityAwarded: boolean;
+  nextPityCounter: number;
+  /** Present for focus-v1; absent for historical legacy draws. */
+  chaseAwarded?: boolean;
+  chaseCompleted?: boolean;
+  focusConsumed?: boolean;
+  chaseConsumed?: boolean;
+  nextFocusSpinsLeft?: number | null;
+  nextChaseCounter?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +173,30 @@ export function buildPoolSnapshot(
   };
 }
 
+/** New0059 pools use capped base-weight composition, including neutral pools. */
+export function buildFocusPoolSnapshot(
+  config: WheelConfig,
+  options: ModifierOptions & { game?: GameKind },
+): PoolSnapshot {
+  const effective = composeModifiers(config, options);
+  const base = new Map(config.prizes.map((p) => [p.id, p.weight]));
+  return {
+    v: 3,
+    rules: FOCUS_WEIGHT_RULE,
+    game: options.game ?? "wheel",
+    prizes: availablePrizes(effective.config)
+      .map((p) => toPublicPrize(p, { showStock: false }))
+      .map((p) => ({ id: p.id, label: p.label, emoji: p.emoji ?? null, rarity: p.rarity, w: p.weight, baseW: base.get(p.id)! }))
+      .sort(byId),
+    modifiers: {
+      happyHour: effective.happyHour,
+      pity: { counter: options.pityCounter, threshold: options.pityThreshold ?? PITY_THRESHOLD },
+      focus: effective.focus,
+      chase: effective.chase,
+    },
+  };
+}
+
 /** SHA-256 (lowercase hex) of the snapshot's canonical JSON. */
 export async function hashPoolSnapshot(snapshot: PoolSnapshot): Promise<string> {
   return sha256Hex(canonicalJson(snapshot));
@@ -167,7 +211,7 @@ export function drawFromSnapshot(
   snapshot: PoolSnapshot,
   excluded: ReadonlySet<string>,
   rng: () => number,
-): { prize: SnapshotPrize; pityAwarded: boolean; nextPityCounter: number } {
+): SnapshotDraw {
   const config: WheelConfig = {
     id: "snapshot",
     title: "snapshot",
@@ -179,6 +223,21 @@ export function drawFromSnapshot(
       stock: excluded.has(p.id) ? 0 : null,
     })),
   };
+  if (snapshot.rules === FOCUS_WEIGHT_RULE) {
+    const pick = pickEffectivePrize(config, {
+      pityCounter: snapshot.modifiers.pity.counter,
+      pityThreshold: snapshot.modifiers.pity.threshold,
+      focus: snapshot.modifiers.focus,
+      chase: snapshot.modifiers.chase,
+    }, rng);
+    return {
+      prize: snapshot.prizes[pick.index],
+      pityAwarded: pick.pityAwarded, nextPityCounter: pick.nextPityCounter,
+      chaseAwarded: pick.chaseAwarded, chaseCompleted: pick.chaseCompleted,
+      focusConsumed: pick.focusConsumed, chaseConsumed: pick.chaseConsumed,
+      nextFocusSpinsLeft: pick.nextFocusSpinsLeft, nextChaseCounter: pick.nextChaseCounter,
+    };
+  }
   const pick = pickPrizeWithPity(
     config,
     { pityCounter: snapshot.modifiers.pity.counter, pityThreshold: snapshot.modifiers.pity.threshold },
@@ -198,8 +257,24 @@ export function drawFromSnapshot(
  */
 export function snapshotOdds(snapshot: PoolSnapshot): {
   pityForced: boolean;
+  chaseForced: boolean;
   rows: { prize: SnapshotPrize; chance: number }[];
 } {
+  if (snapshot.rules === FOCUS_WEIGHT_RULE) {
+    const config: WheelConfig = {
+      id: "snapshot", title: "snapshot",
+      prizes: snapshot.prizes.map((p) => ({ id: p.id, label: p.label, rarity: p.rarity, weight: p.w, stock: null })),
+    };
+    const odds = effectiveOdds(config, {
+      pityCounter: snapshot.modifiers.pity.counter,
+      pityThreshold: snapshot.modifiers.pity.threshold,
+      focus: snapshot.modifiers.focus, chase: snapshot.modifiers.chase,
+    });
+    return {
+      pityForced: odds.pityForced, chaseForced: odds.chaseForced,
+      rows: odds.rows.map((row, index) => ({ prize: snapshot.prizes[index], chance: row.chance })),
+    };
+  }
   const { counter, threshold } = snapshot.modifiers.pity;
   const rare = (r: Rarity) => RARITY_ORDER.indexOf(r) >= RARITY_ORDER.indexOf("rare");
   const rarePool = snapshot.prizes.filter((p) => rare(p.rarity));
@@ -208,6 +283,7 @@ export function snapshotOdds(snapshot: PoolSnapshot): {
   const total = pool.reduce((s, p) => s + p.w, 0);
   return {
     pityForced,
+    chaseForced: false,
     rows: snapshot.prizes.map((prize) => {
       const inPool = pool.includes(prize);
       const chance = !inPool ? 0 : total > 0 ? prize.w / total : 1 / pool.length;
@@ -235,6 +311,7 @@ export type SnapshotParse = { ok: true; snapshot: PoolSnapshot } | { ok: false; 
  * silently ignored by the replay.
  */
 export function parsePoolSnapshot(raw: unknown): SnapshotParse {
+  if (isObj(raw) && raw.rules === FOCUS_WEIGHT_RULE) return parseFocusPoolSnapshot(raw);
   const bad = (reason: string): SnapshotParse => ({ ok: false, reason });
   if (!isObj(raw) || !exactKeys(raw, ["v", "game", "prizes", "modifiers"])) return bad("unreadable snapshot");
   if (raw.v !== 3) return bad("unsupported snapshot version");
@@ -281,6 +358,88 @@ export function parsePoolSnapshot(raw: unknown): SnapshotParse {
   };
 }
 
+function parseFocusProof(raw: unknown): FocusProof | null | undefined {
+  if (raw === null) return null;
+  if (!isObj(raw) || !exactKeys(raw, ["prizeId", "multiplier", "spinsLeft", "totalSpins", "effectiveMultiplier", "applied", "pauseReason"])) return undefined;
+  if (typeof raw.prizeId !== "string" || !raw.prizeId || !isFocusMultiplier(raw.multiplier) || !isFocusLength(raw.totalSpins) ||
+      !isCount(raw.spinsLeft) || raw.spinsLeft < 1 || raw.spinsLeft > raw.totalSpins ||
+      typeof raw.effectiveMultiplier !== "number" || !Number.isFinite(raw.effectiveMultiplier) || raw.effectiveMultiplier < 1 || raw.effectiveMultiplier > MAX_COMBINED_BOOST ||
+      typeof raw.applied !== "boolean" ||
+      (raw.pauseReason !== null && !["sold_out", "other_wheel", "no_increase", "pity"].includes(raw.pauseReason as string)) ||
+      raw.applied !== (raw.pauseReason === null)) return undefined;
+  return {
+    prizeId: raw.prizeId, multiplier: raw.multiplier, spinsLeft: raw.spinsLeft, totalSpins: raw.totalSpins,
+    effectiveMultiplier: raw.effectiveMultiplier, applied: raw.applied, pauseReason: raw.pauseReason as FocusProof["pauseReason"],
+  };
+}
+
+function parseChaseProof(raw: unknown): ChaseProof | null | undefined {
+  if (raw === null) return null;
+  if (!isObj(raw) || !exactKeys(raw, ["prizeId", "counter", "within", "reserved", "eligible", "pauseReason"])) return undefined;
+  if (typeof raw.prizeId !== "string" || !raw.prizeId || !isFocusLength(raw.within) || !isCount(raw.counter) || raw.counter >= raw.within ||
+      typeof raw.reserved !== "boolean" || typeof raw.eligible !== "boolean" ||
+      (raw.pauseReason !== null && raw.pauseReason !== "sold_out" && raw.pauseReason !== "other_wheel") ||
+      raw.eligible !== (raw.pauseReason === null) || (raw.reserved && raw.pauseReason === "sold_out")) return undefined;
+  return { prizeId: raw.prizeId, counter: raw.counter, within: raw.within, reserved: raw.reserved, eligible: raw.eligible, pauseReason: raw.pauseReason };
+}
+
+/** A separate explicit shape keeps every historical canonical byte unchanged. */
+function parseFocusPoolSnapshot(raw: Record<string, unknown>): SnapshotParse {
+  const bad = (reason: string): SnapshotParse => ({ ok: false, reason });
+  if (!exactKeys(raw, ["v", "rules", "game", "prizes", "modifiers"]) || !Array.isArray(raw.prizes) || !isObj(raw.modifiers)) return bad("unreadable focus snapshot");
+  const base = new Map<string, number>();
+  const rows: Record<string, unknown>[] = [];
+  for (const p of raw.prizes) {
+    if (!isObj(p) || !exactKeys(p, ["id", "label", "emoji", "rarity", "w", "baseW"]) || typeof p.id !== "string" || !isCount(p.baseW)) return bad("unreadable base tickets");
+    base.set(p.id, p.baseW);
+    rows.push({ id: p.id, label: p.label, emoji: p.emoji, rarity: p.rarity, w: p.w });
+  }
+  const legacy = parsePoolSnapshot({
+    v: raw.v, game: raw.game, prizes: rows,
+    modifiers: { ...raw.modifiers, focus: null, chase: null },
+  });
+  if (!legacy.ok) return legacy;
+  const hh = legacy.snapshot.modifiers.happyHour;
+  if (hh && hh.multiplier > MAX_COMBINED_BOOST) return bad("happy hour exceeds the combined cap");
+  const focus = parseFocusProof(raw.modifiers.focus);
+  const chase = parseChaseProof(raw.modifiers.chase);
+  if (focus === undefined || chase === undefined || (focus && chase)) return bad("unreadable or stacked focus modifiers");
+  const snapshot: PoolSnapshot = {
+    ...legacy.snapshot, rules: FOCUS_WEIGHT_RULE,
+    prizes: legacy.snapshot.prizes.map((p) => ({ ...p, baseW: base.get(p.id)! })),
+    modifiers: { ...legacy.snapshot.modifiers, focus, chase },
+  };
+  try {
+    for (const p of snapshot.prizes) {
+      const multiplier = isRarePrize(p) ? hh?.multiplier ?? 1 : 1;
+      const expected = boostedWeight(p.baseW!, focus?.applied && p.id === focus.prizeId ? Math.min(multiplier * focus.multiplier, MAX_COMBINED_BOOST) : multiplier);
+      if (p.w !== expected) return bad("effective tickets do not match the recorded boosts");
+    }
+    if (focus) {
+      const target = snapshot.prizes.find((p) => p.id === focus.prizeId);
+      if (!target) {
+        if (focus.applied || !["sold_out", "other_wheel"].includes(focus.pauseReason ?? "") ||
+            (focus.effectiveMultiplier !== 1 && focus.effectiveMultiplier !== hh?.multiplier)) return bad("unavailable focus state is inconsistent");
+      } else {
+        const config: WheelConfig = {
+          id: "proof", title: "proof",
+          prizes: snapshot.prizes.map((p) => ({ id: p.id, label: p.label, rarity: p.rarity, weight: p.baseW!, stock: null })),
+        };
+        const computed = composeModifiers(config, {
+          happyHourMultiplier: hh?.multiplier ?? null,
+          pityCounter: snapshot.modifiers.pity.counter, pityThreshold: snapshot.modifiers.pity.threshold,
+          focus: { prizeId: focus.prizeId, multiplier: focus.multiplier, spinsLeft: focus.spinsLeft, totalSpins: focus.totalSpins },
+        });
+        if (canonicalJson(computed.focus) !== canonicalJson(focus)) return bad("focus application or pause is inconsistent with its odds");
+      }
+    }
+    if (chase && chase.eligible !== snapshot.prizes.some((p) => p.id === chase.prizeId)) return bad("chase eligibility is inconsistent with the pool");
+  } catch {
+    return bad("invalid modifier ticket math");
+  }
+  return { ok: true, snapshot };
+}
+
 export function parseFairTrace(raw: unknown): FairTrace | null {
   if (!isObj(raw) || !exactKeys(raw, ["excluded", "won"])) return null;
   if (!Array.isArray(raw.excluded) || !raw.excluded.every((e) => typeof e === "string")) return null;
@@ -315,6 +474,10 @@ export interface V3Replay {
   /** Prizes drawn first but sold out mid-spin, in order (each re-checked). */
   excluded: SnapshotPrize[];
   pityAwarded: boolean;
+  chaseAwarded: boolean;
+  chaseCompleted: boolean;
+  focusConsumed: boolean;
+  chaseConsumed: boolean;
   /** Plain-language reason when `ok` is false. */
   problem: string | null;
 }
@@ -333,6 +496,10 @@ export async function replayV3(input: V3ReplayInput): Promise<V3Replay> {
     replayed: null,
     excluded: [],
     pityAwarded: false,
+    chaseAwarded: false,
+    chaseCompleted: false,
+    focusConsumed: false,
+    chaseConsumed: false,
     problem: null,
   };
   const parsed = parsePoolSnapshot(input.snapshot);
@@ -360,6 +527,10 @@ export async function replayV3(input: V3ReplayInput): Promise<V3Replay> {
     const final = drawFromSnapshot(snapshot, excluded, rng);
     out.replayed = final.prize;
     out.pityAwarded = final.pityAwarded;
+    out.chaseAwarded = final.chaseAwarded ?? false;
+    out.chaseCompleted = final.chaseCompleted ?? false;
+    out.focusConsumed = final.focusConsumed ?? false;
+    out.chaseConsumed = final.chaseConsumed ?? false;
   } catch {
     return { ...out, problem: "These odds leave nothing to draw." };
   }

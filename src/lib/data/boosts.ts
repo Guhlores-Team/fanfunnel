@@ -1,3 +1,4 @@
+import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
 // Data layer — boosts: happy hours, share cards, provably-fair verification,
 // wishlists, the public leaderboard and the recent-wins ticker.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
@@ -85,7 +86,7 @@ export async function createHappyHour(input: {
   if (new Date(input.endsAt).getTime() <= new Date(input.startsAt).getTime())
     return { error: "invalid_window" };
   const multiplier = Number(input.multiplier);
-  if (!(multiplier >= 1 && multiplier <= 10))
+  if (!(multiplier >= 1 && multiplier <= MAX_COMBINED_BOOST))
     return { error: "invalid_multiplier" };
 
   const sb = await createClient();

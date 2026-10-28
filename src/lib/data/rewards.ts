@@ -86,6 +86,7 @@ async function deliveryView(svc: ReturnType<typeof createServiceClient>, prizeId
       .select("hint")
       .eq("prize_id", prizeId)
       .is("spin_id", null)
+      .is("reserved_focus_id", null)
       .order("created_at", { ascending: true })
       .limit(CODE_PREVIEW_COUNT),
     svc

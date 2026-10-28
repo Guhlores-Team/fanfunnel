@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 // Approval is a database authorization boundary, not only a dashboard redirect.
 // This local-only transaction runs as authenticated callers through the actual
 // RLS policies/RPCs, then rolls back every fixture. Imported by the drift check.
@@ -41,6 +42,21 @@ for (const name of ['pending', 'rejected']) {
   lines.push(value(`${name}.import.rows`, `select count(*)::text from public.fans where creator_id='${U[name]}'`, '0'));
   lines.push(value(`${name}.profile.unchanged`, `select (public_slug is null)::text from public.profiles where id='${U[name]}'`, 'true'));
   lines.push(value(`${name}.name.changed`, `select (display_name='Application name')::text from public.profiles where id='${U[name]}'`, 'true'));
+}
+// Keep the approved/unapproved import data assertions through the durable
+// service gateway; legacy authenticated calls above are now retirement tests.
+const canonical=(v)=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?`[${v.map(canonical).join(",")}]`:`{${Object.keys(v).sort().map(k=>`${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+for(const name of ['pending','rejected','inactive','approved']) {
+  const allowed=name==='approved';
+  const rows=[{name:'Approval import',spins:2,amountCents:0,campaignId:null,wheelId:wheel(name),error:null}];
+  const hash=createHash('sha256').update(canonical(['fan-import-v1',rows])).digest('hex');
+  const batch=uid(230+['pending','rejected','inactive','approved'].indexOf(name));
+  lines.push(`set local role service_role;`);
+  lines.push(value(`${name}.durable.import`, `select public.import_fans_durable('${batch}','${U[name]}','${hash}',${q(JSON.stringify(rows))}::jsonb,'${U[name]}')->>'status'`,allowed?'imported':'unavailable'));
+  lines.push(`reset role;`);
+  lines.push(value(`${name}.durable.import.fans`, `select count(*)::text from public.fans where creator_id='${U[name]}'`,allowed?'1':'0'));
+  lines.push(value(`${name}.durable.import.credits`, `select coalesce(sum(spins_remaining),0)::text from public.fan_passes where creator_id='${U[name]}'`,allowed?'2':'0'));
+  lines.push(value(`${name}.durable.import.grants`, `select count(*)::text from public.grants where creator_id='${U[name]}'`,allowed?'1':'0'));
 }
 for (const aal of ['aal1', 'aal2']) {
   lines.push(as('admin', [
@@ -91,10 +107,10 @@ lines.push(as('manager', [value('suspended.manager.edit', `select public.can_act
 
 export const APPROVAL_PROBE_SQL = `begin;
 create schema ffapproval;
-grant usage on schema ffapproval to authenticated;
+grant usage on schema ffapproval to authenticated,service_role;
 create function ffapproval.val(stmt text) returns text language plpgsql as $f$ declare v text; begin execute stmt into v; return coalesce(v,''); exception when others then return 'err:'||sqlstate; end; $f$;
 create function ffapproval.attempt(stmt text) returns text language plpgsql as $f$ declare n bigint; begin execute stmt; get diagnostics n=row_count; return 'ok:'||n; exception when others then return 'err:'||sqlstate; end; $f$;
-grant execute on all functions in schema ffapproval to authenticated;
+grant execute on all functions in schema ffapproval to authenticated,service_role;
 -- Match Supabase's ordinary table grants; RLS remains the authorization gate.
 grant select,insert,update,delete on public.profiles,public.wheels,public.fans,public.orgs,public.org_members,public.org_member_creators,public.creator_applications to authenticated;
 insert into auth.users(id,email) values ${Object.entries(U).map(([name,id])=>`('${id}','${email(name)}')`).join(',')};

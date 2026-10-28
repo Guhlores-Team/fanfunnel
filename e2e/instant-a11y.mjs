@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // Standalone accessibility fixtures: each prep creates its own wheel/fan and
 // works after e2e's final account reset. Register these states in a11y.mjs.
 import { BASE, clickTab, goto } from "./harness.mjs";
@@ -60,7 +61,7 @@ export async function openInstantCodeReveal(page) {
 
 export async function openSavedInstantReward(page) {
   const fixture = await fixtureFor(page, "A11y saved reward");
-  const result = await page.request.post(BASE + "/api/spin", { data: { token: fixture.token, clientSeed: "a11y-instant" } });
+  const result = await page.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: fixture.token, clientSeed: "a11y-instant" } });
   if (!result.ok()) throw new Error(`could not make an instant reward for the scan (${result.status()})`);
   await goto(page, `/spin/${fixture.token}`, 500);
   await page.getByTestId("view-reward").click();
@@ -69,7 +70,7 @@ export async function openSavedInstantReward(page) {
 
 export async function openInstantFulfilment(page) {
   const fixture = await fixtureFor(page, "A11y auto delivery");
-  const result = await page.request.post(BASE + "/api/spin", { data: { token: fixture.token, clientSeed: "a11y-auto" } });
+  const result = await page.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: fixture.token, clientSeed: "a11y-auto" } });
   if (!result.ok()) throw new Error(`could not make an Auto row for the scan (${result.status()})`);
   await goto(page, "/dashboard", 600);
   await clickTab(page, "Fulfilment");

@@ -27,7 +27,7 @@ const req = (url: string, body: unknown, raw?: string) =>
   });
 const brk = (body: unknown, raw?: string) => breakPOST(req("/api/fan/break", body, raw));
 const rem = (body: unknown, raw?: string) => reminderPOST(req("/api/fan/reminder", body, raw));
-const spin = (token: string) => spinPOST(req("/api/spin", { token, clientSeed: "seed" }));
+const spin = (token: string) => spinPOST(req("/api/spin", { token, requestId: crypto.randomUUID(), clientSeed: "seed" }));
 
 const DAY = 86_400_000;
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // The actual journeys: creator dashboard + fan flow. Each `step` asserts a real
 // outcome; the harness records pass/fail and attributes any browser signal.
 // Runs against MOCK mode, so data is deterministic per fresh server.
@@ -938,15 +939,15 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     // has spun 3 of it, then a 4-spin top-up on another wheel. Fan total 6, but
     // the first grant's pass only has 2 left.
     const post = (path, data) => ctx.request.post(BASE + path, { data });
-    const created = await post("/api/passes", { name: "Two Wheel Fan", spins: 5 });
+    const created = await post("/api/passes", { requestId: randomUUID(), name: "Two Wheel Fan", spins: 5 });
     assert(created.ok(), "fan created");
     const { token, fanId } = await created.json();
     assert((await acknowledgeFixtureFan(ctx.request, token)).ok(), "fan acknowledged the age gate");
-    for (let i = 0; i < 3; i++) assert((await post("/api/spin", { token })).ok(), `spin ${i + 1} landed`);
+    for (let i = 0; i < 3; i++) assert((await post("/api/spin", { token, requestId: randomUUID() })).ok(), `spin ${i + 1} landed`);
     const { wheels } = await (await ctx.request.get(BASE + "/api/wheels")).json();
     const other = wheels.find((w) => !w.isActive);
     assert(other, "a second, inactive wheel exists");
-    assert((await post("/api/passes", { name: "Two Wheel Fan", spins: 4, fanId, wheelId: other.id })).ok(), "top-up on the other wheel");
+    assert((await post("/api/passes", { requestId: randomUUID(), name: "Two Wheel Fan", spins: 4, fanId, wheelId: other.id })).ok(), "top-up on the other wheel");
     const detail = async () => (await ctx.request.get(BASE + `/api/fans/${fanId}`)).json();
     const d0 = await detail();
     assert(d0.spinsRemaining === 6, `fan total is 2 + 4 = 6 (got ${d0.spinsRemaining})`);

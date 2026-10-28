@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // RM-6: the fan's spend-awareness guardrail. "Your play" counts, a soft daily
 // reminder that asks before the next spin, and a break the server enforces;
 // then the creator's fan drawer, which shows only that the fan is on a break.
@@ -18,7 +19,7 @@ export async function spinViaApi(request, token, n) {
   for (let done = 0; done < n; ) {
     const batch = Math.min(SPIN_BATCH, n - done);
     for (let i = 0; i < batch; i++) {
-      const res = await request.post(BASE + "/api/spin", { data: { token, clientSeed: `play-${done + i}` } });
+      const res = await request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token, clientSeed: `play-${done + i}` } });
       if (!res.ok()) throw new Error(`api spin ${done + i + 1} failed (${res.status()})`);
     }
     done += batch;
@@ -125,7 +126,7 @@ export async function playJourney(page, { step, assert }, ctx) {
   });
 
   await step("play: the server refuses spins during the break (403 on_break), across reloads", async () => {
-    const res = await ctx.request.post(BASE + "/api/spin", { data: { token, clientSeed: "on-break" } });
+    const res = await ctx.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token, clientSeed: "on-break" } });
     assert(res.status() === 403, `POST /api/spin is 403 (${res.status()})`);
     assert((await res.json()).error === "on_break", "with on_break");
     const again = await ctx.request.post(BASE + "/api/fan/break", { data: { token, duration: "24h" } });

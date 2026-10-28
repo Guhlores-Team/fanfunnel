@@ -15,7 +15,7 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import VerifyPage from "@/app/verify/[shareId]/page";
 import {
-  buildPoolSnapshot,
+  buildFocusPoolSnapshot,
   canonicalJson,
   hashPoolSnapshot,
   parsePoolSnapshot,
@@ -26,9 +26,8 @@ import {
 // fairness inputs, otherwise a spin verified in the demo re-derives differently
 // from one verified against a real DB.
 //
-//  - nonce: the Supabase path uses claim_spin's return value — THIS PASS's
-//    spins_remaining AFTER the decrement (migration 0035). The mock used the
-//    fan-level aggregate BEFORE the decrement.
+//  - nonce: upgraded attempts use a monotonic pass counter independent of
+//    top-ups and balance. Historical receipts retain their original nonce.
 //  - happy hour: the Supabase path stores the multiplier as given (numeric
 //    column, UI step 0.5); the mock floored it, so a ×1.5 boost became ×1 (no
 //    boost at all).
@@ -56,9 +55,9 @@ async function main() {
     assert.ok(!("error" in r), "spin succeeded");
     const v = await mockGetSpinVerification(r.shareId);
     assert.ok(v, "verification for the spin");
-    // claim_spin would return 1 here (pass balance 2 → 1); the fan aggregate
-    // before the decrement was 7.
-    check("nonce is this pass's balance after the decrement (claim_spin basis)", v.nonce === 1);
+    // The new monotonic counter starts at zero, independently of the
+    // pass balance (2 → 1) and the fan aggregate (7 → 6).
+    check("new attempt nonce starts at zero independently of balances", v.nonce === 0);
     check("nonce is not the fan aggregate", v.nonce !== 7);
   }
 
@@ -89,11 +88,11 @@ async function main() {
     check("multiplier below 1 is rejected (same range as the Supabase path)", "error" in low && low.error === "invalid_multiplier");
     const high = mockCreateHappyHour({
       wheelId: wheel.id,
-      multiplier: 10.5,
+      multiplier: 5.5,
       startsAt: new Date(now - 60_000).toISOString(),
       endsAt: new Date(now + 60_000).toISOString(),
     });
-    check("multiplier above 10 is rejected (same range as the Supabase path)", "error" in high && high.error === "invalid_multiplier");
+    check("multiplier above 5 is rejected (same range as the Supabase path)", "error" in high && high.error === "invalid_multiplier");
   }
 
   // --- fairness v3: the mock records and replays exactly like the real path ---
@@ -125,7 +124,7 @@ async function main() {
         parsed.ok &&
           canonicalJson(parsed.snapshot) ===
             canonicalJson(
-              buildPoolSnapshot(wheel, {
+              buildFocusPoolSnapshot(wheel, {
                 happyHourMultiplier: 2,
                 pityCounter: parsed.snapshot.modifiers.pity.counter,
               }),
@@ -166,9 +165,12 @@ async function main() {
       prizes: wheel.prizes.map((p, i) => (i === 0 ? { ...p, weight: 1, stock: 1 } : { ...p, weight: 0 })),
     });
     try {
-      const { token } = mockCreatePass("ParityRace", 2);
-      mockAckFan(token);
-      const [a, b] = await Promise.all([mockSpin(token, "race-a"), mockSpin(token, "race-b")]);
+      // Fan transactions serialize pity and nonce. Separate fans can still
+      // race for shared stock and must retain the original exclusion trace.
+      const { token: tokenA } = mockCreatePass("ParityRace A", 1);
+      const { token: tokenB } = mockCreatePass("ParityRace B", 1);
+      mockAckFan(tokenA); mockAckFan(tokenB);
+      const [a, b] = await Promise.all([mockSpin(tokenA, "race-a"), mockSpin(tokenB, "race-b")]);
       assert.ok(!("error" in a) && !("error" in b), "both racing spins succeeded");
       const va = await mockGetSpinVerification(a.shareId!);
       const vb = await mockGetSpinVerification(b.shareId!);

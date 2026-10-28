@@ -38,6 +38,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, chownSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { probeFocusLedger } from "./focusLedgerProbe.mjs";
+import {probeRewardViews} from "./rewardViewsProbe.mjs";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
 import { probeTheme } from "./themeProbe.mjs";
@@ -271,7 +273,6 @@ const SIGNED_IN_ONLY = [
   "set_notifications_seen()",
   "set_pwa_icon_mode(text)",
   "set_creator_theme(jsonb)",
-  "import_fans(jsonb)",
   "admin_account_stats()",
   "admin_reserve_account_deletion(uuid)",
   "org_account_stats(uuid)",
@@ -296,6 +297,15 @@ function probeGrants(db) {
   for (const sig of SIGNED_IN_ONLY) {
     if (priv("anon", sig)) bad.push(`anon can EXECUTE ${sig}`);
     if (!priv("authenticated", sig)) bad.push(`authenticated lost EXECUTE on ${sig}`);
+  }
+  //0059 retires the former signed-in import entrypoint. Neither the PUBLIC
+  // ACL nor any API role may reach it outside the durable service gateway.
+  const publicImport=sql(db, `select exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname='import_fans' and a.grantee=0 and a.privilege_type='EXECUTE')`);
+  if(publicImport!=="f")bad.push("PUBLIC retained EXECUTE on legacy import_fans");
+  for(const role of ["anon","authenticated","service_role"]) {
+    if(priv(role,"import_fans(jsonb)"))bad.push(`${role} retained EXECUTE on legacy import_fans`);
+    const retired=psql(db,["-c",`begin;set local role ${role};select public.import_fans('[]'::jsonb);rollback;`],{allowFail:true});
+    if(!/permission denied for function import_fans\b/.test(retired.stderr||""))bad.push(`${role} reached retired import_fans`);
   }
   for (const sig of RLS_HELPERS) if (!priv("anon", sig)) bad.push(`anon lost EXECUTE on RLS helper ${sig}`);
 
@@ -411,7 +421,7 @@ function probeGrants(db) {
     console.log(`FAIL  ${db}: signed-in-only RPC grants / RM-6 break guard`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; authenticated setters persist; set_pwa_icon_mode is own-row only; record_terms_acceptance is service-only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only; creator theme/media are owner-scoped and allowlisted`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; legacy import denied to PUBLIC/all API roles; authenticated setters persist; set_pwa_icon_mode is own-row only; record_terms_acceptance is service-only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only; creator theme/media are owner-scoped and allowlisted`);
   }
 }
 
@@ -430,6 +440,7 @@ function probeBreaks(db, asUser) {
   const FB = "00000000-0000-4000-8000-0000000049fb";
   const FC = "00000000-0000-4000-8000-0000000049fc";
   const seed = `
+    set local fanfunnel.economic_write='on'; -- DB-owner fixture
     insert into auth.users (id, email) values ('${A}', 'probe-0049a@example.test'), ('${B}', 'probe-0049b@example.test');
     update public.profiles set is_active = true, approval_status = 'approved' where id in ('${A}', '${B}');
     insert into public.wheels (id, creator_id, title) values
@@ -439,6 +450,7 @@ function probeBreaks(db, asUser) {
       ('probe-0049-a', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FA}', 3),
       ('probe-0049-b', '${B}', '00000000-0000-4000-8000-0000000049bb', '${FB}', 3),
       ('probe-0049-c', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FC}', 3);
+    update public.fans set acked_at=now(),acked_terms_version='2026-10-27' where id in ('${FA}','${FB}','${FC}');
     update public.fans set break_until = now() - interval '1 hour' where id = '${FC}';
     -- Supabase grants table privileges to anon/authenticated by default and
     -- leaves the rest to RLS; the stub does not, so model that here.
@@ -452,13 +464,13 @@ function probeBreaks(db, asUser) {
     select 'take:' || (public.fan_take_break('probe-0049-a', now() + interval '1 day') = now() + interval '1 day');
     select 'shorter:' || (public.fan_take_break('probe-0049-a', now() + interval '1 hour') = now() + interval '1 day');
     select 'other-fan:' || coalesce((select break_until::text from public.fans where id = '${FB}'), 'none');
-    select 'claim-on-break:' || coalesce(public.claim_spin('probe-0049-a')::text, 'refused');
-    select 'claim-other:' || coalesce(public.claim_spin('probe-0049-b')::text, 'refused');
-    select 'claim-ended:' || coalesce(public.claim_spin('probe-0049-c')::text, 'refused');
+    select 'claim-on-break:' || (public.prepare_spin_attempt(gen_random_uuid(),'probe-0049-a',repeat('a',64))->>'error');
+    select 'claim-other:' || (public.prepare_spin_attempt(gen_random_uuid(),'probe-0049-b',repeat('b',64))->>'status');
+    select 'claim-ended:' || (public.prepare_spin_attempt(gen_random_uuid(),'probe-0049-c',repeat('c',64))->>'status');
     select 'restart:' || (public.fan_take_break('probe-0049-c', now() + interval '7 days') = now() + interval '7 days');
     select 'unknown:' || coalesce(public.fan_take_break('probe-0049-nope', now() + interval '1 day')::text, 'null');
     rollback;`], { allowFail: true });
-  const want = ["take:true", "shorter:true", "other-fan:none", "claim-on-break:refused", "claim-other:2", "claim-ended:2", "restart:true", "unknown:null"];
+  const want = ["take:true", "shorter:true", "other-fan:none", "claim-on-break:on_break", "claim-other:ready", "claim-ended:ready", "restart:true", "unknown:null"];
   const got = out(r);
   const missing = want.filter((w) => !got.includes(w));
   if (r.status !== 0 || missing.length) {
@@ -772,6 +784,7 @@ const PS = {
   ORG: "00000000-0000-4000-8000-000000005405",
 };
 const PS_SETUP = `
+  set local fanfunnel.economic_write='on'; -- DB-owner historical fixture only
   insert into auth.users (id, email) values
     ('${PS.A}', 'probe-0054a@example.test'), ('${PS.B}', 'probe-0054b@example.test'),
     ('${PS.ADM}', 'probe-0054adm@example.test'), ('${PS.ADM2}', 'probe-0054adm2@example.test');
@@ -1004,8 +1017,9 @@ const RW_PASS = "00000000-0000-4000-8000-0000000057f0";
 const rwCodes = (n, tag) =>
   `'${JSON.stringify(Array.from({ length: n }, (_, i) => ({ cipher: `c-${tag}-${i}`, iv: `iv-${i}`, key_version: 1, hint: `${tag}${i}`.slice(-4), fingerprint: createHash("sha256").update(`${tag}:${i}`).digest("hex") })))}'::jsonb`;
 const RW_SEED = `
+  set local fanfunnel.economic_write='on'; -- DB-owner historical engine fixture only
   insert into auth.users (id, email) values ('${RW_A}', 'probe-0057a@example.test'), ('${RW_B}', 'probe-0057b@example.test');
-  update public.profiles set is_active = true, approval_status = 'approved' where id in ('${RW_A}', '${RW_B}');
+  update public.profiles set is_active = true, approval_status='approved' where id in ('${RW_A}', '${RW_B}');
   insert into public.wheels (id, creator_id, title) values ('${RW_WA}', '${RW_A}', 'a'), ('${RW_WB}', '${RW_B}', 'b');
   insert into public.prizes (id, wheel_id, label, weight) values
     ('${RW_PA}', '${RW_WA}', 'A code prize', 10), ('${RW_PB}', '${RW_WB}', 'B link prize', 10), ('${RW_PC}', '${RW_WA}', 'A race prize', 10);
@@ -1101,18 +1115,15 @@ async function probeInstantRewards(db) {
   const S1 = "00000000-0000-4000-8000-000000005711";
   const S2 = "00000000-0000-4000-8000-000000005712";
   const flow = run(`
-    set local role service_role;
     select 'reserved:' || count(*) from public.reserve_reward_code('${RW_PA}', '${S1}');
-    reset role;
     select 'stock-1:' || stock from public.prizes where id = '${RW_PA}';
     ${rwSpin(S1, RW_PA)}
+    select public.record_fan_reward_views(array['${S1}'::uuid],'probe-0057');
     select 'delivered:' || kind || ',' || (code_id is not null) || ',' || (cipher like 'c-A-%') || ',' || views from public.spin_rewards where spin_id = '${S1}';
-    set local role service_role;
     select 'release-delivered:' || public.release_reward_code('${S1}');
     select 'reserved-2:' || count(*) from public.reserve_reward_code('${RW_PA}', '${S2}');
     select 'release-unrecorded:' || public.release_reward_code('${S2}');
     select 'views:' || public.record_reward_view('${S1}');
-    reset role;
     select 'stock-end:' || stock from public.prizes where id = '${RW_PA}';
     select 'assigned:' || count(*) from public.prize_reward_codes where spin_id is not null;`);
   for (const want of [
@@ -1128,7 +1139,7 @@ async function probeInstantRewards(db) {
   ]) {
     if (!out(flow).includes(want)) bad.push(`reward flow: expected ${want} (got ${out(flow).filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${firstErr(flow)})`);
   }
-  const twice = run(`set local role service_role; select public.reserve_reward_code('${RW_PA}', '${S1}'); select public.reserve_reward_code('${RW_PA}', '${S1}');`);
+  const twice = run(`select public.reserve_reward_code('${RW_PA}', '${S1}'); select public.reserve_reward_code('${RW_PA}', '${S1}');`);
   if (!/duplicate key|unique/.test(twice.stderr || "")) bad.push(`one spin could reserve two codes (${firstErr(twice)})`);
   const manual = run(`
     set local role service_role;
@@ -1164,6 +1175,7 @@ async function probeInstantRewards(db) {
     insert into public.fans(id,creator_id,display_name) values('00000000-0000-4000-8000-0000000057fb','${RW_A}','another fan');
     insert into public.fan_passes(token,creator_id,wheel_id,fan_id) values('probe-other-fan','${RW_A}','${RW_WA}','00000000-0000-4000-8000-0000000057fb');
     select 'wrong-fan-view:' || (public.record_fan_reward_view('${atomicId}','probe-other-fan') is null);
+    select public.record_fan_reward_views(array['${atomicId}'::uuid],'probe-0057');
     select 'own-fan-view:' || public.record_fan_reward_view('${atomicId}','probe-0057');
     select public.scrub_fan_reward_values('${RW_FAN}');
     select 'erased-view:' || (public.record_fan_reward_view('${atomicId}','probe-0057') is null);
@@ -1221,14 +1233,14 @@ async function probeInstantRewards(db) {
         if (!candidate.stdout.trim()) return "sold-out";
         const c = JSON.parse(candidate.stdout.trim());
         const expected = { delivery: "codes", codeId: c.id, cipher: c.cipher, iv: c.iv, keyVersion: c.key_version };
-        const result = await psqlAsync(db, `select public.finalize_reward_spin('${JSON.stringify(spin)}'::jsonb, '${JSON.stringify(expected)}'::jsonb);`);
+        const result = await psqlAsync(db, `set fanfunnel.economic_write='on'; select public.finalize_reward_spin('${JSON.stringify(spin)}'::jsonb, '${JSON.stringify(expected)}'::jsonb);`);
         if (result.status !== 0) return `error:${firstErr(result)}`;
         const receipt = JSON.parse(result.stdout.trim());
         if (receipt.status === "retry") continue;
         if (receipt.status === "sold_out") return "sold-out";
         if (receipt.status !== "recorded") return `error:${receipt.status}`;
         // A second independent request after commit returns the same immutable receipt.
-        const replay = await psqlAsync(db, `select public.finalize_reward_spin('${JSON.stringify(spin)}'::jsonb, '${JSON.stringify(expected)}'::jsonb);`);
+        const replay = await psqlAsync(db, `set fanfunnel.economic_write='on'; select public.finalize_reward_spin('${JSON.stringify(spin)}'::jsonb, '${JSON.stringify(expected)}'::jsonb);`);
         if (replay.status !== 0 || JSON.parse(replay.stdout.trim()).shareId !== receipt.shareId) return "error:non-idempotent";
         return `won:${c.id}`;
       }
@@ -1255,7 +1267,7 @@ async function probeInstantRewards(db) {
     console.log(`FAIL  ${db}: instant rewards (0057)`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: instant rewards: secrets server-only, creator metadata-only and tenant-isolated, code stock locked, no award without a code; 20 racing spins on 5 codes -> 5 distinct codes, 15 sold out`);
+    console.log(`PASS  ${db}: private0057 engine regression: secrets server-only, creator metadata-only and tenant-isolated, code stock locked, no award without a code; 20 racing spins on 5 codes -> 5 distinct codes, 15 sold out`);
   }
 }
 
@@ -1321,6 +1333,12 @@ try {
     probeApproval(db);
     await probeInstantRewards(db);
     await probeCreatorStorage(db);
+    await probeFocusLedger(async (q) => {
+      const r=await psqlAsync(db,q);
+      if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");
+      return r.stdout;
+    });
+    await probeRewardViews(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"reward view SQL failed");return r.stdout;});
   }
 } catch (e) {
   failures++;

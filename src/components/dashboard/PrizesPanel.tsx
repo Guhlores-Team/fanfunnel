@@ -320,6 +320,7 @@ function RedemptionRow({
             {STATUS_LABEL[r.status]}
           </span>
           {r.auto && <span data-testid="redemption-auto" title="Reward delivered instantly to the winning fan" className="rounded-full border border-[#22c55e]/30 bg-[#22c55e]/10 px-[11px] py-1 text-xs font-bold text-[#86efac]">Auto · {r.auto.kind === "link" ? "Link" : r.auto.kind === "code" ? "Code" : "Text"}</span>}
+          {r.focusKind && <span data-testid="redemption-focus" title={r.chaseAwarded ? "This win completed the Chase guarantee" : "Won while a Focus or Chase pack was active"} className="rounded-full border border-[var(--brand)]/30 px-[11px] py-1 text-xs font-bold text-ink">Focus{r.focusKind === "chase" ? r.chaseAwarded ? " · Chase guaranteed" : " · Chase" : ""}</span>}
           {!r.auto && (
           <button
             type="button"

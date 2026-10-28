@@ -284,10 +284,8 @@ async function main() {
   check("dead pass grant: inactive pass untouched (3)", db.row("fan_passes", deadPass.id as string).spins_remaining === 3);
   check("dead pass grant: fans == SUM(active passes)", invariantHolds(dormant.id as string));
 
-  // 11. The grants update fails after the balance change was applied, and a
-  //     spin lands while the rollback is in flight. The rollback must undo the
-  //     delta from the balance as it is then (not give up after one miss):
-  //     pass 2 -> +2 = 4 -> spin -> 3 -> rollback -> 1.
+  // 11. A grant write fails in the atomic transaction while a separate spin
+  //     commits first (2 -> 1). Neither the credit nor a compensation may leak.
   const rb = db.seed("fans", { creator_id: CREATOR, display_name: "Rollback" });
   const rbPass = db.seed("fan_passes", {
     token: "tok-rb",
@@ -309,9 +307,8 @@ async function main() {
     if (stmt.table === "grants" && stmt.op === "update") return { message: "injected grant update failure" };
     if (stmt.table === "fan_passes" && stmt.op === "update") {
       passUpdates++;
-      // The 2nd pass update is the rollback's first compare-and-swap: a spin
-      // lands just before it, so it misses and must be retried.
-      if (passUpdates === 2) assert.strictEqual(db.spin("tok-rb"), 3, "spin during the rollback");
+      // This spin commits before the transaction acquires its pass lock.
+      if (passUpdates === 1) assert.strictEqual(db.spin("tok-rb"), 1, "concurrent spin keeps its committed debit");
     }
   };
   const failedGrant = await editGrant(rbGrant.id as string, { spins: 7 });
@@ -323,11 +320,11 @@ async function main() {
     db.row("fan_passes", rbPass.id as string).spins_remaining === 1
   );
   check("rollback: pass granted_total is back to 5", db.row("fan_passes", rbPass.id as string).spins_granted_total === 5);
-  check("rollback: the first undo missed and was retried (3 pass updates)", passUpdates === 3);
+  check("atomic failure: one attempted internal credit and no compensating write", passUpdates === 1 && !db.statements.some(s => !s.transaction && s.table === "fan_passes" && s.op === "update"));
   check("rollback: fans == SUM(passes)", invariantHolds(rb.id as string));
 
-  // 12. Same failure, but the fan spent the whole delta before the rollback ran:
-  //     undoing would take the pass negative, so it is skipped and logged.
+  // 12. The fan exhausts their committed balance while the transaction fails.
+  //     Further spends cannot borrow the uncommitted delta; no undo is needed.
   const logged: unknown[][] = [];
   const realError = console.error;
   console.error = (...args: unknown[]) => {
@@ -335,10 +332,10 @@ async function main() {
   };
   db.beforeStatement = (stmt) => {
     if (stmt.table === "grants" && stmt.op === "update") {
-      // Pass is 1 + 2 = 3 here; the fan spins all 3 before the rollback reads.
-      assert.strictEqual(db.spin("tok-rb"), 2, "spin 1");
-      assert.strictEqual(db.spin("tok-rb"), 1, "spin 2");
-      assert.strictEqual(db.spin("tok-rb"), 0, "spin 3");
+      // Only the previously committed one spin is visible.
+      assert.strictEqual(db.spin("tok-rb"), 0, "spend the last committed spin");
+      assert.strictEqual(db.spin("tok-rb"), null, "uncommitted edit credit cannot fund spin 2");
+      assert.strictEqual(db.spin("tok-rb"), null, "uncommitted edit credit cannot fund spin 3");
       return { message: "injected grant update failure" };
     }
   };
@@ -348,18 +345,7 @@ async function main() {
   check("skipped rollback: the edit still fails", "error" in skipped && skipped.error === "db_error");
   check("skipped rollback: grant row untouched (5)", db.row("grants", rbGrant.id as string).spins === 5);
   check("skipped rollback: pass stays at 0, never negative", db.row("fan_passes", rbPass.id as string).spins_remaining === 0);
-  check(
-    "skipped rollback: logged with grantId/passId/delta",
-    logged.some(
-      (a) =>
-        a[0] === "editGrant: balance rollback could not be applied" &&
-        typeof a[1] === "object" &&
-        a[1] !== null &&
-        (a[1] as { grantId?: string; passId?: string; delta?: number }).grantId === rbGrant.id &&
-        (a[1] as { passId?: string }).passId === rbPass.id &&
-        (a[1] as { delta?: number }).delta === 2
-    )
-  );
+  check("atomic failure: no skipped compensation or private balance log", !logged.some(args => String(args[0]).includes("rollback")) && !db.statements.some(stmt => !stmt.transaction && stmt.table === "fan_passes" && stmt.op === "update"));
   check("skipped rollback: fans == SUM(passes)", invariantHolds(rb.id as string));
 
   // 12b. A transient error looking up the grant's own pass must abort the edit,

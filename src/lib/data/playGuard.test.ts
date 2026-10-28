@@ -237,7 +237,9 @@ async function main() {
       if (table === "fans") return { data: { break_until: breakUntil }, error: null };
       return { data: null, error: null };
     };
-    rpcHandler = () => ({ data: null, error: null }); // claim_spin refuses
+    rpcHandler = (name) => name === "prepare_spin_attempt"
+      ? { data: { status: "declined", error: breakUntil && Date.parse(breakUntil) > Date.now() ? "on_break" : "no_spins" }, error: null }
+      : { data: null, error: null }; // atomic preparation refuses before any spend
     breakUntil = new Date(Date.now() + DAY).toISOString();
     const onBreak = await data.spin("tok-a", "x");
     check("supabase: a refused claim during a break is on_break", "error" in onBreak && onBreak.error === "on_break");

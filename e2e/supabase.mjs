@@ -14,10 +14,12 @@
 // been applied.
 
 import { createClient } from "@supabase/supabase-js";
+import { requireTestProject, createFixturePass, commitSinglePrizeFixture, FIXTURE_TERMS_VERSION } from "./economic-fixtures.mjs";
 import { log, requireSupabaseEnvOrExit } from "./supabase-env.mjs";
 
 // Resolve + validate config (skips/exits with clear diagnostics if missing/bad).
 const { URL, ANON, SERVICE } = requireSupabaseEnvOrExit();
+requireTestProject(URL);
 
 // ---- tiny assert/report (self-contained; no playwright import) -------------
 const results = [];
@@ -245,32 +247,14 @@ try {
       .select("id")
       .single();
     assert(!pErr, `seed prize failed: ${pErr?.message}`);
-    const { data: fan, error: fErr } = await admin
-      .from("fans")
-      .insert({ creator_id: A.id, display_name: "A's spin fan", spins_remaining: 5 })
-      .select("id")
-      .single();
-    assert(!fErr, `seed fan failed: ${fErr?.message}`);
-    const { data: pass, error: passErr } = await admin
-      .from("fan_passes")
-      .insert({ token: `e2e-rls-${rand}`, creator_id: A.id, wheel_id: wheelId, fan_id: fan.id })
-      .select("id")
-      .single();
-    assert(!passErr, `seed fan_pass failed: ${passErr?.message}`);
-    const { error: gErr } = await admin
-      .from("grants")
-      .insert({ creator_id: A.id, fan_id: fan.id, spins: 5, amount_cents: 1000 });
-    assert(!gErr, `seed grant failed: ${gErr?.message}`);
-    const { error: sErr } = await admin.from("spins").insert({
-      fan_pass_id: pass.id,
-      creator_id: A.id,
-      wheel_id: wheelId,
-      fan_id: fan.id,
-      prize_id: prize.id,
-      prize_label: "A's prize",
-      prize_rarity: "common",
-    });
-    assert(!sErr, `seed spin failed: ${sErr?.message}`);
+    const grant = await createFixturePass(admin, A, { wheelId, name: "A's spin fan", spins: 5, amountCents: 1000 });
+    const { error: ackError } = await admin.from("fans").update({ acked_at: new Date().toISOString(), acked_terms_version: FIXTURE_TERMS_VERSION }).eq("id", grant.fanId);
+    assert(!ackError, `ack fixture: ${ackError?.message}`);
+    const outcome = await commitSinglePrizeFixture(admin, grant.token);
+    assert(outcome.status === "committed" && outcome.balance === 4, "real atomic play seeds the private grant/spin chain");
+    assert(outcome.spin.prize_id === prize.id, "atomic fixture records the owned prize");
+    const replay = await commitSinglePrizeFixture(admin, grant.token, { requestId: outcome.requestId });
+    assert(replay.status === "committed" && replay.id === outcome.id && replay.balance === 4, "replayed fixture cannot debit twice");
 
     const { data: bGrants } = await B.client.from("grants").select("id").eq("creator_id", A.id);
     assert((bGrants?.length ?? 0) === 0, "B reads 0 of A's grants");

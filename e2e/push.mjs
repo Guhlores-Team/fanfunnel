@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // Web push journey (closed-tab notifications for creators). Runs before the
 // first-run wipe, each part in its own browser context so the stubs below
 // never leak into the other journeys.
@@ -208,10 +209,10 @@ export async function pushJourney(browser, { step, assert }, sink, ctx) {
 
     // F8 parity: a real fan spin → the push says exactly what the bell says.
     const spinOnce = async () => {
-      const { token } = await (await ctx.request.post(BASE + "/api/passes", { data: { name: "Push Parity Fan", spins: 2 } })).json();
+      const { token } = await (await ctx.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "Push Parity Fan", spins: 2 } })).json();
       const ack = await acknowledgeFixtureFan(ctx.request, token);
       if (!ack.ok()) throw new Error(`could not acknowledge the fixture fan (${ack.status()})`);
-      const r = await ctx.request.post(BASE + "/api/spin", { data: { token, clientSeed: "e2e-push" } });
+      const r = await ctx.request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token, clientSeed: "e2e-push" } });
       if (!r.ok()) throw new Error(`spin failed (${r.status()})`);
     };
     const waitForWinPush = async (since) => {

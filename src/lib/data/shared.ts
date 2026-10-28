@@ -89,7 +89,7 @@ type DbPrizeRow = Pick<
   | "stock"
   | "sort_order"
 > &
-  Partial<Pick<Tables<"prizes">, "delivery">>;
+  Partial<Pick<Tables<"prizes">, "delivery">> & { boostable?: boolean };
 type WheelRow = Tables<"wheels">;
 // label_color: Phase 9 (#11) prize-label color (migration 0025); label_size:
 // per-wheel label text size (0037); show_stock: RM-2 "Show stock to fans"
@@ -110,7 +110,7 @@ type _RarityMatchesDb = AssertTrue<Same<Rarity, Enums<"prize_rarity">>>;
 // The columns we select to load a wheel's full config (prizes joined).
 export const WHEEL_SELECT =
   `id, title, subtitle, brand_color, label_color, label_size, show_stock, is_active, active_from, active_until, archived_at,
-   prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order, delivery)`;
+   prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order, delivery, boostable)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
 export type AnyClient =
@@ -133,7 +133,7 @@ const isPrizeDelivery = (v: unknown): v is PrizeDelivery =>
 export function toWheelConfig(wheel: DbWheelRow): WheelConfig {
   const prizes: Prize[] = (wheel.prizes ?? [])
     .slice()
-    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id.localeCompare(b.id))
     .map((p) => ({
       id: p.id,
       label: p.label,
@@ -147,6 +147,7 @@ export function toWheelConfig(wheel: DbWheelRow): WheelConfig {
       stock: p.stock ?? null,
       // #26 (migration 0057): creator-only; toPublicPrize never copies it.
       delivery: isPrizeDelivery(p.delivery) ? p.delivery : "manual",
+      boostable: p.boostable === true,
     }));
 
   return {

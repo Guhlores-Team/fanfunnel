@@ -6,6 +6,7 @@ import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { WonPrize } from "@/lib/data/types";
 import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
 import { hasStockToShow, stockLabel } from "./stockDisplay";
+import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
 
 /**
  * The fan's "prize book": every prize on the wheel, marked won / not-yet, with
@@ -17,9 +18,13 @@ import { hasStockToShow, stockLabel } from "./stockDisplay";
 export default function PrizeBook({
   prizes,
   history,
+  focus = null,
+  odds,
 }: {
   prizes: PublicPrize[];
   history: WonPrize[];
+  focus?: FanFocusView | null;
+  odds?: FanOddsView;
 }) {
   const [open, setOpen] = useState(false);
   if (prizes.length === 0) return null;
@@ -45,8 +50,13 @@ export default function PrizeBook({
 
       {open && (
         <div className="mt-2 grid grid-cols-2 gap-2">
+          <p className="col-span-2 text-xs text-muted" data-testid="fan-odds-note">
+            {odds?.chaseForced ? "Your chase guarantee applies to the next eligible spin." : odds?.pityForced ? "Your rare-prize guarantee applies to your next spin." : "Current odds for your next spin; creator edits can change them before you play."}
+          </p>
           {prizes.map((p) => {
             const won = wonLabels.has(p.label);
+            const target = focus?.prizeId === p.id && (focus.status === "active" || focus.status === "paused");
+            const chance = odds?.rows.find(row => row.prizeId === p.id)?.chance;
             const c = p.color ?? RARITY_COLORS[p.rarity];
             const limited = hasStockToShow(p);
             const soldOut = !isPublicPrizeAvailable(p);
@@ -63,6 +73,8 @@ export default function PrizeBook({
                     : "transparent",
                 }}
                 data-testid="prize-book-item"
+                data-prize-id={p.id}
+                data-focus-target={String(target)}
               >
                 {/* Dim only the icon: dimmed text would fail AA contrast. */}
                 <span className="text-lg" aria-hidden="true" style={{ opacity: soldOut && !won ? 0.5 : 1 }}>
@@ -70,8 +82,10 @@ export default function PrizeBook({
                 </span>
                 <div className="min-w-0">
                   <p className="truncate text-xs font-semibold text-ink">
-                    {won ? p.label : "Not yet…"}
+                    {won || target ? p.label : "Not yet…"}
                   </p>
+                  {target && <p className="text-xs font-semibold text-[var(--brand-text)]">{focus?.kind === "chase" ? "Chase target" : "Focus target"}</p>}
+                  <p className="tnum text-xs text-muted" data-testid="fan-prize-odds">{typeof chance === "number" && Number.isFinite(chance) && chance >= 0 && chance <= 1 ? `${(chance * 100).toLocaleString(undefined, { maximumFractionDigits: 3 })}% chance` : "Odds unavailable"}</p>
                   {limited && (
                     <p className="tnum text-[10px] text-muted">{stockLabel(p)}</p>
                   )}

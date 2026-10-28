@@ -50,7 +50,7 @@ const req = (url: string, body: unknown, method = "POST", raw?: string) =>
   });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 const reveal = (body: unknown, raw?: string) => rewardPOST(req("/api/fan/reward", body, "POST", raw));
-const spin = (token: string) => spinPOST(req("/api/spin", { token, clientSeed: "seed" }));
+const spin = (token: string) => spinPOST(req("/api/spin", { token, requestId: crypto.randomUUID(), clientSeed: "seed" }));
 const putDelivery = (id: string, body: unknown) => deliveryPUT(req(`/api/prizes/${id}/reward`, body, "PUT"), params(id));
 const getDelivery = (id: string) => deliveryGET(req(`/api/prizes/${id}/reward`, null, "GET"), params(id));
 const postCodes = (id: string, codes: unknown) => codesPOST(req(`/api/prizes/${id}/codes`, { codes }), params(id));

@@ -1,5 +1,6 @@
 "use client";
 
+import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -597,7 +598,7 @@ function HappyHourScheduler() {
           <input
             type="number"
             min={1}
-            max={10}
+            max={MAX_COMBINED_BOOST}
             step={0.5}
             value={multiplier}
             onChange={(e) => setMultiplier(Number(e.target.value))}

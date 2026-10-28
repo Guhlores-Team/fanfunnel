@@ -149,7 +149,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     if (result.truncated) truncated.push(name);
     return result.rows;
   };
-  const [fanRes, creatorRes, linksRead, grantsRead, wishesRead, messagesRead, spinsRead, checkinsRead, outreachRead, reportsRead, reminderRes, refRes] = await Promise.all([
+  const [fanRes, creatorRes, linksRead, grantsRead, wishesRead, messagesRead, spinsRead, checkinsRead, outreachRead, reportsRead, reminderRes, refRes, focusRead, attemptsRead] = await Promise.all([
     svc.from("fans").select("display_name, handle, created_at, spins_remaining, spins_granted_total, last_spin_at, referral_code, referred_by_fan_id, acked_at, acked_terms_version, leaderboard_opt_in, break_until").eq("id", fanId).eq("creator_id", creatorId).maybeSingle(),
     svc.from("profiles").select("display_name").eq("id", creatorId).maybeSingle(),
     readRows(svc, "fan_passes", "id, token, created_at, is_active, self_excluded_at, spins_remaining, spins_granted_total, last_spin_at, wheel:wheels(title)", own),
@@ -162,6 +162,8 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     readRows(svc, "creator_reports", "id, created_at, reason, detail", own),
     svc.from("fan_play_reminders").select("daily, updated_at").eq("fan_id", fanId).maybeSingle(),
     svc.from("referrals").select("id", { count: "exact", head: true }).eq("referrer_fan_id", fanId).eq("creator_id", creatorId),
+    readRows(svc, "fan_focus", "id, kind, prize_label, multiplier, total_spins, spins_left, chase_counter, status, created_at, ended_at", own),
+    readRows(svc, "spin_attempts", "id, state, error, created_at, finished_at", own),
   ]);
   if (fanRes.error || !fanRes.data) return null;
   const fan = fanRes.data as ExportRow;
@@ -190,6 +192,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
   }
   if (spinsRead.failed) failed.push("prizes", "instantReceipts");
   if (spinsRead.truncated) truncated.push("prizes", "instantReceipts");
+  const focusPacks = remember("focusPacks", focusRead), spinAttempts = remember("spinAttempts", attemptsRead);
   return safeExportValue({
     format: FAN_EXPORT_FORMAT, exportedAt: new Date().toISOString(), about: FAN_EXPORT_ABOUT,
     ...exportStatus(failed, truncated), excluded: [...FAN_EXPORT_EXCLUDED],
@@ -200,6 +203,8 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     topUps: grants.map((row) => ({ at: str(row.created_at) ?? "", spins: num(row.spins), bonusSpins: num(row.bonus_spins) })),
     spins: spins.map((row) => ({ id: String(row.id), at: str(row.created_at) ?? "", prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", wheel: str((row.wheel as ExportRow | null)?.title), shareId: str(row.share_id), fairness: { version: row.fair_version ?? null, serverSeed: str(row.server_seed), serverSeedHash: str(row.server_seed_hash), clientSeed: str(row.client_seed), nonce: row.nonce ?? null, seedCommitment: str(row.seed_commitment), poolHash: str(row.pool_hash), poolSnapshot: (row.pool_snapshot ?? null) as Json, trace: (row.fair_trace ?? null) as Json } })),
     prizes, instantReceipts,
+    focusPacks: focusPacks.map(row => ({ kind: str(row.kind) ?? "focus", prize: str(row.prize_label) ?? "Prize", multiplier: num(row.multiplier), totalSpins: num(row.total_spins), spinsLeft: num(row.spins_left), chaseCounter: num(row.chase_counter), status: str(row.status) ?? "unknown", at: str(row.created_at), endedAt: str(row.ended_at) })),
+    spinAttempts: spinAttempts.map(row => ({ status: str(row.state) ?? "unknown", error: str(row.error), at: str(row.created_at), finishedAt: str(row.finished_at) })),
     wishlist: wishes.map((row) => ({ prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", addedAt: str(row.created_at) ?? "" })),
     messagesYouSent: messages.map((row) => ({ at: str(row.created_at) ?? "", body: str(row.body) ?? "" })),
     play: { breakUntil: str(fan.break_until), reminderDaily: reminder?.daily ?? null, reminderUpdatedAt: reminder?.updated_at ?? null },
@@ -283,7 +288,7 @@ export async function deleteFanData(
 const CREATOR_TABLES: [string, string, string, string, string[]?][] = [
   ["wheels", "wheels", "creator_id", "id, creator_id, title, subtitle, brand_color, label_color, label_size, show_stock, is_active, active_from, active_until, archived_at, created_at, updated_at"],
   ["campaigns", "campaigns", "creator_id", "id, creator_id, name, is_active, pinned_wheel_id, created_at"],
-  ["campaign_packs", "campaign_packs", "creator_id", "id, creator_id, campaign_id, label, spins, bonus_spins, amount_cents, sort_order, created_at"],
+  ["campaign_packs", "campaign_packs", "creator_id", "id, creator_id, campaign_id, label, spins, bonus_spins, amount_cents, sort_order, pack_kind, focus_multiplier, focus_spins, chase_within, created_at"],
   ["prize_templates", "prize_templates", "creator_id", "id, creator_id, label, description, rarity, weight, color, emoji, created_at"],
   ["wheel_templates", "wheel_templates", "creator_id", "id, creator_id, name, title, subtitle, brand_color, prizes, created_at"],
   ["dm_templates", "dm_templates", "creator_id", "id, creator_id, title, body, created_at"],
@@ -296,6 +301,13 @@ const CREATOR_TABLES: [string, string, string, string, string[]?][] = [
   ["prize_rewards", "prize_rewards", "creator_id", "prize_id, creator_id, kind, updated_at", ["prize_id"]],
   ["prize_reward_codes", "prize_reward_codes", "creator_id", "id, prize_id, creator_id, spin_id, assigned_at, created_at, erased_at"],
   ["spin_rewards", "spin_rewards", "creator_id", "spin_id, creator_id, kind, views, last_viewed_at, created_at, erased_at", ["spin_id"]],
+  ["focus_creator_config", "focus_creator_config", "creator_id", "creator_id, focus_enabled, chase_enabled", ["creator_id"]],
+  ["fan_focus", "fan_focus", "creator_id", "id, creator_id, fan_id, fan_pass_id, wheel_id, prize_id, prize_label, grant_id, kind, multiplier, total_spins, spins_left, chase_counter, status, version, created_at, ended_at"],
+  ["chase_reservations", "chase_reservations", "creator_id", "id, focus_id, creator_id, prize_id, kind, state, consumed_spin_id, created_at, ended_at"],
+  ["spin_attempts", "spin_attempts", "creator_id", "id, creator_id, fan_id, fan_pass_id, state, error, spin_id, created_at, finished_at"],
+  ["fan_import_batches", "fan_import_batches", "creator_id", "id, creator_id, created_at"],
+  ["fan_import_items", "fan_import_items", "creator_id", "batch_id, ordinal, creator_id, grant_id, error, created_at", ["batch_id", "ordinal"]],
+  ["creator_request_journal", "creator_request_journal", "creator_id", "id, creator_id, actor_id, kind, state, error, created_at, finished_at"],
   ["referrals", "referrals", "creator_id", "id, creator_id, referrer_fan_id, referred_fan_id, bonus_spins, credited_at, created_at"],
   ["messages", "messages", "creator_id", "id, creator_id, fan_id, sender, body, read_at, created_at"],
   ["wishlists", "wishlists", "creator_id", "id, creator_id, fan_id, prize_id, prize_label, prize_rarity, created_at"],
@@ -347,7 +359,7 @@ export async function exportCreatorData(): Promise<CreatorDataExport | null> {
   const orgIds = sections.agencies_owned.map((row) => row.id);
   const memberIds = sections.agency_memberships.map((row) => row.id);
   await Promise.all([
-    related("prizes", "prizes", "id, wheel_id, label, description, rarity, weight, stock, cost_cents, color, emoji, image_url, sort_order, created_at", "wheel_id", wheelIds),
+    related("prizes", "prizes", "id, wheel_id, label, description, rarity, weight, stock, cost_cents, color, emoji, image_url, sort_order, delivery, boostable, created_at", "wheel_id", wheelIds),
     related("agency_owned_members", "org_members", "id, org_id, profile_id, role, created_at", "org_id", orgIds),
     related("agency_invitations", "org_invites", "id, org_id, email, status, created_at", "org_id", orgIds),
     related("agency_scopes", "org_member_creators", "member_id, creator_id", "member_id", memberIds, ["member_id", "creator_id"]),

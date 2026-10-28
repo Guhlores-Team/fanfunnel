@@ -68,6 +68,8 @@ export interface Prize {
    * Undefined = "manual".
    */
   delivery?: PrizeDelivery;
+  /** Creator-only opt-in to focus/chase grants. */
+  boostable?: boolean;
 }
 
 /** Per-wheel prize-label text size; undefined = Auto (smart fit). */
@@ -133,6 +135,16 @@ export interface PublicWheelConfig
 
 /** Result of a single server-authoritative spin. */
 export interface SpinResult {
+  /** Immutable receipt timestamp; recovery must not relabel an old win as new. */
+  awardedAt?: string;
+  odds?: import("@/lib/data/focusView").FanOddsView;
+  attemptId?: string;
+  replayed?: boolean;
+  focus?: import("@/lib/data/focusView").FanFocusView | null;
+  focusConsumed?: boolean;
+  chaseConsumed?: boolean;
+  chaseCompleted?: boolean;
+  chaseAwarded?: boolean;
   prize: PublicPrize;
   /** Index of the winning prize within config.prizes (for client animation). */
   prizeIndex: number;

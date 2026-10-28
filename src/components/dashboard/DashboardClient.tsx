@@ -20,6 +20,8 @@ import NotificationBell from "@/components/dashboard/NotificationBell";
 import TermsPrompt from "@/components/dashboard/TermsPrompt";
 import { resolveSection } from "@/components/dashboard/dashboardSection";
 import { deliveryLeaveDecision, type DeliveryNavigationState } from "@/components/dashboard/deliveryNavigation";
+import { CreatorDraftProvider, type CreatorDraftScope, type CreatorDraftState, type CreatorLeaveOptions } from "./CreatorDrafts";
+import { creatorNavigationState, creatorScopeIncludes } from "./creatorNavigation";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -80,6 +82,7 @@ interface DashboardLeaveRequest {
   action: () => void;
   what: string;
   consequence: string;
+  scope?: CreatorDraftScope;
 }
 
 export default function DashboardClient({
@@ -113,9 +116,26 @@ export default function DashboardClient({
   const [deliveryDirty, setDeliveryDirty] = useState(false);
   const [deliveryPending, setDeliveryPending] = useState(false);
   const deliveryState = useRef<DeliveryNavigationState>({ dirty: false, pending: false });
+  const [creatorDrafts, setCreatorDrafts] = useState<ReadonlyMap<string, CreatorDraftState>>(() => new Map());
+  const creatorDraftsRef = useRef<ReadonlyMap<string, CreatorDraftState>>(new Map());
+  const [blockedScope, setBlockedScope] = useState<CreatorDraftScope | undefined>(undefined);
+  const blockedScopeRef = useRef<CreatorDraftScope | undefined>(undefined);
   const [blockedDeliveryLeave, setBlockedDeliveryLeave] = useState(false);
   const [leaveRequest, setLeaveRequest] = useState<DashboardLeaveRequest | null>(null);
   const leaveRequestRef = useRef<DashboardLeaveRequest | null>(null);
+  const registerCreatorDraft = useCallback((id: string, state: CreatorDraftState | null) => {
+    const current = creatorDraftsRef.current;
+    const old = current.get(id);
+    if (!state || (!state.dirty && !state.pending)) {
+      if (!old) return;
+    } else if (old?.scope === state.scope && old.description === state.description && old.dirty === state.dirty && old.pending === state.pending) return;
+    const next = new Map(current);
+    if (state && (state.dirty || state.pending)) next.set(id, state);
+    else next.delete(id);
+    creatorDraftsRef.current = next;
+    setCreatorDrafts(next);
+    if (!creatorNavigationState(next, deliveryState.current, blockedScopeRef.current).pending) setBlockedDeliveryLeave(false);
+  }, []);
   const deliveryDraftChanged = useCallback((dirty: boolean) => {
     deliveryState.current.dirty = dirty;
     setDeliveryDirty(dirty);
@@ -123,14 +143,16 @@ export default function DashboardClient({
   const deliveryPendingChanged = useCallback((pending: boolean) => {
     deliveryState.current.pending = pending;
     setDeliveryPending(pending);
-    if (!pending) setBlockedDeliveryLeave(false);
+    if (!creatorNavigationState(creatorDraftsRef.current, deliveryState.current, blockedScopeRef.current).pending) setBlockedDeliveryLeave(false);
   }, []);
+  const creatorNavigation = useMemo(() => creatorNavigationState(creatorDrafts, { dirty: deliveryDirty, pending: deliveryPending }), [creatorDrafts, deliveryDirty, deliveryPending]);
+  const blockedNavigation = useMemo(() => creatorNavigationState(creatorDrafts, { dirty: deliveryDirty, pending: deliveryPending }, blockedScope), [creatorDrafts, deliveryDirty, deliveryPending, blockedScope]);
   // Leaving with unsaved wheel edits. Sign out asks in-app first (below); a
   // reload/close can only get the browser's own beforeunload prompt. Lives
   // here, not in the editor, so it holds while another section is open.
   const leavingRef = useRef(false);
   useEffect(() => {
-    if (!wheelDirty && !deliveryDirty && !deliveryPending) return;
+    if (!wheelDirty && !creatorNavigation.dirty && !creatorNavigation.pending) return;
     const warn = (e: BeforeUnloadEvent) => {
       if (!leavingRef.current) {
         e.preventDefault();
@@ -139,21 +161,24 @@ export default function DashboardClient({
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [wheelDirty, deliveryDirty, deliveryPending]);
-  const requestLeave = useCallback((action: () => void, intent: "section" | "signout") => {
+  }, [wheelDirty, creatorNavigation.dirty, creatorNavigation.pending]);
+  const requestLeave = useCallback((action: () => void, intent: "section" | "signout", options?: CreatorLeaveOptions) => {
     // A later push message must not replace a choice already being reviewed.
     if (leaveRequestRef.current) return;
-    const state = deliveryState.current;
+    const state = creatorNavigationState(creatorDraftsRef.current, deliveryState.current, options?.scope);
     const decision = deliveryLeaveDecision(state, wheelDirty, intent);
     if (decision === "wait") {
+      blockedScopeRef.current = options?.scope;
+      setBlockedScope(options?.scope);
       setBlockedDeliveryLeave(true);
       return;
     }
     if (decision === "confirm") {
       const request: DashboardLeaveRequest = {
         action,
-        what: intent === "section" ? "this prize's delivery" : state.dirty && wheelDirty ? "your wheel and prize delivery" : state.dirty ? "your prize delivery" : "your wheel",
-        consequence: intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away the delivery changes. Your wheel edits stay here.",
+        what: [...(intent === "signout" && wheelDirty ? ["your wheel"] : []), ...state.descriptions].join(" and ") || "your changes",
+        consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your wheel edits stay here."),
+        scope: options?.scope,
       };
       leaveRequestRef.current = request;
       setLeaveRequest(request);
@@ -161,6 +186,7 @@ export default function DashboardClient({
     }
     action();
   }, [wheelDirty]);
+  const draftRegistry = useMemo(() => ({ register: registerCreatorDraft, leave: (action: () => void, options?: CreatorLeaveOptions) => requestLeave(action, "section", options) }), [registerCreatorDraft, requestLeave]);
   // Which wheel the editor is currently editing. Lifted so it survives tab
   // switches and the WheelSwitcher highlights the right wheel. Seeded from the
   // initial active wheel's id so the switcher highlights it on first paint.
@@ -226,8 +252,9 @@ export default function DashboardClient({
       setTab(t);
       after?.();
     };
-    // Re-selecting the current section preserves the mounted editor.
-    if (t === tab) navigate();
+    // A plain re-select preserves the mounted editor. Actions such as search
+    // can remount even the current section, so they still use the guard.
+    if (t === tab && !after) navigate();
     else requestLeave(navigate, "section");
   }, [tab, adminVisible, requestLeave]);
 
@@ -338,6 +365,7 @@ export default function DashboardClient({
 
   return (
     <ToastProvider>
+    <CreatorDraftProvider value={draftRegistry}>
     <div
       className="flex min-h-[100dvh] flex-col lg:flex-row"
       // Live brand theming: the page shell seeds --brand at request time, but
@@ -505,15 +533,20 @@ export default function DashboardClient({
               const next = leaveRequestRef.current;
               leaveRequestRef.current = null;
               setLeaveRequest(null);
-              if (deliveryState.current.pending) { setBlockedDeliveryLeave(true); return; }
-              deliveryState.current.dirty = false;
-              setDeliveryDirty(false);
+              if (!next) return;
+              if (creatorNavigationState(creatorDraftsRef.current, deliveryState.current, next.scope).pending) {
+                blockedScopeRef.current = next.scope; setBlockedScope(next.scope); setBlockedDeliveryLeave(true); return;
+              }
+              const remaining = new Map([...creatorDraftsRef.current].filter(([, record]) => !creatorScopeIncludes(next.scope, record.scope)));
+              creatorDraftsRef.current = remaining;
+              setCreatorDrafts(remaining);
+              if (next.scope === undefined) { deliveryState.current.dirty = false; setDeliveryDirty(false); }
               next?.action();
             }}
           />
         )}
-        {blockedDeliveryLeave && deliveryPending && (
-          <DiscardChangesDialog pending what="prize delivery" onKeep={() => setBlockedDeliveryLeave(false)} onDiscard={() => {}} />
+        {blockedDeliveryLeave && blockedNavigation.pending && (
+          <DiscardChangesDialog pending what="your changes" pendingTitle={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "A request still needs checking"} pendingMessage={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "Keep this page open while the request finishes. If its result is unconfirmed, use the form's Check again button before leaving. Then choose where to go next."} onKeep={() => setBlockedDeliveryLeave(false)} onDiscard={() => {}} />
         )}
       </div>
         </div>
@@ -534,6 +567,7 @@ export default function DashboardClient({
       />
       <TermsPrompt canSignOut={!!email} />
     </div>
+    </CreatorDraftProvider>
     </ToastProvider>
   );
 }

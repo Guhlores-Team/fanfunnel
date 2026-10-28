@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 // Home-screen install journey (RM-4). Runs on its own freshly minted fan link,
 // so it neither depends on nor disturbs the demo link the other journeys use,
 // and it runs before the first-run wipe.
@@ -18,7 +19,7 @@ const NUDGE = "[data-testid='install-nudge']";
 
 /** Mint a fresh fan link with `spins` spins (demo mode needs no session). */
 export async function mintFanLink(request, spins = 6) {
-  const res = await request.post(BASE + "/api/passes", { data: { name: "PWA Fan", spins } });
+  const res = await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "PWA Fan", spins } });
   if (!res.ok()) throw new Error(`could not mint a fan link (${res.status()})`);
   const { token } = await res.json();
   if (typeof token !== "string" || !token) throw new Error("no token in /api/passes response");

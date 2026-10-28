@@ -2,6 +2,7 @@
 // final firstRunJourney reset. All data comes through real demo APIs; the
 // fixture owns its wheel, fan and uploaded photos and restores the prior look.
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { acknowledgeFixtureFan, ARTIFACTS, BASE, ensureArtifacts, goto } from "./harness.mjs";
@@ -73,8 +74,9 @@ export async function themeFixture(request, name = "Theme") {
     await themeJson(await request.patch(`${BASE}/api/wheels/${fixture.wheel.id}`, {
       data: { activeFrom: new Date(Date.now() - 1000).toISOString(), activeUntil: null },
     }), "activate theme fixture wheel");
+    const passRequestId = randomUUID();
     const pass = await themeJson(await request.post(BASE + "/api/passes", {
-      data: { name: `${name} fan ${suffix}`, spins: 3, wheelId: fixture.wheel.id },
+      data: { requestId: passRequestId, name: `${name} fan ${suffix}`, spins: 3, wheelId: fixture.wheel.id },
     }), "create theme fixture fan");
     fixture.token = pass.token; fixture.fanId = pass.fanId;
     await themeJson(await acknowledgeFixtureFan(request, fixture.token), "acknowledge theme fixture fan");

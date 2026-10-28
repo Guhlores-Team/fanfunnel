@@ -12,6 +12,8 @@ export default function DiscardChangesDialog({
   what,
   consequence = "Switching now throws them away.",
   pending = false,
+  pendingTitle = "Delivery is still saving",
+  pendingMessage = "Please keep this page open until delivery finishes saving. Then choose where to go next.",
   onKeep,
   onDiscard,
 }: {
@@ -21,6 +23,8 @@ export default function DiscardChangesDialog({
   consequence?: string;
   /** An in-flight delivery cannot be safely discarded or abandoned. */
   pending?: boolean;
+  pendingTitle?: string;
+  pendingMessage?: string;
   onKeep: () => void;
   onDiscard: () => void;
 }) {
@@ -36,10 +40,10 @@ export default function DiscardChangesDialog({
       <div>
         <h2 id={titleId} className="flex items-center gap-[9px] text-lg font-bold tracking-[-0.01em]">
           <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[#f59e0b]" />
-          {pending ? "Delivery is still saving" : "Discard unsaved changes?"}
+          {pending ? pendingTitle : "Discard unsaved changes?"}
         </h2>
         <p className="mt-2 text-[13.5px] text-muted text-pretty">
-          {pending ? "Please keep this page open until delivery finishes saving. Then choose where to go next." : `You have edits to ${what} that aren’t saved. ${consequence}`}
+          {pending ? pendingMessage : `You have edits to ${what} that aren’t saved. ${consequence}`}
         </p>
         <div className="mt-5 flex gap-2">
           <button

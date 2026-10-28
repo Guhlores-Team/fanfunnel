@@ -953,6 +953,10 @@ export default function WheelEditor({
                     </div>
                   </div>
                   <FieldError id={errId(k("label"))} message={errFor(k("label"), pe.label)} />
+                  <label className="mt-3 flex items-start gap-2.5 text-xs text-ink">
+                    <input type="checkbox" data-testid="prize-boostable" checked={p.boostable === true} onChange={(e) => updatePrize(p.id, { boostable: e.target.checked })} className="mt-0.5 shrink-0 accent-[var(--brand)]" />
+                    <span><span className="font-semibold">Boostable</span><span className="mt-0.5 block text-muted">Allow new Focus and Chase packs for this prize. Existing packs keep their promise.{p.stock != null ? " Each Chase pack reserves one unit when granted." : ""}</span></span>
+                  </label>
 
                   <div className="mt-2.5 grid grid-cols-4 gap-2">
                     <Lbl label="Tickets" small>
