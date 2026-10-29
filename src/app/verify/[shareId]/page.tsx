@@ -5,6 +5,8 @@ import { brandVars, readableInk } from "@/lib/theme";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { replayV3 } from "@/lib/games/wheel/fairnessV3";
 import { OddsUsed } from "./OddsUsed";
+import { GameProof, gameOddsReplay } from "./GameProof";
+import { replayGameV3 } from "@/lib/games/core/replay";
 import { V3_FORMULA } from "./oddsCopy";
 
 export const dynamic = "force-dynamic";
@@ -59,7 +61,20 @@ export default async function VerifyPage({
   // fair_version selects the check: a v3 spin is replayed end to end from its
   // recorded odds; v1/v2 (and untracked) spins are verified by their seed
   // hash exactly as before.
-  const replay =
+  const snapshot = v.v3?.poolSnapshot;
+  const gameRecord = typeof snapshot === "object" && snapshot !== null &&
+    ("gameRules" in snapshot || ("game" in snapshot && (snapshot.game === "scratch" || snapshot.game === "bingo")));
+  // An absent/forged stored presentation fails game replay instead of falling
+  // back to the historical wheel-only check.
+  const gameReplay = v.fairVersion === 3 && v.v3 && gameRecord
+    ? await replayGameV3({
+        serverSeed: v.serverSeed, clientSeed: v.clientSeed ?? null, nonce: v.nonce,
+        snapshot, poolHash: v.v3.poolHash, trace: v.v3.fairTrace,
+        prizeId: v.v3.prizeId, prizeLabel: v.prizeLabel,
+        presentation: (v.v3 as typeof v.v3 & { presentation?: unknown }).presentation,
+      })
+    : null;
+  const replay = gameReplay ? gameOddsReplay(gameReplay) :
     v.fairVersion === 3 && v.v3
       ? await replayV3({
           serverSeed: v.serverSeed,
@@ -126,7 +141,8 @@ export default async function VerifyPage({
             </p>
           </div>
 
-          {replay ? <OddsUsed replay={replay} poolHash={v.v3?.poolHash ?? null} /> : null}
+          {replay ? <OddsUsed replay={replay} poolHash={v.v3?.poolHash ?? null} game={!!gameReplay} /> : null}
+          {gameReplay ? <GameProof replay={gameReplay} /> : null}
 
           {/* The commitment's provenance + hash + revealed seed + nonce. */}
           <dl className="mt-6 space-y-4 text-sm">
@@ -182,7 +198,7 @@ export default async function VerifyPage({
               , where <code className="font-mono text-[10px] text-ink">poolHash</code>{" "}
               is the odds fingerprint. This page re-hashes the seed and the odds,
               rebuilds every random number and replays the draw; it passes only
-              when the replay lands on the prize you won. The
+              when the replay lands on the prize you won.{gameReplay ? " The fingerprint also includes game settings, the safe pre-play card and bonus pools. The same stream must reproduce the entire ticket or card and all line bonuses." : ""} The
               &ldquo;Commitment&rdquo; line above says whether the seed was fixed
               before you spun.
             </p>

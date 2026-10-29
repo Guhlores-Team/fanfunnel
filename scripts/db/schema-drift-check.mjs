@@ -40,6 +40,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { probeFocusLedger } from "./focusLedgerProbe.mjs";
 import {probeRewardViews} from "./rewardViewsProbe.mjs";
+import { probeScratchGames } from "./scratchGamesProbe.mjs";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
 import { probeTheme } from "./themeProbe.mjs";
@@ -111,7 +112,8 @@ function cleanup() {
   else rmSync(WORK, { recursive: true, force: true });
 }
 
-pg("initdb", ["-D", DATA, "-A", "trust", "-U", "postgres", "--no-sync"]);
+// Hosted Supabase databases are UTF8; never inherit SQL_ASCII from an unset locale.
+pg("initdb", ["-D", DATA, "-A", "trust", "-U", "postgres", "--no-sync", "-E", "UTF8", "--locale=C"]);
 pg("pg_ctl", [
   "-D", DATA, "-w", "-l", join(WORK, "pg.log"),
   "-o", `-p ${PORT} -k ${WORK} -c listen_addresses= -c fsync=off`,
@@ -1346,6 +1348,7 @@ try {
       return r.stdout;
     });
     await probeRewardViews(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"reward view SQL failed");return r.stdout;});
+    await probeScratchGames(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"scratch SQL failed");return r.stdout;});
     const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
     if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }

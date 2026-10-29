@@ -59,6 +59,8 @@ export interface FanDataExport extends ExportStatus {
   }[];
   topUps: { at: string; spins: number; bonusSpins: number }[];
   spins: {
+    gameKind?: string;
+    presentation?: Json | null;
     id: string;
     at: string;
     prize: string;

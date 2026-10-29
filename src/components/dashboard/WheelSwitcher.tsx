@@ -1,9 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { WheelSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
+import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
+import NewGameDialog from "./NewGameDialog";
+import { canCreateGame, GAME_LABEL, gameRefusalMessage, type GameFeatures } from "./gameEditor";
+import type { GameKind } from "@/lib/games/core/gameProof";
+import { MIN_WHEEL_PRIZES } from "@/lib/games/wheel/validate";
+
+type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
 
 /**
  * Header control for the wheel editor. Self-fetches the creator's wheels and
@@ -23,14 +30,22 @@ export default function WheelSwitcher({
   currentWheelId,
   onEdit,
   onChanged,
+  features,
+  savedGame,
 }: {
   currentWheelId: string | null;
   onEdit: (id: string) => boolean | void | Promise<boolean | void>;
   onChanged?: () => void;
+  features: GameFeatures | null;
+  savedGame?: { id: string; title: string; prizeCount: number; gameKind?: GameKind; gameReady?: boolean };
 }) {
   const toast = useToast();
-  const [wheels, setWheels] = useState<WheelSummary[] | null>(null);
+  const [wheels, setWheels] = useState<GameSummary[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newError, setNewError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const leave = useCreatorLeave();
   // Two-step archive confirm, keyed by wheel id (mirrors the delete-fan pattern).
   const [confirmArchive, setConfirmArchive] = useState<string | null>(null);
   // Two-step permanent-delete confirm, keyed by wheel id.
@@ -47,20 +62,29 @@ export default function WheelSwitcher({
     // Include archived wheels so they're visible (and restorable), not hidden.
     const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
     if (res.ok) {
-      const data = (await res.json()) as { wheels?: WheelSummary[] };
+      const data = (await res.json()) as { wheels?: GameSummary[] };
       setWheels(data.wheels ?? []);
+      setLoadError("");
     } else {
-      setWheels([]);
+      throw new Error("games_unavailable");
     }
   }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load();
+    void load().catch(() => setLoadError("Saved games couldn't load. Check again before creating or changing a game."));
   }, [load]);
 
   // Sync the schedule inputs whenever the selected wheel (or list) changes.
-  const selected = wheels?.find((w) => w.id === currentWheelId) ?? null;
+  // Reflect a confirmed editor save without refetching/replacing a schedule
+  // the creator is still typing in this component.
+  const visibleWheels = useMemo(() => wheels?.map((game) => game.id === savedGame?.id ? { ...game, title: savedGame.title, prizeCount: savedGame.prizeCount, ...(savedGame.gameKind ? { gameKind: savedGame.gameKind } : {}), ...(typeof savedGame.gameReady === "boolean" ? { gameReady: savedGame.gameReady } : {}) } : game) ?? null, [wheels, savedGame]);
+  const selected = visibleWheels?.find((w) => w.id === currentWheelId) ?? null;
+  const scheduleDirty = from !== toLocalInput(selected?.activeFrom ?? null) || until !== toLocalInput(selected?.activeUntil ?? null);
+  useCreatorDraft("game-management", "this game schedule", scheduleDirty, busy);
+  function openGame(id: string) {
+    leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void onEdit(id); }, { scope: "game-management", consequence: "Switching games discards the unsaved schedule. It does not undo a request already sent." });
+  }
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror selection into editable inputs
     setFrom(toLocalInput(selected?.activeFrom ?? null));
@@ -114,23 +138,29 @@ export default function WheelSwitcher({
     items[next].focus();
   }
 
-  async function createWheel() {
+  async function createWheel(gameKind: GameKind, name: string) {
+    if (busy || !canCreateGame(gameKind, features)) return;
     setBusy(true);
+    setNewError("");
     try {
       const res = await fetch("/api/wheels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ gameKind, gameConfig: gameKind === "wheel" ? {} : gameKind === "scratch" ? { style: "classic" } : { size: 3, linePrizeId: null }, ...(name.trim() ? { name: name.trim() } : {}) }),
       });
       const data = (await res.json()) as { wheel?: { id: string }; error?: string };
       if (!res.ok || !data.wheel) {
-        toast("Couldn't create wheel. Try again.", { tone: "error" });
+        setNewError(gameRefusalMessage(data.error) ?? "Couldn't confirm game creation. Check the game list before retrying.");
         return;
       }
-      toast("Wheel created", { tone: "success" });
+      toast(gameKind === "bingo" ? "Inactive bingo draft created" : "Game created", { tone: "success" });
+      setNewOpen(false);
       await load();
-      onEdit(data.wheel.id);
+      await onEdit(data.wheel.id);
       onChanged?.();
+    } catch {
+      setNewError("The result couldn't be confirmed. Close this form and check the game list before creating another.");
+      await load().catch(() => {});
     } finally {
       setBusy(false);
     }
@@ -145,24 +175,28 @@ export default function WheelSwitcher({
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        toast("Couldn't update wheel. Try again.", { tone: "error" });
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        toast(gameRefusalMessage(data?.error) ?? "Couldn't update this game. Your settings are still here.", { tone: "error" });
         return false;
       }
       toast(okMsg, { tone: "success" });
       await load();
       onChanged?.();
       return true;
+    } catch {
+      toast("The game update couldn't be confirmed. Your settings are still here; check its saved state before retrying.", { tone: "error" });
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   async function setActive(id: string) {
-    await patchWheel(id, { isActive: true }, "Wheel set active");
+    await patchWheel(id, { isActive: true }, "Game set active");
   }
 
   async function restore(id: string) {
-    await patchWheel(id, { archived: false }, "Wheel restored");
+    await patchWheel(id, { archived: false }, "Game restored");
   }
 
   async function duplicate(id: string) {
@@ -171,13 +205,15 @@ export default function WheelSwitcher({
       const res = await fetch(`/api/wheels/${id}/duplicate`, { method: "POST" });
       const data = (await res.json()) as { wheel?: { id: string }; error?: string };
       if (!res.ok) {
-        toast("Couldn't duplicate wheel. Try again.", { tone: "error" });
+        toast(gameRefusalMessage(data.error) ?? "Couldn't duplicate this game. Check its enabled feature and try again.", { tone: "error" });
         return;
       }
-      toast("Wheel duplicated", { tone: "success" });
+      toast("Game duplicated", { tone: "success" });
       await load();
-      if (data.wheel?.id) onEdit(data.wheel.id);
+      if (data.wheel?.id) await onEdit(data.wheel.id);
       onChanged?.();
+    } catch {
+      toast("The duplicate couldn't be confirmed. Check the game list before creating another.", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -188,13 +224,16 @@ export default function WheelSwitcher({
     try {
       const res = await fetch(`/api/wheels/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        toast("Couldn't archive wheel. Try again.", { tone: "error" });
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        toast(gameRefusalMessage(data?.error) ?? "Couldn't archive this game. Its active progress has been kept.", { tone: "error" });
         return;
       }
-      toast("Wheel archived", { tone: "success" });
+      toast("Game archived", { tone: "success" });
       setConfirmArchive(null);
       await load();
       onChanged?.();
+    } catch {
+      toast("The archive result couldn't be confirmed. The game list can be checked again before retrying.", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -205,20 +244,23 @@ export default function WheelSwitcher({
     try {
       const res = await fetch(`/api/wheels/${id}?hard=1`, { method: "DELETE" });
       if (res.status === 409) {
-        toast("This wheel has spins — archive it instead to keep your history.", {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        toast(gameRefusalMessage(data?.error) ?? "This game has plays — keep its history and active progress. Archive only when the server allows it.", {
           tone: "error",
         });
         setConfirmDelete(null);
         return;
       }
       if (!res.ok) {
-        toast("Couldn't delete wheel. Try again.", { tone: "error" });
+        toast("Couldn't delete this game. Try again.", { tone: "error" });
         return;
       }
-      toast("Wheel deleted", { tone: "success" });
+      toast("Game deleted", { tone: "success" });
       setConfirmDelete(null);
       await load();
       onChanged?.();
+    } catch {
+      toast("The delete result couldn't be confirmed. Check the game list before retrying.", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -255,13 +297,15 @@ export default function WheelSwitcher({
     "flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[13px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none disabled:opacity-50";
 
   return (
-    <section aria-label="Wheel switcher">
+    <section aria-label="Game switcher">
+      {loadError && <p role="alert" className="mb-2 text-xs text-amber-200">{loadError} <button type="button" className="font-semibold underline" disabled={busy} onClick={() => void load().catch(() => setLoadError("Saved games still couldn't load."))}>Check games again</button></p>}
+      {newOpen && <NewGameDialog features={features} busy={busy} error={newError} onClose={() => { setNewOpen(false); setNewError(""); }} onCreate={(kind, name) => leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void createWheel(kind, name); }, { scope: "game-management", consequence: "Creating a game discards this unsaved schedule. Existing game prize edits are kept until you choose whether to open the new game." })} />}
       <div className="flex flex-wrap items-center gap-2">
-        {wheels === null
+        {visibleWheels === null
           ? Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="skeleton h-[34px] w-32 rounded-full" />
             ))
-          : wheels.map((w) => {
+          : visibleWheels.map((w) => {
               const current = w.id === currentWheelId;
               const open = menuFor === w.id;
               const hint = `${w.prizeCount} ${w.prizeCount === 1 ? "prize" : "prizes"} · ${scheduleHint(
@@ -280,7 +324,8 @@ export default function WheelSwitcher({
                 >
                   <button
                     type="button"
-                    onClick={() => onEdit(w.id)}
+                    onClick={() => openGame(w.id)}
+                    disabled={busy}
                     aria-current={current ? "true" : undefined}
                     title={hint}
                     className="flex min-h-[32px] max-w-[220px] items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
@@ -291,6 +336,8 @@ export default function WheelSwitcher({
                       style={{ backgroundColor: w.brandColor }}
                     />
                     <span className="truncate">{w.title}</span>
+                    <span className="sr-only">{`, ${GAME_LABEL[w.gameKind ?? "wheel"]}`}</span>
+                    {w.gameReady === false && <span className="shrink-0 rounded-full border border-amber-300/30 px-1.5 py-px text-[9.5px] font-semibold">Draft</span>}
                     {w.isActive && (
                       <span className="shrink-0 rounded-full bg-[var(--brand)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[var(--brand-ink)]">
                         Active
@@ -304,11 +351,12 @@ export default function WheelSwitcher({
                     <span className="sr-only">{`, ${hint}`}</span>
                   </button>
                   {/* The one everyday wheel action stays visible (not in the menu). */}
-                  {!w.isActive && !w.archivedAt && (
+                  {!w.isActive && !w.archivedAt && w.gameReady !== false && (
                     <button
                       type="button"
                       onClick={() => setActive(w.id)}
-                      disabled={busy}
+                      disabled={busy || w.prizeCount < MIN_WHEEL_PRIZES || !canCreateGame(w.gameKind ?? "wheel", features)}
+                      title={w.prizeCount < MIN_WHEEL_PRIZES ? `Save at least ${MIN_WHEEL_PRIZES} prizes before activating this game.` : !canCreateGame(w.gameKind ?? "wheel", features) ? "Ask your admin to enable this game type before activating it." : undefined}
                       aria-label={`Set ${w.title} active`}
                       className="ml-1.5 shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-2 py-px text-[10.5px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
                     >
@@ -330,7 +378,7 @@ export default function WheelSwitcher({
                     aria-haspopup="menu"
                     aria-expanded={open}
                     aria-label={`Manage ${w.title}`}
-                    title="Manage wheel"
+                    title="Manage game"
                     className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
                     <Icon d="M5 12h.01M12 12h.01M19 12h.01" size={15} />
@@ -353,7 +401,7 @@ export default function WheelSwitcher({
                           type="button"
                           role="menuitem"
                           onClick={() => {
-                            onEdit(w.id);
+                            openGame(w.id);
                             closeMenu(true);
                           }}
                           className={menuItem}
@@ -364,11 +412,12 @@ export default function WheelSwitcher({
                       <button
                         type="button"
                         role="menuitem"
-                        onClick={async () => {
+                        onClick={() => {
                           closeMenu(true);
-                          await duplicate(w.id);
+                          leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void duplicate(w.id); }, { scope: "game-management", consequence: "Opening a duplicate discards the unsaved schedule. Existing game prize edits stay until you choose whether to open it." });
                         }}
-                        disabled={busy}
+                        disabled={busy || !canCreateGame(w.gameKind ?? "wheel", features)}
+                        title={!canCreateGame(w.gameKind ?? "wheel", features) ? "Ask your admin to enable this game type before duplicating it." : undefined}
                         className={menuItem}
                       >
                         Duplicate
@@ -453,9 +502,9 @@ export default function WheelSwitcher({
                         </button>
                       )}
                       <p className="mt-1 border-t border-[var(--hair)] px-2.5 pb-1 pt-2 text-[11px] leading-snug text-muted">
-                        One wheel is <strong>active</strong> (the one fans spin) at a time.{" "}
-                        <strong>Archive</strong> keeps its history (you can Restore). Only wheels with
-                        no spins can be deleted.
+                        One game is <strong>active</strong> at a time, except scheduled or campaign-pinned games.{" "}
+                        <strong>Archive</strong> keeps its history (you can Restore). Games with
+                        credited plays or owed bingo progress cannot be deleted.
                       </p>
                     </div>
                   )}
@@ -464,16 +513,16 @@ export default function WheelSwitcher({
             })}
         <button
           type="button"
-          onClick={createWheel}
+          onClick={() => { setNewError(""); setNewOpen(true); }}
           disabled={busy}
           className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-dashed border-[var(--hair)] px-3.5 text-[13px] font-semibold text-muted transition-colors duration-150 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
         >
           <Icon d="M12 5v14M5 12h14" size={14} strokeWidth={2.2} />
-          New wheel
+          New game
         </button>
       </div>
       {wheels !== null && wheels.length === 0 && (
-        <p className="mt-2 text-sm text-muted">No wheels yet. Create one to get started.</p>
+        <p className="mt-2 text-sm text-muted">No games yet. Create one to get started.</p>
       )}
 
       {/* Schedule for the selected wheel: always visible, so a time-boxed wheel
@@ -493,6 +542,7 @@ export default function WheelSwitcher({
               {scheduleHint(selected.activeFrom, selected.activeUntil, selected.isActive)}
             </span>
           </div>
+          {selected.gameReady === false && <p className="mt-2 text-xs text-amber-200">Finish and save this draft before activating it or setting a schedule.</p>}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex min-w-0 flex-col gap-1.5">
               <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
@@ -504,6 +554,7 @@ export default function WheelSwitcher({
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
                 aria-label="Active from"
+                disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
             <label className="flex min-w-0 flex-col gap-1.5">
@@ -516,6 +567,7 @@ export default function WheelSwitcher({
                 value={until}
                 onChange={(e) => setUntil(e.target.value)}
                 aria-label="Active until"
+                disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
           </div>
@@ -523,7 +575,7 @@ export default function WheelSwitcher({
             <button
               type="button"
               onClick={saveSchedule}
-              disabled={busy}
+              disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
               className="btn-brand min-h-9 rounded-[9px] px-3.5 text-xs font-bold disabled:opacity-50"
             >
               Save schedule
@@ -531,7 +583,7 @@ export default function WheelSwitcher({
             <button
               type="button"
               onClick={clearSchedule}
-              disabled={busy || (!from && !until)}
+              disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features) || (!from && !until)}
               className="min-h-9 rounded-[9px] border border-[var(--hair)] px-3.5 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] disabled:opacity-50"
             >
               Always on

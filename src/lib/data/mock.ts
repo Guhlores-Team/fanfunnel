@@ -1,3 +1,7 @@
+import { creatorGameFeatures, gameSettings } from "./gameSettings";
+import { buildScratchPoolSnapshot, hashGamePoolSnapshot, primarySnapshot, type GamePoolSnapshot } from "@/lib/games/core/gameProof";
+import { makeGameRngV3 } from "@/lib/games/core/fairness";
+import { finishGame, type GamePresentation, type GameTrace } from "@/lib/games/core/play";
 import { beginMockCreatorRequest, finishMockCreatorRequest, reconcileMockCreatorRequest, eraseMockCreatorRequestFan, resetMockCreatorRequestBusinessData, mockCreatorRequests } from "./mockCreatorRequests";
 import { isUuid } from "./shared";
 import { serverCreatorIntentHash, serverImportHash } from "@/lib/imports/serverDigest";
@@ -18,6 +22,7 @@ import {
   buildFocusPoolSnapshot,
   drawFromSnapshot,
   hashPoolSnapshot,
+  snapshotOdds,
   type FairTrace,
   type PoolSnapshot,
 } from "@/lib/games/wheel/fairnessV3";
@@ -150,9 +155,12 @@ export interface MockWin extends WonPrize {
   // Fairness v3 (absent on older/seeded wins, which verify as v1/v2).
   prizeId?: string | null;
   fairVersion?: number | null;
-  poolSnapshot?: PoolSnapshot | null;
+  gameKind?: "wheel" | "scratch" | "bingo";
+  wheelId?: string;
+  presentation?: GamePresentation;
+  poolSnapshot?: PoolSnapshot | GamePoolSnapshot | null;
   poolHash?: string | null;
-  fairTrace?: FairTrace | null;
+  fairTrace?: FairTrace | GameTrace | null;
 }
 
 // A per-wheel link under a fan: its own balance + which wheel/campaign it's for.
@@ -680,7 +688,7 @@ function wheelsByAge(): WheelConfig[] {
  *  3. else the oldest wheel (always returns something if any wheel exists).
  */
 export function mockResolveActiveWheelId(now: Date = new Date()): string {
-  const live = wheelsByAge().filter((w) => !w.archivedAt);
+  const live = wheelsByAge().filter((w) => !w.archivedAt && w.gameReady !== false && w.gameKind !== "bingo");
   if (live.length === 0) {
     // Should never happen in demo mode, but stay defensive.
     return store.wheels.keys().next().value ?? SAMPLE_WHEEL.id;
@@ -719,14 +727,14 @@ export function mockResolveWheelId(
   // An explicit wheel wins (per-wheel top-ups target a specific wheel).
   if (pass.wheelId) {
     const w = store.wheels.get(pass.wheelId);
-    if (w && !w.archivedAt) return pass.wheelId;
+    if (w && !w.archivedAt && w.gameReady !== false && w.gameKind !== "bingo") return pass.wheelId;
   }
   if (pass.campaignId) {
     const campaign = store.campaigns.find((c) => c.id === pass.campaignId);
     const pinned = campaign?.pinnedWheelId ?? null;
     if (pinned) {
       const w = store.wheels.get(pinned);
-      if (w && !w.archivedAt) return pinned;
+      if (w && !w.archivedAt && w.gameReady !== false && w.gameKind !== "bingo") return pinned;
     }
   }
   return mockResolveActiveWheelId(now);
@@ -736,7 +744,7 @@ export function mockResolveWheelId(
 export function mockResolvedSpinWheelId(pass: { campaignId: string | null; wheelId: string }, now = new Date()): string {
   const pinnedId = pass.campaignId ? store.campaigns.find(campaign => campaign.id === pass.campaignId)?.pinnedWheelId : null;
   const pinned = pinnedId ? store.wheels.get(pinnedId) : null;
-  if (pinned && !pinned.archivedAt) return pinned.id;
+  if (pinned && !pinned.archivedAt && pinned.gameReady !== false && pinned.gameKind !== "bingo") return pinned.id;
   const active = mockResolveActiveWheelId(now);
   return store.wheels.get(active)?.archivedAt ? pass.wheelId : active;
 }
@@ -808,6 +816,8 @@ function toWheelSummary(w: WheelConfig): WheelSummary {
     activeUntil: w.activeUntil ?? null,
     prizeCount: w.prizes.length,
     updatedAt: meta?.updatedAt ?? new Date().toISOString(),
+    gameKind: w.gameKind ?? "wheel",
+    gameReady: w.gameReady !== false,
   };
 }
 
@@ -829,7 +839,8 @@ function fanGrants(fanId: string): MockGrant[] {
 }
 
 export function mockGetWheel(): WheelConfig {
-  return structuredClone(activeWheel());
+  const wheel = activeWheel();
+  return { ...structuredClone(wheel), gameKind: wheel.gameKind ?? "wheel", gameConfig: wheel.gameConfig ?? {}, gameReady: wheel.gameReady !== false, gameKindLocked: wheel.gameKindLocked === true };
 }
 
 export function mockSaveWheel(config: WheelConfig): WheelConfig {
@@ -837,12 +848,18 @@ export function mockSaveWheel(config: WheelConfig): WheelConfig {
   // the save as targeting the active wheel (preserving its stable id).
   const targetId = store.wheels.has(config.id) ? config.id : activeWheel().id;
   const existing = store.wheels.get(targetId);
+  const settings = gameSettings(config.gameKind ?? existing?.gameKind, config.gameConfig ?? existing?.gameConfig);
+  if (settings.gameKind !== (existing?.gameKind ?? "wheel")) {
+    if (existing?.gameKindLocked) throw new Error("game_kind_locked");
+    if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
+  }
   for (const focus of mockFocusState().focuses.values()) {
     const target = config.prizes.find(prize => prize.id === focus.prize_id);
     if (focus.wheel_id === targetId && !target) mockCancelFanFocus(focus.fan_id);
   }
   const saved: WheelConfig = {
     ...structuredClone(config),
+    ...settings, gameReady: true, gameKindLocked: existing?.gameKindLocked === true,
     // Mirror the int4 weight column (see prizeRow): round, positive stays ≥ 1.
     prizes: config.prizes.map((p) => ({ ...structuredClone(p), weight: storedWeight(p.weight) })),
     id: targetId,
@@ -879,7 +896,7 @@ export function mockListWheels(includeArchived = false): WheelSummary[] {
 /** A single wheel's full config by id, or null. */
 export function mockGetWheelById(id: string): WheelConfig | null {
   const w = store.wheels.get(id);
-  return w ? structuredClone(w) : null;
+  return w ? { ...structuredClone(w), gameKind: w.gameKind ?? "wheel", gameConfig: w.gameConfig ?? {}, gameReady: w.gameReady !== false, gameKindLocked: w.gameKindLocked === true } : null;
 }
 
 /**
@@ -889,6 +906,8 @@ export function mockGetWheelById(id: string): WheelConfig | null {
 export function mockCreateWheel(opts?: {
   fromTemplateId?: string;
   name?: string;
+  gameKind?: unknown;
+  gameConfig?: unknown;
 }): { wheel: WheelConfig } {
   const isFirst = store.wheels.size === 0;
   const id = genId("wheel");
@@ -916,7 +935,10 @@ export function mockCreateWheel(opts?: {
     prizes = [];
   }
 
+  const settings = gameSettings(tpl?.gameKind ?? opts?.gameKind, tpl?.gameConfig ?? opts?.gameConfig);
+  if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
   const wheel: WheelConfig = {
+    ...settings, gameReady: true, gameKindLocked: false,
     id,
     title: opts?.name?.trim() || title,
     subtitle,
@@ -934,11 +956,15 @@ export function mockCreateWheel(opts?: {
 
 /** Duplicate an existing wheel (deep copy, " copy" suffix, inactive). */
 export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
-  const src = store.wheels.get(id) ?? activeWheel();
+  const src = store.wheels.get(id);
+  if (!src) throw new Error("not_found");
+  const settings = gameSettings(src.gameKind, src.gameConfig);
+  if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
   const newId = genId("wheel");
   const now = new Date().toISOString();
   const wheel: WheelConfig = {
     ...structuredClone(src),
+    ...settings, gameKindLocked: false,
     id: newId,
     title: src.title,
     prizes: src.prizes.map((p) => ({ ...structuredClone(p), id: genId("prize") })),
@@ -1059,6 +1085,7 @@ export async function mockGetFanPass(
   const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
   const wheelId = pass ? mockResolvedSpinWheelId(pass) : mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
+  if (wheel.gameKind === "bingo" || wheel.gameReady === false) return null;
   // Commit-reveal: make sure this link holds a pre-committed seed for the next
   // spin and publish its hash on the page (commitment predates the spin).
   if (pass && !pass.nextServerSeedHash) {
@@ -1099,13 +1126,60 @@ export async function mockGetFanPass(
   });
 }
 
+export const MAX_GAME_FIXTURE_ATTEMPTS = 1024;
+/** Alters only the next committed demo seed, never a result, balance or card. */
+export async function mockGameFixture(token: string, clientSeed: string, targetPrizeId: string): Promise<{ nextServerSeedHash: string; attempts: number } | { error: string }> {
+  const found = passForToken(token);
+  if (!found) return { error: "not_found" };
+  return withMockFanLock(found.fan.id, async () => {
+    const { fan, pass } = found;
+    if (!store.fans.has(fan.id) || !fanEngagementAllowed({ blocked: !!fan.blockedAt, selfExcluded: !!fan.selfExcludedAt, breakUntil: fan.breakUntil })) return { error: "blocked" };
+    if ([...mockFocusState().attempts.values()].some(attempt => attempt.fanId === fan.id && !attempt.finishedAt)) return { error: "spin_pending" };
+    const wheel = store.wheels.get(mockResolvedSpinWheelId(pass));
+    if (!wheel || wheel.gameReady === false || wheel.gameKind === "bingo") return { error: "game_unavailable" };
+    const focusRow = mockFocusState().focuses.get(fan.id);
+    const focus = focusRow && (focusRow.status === "active" || focusRow.status === "paused") ? toFanFocusView(focusRow) : null;
+    const personal = structuredClone(wheel);
+    if (focus?.kind === "chase" && focusRow?.reservation?.held) {
+      const target = personal.prizes.find(prize => prize.id === focus.prizeId);
+      if (target && typeof target.stock === "number") target.stock += 1;
+    }
+    const hh = mockGetActiveHappyHour(wheel.id);
+    const options = { pityCounter: fan.pityCounter, happyHourMultiplier: hh.active ? hh.multiplier : null,
+      ...(focus?.kind === "focus" ? { focus: { prizeId: focus.prizeId, multiplier: focus.multiplier, spinsLeft: focus.spinsLeft, totalSpins: focus.totalSpins } } : {}),
+      ...(focus?.kind === "chase" ? { chase: { prizeId: focus.prizeId, counter: focus.chaseCounter, within: focus.chaseWithin, reserved: !!focusRow?.reservation?.held } } : {}) };
+    let snapshot: PoolSnapshot | GamePoolSnapshot;
+    try { snapshot = wheel.gameKind === "scratch" ? buildScratchPoolSnapshot(personal, options) : buildFocusPoolSnapshot(personal, options); } catch { return { error: "no_prizes" }; }
+    const primary = snapshot.game === "scratch" ? primarySnapshot(snapshot as GamePoolSnapshot) : snapshot as PoolSnapshot;
+    if (!(snapshotOdds(primary).rows.find(row => row.prize.id === targetPrizeId)?.chance ?? 0)) return { error: "target_unavailable" };
+    const fingerprint = () => JSON.stringify([store.wheels.get(wheel.id), mockFocusState().focuses.get(fan.id), fan.pityCounter,
+      fan.blockedAt, fan.selfExcludedAt, fan.breakUntil, pass.spinsRemaining, pass.nextSpinNonce, pass.nextServerSeedHash, fan.wins.length]);
+    const before = fingerprint();
+    const hash = snapshot.game === "scratch" ? await hashGamePoolSnapshot(snapshot as GamePoolSnapshot) : await hashPoolSnapshot(snapshot as PoolSnapshot);
+    for (let attempts = 1; attempts <= MAX_GAME_FIXTURE_ATTEMPTS; attempts++) {
+      const seed = randomSeedHex();
+      const rng = snapshot.game === "scratch" ? await makeGameRngV3(seed, normalizeClientSeed(clientSeed), pass.nextSpinNonce ?? 0, hash) : await makeFairRngV3(seed, normalizeClientSeed(clientSeed), pass.nextSpinNonce ?? 0, hash);
+      let selected: ReturnType<typeof drawFromSnapshot>;
+      try { selected = drawFromSnapshot(snapshot.game === "scratch" ? primarySnapshot(snapshot as GamePoolSnapshot) : snapshot as PoolSnapshot, new Set(), rng); } catch { return { error: "no_prizes" }; }
+      if (selected.prize.id !== targetPrizeId) continue;
+      const nextHash = await sha256Hex(seed);
+      if (fingerprint() !== before || !store.fans.has(fan.id)) return { error: "context_changed" };
+      pass.nextServerSeed = seed; pass.nextServerSeedHash = nextHash;
+      return { nextServerSeedHash: nextHash, attempts };
+    }
+    return { error: "target_unavailable" };
+  });
+}
+
 type MockSpinSuccess = import("@/lib/games/wheel/types").SpinResult & { shareId: string; nextSpinHash: string };
 export async function mockSpin(token: string, clientSeed = "", requestId: string = crypto.randomUUID(), publishedSeedHash?: string): Promise<MockSpinSuccess | import("./shared").SpinError> {
   requestId = requestId.toLowerCase();
   const found = passForToken(token);
   if (!found) return { error: "not_found" as const };
-  const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", clientSeed, publishedSeedHash?.toLowerCase() ?? null]));
+  // Hash inside the lock: async digests can finish out of order, and the lock
+  // must be taken in call order so a simultaneous retry is the replay.
   return withMockFanLock(found.fan.id, async () => {
+    const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", clientSeed, publishedSeedHash?.toLowerCase() ?? null]));
     const state = mockFocusState();
     const existing = state.attempts.get(requestId);
     if (existing) {
@@ -1198,12 +1272,17 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
     const target = personalWheel.prizes.find(p => p.id === focus.prizeId);
     if (target && typeof target.stock === "number") target.stock += 1;
   }
-  const snapshot = buildFocusPoolSnapshot(personalWheel, {
+  const gameKind = wheel.gameKind ?? "wheel";
+  if (gameKind === "bingo" || wheel.gameReady === false) return { error: "no_prizes" as const };
+  const options = {
     happyHourMultiplier: hh.active ? hh.multiplier : null,
     pityCounter: fan.pityCounter,
     ...(focus?.kind === "focus" ? { focus: { prizeId: focus.prizeId, multiplier: focus.multiplier, spinsLeft: focus.spinsLeft, totalSpins: focus.totalSpins } } : {}),
     ...(focus?.kind === "chase" ? { chase: { prizeId: focus.prizeId, counter: focus.chaseCounter, within: focus.chaseWithin, reserved: !!focusRow?.reservation?.held } } : {}),
-  });
+  };
+  let snapshot: PoolSnapshot | GamePoolSnapshot;
+  try { snapshot = gameKind === "scratch" ? buildScratchPoolSnapshot(personalWheel, options) : buildFocusPoolSnapshot(personalWheel, options); } catch { return { error: "no_prizes" as const }; }
+  const gameSnapshot = snapshot.game === "scratch" ? snapshot as GamePoolSnapshot : null;
   const v3 = NEW_SPIN_FAIR_VERSION === 3;
   const contextFingerprint = () => {
     const currentWheel = store.wheels.get(wheel.id);
@@ -1214,10 +1293,10 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
       fan.pityCounter, pass.nextServerSeed, pass.nextSpinNonce ?? 0, pass.spinsRemaining, currentFocus ?? null, targetAvailable]);
   };
   const expectedContext = contextFingerprint();
-  const poolHash = await hashPoolSnapshot(snapshot);
+  const poolHash = gameSnapshot ? await hashGamePoolSnapshot(gameSnapshot) : await hashPoolSnapshot(snapshot as PoolSnapshot);
   const serverSeedHash =
     committedSeed && committedHash ? committedHash : await sha256Hex(serverSeed);
-  const rng = v3
+  const rng = gameSnapshot ? await makeGameRngV3(serverSeed, clientSeed, nonce, poolHash) : v3
     ? await makeFairRngV3(serverSeed, clientSeed, nonce, poolHash)
     : await makeFairRng(serverSeed, clientSeed, nonce);
 
@@ -1246,15 +1325,24 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
   } | null = null;
   const excluded = new Set<string>();
   const excludedOrder: string[] = [];
+  let gamePresentation: GamePresentation | undefined;
+  let gameTrace: GameTrace | undefined;
   try {
     for (let attempt = 0; attempt < snapshot.prizes.length + 1; attempt++) {
-      const draw = drawFromSnapshot(snapshot, excluded, rng);
+      const draw = drawFromSnapshot(gameSnapshot ? primarySnapshot(gameSnapshot) : snapshot as PoolSnapshot, excluded, rng);
       const index = wheel.prizes.findIndex((p) => p.id === draw.prize.id);
       const live = wheel.prizes[index];
       // #26: an instant prize that can't be delivered right now (no code
       // left, no reward set) counts as sold out, exactly as on Supabase.
       const ownReserved = live && focusRow?.prize_id === live.id && focusRow.reservation?.held ? focusRow.reservation : null;
-      const take = live && (ownReserved || live.stock === null || live.stock === undefined || live.stock > 0) ? mockTakeReward(live, ownReserved?.codeId) : null;
+      const available = live && (ownReserved || live.stock == null || live.stock > 0) && mockRewardAvailable(live, ownReserved?.codeId);
+      if (available && gameSnapshot) {
+        // Validate the full cosmetic result before touching inventory. No await
+        // occurs until the credit/stock/proof receipt have committed together.
+        const played = finishGame(gameSnapshot, draw, { excluded: [...excludedOrder], won: live.id }, rng);
+        gamePresentation = played.presentation; gameTrace = played.trace;
+      }
+      const take = available ? mockTakeReward(live, ownReserved?.codeId) : null;
       if (live && take?.ok) {
         // As read before the decrement, like the Supabase path's response.
         const shown = structuredClone(toPublicPrize(live, { showStock: showsStock(wheel) }));
@@ -1282,6 +1370,7 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
   // Per-wheel: the spin belongs to THIS pass's campaign directly.
   const campaignId = pass.campaignId;
 
+  wheel.gameKindLocked = true;
   pass.nextServerSeed = nextServerSeed;
   pass.nextServerSeedHash = nextServerSeedHash;
   pass.spinsRemaining -= 1;
@@ -1325,13 +1414,14 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
       clientSeed: clientSeed || null,
       commitment,
       prizeId: prize.id,
+      wheelId: wheel.id, gameKind, ...(gamePresentation ? { presentation: gamePresentation } : {}),
       ...(reward ? { instant: true } : {}),
       ...(v3
         ? {
             fairVersion: 3,
             poolSnapshot: snapshot,
             poolHash,
-            fairTrace: { excluded: excludedOrder, won: prize.id },
+            fairTrace: gameTrace ?? { excluded: excludedOrder, won: prize.id },
           }
         : {}),
     },
@@ -1342,6 +1432,7 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
   // #26: an instant reward is delivered right here, so its row is fulfilled.
   if (reward) mockRecordDelivery(shareId, fan.id, reward, at, prize);
   store.redemptions.unshift({
+    gameKind,
     id: "r-" + Math.random().toString(36).slice(2, 10),
     fanName: fan.name,
     prizeLabel: prize.label,
@@ -1359,6 +1450,7 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
   // the live map (read after the decrement above) lets the page update counts.
   const showStock = showsStock(wheel);
   return {
+    ...(gamePresentation ? { gameKind, presentation: gamePresentation, bonusWins: [] } : {}),
     attemptId: requestId,
     awardedAt: at,
     ...mockFanFocusDisplay(token),
@@ -1458,6 +1550,11 @@ function mockCreatePassOnce(
   if (fan && !fanEngagementAllowed({ blocked: !!fan.blockedAt, selfExcluded: !!fan.selfExcludedAt, breakUntil: fan.breakUntil })) {
     throw new Error(fan.blockedAt || fan.selfExcludedAt ? "blocked" : "on_break");
   }
+
+  const requestedWheel = wheelId ? store.wheels.get(wheelId) : null;
+  if (wheelId && (!requestedWheel || requestedWheel.archivedAt || requestedWheel.gameReady === false || requestedWheel.gameKind === "bingo")) throw new Error("no_wheel");
+  const resolved = store.wheels.get(mockResolveWheelId({ campaignId: campaignId ?? null, wheelId }));
+  if (!resolved || resolved.archivedAt || resolved.gameReady === false || resolved.gameKind === "bingo") throw new Error("no_wheel");
 
   // Credit a pending referral once, idempotently, when this grant is the fan's
   // first PAID grant (money > 0) and the referrer is still under the cap.
@@ -1901,6 +1998,7 @@ export function mockGetOverview(): CreatorOverview {
         : false;
     });
   return {
+    gamePlays: { wheel: redemptions.filter(row => !row.gameKind || row.gameKind === "wheel").length, scratch: redemptions.filter(row => row.gameKind === "scratch").length, bingo: 0 },
     metrics: {
       fans: store.fans.size,
       spinsPlayed: redemptions.length,
@@ -2462,7 +2560,7 @@ export function mockListWheelTemplates(): WheelTemplate[] {
 export function mockCreateWheelTemplate(input: {
   name: string;
   fromWheelId?: string;
-  config?: { title: string; subtitle?: string; brandColor?: string; prizes: Omit<Prize, "id">[] };
+  config?: Pick<WheelConfig, "title" | "subtitle" | "brandColor" | "gameKind" | "gameConfig"> & { prizes: Omit<Prize, "id">[] };
 }): WheelTemplate {
   let title = "Wheel";
   let subtitle: string | undefined;
@@ -2482,7 +2580,10 @@ export function mockCreateWheelTemplate(input: {
     prizes = input.config.prizes.map((p) => structuredClone(p));
   }
 
+  const settings = gameSettings(source?.gameKind ?? input.config?.gameKind, source?.gameConfig ?? input.config?.gameConfig);
+  if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
   const tpl: WheelTemplate = {
+    ...settings,
     id: genId("wtpl"),
     name: input.name.trim() || "Template",
     title,
@@ -2674,6 +2775,7 @@ export async function mockGetSpinVerification(
               poolSnapshot: structuredClone(win.poolSnapshot ?? null),
               poolHash: win.poolHash ?? null,
               fairTrace: structuredClone(win.fairTrace ?? null),
+              presentation: structuredClone(win.presentation ?? null),
             },
           }
         : {}),
@@ -2893,12 +2995,16 @@ export function mockSetOnboardingDismissed(dismissed: boolean): { ok: true } {
 
 // --- Phase 9 #6: account settings (display name + notification prefs) --------
 
+export function mockGameFeatures() { return creatorGameFeatures(store.accounts.find(account => account.id === "acc-you")?.features); }
+
 export function mockGetMyAccount(): {
+  features: ReturnType<typeof creatorGameFeatures>;
   email: string | null;
   displayName: string | null;
   notifications: { newSpin: boolean; lowBalance: boolean; messages: boolean };
 } {
   return {
+    features: mockGameFeatures(),
     email: "demo@fanfunnel.app",
     displayName: store.displayName,
     notifications: {
@@ -3550,6 +3656,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
       .filter((g) => g.fanId === fan.id)
       .map((g) => ({ at: g.at, spins: g.spins, bonusSpins: g.bonusSpins })),
     spins: wins.map((w) => ({
+      gameKind: w.gameKind ?? "wheel", presentation: (w.presentation ?? null) as unknown as Json,
       id: w.shareId,
       at: w.at,
       prize: w.label,
@@ -3656,6 +3763,7 @@ export function mockExportCreatorData(): CreatorDataExport {
     nonce: win.nonce, seed_commitment: win.commitment ? JSON.stringify(win.commitment) : null,
     fair_version: win.fairVersion ?? null, pool_hash: win.poolHash ?? null,
     pool_snapshot: win.poolSnapshot ?? null, fair_trace: win.fairTrace ?? null,
+    game_kind: win.gameKind ?? "wheel", presentation: win.presentation ?? null,
   }));
   });
   for (const win of mockFocusState().anonymousWins?.values() ?? []) spins.push({
@@ -3665,6 +3773,7 @@ export function mockExportCreatorData(): CreatorDataExport {
     nonce: win.nonce, seed_commitment: win.commitment ? JSON.stringify(win.commitment) : null,
     fair_version: win.fairVersion ?? null, pool_hash: win.poolHash ?? null,
     pool_snapshot: win.poolSnapshot ?? null, fair_trace: win.fairTrace ?? null,
+    game_kind: win.gameKind ?? "wheel", presentation: win.presentation ?? null,
   });
   const push = (globalThis as unknown as { __ffPushStore?: {
     devices: { id: string; showDetails: boolean; userAgent: string | null; failures: number; lastSuccessAt: string | null; createdAt: string }[];
@@ -3908,6 +4017,14 @@ export function mockAddPrizeCodes(
  * can this prize be delivered right now? Code prizes take their code here.
  * `ok: false` = treat as sold out (excluded and re-drawn).
  */
+function mockRewardAvailable(prize: Prize, ownReservedCodeId?: string): boolean {
+  const delivery = prize.delivery ?? "manual";
+  if (delivery === "manual") return true;
+  const reward = rewardState().prizes.get(prize.id);
+  if (delivery === "codes") return !!(ownReservedCodeId && reward?.kind === "codes" ? reward.codes.find(code => code.id === ownReservedCodeId && code.shareId === null) : freeCodes(reward)[0]);
+  return !!reward && reward.kind !== "codes";
+}
+
 function mockTakeReward(prize: Prize, ownReservedCodeId?: string): { ok: true; reward: { kind: RewardKind; value: string; code?: MockCode } | null } | { ok: false } {
   const delivery = prize.delivery ?? "manual";
   if (delivery === "manual") return { ok: true, reward: null };

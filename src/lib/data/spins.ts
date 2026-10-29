@@ -144,6 +144,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .maybeSingle();
   if (!wheelData) return null;
   const wheel = wheelData as unknown as DbWheelRow;
+  if (wheel.game_kind === "bingo" || wheel.game_ready === false) return null;
 
   // The fan's win history, wishlist, and the active happy-hour are all
   // independent reads keyed off the now-known fan/wheel — fetch concurrently

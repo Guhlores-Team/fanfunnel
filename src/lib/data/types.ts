@@ -1,4 +1,4 @@
-import type { Prize, PublicWheelConfig, Rarity } from "@/lib/games/wheel/types";
+import type { Prize, PublicWheelConfig, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import type { FanGlow } from "@/lib/glow/glow";
 
 // Generated Supabase schema types (`npm run gen:types`; CI fails on drift).
@@ -156,6 +156,7 @@ export interface SpinVerification {
     poolSnapshot: unknown;
     poolHash: string | null;
     fairTrace: unknown;
+    presentation?: unknown;
   };
 }
 
@@ -198,6 +199,8 @@ export interface Grant {
 
 /** A compact view of a creator's wheel for list/management screens. */
 export interface WheelSummary {
+  gameKind?: "wheel" | "scratch" | "bingo";
+  gameReady?: boolean;
   id: string;
   title: string;
   subtitle: string | null;
@@ -240,6 +243,8 @@ export interface PrizeTemplate {
 
 /** A reusable wheel preset (title + branding + prize set, no ids). */
 export interface WheelTemplate {
+  gameKind?: "wheel" | "scratch" | "bingo";
+  gameConfig?: WheelConfig["gameConfig"];
   id: string;
   name: string;
   title: string;
@@ -280,6 +285,7 @@ export type RedemptionStatus =
 
 /** A won prize in the creator's fulfilment queue. */
 export interface RedemptionItem {
+  gameKind?: "wheel" | "scratch" | "bingo";
   focusKind?: "focus" | "chase";
   chaseAwarded?: boolean;
   id: string;
@@ -376,6 +382,8 @@ export interface CreatorMetrics {
 
 /** Everything the creator dashboard's metrics + inbox need. */
 export interface CreatorOverview {
+  /** Exact credited plays by game; null means the read failed. */
+  gamePlays?: { wheel: number; scratch: number; bingo: number } | null;
   metrics: CreatorMetrics;
   redemptions: RedemptionItem[];
 }

@@ -133,13 +133,15 @@ async function main() {
       check("mock paused token cannot rejoin, matching real active-pass requirement", "error" in result && result.error === "not_found" && demo.mockExportFanData(created.token)?.consents.leaderboardOptIn === false);
     }
   }
+  // Mock pass creation, like the real grant, requires a live game, so create
+  // this fixture before every wheel is archived below.
+  const deleteFan = demo.mockCreatePass("Deleted Privacy", 2);
   const archiveFan = demo.mockCreatePass("Archived Privacy", 2);
   demo.mockSetFanLeaderboardOptIn(archiveFan.token, true, "mock_archived");
   for (const row of demo.mockListWheels(true)) demo.mockArchiveWheel(row.id);
   const archivedMock = await setFanLeaderboardOptIn(archiveFan.token, false);
   check("mock all-archived false withdrawal matches real privacy path", "ok" in archivedMock && !demo.mockGetLeaderboard().entries.some(entry => entry.handle === "mock_archived"));
   check("mock unknown privacy token remains denied", "error" in await setFanLeaderboardOptIn("unknown-token", false));
-  const deleteFan = demo.mockCreatePass("Deleted Privacy", 2);
   await demo.mockDeleteFanData(deleteFan.token);
   check("mock deleted token remains denied", "error" in await setFanLeaderboardOptIn(deleteFan.token, false));
   console.log(`LeaderboardWithdrawal data: ${passed} actual real/mock privacy and negative authorization checks passed`);

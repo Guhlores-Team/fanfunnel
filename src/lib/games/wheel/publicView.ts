@@ -56,6 +56,11 @@ export function toPublicWheel(w: WheelConfig): PublicWheelConfig {
     title: w.title,
     prizes: w.prizes.map((p) => toPublicPrize(p, opts)),
   };
+  // Exact display allowlist; never spread arbitrary creator game settings.
+  if (w.gameKind === "scratch") { out.gameKind = "scratch"; out.gameConfig = { style: "classic" }; }
+  else if (w.gameKind === "bingo" && w.gameConfig && "linePrizeId" in w.gameConfig && typeof w.gameConfig.linePrizeId === "string") {
+    out.gameKind = "bingo"; out.gameConfig = { size: 3, linePrizeId: w.gameConfig.linePrizeId };
+  }
   if (w.subtitle !== undefined) out.subtitle = w.subtitle;
   if (w.brandColor !== undefined) out.brandColor = w.brandColor;
   if (w.labelColor !== undefined) out.labelColor = w.labelColor;

@@ -333,6 +333,35 @@ async function main() {
     check((await a.rpc("import_fans",{p_rows:[]})).error?.code==="42501","authenticated cannot bypass durable imports through the legacy API");
     check((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc("import_fans",{p_rows:[]})).error?.code==="42501","anon cannot bypass durable imports through the legacy API");
 
+    //0060: feature metadata comes from server-owned profiles. Exercise real
+    // table writes so create/duplicate/template/import cannot bypass the gate.
+    const originalGameFeatures=must(await admin.from("profiles").select("features").eq("id",B.id).single(),"read disposable B feature state").features;
+    const setBGameFeatures=async scratch=>must(await admin.from("profiles").update({features:{...originalGameFeatures,wheel:true,scratch,bingo:true}}).eq("id",B.id).select("id").single(),"set disposable B game feature");
+    await setBGameFeatures(false);
+    const scratchSettings={creator_id:B.id,title:"runtime scratch",game_kind:"scratch",game_config:{style:"classic"},game_ready:true};
+    check((await b.from("wheels").insert(scratchSettings)).error?.code==="42501","B cannot create scratch while its server feature is disabled");
+    check((await admin.from("wheels").insert(scratchSettings)).error?.code==="42501","service cannot bypass disabled scratch feature by direct insertion");
+    check((await b.from("wheel_templates").insert({creator_id:B.id,name:"disabled scratch template",game_kind:"scratch",game_config:{style:"classic"}})).error?.code==="42501","template/import metadata cannot bypass disabled scratch feature");
+    const selfFeature=await b.from("profiles").update({features:{wheel:true,scratch:true,bingo:true}}).eq("id",B.id).select("id");
+    check(!selfFeature.data?.length,"creator cannot self-enable game feature flags");
+    await setBGameFeatures(true);
+    const scratchWheel=must(await b.from("wheels").insert(scratchSettings).select("id,game_kind").single(),"B creates feature-enabled scratch game");
+    check(scratchWheel.game_kind==="scratch","approved enabled B creates an actual scratch metadata row");
+    const ownScratch=await b.from("wheels").select("id,game_kind").eq("id",scratchWheel.id);
+    const otherScratch=await a.from("wheels").select("id,game_kind").eq("id",scratchWheel.id);
+    check(!ownScratch.error&&ownScratch.data?.length===1,"B reads its own nonempty scratch metadata");
+    check(!otherScratch.error&&otherScratch.data?.length===0,"A reads no B scratch metadata");
+    check((await a.from("wheels").insert(scratchSettings)).error?.code==="42501","A cannot create scratch for another creator even when that creator is enabled");
+    check(!!(await createClient(URL_,ANON,{auth:{persistSession:false}}).from("wheels").insert(scratchSettings)).error,"anon cannot create scratch games");
+    check((await b.from("wheels").insert({...scratchSettings,game_config:{style:"classic",secret:"not allowed"}})).error?.code==="22023","extra game configuration fields are refused");
+    check((await admin.from("wheels").insert({...scratchSettings,game_kind:"bingo",game_config:{size:3,linePrizeId:B.prizeId}})).error?.code==="22023","0060 refuses bingo even if its feature flag is true");
+    check((await b.from("wheels").update({game_kind:"scratch",game_config:{style:"classic"}}).eq("id",B.wheelId)).error?.code==="22023","first credited play locks game kind against direct table conversion");
+    await setBGameFeatures(false);
+    must(await b.from("wheels").update({title:"grandfathered scratch",game_config:{style:"classic"}}).eq("id",scratchWheel.id).select("id").single(),"same-kind scratch metadata survives feature removal");
+    check((await admin.from("wheels").insert({...scratchSettings,title:"duplicate existing scratch"})).error?.code==="42501","duplicating grandfathered scratch cannot mint a disabled new game");
+    for(const client of [a,createClient(URL_,ANON,{auth:{persistSession:false}}),admin])check((await client.rpc("_game_feature_allowed",{p_creator:B.id,p_kind:"scratch"})).error?.code==="42501","API roles cannot execute the private game permission helper");
+    must(await admin.from("profiles").update({features:originalGameFeatures}).eq("id",B.id).select("id").single(),"restore disposable B features");
+
     // RM-4 (0046): the home-screen icon setter writes only the caller's row.
     const setIcon = await a.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!setIcon.error, `A can set its own home-screen icon (${setIcon.error?.message ?? "ok"})`);
