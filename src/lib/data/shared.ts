@@ -27,6 +27,7 @@ import { createServiceClient, createClient } from "@/lib/supabase/server";
 import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { SHOW_STOCK_DEFAULT } from "@/lib/games/wheel/publicView";
+import { isPlayableGame } from "@/lib/games/liveGame";
 import { PRIZE_DELIVERIES, type PrizeDelivery } from "@/lib/rewards/config";
 import type { Enums, Tables } from "./db.types";
 
@@ -65,6 +66,33 @@ export async function creatorOwnsCampaign(
     .eq("creator_id", userId)
     .maybeSingle();
   return !!data;
+}
+
+/**
+ * Why a campaign may not be set to play `wheelId`, or null when it may: the
+ * wheel must belong to `userId` ("not_found" otherwise, so another creator's
+ * id is indistinguishable from a missing one) and be playable: not archived,
+ * saved and complete (game_ready), of a known kind (wheel, scratch or bingo).
+ * Same test as SQL _creator_default_wheel's pinned arm (0061), via
+ * isPlayableGame. A null wheel ("follow my live game") is always allowed.
+ */
+export async function campaignPinError(
+  sb: AnyClient,
+  userId: string,
+  wheelId: string | null | undefined
+): Promise<"not_found" | "game_not_playable" | null> {
+  if (wheelId == null) return null;
+  if (!isUuid(wheelId)) return "not_found";
+  const { data } = await sb
+    .from("wheels")
+    .select("id, archived_at, game_kind, game_ready")
+    .eq("id", wheelId)
+    .eq("creator_id", userId)
+    .maybeSingle();
+  const row = data as { archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
+  if (!row) return "not_found";
+  if (!isPlayableGame({ archivedAt: row.archived_at, gameReady: row.game_ready, gameKind: row.game_kind })) return "game_not_playable";
+  return null;
 }
 
 // Phase 3 referral economy: how many referrals a fan can be credited for, and

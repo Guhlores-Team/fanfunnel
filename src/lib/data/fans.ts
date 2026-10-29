@@ -140,7 +140,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   const cutoff = new Date().toISOString();
   const [fanRows, passRows, spinRows, grantRows, visits] = await Promise.all([
     readScopedRows<Record<string, unknown>>(sb, "fans", "display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at, break_until", q => q.eq("creator_id", user.id), cutoff),
-    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, token, created_at, spins_remaining, wheel_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, token, created_at, spins_remaining, wheel_id, campaign_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
     readScopedRows<Record<string, unknown>>(sb, "spins", "fan_id, prize_label, prize_rarity, created_at", q => q.eq("creator_id", user.id).not("fan_id", "is", null), cutoff),
     readScopedRows<Record<string, unknown>>(sb, "grants", "fan_id, amount_cents, campaign_id, campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
     visitsByFan(sb, user.id),
@@ -160,7 +160,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     id: string; display_name: string | null; handle: string | null;
     spins_remaining: number; spins_granted_total: number; tags: string[] | null;
     blocked_at: string | null; break_until: string | null;
-    fan_passes: { token: string; created_at: string; spins_remaining: number; wheel_id: string; is_active: boolean; self_excluded_at: string | null; wheel: { title: string } | null; campaign: { name: string } | null }[];
+    fan_passes: { token: string; created_at: string; spins_remaining: number; wheel_id: string; campaign_id: string | null; is_active: boolean; self_excluded_at: string | null; wheel: { title: string } | null; campaign: { name: string } | null }[];
     spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[];
     grants: { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[];
   }[];
@@ -188,6 +188,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
         token: p.token,
         wheelId: p.wheel_id,
         wheelTitle: p.wheel?.title ?? "Wheel",
+        campaignId: p.campaign_id ?? null,
         campaignName: p.campaign?.name ?? null,
         spinsRemaining: p.spins_remaining ?? 0,
       }));

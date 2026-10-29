@@ -20,12 +20,15 @@ import FocusPackPanel from "./FocusPackPanel";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import GrantRow from "./GrantEditRow";
+import { CampaignGameSelect, FOLLOW_LIVE, GameName } from "./GameChoice";
+import { KIND_SHORT, kindOf, linkGame, liveExplanation, type ChoiceGame } from "./gameAssignment";
+import { isPlayableGame } from "@/lib/games/liveGame";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
 
-type Campaign = { id: string; name: string };
-type Wheel = { id: string; title: string };
+type Campaign = { id: string; name: string; pinnedWheelId?: string | null };
+type Wheel = ChoiceGame;
 export type TopUpFn = (
   fanId: string,
   addSpins: number,
@@ -63,6 +66,10 @@ export default function FanDetailDrawer({
   onDeleted,
   hasThread = false,
   onMessage,
+  now,
+  onOpenGame,
+  onOpenCampaigns,
+  onCampaignsChanged,
 }: {
   fanId: string | null;
   /** The list row for this fan (per-wheel passes, campaign names), if loaded. */
@@ -78,6 +85,12 @@ export default function FanDetailDrawer({
   hasThread?: boolean;
   /** "Message": jump to this fan's thread in the Inbox section. */
   onMessage?: (fanId: string) => void;
+  /** When the games list was read (what "plays now" is computed against). */
+  now?: Date;
+  onOpenGame?: (wheelId: string) => void;
+  onOpenCampaigns?: () => void;
+  /** A campaign's game was changed from here: reload campaigns + games. */
+  onCampaignsChanged?: () => void | Promise<void>;
 }) {
   const [detail, setDetail] = useState<FanDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -672,17 +685,21 @@ export default function FanDetailDrawer({
                       <li key={p.token} className={`px-[13px] py-[11px] ${well}`}>
                         <div className="flex items-center justify-between gap-2">
                           <span className="min-w-0 truncate text-[13.5px] font-semibold text-ink">
-                            {p.wheelTitle}
+                            {p.campaignName ? `Link in “${p.campaignName}”` : "Link (no campaign)"}
                           </span>
                           <span className="tnum shrink-0 text-xs font-bold text-brand">
                             {p.spinsRemaining} spins
                           </span>
                         </div>
-                        {p.campaignName && (
-                          <span className="mt-1 inline-block rounded-full border border-line px-2 py-0.5 text-[10.5px] text-muted">
-                            {p.campaignName}
-                          </span>
-                        )}
+                        <LinkPlays
+                          pass={p}
+                          campaigns={campaigns}
+                          wheels={wheels}
+                          now={now ?? new Date()}
+                          onOpenGame={onOpenGame}
+                          onOpenCampaigns={onOpenCampaigns}
+                          onCampaignsChanged={onCampaignsChanged}
+                        />
                         <LinkRow url={`${origin}/spin/${p.token}`} newest={false} bare />
                       </li>
                     ))}
@@ -799,6 +816,14 @@ function TopUpForm({
   const [wheelId, setWheelId] = useState<string>(
     summary?.passes[0]?.wheelId ?? wheels[0]?.id ?? ""
   );
+  // Balances are kept per game a link was made for; a game with no link for
+  // this fan yet gets a new one.
+  const topUpTargets = wheels
+    .filter((w) => isPlayableGame(w))
+    .map((w) => {
+      const own = summary?.passes.find((p) => p.wheelId === w.id);
+      return { id: w.id, label: own ? `${w.title} balance (${own.spinsRemaining} spins)` : `${w.title} balance (new link)` };
+    });
   const [spins, setSpins] = useState(3);
   // Per-spin price as its own state so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
@@ -880,16 +905,17 @@ function TopUpForm({
             }}
           />
         </Field>
-        <Field label="Wheel">
+        <Field label="Add spins to">
           <select
             className="ff-input w-full"
             value={wheelId}
             onChange={(e) => setWheelId(e.target.value)}
+            aria-describedby={`${id}-target-help`}
           >
-            {wheels.length === 0 && <option value="">Active wheel</option>}
-            {wheels.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.title}
+            {wheels.length === 0 && <option value="">This fan&apos;s link</option>}
+            {topUpTargets.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
               </option>
             ))}
           </select>
@@ -912,6 +938,9 @@ function TopUpForm({
           </select>
         </Field>
       </div>
+      <p id={`${id}-target-help`} className="mt-2 text-[11.5px] text-muted text-pretty">
+        Picks which of this fan&apos;s spin balances gets the spins. It doesn&apos;t choose the game: each link plays its campaign&apos;s game, or your live game.
+      </p>
       {campaignId && (
         <div className="mt-2.5">
           <PackPresets
@@ -1095,6 +1124,128 @@ function LinkRow({ url, newest, bare }: { url: string; newest: boolean; bare?: b
       <a href={url} target="_blank" rel="noreferrer" className={smallBtn}>
         Open
       </a>
+    </div>
+  );
+}
+
+/**
+ * What one fan link plays now and why, computed with the server's resolver
+ * (never the link's stored game alone), plus the shortcuts to change it.
+ * Per-fan game choice doesn't exist yet: a link's game comes from its campaign
+ * or from the creator's live game.
+ */
+function LinkPlays({
+  pass,
+  campaigns,
+  wheels,
+  now,
+  onOpenGame,
+  onOpenCampaigns,
+  onCampaignsChanged,
+}: {
+  pass: { token: string; wheelId: string; campaignId?: string | null; campaignName: string | null };
+  campaigns: Campaign[];
+  wheels: Wheel[];
+  now: Date;
+  onOpenGame?: (wheelId: string) => void;
+  onOpenCampaigns?: () => void;
+  onCampaignsChanged?: () => void | Promise<void>;
+}) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const panelId = useId();
+  const selectId = useId();
+  const helpId = useId();
+  const plays = linkGame(pass, campaigns, wheels, now);
+  const campaign = plays?.campaign ?? (pass.campaignId ? campaigns.find((c) => c.id === pass.campaignId) ?? null : null);
+  const live = liveExplanation(wheels, now);
+  const liveTitle = live ? `${live.game.title} · ${KIND_SHORT[kindOf(live.game)]}` : null;
+
+  async function setCampaignGame(value: string) {
+    if (!campaign) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinnedWheelId: value || null }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        toast(data?.error === "game_not_playable" ? "That game can't be chosen: it's archived or still a draft." : "Couldn't change the campaign's game. Nothing changed; try again.", { tone: "error" });
+        return;
+      }
+      const picked = wheels.find((w) => w.id === value);
+      toast(picked ? `“${campaign.name}” now plays ${picked.title}.` : `“${campaign.name}” now follows your live game.`, { tone: "success" });
+      await onCampaignsChanged?.();
+    } catch {
+      toast("The change couldn't be confirmed. Check the campaign before trying again.", { tone: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div data-testid="link-plays" data-plays-game-id={plays?.game.id ?? ""} className="mt-1.5 text-[12.5px] text-muted">
+      {plays ? (
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-pretty">
+          <span className="font-semibold text-ink">This link plays:</span>
+          <GameName game={plays.game} />
+          <span>
+            {plays.via === "campaign" && plays.campaign
+              ? `(via campaign “${plays.campaign.name}”)`
+              : plays.via === "live"
+                ? `(your live game: ${plays.because})`
+                : "(the game it was made for)"}
+          </span>
+        </p>
+      ) : (
+        <p>No playable game right now. Finish a wheel or scratch game first.</p>
+      )}
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {plays && onOpenGame && (
+          <button type="button" className={smallBtn} onClick={() => onOpenGame(plays.game.id)} aria-label={`Edit game ${plays.game.title}`}>
+            Edit game
+          </button>
+        )}
+        <button type="button" className={smallBtn} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((v) => !v)}>
+          Change game
+        </button>
+      </div>
+      {open && (
+        <div id={panelId} className="mt-2 rounded-[8px] border border-[var(--hair)] p-2.5">
+          {campaign ? (
+            <>
+              <label htmlFor={selectId} className="block text-[11.5px] font-semibold text-ink">
+                Game for campaign “{campaign.name}”
+              </label>
+              <CampaignGameSelect
+                id={selectId}
+                value={campaign.pinnedWheelId ?? FOLLOW_LIVE}
+                games={wheels}
+                liveTitle={liveTitle}
+                disabled={saving}
+                describedBy={helpId}
+                onChange={(value) => void setCampaignGame(value)}
+                className="mt-1 w-full"
+              />
+              <p id={helpId} className="mt-1.5 text-[11.5px] text-pretty">
+                This changes the game for every fan link in “{campaign.name}”, not just this fan.
+              </p>
+            </>
+          ) : (
+            <p className="text-[11.5px] text-pretty">
+              This link isn&apos;t in a campaign, so it plays your live game. To give fans a specific game, mint them a link in a campaign that plays it, or change your live game on the Games screen.
+            </p>
+          )}
+          {onOpenCampaigns && (
+            <button type="button" className={`${smallBtn} mt-2`} onClick={onOpenCampaigns}>
+              Open Campaigns
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

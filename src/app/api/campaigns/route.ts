@@ -21,6 +21,9 @@ export async function POST(req: Request) {
     return badRequest();
   }
 
+  // Optional: the game this campaign plays. Ownership and playability are
+  // checked in createCampaign (campaignPinError); null follows the live game.
+  if (body.pinnedWheelId != null && typeof body.pinnedWheelId !== "string") return badRequest();
   const result = await createCampaign(name, body.pinnedWheelId ?? null);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);

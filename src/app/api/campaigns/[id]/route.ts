@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { setCampaignPinnedWheel, renameCampaign, deleteCampaign } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { campaignPinError } from "@/lib/data/shared";
 
 const statusFor = (e: string) =>
   e === "unauthorized" ? 401 : e === "not_found" ? 404 : 400;
@@ -26,6 +27,7 @@ export async function PATCH(
     }
   }
   const hasPin = "pinnedWheelId" in body;
+  if (hasPin && body.pinnedWheelId != null && typeof body.pinnedWheelId !== "string") return badRequest();
   const pinnedWheelId = body.pinnedWheelId ?? null;
 
   // Mock/in-memory path: no DB transactions exist here, so keep the original
@@ -55,18 +57,12 @@ export async function PATCH(
   } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  // Verify the pinned wheel belongs to this creator before referencing it, so a
-  // campaign can't be pointed at another creator's wheel id.
-  if (hasPin && pinnedWheelId) {
-    const { data: ownWheel } = await sb
-      .from("wheels")
-      .select("id")
-      .eq("id", pinnedWheelId)
-      .eq("creator_id", user.id)
-      .maybeSingle();
-    if (!ownWheel) {
-      return NextResponse.json({ error: "not_found" }, { status: 404 });
-    }
+  // The chosen game must be this creator's own playable game, so a campaign
+  // can't be pointed at another creator's wheel id (or an archived/draft game
+  // the resolver would silently skip).
+  if (hasPin) {
+    const pinError = await campaignPinError(sb, user.id, pinnedWheelId);
+    if (pinError) return NextResponse.json({ error: pinError }, { status: statusFor(pinError) });
   }
 
   const patch: { name?: string; pinned_wheel_id?: string | null } = {};

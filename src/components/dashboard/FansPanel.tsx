@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
-import type { CampaignPack, DmTemplate, FanAccountSummary } from "@/lib/data/types";
+import type { CampaignPack, DmTemplate, FanAccountSummary, WheelSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
 import { formatCents } from "@/lib/format";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
@@ -20,6 +20,8 @@ import { REGULAR_MIN_VISITS } from "@/lib/glow/config";
 import { creatorIntent, creatorIntentComplete } from "./creatorIntent";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
+import { GameName } from "./GameChoice";
+import { linkGame } from "./gameAssignment";
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -36,11 +38,17 @@ export default function FansPanel({
   initialSearch = "",
   focusMintNonce = 0,
   onMessage,
+  onOpenGame,
+  onOpenCampaigns,
 }: {
   initialSearch?: string;
   focusMintNonce?: number;
   /** Drawer "Message": open this fan's thread in the Inbox section. */
   onMessage?: (fanId: string) => void;
+  /** "Edit game": open a game in the Games editor. */
+  onOpenGame?: (wheelId: string) => void;
+  /** Jump to Campaigns (to choose the game a campaign plays). */
+  onOpenCampaigns?: () => void;
 }) {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [name, setName] = useState("");
@@ -58,9 +66,10 @@ export default function FansPanel({
   const [packId, setPackId] = useState<string | null>(null);
   const [packUnits, setPackUnits] = useState(1);
   const [campaigns, setCampaigns] = useState<
-    { id: string; name: string; isActive?: boolean }[]
+    { id: string; name: string; isActive?: boolean; pinnedWheelId?: string | null }[]
   >([]);
-  const [wheels, setWheels] = useState<{ id: string; title: string }[]>([]);
+  const [wheels, setWheels] = useState<WheelSummary[]>([]);
+  const [now, setNow] = useState(() => new Date());
   const [creating, setCreating] = useState(false);
   const [newFanUncertain, setNewFanUncertain] = useState(false);
   const creatingRef = useRef(false);
@@ -104,6 +113,7 @@ export default function FansPanel({
       id: string;
       name: string;
       isActive?: boolean;
+      pinnedWheelId?: string | null;
     }[];
     setCampaigns(list);
     // Default the add-fan form to the newest active campaign so links are
@@ -120,8 +130,9 @@ export default function FansPanel({
   const loadWheels = useCallback(async () => {
     const res = await fetch("/api/wheels", { cache: "no-store" });
     if (res.ok) {
-      const d = (await res.json()) as { wheels?: { id: string; title: string }[] };
-      setWheels((d.wheels ?? []).map((w) => ({ id: w.id, title: w.title })));
+      const d = (await res.json()) as { wheels?: WheelSummary[] };
+      setWheels(d.wheels ?? []);
+      setNow(new Date());
     }
   }, []);
   const loadThreads = useCallback(async () => {
@@ -264,6 +275,7 @@ export default function FansPanel({
     return matchesSearch && matchesCampaign && matchesTag && matchesVisits;
   });
   const openAccount = accounts?.find((a) => a.fanId === openFanId) ?? null;
+  const mintPlays = useMemo(() => linkGame({ wheelId: "", campaignId: campaignId || null }, campaigns, wheels, now), [campaignId, campaigns, wheels, now]);
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -345,6 +357,22 @@ export default function FansPanel({
           >
             {creating ? "Checking…" : newFanUncertain ? "Check this link again" : "Create"}
           </button>
+        {mintPlays && (
+          <p data-testid="mint-plays" className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12.5px] text-muted text-pretty">
+            <span className="font-semibold text-ink">This link will play:</span>
+            <GameName game={mintPlays.game} />
+            <span>
+              {mintPlays.via === "campaign" && mintPlays.campaign
+                ? `(the game chosen for “${mintPlays.campaign.name}”)`
+                : `(your live game${mintPlays.campaign ? `, because “${mintPlays.campaign.name}” follows it` : ""})`}
+            </span>
+            {onOpenCampaigns && (
+              <button type="button" onClick={onOpenCampaigns} className="font-semibold text-ink underline underline-offset-2">
+                Change game via a campaign
+              </button>
+            )}
+          </p>
+        )}
         {amount && Number(amount) > 0 && spins > 0 && (
           <p className="tnum mt-2 text-[11.5px] text-muted">
             {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
@@ -486,6 +514,10 @@ export default function FansPanel({
         summary={openAccount}
         campaigns={campaigns}
         wheels={wheels}
+        now={now}
+        onOpenGame={onOpenGame ? (wheelId) => leave(() => { setOpenFanId(null); onOpenGame(wheelId); }) : undefined}
+        onOpenCampaigns={onOpenCampaigns ? () => leave(() => { setOpenFanId(null); onOpenCampaigns(); }) : undefined}
+        onCampaignsChanged={async () => { await Promise.all([loadCampaigns(), loadWheels()]); }}
         templates={templates}
         onClose={() => setOpenFanId(null)}
         onSaved={load}

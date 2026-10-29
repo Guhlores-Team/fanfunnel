@@ -144,6 +144,9 @@ export default function WheelEditor({
   onWheelMutated,
   onDeliveryDraftChange,
   onDeliveryPendingChange,
+  openGameRequest,
+  onOpenGameHandled,
+  onOpenCampaigns,
 }: {
   wheel: WheelConfig;
   setWheel: Dispatch<SetStateAction<WheelConfig>>;
@@ -158,6 +161,11 @@ export default function WheelEditor({
   /** Navigation guard: delivery drafts stay out of the wheel JSON. */
   onDeliveryDraftChange?: (dirty: boolean) => void;
   onDeliveryPendingChange?: (pending: boolean) => void;
+  /** Another screen asked to open this game here ("Edit game" shortcuts). */
+  openGameRequest?: { id: string; nonce: number } | null;
+  onOpenGameHandled?: () => void;
+  /** Jump to Campaigns to change which game a campaign plays. */
+  onOpenCampaigns?: () => void;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
   // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
@@ -406,6 +414,17 @@ export default function WheelEditor({
       return false;
     }
   }
+  // An "Edit game" shortcut from Campaigns or a fan's link: open that game
+  // through the same guarded switch as its chip, then let the request go.
+  const requestedGameId = openGameRequest?.id ?? null;
+  const requestNonce = openGameRequest?.nonce ?? 0;
+  useEffect(() => {
+    if (!requestedGameId) return;
+    onOpenGameHandled?.();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- open a game another screen asked for
+    if (requestedGameId !== wheel.id || requestedGameId !== editingWheelId) void loadWheel(requestedGameId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per request
+  }, [requestedGameId, requestNonce]);
   // Apply a saved wheel template: it mints a fresh wheel from the template
   // server-side, then opens that new wheel in the editor.
   async function applyWheelTemplate(templateId: string) {
@@ -577,6 +596,7 @@ export default function WheelEditor({
           onChanged={onWheelMutated}
           features={capabilities.features}
           savedGame={savedGame}
+          onOpenCampaigns={onOpenCampaigns}
         />
         {capabilities.error && <p role="alert" className="mt-2 text-xs text-amber-200">{capabilities.error} <button type="button" onClick={() => void capabilities.reload()} className="font-semibold underline">Check permissions again</button></p>}
         {featureBlocked && <p role="status" className="mt-2 text-xs text-amber-200">This game type is not enabled for your account. Existing fan links and edits to their current type keep working. Ask your admin to enable this type before changing to it or creating another.</p>}

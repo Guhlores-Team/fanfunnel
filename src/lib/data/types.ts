@@ -215,6 +215,8 @@ export interface WheelSummary {
   activeUntil: string | null;
   prizeCount: number;
   updatedAt: string;
+  /** Tie-break for the "oldest game" fallback (see src/lib/games/liveGame.ts). */
+  createdAt?: string;
 }
 
 /** A purchasable spin pack, optionally scoped to a campaign. */
@@ -309,7 +311,10 @@ export interface RedemptionItem {
 /** One per-wheel link under a fan: its own spin balance + which wheel/campaign. */
 export interface FanPassInfo {
   token: string;
+  /** The game this link was made for: a fallback and the top-up target, not
+   *  necessarily what it plays (see resolvePlayingGame). */
   wheelId: string;
+  campaignId?: string | null;
   wheelTitle: string;
   campaignName: string | null;
   spinsRemaining: number;

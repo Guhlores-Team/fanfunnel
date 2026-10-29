@@ -9,6 +9,7 @@ import { MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
 import { wheelRulesError } from "@/lib/games/wheel/validate";
 import { showsStock } from "@/lib/games/wheel/publicView";
+import { isPlayableGame, pickLiveGame } from "@/lib/games/liveGame";
 import type { WheelSummary, HappyHourStatus } from "./types";
 import {
   mockGetWheel,
@@ -33,12 +34,11 @@ import type { AnyClient, DbWheelRow } from "./shared";
 // ---------------------------------------------------------------------------
 
 /**
- * The creator's currently-live wheel among their non-archived wheels:
- *   1. a scheduled wheel whose window contains `now` (prefer latest
- *      active_from, tie-break newest created_at);
- *   2. else the wheel flagged is_active (oldest first);
- *   3. else the oldest non-archived wheel.
- * Mirrors SQL _creator_default_wheel (0061), which issuance and spin time share.
+ * The creator's currently-live game among their non-archived, ready games
+ * (pickLiveGame: open schedule window, else is_active, else oldest, each
+ * tie-broken by created_at then id). Mirrors SQL _creator_default_wheel
+ * (0061), which issuance and spin time share; the dashboard explains the
+ * same decision with the same function.
  */
 export async function resolveActiveWheelId(
   sb: AnyClient,
@@ -51,50 +51,33 @@ export async function resolveActiveWheelId(
     .eq("creator_id", creatorId)
     .is("archived_at", null);
 
-  const rawRows = (data ?? []) as {
+  const rows = ((data ?? []) as {
     id: string;
     is_active: boolean;
     active_from: string | null;
     active_until: string | null;
     created_at: string;
-    game_kind?: string;
+    archived_at?: string | null;
+    game_kind?: "wheel" | "scratch" | "bingo";
     game_ready?: boolean;
-  }[];
-  const rows = rawRows.filter(row => row.game_ready !== false);
-  if (rows.length === 0) return null;
-
-  const nowMs = now.getTime();
-  const inWindow = rows.filter((w) => {
-    const fromOk = !w.active_from || new Date(w.active_from).getTime() <= nowMs;
-    const untilOk = !w.active_until || new Date(w.active_until).getTime() > nowMs;
-    return (w.active_from != null || w.active_until != null) && fromOk && untilOk;
-  });
-  if (inWindow.length > 0) {
-    inWindow.sort((a, b) => {
-      // Prefer latest active_from (a null active_from sorts oldest).
-      const af = a.active_from ? new Date(a.active_from).getTime() : -Infinity;
-      const bf = b.active_from ? new Date(b.active_from).getTime() : -Infinity;
-      if (af !== bf) return bf - af;
-      // Tie-break: newest created_at first.
-      return b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
-    });
-    return inWindow[0].id;
-  }
-
-  // Same tie-break as SQL: created_at, then id.
-  const active = rows.filter((w) => w.is_active).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0];
-  if (active) return active.id;
-
-  // Oldest non-archived wheel.
-  return rows
-    .slice()
-    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0].id;
+  }[]).map((row) => ({
+    id: row.id,
+    isActive: row.is_active,
+    archivedAt: row.archived_at ?? null,
+    activeFrom: row.active_from,
+    activeUntil: row.active_until,
+    createdAt: row.created_at,
+    gameKind: row.game_kind,
+    gameReady: row.game_ready,
+  }));
+  return pickLiveGame(rows, now)?.game.id ?? null;
 }
 
 /**
- * The wheel a specific pass should use right now: the campaign's pinned wheel
- * (if set + non-archived) wins; otherwise the creator's active wheel; otherwise
- * the pass's own stored wheel_id.
+ * The wheel a specific pass should use right now: the campaign's pinned game
+ * (if set and playable) wins; otherwise the creator's live game; otherwise
+ * the pass's own stored wheel_id (if playable). Mirrors SQL
+ * _resolved_spin_wheel (0061); "playable" is isPlayableGame in liveGame.ts.
  */
 export async function resolveWheelId(
   sb: AnyClient,
@@ -118,7 +101,7 @@ export async function resolveWheelId(
         .eq("creator_id", pass.creator_id)
         .maybeSingle();
       const row = pinned as { id: string; archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
-      if (row && !row.archived_at && row.game_ready !== false) return row.id;
+      if (row && isPlayableGame({ archivedAt: row.archived_at, gameReady: row.game_ready, gameKind: row.game_kind })) return row.id;
     }
   }
 
@@ -126,7 +109,7 @@ export async function resolveWheelId(
   if (active) return active;
   const { data: stored } = await sb.from("wheels").select("id,archived_at,game_kind,game_ready").eq("id", pass.wheel_id).eq("creator_id", pass.creator_id).maybeSingle();
   const row = stored as { id: string; archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
-  return row && !row.archived_at && row.game_ready !== false ? row.id : null;
+  return row && isPlayableGame({ archivedAt: row.archived_at, gameReady: row.game_ready, gameKind: row.game_kind }) ? row.id : null;
 }
 
 /**
@@ -436,7 +419,7 @@ export async function listWheels(
     .from("wheels")
     .select(
       `id, title, subtitle, brand_color, is_active, archived_at,
-       active_from, active_until, updated_at, game_kind, game_ready, prizes(id)`
+       active_from, active_until, created_at, updated_at, game_kind, game_ready, prizes(id)`
     )
     .eq("creator_id", user.id)
     .order("created_at", { ascending: false });
@@ -452,6 +435,7 @@ export async function listWheels(
     archived_at: string | null;
     active_from: string | null;
     active_until: string | null;
+    created_at?: string;
     updated_at: string;
     game_kind?: "wheel" | "scratch" | "bingo";
     game_ready?: boolean;
@@ -469,6 +453,7 @@ export async function listWheels(
     activeUntil: r.active_until,
     prizeCount: (r.prizes ?? []).length,
     updatedAt: r.updated_at,
+    ...(r.created_at ? { createdAt: r.created_at } : {}),
     gameKind: r.game_kind ?? "wheel",
     gameReady: r.game_ready !== false,
   }));
