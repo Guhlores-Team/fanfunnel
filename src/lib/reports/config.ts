@@ -42,3 +42,6 @@ export const REPORTS_PAGE_SIZE = 50;
 
 export type ReportStatus = "open" | "resolved" | "dismissed";
 export const REPORT_STATUSES: readonly ReportStatus[] = ["open", "resolved", "dismissed"];
+
+/** Window event: Admin › Reports changed a report, so the nav badge refreshes. */
+export const REPORTS_CHANGED_EVENT = "ff:reports-changed";

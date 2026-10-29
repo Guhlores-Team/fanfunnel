@@ -25,13 +25,16 @@ export type AuditAction =
   | "admin.bootstrap"
   | "error.resolve"
   | "error.reopen"
+  | "report.resolve"
+  | "report.dismiss"
+  | "report.reopen"
   | "mfa.factor_removed"
   | "retention.cleanup";
 
 export interface AuditInput {
   actorId: string | null;
   action: AuditAction;
-  targetType?: "profile" | "factor" | "error" | null;
+  targetType?: "profile" | "factor" | "error" | "report" | null;
   targetId?: string | null;
   /** Small, PII-free facts (role names, feature keys, counts, booleans). */
   details?: Record<string, string | number | boolean | null | Record<string, boolean>>;

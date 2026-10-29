@@ -17,6 +17,9 @@ const ACTION_LABELS: Record<string, string> = {
   "admin.bootstrap": "claimed the first admin",
   "error.resolve": "resolved an error report",
   "error.reopen": "reopened an error report",
+  "report.resolve": "resolved a safety report",
+  "report.dismiss": "dismissed a safety report",
+  "report.reopen": "reopened a safety report",
   "mfa.factor_removed": "removed a two-factor app",
   "retention.cleanup": "ran the retention cleanup",
 };

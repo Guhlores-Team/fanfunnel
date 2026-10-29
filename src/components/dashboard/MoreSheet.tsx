@@ -127,7 +127,7 @@ export default function MoreSheet({
                         {badge > 0 && (
                           <>
                             <CountBadge n={badge} />
-                            <span className="sr-only">{id === "inbox" ? " unread" : " waiting"}</span>
+                            <span className="sr-only">{id === "inbox" ? " unread" : id === "admin" ? " open reports" : " waiting"}</span>
                           </>
                         )}
                       </button>

@@ -8,6 +8,7 @@ import type { WheelConfig } from "@/lib/games/wheel/types";
 import type { CreatorOverview } from "@/lib/data/types";
 import { ToastProvider } from "@/components/ui/Toast";
 import { useFetch } from "@/lib/hooks/useFetch";
+import { REPORTS_CHANGED_EVENT } from "@/lib/reports/config";
 import TodayPanel from "@/components/dashboard/TodayPanel";
 import PrizesPanel from "@/components/dashboard/PrizesPanel";
 import FansPanel from "@/components/dashboard/FansPanel";
@@ -196,6 +197,16 @@ export default function DashboardClient({
   const overview = useOverview();
   const pending = overview.data?.metrics.pending ?? 0;
   const unread = overview.data?.metrics.unreadMessages ?? 0;
+  // Open safety reports on the Admin item (admins only; the route re-checks).
+  const reportCount = useFetch<{ openCount: number }>(adminVisible ? "/api/admin/reports/count" : null, { pollMs: 60000 });
+  const reloadReportCount = reportCount.reload;
+  useEffect(() => {
+    if (!adminVisible) return;
+    const onChange = () => void reloadReportCount();
+    window.addEventListener(REPORTS_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(REPORTS_CHANGED_EVENT, onChange);
+  }, [adminVisible, reloadReportCount]);
+  const openReports = reportCount.data?.openCount ?? 0;
 
   // First-run signals: a brand-new creator has no fans and no spins yet, and is
   // still on the sample wheel (no saved wheel id of their own).
@@ -386,7 +397,7 @@ export default function DashboardClient({
       <Sidebar
         active={tab}
         onSelect={goTab}
-        badges={{ prizes: pending, inbox: unread }}
+        badges={{ prizes: pending, inbox: unread, admin: openReports }}
         // Server-derived gate: is_admin() via checkAdmin in dashboard/page.tsx
         // (or demo mode, decided there too). The /api/admin routes re-check.
         showAdmin={adminVisible}
@@ -555,7 +566,7 @@ export default function DashboardClient({
       <MobileTabBar
         active={tab}
         onSelect={goTab}
-        badges={{ prizes: pending, inbox: unread }}
+        badges={{ prizes: pending, inbox: unread, admin: openReports }}
         // Same server-derived gate as the sidebar (never client state).
         showAdmin={adminVisible}
         accountName={accountName}

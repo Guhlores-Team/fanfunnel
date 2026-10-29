@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { demoCodeFingerprint } from "@/lib/rewards/demoFingerprint";
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
 import { mockGetTheme, mockListMedia } from "./mockTheme";
+import { addMockReport, mockReportStore } from "./mockReports";
 import { toDbTheme } from "@/lib/creatorTheme/config";
 import { makeFairRng, makeFairRngV3, normalizeClientSeed, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import {
@@ -2787,9 +2788,6 @@ export function mockSelfExclude(token: string): { ok: true } | { error: string }
   return { ok: true };
 }
 
-// In-memory record of fan→creator reports (demo only; mirrors creator_reports).
-const mockReports: { token: string; reason: string; detail: string | null; at: string }[] = [];
-
 /** A fan reports the creator behind their token (demo: store it, validate reason). */
 export function mockReportCreator(
   token: string,
@@ -2799,13 +2797,30 @@ export function mockReportCreator(
   if (!reason.trim()) return { error: "empty" };
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
-  mockReports.push({
+  addMockReport({
+    creatorId: MOCK_REPORTED_CREATOR,
+    fanId: fan.id,
     token,
     reason: reason.slice(0, 120),
     detail: detail?.slice(0, 2000) ?? null,
-    at: new Date().toISOString(),
   });
   return { ok: true };
+}
+
+// Every demo fan belongs to the signed-in demo account.
+const MOCK_REPORTED_CREATOR = "acc-you";
+
+/** Admin › Reports context for a demo report (null when the row is gone). */
+export function mockReportParties(creatorId: string, fanId: string | null): {
+  creator: { name: string; email: string | null } | null;
+  fanName: string | null;
+} {
+  const account = store.accounts.find((a) => a.id === creatorId);
+  const fan = fanId ? store.fans.get(fanId) : undefined;
+  return {
+    creator: account ? { name: account.displayName, email: account.email } : null,
+    fanName: fan ? fan.name : null,
+  };
 }
 
 // --- Phase 3: Wishlist ------------------------------------------------------
@@ -3580,7 +3595,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
     play: { breakUntil: fan.breakUntil ?? null, reminderDaily: fan.playReminderDaily ?? null, reminderUpdatedAt: null },
     checkIns: [...checkinDays(fan.id)].sort().map((day) => ({ day, recordedAt: null })),
     outreach: outreachLog().filter((row) => row.fanId === fan.id).map((row) => ({ at: row.createdAt, contactedAt: row.contactedAt })),
-    reportsYouSent: mockReports.filter((row) => (fan.passes ?? []).some((pass) => pass.token === row.token)).map((row) => ({ at: row.at, reason: row.reason, detail: row.detail })),
+    reportsYouSent: mockReportStore().filter((row) => (fan.passes ?? []).some((pass) => pass.token === row.token)).map((row) => ({ at: row.createdAt, reason: row.reason, detail: row.detail })),
     messagesYouSent: store.messages
       .filter((m) => m.fanId === fan.id && m.sender === "fan")
       .map((m) => ({ at: m.at, body: m.body })),
