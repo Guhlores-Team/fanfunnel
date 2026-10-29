@@ -27,6 +27,7 @@ import {
   type PoolSnapshot,
 } from "@/lib/games/wheel/fairnessV3";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
+import { isPlayableGame, pickLiveGame } from "@/lib/games/liveGame";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicPrize, type PublicWheelConfig, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
 import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
@@ -694,19 +695,9 @@ export function mockResolveActiveWheelId(now: Date = new Date()): string {
     return store.wheels.keys().next().value ?? SAMPLE_WHEEL.id;
   }
 
-  const nowIso = now.toISOString();
-  const windowed = live.filter(w => (w.activeFrom != null || w.activeUntil != null)
-    && (w.activeFrom == null || w.activeFrom <= nowIso) && (w.activeUntil == null || w.activeUntil > nowIso));
-  if (windowed.length > 0) {
-    windowed.sort((a, b) => (b.activeFrom ?? "").localeCompare(a.activeFrom ?? "")
-      || wheelCreatedAt(b.id).localeCompare(wheelCreatedAt(a.id)) || a.id.localeCompare(b.id));
-    return windowed[0].id;
-  }
-  const flagged = live.filter(w => w.isActive).sort((a, b) => a.id.localeCompare(b.id))[0];
-  if (flagged) return flagged.id;
-  live.sort((a, b) => wheelCreatedAt(a.id).localeCompare(wheelCreatedAt(b.id)) || a.id.localeCompare(b.id));
-
-  return live[0].id; // oldest
+  const picked = pickLiveGame(live.map(w => ({ id: w.id, isActive: w.isActive === true, archivedAt: w.archivedAt ?? null,
+    activeFrom: w.activeFrom ?? null, activeUntil: w.activeUntil ?? null, createdAt: wheelCreatedAt(w.id), gameKind: w.gameKind, gameReady: w.gameReady })), now);
+  return picked ? picked.game.id : live[0].id;
 }
 
 /** The currently-active wheel config (always defined in demo mode). */
@@ -816,6 +807,7 @@ function toWheelSummary(w: WheelConfig): WheelSummary {
     activeUntil: w.activeUntil ?? null,
     prizeCount: w.prizes.length,
     updatedAt: meta?.updatedAt ?? new Date().toISOString(),
+    createdAt: wheelCreatedAt(w.id),
     gameKind: w.gameKind ?? "wheel",
     gameReady: w.gameReady !== false,
   };
@@ -1795,6 +1787,7 @@ export function mockListFans(): FanAccountSummary[] {
       token: p.token,
       wheelId: p.wheelId,
       wheelTitle: store.wheels.get(p.wheelId)?.title ?? "Wheel",
+      campaignId: p.campaignId ?? null,
       campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
       spinsRemaining: p.spinsRemaining,
     }));
@@ -2346,6 +2339,14 @@ export function mockCreateCampaign(
   return structuredClone(campaign);
 }
 
+/** Demo twin of campaignPinError: only an existing, playable game. */
+export function mockCampaignPinError(wheelId: string | null | undefined): "not_found" | "game_not_playable" | null {
+  if (wheelId == null) return null;
+  const wheel = store.wheels.get(wheelId);
+  if (!wheel) return "not_found";
+  return isPlayableGame(wheel) ? null : "game_not_playable";
+}
+
 /** Pin (or unpin) a campaign's default wheel. */
 export function mockSetCampaignPinnedWheel(
   campaignId: string,
@@ -2353,9 +2354,8 @@ export function mockSetCampaignPinnedWheel(
 ): { ok: true } | { error: string } {
   const campaign = store.campaigns.find((c) => c.id === campaignId);
   if (!campaign) return { error: "not_found" };
-  if (wheelId !== null && !store.wheels.has(wheelId)) {
-    return { error: "wheel_not_found" };
-  }
+  const pinError = mockCampaignPinError(wheelId);
+  if (pinError) return { error: pinError };
   campaign.pinnedWheelId = wheelId;
   return { ok: true };
 }

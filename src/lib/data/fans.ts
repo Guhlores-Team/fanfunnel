@@ -148,7 +148,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     .from("fans")
     .select(
       `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at,
-       fan_passes(token, created_at, spins_remaining, wheel_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)),
+       fan_passes(token, created_at, spins_remaining, wheel_id, campaign_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)),
        ${TAIL}`
     )
     .eq("creator_id", user.id)
@@ -182,6 +182,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
           created_at: string;
           spins_remaining?: number; // per-wheel fields are absent pre-0020
           wheel_id?: string;
+          campaign_id?: string | null;
           is_active?: boolean; // absent on the legacy select
           self_excluded_at?: string | null;
           wheel?: { title: string } | null;
@@ -218,6 +219,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
         token: p.token,
         wheelId: p.wheel_id,
         wheelTitle: p.wheel?.title ?? "Wheel",
+        campaignId: p.campaign_id ?? null,
         campaignName: p.campaign?.name ?? null,
         spinsRemaining: p.spins_remaining ?? 0,
       }));
