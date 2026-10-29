@@ -1921,6 +1921,39 @@ export function mockGetOverview(): CreatorOverview {
   };
 }
 
+/**
+ * A5: the whole fulfilment queue, filtered and keyset-paginated (newest first),
+ * like creator_redemption_queue(): status, a fan/prize search and a
+ * (created_at, id) cursor, so every pending prize is reachable.
+ */
+export function mockListRedemptionQueue(opts: {
+  status?: RedemptionStatus;
+  query?: string;
+  before?: { at: string; id: string } | null;
+  limit: number;
+}): RedemptionItem[] {
+  const q = (opts.query ?? "").trim().toLowerCase();
+  const before = opts.before;
+  return store.redemptions
+    .filter((r) => !opts.status || r.status === opts.status)
+    .filter((r) => !q || r.fanName.toLowerCase().includes(q) || r.prizeLabel.toLowerCase().includes(q))
+    .filter((r) => !before || r.at < before.at || (r.at === before.at && r.id < before.id))
+    .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
+    .slice(0, Math.min(Math.max(1, opts.limit), 100))
+    .map((r) => structuredClone({
+      id: r.id,
+      fanName: r.fanName,
+      prizeLabel: r.prizeLabel,
+      rarity: r.rarity,
+      emoji: r.emoji,
+      status: r.status,
+      at: r.at,
+      notes: r.notes ?? null,
+      dueAt: r.dueAt ?? null,
+      ...((r.auto ?? mockAutoInfo(r.shareId)) ? { auto: r.auto ?? mockAutoInfo(r.shareId) } : {}),
+    }));
+}
+
 export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
   const n = clampDays(days);
   const trend = bucketByDay(
