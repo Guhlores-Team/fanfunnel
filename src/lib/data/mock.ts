@@ -1176,8 +1176,10 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
   requestId = requestId.toLowerCase();
   const found = passForToken(token);
   if (!found) return { error: "not_found" as const };
-  const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", clientSeed, publishedSeedHash?.toLowerCase() ?? null]));
+  // Hash inside the lock: async digests can finish out of order, and the lock
+  // must be taken in call order so a simultaneous retry is the replay.
   return withMockFanLock(found.fan.id, async () => {
+    const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", clientSeed, publishedSeedHash?.toLowerCase() ?? null]));
     const state = mockFocusState();
     const existing = state.attempts.get(requestId);
     if (existing) {

@@ -112,7 +112,8 @@ function cleanup() {
   else rmSync(WORK, { recursive: true, force: true });
 }
 
-pg("initdb", ["-D", DATA, "-A", "trust", "-U", "postgres", "--no-sync"]);
+// Hosted Supabase databases are UTF8; never inherit SQL_ASCII from an unset locale.
+pg("initdb", ["-D", DATA, "-A", "trust", "-U", "postgres", "--no-sync", "-E", "UTF8", "--locale=C"]);
 pg("pg_ctl", [
   "-D", DATA, "-w", "-l", join(WORK, "pg.log"),
   "-o", `-p ${PORT} -k ${WORK} -c listen_addresses= -c fsync=off`,

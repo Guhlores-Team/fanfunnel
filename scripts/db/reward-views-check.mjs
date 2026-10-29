@@ -11,7 +11,7 @@ const run=(tool,args)=>{const r=spawnSync(join(bin,tool),args,{encoding:"utf8",c
 const args=["-U","postgres","-X","-h",work,"-p","54221","-d","postgres","-v","ON_ERROR_STOP=1","-qAt"];
 const sql=q=>new Promise((resolve,reject)=>{const p=spawn(join(bin,"psql"),[...args,"-c",q],{stdio:["ignore","pipe","pipe"]});let out="",err="";p.stdout.on("data",v=>out+=v);p.stderr.on("data",v=>err+=v);p.on("error",reject);p.on("close",code=>code===0?resolve(out):reject(Error(err)));});
 try{
- run("initdb",["-D",join(work,"data"),"-A","trust","--no-sync","-U","postgres"]);
+ run("initdb",["-D",join(work,"data"),"-A","trust","--no-sync","-U","postgres","-E","UTF8","--locale=C"]);
  run("pg_ctl",["-D",join(work,"data"),"-l",join(work,"log"),"-w","-o",`-p 54221 -k ${work} -c listen_addresses= -c fsync=off`,"start"]);
  run("psql",[...args,"-f",join(root,"scripts/db/supabase-stub.sql")]);
  run("psql",[...args,"-f",join(root,"supabase/schema.sql")]);
