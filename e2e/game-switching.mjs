@@ -73,6 +73,7 @@ export async function gameSwitchingJourney(browser, { step, assert }, sink, ctx)
       const name = page.getByLabel("Campaign name");
       await name.waitFor({ timeout: 8000 });
       const select = page.getByLabel("Game fans play");
+      for (let i = 0; i < 40 && !(await select.isEnabled() && await select.inputValue() === state.scratch.id); i++) await page.waitForTimeout(200);
       assert(await select.inputValue() === state.scratch.id, "a new campaign defaults to the game fans get now");
       await name.fill(`Follow ${suffix}`);
       await select.selectOption("");

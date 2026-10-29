@@ -84,6 +84,9 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
   const [stats, setStats] = useState<CampaignStats[] | null>(null);
   const [uncat, setUncat] = useState<{ revenue: number; spinsBought: number; spinsPlayed: number; fans: number } | null>(null);
   const [wheels, setWheels] = useState<WheelSummary[]>([]);
+  // The game choice defaults to the live game, so wait for the list before
+  // letting a campaign be created (it would silently follow the live game).
+  const [wheelsLoaded, setWheelsLoaded] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   // null = not touched yet: default to whatever fans get right now.
@@ -107,11 +110,15 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
   // Fetch the creator's wheels once so each campaign can offer a pin selector.
   const loadWheels = useCallback(async () => {
     // Archived games too, so a campaign still set to one can say so.
-    const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
-    if (res.ok) {
-      const data = (await res.json()) as { wheels?: WheelSummary[] };
-      setWheels(data.wheels ?? []);
-      setNow(new Date());
+    try {
+      const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { wheels?: WheelSummary[] };
+        setWheels(data.wheels ?? []);
+        setNow(new Date());
+      }
+    } finally {
+      setWheelsLoaded(true);
     }
   }, []);
   const live = useMemo(() => liveExplanation(wheels, now), [wheels, now]);
@@ -126,7 +133,7 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
 
   async function createCampaign() {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || !wheelsLoaded) return;
     setCreating(true);
     try {
       const res = await fetch("/api/campaigns", {
@@ -187,7 +194,7 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
               value={chosenNewGame}
               games={wheels}
               liveTitle={liveTitle}
-              disabled={creating}
+              disabled={creating || !wheelsLoaded}
               describedBy={newGameHelpId}
               onChange={setNewGameId}
               className="w-full"
@@ -195,7 +202,7 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
           </div>
           <button
             onClick={createCampaign}
-            disabled={creating || !name.trim()}
+            disabled={creating || !wheelsLoaded || !name.trim()}
             className="btn-brand min-h-10 rounded-[10px] px-[18px] text-sm font-bold"
           >
             {creating ? "Creating…" : "Create campaign"}
