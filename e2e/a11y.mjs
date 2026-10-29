@@ -20,6 +20,7 @@ import { PUSH_STUB, pushConfig, openPushCard, turnPushOn, clearPushDevices } fro
 import { instantA11yStates } from "./instant-a11y.mjs";
 import { themingA11yStates } from "./theming-a11y.mjs";
 import { focusA11yStates } from "./focus-a11y.mjs";
+import { safetyA11yStates } from "./safety-a11y.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -397,6 +398,8 @@ const PAGES = [
   { path: "/spin/no-such-link-a11y", name: "fan link 404 (data rescue open)", prep: openLinkRescue },
   { path: "/dashboard", name: "dashboard (Settings: Close my account)", prep: openCloseAccount, advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard phone (Settings: Close my account)", viewport: PHONE, prep: openCloseAccount, advisory: DASH_ADVISORY },
+  // A1/A4: Admin › Reports and a blocked fan.
+  ...safetyA11yStates(DASH_ADVISORY),
 ];
 
 // Impacts that fail the build vs. advisory-only.
