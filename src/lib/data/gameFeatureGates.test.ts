@@ -4,7 +4,7 @@ import { FakeSupabase } from "./fakeSupabase";
 const owner = "00000000-0000-0000-0000-000000000060";
 const db = new FakeSupabase(owner);
 db.tables.profiles = []; db.tables.prizes = []; db.tables.wheel_templates = [];
-db.seed("profiles", { id: owner, features: { scratch: false, bingo: true } });
+db.seed("profiles", { id: owner, features: { scratch: false, bingo: false } });
 mock.module("@/lib/supabase/server", { namedExports: { isSupabaseConfigured: () => true, createClient: async () => db.client(), createServiceClient: () => db.client() } });
 let passed = 0;
 function check(label: string, value: unknown) { assert.ok(value, label); passed++; }
@@ -14,7 +14,7 @@ async function main() {
   const { createWheelTemplate } = await import("./templates");
   const empty = writes();
   await assert.rejects(() => createWheel({ gameKind: "scratch" }), /feature_disabled/); passed++;
-  await assert.rejects(() => createWheel({ gameKind: "bingo", gameConfig: { size: 3, linePrizeId: "target" } }), /game_unavailable/); passed++;
+  await assert.rejects(() => createWheel({ gameKind: "bingo", gameConfig: { size: 3, linePrizeId: "target" } }), /feature_disabled/); passed++;
   check("refused creator game creation writes no wheel or prizes", writes() === empty);
   const prizes = [{ id: "00000000-0000-0000-0000-000000000001", label: "A", rarity: "common", weight: 1 }, { id: "00000000-0000-0000-0000-000000000002", label: "B", rarity: "rare", weight: 1 }];
   const source = db.seed("wheels", { creator_id: owner, title: "Scratch source", game_kind: "scratch", game_config: { style: "classic" }, game_ready: true, prizes });

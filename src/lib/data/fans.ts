@@ -1,3 +1,4 @@
+import { CompleteReadError, readScopedRows } from "./readPages";
 // Data layer — fans and grants: creator CRM, fan detail, grant edits, fan
 // moderation, and the token-scoped fan actions (ack, self-exclude, report).
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
@@ -18,7 +19,6 @@ import {
 import { isUuid } from "./shared";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
-import { readFansOnBreak } from "./playGuard";
 import { isOnBreak } from "@/lib/play/playGuard";
 import { fanVisitsLast7, visitsByFan } from "./checkins";
 import { contactToken } from "@/lib/engagement";
@@ -137,63 +137,33 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
-  // RM-6: who is on a break (read on its own, so a DB without 0049 still lists).
-  const onBreakP = readFansOnBreak(sb, user.id);
-  const TAIL = `spins(prize_label, prize_rarity, created_at),
-       grants(amount_cents, campaign_id, campaign:campaigns(name))`;
-  // Per-wheel pass columns come from migration 0020. If they're not present yet,
-  // fall back to the legacy pass select so the Fans tab still loads (without the
-  // per-wheel breakdown) instead of returning nothing.
-  const primary = await sb
-    .from("fans")
-    .select(
-      `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at,
-       fan_passes(token, created_at, spins_remaining, wheel_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)),
-       ${TAIL}`
-    )
-    .eq("creator_id", user.id)
-    .order("created_at", { ascending: false });
-  let data: unknown = primary.data;
-  if (primary.error) {
-    const legacy = await sb
-      .from("fans")
-      .select(
-        `id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at,
-         fan_passes(token, created_at),
-         ${TAIL}`
-      )
-      .eq("creator_id", user.id)
-      .order("created_at", { ascending: false });
-    data = legacy.data;
-  }
-
-  const visits = await visitsByFan(sb, user.id);
-  const rows = (data ?? []) as unknown as {
-    id: string;
-    display_name: string | null;
-    handle: string | null;
-    spins_remaining: number;
-    spins_granted_total: number;
-    tags: string[] | null;
-    blocked_at?: string | null; // absent on the legacy select
-    fan_passes:
-      | {
-          token: string;
-          created_at: string;
-          spins_remaining?: number; // per-wheel fields are absent pre-0020
-          wheel_id?: string;
-          is_active?: boolean; // absent on the legacy select
-          self_excluded_at?: string | null;
-          wheel?: { title: string } | null;
-          campaign?: { name: string } | null;
-        }[]
-      | null;
-    spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[] | null;
-    grants:
-      | { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[]
-      | null;
+  const cutoff = new Date().toISOString();
+  const [fanRows, passRows, spinRows, grantRows, visits] = await Promise.all([
+    readScopedRows<Record<string, unknown>>(sb, "fans", "display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at, break_until", q => q.eq("creator_id", user.id), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, token, created_at, spins_remaining, wheel_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "spins", "fan_id, prize_label, prize_rarity, created_at", q => q.eq("creator_id", user.id).not("fan_id", "is", null), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "grants", "fan_id, amount_cents, campaign_id, campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
+    visitsByFan(sb, user.id),
+  ]);
+  const groupByFan = (items: Record<string, unknown>[]) => {
+    const groups = new Map<string, Record<string, unknown>[]>();
+    for (const row of items) {
+      if (typeof row.fan_id !== "string") continue;
+      const group = groups.get(row.fan_id) ?? [];
+      group.push(row); groups.set(row.fan_id, group);
+    }
+    return groups;
+  };
+  const passesByFan = groupByFan(passRows), spinsByFan = groupByFan(spinRows), grantsByFan = groupByFan(grantRows);
+  fanRows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id.localeCompare(a.id));
+  const rows = fanRows.map(fan => ({ ...fan, fan_passes: passesByFan.get(fan.id) ?? [], spins: spinsByFan.get(fan.id) ?? [], grants: grantsByFan.get(fan.id) ?? [] })) as unknown as {
+    id: string; display_name: string | null; handle: string | null;
+    spins_remaining: number; spins_granted_total: number; tags: string[] | null;
+    blocked_at: string | null; break_until: string | null;
+    fan_passes: { token: string; created_at: string; spins_remaining: number; wheel_id: string; is_active: boolean; self_excluded_at: string | null; wheel: { title: string } | null; campaign: { name: string } | null }[];
+    spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[];
+    grants: { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[];
   }[];
-  const onBreak = await onBreakP;
 
   return rows.map((r) => {
     const wins = (r.spins ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -241,7 +211,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
       // offers none (is_active is undefined there).
       activeToken: links.find((p) => p.is_active === true && !p.self_excluded_at)?.token ?? null,
       // RM-6: only the break state, never the fan's reminder or counts.
-      breakUntil: onBreak.get(r.id) ?? null,
+      breakUntil: isOnBreak(r.break_until) ? r.break_until : null,
       visits7: visits.get(r.id) ?? 0,
     };
   });
@@ -322,25 +292,23 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
  */
 export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   if (!isSupabaseConfigured()) return mockGetFanDetail(fanId);
+  const cutoff = new Date().toISOString();
 
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
 
-  const { data: fan } = await sb
+  const { data: fan, error: fanReadError } = await sb
     .from("fans")
     .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags, blocked_at")
     .eq("id", fanId)
     .eq("creator_id", user.id)
     .maybeSingle();
+  if (fanReadError) throw new CompleteReadError();
   if (!fan) return null;
 
   const [{ data: spinRows }, breakRes] = await Promise.all([
-    sb
-      .from("spins")
-      .select("prize_label, prize_rarity, campaign_id, created_at")
-      .eq("fan_id", fanId)
-      .order("created_at", { ascending: false }),
+    readScopedRows<{ prize_label: string; prize_rarity: Rarity; campaign_id: string | null; created_at: string; kind?: "play" | "bonus" }>(sb, "spins", "prize_label, prize_rarity, campaign_id, created_at, kind", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff).then(data => ({ data: data.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)) })),
     // RM-6: read on its own so a DB without 0049 still opens the drawer.
     Promise.resolve(sb.from("fans").select("break_until").eq("id", fanId).maybeSingle()).catch(() => null),
   ]);
@@ -351,9 +319,11 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     prize_rarity: Rarity;
     campaign_id: string | null;
     created_at: string;
+    kind?: "play" | "bonus";
   }[];
-  const totalSpins = spins.length;
-  const lastActive = spins[0]?.created_at ?? null;
+  const paidPlays = spins.filter(spin => spin.kind !== "bonus");
+  const totalSpins = paidPlays.length;
+  const lastActive = paidPlays[0]?.created_at ?? null;
 
   const rarityCounts = new Map<Rarity, number>();
   for (const s of spins) {
@@ -366,12 +336,8 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   // Pending prizes: this fan's pending redemptions, joined back to the spin for
   // the prize label/rarity. Emoji isn't stored on spins, so it's omitted.
-  const { data: pendingRows } = await sb
-    .from("redemptions")
-    .select("created_at, spin:spins!inner(prize_label, prize_rarity, fan_id)")
-    .eq("status", "pending")
-    .eq("spin.fan_id", fanId)
-    .order("created_at", { ascending: false });
+  const pendingRows = await readScopedRows<{ created_at: string; spin: { prize_label: string; prize_rarity: Rarity; fan_id: string } | null }>(sb, "redemptions", "created_at, spin:spins!inner(prize_label, prize_rarity, fan_id)", q => q.eq("creator_id", user.id).eq("status", "pending").eq("spin.fan_id", fanId), cutoff);
+  pendingRows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
 
   const pending = (pendingRows ?? []) as unknown as {
     created_at: string;
@@ -387,13 +353,8 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   // Every pass, oldest first in editGrant's order: the links list (newest
   // first) and each grant's preview balance come from this one read.
-  const { data: passRows } = await sb
-    .from("fan_passes")
-    .select("id, token, created_at, is_active, spins_remaining, wheel:wheels(title)")
-    .eq("fan_id", fanId)
-    .eq("creator_id", user.id)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
+  const passRows = await readScopedRows<{ token: string; created_at: string; is_active: boolean; spins_remaining: number; wheel: { title: string } | null }>(sb, "fan_passes", "token, created_at, is_active, spins_remaining, wheel:wheels(title)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
+  passRows.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
 
   const passesOldestFirst = ((passRows ?? []) as unknown as {
     id: string;
@@ -410,11 +371,8 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     .map((p) => ({ token: p.token, createdAt: p.created_at }));
 
   // This fan's grants, newest first, with campaign name resolved via a join.
-  const { data: grantRows } = await sb
-    .from("grants")
-    .select("id, fan_pass_id, spins, amount_cents, bonus_spins, campaign_id, created_at, campaign:campaigns(name)")
-    .eq("fan_id", fanId)
-    .order("created_at", { ascending: false });
+  const grantRows = await readScopedRows<{ created_at: string } & Record<string, unknown>>(sb, "grants", "fan_pass_id, spins, amount_cents, bonus_spins, campaign_id, created_at, campaign:campaigns(name)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
+  grantRows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
 
   const grantData = (grantRows ?? []) as unknown as {
     id: string;
@@ -483,7 +441,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   }
   for (const s of spins) {
     const b = bucketFor(s.campaign_id);
-    b.spinsPlayed += 1;
+    if (s.kind !== "bonus") b.spinsPlayed += 1;
     const cur = b.prizeCounts.get(s.prize_label);
     if (cur) cur.count += 1;
     else b.prizeCounts.set(s.prize_label, { label: s.prize_label, rarity: s.prize_rarity, count: 1 });
@@ -499,6 +457,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   }));
 
   return {
+    dataStatus: "complete",
     fanId: fan.id,
     name: fan.display_name ?? fan.handle ?? "Fan",
     blocked: !!(fan as { blocked_at?: string | null }).blocked_at,

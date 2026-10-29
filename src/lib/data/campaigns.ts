@@ -1,3 +1,4 @@
+import { CompleteReadError, readScopedRows } from "./readPages";
 import { focusPackTerms, type FocusPackTerms } from "./focusPacks";
 // Data layer — campaigns and campaign packs.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
@@ -102,25 +103,25 @@ export interface UncategorizedStats {
 export async function getUncategorizedStats(): Promise<UncategorizedStats> {
   const empty = { revenue: 0, spinsBought: 0, spinsPlayed: 0, fans: 0 };
   if (!isSupabaseConfigured()) return mockGetUncategorizedStats();
+  const cutoff = new Date().toISOString();
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return empty;
 
-  const { data: grantRows } = await sb
-    .from("grants")
-    .select("fan_id, spins, amount_cents")
-    .eq("creator_id", user.id)
-    .is("campaign_id", null);
+  const grantRows = await readScopedRows<{ fan_id: string; spins: number; amount_cents: number }>(sb, "grants", "fan_id, spins, amount_cents", q => q.eq("creator_id", user.id).is("campaign_id", null), cutoff);
   const grants = (grantRows ?? []) as { fan_id: string; spins: number; amount_cents: number }[];
 
   const { count: spinsPlayed } = await sb
     .from("spins")
     .select("id", { count: "exact", head: true })
     .eq("creator_id", user.id)
+    .eq("kind", "play")
+    .lte("created_at", cutoff)
     .is("campaign_id", null);
 
+  if (typeof spinsPlayed !== "number") throw new CompleteReadError();
   return {
     revenue: grants.reduce((s, g) => s + g.amount_cents, 0),
     spinsBought: grants.reduce((s, g) => s + g.spins, 0),

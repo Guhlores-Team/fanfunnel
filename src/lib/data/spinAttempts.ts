@@ -1,7 +1,10 @@
 import { recordRewardDisclosures } from "./rewardDisclosures";
-import { buildScratchPoolSnapshot, hashGamePoolSnapshot, primarySnapshot, type GamePoolSnapshot } from "@/lib/games/core/gameProof";
-import { makeGameRngV3 } from "@/lib/games/core/fairness";
-import { finishGame, type GamePresentation, type GameTrace } from "@/lib/games/core/play";
+import { gameProposal, addBonusFailure } from "./gameProposal";
+import { readBingoCard } from "./bingo";
+import { parseBingoState } from "@/lib/games/bingo/state";
+import type { BingoState } from "@/lib/games/bingo/engine";
+import { buildBingoPoolSnapshot, buildScratchPoolSnapshot, hashGamePoolSnapshot, type GamePoolSnapshot } from "@/lib/games/core/gameProof";
+import { type GamePresentation, type GameTrace, type BonusFailurePlan } from "@/lib/games/core/play";
 import { parseGamePresentation } from "@/lib/games/core/presentation";
 import { getFanFocusDisplay } from "./focus";
 import "server-only";
@@ -38,6 +41,7 @@ type Context = {
   serverSeed: string; serverSeedHash: string; nonce: number; pityCounter: number;
   happyHourMultiplier: number | null; focus: FocusRow | null;
   reservation: { code_id?: string; prize_id?: string } | null;
+  bingoCard?: { id:string;version:number;cells:unknown;marked_mask:number;awarded_lines_mask:number;status:string } | null;
   wheel: DbWheelRow; prizes: DbWheelRow["prizes"]; commitment: "fresh" | "stored";
 };
 type SpinRow = { id: string; creator_id: string; fan_id: string; wheel_id: string; prize_id: string; prize_label: string; prize_rarity: Prize["rarity"]; prize_image_url?: string | null; pool_hash?: string; created_at?: string; game_kind?: "wheel" | "scratch" | "bingo"; presentation?: unknown };
@@ -46,7 +50,7 @@ type Receipt = {
   stockAfter: number | null; focus: FocusRow | null; spin: SpinRow;
   pityAwarded?: boolean; chaseAwarded?: boolean; chaseCompleted?: boolean; focusConsumed?: boolean; chaseConsumed?: boolean;
   prize?: Prize; prizeIndex?: number; showStock?: boolean;
-  gameKind?: "wheel" | "scratch" | "bingo"; presentation?: unknown; bonusWins?: [];
+  gameKind?: "wheel" | "scratch" | "bingo"; presentation?: unknown; bonusWins?: {line:number;shareId:string;prize:Prize;spin:SpinRow;stockAfter?:number|null;reward?:Receipt["reward"]}[];
   reward?: { kind: DeliveredReward["kind"]; cipher: string; iv: string; keyVersion: number } | null;
 };
 export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" } | { status: "declined"; error: SpinError["error"] };
@@ -63,11 +67,15 @@ function resultFromReceipt(receipt: Receipt, requestId: string): SpinResult {
   const p = receipt.prize ?? { id: receipt.spin.prize_id, label: receipt.spin.prize_label, rarity: receipt.spin.prize_rarity, weight: 0, imageUrl: receipt.spin.prize_image_url ?? null };
   const reward = receipt.reward ? { kind: receipt.reward.kind, value: openReward(receipt.reward, receipt.spin.creator_id) } : null;
   const kind = receipt.gameKind ?? receipt.spin.game_kind ?? "wheel";
-  if (kind !== "wheel" && kind !== "scratch") throw new Error("Unreleased game receipt");
-  const presentation = kind === "scratch" ? parseGamePresentation(receipt.presentation ?? receipt.spin.presentation, { kind, prizeId: p.id, label: p.label }) : null;
+  if (!["wheel","scratch","bingo"].includes(kind)) throw new Error("Unknown game receipt");
+  const presentation = kind !== "wheel" ? parseGamePresentation(receipt.presentation ?? receipt.spin.presentation, { kind, prizeId: p.id, label: p.label }) : null;
   if (kind === "scratch" && (!presentation || (receipt.bonusWins !== undefined && (!Array.isArray(receipt.bonusWins) || receipt.bonusWins.length !== 0)))) throw new Error("Invalid committed scratch presentation");
+  const bonuses=receipt.bonusWins??[];
+  if(kind === "bingo" && (!presentation || presentation.kind!=="bingo" || !Array.isArray(receipt.bonusWins) || bonuses.length!==presentation.newLines.length ||
+    bonuses.some((bonus,index)=>bonus.line!==presentation.newLines[index]||!bonus.shareId||!bonus.spin||!bonus.prize)||new Set(bonuses.map(bonus=>bonus.shareId)).size!==bonuses.length))throw new Error("Invalid Bingo bonus receipt");
   return {
-    ...(kind === "scratch" ? { gameKind: kind, presentation: presentation!, bonusWins: [] } : {}),
+    ...(kind !== "wheel" ? { gameKind: kind, presentation: presentation!, bonusWins: bonuses.map(bonus=>({line:bonus.line,shareId:bonus.shareId,prize:toPublicPrize(bonus.prize,{showStock:receipt.showStock??true}),
+      ...(bonus.spin.created_at?{awardedAt:bonus.spin.created_at}:{}),...(bonus.reward?{instant:true,reward:{kind:bonus.reward.kind,value:openReward(bonus.reward,bonus.spin.creator_id)}}:{})})) } : {}),
     attemptId: requestId, replayed: receipt.replayed === true,
     ...(receipt.spin.created_at ? { awardedAt: receipt.spin.created_at } : {}),
     prize: toPublicPrize(p, { showStock: receipt.showStock ?? true }), prizeIndex: receipt.prizeIndex ?? 0,
@@ -78,9 +86,11 @@ function resultFromReceipt(receipt: Receipt, requestId: string): SpinResult {
     focus: toFanFocusView(receipt.focus), ...(reward ? { reward } : {}),
   };
 }
-async function refreshReceipt(token:string,receipt:Receipt,requestId:string,sb:Service,result:SpinResult=resultFromReceipt(receipt,requestId)):Promise<SpinResult> {
-  const response={...result,...(await readPlayAfterSpin(sb,receipt.spin.fan_id)),...(await getFanFocusDisplay(token,sb))};
-  if(!await recordRewardDisclosures(sb,token,result.reward?[receipt.spin.id]:[]))throw new Error("reward_disclosure_pending");
+async function refreshReceipt(token:string,receipt:Receipt,requestId:string,sb:Service):Promise<SpinResult> {
+  const result=resultFromReceipt(receipt,requestId);
+  const response={...result,...(await readPlayAfterSpin(sb,receipt.spin.fan_id)),...(await getFanFocusDisplay(token,sb)),...(result.gameKind==="bingo"?{bingoCard:await readBingoCard(token,sb)}:{})};
+  const exposed=[...(result.reward?[receipt.spin.id]:[]),...(result.bonusWins??[]).flatMap((bonus,index)=>bonus.reward?[receipt.bonusWins![index].spin.id]:[])];
+  if(!await recordRewardDisclosures(sb,token,exposed))throw new Error("reward_disclosure_pending");
   return response;
 }
 /** A read cannot authorize a fresh attempt. Absent and pending retain the SAME request identity. */
@@ -99,7 +109,7 @@ export async function readSpinAttempt(token: string, intent: SpinIntent, sb = cr
 }
 type ExpectedReward = { delivery: PrizeDelivery; codeId?: string; cipher?: string; iv?: string; keyVersion?: number };
 type RewardCandidate = { status: "ready"; candidate: ExpectedReward } | { status: "sold_out" } | { status: "unavailable" } | { status: "error" };
-async function expectedReward(sb: Service, ctx: Context, prize: Prize): Promise<RewardCandidate> {
+async function expectedReward(sb: Service, ctx: Context, prize: Prize, usedCodes:ReadonlySet<string>=new Set()): Promise<RewardCandidate> {
   const delivery = prize.delivery ?? "manual";
   if (delivery === "manual") return { status: "ready", candidate: { delivery } };
   let row: { id?: string; kind?: string; cipher: string; iv: string; key_version: number } | null;
@@ -109,6 +119,7 @@ async function expectedReward(sb: Service, ctx: Context, prize: Prize): Promise<
     // A held chase code must be selected by its concrete identity; SQL also validates ownership.
     if (reserved) q = q.eq("id", reserved);
     else q = q.is("reserved_focus_id", null);
+    if(usedCodes.size)q=q.not("id","in",`(${[...usedCodes].filter(isUuid).join(",")})`);
     const { data, error } = await q.order("created_at").order("id").limit(1).maybeSingle();
     if (error) return { status: "error" };
     row = data;
@@ -132,125 +143,93 @@ async function declineAttempt(sb: Service, token: string, intent: SpinIntent, er
   return reply?.status === "declined" ? spinError(reply.error) : { error: "spin_pending" };
 }
 
-/** No credit, stock, seed, pity or focus write occurs outside commit_spin_attempt. */
-export async function commitSpinAttempt(token: string, intent: SpinIntent, sb = createServiceClient()): Promise<SpinResult | SpinError> {
-  const binding = { p_attempt: intent.requestId, p_token: token, p_request_hash: await spinIntentHash(intent) };
-  for (let contextTry = 0; contextTry < 8; contextTry++) {
-    const prepared = await call(sb, "prepare_spin_attempt", binding);
-    if (!prepared) return { error: "spin_pending" };
-    if (prepared.status === "committed") {
-      try {
-        const receipt = { ...prepared, replayed: true } as Receipt;
-        return await refreshReceipt(token,receipt,intent.requestId,sb);
-      } catch { return { error: "spin_pending" }; }
-    }
-    if (prepared.status === "declined") return spinError(prepared.error);
-    if (prepared.status !== "ready") return { error: "spin_pending" };
-    const ctx = prepared.context as Context;
-    const config = toWheelConfig({ ...ctx.wheel, prizes: ctx.prizes });
-    const focus = toFanFocusView(ctx.focus);
-    let snapshot: ReturnType<typeof buildFocusPoolSnapshot> | GamePoolSnapshot;
-    const gameKind = config.gameKind ?? "wheel";
-    if (gameKind === "bingo" || config.gameReady === false) return declineAttempt(sb, token, intent);
-    try {
-      const options = {
-        happyHourMultiplier: ctx.happyHourMultiplier, pityCounter: ctx.pityCounter,
-        ...(focus?.kind === "focus" ? { focus: { prizeId: focus.prizeId, multiplier: focus.multiplier, spinsLeft: focus.spinsLeft, totalSpins: focus.totalSpins } } : {}),
-        ...(focus?.kind === "chase" ? { chase: { prizeId: focus.prizeId, counter: focus.chaseCounter, within: focus.chaseWithin, reserved: !!ctx.reservation } } : {}),
-      };
-      snapshot = gameKind === "scratch" ? buildScratchPoolSnapshot(config, options) : buildFocusPoolSnapshot(config, options);
-    } catch { return declineAttempt(sb, token, intent); }
-    const gameSnapshot = snapshot.game === "scratch" ? snapshot as GamePoolSnapshot : null;
-    const poolHash = gameSnapshot ? await hashGamePoolSnapshot(gameSnapshot) : await hashPoolSnapshot(snapshot as ReturnType<typeof buildFocusPoolSnapshot>);
-    let rng = gameSnapshot ? await makeGameRngV3(ctx.serverSeed, normalizeClientSeed(intent.clientSeed), ctx.nonce, poolHash) : await makeFairRngV3(ctx.serverSeed, normalizeClientSeed(intent.clientSeed), ctx.nonce, poolHash);
-    const excluded = new Set<string>();
-    const excludedOrder: string[] = [];
-    let reprepare = false;
-    for (let candidateTry = 0; candidateTry < snapshot.prizes.length + 1; candidateTry++) {
-    let draw: ReturnType<typeof drawFromSnapshot>;
-    try {
-      if (gameSnapshot) {
-        // Rebuild only after a failed allocation. Cosmetic face draws from that
-        // failed candidate must never shift the next primary draw.
-        rng = await makeGameRngV3(ctx.serverSeed, normalizeClientSeed(intent.clientSeed), ctx.nonce, poolHash);
-        const replayExclusions = new Set<string>();
-        for (const id of excludedOrder) {
-          const prior = drawFromSnapshot(primarySnapshot(gameSnapshot), replayExclusions, rng);
-          if (prior.prize.id !== id) throw new Error("Stock trace changed");
-          replayExclusions.add(id);
-        }
+/** No credit, stock, seed, card, award, pity or focus write occurs outside one commit. */
+export async function commitSpinAttempt(token:string,intent:SpinIntent,sb=createServiceClient()):Promise<SpinResult|SpinError> {
+  const binding={p_attempt:intent.requestId,p_token:token,p_request_hash:await spinIntentHash(intent)};
+  for(let contextTry=0;contextTry<8;contextTry++){
+    const prepared=await call(sb,"prepare_spin_attempt",binding);
+    if(!prepared)return {error:"spin_pending"};
+    if(prepared.status==="committed"){try{return await refreshReceipt(token,{...prepared,replayed:true} as Receipt,intent.requestId,sb);}catch{return {error:"spin_pending"};}}
+    if(prepared.status==="declined")return spinError(prepared.error);
+    if(prepared.status!=="ready")return {error:"spin_pending"};
+    const ctx=prepared.context as Context,config=toWheelConfig({...ctx.wheel,prizes:ctx.prizes}),kind=config.gameKind??"wheel",focus=toFanFocusView(ctx.focus);
+    if(config.gameReady===false)return declineAttempt(sb,token,intent);
+    // Context includes the personally held unit for primary odds. Bingo bonuses
+    // use ordinary FREE inventory only; composeModifiers injects its reserved primary.
+    if(kind==="bingo"&&ctx.reservation?.prize_id){const held=config.prizes.find(prize=>prize.id===ctx.reservation?.prize_id);if(held&&typeof held.stock==="number")held.stock=Math.max(0,held.stock-1);}
+    const options={happyHourMultiplier:ctx.happyHourMultiplier,pityCounter:ctx.pityCounter,
+      ...(focus?.kind==="focus"?{focus:{prizeId:focus.prizeId,multiplier:focus.multiplier,spinsLeft:focus.spinsLeft,totalSpins:focus.totalSpins}}:{}),
+      ...(focus?.kind==="chase"?{chase:{prizeId:focus.prizeId,counter:focus.chaseCounter,within:focus.chaseWithin,reserved:!!ctx.reservation}}:{})};
+    let card:BingoState|null=null;
+    if(ctx.bingoCard){card=parseBingoState({cells:ctx.bingoCard.cells,markedMask:ctx.bingoCard.marked_mask,awardedLinesMask:ctx.bingoCard.awarded_lines_mask,version:ctx.bingoCard.version});if(!card)return {error:"spin_pending"};}
+    let snapshot:ReturnType<typeof buildFocusPoolSnapshot>|GamePoolSnapshot;
+    try{snapshot=kind==="scratch"?buildScratchPoolSnapshot(config,options):kind==="bingo"?buildBingoPoolSnapshot(config,options,config.gameConfig as {size:3;linePrizeId:string},card):buildFocusPoolSnapshot(config,options);}catch{return declineAttempt(sb,token,intent);}
+    const game=snapshot.game==="wheel"?null:snapshot as GamePoolSnapshot;
+    const poolHash=game?await hashGamePoolSnapshot(game):await hashPoolSnapshot(snapshot as ReturnType<typeof buildFocusPoolSnapshot>);
+    const legacyRng=game?null:await makeFairRngV3(ctx.serverSeed,normalizeClientSeed(intent.clientSeed),ctx.nonce,poolHash);
+    const excluded:string[]=[];let failures:BonusFailurePlan[]=[],reprepare=false,changed=0;
+    const bonusIds=new Map<number,string>();
+    let legacyDraw:ReturnType<typeof drawFromSnapshot>|null=null;
+    for(let proposalTry=0;proposalTry<64;proposalTry++){
+      let draw:ReturnType<typeof drawFromSnapshot>,presentation:GamePresentation|undefined,trace:GameTrace|{excluded:string[];won:string},bonuses:{line:number;prize:import("@/lib/games/bingo/engine").BonusPrize}[]=[];
+      try{if(game){const proposed=await gameProposal(game,ctx.serverSeed,normalizeClientSeed(intent.clientSeed),ctx.nonce,poolHash,excluded,failures);draw=proposed.primary;presentation=proposed.presentation;trace=proposed.trace;bonuses=proposed.bonuses;}
+        else{draw=legacyDraw??drawFromSnapshot(snapshot as ReturnType<typeof buildFocusPoolSnapshot>,new Set(excluded),legacyRng!);legacyDraw=draw;trace={excluded:[...excluded],won:draw.prize.id};}}
+      catch{return declineAttempt(sb,token,intent);}
+      const index=config.prizes.findIndex(prize=>prize.id===draw.prize.id),prize=config.prizes[index];if(!prize)return {error:"db_error"};
+      const usedCodes=new Set<string>(),free=new Map(config.prizes.map(prize=>[prize.id,prize.stock??null]));
+      const reserve=(target:Prize,primary:boolean)=>{if(primary&&ctx.reservation?.prize_id===target.id)return true;const left=free.get(target.id);if(typeof left!=="number")return true;if(left<=0)return false;free.set(target.id,left-1);return true;};
+      const primaryCandidate=await expectedReward(sb,ctx,prize,usedCodes);
+      if(primaryCandidate.status==="error")return {error:"spin_pending"};
+      if(primaryCandidate.status==="unavailable")return declineAttempt(sb,token,intent,"reward_unavailable");
+      if(primaryCandidate.status==="sold_out"||!reserve(prize,true)){if(ctx.reservation?.prize_id===prize.id)return declineAttempt(sb,token,intent,"reward_unavailable");if(excluded.includes(prize.id))return {error:"spin_pending"};excluded.push(prize.id);legacyDraw=null;failures=[];continue;}
+      if(primaryCandidate.candidate.codeId)usedCodes.add(primaryCandidate.candidate.codeId);
+      const bonusRows:Record<string,unknown>[]=[];let retryBonus=false;
+      for(const bonus of bonuses){
+        const target=config.prizes.find(prize=>prize.id===bonus.prize.id);if(!target)return {error:"db_error"};
+        const candidate=await expectedReward(sb,{...ctx,reservation:null},target,usedCodes);
+        if(candidate.status==="error")return {error:"spin_pending"};
+        if(candidate.status==="unavailable")return declineAttempt(sb,token,intent,"reward_unavailable");
+        if(candidate.status==="sold_out"||!reserve(target,false)){try{failures=addBonusFailure(failures,bonus.line,target.id);}catch{return {error:"spin_pending"};}retryBonus=true;break;}
+        if(candidate.candidate.codeId)usedCodes.add(candidate.candidate.codeId);
+        if(!bonusIds.has(bonus.line))bonusIds.set(bonus.line,crypto.randomUUID());
+        bonusRows.push({id:bonusIds.get(bonus.line),line:bonus.line,prize_id:target.id,prize_label:target.label,prize_rarity:target.rarity,prize_image_url:target.imageUrl??null,
+          response_prize:toPublicPrize(target,{showStock:showsStock(config)}),expected_reward:candidate.candidate});
       }
-      draw = drawFromSnapshot(gameSnapshot ? primarySnapshot(gameSnapshot) : snapshot as ReturnType<typeof buildFocusPoolSnapshot>, excluded, rng);
-    } catch { return declineAttempt(sb, token, intent); }
-    const index = config.prizes.findIndex(p => p.id === draw.prize.id);
-    const prize = config.prizes[index];
-    if (!prize) return { error: "db_error" };
-    let candidate = await expectedReward(sb, ctx, prize);
-    if (candidate.status === "error") return { error: "spin_pending" };
-    if (candidate.status === "unavailable") return declineAttempt(sb, token, intent, "reward_unavailable");
-    if (candidate.status === "sold_out") {
-      if (ctx.reservation?.prize_id === prize.id) return declineAttempt(sb, token, intent, "reward_unavailable");
-      excluded.add(prize.id); excludedOrder.push(prize.id); continue;
+      if(retryBonus)continue;
+      const nextSeed=randomSeedHex(),upgraded=draw as typeof draw&{focusConsumed?:boolean;chaseConsumed?:boolean;chaseCompleted?:boolean;chaseAwarded?:boolean;nextFocusSpinsLeft?:number|null;nextChaseCounter?:number|null};
+      const spin={id:intent.requestId,fan_pass_id:ctx.passId,creator_id:ctx.creatorId,wheel_id:ctx.wheelId,fan_id:ctx.fanId,
+        prize_id:prize.id,prize_label:prize.label,prize_rarity:prize.rarity,prize_image_url:prize.imageUrl??null,campaign_id:ctx.campaignId,
+        server_seed:ctx.serverSeed,server_seed_hash:ctx.serverSeedHash,nonce:ctx.nonce,client_seed:normalizeClientSeed(intent.clientSeed)||null,
+        seed_commitment:ctx.commitment==="fresh"?"fresh":intent.publishedSeedHash?.toLowerCase()===ctx.serverSeedHash.toLowerCase()?"published":"stored",
+        fair_version:3,pool_snapshot:snapshot,pool_hash:poolHash,fair_trace:trace,
+        next_pity_counter:draw.nextPityCounter,pity_awarded:draw.pityAwarded,focus_consumed:upgraded.focusConsumed??false,chase_consumed:upgraded.chaseConsumed??false,chase_completed:upgraded.chaseCompleted??false,chase_awarded:upgraded.chaseAwarded??false,
+        next_focus_spins_left:upgraded.nextFocusSpinsLeft??null,next_chase_counter:upgraded.nextChaseCounter??null,
+        response_prize:toPublicPrize(prize,{showStock:showsStock(config)}),response_prize_index:index,response_show_stock:showsStock(config),
+        ...(game?{game_kind:kind,presentation,bonuses:bonusRows}:{})};
+      const args={...binding,p_context:{contextHash:ctx.contextHash,publishedSeedHash:intent.publishedSeedHash?.toLowerCase()??null,...(kind==="bingo"?{cardId:ctx.bingoCard?.id??null,cardVersion:ctx.bingoCard?.version??null}:{})},p_spin:spin,p_expected_reward:primaryCandidate.candidate,p_next_seed:{seed:nextSeed,hash:await sha256Hex(nextSeed)}};
+      let reply:Record<string,unknown>|null=null;for(let transport=0;transport<3&&!reply;transport++)reply=await call(sb,"commit_spin_attempt",args);
+      if(!reply)return {error:"spin_pending"};
+      if(reply.status==="retry_context"){reprepare=true;break;}
+      if(reply.status==="changed"){if(++changed>=8)return {error:"spin_pending"};continue;}
+      if(reply.status==="sold_out"){
+        const line=reply.line;
+        if(typeof line==="number"){
+          const failed=bonuses.find(bonus=>bonus.line===line);if(!failed||reply.prizeId!==failed.prize.id)return {error:"spin_pending"};
+          try{failures=addBonusFailure(failures,line,failed.prize.id);}catch{return {error:"spin_pending"};}
+        }else{if(excluded.includes(prize.id))return {error:"spin_pending"};excluded.push(prize.id);legacyDraw=null;failures=[];}
+        continue;
+      }
+      if(reply.status==="declined")return spinError(reply.error);
+      if(reply.status!=="committed")return {error:"spin_pending"};
+      const receipt=reply as Receipt;
+      if(receipt.replayed!==true){
+        const events=[{prize,spin:receipt.spin,reward:receipt.reward,stockAfter:receipt.stockAfter},...(receipt.bonusWins??[]).map(bonus=>({prize:bonus.prize,spin:bonus.spin,reward:bonus.reward,stockAfter:bonus.stockAfter??null}))];
+        for(const event of events){runAfterResponse(()=>fireWebhooks(ctx.creatorId,{event:event.reward?"prize_delivered":"prize_pending",prize:event.prize.label,rarity:event.prize.rarity,at:event.spin.created_at??new Date().toISOString()}));
+          runAfterResponse(()=>notifyCreator(ctx.creatorId,{type:"spin",spinId:event.spin.id,fanId:ctx.fanId,prizeId:event.prize.id,stockAfter:event.stockAfter}));}
+      }
+      try{return await refreshReceipt(token,receipt,intent.requestId,sb);}catch{return {error:"spin_pending"};}
     }
-    let expected = candidate.candidate;
-    let presentation: GamePresentation | undefined;
-    let trace: GameTrace | { excluded: string[]; won: string } = { excluded: [...excludedOrder], won: prize.id };
-    if (gameSnapshot) {
-      try {
-        const played = finishGame(gameSnapshot, draw, trace, rng);
-        presentation = played.presentation;
-        trace = played.trace;
-      } catch { return declineAttempt(sb, token, intent); }
-    }
-    const nextSeed = randomSeedHex();
-    const upgraded = draw as typeof draw & { focusConsumed?: boolean; chaseConsumed?: boolean; chaseCompleted?: boolean; chaseAwarded?: boolean; nextFocusSpinsLeft?: number | null; nextChaseCounter?: number | null };
-    const spin = {
-      id: intent.requestId, fan_pass_id: ctx.passId, creator_id: ctx.creatorId, wheel_id: ctx.wheelId, fan_id: ctx.fanId,
-      prize_id: prize.id, prize_label: prize.label, prize_rarity: prize.rarity, prize_image_url: prize.imageUrl ?? null,
-      campaign_id: ctx.campaignId, server_seed: ctx.serverSeed, server_seed_hash: ctx.serverSeedHash, nonce: ctx.nonce,
-      client_seed: normalizeClientSeed(intent.clientSeed) || null,
-      seed_commitment: ctx.commitment === "fresh" ? "fresh" : intent.publishedSeedHash?.toLowerCase() === ctx.serverSeedHash.toLowerCase() ? "published" : "stored",
-      fair_version: 3, pool_snapshot: snapshot, pool_hash: poolHash, fair_trace: trace,
-      ...(gameSnapshot ? { game_kind: gameKind, presentation } : {}),
-      next_pity_counter: draw.nextPityCounter, pity_awarded: draw.pityAwarded,
-      focus_consumed: upgraded.focusConsumed ?? false, chase_consumed: upgraded.chaseConsumed ?? false,
-      chase_completed: upgraded.chaseCompleted ?? false, chase_awarded: upgraded.chaseAwarded ?? false,
-      next_focus_spins_left: upgraded.nextFocusSpinsLeft ?? null, next_chase_counter: upgraded.nextChaseCounter ?? null,
-      // Immutable response metadata is stored inside the attempt, never in a public fairness proof.
-      response_prize: toPublicPrize(prize, { showStock: showsStock(config) }), response_prize_index: index, response_show_stock: showsStock(config),
-    };
-    const args = { ...binding, p_context: { contextHash: ctx.contextHash, publishedSeedHash: intent.publishedSeedHash?.toLowerCase() ?? null },
-      p_spin: spin, p_expected_reward: expected, p_next_seed: { seed: nextSeed, hash: await sha256Hex(nextSeed) } };
-    let reply: Record<string, unknown> | null = null;
-    // A changed encrypted candidate retries the same outcome and same RNG position.
-    for (let candidateRefresh = 0; candidateRefresh < 8; candidateRefresh++) {
-      reply = null;
-      for (let transport = 0; transport < 3 && !reply; transport++) reply = await call(sb, "commit_spin_attempt", args);
-      if (reply?.status !== "changed") break;
-      candidate = await expectedReward(sb, ctx, prize);
-      if (candidate.status === "error") return { error: "spin_pending" };
-      if (candidate.status === "unavailable") return declineAttempt(sb, token, intent, "reward_unavailable");
-      if (candidate.status === "sold_out") { reply = { status: "sold_out" }; break; }
-      expected = candidate.candidate;
-      args.p_expected_reward = expected;
-    }
-    if (!reply) return { error: "spin_pending" };
-    if (reply.status === "retry_context") { reprepare = true; break; }
-    if (reply.status === "sold_out") {
-      excluded.add(prize.id); excludedOrder.push(prize.id); continue;
-    }
-    if (reply.status === "declined") return spinError(reply.error);
-    if (reply.status !== "committed") return { error: "spin_pending" };
-    const receipt = reply as Receipt;
-    let result: SpinResult;
-    try { result = resultFromReceipt(receipt, intent.requestId); } catch { return { error: "spin_pending" }; }
-    if (receipt.replayed !== true) {
-      runAfterResponse(() => fireWebhooks(ctx.creatorId, { event: receipt.reward ? "prize_delivered" : "prize_pending", prize: prize.label, rarity: prize.rarity, at: receipt.spin.created_at ?? new Date().toISOString() }));
-      runAfterResponse(() => notifyCreator(ctx.creatorId, { type: "spin", spinId: receipt.id, fanId: ctx.fanId, prizeId: prize.id, stockAfter: receipt.stockAfter }));
-    }
-    try { return await refreshReceipt(token,receipt,intent.requestId,sb,result); } catch { return { error: "spin_pending" }; }
-    }
-    if (!reprepare) return declineAttempt(sb, token, intent);
+    if(!reprepare)return {error:"spin_pending"};
   }
-  return { error: "spin_pending" };
+  return {error:"spin_pending"};
 }

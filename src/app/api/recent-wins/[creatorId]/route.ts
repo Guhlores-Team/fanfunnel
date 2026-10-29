@@ -1,3 +1,4 @@
+import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { getRecentWins } from "@/lib/data";
 import { clientIp } from "@/lib/api/clientIp";
@@ -17,15 +18,17 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ creatorId: string }> }
 ) {
-  // Most polls are served by the CDN; this caps what reaches the origin (e.g.
-  // cache-busting query strings). Generous: one fan polls ~3x/min, and many
-  // fans can share an IP. A 429 must never be shared-cached.
-  const limited = await rateLimitOr429("wins:" + clientIp(req), 120, 60_000);
-  if (limited) {
-    limited.headers.set("Cache-Control", "no-store");
-    return limited;
-  }
-  const { creatorId } = await params;
-  const wins = await getRecentWins(creatorId);
-  return NextResponse.json({ wins }, { headers: { "Cache-Control": CACHE_CONTROL } });
+  return completeReadResponse(async () => {
+    // Most polls are served by the CDN; this caps what reaches the origin (e.g.
+    // cache-busting query strings). Generous: one fan polls ~3x/min, and many
+    // fans can share an IP. A 429 must never be shared-cached.
+    const limited = await rateLimitOr429("wins:" + clientIp(req), 120, 60_000);
+    if (limited) {
+      limited.headers.set("Cache-Control", "no-store");
+      return limited;
+    }
+    const { creatorId } = await params;
+    const wins = await getRecentWins(creatorId);
+    return NextResponse.json({ wins }, { headers: { "Cache-Control": CACHE_CONTROL } });
+  });
 }

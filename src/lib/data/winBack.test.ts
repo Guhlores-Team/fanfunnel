@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { mock } from "node:test";
+import { FakeSupabase, type Row, type Statement } from "./fakeSupabase";
 
 // Regression (spend safety): the Analytics win-back list (getCreatorCrm's
 // `dormant`) suggested messaging fans who had been BLOCKED by the creator or
@@ -21,31 +22,18 @@ function check(label: string, cond: boolean) {
 const DAY = 86_400_000;
 const CREATOR = "creator-1";
 
-// --- A scriptable Supabase client: `from(table)` resolves to TABLES[table] ---
-type Resp = { data: unknown; error: { message: string } | null };
+// The configured path now pages independent relational tables. Use the shared
+// fake's actual predicates, immutable-ID ordering, cursors and exact counts.
 let TABLES: Record<string, unknown> = {};
+const statements: Statement[] = [];
 function fakeClient() {
-  const builder = (table: string) => {
-    const proxy: unknown = new Proxy(
-      {},
-      {
-        get(_t, prop) {
-          if (prop === "then") {
-            return (res: (v: Resp) => unknown, rej: (e: unknown) => unknown) =>
-              table in TABLES
-                ? Promise.resolve({ data: TABLES[table], error: null }).then(res, rej)
-                : Promise.reject(new Error(`fake client: no rows for ${table}`)).then(res, rej);
-          }
-          return () => proxy;
-        },
-      },
-    );
-    return proxy;
-  };
-  return {
-    from: (table: string) => builder(table),
-    auth: { getUser: async () => ({ data: { user: { id: CREATOR } }, error: null }) },
-  };
+  const db = new FakeSupabase(CREATOR);
+  for (const [table, rows] of Object.entries(TABLES)) {
+    assert.ok(Array.isArray(rows), `fixture table ${table} is relational`);
+    db.tables[table] = rows as Row[];
+  }
+  db.beforeStatement = (statement) => { statements.push(statement); };
+  return db.client();
 }
 
 let useSupabase = false;
@@ -205,7 +193,38 @@ async function main() {
         { fan_id: "returned", contacted_at: t(10), snoozed_until: null },
       ],
     };
+    // Preserve the original fixture values and relationships, storing them in
+    // the same four physical tables the configured data path now queries.
+    type EmbeddedFan = Row & { id: string; created_at: string; fan_passes: Row[]; spins: Row[]; grants: Row[] };
+    const originalFans = TABLES.fans as EmbeddedFan[];
+    TABLES.fan_passes = originalFans.flatMap(f => f.fan_passes.map((row, i) => ({ ...row, id: `pass:${f.id}:${i}`, fan_id: f.id, creator_id: CREATOR })));
+    TABLES.spins = originalFans.flatMap(f => f.spins.map((row, i) => ({ ...row, id: `spin:${f.id}:${i}`, fan_id: f.id, creator_id: CREATOR, kind: "play" })));
+    TABLES.grants = originalFans.flatMap(f => f.grants.map((row, i) => ({ ...row, id: `grant:${f.id}:${i}`, fan_id: f.id, creator_id: CREATOR, created_at: f.created_at })));
+    TABLES.fans = originalFans.map(f => {
+      const row = { ...f, creator_id: CREATOR } as Row;
+      delete row.fan_passes; delete row.spins; delete row.grants;
+      return row;
+    });
+    TABLES.fan_outreach = (TABLES.fan_outreach as Row[]).map((row, i) => ({ ...row, id: `outreach:${i}`, creator_id: CREATOR, kind: "winback", created_at: row.contacted_at ?? t(25) }));
+    TABLES.fan_checkins = [];
+    // Cross a real500-row page boundary without inventing spend/activity.
+    const fanRows = TABLES.fans as Row[];
+    for (let i = 0; i < 501; i++) fanRows.push({ id: `zz-fill-${String(i).padStart(4, "0")}`, creator_id: CREATOR, created_at: t(60), display_name: "No activity", spins_remaining: 0, spins_granted_total: 0 });
+    fanRows.push({ id: "foreign", creator_id: "other-creator", created_at: t(60), display_name: "Foreign", spins_remaining: 0, spins_granted_total: 3 });
+    fanRows.push({ id: "future", creator_id: CREATOR, created_at: new Date(realNow() + DAY).toISOString(), display_name: "Future", spins_remaining: 0, spins_granted_total: 3 });
+    for (const id of ["foreign", "future"]) {
+      const creator = id === "foreign" ? "other-creator" : CREATOR;
+      const created_at = id === "future" ? new Date(realNow() + DAY).toISOString() : t(60);
+      (TABLES.grants as Row[]).push({ id: `grant:${id}`, creator_id: creator, fan_id: id, created_at, amount_cents: 999999 });
+      (TABLES.fan_passes as Row[]).push({ id: `pass:${id}`, creator_id: creator, fan_id: id, created_at, token: `${id}-token`, is_active: true });
+      (TABLES.spins as Row[]).push({ id: `spin:${id}`, creator_id: creator, fan_id: id, created_at, prize_label: "Private", prize_rarity: "common", kind: "play" });
+    }
     const crm = await data.getCreatorCrm();
+    check("supabase: foreign and after-cutoff rows never enter financial totals or offered links", crm.totalLtv === originalFans.length * 500 && ![...crm.whales, ...crm.dormant].some(f => ["foreign", "future"].includes(f.fanId)));
+    const reportReads = statements.filter(s => ["fans", "fan_passes", "spins", "grants"].includes(s.table));
+    check("supabase: each independent report read retains exact creator scope and fixed cutoff", reportReads.length >= 5 && reportReads.every(s => s.filters.some(f => f.col === "creator_id" && f.operator === "eq" && f.value === CREATOR) && s.filters.some(f => f.col === "created_at" && f.operator === "lte")) && new Set(reportReads.map(s => s.filters.find(f => f.col === "created_at" && f.operator === "lte")?.value)).size === 1);
+    check("supabase: fan report crosses the actual immutable-ID keyset page boundary", reportReads.some(s => s.table === "fans" && s.filters.some(f => f.col === "id" && f.operator === "gt" && String(f.value).startsWith("zz-fill-"))));
+    check("supabase: relational fixtures expose no embedded passes, wins or grants", (TABLES.fans as Row[]).every(f => !["fan_passes", "spins", "grants"].some(key => key in f)));
     const dormant = new Map(crm.dormant.map((f) => [f.fanId, f]));
     check("supabase: an ordinary quiet spender is in win-back", dormant.has("ok"));
     check("supabase: win-back offers the newest active link", dormant.get("ok")?.primaryToken === "ok-new");

@@ -1,3 +1,4 @@
+export type DataReadStatus = "complete" | "partial" | "unavailable";
 import type { Prize, PublicWheelConfig, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import type { FanGlow } from "@/lib/glow/glow";
 
@@ -57,6 +58,7 @@ export interface ChatSettings { intro: string | null; outro: string | null }
 export interface FanPassView {
   /** This fan's own block state; history remains readable without engagement. */
   blocked?: boolean;
+  bingoCard?: import("@/lib/games/bingo/engine").BingoState | null;
   odds?: import("./focusView").FanOddsView;
   focus?: import("./focusView").FanFocusView | null;
   token: string;
@@ -130,6 +132,8 @@ export type SeedCommitment = "published" | "stored" | "fresh";
 
 /** Phase 5b (#23): the data a public verify page needs for one spin. */
 export interface SpinVerification {
+  /** A line bonus derives from its parent proof; it has no second seed. */
+  parent?: { shareId: string; line: number; prizeId: string | null };
   prizeLabel: string;
   rarity: Rarity;
   serverSeed: string;
@@ -286,6 +290,7 @@ export type RedemptionStatus =
 /** A won prize in the creator's fulfilment queue. */
 export interface RedemptionItem {
   gameKind?: "wheel" | "scratch" | "bingo";
+  kind?: "play" | "bonus";
   focusKind?: "focus" | "chase";
   chaseAwarded?: boolean;
   id: string;
@@ -335,6 +340,7 @@ export interface FanAccountSummary {
 }
 
 export interface FanDetail {
+  dataStatus?: DataReadStatus;
   fanId: string; name: string;
   blocked: boolean; // fan is currently blocked (fans.blocked_at set)
   /** RM-6: when the fan's break ends (null / absent = not on a break). */
@@ -382,6 +388,7 @@ export interface CreatorMetrics {
 
 /** Everything the creator dashboard's metrics + inbox need. */
 export interface CreatorOverview {
+  dataStatus?: DataReadStatus;
   /** Exact credited plays by game; null means the read failed. */
   gamePlays?: { wheel: number; scratch: number; bingo: number } | null;
   metrics: CreatorMetrics;
@@ -392,17 +399,21 @@ export interface CreatorOverview {
 
 /** #17 Best-time heatmap: 168 cells (7 weekdays × 24 hours, UTC). */
 export interface EngagementHeatmap {
+  dataStatus?: DataReadStatus;
   cells: { weekday: number; hour: number; count: number }[]; // weekday 0=Sun..6=Sat, hour 0..23
   max: number;
 }
 
 /** #18 Prize ROI: a creator's per-prize win count and your cost to fulfil it. */
 export interface PrizeRoiRow {
+  prizeId?: string | null;
+  costBasis?: "current_prize_cost";
+  historicalCostsKnown?: false;
   label: string;
   rarity: Rarity;
   timesWon: number;
   costCents: number | null;
-  totalCostCents: number; // (costCents ?? 0) * timesWon
+  totalCostCents: number; // Known current estimate only; display unknown when costCents is null
 }
 
 /** #19 Cohort retention: fans cohorted by their first grant's campaign. */
@@ -423,6 +434,7 @@ export interface ConversionFunnel { fans: number; spun: number; fulfilled: numbe
 /** Distinct fans with ≥1 spin in the rolling last 7 days, and the 7 days before. */
 export interface WeeklyActiveFans { thisWeek: number; lastWeek: number }
 export interface CreatorMetricsExtra {
+  dataStatus?: DataReadStatus;
   trend: DailyCount[];
   funnel: ConversionFunnel;
   revenueTrend: RevenueDaily[];

@@ -56,6 +56,22 @@ export default async function VerifyPage({
     );
   }
 
+  if(v.parent) {
+    const parent=await getSpinVerification(v.parent.shareId);
+    const replay=parent?.fairVersion===3&&parent.v3&&!parent.parent?await replayGameV3({serverSeed:parent.serverSeed,clientSeed:parent.clientSeed??null,nonce:parent.nonce,
+      snapshot:parent.v3.poolSnapshot,poolHash:parent.v3.poolHash,trace:parent.v3.fairTrace,prizeId:parent.v3.prizeId,prizeLabel:parent.prizeLabel,presentation:parent.v3.presentation}):null;
+    const award=replay?.draw?.bonuses.find(bonus=>bonus.line===v.parent!.line);
+    const verified=!!parent?.hashOk&&!!replay?.ok&&!!award&&award.prize.label===v.prizeLabel&&(v.parent.prizeId===null||award.prize.id===v.parent.prizeId);
+    return <main className="grain brand-glow relative flex min-h-[100dvh] items-center justify-center px-5 py-10" style={brandVars(RARITY_COLORS[v.rarity])}>
+      <section className="card relative z-[1] w-full max-w-md rounded-[1.75rem] p-8">
+        <h1 className="text-xl font-extrabold text-ink">{verified?"Bingo line bonus verified":"Unable to verify this bonus"}</h1>
+        <p className="mt-3 break-words text-sm text-ink">{v.prizeLabel} · Line {v.parent.line+1}</p>
+        <p className="mt-3 text-sm text-muted">This extra reward comes from the parent game&apos;s committed random stream. It uses no extra play credit and has no separate seed commitment.</p>
+        <a className="mt-4 inline-flex min-h-11 items-center font-semibold text-[var(--brand-text)] underline underline-offset-4" href={`/verify/${encodeURIComponent(v.parent.shareId)}`}>View the parent game&apos;s full fairness proof</a>
+      </section>
+    </main>;
+  }
+
   const color = RARITY_COLORS[v.rarity];
   const commitment = COMMITMENT_COPY[v.commitment ?? "unknown"];
   // fair_version selects the check: a v3 spin is replayed end to end from its

@@ -155,6 +155,8 @@ interface ProfitSummary {
   profitCents: number;
   marginPct: number;
   costsComplete: boolean;
+  costBasis?: "current_prize_cost";
+  historicalCostsKnown?: false;
 }
 
 function ProfitSection() {
@@ -167,13 +169,13 @@ function ProfitSection() {
     <section aria-labelledby="an-profit">
       <TickHeader
         id="an-profit"
-        title="Profit & prize costs · 90 days"
+        title="Profit & prize costs · current estimates · 90 days"
         hint={
           <>
-            Your real bottom line: revenue (what fans paid) minus prize cost (won prizes × the
-            &ldquo;Cost&rdquo; you set on each in the Wheel editor) = profit. Per-prize ROI can&rsquo;t be
-            exact because a fan pays for spins, not a specific prize — so the table shows each
-            prize&rsquo;s cost and its share of revenue.
+            Revenue is what fans paid. Costs and profit are estimates using each awarded
+            prize&apos;s current Cost setting. Changing that setting updates these estimates for
+            past wins; historical costs at the time of each win were not recorded. Line bonuses
+            are included. The table shows estimated prize costs as a share of revenue.
           </>
         }
       />
@@ -196,16 +198,17 @@ function ProfitSection() {
           <>
             <dl className={`${hairGrid} grid-cols-2 sm:grid-cols-4`}>
               <StatCell label="Revenue" value={formatCents(profit.revenueCents)} />
-              <StatCell label="Prize cost" value={formatCents(profit.costCents)} />
-              <StatCell label="Profit" value={formatCents(profit.profitCents)} />
-              <StatCell label="Margin" value={`${Math.round(profit.marginPct * 100)}%`} />
+              <StatCell label="Estimated prize cost" value={profit.costsComplete ? formatCents(profit.costCents) : "—"} />
+              <StatCell label="Estimated profit" value={profit.costsComplete ? formatCents(profit.profitCents) : "—"} />
+              <StatCell label="Estimated margin" value={profit.costsComplete ? `${Math.round(profit.marginPct * 100)}%` : "—"} />
             </dl>
             {!profit.costsComplete && (
               <p className="mt-2.5 flex items-start gap-2 rounded-xl border border-[#f59e0b]/25 bg-[#f59e0b]/10 px-3.5 py-2.5 text-xs text-[#fcd34d]">
                 <Glyph d={ICON.alert} size={15} className="mt-px" />
                 <span>
-                  Some won prizes have no cost set, so cost (and profit) is understated. Set a Cost on
-                  each prize in the Wheel editor for an exact figure.
+                  Some awards no longer resolve to a current prize or have no Cost set, so a complete
+                  cost and profit estimate is unavailable. Setting current costs improves the estimate;
+                  it does not reconstruct historical costs.
                 </span>
               </p>
             )}
@@ -215,7 +218,7 @@ function ProfitSection() {
 
       <section className={`mt-[18px] rounded-2xl ${raised}`}>
         <div className="p-5 pb-4">
-          <CardHeader icon={ICON.gift} title="Prize ROI" hint="Each prize's fulfilment cost and its share of revenue." />
+          <CardHeader icon={ICON.gift} title="Prize cost estimates" hint="Current unit costs applied to awarded primary and line-bonus prizes; historical costs are unknown." />
         </div>
         {roi.error && !roi.data ? (
           <div className="px-5 pb-5">
@@ -237,14 +240,14 @@ function ProfitSection() {
                   <th scope="col" className={th}>Prize</th>
                   <th scope="col" className={th}>Rarity</th>
                   <th scope="col" className={`${th} text-right`}>Won</th>
-                  <th scope="col" className={`${th} text-right`}>Cost each</th>
-                  <th scope="col" className={`${th} text-right`}>Total cost</th>
-                  <th scope="col" className={`${th} text-right`}>% of revenue</th>
+                  <th scope="col" className={`${th} text-right`}>Current cost each</th>
+                  <th scope="col" className={`${th} text-right`}>Estimated total</th>
+                  <th scope="col" className={`${th} text-right`}>Est. % of revenue</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--hair)]">
                 {rows.map((r) => (
-                  <tr key={r.label}>
+                  <tr key={r.prizeId ?? JSON.stringify([r.label,r.rarity])}>
                     <td className={`${td} text-ink`}>{r.label}</td>
                     <td className={td}>
                       <span className="inline-flex items-center gap-1.5 text-muted">
@@ -261,10 +264,10 @@ function ProfitSection() {
                       {r.costCents === null ? "—" : formatCents(r.costCents)}
                     </td>
                     <td className={`tnum ${td} text-right font-semibold text-ink`}>
-                      {formatCents(r.totalCostCents)}
+                      {r.costCents === null ? "—" : formatCents(r.totalCostCents)}
                     </td>
                     <td className={`tnum ${td} text-right text-muted`}>
-                      {shareOfRevenue(r.totalCostCents, profit?.revenueCents)}
+                      {r.costCents === null ? "—" : shareOfRevenue(r.totalCostCents, profit?.revenueCents)}
                     </td>
                   </tr>
                 ))}

@@ -37,6 +37,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { testBingoRuntime } from "./bingo-runtime-fixture.mjs";
 
 try {
   for (const line of readFileSync(new URL("../../.env.local", import.meta.url), "utf8").split("\n")) {
@@ -354,13 +355,15 @@ async function main() {
     check((await a.from("wheels").insert(scratchSettings)).error?.code==="42501","A cannot create scratch for another creator even when that creator is enabled");
     check(!!(await createClient(URL_,ANON,{auth:{persistSession:false}}).from("wheels").insert(scratchSettings)).error,"anon cannot create scratch games");
     check((await b.from("wheels").insert({...scratchSettings,game_config:{style:"classic",secret:"not allowed"}})).error?.code==="22023","extra game configuration fields are refused");
-    check((await admin.from("wheels").insert({...scratchSettings,game_kind:"bingo",game_config:{size:3,linePrizeId:B.prizeId}})).error?.code==="22023","0060 refuses bingo even if its feature flag is true");
+    check((await admin.from("wheels").insert({...scratchSettings,game_kind:"bingo",game_config:{size:3,linePrizeId:B.prizeId}})).error?.code==="22023","unconfigured Bingo cannot publish even if its feature flag is true");
     check((await b.from("wheels").update({game_kind:"scratch",game_config:{style:"classic"}}).eq("id",B.wheelId)).error?.code==="22023","first credited play locks game kind against direct table conversion");
     await setBGameFeatures(false);
     must(await b.from("wheels").update({title:"grandfathered scratch",game_config:{style:"classic"}}).eq("id",scratchWheel.id).select("id").single(),"same-kind scratch metadata survives feature removal");
     check((await admin.from("wheels").insert({...scratchSettings,title:"duplicate existing scratch"})).error?.code==="42501","duplicating grandfathered scratch cannot mint a disabled new game");
     for(const client of [a,createClient(URL_,ANON,{auth:{persistSession:false}}),admin])check((await client.rpc("_game_feature_allowed",{p_creator:B.id,p_kind:"scratch"})).error?.code==="42501","API roles cannot execute the private game permission helper");
     must(await admin.from("profiles").update({features:originalGameFeatures}).eq("id",B.id).select("id").single(),"restore disposable B features");
+
+    await testBingoRuntime({admin,a,anonymous:createClient(URL_,ANON,{auth:{persistSession:false}}),actorA:A.id,makeUser,signedClient,must,check});
 
     // RM-4 (0046): the home-screen icon setter writes only the caller's row.
     const setIcon = await a.rpc("set_pwa_icon_mode", { p_mode: "avatar" });

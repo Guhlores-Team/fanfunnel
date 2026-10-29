@@ -1,7 +1,11 @@
+import { bingoReadyError } from "./bingo";
+import { mockBingoStore,currentMockBingo,mockBingoEditError,commitMockBingo,eraseMockBingo,clearMockBingo } from "./mockBingo";
+import { gameProposal,addBonusFailure } from "./gameProposal";
+import { BINGO_FULL_MASK } from "@/lib/games/bingo/engine";
 import { creatorGameFeatures, gameSettings } from "./gameSettings";
-import { buildScratchPoolSnapshot, hashGamePoolSnapshot, primarySnapshot, type GamePoolSnapshot } from "@/lib/games/core/gameProof";
+import { buildBingoPoolSnapshot, buildScratchPoolSnapshot, hashGamePoolSnapshot, primarySnapshot, type GamePoolSnapshot } from "@/lib/games/core/gameProof";
 import { makeGameRngV3 } from "@/lib/games/core/fairness";
-import { finishGame, type GamePresentation, type GameTrace } from "@/lib/games/core/play";
+import { finishGame, type GamePresentation, type GameTrace, type BonusFailurePlan } from "@/lib/games/core/play";
 import { beginMockCreatorRequest, finishMockCreatorRequest, reconcileMockCreatorRequest, eraseMockCreatorRequestFan, resetMockCreatorRequestBusinessData, mockCreatorRequests } from "./mockCreatorRequests";
 import { isUuid } from "./shared";
 import { serverCreatorIntentHash, serverImportHash } from "@/lib/imports/serverDigest";
@@ -142,12 +146,15 @@ const REFERRAL_BONUS = 3;
 // A win record carries the FIFO-attributed campaign for the spin that won it.
 export interface MockWin extends WonPrize {
   campaignId: string | null;
+  kind?: "play" | "bonus";
+  parentShareId?: string;
+  bingoLine?: number;
   shareId: string; // Phase 3: opaque id for the shareable card
   imageUrl?: string | null; // Phase 3: snapshot of the prize photo
   // Phase 5b (#23): provably-fair commitment for this spin.
-  serverSeed: string;
-  serverSeedHash: string;
-  nonce: number;
+  serverSeed?: string | null;
+  serverSeedHash?: string | null;
+  nonce?: number | null;
   // Commit-reveal v2: the fan-contributed seed mixed into the RNG.
   clientSeed?: string | null;
   // Whether the seed was pre-committed (absent on seeded demo wins).
@@ -688,7 +695,7 @@ function wheelsByAge(): WheelConfig[] {
  *  3. else the oldest wheel (always returns something if any wheel exists).
  */
 export function mockResolveActiveWheelId(now: Date = new Date()): string {
-  const live = wheelsByAge().filter((w) => !w.archivedAt && w.gameReady !== false && w.gameKind !== "bingo");
+  const live = wheelsByAge().filter((w) => !w.archivedAt && w.gameReady !== false);
   if (live.length === 0) {
     // Should never happen in demo mode, but stay defensive.
     return store.wheels.keys().next().value ?? SAMPLE_WHEEL.id;
@@ -727,14 +734,14 @@ export function mockResolveWheelId(
   // An explicit wheel wins (per-wheel top-ups target a specific wheel).
   if (pass.wheelId) {
     const w = store.wheels.get(pass.wheelId);
-    if (w && !w.archivedAt && w.gameReady !== false && w.gameKind !== "bingo") return pass.wheelId;
+    if (w && !w.archivedAt && w.gameReady !== false) return pass.wheelId;
   }
   if (pass.campaignId) {
     const campaign = store.campaigns.find((c) => c.id === pass.campaignId);
     const pinned = campaign?.pinnedWheelId ?? null;
     if (pinned) {
       const w = store.wheels.get(pinned);
-      if (w && !w.archivedAt && w.gameReady !== false && w.gameKind !== "bingo") return pinned;
+      if (w && !w.archivedAt && w.gameReady !== false) return pinned;
     }
   }
   return mockResolveActiveWheelId(now);
@@ -744,7 +751,7 @@ export function mockResolveWheelId(
 export function mockResolvedSpinWheelId(pass: { campaignId: string | null; wheelId: string }, now = new Date()): string {
   const pinnedId = pass.campaignId ? store.campaigns.find(campaign => campaign.id === pass.campaignId)?.pinnedWheelId : null;
   const pinned = pinnedId ? store.wheels.get(pinnedId) : null;
-  if (pinned && !pinned.archivedAt && pinned.gameReady !== false && pinned.gameKind !== "bingo") return pinned.id;
+  if (pinned && !pinned.archivedAt && pinned.gameReady !== false) return pinned.id;
   const active = mockResolveActiveWheelId(now);
   return store.wheels.get(active)?.archivedAt ? pass.wheelId : active;
 }
@@ -849,10 +856,15 @@ export function mockSaveWheel(config: WheelConfig): WheelConfig {
   const targetId = store.wheels.has(config.id) ? config.id : activeWheel().id;
   const existing = store.wheels.get(targetId);
   const settings = gameSettings(config.gameKind ?? existing?.gameKind, config.gameConfig ?? existing?.gameConfig);
-  if (settings.gameKind !== (existing?.gameKind ?? "wheel")) {
-    if (existing?.gameKindLocked) throw new Error("game_kind_locked");
-    if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
-  }
+  const kindChanged=settings.gameKind !== (existing?.gameKind ?? "wheel");
+  if(kindChanged && existing?.gameKindLocked)throw new Error("game_kind_locked");
+  if((kindChanged || (settings.gameKind === "bingo" && existing?.gameReady === false)) && !mockGameFeatures()[settings.gameKind])throw new Error("feature_disabled");
+  const candidate={...structuredClone(config),...settings,prizes:config.prizes.map(prize=>({...structuredClone(prize),weight:storedWeight(prize.weight)}))};
+  for(const prize of candidate.prizes)syncMockPrizeDelivery(prize);
+  const protectedCard=mockBingoEditError(targetId,candidate);if(protectedCard)throw new Error(protectedCard);
+  const activeCards=[...mockBingoStore().cards.values()].some(card=>card.wheelId===targetId&&card.state.markedMask!==BINGO_FULL_MASK);
+  if(activeCards&&JSON.stringify(existing?.gameConfig)!==JSON.stringify(candidate.gameConfig))throw new Error("bingo_active_card");
+  if(settings.gameKind==="bingo"){const error=bingoReadyError(candidate);if(error)throw new Error(error);}
   for (const focus of mockFocusState().focuses.values()) {
     const target = config.prizes.find(prize => prize.id === focus.prize_id);
     if (focus.wheel_id === targetId && !target) mockCancelFanFocus(focus.fan_id);
@@ -935,21 +947,26 @@ export function mockCreateWheel(opts?: {
     prizes = [];
   }
 
-  const settings = gameSettings(tpl?.gameKind ?? opts?.gameKind, tpl?.gameConfig ?? opts?.gameConfig);
+  const settings = gameSettings(tpl?.gameKind ?? opts?.gameKind, tpl?.gameConfig ?? opts?.gameConfig,true);
   if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
   const wheel: WheelConfig = {
-    ...settings, gameReady: true, gameKindLocked: false,
+    ...settings, gameReady: settings.gameKind!=="bingo", gameKindLocked: false,
     id,
     title: opts?.name?.trim() || title,
     subtitle,
     brandColor,
     prizes,
-    isActive: isFirst,
+    isActive: isFirst && settings.gameKind!=="bingo",
     activeFrom: null,
     activeUntil: null,
     archivedAt: null,
   };
+  if(settings.gameKind==="bingo"){
+    if(tpl&&settings.gameConfig.linePrizeId){const oldIndex=tpl.prizes.findIndex(prize=>(prize as Partial<Prize>).id===settings.gameConfig.linePrizeId);wheel.gameConfig={size:3,linePrizeId:prizes[oldIndex]?.id??null};wheel.gameReady=!bingoReadyError(wheel);}
+    else wheel.gameConfig={size:3,linePrizeId:null};
+  }
   store.wheels.set(id, wheel);
+  syncMockWheelRewards(wheel);
   wheelMeta.set(id, { createdAt: now, updatedAt: now });
   return { wheel: structuredClone(wheel) };
 }
@@ -958,7 +975,7 @@ export function mockCreateWheel(opts?: {
 export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
   const src = store.wheels.get(id);
   if (!src) throw new Error("not_found");
-  const settings = gameSettings(src.gameKind, src.gameConfig);
+  const settings = gameSettings(src.gameKind, src.gameConfig,true);
   if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
   const newId = genId("wheel");
   const now = new Date().toISOString();
@@ -973,7 +990,13 @@ export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
     activeUntil: null,
     archivedAt: null,
   };
+  if(settings.gameKind==="bingo"){
+    const sourceId=settings.gameConfig.linePrizeId;
+    wheel.gameConfig={size:3,linePrizeId:sourceId?wheel.prizes[src.prizes.findIndex(prize=>prize.id===sourceId)]?.id??null:null};
+    wheel.gameReady=!bingoReadyError(wheel);
+  }
   store.wheels.set(newId, wheel);
+  syncMockWheelRewards(wheel);
   wheelMeta.set(newId, { createdAt: now, updatedAt: now });
   return { wheel: structuredClone(wheel) };
 }
@@ -993,6 +1016,7 @@ export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
   if (wheel.archivedAt) return { ok: true };
+  const progress=mockBingoEditError(id,null);if(progress)return {error:progress};
 
   const wasActive = wheel.isActive;
   for (const focus of mockFocusState().focuses.values()) if (focus.wheel_id === id) mockCancelFanFocus(focus.fan_id);
@@ -1000,7 +1024,7 @@ export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
   wheel.isActive = false;
 
   if (wasActive) {
-    const remaining = wheelsByAge().filter((w) => !w.archivedAt);
+    const remaining = wheelsByAge().filter((w) => !w.archivedAt&&w.gameReady!==false);
     if (remaining.length > 0) remaining[0].isActive = true; // oldest remaining
   }
   return { ok: true };
@@ -1010,12 +1034,15 @@ export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
 export function mockDeleteWheel(id: string): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
+  const progress=mockBingoEditError(id,null);if(progress)return {error:progress};
+  const hasHistory=[...store.fans.values()].some(fan=>fan.wins.some(win=>win.wheelId===id))||[...(mockFocusState().anonymousWins?.values()??[])].some(win=>win.wheelId===id);
+  if(hasHistory)return {error:"has_history"};
   const wasActive = wheel.isActive;
   for (const focus of mockFocusState().focuses.values()) if (focus.wheel_id === id) mockCancelFanFocus(focus.fan_id);
   store.wheels.delete(id);
   wheelMeta.delete(id);
   if (wasActive) {
-    const remaining = wheelsByAge().filter((w) => !w.archivedAt);
+    const remaining = wheelsByAge().filter((w) => !w.archivedAt&&w.gameReady!==false);
     if (remaining.length > 0) remaining[0].isActive = true;
   }
   return { ok: true };
@@ -1026,6 +1053,7 @@ export function mockSetActiveWheel(id: string): { ok: true } | { error: string }
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
   if (wheel.archivedAt) return { error: "archived" };
+  if(wheel.gameReady===false)return {error:"game_not_ready"};
   for (const w of store.wheels.values()) w.isActive = false;
   wheel.isActive = true;
   return { ok: true };
@@ -1038,6 +1066,7 @@ export function mockSetWheelSchedule(
 ): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
+  if(wheel.gameReady===false)return {error:"game_not_ready"};
   const { activeFrom, activeUntil } = schedule;
   if (activeFrom != null && activeUntil != null && activeUntil <= activeFrom) {
     return { error: "invalid_window" };
@@ -1085,7 +1114,7 @@ export async function mockGetFanPass(
   const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
   const wheelId = pass ? mockResolvedSpinWheelId(pass) : mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
-  if (wheel.gameKind === "bingo" || wheel.gameReady === false) return null;
+  if (wheel.gameReady === false) return null;
   // Commit-reveal: make sure this link holds a pre-committed seed for the next
   // spin and publish its hash on the page (commitment predates the spin).
   if (pass && !pass.nextServerSeedHash) {
@@ -1099,6 +1128,7 @@ export async function mockGetFanPass(
   }
   const modifierDisplay = mockFanFocusDisplay(token);
   return structuredClone({
+    ...(wheel.gameKind === "bingo"?{bingoCard:currentMockBingo(fan.id,wheel.id)?.state??null}:{}),
     token,
     blocked: !!fan.blockedAt,
     fanName: fan.name,
@@ -1136,11 +1166,11 @@ export async function mockGameFixture(token: string, clientSeed: string, targetP
     if (!store.fans.has(fan.id) || !fanEngagementAllowed({ blocked: !!fan.blockedAt, selfExcluded: !!fan.selfExcludedAt, breakUntil: fan.breakUntil })) return { error: "blocked" };
     if ([...mockFocusState().attempts.values()].some(attempt => attempt.fanId === fan.id && !attempt.finishedAt)) return { error: "spin_pending" };
     const wheel = store.wheels.get(mockResolvedSpinWheelId(pass));
-    if (!wheel || wheel.gameReady === false || wheel.gameKind === "bingo") return { error: "game_unavailable" };
+    if (!wheel || wheel.gameReady === false) return { error: "game_unavailable" };
     const focusRow = mockFocusState().focuses.get(fan.id);
     const focus = focusRow && (focusRow.status === "active" || focusRow.status === "paused") ? toFanFocusView(focusRow) : null;
     const personal = structuredClone(wheel);
-    if (focus?.kind === "chase" && focusRow?.reservation?.held) {
+    if (wheel.gameKind !== "bingo" && focus?.kind === "chase" && focusRow?.reservation?.held) {
       const target = personal.prizes.find(prize => prize.id === focus.prizeId);
       if (target && typeof target.stock === "number") target.stock += 1;
     }
@@ -1149,18 +1179,18 @@ export async function mockGameFixture(token: string, clientSeed: string, targetP
       ...(focus?.kind === "focus" ? { focus: { prizeId: focus.prizeId, multiplier: focus.multiplier, spinsLeft: focus.spinsLeft, totalSpins: focus.totalSpins } } : {}),
       ...(focus?.kind === "chase" ? { chase: { prizeId: focus.prizeId, counter: focus.chaseCounter, within: focus.chaseWithin, reserved: !!focusRow?.reservation?.held } } : {}) };
     let snapshot: PoolSnapshot | GamePoolSnapshot;
-    try { snapshot = wheel.gameKind === "scratch" ? buildScratchPoolSnapshot(personal, options) : buildFocusPoolSnapshot(personal, options); } catch { return { error: "no_prizes" }; }
-    const primary = snapshot.game === "scratch" ? primarySnapshot(snapshot as GamePoolSnapshot) : snapshot as PoolSnapshot;
+    try { snapshot = wheel.gameKind === "scratch" ? buildScratchPoolSnapshot(personal, options) : wheel.gameKind === "bingo" ? buildBingoPoolSnapshot(personal, options,wheel.gameConfig as {size:3;linePrizeId:string},currentMockBingo(fan.id,wheel.id)?.state??null) : buildFocusPoolSnapshot(personal, options); } catch { return { error: "no_prizes" }; }
+    const primary = snapshot.game !== "wheel" ? primarySnapshot(snapshot as GamePoolSnapshot) : snapshot as PoolSnapshot;
     if (!(snapshotOdds(primary).rows.find(row => row.prize.id === targetPrizeId)?.chance ?? 0)) return { error: "target_unavailable" };
     const fingerprint = () => JSON.stringify([store.wheels.get(wheel.id), mockFocusState().focuses.get(fan.id), fan.pityCounter,
-      fan.blockedAt, fan.selfExcludedAt, fan.breakUntil, pass.spinsRemaining, pass.nextSpinNonce, pass.nextServerSeedHash, fan.wins.length]);
+      fan.blockedAt, fan.selfExcludedAt, fan.breakUntil, pass.spinsRemaining, pass.nextSpinNonce, pass.nextServerSeedHash, fan.wins.length,currentMockBingo(fan.id,wheel.id)]);
     const before = fingerprint();
-    const hash = snapshot.game === "scratch" ? await hashGamePoolSnapshot(snapshot as GamePoolSnapshot) : await hashPoolSnapshot(snapshot as PoolSnapshot);
+    const hash = snapshot.game !== "wheel" ? await hashGamePoolSnapshot(snapshot as GamePoolSnapshot) : await hashPoolSnapshot(snapshot as PoolSnapshot);
     for (let attempts = 1; attempts <= MAX_GAME_FIXTURE_ATTEMPTS; attempts++) {
       const seed = randomSeedHex();
-      const rng = snapshot.game === "scratch" ? await makeGameRngV3(seed, normalizeClientSeed(clientSeed), pass.nextSpinNonce ?? 0, hash) : await makeFairRngV3(seed, normalizeClientSeed(clientSeed), pass.nextSpinNonce ?? 0, hash);
+      const rng = snapshot.game !== "wheel" ? await makeGameRngV3(seed, normalizeClientSeed(clientSeed), pass.nextSpinNonce ?? 0, hash) : await makeFairRngV3(seed, normalizeClientSeed(clientSeed), pass.nextSpinNonce ?? 0, hash);
       let selected: ReturnType<typeof drawFromSnapshot>;
-      try { selected = drawFromSnapshot(snapshot.game === "scratch" ? primarySnapshot(snapshot as GamePoolSnapshot) : snapshot as PoolSnapshot, new Set(), rng); } catch { return { error: "no_prizes" }; }
+      try { selected = drawFromSnapshot(snapshot.game !== "wheel" ? primarySnapshot(snapshot as GamePoolSnapshot) : snapshot as PoolSnapshot, new Set(), rng); } catch { return { error: "no_prizes" }; }
       if (selected.prize.id !== targetPrizeId) continue;
       const nextHash = await sha256Hex(seed);
       if (fingerprint() !== before || !store.fans.has(fan.id)) return { error: "context_changed" };
@@ -1185,8 +1215,9 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
     if (existing) {
       if (existing.token !== token || existing.hash !== hash) return { error: "db_error" as const };
       if (!existing.result) return { error: "spin_pending" as const };
-      if ("error" in existing.result) return existing.result;
-      const response = { ...structuredClone(existing.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+      if("error" in existing.result)return existing.result;
+      const response={ ...structuredClone(existing.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+        ...(existing.result.gameKind==="bingo"?{bingoCard:structuredClone(currentMockBingo(found.fan.id,mockResolvedSpinWheelId(found.pass))?.state??null)}:{}),
         play: countPlay(found.fan.spinTimes ?? []), reminderDue: reminderDue(countPlay(found.fan.spinTimes ?? []).today, found.fan.playReminderDaily ?? null) } as MockSpinSuccess;
       return mockRecordRewardDisclosures(token,response)?response:{error:"spin_pending" as const};
     }
@@ -1202,17 +1233,109 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
 export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
   const found = passForToken(token);
   if (!found) return { status: "unavailable" };
-  // A break forbids new paid plays, while safe receipt/status reads remain available (SQL parity).
   if (found.fan.blockedAt || found.fan.selfExcludedAt) return { status: "unavailable" };
   const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", normalizeClientSeed(intent.clientSeed), intent.publishedSeedHash?.toLowerCase() ?? null]));
   const attempt = mockFocusState().attempts.get(intent.requestId.toLowerCase());
   if (!attempt) return { status: "absent" };
   if (attempt.token !== token || attempt.hash !== hash) return { status: "conflict" };
   if (!attempt.result) return { status: "pending" };
-  if ("error" in attempt.result) return {status:"declined",error:attempt.result.error};
-  const result = { ...structuredClone(attempt.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+  if("error"in attempt.result)return {status:"declined",error:attempt.result.error};
+  const result={ ...structuredClone(attempt.result), replayed: true, spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
+    ...(attempt.result.gameKind==="bingo"?{bingoCard:structuredClone(currentMockBingo(found.fan.id,mockResolvedSpinWheelId(found.pass))?.state??null)}:{}),
     play: countPlay(found.fan.spinTimes ?? []), reminderDue: reminderDue(countPlay(found.fan.spinTimes ?? []).today, found.fan.playReminderDaily ?? null) };
   return mockRecordRewardDisclosures(token,result)?{status:"committed",result}:{status:"pending"};
+}
+
+/** One synchronous mock transaction after all cryptography/proposals finish. */
+async function mockSpinBingoLocked(token:string,clientSeed:string,requestId:string,publishedSeedHash?:string,contextTry=0):Promise<MockSpinSuccess|import("./shared").SpinError> {
+  const found=passForToken(token);if(!found)return {error:"not_found"};
+  const {fan,pass}=found;
+  const nextSeed=randomSeedHex(),nextHash=await sha256Hex(nextSeed);
+  const wheel=store.wheels.get(mockResolvedSpinWheelId(pass));
+  if(!wheel||wheel.gameReady===false)return {error:"no_prizes"};
+  if(pass.spinsRemaining<=0)return {error:"no_spins"};
+  const seed=pass.nextServerSeed??randomSeedHex(),seedHash=pass.nextServerSeedHash??await sha256Hex(seed),nonce=pass.nextSpinNonce??0;
+  const focusRow=mockFocusState().focuses.get(fan.id),focus=focusRow&&(focusRow.status==="active"||focusRow.status==="paused")?toFanFocusView(focusRow):null;
+  const before=currentMockBingo(fan.id,wheel.id),hh=mockGetActiveHappyHour(wheel.id);
+  // These are free prizes. composeModifiers injects only the personally held
+  // primary target; its reservation never enters the ordinary bonus pool.
+  let snapshot:GamePoolSnapshot;
+  try{snapshot=buildBingoPoolSnapshot(structuredClone(wheel),{pityCounter:fan.pityCounter,happyHourMultiplier:hh.active?hh.multiplier:null,
+    ...(focus?.kind==="focus"?{focus:{prizeId:focus.prizeId,multiplier:focus.multiplier,spinsLeft:focus.spinsLeft,totalSpins:focus.totalSpins}}:{}),
+    ...(focus?.kind==="chase"?{chase:{prizeId:focus.prizeId,counter:focus.chaseCounter,within:focus.chaseWithin,reserved:!!focusRow?.reservation?.held}}:{})},wheel.gameConfig as {size:3;linePrizeId:string},before?.state??null);}catch{return {error:"no_prizes"};}
+  const fingerprint=()=>JSON.stringify([store.wheels.get(wheel.id)?{...store.wheels.get(wheel.id),prizes:store.wheels.get(wheel.id)!.prizes.map(prize=>({...prize,stock:undefined}))}:null,
+    fan.pityCounter,pass.spinsRemaining,pass.nextServerSeedHash,pass.nextSpinNonce,mockFocusState().focuses.get(fan.id),currentMockBingo(fan.id,wheel.id),mockResolvedSpinWheelId(pass)]);
+  const expected=fingerprint(),hash=await hashGamePoolSnapshot(snapshot),excluded:string[]=[];
+  let failures:BonusFailurePlan[]=[];
+  type Allocation={prize:Prize;shown:PublicPrize;reward:{kind:RewardKind;value:string;code?:MockCode}|null;line?:number;held:boolean};
+  for(let attempt=0;attempt<64;attempt++){
+    let proposal:Awaited<ReturnType<typeof gameProposal>>;
+    try{proposal=await gameProposal(snapshot,seed,normalizeClientSeed(clientSeed),nonce,hash,excluded,failures);}catch{return {error:"no_prizes"};}
+    if(fingerprint()!==expected){if(contextTry>=8)return {error:"spin_pending"};return mockSpinLocked(token,clientSeed,requestId,publishedSeedHash,contextTry+1);}
+    if(!store.fans.has(fan.id))return {error:"not_found"};
+    if(fan.blockedAt||fan.selfExcludedAt)return {error:"blocked"};
+    if(isOnBreak(fan.breakUntil))return {error:"on_break"};
+    const free=new Map(wheel.prizes.map(prize=>[prize.id,prize.stock??null])),usedCodes=new Set<string>();
+    const allocate=(id:string,primary:boolean,line?:number):Allocation|null=>{
+      const prize=wheel.prizes.find(prize=>prize.id===id);if(!prize)return null;
+      const held=!!(primary&&focusRow?.prize_id===id&&focusRow.reservation?.held);
+      const left=free.get(id);if(!held&&typeof left==="number"&&left<=0)return null;
+      const take=mockRewardProposal(prize,held?focusRow?.reservation?.codeId:undefined,usedCodes);if(!take.ok)return null;
+      if(!held&&typeof left==="number")free.set(id,left-1);
+      if(take.reward?.code)usedCodes.add(take.reward.code.id);
+      return {prize,shown:structuredClone(toPublicPrize(prize,{showStock:showsStock(wheel)})),reward:take.reward,line,held};
+    };
+    const primary=allocate(proposal.primary.prize.id,true);
+    if(!primary){excluded.push(proposal.primary.prize.id);failures=[];continue;}
+    const bonusAllocations:Allocation[]=[];let retry=false;
+    for(const bonus of proposal.bonuses){const allocation=allocate(bonus.prize.id,false,bonus.line);if(!allocation){try{failures=addBonusFailure(failures,bonus.line,bonus.prize.id);}catch{return {error:"spin_pending"};}retry=true;break;}bonusAllocations.push(allocation);}
+    if(retry)continue;
+    if(proposal.presentation.kind!=="bingo")return {error:"db_error"};
+    const at=new Date().toISOString(),parentShare=genId("share"),bonusShares=bonusAllocations.map(allocation=>({line:allocation.line!,shareId:genId("share")}));
+    // Capture only immediately before the synchronous commit. Rollback preserves
+    // fan/pass/prize object identity for other already-waiting mock requests.
+    const backupFan=structuredClone(fan),oldPasses=[...fan.passes],backupPrizes=structuredClone(wheel.prizes),backupReds=structuredClone([...store.redemptions]),backupFocus=focusRow?structuredClone(focusRow):null;
+    const rewards=rewardState(),backupRewardPrizes=structuredClone(rewards.prizes),backupDeliveries=structuredClone(rewards.deliveries),backupBingo=structuredClone(mockBingoStore()),oldKindLock=wheel.gameKindLocked;
+    try{
+      const allocations=[primary,...bonusAllocations],shares=[parentShare,...bonusShares.map(bonus=>bonus.shareId)];
+      for(let i=0;i<allocations.length;i++){
+        const allocation=allocations[i];
+        if(allocation.reward?.code){allocation.reward.code.shareId=shares[i];allocation.reward.code.reservedFocusId=null;}
+        if(allocation.prize.delivery==="codes")syncMockPrizeDelivery(allocation.prize);
+        else if(typeof allocation.prize.stock==="number"&&!allocation.held)allocation.prize.stock--;
+        if(allocation.held&&focusRow?.reservation)focusRow.reservation.held=false;
+        if(allocation.reward)mockRecordDelivery(shares[i],fan.id,allocation.reward,at,allocation.prize);
+      }
+      pass.spinsRemaining--;pass.nextSpinNonce=nonce+1;pass.nextServerSeed=nextSeed;pass.nextServerSeedHash=nextHash;
+      recomputeFanAggregate(fan);fan.pityCounter=proposal.primary.nextPityCounter;wheel.gameKindLocked=true;
+      if(focusRow&&focus){const draw=proposal.primary as typeof proposal.primary&{nextFocusSpinsLeft?:number|null;nextChaseCounter?:number|null;chaseCompleted?:boolean};
+        if(draw.nextFocusSpinsLeft!=null)focusRow.spins_left=draw.nextFocusSpinsLeft;if(draw.nextChaseCounter!=null)focusRow.chase_counter=draw.nextChaseCounter;
+        focusRow.status=draw.chaseCompleted||focusRow.spins_left===0?"completed":"active";focusRow.version=(focusRow.version??0)+1;focusRow.ended_at=focusRow.status==="completed"?at:null;
+        const proof=snapshot.modifiers.focus??snapshot.modifiers.chase;focusRow.pause_reason=proof?.pauseReason??null;if(focusRow.status==="active"&&proof?.pauseReason)focusRow.status="paused";
+      }
+      fan.spinTimes=[...(fan.spinTimes??[]).filter(time=>Date.parse(at)-Date.parse(time)<PLAY_WEEK_WINDOW_MS),at];
+      const commitment:SeedCommitment=pass.nextServerSeedHash&&backupFan.passes.find(saved=>saved.token===token)?.nextServerSeedHash?(publishedSeedHash?.toLowerCase()===seedHash.toLowerCase()?"published":"stored"):"fresh";
+      const primaryWin:MockWin={label:primary.prize.label,rarity:primary.prize.rarity,emoji:primary.prize.emoji,color:primary.prize.color??RARITY_COLORS[primary.prize.rarity],at,campaignId:pass.campaignId,shareId:parentShare,imageUrl:primary.prize.imageUrl??null,
+        serverSeed:seed,serverSeedHash:seedHash,nonce,clientSeed:normalizeClientSeed(clientSeed)||null,commitment,prizeId:primary.prize.id,wheelId:wheel.id,gameKind:"bingo",kind:"play",fairVersion:3,poolSnapshot:snapshot,poolHash:hash,fairTrace:proposal.trace,presentation:proposal.presentation,...(primary.reward?{instant:true}:{})};
+      const bonusWins:MockWin[]=bonusAllocations.map((allocation,index)=>({label:allocation.prize.label,rarity:allocation.prize.rarity,emoji:allocation.prize.emoji,color:allocation.prize.color??RARITY_COLORS[allocation.prize.rarity],at,campaignId:pass.campaignId,shareId:bonusShares[index].shareId,
+        imageUrl:allocation.prize.imageUrl??null,serverSeed:null,serverSeedHash:null,nonce:null,prizeId:allocation.prize.id,wheelId:wheel.id,gameKind:"bingo",kind:"bonus",parentShareId:parentShare,bingoLine:allocation.line,...(allocation.reward?{instant:true}:{})}));
+      fan.wins=[...bonusWins,primaryWin,...fan.wins];
+      for(let i=0;i<allocations.length;i++){const allocation=allocations[i];store.redemptions.unshift({id:genId("r"),fanId:fan.id,fanName:fan.name,prizeLabel:allocation.prize.label,rarity:allocation.prize.rarity,emoji:allocation.prize.emoji,status:allocation.reward?"fulfilled":"pending",at,campaignId:pass.campaignId,shareId:shares[i],gameKind:"bingo",kind:i===0?"play":"bonus"});}
+      const card=commitMockBingo(fan.id,wheel.id,proposal.presentation,parentShare,bonusShares,at),play=countPlay(fan.spinTimes);
+      const draw=proposal.primary as typeof proposal.primary&{focusConsumed?:boolean;chaseConsumed?:boolean;chaseCompleted?:boolean;chaseAwarded?:boolean};
+      return {attemptId:requestId,awardedAt:at,gameKind:"bingo",presentation:proposal.presentation,bingoCard:structuredClone(card.state),bonusWins:bonusAllocations.map((allocation,index)=>({line:allocation.line!,shareId:bonusShares[index].shareId,prize:allocation.shown,awardedAt:at,...(allocation.reward?{instant:true,reward:{kind:allocation.reward.kind,value:allocation.reward.value}}:{})})),
+        prize:primary.shown,prizeIndex:wheel.prizes.findIndex(prize=>prize.id===primary.prize.id),shareId:parentShare,spinsRemaining:pass.spinsRemaining,nextSpinHash:nextHash,fairVersion:3,poolHash:hash,pityAwarded:proposal.primary.pityAwarded,
+        focusConsumed:draw.focusConsumed??false,chaseConsumed:draw.chaseConsumed??false,chaseCompleted:draw.chaseCompleted??false,chaseAwarded:draw.chaseAwarded??false,...mockFanFocusDisplay(token),...(primary.reward?{reward:{kind:primary.reward.kind,value:primary.reward.value}}:{}),play,reminderDue:reminderDue(play.today,fan.playReminderDaily??null)};
+    }catch{
+      Object.assign(fan,backupFan);fan.passes=backupFan.passes.map(saved=>{const original=oldPasses.find(pass=>pass.token===saved.token);return original?Object.assign(original,saved):saved;});
+      for(let i=0;i<backupPrizes.length;i++)Object.assign(wheel.prizes[i],backupPrizes[i]);wheel.gameKindLocked=oldKindLock;store.redemptions=backupReds;
+      if(focusRow&&backupFocus)Object.assign(focusRow,backupFocus);
+      rewards.prizes=backupRewardPrizes;rewards.deliveries=backupDeliveries;
+      const bingo=mockBingoStore();bingo.cards=backupBingo.cards;bingo.current=backupBingo.current;bingo.awards=backupBingo.awards;
+      return {error:"db_error"};
+    }
+  }
+  return {error:"spin_pending"};
 }
 
 async function mockSpinLocked(token: string, clientSeed: string, requestId: string, publishedSeedHash?: string, contextTry = 0): Promise<MockSpinSuccess | import("./shared").SpinError> {
@@ -1233,6 +1356,8 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" as const };
   // RM-6: claim_spin refuses a fan on a break (migration 0049).
   if (!fanEngagementAllowed({ breakUntil: fan.breakUntil })) return { error: "on_break" as const };
+
+  if(store.wheels.get(mockResolvedSpinWheelId(pass))?.gameKind==="bingo")return mockSpinBingoLocked(token,clientSeed,requestId,publishedSeedHash,contextTry);
 
   // Pre-generate the NEXT commitment before touching shared state, so the
   // claim + seed consumption below has no `await` inside it: in single-threaded
@@ -1273,7 +1398,7 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
     if (target && typeof target.stock === "number") target.stock += 1;
   }
   const gameKind = wheel.gameKind ?? "wheel";
-  if (gameKind === "bingo" || wheel.gameReady === false) return { error: "no_prizes" as const };
+  if (wheel.gameReady === false) return { error: "no_prizes" as const };
   const options = {
     happyHourMultiplier: hh.active ? hh.multiplier : null,
     pityCounter: fan.pityCounter,
@@ -1552,9 +1677,9 @@ function mockCreatePassOnce(
   }
 
   const requestedWheel = wheelId ? store.wheels.get(wheelId) : null;
-  if (wheelId && (!requestedWheel || requestedWheel.archivedAt || requestedWheel.gameReady === false || requestedWheel.gameKind === "bingo")) throw new Error("no_wheel");
+  if (wheelId && (!requestedWheel || requestedWheel.archivedAt || requestedWheel.gameReady === false)) throw new Error("no_wheel");
   const resolved = store.wheels.get(mockResolveWheelId({ campaignId: campaignId ?? null, wheelId }));
-  if (!resolved || resolved.archivedAt || resolved.gameReady === false || resolved.gameKind === "bingo") throw new Error("no_wheel");
+  if (!resolved || resolved.archivedAt || resolved.gameReady === false) throw new Error("no_wheel");
 
   // Credit a pending referral once, idempotently, when this grant is the fan's
   // first PAID grant (money > 0) and the referrer is still under the cap.
@@ -1737,6 +1862,7 @@ export function mockDeleteFan(fanId: string): boolean {
   mockCancelFanFocus(fanId);
   const anonymous = mockFocusState().anonymousWins ??= new Map();
   for (const win of store.fans.get(fanId)!.wins) anonymous.set(win.shareId, structuredClone(win));
+  eraseMockBingo(fanId);
   eraseMockFocusIdentity(fanId);
   eraseMockCreatorRequestFan(fanId);
   mockEraseFanRewards(fanId);
@@ -1919,7 +2045,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
   }
   for (const w of fan.wins) {
     const b = bucketFor(w.campaignId);
-    b.spinsPlayed += 1;
+    if(w.kind!=="bonus")b.spinsPlayed += 1;
     const cur = b.prizeCounts.get(w.label);
     if (cur) cur.count += 1;
     else b.prizeCounts.set(w.label, { label: w.label, rarity: w.rarity, count: 1 });
@@ -1935,6 +2061,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
   }));
 
   return {
+    dataStatus:"complete",
     fanId: fan.id,
     name: fan.name,
     blocked: !!(fan as { blockedAt?: string | null }).blockedAt,
@@ -1943,9 +2070,9 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
     tags: fan.tags ?? [],
     spinsRemaining: fan.spinsRemaining,
     grantedTotal,
-    totalSpins: fan.wins.length,
+    totalSpins: fan.wins.filter(win=>win.kind!=="bonus").length,
     totalSpent,
-    lastActive: fan.wins[0]?.at ?? null,
+    lastActive: fan.wins.find(win=>win.kind!=="bonus")?.at ?? null,
     winsByRarity,
     pendingPrizes,
     links,
@@ -1998,10 +2125,11 @@ export function mockGetOverview(): CreatorOverview {
         : false;
     });
   return {
-    gamePlays: { wheel: redemptions.filter(row => !row.gameKind || row.gameKind === "wheel").length, scratch: redemptions.filter(row => row.gameKind === "scratch").length, bingo: 0 },
+    dataStatus:"complete",
+    gamePlays: { wheel: redemptions.filter(row => row.kind!=="bonus"&&(!row.gameKind || row.gameKind === "wheel")).length, scratch: redemptions.filter(row => row.kind!=="bonus"&&row.gameKind === "scratch").length, bingo: redemptions.filter(row=>row.kind!=="bonus"&&row.gameKind==="bingo").length },
     metrics: {
       fans: store.fans.size,
-      spinsPlayed: redemptions.length,
+      spinsPlayed: redemptions.filter(row=>row.kind!=="bonus").length,
       pending: redemptions.filter((r) => r.status === "pending").length,
       fulfilled: redemptions.filter((r) => r.status === "fulfilled").length,
       revenue,
@@ -2021,7 +2149,7 @@ export function mockGetOverview(): CreatorOverview {
 export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
   const n = clampDays(days);
   const trend = bucketByDay(
-    store.redemptions.map((r) => r.at),
+    store.redemptions.filter(row=>row.kind!=="bonus").map((r) => r.at),
     n
   );
   const revenueTrend = bucketCentsByDay(
@@ -2029,19 +2157,20 @@ export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
     n
   );
   return {
+    dataStatus:"complete",
     trend,
     funnel: {
       // Per-fan funnel: fans created → fans with ≥1 spin → fans with a
       // fulfilled prize. Each redemption is one spin and carries its fanId.
       fans: store.fans.size,
-      spun: new Set(store.redemptions.flatMap((r) => r.fanId ? [r.fanId] : [])).size,
+      spun: new Set(store.redemptions.filter(row=>row.kind!=="bonus").flatMap((r) => r.fanId ? [r.fanId] : [])).size,
       fulfilled: new Set(
         store.redemptions.filter((r) => r.status === "fulfilled" && r.fanId !== null).map((r) => r.fanId)
       ).size,
     },
     revenueTrend,
     // Each redemption is one spin and carries its fanId.
-    activeFans: activeFans(store.redemptions.flatMap((r) => r.fanId ? [{ fanId: r.fanId, at: r.at }] : [])),
+    activeFans: activeFans(store.redemptions.filter(row=>row.kind!=="bonus").flatMap((r) => r.fanId ? [{ fanId: r.fanId, at: r.at }] : [])),
   };
 }
 
@@ -2054,6 +2183,7 @@ export function mockGetEngagementHeatmap(days?: number): EngagementHeatmap {
   // 7×24 grid of zeros.
   const counts = new Array<number>(7 * 24).fill(0);
   for (const r of store.redemptions) {
+    if(r.kind==="bonus")continue;
     const d = new Date(r.at);
     if (Number.isNaN(d.getTime()) || d.getTime() < since) continue;
     counts[d.getUTCDay() * 24 + d.getUTCHours()] += 1;
@@ -2067,84 +2197,42 @@ export function mockGetEngagementHeatmap(days?: number): EngagementHeatmap {
       cells.push({ weekday, hour, count });
     }
   }
-  return { cells, max };
+  return { dataStatus:"complete", cells, max };
 }
 
-/** #18 Prize ROI: count wins per prize label and join the creator's cost. */
+/** Resolve award costs by immutable win identity, never by a mutable label. */
+function mockAwardCostRows(since:number,until:number) {
+  const wins=new Map([...store.fans.values()].flatMap(fan=>fan.wins).map(win=>[win.shareId,win]));
+  for(const win of mockFocusState().anonymousWins.values())wins.set(win.shareId,win);
+  const prizes=new Map([...store.wheels.values()].flatMap(wheel=>wheel.prizes).map(prize=>[prize.id,prize]));
+  return store.redemptions.filter(row=>{const at=Date.parse(row.at);return Number.isFinite(at)&&at>=since&&at<=until;}).map(row=>{
+    const win=row.shareId?wins.get(row.shareId):undefined,prizeId=win?.prizeId??null,prize=prizeId?prizes.get(prizeId):undefined;
+    const cost=prize?.cost;
+    return {row,prizeId,prize,costCents:typeof cost==="number"&&Number.isFinite(cost)&&cost>=0?cost:null};
+  });
+}
+
+/** All awarded primary and bonus costs use current prize settings, not historical snapshots. */
 export function mockGetProfitSummary(days?: number): {
-  revenueCents: number;
-  costCents: number;
-  profitCents: number;
-  marginPct: number;
-  costsComplete: boolean;
+  revenueCents: number; costCents: number; profitCents: number; marginPct: number; costsComplete: boolean;
+  dataStatus: "complete"; costBasis: "current_prize_cost"; historicalCostsKnown: false;
 } {
-  const n = clampDays(days ?? 90);
-  const since = Date.now() - n * 24 * 60 * 60 * 1000;
-  const inWindow = (iso: string) => {
-    const t = new Date(iso).getTime();
-    return !Number.isNaN(t) && t >= since;
-  };
-  const revenueCents = store.grants
-    .filter((g) => inWindow(g.at))
-    .reduce((s, g) => s + g.amountCents, 0);
-
-  const costByLabel = new Map<string, number | null>();
-  for (const w of store.wheels.values())
-    for (const p of w.prizes) costByLabel.set(p.label, p.cost ?? null);
-
-  let costCents = 0;
-  let costsComplete = true;
-  for (const r of store.redemptions) {
-    if (!inWindow(r.at)) continue;
-    const c = costByLabel.get(r.prizeLabel);
-    if (c == null) costsComplete = false;
-    else costCents += c;
-  }
-  const profitCents = revenueCents - costCents;
-  return {
-    revenueCents,
-    costCents,
-    profitCents,
-    marginPct: revenueCents > 0 ? profitCents / revenueCents : 0,
-    costsComplete,
-  };
+  const until=Date.now(),since=until-clampDays(days??90)*24*60*60*1000;
+  const revenueCents=store.grants.filter(grant=>{const at=Date.parse(grant.at);return Number.isFinite(at)&&at>=since&&at<=until;}).reduce((total,grant)=>total+grant.amountCents,0);
+  const awards=mockAwardCostRows(since,until),costsComplete=awards.every(award=>award.costCents!==null);
+  const costCents=awards.reduce((total,award)=>total+(award.costCents??0),0),profitCents=revenueCents-costCents;
+  return {revenueCents,costCents,profitCents,marginPct:revenueCents>0?profitCents/revenueCents:0,costsComplete,
+    dataStatus:"complete",costBasis:"current_prize_cost",historicalCostsKnown:false};
 }
 
 export function mockGetPrizeRoi(days?: number): PrizeRoiRow[] {
-  const n = clampDays(days ?? 90);
-  const since = Date.now() - n * 24 * 60 * 60 * 1000;
-
-  // Costs + rarity come from every wheel's prize config (last write wins).
-  const meta = new Map<string, { rarity: Rarity; costCents: number | null }>();
-  for (const w of store.wheels.values()) {
-    for (const p of w.prizes) {
-      meta.set(p.label, { rarity: p.rarity, costCents: p.cost ?? null });
-    }
+  const until=Date.now(),since=until-clampDays(days??90)*24*60*60*1000,rows=new Map<string,PrizeRoiRow>();
+  for(const {row,prizeId,prize,costCents} of mockAwardCostRows(since,until)){
+    const key=JSON.stringify(prizeId?["prize",prizeId]:["unknown",row.prizeLabel,row.rarity]),existing=rows.get(key);
+    if(existing){existing.timesWon++;existing.totalCostCents+=costCents??0;}
+    else rows.set(key,{prizeId,label:prize?.label??row.prizeLabel,rarity:prize?.rarity??row.rarity,timesWon:1,costCents,totalCostCents:costCents??0,costBasis:"current_prize_cost",historicalCostsKnown:false});
   }
-
-  // Counts come from redemptions (one row per spin) inside the window.
-  const counts = new Map<string, { rarity: Rarity; timesWon: number }>();
-  for (const r of store.redemptions) {
-    const d = new Date(r.at);
-    if (Number.isNaN(d.getTime()) || d.getTime() < since) continue;
-    const cur = counts.get(r.prizeLabel);
-    if (cur) cur.timesWon += 1;
-    else counts.set(r.prizeLabel, { rarity: r.rarity, timesWon: 1 });
-  }
-
-  const rows: PrizeRoiRow[] = [];
-  for (const [label, { rarity, timesWon }] of counts) {
-    const costCents = meta.get(label)?.costCents ?? null;
-    rows.push({
-      label,
-      rarity: meta.get(label)?.rarity ?? rarity,
-      timesWon,
-      costCents,
-      totalCostCents: (costCents ?? 0) * timesWon,
-    });
-  }
-  rows.sort((a, b) => b.totalCostCents - a.totalCostCents);
-  return rows;
+  return [...rows.values()].sort((a,b)=>b.totalCostCents-a.totalCostCents);
 }
 
 /** #19 Cohort retention: cohort each fan by their first grant's campaign. */
@@ -2220,7 +2308,7 @@ export function mockGetUncategorizedStats(): {
   fans: number;
 } {
   const g = store.grants.filter((x) => x.campaignId == null);
-  const spinsPlayed = store.redemptions.filter((r) => r.campaignId == null).length;
+  const spinsPlayed = store.redemptions.filter((r) => r.kind!=="bonus"&&r.campaignId == null).length;
   return {
     revenue: g.reduce((s, x) => s + x.amountCents, 0),
     spinsBought: g.reduce((s, x) => s + x.spins, 0),
@@ -2295,6 +2383,7 @@ export function mockEditGrant(
 }
 
 export function mockClearMyData(): { ok: true } | { error: string } {
+  clearMockBingo();
   clearMockFocusState();
   resetMockCreatorRequestBusinessData();
   store.fans = new Map();
@@ -2387,6 +2476,7 @@ export function mockGetCampaignStats(): CampaignStats[] {
   // Pre-collect every win across all fans (each carries its FIFO campaignId).
   const allWins: MockWin[] = [];
   for (const f of store.fans.values()) allWins.push(...f.wins);
+  allWins.push(...(mockFocusState().anonymousWins?.values()??[]));
 
   return store.campaigns.map((campaign) => {
     const grants = store.grants.filter((g) => g.campaignId === campaign.id);
@@ -2395,7 +2485,7 @@ export function mockGetCampaignStats(): CampaignStats[] {
     const uniqueFans = new Set(grants.map((g) => g.fanId)).size;
 
     const campaignWins = allWins.filter((w) => w.campaignId === campaign.id);
-    const spinsPlayed = campaignWins.length;
+    const spinsPlayed = campaignWins.filter(win=>win.kind!=="bonus").length;
 
     const fulfilled = store.redemptions.filter(
       (r) => r.status === "fulfilled" && r.campaignId === campaign.id
@@ -2421,7 +2511,7 @@ export function mockGetCampaignStats(): CampaignStats[] {
       spinsPlayed,
       uniqueFans,
       fulfilled,
-      pending: Math.max(0, spinsPlayed - fulfilled),
+      pending: Math.max(0, campaignWins.length - fulfilled),
       playThroughPct: spinsBought > 0 ? spinsPlayed / spinsBought : 0,
       revenue,
       arpu,
@@ -2572,7 +2662,7 @@ export function mockCreateWheelTemplate(input: {
     title = source.title;
     subtitle = source.subtitle;
     brandColor = source.brandColor ?? "#ec4899";
-    prizes = source.prizes.map(({ id: _id, ...rest }) => structuredClone(rest));
+    prizes = source.prizes.map(({ id, ...rest }) => source.gameKind === "bingo" ? { ...structuredClone(rest),id } : structuredClone(rest));
   } else if (input.config) {
     title = input.config.title;
     subtitle = input.config.subtitle;
@@ -2580,7 +2670,7 @@ export function mockCreateWheelTemplate(input: {
     prizes = input.config.prizes.map((p) => structuredClone(p));
   }
 
-  const settings = gameSettings(source?.gameKind ?? input.config?.gameKind, source?.gameConfig ?? input.config?.gameConfig);
+  const settings = gameSettings(source?.gameKind ?? input.config?.gameKind, source?.gameConfig ?? input.config?.gameConfig,true);
   if (!mockGameFeatures()[settings.gameKind]) throw new Error("feature_disabled");
   const tpl: WheelTemplate = {
     ...settings,
@@ -2609,7 +2699,7 @@ export function mockGetAdminOverview(): AdminOverview {
   const you = store.accounts.find((a) => a.id === "acc-you");
   if (you) {
     you.fans = store.fans.size;
-    you.spins = store.redemptions.length;
+    you.spins = store.redemptions.filter(row=>row.kind!=="bonus").length;
     you.pending = store.redemptions.filter((r) => r.status === "pending").length;
   }
 
@@ -2755,6 +2845,11 @@ export async function mockGetSpinVerification(
   for (const wins of histories) {
     const win = wins.find((w) => w.shareId === shareId);
     if (!win) continue;
+    if(win.kind === "bonus") {
+      if(!win.parentShareId || !Number.isInteger(win.bingoLine) || win.bingoLine!<0 || win.bingoLine!>7)return null;
+      return {prizeLabel:win.label,rarity:win.rarity,at:win.at,serverSeed:"",serverSeedHash:"",nonce:0,hashOk:false,
+        parent:{shareId:win.parentShareId,line:win.bingoLine!,prizeId:win.prizeId??null}};
+    }
     if (!win.serverSeed || !win.serverSeedHash) return null;
     const hashOk = (await sha256Hex(win.serverSeed)) === win.serverSeedHash;
     return {
@@ -3127,7 +3222,7 @@ export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
   const rows = Array.from(store.fans.values())
     .filter((f) => f.leaderboardOptIn && publicHandle(f) !== null)
     .map((f) => {
-      const spins = f.wins.length;
+      const spins = f.wins.filter(win=>win.kind!=="bonus").length;
       const rareWins = f.wins.filter(
         (w) => RARITY_ORDER.indexOf(w.rarity) >= RARITY_ORDER.indexOf("rare")
       ).length;
@@ -3656,6 +3751,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
       .filter((g) => g.fanId === fan.id)
       .map((g) => ({ at: g.at, spins: g.spins, bonusSpins: g.bonusSpins })),
     spins: wins.map((w) => ({
+      kind:w.kind??"play",parentSpinId:w.parentShareId??null,bingoLine:w.bingoLine??null,
       gameKind: w.gameKind ?? "wheel", presentation: (w.presentation ?? null) as unknown as Json,
       id: w.shareId,
       at: w.at,
@@ -3679,6 +3775,8 @@ export function mockExportFanData(token: string): FanDataExport | null {
       .filter((r) => r.fanId === fan.id)
       .map((r) => ({ spinId: null, prize: r.prizeLabel, status: r.status, wonAt: r.at, fulfilledAt: null })),
     instantReceipts: deliveries.sort(([a], [b]) => a.localeCompare(b)).map(([spinId, delivery]) => ({ spinId, kind: delivery.kind, views: delivery.views, lastViewedAt: delivery.lastViewedAt, createdAt: delivery.at, erasedAt: null })),
+    bingoCards:[...mockBingoStore().cards.values()].filter(card=>card.fanId===fan.id).map(card=>({id:card.id,wheelId:card.wheelId,cells:structuredClone(card.state.cells) as unknown as Json,markedMask:card.state.markedMask,awardedLinesMask:card.state.awardedLinesMask,version:card.state.version,status:card.completedAt?"completed":"active",createdAt:card.createdAt,completedAt:card.completedAt})),
+    bingoLineAwards:[...mockBingoStore().awards.values()].filter(award=>award.fanId===fan.id).map(award=>({cardId:award.cardId,line:award.line,primarySpinId:award.parentShareId,bonusSpinId:award.bonusShareId,at:award.at})),
     focusPacks: [...mockFocusState().grants.values()].filter(grant => grant.focus.fan_id === fan.id).map(({ focus }) => ({ kind: focus.kind, prize: focus.prize_label ?? "Prize", multiplier: focus.multiplier, totalSpins: focus.total_spins, spinsLeft: focus.spins_left, chaseCounter: focus.chase_counter, status: focus.status === "completed" ? "done" : focus.status === "cancelled" ? "released" : focus.status, at: focus.created_at ?? null, endedAt: focus.ended_at ?? null })),
     spinAttempts: [...mockFocusState().attempts.values()].filter(attempt => attempt.fanId === fan.id).map(attempt => ({ status: !attempt.result || ("error" in attempt.result && attempt.result.error === "spin_pending") ? "pending" : "error" in attempt.result ? "declined" : "committed", error: attempt.result && "error" in attempt.result ? attempt.result.error : null, at: attempt.createdAt ?? null, finishedAt: attempt.finishedAt ?? null })),
     wishlist: store.wishlists
@@ -3764,6 +3862,7 @@ export function mockExportCreatorData(): CreatorDataExport {
     fair_version: win.fairVersion ?? null, pool_hash: win.poolHash ?? null,
     pool_snapshot: win.poolSnapshot ?? null, fair_trace: win.fairTrace ?? null,
     game_kind: win.gameKind ?? "wheel", presentation: win.presentation ?? null,
+    kind:win.kind??"play",parent_spin_id:win.parentShareId??null,bingo_line:win.bingoLine??null,
   }));
   });
   for (const win of mockFocusState().anonymousWins?.values() ?? []) spins.push({
@@ -3774,6 +3873,7 @@ export function mockExportCreatorData(): CreatorDataExport {
     fair_version: win.fairVersion ?? null, pool_hash: win.poolHash ?? null,
     pool_snapshot: win.poolSnapshot ?? null, fair_trace: win.fairTrace ?? null,
     game_kind: win.gameKind ?? "wheel", presentation: win.presentation ?? null,
+    kind:win.kind??"play",parent_spin_id:win.parentShareId??null,bingo_line:win.bingoLine??null,
   });
   const push = (globalThis as unknown as { __ffPushStore?: {
     devices: { id: string; showDetails: boolean; userAgent: string | null; failures: number; lastSuccessAt: string | null; createdAt: string }[];
@@ -3797,6 +3897,8 @@ export function mockExportCreatorData(): CreatorDataExport {
     spin_attempts: rows("spin_attempts", [...mockFocusState().attempts].map(([id, attempt]) => ({ id, creator_id: uid, fan_id: attempt.fanId, state: !attempt.result || ("error" in attempt.result && attempt.result.error === "spin_pending") ? "pending" : "error" in attempt.result ? "declined" : "committed", error: attempt.result && "error" in attempt.result ? attempt.result.error : null, spin_id: attempt.result && !("error" in attempt.result) ? id : null, created_at: attempt.createdAt ?? null, finished_at: attempt.finishedAt ?? null }))),
     fan_import_batches: rows("fan_import_batches", [...(mockFocusState().imports ?? [])].map(([id]) => ({ id, creator_id: uid, created_at: null }))),
     fan_import_items: rows("fan_import_items", [...(mockFocusState().imports ?? [])].flatMap(([batch_id, batch]) => batch.items.map(item => ({ batch_id, ordinal: item.ordinal, creator_id: uid, grant_id: item.grantId ?? null, error: item.error ?? null, created_at: null })))),
+    bingo_cards:rows("bingo_cards",[...mockBingoStore().cards.values()].map(card=>({id:card.id,creator_id:uid,fan_id:card.fanId,wheel_id:card.wheelId,cells:card.state.cells,marked_mask:card.state.markedMask,awarded_lines_mask:card.state.awardedLinesMask,version:card.state.version,status:card.completedAt?"completed":"active",created_at:card.createdAt,completed_at:card.completedAt}))),
+    bingo_line_awards:rows("bingo_line_awards",[...mockBingoStore().awards.values()].map(award=>({card_id:award.cardId,line_index:award.line,creator_id:uid,fan_id:award.fanId,wheel_id:award.wheelId,primary_spin_id:award.parentShareId,bonus_spin_id:award.bonusShareId,created_at:award.at}))),
     creator_request_journal: rows("creator_request_journal", [...mockCreatorRequests().values()].map(entry => ({ id: entry.requestId, creator_id: uid, actor_id: uid, kind: entry.kind, state: entry.status, error: entry.status === "gone" ? "gone" : null, created_at: entry.createdAt, finished_at: entry.finishedAt ?? null }))),
     referrals: rows("referrals", store.referrals), messages: rows("messages", store.messages),
     wishlists: rows("wishlists", store.wishlists), creator_notices: rows("creator_notices", privacy.notices),
@@ -3846,12 +3948,13 @@ export function mockAcceptMyTerms(): { version: string; acceptedAt: string } {
  * with the Supabase path's notifyCreator call). Null when there is no win.
  */
 export function mockSpinPushEvent(
-  token: string
+  token: string,
+  shareId?: string
 ): { fanId: string; prizeId: string; stockAfter: number | null; redemptionId?: string } | null {
   const fan = fanForToken(token);
-  const win = fan?.wins[0];
+  const win = shareId?fan?.wins.find(win=>win.shareId===shareId):fan?.wins[0];
   if (!fan || !win?.prizeId) return null;
-  const redemption = store.redemptions.find((r) => r.fanId === fan.id && r.at === win.at && r.prizeLabel === win.label);
+  const redemption = store.redemptions.find((r) => r.fanId === fan.id && (shareId?r.shareId===shareId:r.at === win.at && r.prizeLabel === win.label));
   let stockAfter: number | null = null;
   for (const w of store.wheels.values()) {
     const p = w.prizes.find((x) => x.id === win.prizeId);
@@ -3990,9 +4093,10 @@ export function mockSetPrizeDelivery(
 export function mockAddPrizeCodes(
   prizeId: string,
   codes: string[],
-): (PrizeDeliveryView & { added: number; duplicates: number }) | { error: "not_found" | "too_many_codes" } {
+): (PrizeDeliveryView & { added: number; duplicates: number }) | { error: "not_found" | "too_many_codes" | "bingo_active_card" } {
   const prize = findMockPrize(prizeId);
   if (!prize) return { error: "not_found" };
+  for(const card of mockBingoStore().cards.values())if(card.state.markedMask!==BINGO_FULL_MASK&&card.state.cells.some(cell=>cell.id===prizeId))return {error:"bingo_active_card"};
   const state = rewardState().prizes;
   const current = state.get(prizeId);
   const kept = current?.kind === "codes" ? current.codes : [];
@@ -4025,19 +4129,17 @@ function mockRewardAvailable(prize: Prize, ownReservedCodeId?: string): boolean 
   return !!reward && reward.kind !== "codes";
 }
 
-function mockTakeReward(prize: Prize, ownReservedCodeId?: string): { ok: true; reward: { kind: RewardKind; value: string; code?: MockCode } | null } | { ok: false } {
-  const delivery = prize.delivery ?? "manual";
-  if (delivery === "manual") return { ok: true, reward: null };
-  const r = rewardState().prizes.get(prize.id);
-  if (delivery === "codes") {
-    const code = ownReservedCodeId && r?.kind === "codes" ? r.codes.find(c => c.id === ownReservedCodeId && c.shareId === null) : freeCodes(r)[0];
-    if (!code) return { ok: false };
-    code.shareId = "reserved";
-    code.reservedFocusId = null;
-    return { ok: true, reward: { kind: "code", value: code.value, code } };
+function mockRewardProposal(prize:Prize,ownReservedCodeId?:string,usedCodes:ReadonlySet<string>=new Set()):{ok:true;reward:{kind:RewardKind;value:string;code?:MockCode}|null}|{ok:false}{
+  const delivery=prize.delivery??"manual";if(delivery==="manual")return {ok:true,reward:null};
+  const reward=rewardState().prizes.get(prize.id);
+  if(delivery==="codes"){
+    const code=ownReservedCodeId&&reward?.kind==="codes"?reward.codes.find(code=>code.id===ownReservedCodeId&&code.shareId===null&&!usedCodes.has(code.id)):freeCodes(reward).find(code=>!usedCodes.has(code.id));
+    return code?{ok:true,reward:{kind:"code",value:code.value,code}}:{ok:false};
   }
-  if (!r || r.kind === "codes") return { ok: false };
-  return { ok: true, reward: { kind: r.kind, value: r.value } };
+  return reward&&reward.kind!=="codes"?{ok:true,reward:{kind:reward.kind,value:reward.value}}:{ok:false};
+}
+function mockTakeReward(prize:Prize,ownReservedCodeId?:string):{ok:true;reward:{kind:RewardKind;value:string;code?:MockCode}|null}|{ok:false}{
+  const proposal=mockRewardProposal(prize,ownReservedCodeId);if(proposal.ok&&proposal.reward?.code){proposal.reward.code.shareId="reserved";proposal.reward.code.reservedFocusId=null;}return proposal;
 }
 
 function mockRecordDelivery(shareId: string, fanId: string, reward: { kind: RewardKind; value: string; code?: MockCode }, at: string, prize: Prize) {
@@ -4046,7 +4148,7 @@ function mockRecordDelivery(shareId: string, fanId: string, reward: { kind: Rewa
 }
 
 /** Logs only values actually present in one outgoing token-authorized response. */
-function mockRecordRewardDisclosures(token:string,result:import("@/lib/games/wheel/types").SpinResult & {bonusWins?:{shareId:string;reward?:DeliveredReward}[]}):boolean {
+function mockRecordRewardDisclosures(token:string,result:import("@/lib/games/wheel/types").SpinResult):boolean {
   const values=[...(result.reward&&result.shareId?[{shareId:result.shareId,reward:result.reward}]:[]),...(result.bonusWins??[]).flatMap(bonus=>bonus.reward?[{shareId:bonus.shareId,reward:bonus.reward}]:[])];
   if(!values.length)return true;
   if(values.length>5||new Set(values.map(value=>value.shareId)).size!==values.length)return false;

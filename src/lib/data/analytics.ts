@@ -1,3 +1,4 @@
+import { CompleteReadError, readScopedRows, visitScopedRows } from "./readPages";
 import { readGamePlayCounts } from "./gameAnalytics";
 import { focusTag } from "./focusTag";
 // Data layer — analytics: creator overview, deeper metrics (heatmap, prize
@@ -28,6 +29,7 @@ import { getWishlistDemand } from "./boosts";
 
 // Creator dashboard: metrics + the prize fulfilment queue.
 export async function getOverview(): Promise<CreatorOverview> {
+  const cutoff = new Date().toISOString();
   const empty: CreatorOverview = {
     metrics: { fans: 0, spinsPlayed: 0, pending: 0, fulfilled: 0, revenue: 0 },
     redemptions: [],
@@ -44,16 +46,16 @@ export async function getOverview(): Promise<CreatorOverview> {
   // awaiting one after another (this powers the 12s dashboard poll).
   const head = { count: "exact" as const, head: true };
   const [
-    { data: reds },
+    { data: reds, error: redsError },
     { count: fans },
     { count: spinsPlayed },
     { data: grantRows },
     { count: unreadMessages },
-    { data: prof },
+    { data: prof, error: profileError },
     { data: wheelRows },
     { count: pendingCount },
     { count: fulfilledCount },
-    { data: oldestPendingRow },
+    { data: oldestPendingRow, error: oldestError },
     gamePlays,
   ] = await Promise.all([
     sb
@@ -65,9 +67,9 @@ export async function getOverview(): Promise<CreatorOverview> {
       .eq("creator_id", user.id)
       .order("created_at", { ascending: false })
       .limit(200),
-    sb.from("fans").select("id", head).eq("creator_id", user.id),
-    sb.from("spins").select("id", head).eq("creator_id", user.id),
-    sb.from("grants").select("amount_cents").eq("creator_id", user.id),
+    sb.from("fans").select("id", head).eq("creator_id", user.id).lte("created_at", cutoff),
+    sb.from("spins").select("id", head).eq("creator_id", user.id).eq("kind", "play").lte("created_at", cutoff),
+    readScopedRows<{ amount_cents: number }>(sb, "grants", "amount_cents", q => q.eq("creator_id", user.id), cutoff).then(data => ({ data })),
     sb
       .from("messages")
       .select("id", head)
@@ -75,10 +77,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       .eq("sender", "fan")
       .is("read_at", null),
     sb.from("profiles").select("leaderboard_enabled").eq("id", user.id).maybeSingle(),
-    sb
-      .from("wheels")
-      .select("created_at, updated_at, archived_at")
-      .eq("creator_id", user.id),
+    readScopedRows<{ created_at: string; updated_at: string; archived_at: string | null }>(sb, "wheels", "created_at, updated_at, archived_at", q => q.eq("creator_id", user.id), cutoff).then(data => ({ data })),
     // Count queries so pending/fulfilled headline totals are exact, not derived
     // from the display-capped (200-row) redemptions slice above.
     sb
@@ -101,8 +100,10 @@ export async function getOverview(): Promise<CreatorOverview> {
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle(),
-    readGamePlayCounts(sb, user.id),
+    readGamePlayCounts(sb, user.id, cutoff),
   ]);
+
+  if (redsError || profileError || oldestError || [fans, spinsPlayed, pendingCount, fulfilledCount, unreadMessages].some(value => typeof value !== "number") || gamePlays === null) throw new CompleteReadError();
 
   const rows = (reds ?? []) as unknown as {
     id: string;
@@ -161,6 +162,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     );
 
   return {
+    dataStatus: "complete",
     gamePlays,
     metrics: {
       fans: fans ?? 0,
@@ -183,6 +185,7 @@ export async function getOverview(): Promise<CreatorOverview> {
 export async function getMetricsExtra(
   days: number = 30
 ): Promise<CreatorMetricsExtra> {
+  const cutoff = new Date().toISOString();
   const n = clampDays(days);
   if (!isSupabaseConfigured()) return mockGetMetricsExtra(days);
 
@@ -199,10 +202,10 @@ export async function getMetricsExtra(
     };
   }
 
-  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
   // Weekly-active fans needs the last 14 days (this week + last week) of spins
   // with their fan, independent of the trend window.
-  const since14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const since14 = new Date(Date.parse(cutoff) - 14 * 24 * 60 * 60 * 1000).toISOString();
 
   // All six reads are independent — run them concurrently (12s metrics poll).
   // Per-fan funnel: fans created → fans with ≥1 spin → fans with a fulfilled
@@ -216,27 +219,15 @@ export async function getMetricsExtra(
     { data: fulfilledRows },
     { data: recentSpinRows },
   ] = await Promise.all([
-    sb.from("spins").select("created_at").eq("creator_id", user.id).gte("created_at", since),
-    sb
-      .from("grants")
-      .select("created_at, amount_cents")
-      .eq("creator_id", user.id)
-      .gte("created_at", since),
-    sb.from("fans").select("id", head).eq("creator_id", user.id),
-    sb.from("spins").select("fan_id").eq("creator_id", user.id).not("fan_id", "is", null),
-    sb
-      .from("redemptions")
-      .select("spin:spins(fan_id)")
-      .eq("creator_id", user.id)
-      .eq("status", "fulfilled"),
-    sb
-      .from("spins")
-      .select("fan_id, created_at")
-      .eq("creator_id", user.id)
-      .not("fan_id", "is", null)
-      .gte("created_at", since14),
+    readScopedRows<{ created_at: string }>(sb, "spins", "created_at", q => q.eq("creator_id", user.id).eq("kind", "play").gte("created_at", since), cutoff).then(data => ({ data })),
+    readScopedRows<{ created_at: string; amount_cents: number }>(sb, "grants", "created_at, amount_cents", q => q.eq("creator_id", user.id).gte("created_at", since), cutoff).then(data => ({ data })),
+    sb.from("fans").select("id", head).eq("creator_id", user.id).lte("created_at", cutoff),
+    readScopedRows<{ fan_id: string }>(sb, "spins", "fan_id", q => q.eq("creator_id", user.id).eq("kind", "play").not("fan_id", "is", null), cutoff).then(data => ({ data })),
+    readScopedRows<{ spin: { fan_id: string | null } | null }>(sb, "redemptions", "spin:spins(fan_id)", q => q.eq("creator_id", user.id).eq("status", "fulfilled"), cutoff).then(data => ({ data })),
+    readScopedRows<{ fan_id: string; created_at: string }>(sb, "spins", "fan_id, created_at", q => q.eq("creator_id", user.id).eq("kind", "play").not("fan_id", "is", null).gte("created_at", since14), cutoff).then(data => ({ data })),
   ]);
 
+  if (typeof fans !== "number") throw new CompleteReadError();
   const timestamps = ((spinRows ?? []) as { created_at: string }[]).map(
     (r) => r.created_at
   );
@@ -264,6 +255,7 @@ export async function getMetricsExtra(
   ).size;
 
   return {
+    dataStatus: "complete",
     trend,
     funnel: { fans: fans ?? 0, spun, fulfilled },
     revenueTrend,
@@ -282,6 +274,7 @@ export async function getMetricsExtra(
 export async function getEngagementHeatmap(
   days: number = 90
 ): Promise<EngagementHeatmap> {
+  const cutoff = new Date().toISOString();
   const n = clampDays(days);
   if (!isSupabaseConfigured()) return mockGetEngagementHeatmap(days);
 
@@ -299,12 +292,8 @@ export async function getEngagementHeatmap(
   } = await sb.auth.getUser();
   if (!user) return empty;
 
-  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
-  const { data: spinRows } = await sb
-    .from("spins")
-    .select("created_at")
-    .eq("creator_id", user.id)
-    .gte("created_at", since);
+  const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
+  const spinRows = await readScopedRows<{ created_at: string }>(sb, "spins", "created_at", q => q.eq("creator_id", user.id).eq("kind", "play").gte("created_at", since), cutoff);
 
   const counts = new Array<number>(7 * 24).fill(0);
   for (const r of (spinRows ?? []) as { created_at: string }[]) {
@@ -322,90 +311,75 @@ export async function getEngagementHeatmap(
       cells.push({ weekday, hour, count });
     }
   }
-  return { cells, max };
+  return { cells, max, dataStatus: "complete" };
 }
 
-// #18 Prize ROI: count wins per prize label and join the creator's cost.
+function currentPrizeCost(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+// #18 Current-cost estimate: stable prize identity, never a label join.
 export async function getPrizeRoi(days: number = 90): Promise<PrizeRoiRow[]> {
+  const cutoff = new Date().toISOString();
   const n = clampDays(days);
   if (!isSupabaseConfigured()) return mockGetPrizeRoi(days);
-
   const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
+  const { data: { user } } = await sb.auth.getUser();
   if (!user) return [];
 
-  // Costs + rarity come from the creator's prize set (last write wins by label).
-  const { data: prizeRows } = await sb
-    .from("prizes")
-    .select("label, rarity, cost_cents, wheel:wheels!inner(creator_id)")
-    .eq("wheel.creator_id", user.id);
-  const meta = new Map<string, { rarity: Rarity; costCents: number | null }>();
-  for (const p of (prizeRows ?? []) as unknown as {
-    label: string;
-    rarity: Rarity;
-    cost_cents: number | null;
-  }[]) {
-    meta.set(p.label, { rarity: p.rarity, costCents: p.cost_cents ?? null });
+  const prizeRows = await readScopedRows<{ label: string; rarity: Rarity; cost_cents: number | null }>(sb, "prizes", "label, rarity, cost_cents, wheel:wheels!inner(creator_id)", q => q.eq("wheel.creator_id", user.id), cutoff);
+  const meta = new Map(prizeRows.map(prize => [prize.id, prize]));
+  const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
+  const spinRows = await readScopedRows<{ prize_id: string | null; prize_label: string; prize_rarity: Rarity }>(sb, "spins", "prize_id, prize_label, prize_rarity", q => q.eq("creator_id", user.id).gte("created_at", since), cutoff);
+  const counts = new Map<string, { prizeId: string | null; label: string; rarity: Rarity; timesWon: number }>();
+  for (const spin of spinRows) {
+    const prizeId = typeof spin.prize_id === "string" && spin.prize_id ? spin.prize_id : null;
+    // Deleted references become NULL. Their display groups remain unknown;
+    // matching a surviving label is never authority for assigning its cost.
+    const key = prizeId === null ? JSON.stringify(["unresolved", spin.prize_label, spin.prize_rarity]) : `prize:${prizeId}`;
+    const current = counts.get(key);
+    if (current) current.timesWon++;
+    else counts.set(key, { prizeId, label: spin.prize_label, rarity: spin.prize_rarity, timesWon: 1 });
   }
-
-  // Counts come from spins (one row per spin) inside the window.
-  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
-  const { data: spinRows } = await sb
-    .from("spins")
-    .select("prize_label, prize_rarity")
-    .eq("creator_id", user.id)
-    .gte("created_at", since);
-
-  const counts = new Map<string, { rarity: Rarity; timesWon: number }>();
-  for (const s of (spinRows ?? []) as {
-    prize_label: string;
-    prize_rarity: Rarity;
-  }[]) {
-    const cur = counts.get(s.prize_label);
-    if (cur) cur.timesWon += 1;
-    else counts.set(s.prize_label, { rarity: s.prize_rarity, timesWon: 1 });
-  }
-
   const rows: PrizeRoiRow[] = [];
-  for (const [label, { rarity, timesWon }] of counts) {
-    const costCents = meta.get(label)?.costCents ?? null;
-    rows.push({
-      label,
-      rarity: meta.get(label)?.rarity ?? rarity,
-      timesWon,
-      costCents,
-      totalCostCents: (costCents ?? 0) * timesWon,
-    });
+  for (const group of counts.values()) {
+    const prize = group.prizeId === null ? undefined : meta.get(group.prizeId);
+    const costCents = currentPrizeCost(prize?.cost_cents);
+    rows.push({ prizeId: group.prizeId, label: prize?.label ?? group.label, rarity: prize?.rarity ?? group.rarity,
+      timesWon: group.timesWon, costCents, totalCostCents: (costCents ?? 0) * group.timesWon,
+      costBasis: "current_prize_cost", historicalCostsKnown: false });
   }
-  rows.sort((a, b) => b.totalCostCents - a.totalCostCents);
+  rows.sort((a, b) => b.totalCostCents - a.totalCostCents || (a.prizeId ?? a.label).localeCompare(b.prizeId ?? b.label));
   return rows;
 }
 
 export interface ProfitSummary {
+  costBasis: "current_prize_cost";
+  historicalCostsKnown: false;
+  dataStatus?: "complete" | "partial" | "unavailable";
   revenueCents: number; // what fans paid (grants) in the window
-  costCents: number; // prize fulfilment cost (won prizes × their set cost)
+  costCents: number; // known current-cost estimate; not a cost-at-award snapshot
   profitCents: number; // revenue − cost
   marginPct: number; // profit ÷ revenue (0 if no revenue)
-  costsComplete: boolean; // false if some won prizes have no cost set (cost understated)
+  costsComplete: boolean; // every included award resolves to a known CURRENT cost
 }
 
 /**
- * The real bottom line over a window: revenue (what fans paid) minus prize cost
- * (won prizes × their set cost) = profit. This is the honest "ROI" the per-prize
- * cost table can't give, because revenue isn't attributable to a single prize.
+ * Revenue minus a current-prize-cost estimate. No immutable cost-at-award
+ * snapshot exists; expose that basis rather than claiming historical profit.
  */
 export async function getProfitSummary(days: number = 90): Promise<ProfitSummary> {
+  const cutoff = new Date().toISOString();
   const n = clampDays(days);
   const empty: ProfitSummary = {
+    costBasis: "current_prize_cost", historicalCostsKnown: false,
     revenueCents: 0,
     costCents: 0,
     profitCents: 0,
     marginPct: 0,
     costsComplete: true,
   };
-  if (!isSupabaseConfigured()) return mockGetProfitSummary(days);
+  if (!isSupabaseConfigured()) return { ...mockGetProfitSummary(days), costBasis: "current_prize_cost", historicalCostsKnown: false };
 
   const sb = await createClient();
   const {
@@ -413,47 +387,28 @@ export async function getProfitSummary(days: number = 90): Promise<ProfitSummary
   } = await sb.auth.getUser();
   if (!user) return empty;
 
-  const since = new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
 
-  // Revenue: grants in the window.
-  const { data: grantRows } = await sb
-    .from("grants")
-    .select("amount_cents")
-    .eq("creator_id", user.id)
-    .gte("created_at", since);
-  const revenueCents = ((grantRows ?? []) as { amount_cents: number }[]).reduce(
-    (s, g) => s + (g.amount_cents ?? 0),
-    0
-  );
-
-  // Cost: each won prize (in window) × its set cost, by label.
-  const { data: prizeRows } = await sb
-    .from("prizes")
-    .select("label, cost_cents, wheel:wheels!inner(creator_id)")
-    .eq("wheel.creator_id", user.id);
-  const costByLabel = new Map<string, number | null>();
-  for (const p of (prizeRows ?? []) as unknown as {
-    label: string;
-    cost_cents: number | null;
-  }[]) {
-    costByLabel.set(p.label, p.cost_cents ?? null);
-  }
-  const { data: spinRows } = await sb
-    .from("spins")
-    .select("prize_label")
-    .eq("creator_id", user.id)
-    .gte("created_at", since);
-
-  let costCents = 0;
-  let costsComplete = true;
-  for (const s of (spinRows ?? []) as { prize_label: string }[]) {
-    const c = costByLabel.get(s.prize_label);
-    if (c == null) costsComplete = false;
-    else costCents += c;
-  }
+  let revenueCents = 0;
+  await visitScopedRows<{ amount_cents: number }>(sb, "grants", "amount_cents", q => q.eq("creator_id", user.id).gte("created_at", since), cutoff, page => {
+    for (const grant of page) revenueCents += grant.amount_cents ?? 0;
+  });
+  const costByPrizeId = new Map<string, number | null>();
+  await visitScopedRows<{ cost_cents: number | null }>(sb, "prizes", "cost_cents, wheel:wheels!inner(creator_id)", q => q.eq("wheel.creator_id", user.id), cutoff, page => {
+    for (const prize of page) costByPrizeId.set(prize.id, currentPrizeCost(prize.cost_cents));
+  });
+  let costCents = 0, costsComplete = true;
+  await visitScopedRows<{ prize_id: string | null }>(sb, "spins", "prize_id", q => q.eq("creator_id", user.id).gte("created_at", since), cutoff, page => {
+    for (const spin of page) {
+      const cost = spin.prize_id === null ? undefined : costByPrizeId.get(spin.prize_id);
+      if (cost == null) costsComplete = false; else costCents += cost;
+    }
+  });
 
   const profitCents = revenueCents - costCents;
   return {
+    dataStatus: "complete",
+    costBasis: "current_prize_cost", historicalCostsKnown: false,
     revenueCents,
     costCents,
     profitCents,
@@ -464,6 +419,7 @@ export async function getProfitSummary(days: number = 90): Promise<ProfitSummary
 
 // #19 Cohort retention: cohort each fan by their first grant's campaign.
 export async function getCohortRetention(): Promise<CohortRow[]> {
+  const cutoff = new Date().toISOString();
   if (!isSupabaseConfigured()) return mockGetCohortRetention();
 
   const sb = await createClient();
@@ -472,14 +428,8 @@ export async function getCohortRetention(): Promise<CohortRow[]> {
   } = await sb.auth.getUser();
   if (!user) return [];
 
-  const { data: grantRows } = await sb
-    .from("grants")
-    .select("fan_id, campaign_id, created_at")
-    .eq("creator_id", user.id);
-  const { data: campaignRows } = await sb
-    .from("campaigns")
-    .select("id, name")
-    .eq("creator_id", user.id);
+  const grantRows = await readScopedRows<{ fan_id: string; campaign_id: string | null; created_at: string }>(sb, "grants", "fan_id, campaign_id, created_at", q => q.eq("creator_id", user.id), cutoff);
+  const campaignRows = await readScopedRows<{ name: string }>(sb, "campaigns", "name", q => q.eq("creator_id", user.id), cutoff);
 
   const campaignName = new Map<string, string>();
   for (const c of (campaignRows ?? []) as { id: string; name: string }[])

@@ -1,3 +1,4 @@
+import { readBingoCard } from "./bingo";
 import { applyFocusStock } from "./focusDisplay";
 import { commitSpinAttempt, readSpinAttempt, type SpinIntent, type SpinAttemptStatus } from "./spinAttempts";
 import { getFanFocusDisplay } from "./focus";
@@ -144,7 +145,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .maybeSingle();
   if (!wheelData) return null;
   const wheel = wheelData as unknown as DbWheelRow;
-  if (wheel.game_kind === "bingo" || wheel.game_ready === false) return null;
+  if (wheel.game_ready === false) return null;
 
   // The fan's win history, wishlist, and the active happy-hour are all
   // independent reads keyed off the now-known fan/wheel — fetch concurrently
@@ -194,8 +195,11 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     at: w.created_at,
   }));
 
+  let bingoCard;
+  if(wheel.game_kind === "bingo"){try{bingoCard=await readBingoCard(token,sb);}catch{return null;}}
   const focusDisplay = await getFanFocusDisplay(token);
   return {
+    ...(wheel.game_kind === "bingo"?{bingoCard}:{}),
     token,
     blocked: !!pass.fan.blocked_at,
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
@@ -248,8 +252,10 @@ export async function spin(token: string, rawClientSeed?: unknown, requestId = c
   if (!isSupabaseConfigured()) {
     const result = await mockSpin(token, clientSeed, requestId, publishedSeedHash);
     if (!("error" in result) && !result.replayed) {
-      const event = mockSpinPushEvent(token);
-      if (event) runAfterResponse(() => notifyCreator("demo", { type: "spin", ...event }));
+      for(const shareId of [result.shareId,...(result.bonusWins??[]).map(win=>win.shareId)]){
+        const event = mockSpinPushEvent(token,shareId);
+        if (event) runAfterResponse(() => notifyCreator("demo", { type: "spin", ...event }));
+      }
     }
     return result;
   }

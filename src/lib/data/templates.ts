@@ -139,7 +139,7 @@ function toWheelTemplate(r: {
   game_config?: unknown;
 }): WheelTemplate {
   return {
-    ...gameSettings(r.game_kind, r.game_config),
+    ...gameSettings(r.game_kind, r.game_config,true),
     id: r.id,
     name: r.name,
     title: r.title,
@@ -193,13 +193,13 @@ export async function createWheelTemplate(input: {
     source = await getWheelById(input.fromWheelId);
   }
   if (!source) throw new Error("no_source");
-  const settings = gameSettings(source.gameKind, source.gameConfig);
+  const settings = gameSettings(source.gameKind, source.gameConfig,true);
   await requireGameFeature(sb, user.id, settings.gameKind);
 
   // Strip ids off the prize snapshot.
   const prizes: Omit<Prize, "id">[] = source.prizes
     .slice(0, MAX_WHEEL_PRIZES)
-    .map(({ id: _id, ...rest }) => rest);
+    .map(({ id, ...rest }) => settings.gameKind === "bingo" ? { ...rest,id } : rest);
 
   const { data, error } = await sb
     .from("wheel_templates")

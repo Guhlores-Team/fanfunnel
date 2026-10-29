@@ -101,6 +101,7 @@ export default function MetricsPanel({
   const top = (
     <div className="flex flex-col gap-7">
       <section aria-label="Key numbers" className="flex flex-col gap-2">
+        {((overview?.dataStatus && overview.dataStatus !== "complete") || (extra?.dataStatus && extra.dataStatus !== "complete")) && <p role="status" className="text-xs text-amber-200">Some Insights records could not be read completely. Refresh before relying on these totals.</p>}
         {/* Stat strip: hairline grid of recessed, tabular cells. */}
         <dl className={`${hairGrid} grid-cols-2 sm:grid-cols-5`}>
           {stats.map((s, i) => (
@@ -116,6 +117,7 @@ export default function MetricsPanel({
         {overview?.gamePlays ? <dl aria-label="Plays by game" className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
           <div className="flex gap-2"><dt className="text-muted">Wheel plays</dt><dd className="font-semibold tabular-nums">{overview.gamePlays.wheel.toLocaleString()}</dd></div>
           <div className="flex gap-2"><dt className="text-muted">Scratch plays</dt><dd className="font-semibold tabular-nums">{overview.gamePlays.scratch.toLocaleString()}</dd></div>
+          <div className="flex gap-2"><dt className="text-muted">Bingo plays</dt><dd className="font-semibold tabular-nums">{overview.gamePlays.bingo.toLocaleString()}</dd></div>
         </dl> : <p className="text-xs text-muted">Plays by game are temporarily unavailable.</p>}
         <p className="flex items-center gap-2 text-xs text-muted">
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#22c55e]" />

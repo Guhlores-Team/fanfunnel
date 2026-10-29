@@ -40,6 +40,7 @@ export type RewardError = {
     | "not_found"
     | "bad_request"
     | "reward_key_missing"
+    | "bingo_active_card"
     | "too_many_codes"
     | "db_error";
 };
@@ -148,7 +149,7 @@ export async function setPrizeDelivery(
   });
   if (error) {
     console.error("rewards: set_prize_delivery failed", error.code);
-    return { error: error.code === "P0002" ? "not_found" : "db_error" };
+    return { error: error.message === "bingo_active_card" ? "bingo_active_card" : error.code === "P0002" ? "not_found" : "db_error" };
   }
   return deliveryView(svc, prizeId, auth.creatorId);
 }
@@ -168,6 +169,7 @@ export async function addPrizeCodes(prizeId: string, codes: string[]): Promise<(
   const { data: added, error } = await svc.rpc("add_reward_codes", { p_prize: prizeId, p_creator: auth.creatorId, p_codes: rows });
   if (error) {
     console.error("rewards: add_reward_codes failed", error.code);
+    if (error.message === "bingo_active_card") return { error: "bingo_active_card" };
     if (error.code === "P0002") return { error: "not_found" };
     if (/too many codes/.test(error.message ?? "")) return { error: "too_many_codes" };
     return { error: "db_error" };

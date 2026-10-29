@@ -1,3 +1,4 @@
+import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { createCampaign, listCampaigns } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -5,8 +6,10 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 // A creator's campaigns: named groupings of links they can compare against
 // each other. Creator-scoped; newest first.
 export async function GET() {
-  const campaigns = await listCampaigns();
-  return NextResponse.json({ campaigns });
+  return completeReadResponse(async () => {
+    const campaigns = await listCampaigns();
+    return NextResponse.json({ campaigns });
+  });
 }
 
 export async function POST(req: Request) {

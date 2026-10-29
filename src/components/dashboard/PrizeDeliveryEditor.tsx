@@ -22,6 +22,7 @@ const ERROR: Record<string, string> = {
   forbidden: "You don't have permission to change this prize.",
   not_found: "This prize is no longer available. Reload the wheel and try again.",
   reward_key_missing: "Instant delivery is unavailable right now. Keep this prize manual or try again later.",
+  bingo_active_card: "This prize is on an active bingo card. Keep it unlimited and use manual, text or link delivery so paid progress can still be completed.",
   too_many_codes: "This prize has reached its code limit. Wait until more codes have been delivered.",
   invalid_link: "Enter a valid https link without a username or password.",
   invalid_text: `Enter between 1 and ${MAX_REWARD_TEXT} characters.`,

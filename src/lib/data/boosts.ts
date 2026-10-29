@@ -1,3 +1,4 @@
+import { readScopedRows, visitScopedRows } from "./readPages";
 import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
 // Data layer — boosts: happy hours, share cards, provably-fair verification,
 // wishlists, the public leaderboard and the recent-wins ticker.
@@ -195,7 +196,7 @@ export async function getSpinVerification(
     "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at";
   let res = await sb
     .from("spins")
-    .select(`${SELECT}, seed_commitment, prize_id, fair_version, pool_snapshot, pool_hash, fair_trace, presentation`)
+    .select(`${SELECT}, seed_commitment, prize_id, fair_version, pool_snapshot, pool_hash, fair_trace, presentation, kind, parent_spin_id, bingo_line`)
     .eq("share_id", shareId)
     .maybeSingle();
   // Pre-0047 DB (no fairness-v3 columns yet): every spin verifies as v1/v2.
@@ -221,7 +222,17 @@ export async function getSpinVerification(
     pool_hash?: string | null;
     fair_trace?: unknown;
     presentation?: unknown;
+    kind?: string;
+    parent_spin_id?: string | null;
+    bingo_line?: number | null;
   } | null;
+  if(row?.kind === "bonus") {
+    if(!row.parent_spin_id || !Number.isInteger(row.bingo_line) || row.bingo_line!<0 || row.bingo_line!>7)return null;
+    const {data:parent,error}=await sb.from("spins").select("share_id,kind").eq("id",row.parent_spin_id).maybeSingle();
+    if(error||!parent?.share_id||parent.kind!=="play")return null;
+    return {prizeLabel:row.prize_label,rarity:row.prize_rarity,at:row.created_at,serverSeed:"",serverSeedHash:"",nonce:0,hashOk:false,
+      parent:{shareId:parent.share_id,line:row.bingo_line!,prizeId:row.prize_id??null}};
+  }
   if (!row || !row.server_seed || !row.server_seed_hash) return null;
 
   const hashOk = (await sha256Hex(row.server_seed)) === row.server_seed_hash;
@@ -397,6 +408,7 @@ export async function getLeaderboard(
   creatorIdOrSlug: string
 ): Promise<LeaderboardView> {
   if (!isSupabaseConfigured()) return mockGetLeaderboard(creatorIdOrSlug);
+  const cutoff = new Date().toISOString();
 
   const sb = createServiceClient();
   // Accept either a UUID id or a public_slug, so the shareable URL can be
@@ -421,36 +433,23 @@ export async function getLeaderboard(
     return { enabled: false, creatorTitle, entries: [] };
   }
 
-  const { data: fanRows } = await sb
-    .from("fans")
-    .select("id, handle")
-    .eq("creator_id", creatorId)
-    .eq("leaderboard_opt_in", true);
+  const fanRows = await readScopedRows<{ handle: string | null }>(sb, "fans", "handle", q => q.eq("creator_id", creatorId).eq("leaderboard_opt_in", true), cutoff);
   const fans = (fanRows ?? []) as {
     id: string;
     handle: string | null;
   }[];
   if (fans.length === 0) return { enabled: true, creatorTitle, entries: [] };
 
-  const fanIds = fans.map((f) => f.id);
-
-  const { data: spinRows } = await sb
-    .from("spins")
-    .select("fan_id, prize_rarity")
-    .in("fan_id", fanIds);
-  const spins = (spinRows ?? []) as { fan_id: string; prize_rarity: Rarity }[];
-
-  // Deliberately NOT reading `grants` here: per-fan spend must never reach this
-  // public payload (see LeaderboardEntry in ./types).
-
-  const spinCount = new Map<string, number>();
-  const rareCount = new Map<string, number>();
-  for (const s of spins) {
-    spinCount.set(s.fan_id, (spinCount.get(s.fan_id) ?? 0) + 1);
-    if (s.prize_rarity === "rare" || s.prize_rarity === "epic" || s.prize_rarity === "legendary") {
-      rareCount.set(s.fan_id, (rareCount.get(s.fan_id) ?? 0) + 1);
+  const fanIds = new Set(fans.map(fan => fan.id));
+  // Only the opted-in set is aggregated; no spend or real names are read.
+  const spinCount = new Map<string, number>(), rareCount = new Map<string, number>();
+  await visitScopedRows<{ fan_id: string; prize_rarity: Rarity; kind?: "play" | "bonus" }>(sb, "spins", "fan_id, prize_rarity, kind", q => q.eq("creator_id", creatorId).not("fan_id", "is", null), cutoff, page => {
+    for (const spin of page) {
+      if (!fanIds.has(spin.fan_id)) continue;
+      if (spin.kind !== "bonus") spinCount.set(spin.fan_id, (spinCount.get(spin.fan_id) ?? 0) + 1);
+      if (["rare", "epic", "legendary"].includes(spin.prize_rarity)) rareCount.set(spin.fan_id, (rareCount.get(spin.fan_id) ?? 0) + 1);
     }
-  }
+  });
 
   const entries: LeaderboardEntry[] = fans
     // A fan with no board handle is skipped, never shown under their real
@@ -483,6 +482,7 @@ export interface RecentWin {
  */
 export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[]> {
   if (!isSupabaseConfigured()) return mockGetRecentWins();
+  const cutoff = new Date().toISOString();
   const sb = createServiceClient();
   const isUuid =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(creatorIdOrSlug);
@@ -494,11 +494,7 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
   const prof = profile as { id: string; leaderboard_enabled: boolean } | null;
   if (!prof || !prof.leaderboard_enabled) return [];
 
-  const { data: fanRows } = await sb
-    .from("fans")
-    .select("id, handle")
-    .eq("creator_id", prof.id)
-    .eq("leaderboard_opt_in", true);
+  const fanRows = await readScopedRows<{ handle: string | null }>(sb, "fans", "handle", q => q.eq("creator_id", prof.id).eq("leaderboard_opt_in", true), cutoff);
   // Only fans with a board handle are surfaced; a real name is never read here.
   const fans = ((fanRows ?? []) as { id: string; handle: string | null }[]).filter(
     (f) => !!f.handle?.trim()
@@ -506,13 +502,15 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
   if (fans.length === 0) return [];
   const byId = new Map(fans.map((f) => [f.id, f.handle!.trim()]));
 
-  const { data: spinRows } = await sb
-    .from("spins")
-    .select("fan_id, prize_label, prize_rarity, created_at")
-    .in("fan_id", Array.from(byId.keys()))
-    .in("prize_rarity", ["rare", "epic", "legendary"])
-    .order("created_at", { ascending: false })
-    .limit(20);
+  const spinRows: { id: string; fan_id: string; prize_label: string; prize_rarity: Rarity; created_at: string }[] = [];
+  await visitScopedRows<{ fan_id: string; prize_label: string; prize_rarity: Rarity; created_at: string }>(sb, "spins", "fan_id, prize_label, prize_rarity, created_at", q => q.eq("creator_id", prof.id).in("prize_rarity", ["rare", "epic", "legendary"]), cutoff, page => {
+    for (const spin of page) {
+      if (!byId.has(spin.fan_id)) continue;
+      spinRows.push(spin);
+      spinRows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      if (spinRows.length > 20) spinRows.length = 20;
+    }
+  });
 
   return ((spinRows ?? []) as {
     fan_id: string;

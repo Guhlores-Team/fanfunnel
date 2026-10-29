@@ -174,14 +174,14 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     if (result.truncated) truncated.push(name);
     return result.rows;
   };
-  const [fanRes, creatorRes, linksRead, grantsRead, wishesRead, messagesRead, spinsRead, checkinsRead, outreachRead, reportsRead, reminderRes, refRes, focusRead, attemptsRead] = await Promise.all([
+  const [fanRes, creatorRes, linksRead, grantsRead, wishesRead, messagesRead, spinsRead, checkinsRead, outreachRead, reportsRead, reminderRes, refRes, focusRead, attemptsRead, cardsRead, awardsRead] = await Promise.all([
     svc.from("fans").select("display_name, handle, created_at, spins_remaining, spins_granted_total, last_spin_at, referral_code, referred_by_fan_id, acked_at, acked_terms_version, leaderboard_opt_in, break_until").eq("id", fanId).eq("creator_id", creatorId).maybeSingle(),
     svc.from("profiles").select("display_name").eq("id", creatorId).maybeSingle(),
     readRows(svc, "fan_passes", "id, token, created_at, is_active, self_excluded_at, spins_remaining, spins_granted_total, last_spin_at, wheel:wheels(title)", own),
     readRows(svc, "grants", "id, created_at, spins, bonus_spins", own),
     readRows(svc, "wishlists", "id, prize_label, prize_rarity, created_at", own),
     readRows(svc, "messages", "id, body, created_at", [...own, ["sender", "fan"]]),
-    readRows(svc, "spins", "id, created_at, prize_label, prize_rarity, share_id, server_seed, server_seed_hash, client_seed, nonce, seed_commitment, fair_version, pool_hash, pool_snapshot, fair_trace, game_kind, presentation, wheel:wheels(title)", own),
+    readRows(svc, "spins", "id, created_at, prize_label, prize_rarity, share_id, server_seed, server_seed_hash, client_seed, nonce, seed_commitment, fair_version, pool_hash, pool_snapshot, fair_trace, game_kind, presentation, kind, parent_spin_id, bingo_line, wheel:wheels(title)", own),
     readRows(svc, "fan_checkins", "day, created_at", own, ["day"]),
     readRows(svc, "fan_outreach", "id, created_at, contacted_at", own),
     readRows(svc, "creator_reports", "id, created_at, reason, detail", own),
@@ -189,6 +189,8 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     svc.from("referrals").select("id", { count: "exact", head: true }).eq("referrer_fan_id", fanId).eq("creator_id", creatorId),
     readRows(svc, "fan_focus", "id, kind, prize_label, multiplier, total_spins, spins_left, chase_counter, status, created_at, ended_at", own),
     readRows(svc, "spin_attempts", "id, state, error, created_at, finished_at", own),
+    readRows(svc,"bingo_cards","id,wheel_id,cells,marked_mask,awarded_lines_mask,version,status,created_at,completed_at",own),
+    readRows(svc,"bingo_line_awards","card_id,line_index,primary_spin_id,bonus_spin_id,created_at",own,["card_id","line_index"]),
   ]);
   if (fanRes.error || !fanRes.data) return null;
   const fan = fanRes.data as ExportRow;
@@ -218,6 +220,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
   if (spinsRead.failed) failed.push("prizes", "instantReceipts");
   if (spinsRead.truncated) truncated.push("prizes", "instantReceipts");
   const focusPacks = remember("focusPacks", focusRead), spinAttempts = remember("spinAttempts", attemptsRead);
+  const bingoCards = remember("bingoCards",cardsRead), bingoLineAwards = remember("bingoLineAwards",awardsRead);
   return safeExportValue({
     format: FAN_EXPORT_FORMAT, exportedAt: new Date().toISOString(), about: FAN_EXPORT_ABOUT,
     ...exportStatus(failed, truncated), excluded: [...FAN_EXPORT_EXCLUDED],
@@ -226,8 +229,10 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     consents: { ageAndTermsAcceptedAt: str(fan.acked_at), termsVersion: str(fan.acked_terms_version), leaderboardOptIn: fan.leaderboard_opt_in === true },
     links: links.map((row) => ({ linkEndsWith: maskToken(str(row.token)), isThisLink: row.token === token, wheel: str((row.wheel as ExportRow | null)?.title), createdAt: str(row.created_at), active: row.is_active === true, pausedByYouAt: str(row.self_excluded_at), spinsRemaining: num(row.spins_remaining), spinsGrantedTotal: num(row.spins_granted_total), lastSpinAt: str(row.last_spin_at) })),
     topUps: grants.map((row) => ({ at: str(row.created_at) ?? "", spins: num(row.spins), bonusSpins: num(row.bonus_spins) })),
-    spins: spins.map((row) => ({ gameKind: str(row.game_kind) ?? "wheel", presentation: (row.presentation ?? null) as Json, id: String(row.id), at: str(row.created_at) ?? "", prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", wheel: str((row.wheel as ExportRow | null)?.title), shareId: str(row.share_id), fairness: { version: row.fair_version ?? null, serverSeed: str(row.server_seed), serverSeedHash: str(row.server_seed_hash), clientSeed: str(row.client_seed), nonce: row.nonce ?? null, seedCommitment: str(row.seed_commitment), poolHash: str(row.pool_hash), poolSnapshot: (row.pool_snapshot ?? null) as Json, trace: (row.fair_trace ?? null) as Json } })),
+    spins: spins.map((row) => ({ kind: row.kind === "bonus" ? "bonus" : "play", parentSpinId:str(row.parent_spin_id),bingoLine:typeof row.bingo_line === "number"?row.bingo_line:null, gameKind: str(row.game_kind) ?? "wheel", presentation: (row.presentation ?? null) as Json, id: String(row.id), at: str(row.created_at) ?? "", prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", wheel: str((row.wheel as ExportRow | null)?.title), shareId: str(row.share_id), fairness: { version: row.fair_version ?? null, serverSeed: str(row.server_seed), serverSeedHash: str(row.server_seed_hash), clientSeed: str(row.client_seed), nonce: row.nonce ?? null, seedCommitment: str(row.seed_commitment), poolHash: str(row.pool_hash), poolSnapshot: (row.pool_snapshot ?? null) as Json, trace: (row.fair_trace ?? null) as Json } })),
     prizes, instantReceipts,
+    bingoCards:bingoCards.map(row=>({id:String(row.id),wheelId:String(row.wheel_id),cells:(row.cells??[]) as Json,markedMask:num(row.marked_mask),awardedLinesMask:num(row.awarded_lines_mask),version:num(row.version),status:str(row.status)??"unknown",createdAt:str(row.created_at),completedAt:str(row.completed_at)})),
+    bingoLineAwards:bingoLineAwards.map(row=>({cardId:String(row.card_id),line:num(row.line_index),primarySpinId:String(row.primary_spin_id),bonusSpinId:String(row.bonus_spin_id),at:str(row.created_at)})),
     focusPacks: focusPacks.map(row => ({ kind: str(row.kind) ?? "focus", prize: str(row.prize_label) ?? "Prize", multiplier: num(row.multiplier), totalSpins: num(row.total_spins), spinsLeft: num(row.spins_left), chaseCounter: num(row.chase_counter), status: str(row.status) ?? "unknown", at: str(row.created_at), endedAt: str(row.ended_at) })),
     spinAttempts: spinAttempts.map(row => ({ status: str(row.state) ?? "unknown", error: str(row.error), at: str(row.created_at), finishedAt: str(row.finished_at) })),
     wishlist: wishes.map((row) => ({ prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", addedAt: str(row.created_at) ?? "" })),
@@ -321,7 +326,7 @@ const CREATOR_TABLES: [string, string, string, string, string[]?][] = [
   ["webhooks", "webhooks", "creator_id", "id, creator_id, event, created_at"],
   ["fans", "fans", "creator_id", "id, creator_id, display_name, handle, spins_remaining, spins_granted_total, notes, tags, pity_counter, blocked_at, break_until, acked_at, acked_terms_version, leaderboard_opt_in, referral_code, referred_by_fan_id, referral_credited, last_spin_at, created_at"],
   ["grants", "grants", "creator_id", "id, creator_id, fan_id, fan_pass_id, campaign_id, spins, bonus_spins, amount_cents, created_at"],
-  ["spins", "spins", "creator_id", "id, creator_id, fan_id, fan_pass_id, wheel_id, campaign_id, prize_id, prize_label, prize_rarity, prize_image_url, share_id, server_seed, server_seed_hash, client_seed, nonce, seed_commitment, fair_version, pool_hash, pool_snapshot, fair_trace, game_kind, presentation, created_at"],
+  ["spins", "spins", "creator_id", "id, creator_id, fan_id, fan_pass_id, wheel_id, campaign_id, prize_id, prize_label, prize_rarity, prize_image_url, share_id, server_seed, server_seed_hash, client_seed, nonce, seed_commitment, fair_version, pool_hash, pool_snapshot, fair_trace, game_kind, presentation, kind, parent_spin_id, bingo_line, created_at"],
   ["redemptions", "redemptions", "creator_id", "id, creator_id, spin_id, status, notes, due_at, fulfilled_at, created_at"],
   ["prize_rewards", "prize_rewards", "creator_id", "prize_id, creator_id, kind, updated_at", ["prize_id"]],
   ["prize_reward_codes", "prize_reward_codes", "creator_id", "id, prize_id, creator_id, spin_id, assigned_at, created_at, erased_at"],
@@ -329,6 +334,8 @@ const CREATOR_TABLES: [string, string, string, string, string[]?][] = [
   ["focus_creator_config", "focus_creator_config", "creator_id", "creator_id, focus_enabled, chase_enabled", ["creator_id"]],
   ["fan_focus", "fan_focus", "creator_id", "id, creator_id, fan_id, fan_pass_id, wheel_id, prize_id, prize_label, grant_id, kind, multiplier, total_spins, spins_left, chase_counter, status, version, created_at, ended_at"],
   ["chase_reservations", "chase_reservations", "creator_id", "id, focus_id, creator_id, prize_id, kind, state, consumed_spin_id, created_at, ended_at"],
+  ["bingo_cards","bingo_cards","creator_id","id,creator_id,fan_id,wheel_id,cells,marked_mask,awarded_lines_mask,version,status,created_at,completed_at"],
+  ["bingo_line_awards","bingo_line_awards","creator_id","card_id,line_index,creator_id,fan_id,wheel_id,primary_spin_id,bonus_spin_id,created_at",["card_id","line_index"]],
   ["spin_attempts", "spin_attempts", "creator_id", "id, creator_id, fan_id, fan_pass_id, state, error, spin_id, created_at, finished_at"],
   ["fan_import_batches", "fan_import_batches", "creator_id", "id, creator_id, created_at"],
   ["fan_import_items", "fan_import_items", "creator_id", "batch_id, ordinal, creator_id, grant_id, error, created_at", ["batch_id", "ordinal"]],

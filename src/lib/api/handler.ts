@@ -54,6 +54,7 @@ export function statusForError(code: string): number {
   switch (code) {
     case "unauthorized":
       return 401;
+    case "feature_disabled":
     case "forbidden":
     case "blocked":
     case "needs_ack":
@@ -64,6 +65,10 @@ export function statusForError(code: string): number {
       return 403;
     case "not_found":
       return 404;
+    case "game_kind_locked":
+    case "game_in_use":
+    case "game_not_ready":
+    case "bingo_active_card":
     case "already_delivered":
     case "has_history":
     case "conflict":
