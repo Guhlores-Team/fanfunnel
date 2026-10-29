@@ -7156,7 +7156,7 @@ language sql stable security invoker set search_path = public as $$
    order by r.created_at desc, r.id desc
    limit least(greatest(coalesce(p_limit, 50), 1), 100);
 $$;
-revoke all on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer) from public, anon;
+revoke execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer) from public, anon;
 grant execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer) to authenticated, service_role;
 
 -- ── A13: inbox threads, server-side ────────────────────────────────────────
@@ -7197,7 +7197,7 @@ language sql stable security invoker set search_path = public as $$
    order by l.created_at desc, l.fan_id desc
    limit least(greatest(coalesce(p_limit, 50), 1), 100);
 $$;
-revoke all on function public.creator_inbox_threads(timestamptz, uuid, integer) from public, anon;
+revoke execute on function public.creator_inbox_threads(timestamptz, uuid, integer) from public, anon;
 grant execute on function public.creator_inbox_threads(timestamptz, uuid, integer) to authenticated, service_role;
 
 -- ── A16: webhooks ──────────────────────────────────────────────────────────

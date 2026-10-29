@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useToast } from "@/components/ui/Toast";
 import { PHOTO_REPORT_REASON } from "@/lib/creatorTheme/config";
 import { REPORT_NOTE_MAX, REPORT_REASONS, REPORTS_CHANGED_EVENT, type ReportStatus } from "@/lib/reports/config";
-import type { AdminReport, ReportPage } from "@/lib/data/reports";
+import type { AdminReport, ReportPage } from "@/lib/reports/types";
 import { P, Glyph, SectionTitle, raised, recessed, btnGhost, pill } from "./adminUi";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 

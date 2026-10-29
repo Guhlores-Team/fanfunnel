@@ -20,7 +20,7 @@ export const LEGAL = {
    * acceptance (profiles.terms_version, fans.acked_terms_version); bumping it
    * asks every creator and fan to agree again. Bump it for material changes.
    */
-  version: "2026-10-29",
+  version: "2026-10-27",
   /** Advance notice before a material change to either document, or a creator fee, takes effect. */
   changeNoticeDays: 30,
   /** Minimum age for every user, creator or fan. */
