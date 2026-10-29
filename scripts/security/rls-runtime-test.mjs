@@ -252,6 +252,19 @@ async function main() {
     const { data: bWheelAfter } = await admin.from("wheels").select("id").eq("id", B.wheelId);
     check((bWheelAfter?.length ?? 0) === 1, "B's wheel still exists");
 
+    // 0061: a happy hour may only boost its own creator's game. The RLS
+    // with-check refuses a creator session, the BEFORE trigger refuses every
+    // role, and a creator's own wheel still accepts one.
+    const hhWindow = { starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3_600_000).toISOString() };
+    const forgedHappyHour = await a.from("happy_hours").insert({ creator_id: A.id, wheel_id: B.wheelId, multiplier: 5, ...hhWindow }).select("id");
+    check(!!forgedHappyHour.error && (forgedHappyHour.data?.length ?? 0) === 0, "A cannot attach a happy hour to B's wheel (RLS with-check)");
+    const serviceForgedHappyHour = await admin.from("happy_hours").insert({ creator_id: A.id, wheel_id: B.wheelId, multiplier: 5, ...hhWindow }).select("id");
+    check(serviceForgedHappyHour.error?.code === "42501", `not even the service role can attach a happy hour to another creator's wheel (got ${serviceForgedHappyHour.error?.code ?? "no error"})`);
+    const { data: bHappyHours } = await admin.from("happy_hours").select("id").eq("wheel_id", B.wheelId);
+    check((bHappyHours?.length ?? 0) === 0, `B's wheel carries no foreign happy hour (got ${bHappyHours?.length ?? 0})`);
+    const ownHappyHour = await a.from("happy_hours").insert({ creator_id: A.id, wheel_id: A.wheelId, multiplier: 2, ...hhWindow }).select("id");
+    check(!ownHappyHour.error && (ownHappyHour.data?.length ?? 0) === 1, `A can still schedule a happy hour on its own wheel (${ownHappyHour.error?.message ?? "ok"})`);
+
     // A cannot PROMOTE itself. The profiles UPDATE policy is admin-only, so a
     // creator setting its own role must match zero rows (RLS no-op), and the
     // role must remain unchanged when re-read with the service role. This pins
