@@ -6,26 +6,52 @@ allowance runs out. Usage percentage is not exposed to the agent; no reset time
 or automatic continuation is promised. Resume the existing objective: finish
 all roadmap items safely on `dashboard-redesign`, draft PR #78, never `main`.
 
-## Current hosted state: TEST is under repair
+## Verified TEST release and resume point
 
-- Remote integration head at preparation: `6e830472b213874aeac1a40cd0bb3e1116de3c5e`.
-  Use `git rev-parse HEAD`, `git status --short` and `git ls-remote origin
-  refs/heads/dashboard-redesign` to distinguish the local checkpoint from remote.
-- TEST project: `snmcrmhgevfqggxdiomu`, migrations 0001–0059 applied.
-- **Forbidden production project:** `ttlogfmogcccwiraaoae`. Never write to it,
-  deploy Production, push/merge `main`, or change a Production alias.
-- Last fully released Preview code: `540f018215fd8b12574ef815ebb975110b5e5361`
-  (0058). Stable URL:
+- **Application release:** `5f72680e4bf621cf205867b94975eb2c2f3fc428`.
+  The following handoff-only commit changes documentation/artifacts. Application
+  blobs and modes must remain identical to this checked release. Use Git to
+  distinguish current documentation HEAD from the deployed application SHA.
+- **Stable TEST Preview:**
   https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
-- **No 0059 Preview has been deployed.** Old 0058 code is not certified compatible
-  with today's 0059 TEST schema. The owner must not be told TEST is ready for
-  acceptance until the repair, hosted tests and matching Preview release pass.
-- Exact `6e83047` CI: [CI passed](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40782622342),
-  [migration/history/generated types passed](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40782622894),
-  [real login passed](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40782622404),
-  [real runtime failed](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40782622348).
-  Runtime result: **19/20**, durable fixture grant fails with
-  `function digest(text, unknown) does not exist`.
+- **Immutable checked deployment:**
+  https://fanfunnel-nn6d8msjd-easy-simple-sites.vercel.app
+  (`dpl_H7vbgELEePxdAg9spTfK8RLkxK9e`, explicitly Preview).
+- TEST `snmcrmhgevfqggxdiomu`: migrations 0001–0059 applied. The actual correction
+  independently verified all 15 crypto functions on trusted paths, preserving
+  bodies, ACLs and owners.
+- **All exact-application-SHA CI passed:** [main CI](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440851),
+  [migrations/history/exact types](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440837),
+  [real runtime](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440838),
+  [real login](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440864).
+  Actual results: integration **20/20**, spin integrity **8/8**, RLS runtime
+  negatives passed, real login **6/6**. No required-secret skip was accepted.
+- **Two full local rounds passed** on that unchanged clean application commit:
+  each 206 unit files, 163 browser steps/zero signals, 103 axe states/zero blocking
+  violations, 43 MJS syntax checks and both complete PostgreSQL 16 layouts
+  (1340 extension-layout / 1376 public-layout catalog entries).
+- Seven hosted HTTP checks and four public mobile-layout interactions passed.
+  Twelve public landing/login chunks contained the TEST URL and no Production
+  URL or server-credential pattern. This was Chromium at 390×844; authenticated
+  feature acceptance, installed-phone push and the comprehensive final security
+  audit remain outstanding. Browser functional checks used the managed proxy
+  with certificate errors ignored; curl retained normal TLS verification. This
+  is not a TLS audit.
+- Stable alias and public script identity were rechecked after promotion; the
+  remote branch still matched the application release at promotion.
+- **Production is untouched:** forbidden database `ttlogfmogcccwiraaoae`;
+  Production alias remained `dpl_D5nQpT4e5qVXhTqHWEae2gCyzR1W`. Never push/merge
+  `main`, write Production Supabase or deploy Production.
+- **Next work is 0060 scratch**, using the repaired-common portable candidate.
+  No 0060+ migration or feature has been released. Retire the one-time 0059 TEST
+  workflow invocation with 0060 before verification; keep helper and tests.
+
+The sanitized [release receipt](./RELEASE_CHECKPOINT.json) records actual source,
+CI, database and deployment evidence. Earlier `6e83047` really failed runtime
+19/20 (`digest(text, unknown)` missing); this release corrects that failure.
+The old 0058 deployment is not a certified rollback against today's 0059 schema.
+The owner requested a pause at a working committed checkpoint; the next agent
+can continue with 0060. Usage percentage/reset timing is not exposed to this agent.
 
 ## Repair in this checkpoint
 
@@ -44,7 +70,7 @@ checks all 15 functions before alteration, applies one transaction, then perform
 an independent readback. It cannot target Production and does not modify table
 data or migration history. The Production workflow job is unchanged.
 
-**The hosted correction has not run at this checkpoint.** Its HTTP protocol is
+**The hosted correction completed and read back successfully on TEST.** Its HTTP protocol is
 deliberately strict: Management API HTTP 201 and an empty JSON array acknowledge
 the transaction; a separate 201 readback must verify every invariant. A timeout
 or unexpected acknowledgement is an **unknown outcome**, not proof of rollback.
@@ -105,8 +131,8 @@ checks and 1376 catalog objects in the then-public-layout drift fixture. The
 follow-up `6e83047` only changed declaration layout to match the hosted type
 generator; a complete TypeScript AST equality proof, lint and typecheck passed.
 
-**Those passes do not certify the changed repair source in this checkpoint.**
-Before pushing it, repeat the complete verification twice from a clean commit.
+**Those historical passes did not certify the changed repair.** The final source
+was subsequently verified twice at `5f72680`, as recorded above and in the receipt.
 The earlier repair diagnostics separately passed 46 transport/guard cases,
 76 native config-only repair cases under a non-superuser owner, both complete
 drift/RLS matrices, 28 actual-component history cases, 35 engagement admission
@@ -118,7 +144,7 @@ passed installation, lint, types, both complete drift layouts, 43 MJS syntax
 checks, all 204 unit files, the debug build and all 163 browser steps with zero
 signals. Its axe run was intentionally interrupted when the backend privacy gap
 above was confirmed. **It is not a completed full round.** Preserve that history;
-restart both full rounds on the final source that includes the six-path repair.
+both fresh rounds were then completed on `5f72680`, including that six-path repair.
 
 One isolated Bingo diagnostic passed all 174 functional steps with zero browser
 signals after history/F6 fixes and corrected fixture admission pacing, but its
@@ -131,7 +157,7 @@ install/build, all eight Scratch axe states and immediate/settled desktop and
 phone checks; all 319 sampled animation frames retained full opacity. That is
 focused repair evidence, not an integrated release pass.
 
-For each of two rounds, run and save actual exit codes/output:
+For each subsequent feature, run two complete rounds and save actual exit codes/output:
 
 ```sh
 npm ci
@@ -152,12 +178,13 @@ axe violations. Stop that server and repeat from installation on another fresh
 server. Require unchanged HEAD and clean worktree at both ends of each round.
 Interrupted runs do not count; preserve failed/interrupted logs separately.
 
-Only after both rounds pass:
+For each subsequent feature, only after both rounds pass:
 
 1. Push exclusively `HEAD:dashboard-redesign`. Confirm all required CI jobs for
-   that exact SHA, actual TEST 0059 history/types, full real runtime negatives
+   that exact SHA, the expected numeric TEST history/types, full real runtime negatives
    and real login. A skipped job is not a pass. Inspect the one-time repair's
-   readback rather than assuming edited SQL changed the hosted database.
+   readback rather than assuming edited SQL changed the hosted database. The 0059
+   repair is complete: do not retain its workflow invocation into 0060.
 2. Follow `docs/PREVIEW_DEPLOY.md`. Deploy a tracked archive of the checked SHA,
    explicitly targeting Preview, after TEST and CI pass. Never deploy a dirty
    checkout or use `--prod`. Confirm project, owner, source SHA and Preview
@@ -208,7 +235,7 @@ Use the final checked branch commit as the new root when deliberately integratin
 If a shallow clone lacks either recorded base, fetch the integration branch's
 history; do not recreate, rewrite or force-push the historical authorities.
 
-Release order is strictly: repaired **0059 → 0060 scratch → 0061 bingo → 0062
+0059 is released. Continue strictly with **0060 scratch → 0061 bingo → 0062
 account security → 0063 ledger operations → code-only small fixes → final audit**.
 Each feature needs the same two full local rounds and exact hosted/Preview gates.
 Do not push unfinished features to a different branch to preserve them: other

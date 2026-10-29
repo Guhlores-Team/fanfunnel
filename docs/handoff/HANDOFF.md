@@ -1,28 +1,28 @@
-# FanFunnel hand-off (2026-10-28)
+# FanFunnel hand-off (2026-10-29)
 
 Read this first, then `AGENTS.md` (binding), then the other files in `docs/handoff/`.
 Everything below was true at the time of writing; verify with `git` before acting.
 
 **Takeover checkpoint:** read [TAKEOVER_CHECKPOINT.md](./TAKEOVER_CHECKPOINT.md)
-before the historical merge notes below. It records the current failed hosted
-check, the unreleased repair, portable remaining-feature sources and the exact
+before the historical merge notes below. It records the verified TEST release,
+actual CI/deployment evidence, portable remaining-feature sources and the exact
 resume gates. The owner requested a committed handoff before the usage allowance
 runs out. A local commit is not a pushed, hosted or verified release.
 
 ## 1. Where things stand
 
-- **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`). Last verified
-  Preview commit `540f018` (0058). CI and TEST migration/history/type checks are
-  green (verify, login-ui, supabase, schema-drift, test). Theming (0058) passed
-  two full rounds (163 unit files, 151 browser checks, 92 accessibility states).
-  All CI, TEST migration/history/exact types, runtime negatives and login UI
-  passed at `540f018`; that exact commit is now on the stable TEST Preview.
-  Focus (0059) was pushed through `6e83047`; its TEST migration is applied, but
-  the real database runtime suite fails because pgcrypto lives in `extensions`
-  on TEST. The correction and additional paused/archived-link privacy fixes are
-  committed locally and need two fresh full rounds. **No 0059 Preview has been
-  deployed.** The unit runner accepts literal Next.js bracket paths and fails
-  process errors. See the checkpoint for precise verification boundaries.
+- **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`).
+  **Verified application release `5f72680` (0059)** is on stable Preview/TEST.
+  Both full local rounds passed: each 206 unit files, 163 browser steps with zero
+  signals, 103 axe states with zero blocking violations, 43 MJS syntax checks
+  and both complete PG16 crypto layouts. Exact-SHA CI/history/types, real runtime
+  (20/20 integration, 8/8 spin integrity plus RLS negatives) and login UI (6/6)
+  passed. The actual hosted correction verified 15 trusted crypto search paths.
+  Seven HTTP checks, four public mobile-layout interactions and a 12-chunk public
+  bundle scan passed before stable alias promotion. Authenticated feature/manual
+  device acceptance and the final security audits remain pending. Any immediate
+  handoff-only HEAD changes docs/artifacts; application bytes/modes remain those
+  of `5f72680`. See `RELEASE_CHECKPOINT.json`. Continue with 0060.
 - **Preview (TEST database `snmcrmhgevfqggxdiomu`):**
   https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
   Vercel login protection is OFF for testing (`ssoProtection` was `all_except_custom_domains`;
@@ -30,11 +30,10 @@ runs out. A local commit is not a pushed, hosted or verified release.
 - **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`, us-east-2/Ohio).
   Still runs an old July build. **`main` = production. Never push or merge to `main`**
   without (a) green CI and (b) the owner's explicit "tested on Preview, go".
-- **TEST database migrations applied:** 0001–0059. At `6e83047`, history and exact
-  generated types pass; real runtime tests fail (19/20). The stable Preview
-  still serves 0058 code against this newer schema, so it is **under repair and
-  not ready for owner acceptance**. Prod gets migrations only at go-live,
-  before or exactly at the merge.
+- **TEST database migrations applied:** 0001–0059, with the actual one-time
+  pgcrypto configuration correction verified independently. Stable Preview code
+  and TEST schema now match. Production remains unchanged; it receives migrations
+  only at an explicitly approved go-live, before or exactly at the merge.
 
 ## 2. Roadmap status (owner chose: build ALL before alpha)
 
@@ -51,7 +50,7 @@ runs out. A local commit is not a pushed, hosted or verified release.
 | **Web push (creators)** | 0056 | merged and hardened through `4431546` | done; two final full rounds (141 unit files, 130 browser checks, 69 accessibility states), green CI / TEST, deployed Preview |
 | **#26 instant-delivery prizes** | 0057 | normal merge of `rm/26-instant-delivery`, finished through `2abae19` | on Preview/TEST; two full local rounds (151 unit files, 140 browser checks, 76 axe states), green CI and real TEST integration/RLS tests |
 | **Per-creator theming** | 0058 | normally merged, verified through `540f018` | on Preview/TEST; two full local rounds, exact-SHA CI, history/types/runtime and real public mobile checks pass |
-| **#25 focus pack → chase pity** | 0059 | pushed through `6e83047`; repair local | earlier source passed two full local rounds; hosted crypto lookup failed; changed repair needs two NEW full rounds and all hosted gates; no Preview release; Chase remains off |
+| **#25 focus pack → chase pity** | 0059 | verified/deployed `5f72680` | two fresh full rounds, exact-SHA CI, actual TEST crypto repair/history/types/runtime/login and public Preview checks passed; Chase remains off; manual feature acceptance pending |
 | **RM-7 scratch tickets** | 0060 | source frozen separately | pure replay, SQL, data and UI prepared; integrated release verification remains after 0059 |
 | **RM-7 personal bingo** | 0061 | source frozen separately | must follow scratch; common fixes need carrying; no TEST application |
 | **Account security follow-up** | 0062 | source frozen separately | enrolled creator MFA, invite expiry and last-active-admin safeguards; integrate only after 0061 |
@@ -66,8 +65,8 @@ someone else's history.
 ## 3. Next steps, in order
 
 ### 3a. Merge the three finished branches, strictly in migration order
-0054–0057 are complete on Preview and TEST. The owner confirmed enabling two-factor
-login before 0054 was pushed. Continue with 0059; do not repeat earlier merges or MFA
+0054–0059 are complete on Preview and TEST. The owner confirmed enabling two-factor
+login before 0054 was pushed. Continue with 0060; do not repeat earlier merges or MFA
 enrolment. The 0057 type-only follow-up preserves the exact generator syntax;
 its declarations and runtime behavior are unchanged from the twice-verified tree.
 
@@ -126,7 +125,7 @@ uncommitted source directory or change a Production alias.
 ### 3b. Finish #26 and theming
 0057 is complete on Preview. 0058 passed both full integrated rounds and has been
 pushed only to `dashboard-redesign`. TEST migration/history/types/runtime and all
-CI jobs pass, and the exact checked commit is on Preview. Continue with 0059. The historical WIP details below describe
+CI jobs pass, and the exact checked commit is on Preview. Continue with 0060. The historical WIP details below describe
 what had to be completed; they are not the remaining task list.
 - **#26** (`rm/26-instant-delivery`): last step in progress was the static migration guard test
   (`src/lib/security/instantRewards.test.ts`) and route authz test (`src/app/api/prizes/rewardAuthz.test.ts`).
@@ -146,6 +145,12 @@ what had to be completed; they are not the remaining task list.
   mock resets, closed-account media cleanup and durable upload/deletion recovery.
 
 ### 3c. Build #25 then RM-7
+0059 is released. Next: 0060 scratch, then 0061 bingo, 0062 account security,
+0063 operations (including the mandatory seven-path safety overlay), then small
+fixes and the final audit. Use the repaired-common artifact index. Remove only
+0059's one-time TEST correction workflow invocation with 0060 before verification;
+retain the helper and all tests. Preserve newer common controllers and mirrors.
+
 Specs: `docs/handoff/PROPOSALS.md` (#25 §, RM-7 §, §8 "riskiest three"). Rules:
 `docs/handoff/ROADMAP_BUILD_BRIEF.md`. Migrations 0059 (#25), 0060+ (RM-7).
 Never change odds outside the committed seed derivation (Fairness v3, 0047); keep `fans == SUM(passes)`.
