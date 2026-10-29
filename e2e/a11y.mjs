@@ -21,6 +21,7 @@ import { instantA11yStates } from "./instant-a11y.mjs";
 import { themingA11yStates } from "./theming-a11y.mjs";
 import { focusA11yStates } from "./focus-a11y.mjs";
 import { scratchA11yStates } from "./games-a11y.mjs";
+import { gameSwitchingA11yStates } from "./game-switching-a11y.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -319,6 +320,7 @@ const PAGES = [
   ...focusA11yStates(),
   ...instantA11yStates(DASH_ADVISORY),
   ...themingA11yStates(DASH_ADVISORY),
+  ...gameSwitchingA11yStates(DASH_ADVISORY),
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
   { path: "/terms", name: "terms" },

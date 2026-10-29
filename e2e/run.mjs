@@ -40,6 +40,7 @@ import { themingJourney } from "./theming.mjs";
 import { focusJourney } from "./focus.mjs";
 import { creatorRecoveryJourney } from "./creator-recovery.mjs";
 import { scratchJourney } from "./games.mjs";
+import { gameSwitchingJourney } from "./game-switching.mjs";
 
 let server = null;
 let browser = null;
@@ -78,6 +79,7 @@ try {
     await themingJourney(page, runner, ctx);
     await focusJourney(page, runner, ctx); // durable play recovery, focused odds, reserved-code chase (own fixtures)
     await scratchJourney(browser, runner, sink, ctx); //0060: real scratch ticket and durable recovery
+    await gameSwitchingJourney(browser, runner, sink, ctx); // schedule takeover warning; campaign card, drawer and fan page agree
     await creatorRecoveryJourney(page, runner, ctx); // durable grant-edit retry, reload and cancellation
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
