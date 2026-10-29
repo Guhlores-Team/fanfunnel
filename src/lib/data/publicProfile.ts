@@ -43,7 +43,7 @@ export async function getPublicWheelTeaser(
     (profile as { display_name: string | null } | null)?.display_name ??
     "Creator";
 
-  const happyHour = await getActiveHappyHour(sb, wheelId, new Date());
+  const happyHour = await getActiveHappyHour(sb, wheelId, new Date(), creatorId);
   return {
     creatorTitle,
     // Unauthenticated: fan-safe projection only (no prize costs).

@@ -165,7 +165,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       .select("id, prize_label, prize_rarity, created_at")
       .eq("fan_id", pass.fan.id)
       .order("created_at", { ascending: false }),
-    getActiveHappyHour(sb, wheelId, new Date()),
+    getActiveHappyHour(sb, wheelId, new Date(), pass.creator_id),
     // RM-6: the fan's own counts, reminder and break (best-effort).
     readPlayState(sb, pass.fan.id),
     readFanGlow(sb, pass.fan.id),
@@ -417,7 +417,7 @@ async function recordClaimedSpin(
   const [wheelRes, fanRow, hh] = await Promise.all([
     sb.from("wheels").select(WHEEL_SELECT).eq("id", wheelId).maybeSingle(),
     sb.from("fans").select("pity_counter").eq("id", pass.fan_id).maybeSingle(),
-    getActiveHappyHour(sb, wheelId, now),
+    getActiveHappyHour(sb, wheelId, now, pass.creator_id),
   ]);
   const wheelData = wheelRes.data;
   if (!wheelData) return { error: "no_prizes" };

@@ -36,8 +36,9 @@ import type { AnyClient, DbWheelRow } from "./shared";
  * The creator's currently-live wheel among their non-archived wheels:
  *   1. a scheduled wheel whose window contains `now` (prefer latest
  *      active_from, tie-break newest created_at);
- *   2. else the wheel flagged is_active;
+ *   2. else the wheel flagged is_active (oldest first);
  *   3. else the oldest non-archived wheel.
+ * Mirrors SQL _creator_default_wheel (0061), which issuance and spin time share.
  */
 export async function resolveActiveWheelId(
   sb: AnyClient,
@@ -80,7 +81,8 @@ export async function resolveActiveWheelId(
     return inWindow[0].id;
   }
 
-  const active = rows.filter((w) => w.is_active).sort((a, b) => a.id.localeCompare(b.id))[0];
+  // Same tie-break as SQL: created_at, then id.
+  const active = rows.filter((w) => w.is_active).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0];
   if (active) return active.id;
 
   // Oldest non-archived wheel.
@@ -135,13 +137,18 @@ export async function resolveWheelId(
 export async function getActiveHappyHour(
   sb: AnyClient,
   wheelId: string,
-  now: Date
+  now: Date,
+  creatorId?: string
 ): Promise<HappyHourStatus> {
   const iso = now.toISOString();
-  const { data } = await sb
+  // Only the game owner's own happy hours count (same filter as SQL
+  // _spin_attempt_context); the policy and trigger refuse cross-tenant rows.
+  let query = sb
     .from("happy_hours")
     .select("multiplier, ends_at")
-    .eq("wheel_id", wheelId)
+    .eq("wheel_id", wheelId);
+  if (creatorId) query = query.eq("creator_id", creatorId);
+  const { data } = await query
     .lte("starts_at", iso)
     .gt("ends_at", iso);
 
