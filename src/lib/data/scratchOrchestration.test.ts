@@ -24,7 +24,7 @@ const context = () => ({ contextHash: `${nonce}`, creatorId: "creator", fanId: "
   serverSeed: seed, serverSeedHash: seedHash, nonce, pityCounter: spinCount, happyHourMultiplier: null, commitment: "stored", focus: null, reservation: null, wheel, prizes });
 function readQuery(table: string) {
   const q: Record<string, unknown> = {};
-  for (const key of ["select", "eq", "gte", "is", "order", "limit"]) q[key] = () => q;
+  for (const key of ["select", "eq", "gte", "lte", "is", "order", "limit"]) q[key] = () => q;
   q.maybeSingle = async () => ({ data: table === "fan_play_reminders" ? { daily: 50 } : null, error: null });
   q.then = (resolve: (reply: unknown) => unknown) => Promise.resolve({ data: null, count: spinCount, error: null }).then(resolve);
   q.update = () => { throw new Error("split economic mutation is forbidden"); };

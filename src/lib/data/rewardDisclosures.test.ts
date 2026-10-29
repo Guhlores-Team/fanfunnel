@@ -10,7 +10,7 @@ const reward:{kind:"text";cipher:string;iv:string;keyVersion:number}={kind:"text
 let currentReward:typeof reward|null=reward;
 const names:string[]=[];
 const reply=()=>({status:"committed",id,shareId:"private-share",balance:2,nextServerSeedHash:"a".repeat(64),focus:null,spin:{id,creator_id:"creator",fan_id:"fan",prize_id:"prize",prize_label:"Private prize",prize_rarity:"common",created_at:"2026-10-28T00:00:00Z"},prize:{id:"prize",label:"Private prize",rarity:"common",weight:1},reward:currentReward});
-function from(){const q:Record<string,unknown>={};for(const method of["select","eq","gte","is"])q[method]=()=>q;q.maybeSingle=async()=>({data:null,error:null});q.then=(resolve:(value:unknown)=>unknown)=>Promise.resolve({data:[],count:1,error:null}).then(resolve);return q;}
+function from(){const q:Record<string,unknown>={};for(const method of["select","eq","gte","lte","is"])q[method]=()=>q;q.maybeSingle=async()=>({data:null,error:null});q.then=(resolve:(value:unknown)=>unknown)=>Promise.resolve({data:[],count:1,error:null}).then(resolve);return q;}
 const client={from,rpc:async(name:string,args:Record<string,unknown>)=>{names.push(name);
  if(name==="get_fan_focus_state")return {data:{status:"ok",focus:null},error:null};
  if(name==="prepare_spin_attempt"||name==="get_spin_attempt_status")return {data:args.p_token==="token"?reply():{status:"unavailable"},error:null};

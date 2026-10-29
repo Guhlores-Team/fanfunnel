@@ -1,6 +1,6 @@
 // Test-only: a tiny in-memory stand-in for the supabase-js query builder slice
 // the privacy code uses (select/insert/upsert/update/delete with eq/in/is,
-// order/limit/range, maybeSingle/single, count+head, and thenable results).
+// gt/gte/lt/lte, not-is-null, order/limit/range, maybeSingle/single, count+head, and thenable results).
 // Every executed statement is recorded with its table, operation and filters,
 // so a test can assert WHICH rows a code path was allowed to touch. Unknown
 // builder methods throw, so a test can't pass on behaviour this fake made up.
@@ -9,7 +9,7 @@ export type Row = Record<string, unknown>;
 export interface Statement {
   table: string;
   op: "select" | "insert" | "upsert" | "update" | "delete";
-  filters: { kind: "eq" | "in" | "is"; col: string; value: unknown }[];
+  filters: { kind: "eq" | "in" | "is" | "not_is" | "gt" | "gte" | "lt" | "lte"; col: string; value: unknown }[];
   columns?: string;
   orders?: { column: string; ascending: boolean }[];
   range?: [number, number];
@@ -41,13 +41,26 @@ export class FakeTables {
     this.statements.push(stmt);
     const fail = this.failWhen?.(stmt);
     if (fail) return { data: null, error: { message: fail }, count: null };
+    // Range comparisons follow SQL: a NULL/absent column never matches.
+    const compare = (v: unknown, x: unknown, ok: (c: number) => boolean) =>
+      v !== null && v !== undefined && ok(String(v) < String(x) ? -1 : String(v) > String(x) ? 1 : 0);
     const match = (r: Row) =>
       stmt.filters.every((f) =>
         f.kind === "eq"
           ? r[f.col] === f.value
           : f.kind === "in"
             ? (f.value as unknown[]).includes(r[f.col])
-            : r[f.col] === f.value
+            : f.kind === "not_is"
+              ? r[f.col] !== null && r[f.col] !== undefined
+              : f.kind === "gt"
+                ? compare(r[f.col], f.value, (c) => c > 0)
+                : f.kind === "gte"
+                  ? compare(r[f.col], f.value, (c) => c >= 0)
+                  : f.kind === "lt"
+                    ? compare(r[f.col], f.value, (c) => c < 0)
+                    : f.kind === "lte"
+                      ? compare(r[f.col], f.value, (c) => c <= 0)
+                      : r[f.col] === f.value
       );
     const rows = this.rows(stmt.table);
     if (stmt.op === "insert" || stmt.op === "upsert") {
@@ -144,6 +157,27 @@ class Builder implements PromiseLike<Result> {
   }
   is(col: string, value: unknown) {
     this.stmt.filters.push({ kind: "is", col, value });
+    return this;
+  }
+  not(col: string, operator: string, value: unknown) {
+    if (operator !== "is" || value !== null) throw new Error(`FakeTables: unsupported not(${operator})`);
+    this.stmt.filters.push({ kind: "not_is", col, value });
+    return this;
+  }
+  gt(col: string, value: unknown) {
+    this.stmt.filters.push({ kind: "gt", col, value });
+    return this;
+  }
+  gte(col: string, value: unknown) {
+    this.stmt.filters.push({ kind: "gte", col, value });
+    return this;
+  }
+  lt(col: string, value: unknown) {
+    this.stmt.filters.push({ kind: "lt", col, value });
+    return this;
+  }
+  lte(col: string, value: unknown) {
+    this.stmt.filters.push({ kind: "lte", col, value });
     return this;
   }
   order(column: string, options: { ascending?: boolean } = {}) {

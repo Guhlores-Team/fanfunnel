@@ -1,3 +1,4 @@
+import { readBingoCard } from "./bingo";
 import { applyFocusStock } from "./focusDisplay";
 import { commitSpinAttempt, readSpinAttempt, type SpinIntent, type SpinAttemptStatus } from "./spinAttempts";
 import { getFanFocusDisplay } from "./focus";
@@ -144,7 +145,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     .maybeSingle();
   if (!wheelData) return null;
   const wheel = wheelData as unknown as DbWheelRow;
-  if (wheel.game_kind === "bingo" || wheel.game_ready === false) return null;
+  if (wheel.game_ready === false) return null;
 
   // The fan's win history, wishlist, and the active happy-hour are all
   // independent reads keyed off the now-known fan/wheel — fetch concurrently
@@ -164,7 +165,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       .select("id, prize_label, prize_rarity, created_at")
       .eq("fan_id", pass.fan.id)
       .order("created_at", { ascending: false }),
-    getActiveHappyHour(sb, wheelId, new Date()),
+    getActiveHappyHour(sb, wheelId, new Date(), pass.creator_id),
     // RM-6: the fan's own counts, reminder and break (best-effort).
     readPlayState(sb, pass.fan.id),
     readFanGlow(sb, pass.fan.id),
@@ -194,8 +195,11 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     at: w.created_at,
   }));
 
+  let bingoCard;
+  if(wheel.game_kind === "bingo"){try{bingoCard=await readBingoCard(token,sb);}catch{return null;}}
   const focusDisplay = await getFanFocusDisplay(token);
   return {
+    ...(wheel.game_kind === "bingo"?{bingoCard}:{}),
     token,
     blocked: !!pass.fan.blocked_at,
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
@@ -248,8 +252,10 @@ export async function spin(token: string, rawClientSeed?: unknown, requestId = c
   if (!isSupabaseConfigured()) {
     const result = await mockSpin(token, clientSeed, requestId, publishedSeedHash);
     if (!("error" in result) && !result.replayed) {
-      const event = mockSpinPushEvent(token);
-      if (event) runAfterResponse(() => notifyCreator("demo", { type: "spin", ...event }));
+      for(const shareId of [result.shareId,...(result.bonusWins??[]).map(win=>win.shareId)]){
+        const event = mockSpinPushEvent(token,shareId);
+        if (event) runAfterResponse(() => notifyCreator("demo", { type: "spin", ...event }));
+      }
     }
     return result;
   }
@@ -411,7 +417,7 @@ async function recordClaimedSpin(
   const [wheelRes, fanRow, hh] = await Promise.all([
     sb.from("wheels").select(WHEEL_SELECT).eq("id", wheelId).maybeSingle(),
     sb.from("fans").select("pity_counter").eq("id", pass.fan_id).maybeSingle(),
-    getActiveHappyHour(sb, wheelId, now),
+    getActiveHappyHour(sb, wheelId, now, pass.creator_id),
   ]);
   const wheelData = wheelRes.data;
   if (!wheelData) return { error: "no_prizes" };

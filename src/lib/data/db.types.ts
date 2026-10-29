@@ -174,6 +174,146 @@ export type Database = {
           },
         ]
       }
+      bingo_cards: {
+        Row: {
+          awarded_lines_mask: number
+          cells: Json
+          completed_at: string | null
+          created_at: string
+          creator_id: string
+          fan_id: string
+          id: string
+          marked_mask: number
+          status: string
+          version: number
+          wheel_id: string
+        }
+        Insert: {
+          awarded_lines_mask?: number
+          cells: Json
+          completed_at?: string | null
+          created_at?: string
+          creator_id: string
+          fan_id: string
+          id?: string
+          marked_mask?: number
+          status?: string
+          version?: number
+          wheel_id: string
+        }
+        Update: {
+          awarded_lines_mask?: number
+          cells?: Json
+          completed_at?: string | null
+          created_at?: string
+          creator_id?: string
+          fan_id?: string
+          id?: string
+          marked_mask?: number
+          status?: string
+          version?: number
+          wheel_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bingo_cards_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bingo_cards_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: false
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bingo_cards_wheel_id_fkey"
+            columns: ["wheel_id"]
+            isOneToOne: false
+            referencedRelation: "wheels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bingo_line_awards: {
+        Row: {
+          bonus_spin_id: string
+          card_id: string
+          created_at: string
+          creator_id: string
+          fan_id: string
+          line_index: number
+          primary_spin_id: string
+          wheel_id: string
+        }
+        Insert: {
+          bonus_spin_id: string
+          card_id: string
+          created_at?: string
+          creator_id: string
+          fan_id: string
+          line_index: number
+          primary_spin_id: string
+          wheel_id: string
+        }
+        Update: {
+          bonus_spin_id?: string
+          card_id?: string
+          created_at?: string
+          creator_id?: string
+          fan_id?: string
+          line_index?: number
+          primary_spin_id?: string
+          wheel_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bingo_line_awards_bonus_spin_id_fkey"
+            columns: ["bonus_spin_id"]
+            isOneToOne: true
+            referencedRelation: "spins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bingo_line_awards_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "bingo_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bingo_line_awards_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bingo_line_awards_fan_id_fkey"
+            columns: ["fan_id"]
+            isOneToOne: false
+            referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bingo_line_awards_primary_spin_id_fkey"
+            columns: ["primary_spin_id"]
+            isOneToOne: false
+            referencedRelation: "spins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bingo_line_awards_wheel_id_fkey"
+            columns: ["wheel_id"]
+            isOneToOne: false
+            referencedRelation: "wheels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaign_packs: {
         Row: {
           amount_cents: number
@@ -2240,6 +2380,7 @@ export type Database = {
       }
       spins: {
         Row: {
+          bingo_line: number | null
           campaign_id: string | null
           client_seed: string | null
           created_at: string
@@ -2250,7 +2391,9 @@ export type Database = {
           fan_pass_id: string | null
           game_kind: string
           id: string
+          kind: string
           nonce: number | null
+          parent_spin_id: string | null
           pool_hash: string | null
           pool_snapshot: Json | null
           presentation: Json | null
@@ -2265,6 +2408,7 @@ export type Database = {
           wheel_id: string
         }
         Insert: {
+          bingo_line?: number | null
           campaign_id?: string | null
           client_seed?: string | null
           created_at?: string
@@ -2275,7 +2419,9 @@ export type Database = {
           fan_pass_id?: string | null
           game_kind?: string
           id?: string
+          kind?: string
           nonce?: number | null
+          parent_spin_id?: string | null
           pool_hash?: string | null
           pool_snapshot?: Json | null
           presentation?: Json | null
@@ -2290,6 +2436,7 @@ export type Database = {
           wheel_id: string
         }
         Update: {
+          bingo_line?: number | null
           campaign_id?: string | null
           client_seed?: string | null
           created_at?: string
@@ -2300,7 +2447,9 @@ export type Database = {
           fan_pass_id?: string | null
           game_kind?: string
           id?: string
+          kind?: string
           nonce?: number | null
+          parent_spin_id?: string | null
           pool_hash?: string | null
           pool_snapshot?: Json | null
           presentation?: Json | null
@@ -2341,6 +2490,13 @@ export type Database = {
             columns: ["fan_pass_id"]
             isOneToOne: false
             referencedRelation: "fan_passes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spins_parent_spin_id_fkey"
+            columns: ["parent_spin_id"]
+            isOneToOne: false
+            referencedRelation: "spins"
             referencedColumns: ["id"]
           },
           {
@@ -2566,7 +2722,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      _bingo_cells_valid: { Args: { p_cells: Json }; Returns: boolean }
+      _bingo_completed_lines: { Args: { p_mask: number }; Returns: number }
+      _bingo_public_state: { Args: { p_card: Json }; Returns: Json }
+      _bingo_ready_error: { Args: { p_wheel: string }; Returns: string }
       _canonical_proof_json: { Args: { v: Json }; Returns: string }
+      _commit_bingo_bonus: {
+        Args: { p_bonus: Json; p_line: number; p_parent_id: string }
+        Returns: Json
+      }
       _create_pass_grant_core: {
         Args: {
           p_amount: number
@@ -2587,6 +2751,10 @@ export type Database = {
       _creator_actor_grant_allowed: {
         Args: { p_actor: string; p_creator: string }
         Returns: boolean
+      }
+      _creator_default_wheel: {
+        Args: { p_campaign: string; p_creator: string }
+        Returns: string
       }
       _creator_request_finish: {
         Args: { p_creator: string; p_outcome: Json; p_request: string }
@@ -2617,6 +2785,10 @@ export type Database = {
       }
       _focus_odds_increased: {
         Args: { p_excluded: Json; p_snapshot: Json }
+        Returns: boolean
+      }
+      _game_actor_edit_allowed: {
+        Args: { p_actor: string; p_creator: string }
         Returns: boolean
       }
       _game_feature_allowed: {
@@ -2669,6 +2841,19 @@ export type Database = {
       }
       _valid_scratch_presentation: {
         Args: { p_presentation: Json; p_prize: string; p_snapshot: Json }
+        Returns: boolean
+      }
+      _validate_bingo_presentation: {
+        Args: {
+          p_before: Json
+          p_presentation: Json
+          p_prize: string
+          p_snapshot: Json
+        }
+        Returns: boolean
+      }
+      _validate_bingo_snapshot: {
+        Args: { p_before: Json; p_context: Json; p_snapshot: Json }
         Returns: boolean
       }
       add_reward_codes: {
@@ -2873,6 +3058,7 @@ export type Database = {
         Args: { p_expected: Json; p_spin: Json }
         Returns: Json
       }
+      get_bingo_card_state: { Args: { p_token: string }; Returns: Json }
       get_fan_focus_state: { Args: { p_token: string }; Returns: Json }
       get_spin_attempt_status: {
         Args: { p_attempt: string; p_request_hash: string; p_token: string }
@@ -3031,6 +3217,16 @@ export type Database = {
           p_tombstone_days: number
         }
         Returns: Json
+      }
+      save_game_wheel: {
+        Args: {
+          p_actor: string
+          p_config: Json
+          p_creator: string
+          p_prizes: Json
+          p_wheel: string
+        }
+        Returns: undefined
       }
       save_wheel_prizes: {
         Args: { p_creator: string; p_prizes: Json; p_wheel: string }

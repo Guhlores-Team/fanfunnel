@@ -9,10 +9,10 @@ function check(label: string, value: unknown) { assert.ok(value, label); passed+
 async function main() {
   const account = mockGetAdminOverview().accounts.find(account => account.id === "acc-you")!;
   const originalFeatures = structuredClone(account.features);
-  mockUpdateAccount(account.id, { features: { ...originalFeatures, scratch: false, bingo: true } });
-  check("0060 account capabilities never advertise bingo", mockGetMyAccount().features.bingo === false && !mockGetMyAccount().features.scratch);
+  mockUpdateAccount(account.id, { features: { ...originalFeatures, scratch: false, bingo: false } });
+  check("disabled Bingo and Scratch capabilities stay closed", mockGetMyAccount().features.bingo === false && !mockGetMyAccount().features.scratch);
   assert.throws(() => mockCreateWheel({ gameKind: "scratch" }), /feature_disabled/); passed++;
-  assert.throws(() => mockCreateWheel({ gameKind: "bingo", gameConfig: { size: 3, linePrizeId: "x" } }), /game_unavailable/); passed++;
+  assert.throws(() => mockCreateWheel({ gameKind: "bingo", gameConfig: { size: 3, linePrizeId: "x" } }), /feature_disabled/); passed++;
   assert.throws(() => mockCreateWheel({ gameKind: "unknown" }), /invalid_game/); passed++;
   mockUpdateAccount(account.id, { features: { ...originalFeatures, scratch: true } });
   const game = mockCreateWheel({ gameKind: "scratch", name: "Private scratch fixture" }).wheel;

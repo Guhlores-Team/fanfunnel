@@ -35,7 +35,7 @@ export async function probeScratchGames(sql) {
    insert into public.wheels(id,creator_id,title,game_kind,game_config,is_active) values(${quote(wheel)},${quote(owner)},'Scratch PG','scratch','{"style":"classic"}',true);
    insert into public.prizes(id,wheel_id,label,rarity,weight,emoji,sort_order) values(${quote(prize)},${quote(wheel)},'İ','common',1,'🎁',0),(${quote(plain)},${quote(wheel)},'i','common',0,'🟦',1);`);
   for(const config of ['{}','{"style":"other"}','{"style":"classic","secret":"bad"}'])check(await refused(`update public.wheels set game_config=${quote(config)}::jsonb where id=${quote(wheel)};`,/invalid_game_config/),"unknown/extra scratch config fails closed");
-  check(await refused(`insert into public.wheels(creator_id,game_kind,game_config) values(${quote(owner)},'bingo','{"size":3,"linePrizeId":null}');`,/game_unavailable/),"bingo unavailable in0060 even with server feature true");
+  check(await refused(`insert into public.wheels(creator_id,game_kind,game_config) values(${quote(owner)},'bingo','{"size":3,"linePrizeId":null}');`,/invalid_game_config/),"unconfigured Bingo cannot publish even with its server feature true");
   check(await refused(`insert into public.wheels(creator_id,game_kind) values(${quote(owner)},'unknown');`,/invalid_game_config/),"unknown game kind refused at SQL boundary");
   check(await refused(`update public.wheels set game_ready=false where id=${quote(wheel)};`,/invalid_game_config/),"wheel/scratch cannot masquerade as an inactive bingo draft");
   await query(`insert into public.wheel_templates(creator_id,name,game_kind,game_config) values(${quote(owner)},'valid scratch','scratch','{"style":"classic"}');`);

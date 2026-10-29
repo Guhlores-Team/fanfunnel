@@ -237,8 +237,10 @@ export async function privateLineReward(request, fixture) {
   await json(await request.put(`${BASE}/api/prizes/${fixture.linePrize.id}/reward`, { data: { kind: "text", value: fixture.privateBonusValue } }), "configure private line reward");
 }
 export async function playBingoPrize(page, request, fixture, prizeId, { keepOpen = false } = {}) {
-  // Respect the real eight-play/ten-second guard; no counter or clock is reset.
-  const wait = Math.max(0, 1400 - (Date.now() - (fixture.lastRequestedAt ?? 0)));
+  // Each seeded fixture play reloads: one board read on mount and one after play.
+  // 2500ms allows48reads/minute, retaining20%headroom under60/minute/IP and
+  // respecting the separate eight-play/ten-second guard. No quota or clock reset.
+  const wait = Math.max(0, 2500 - (Date.now() - (fixture.lastRequestedAt ?? 0)));
   if (wait) await page.waitForTimeout(wait);
   const prepared = await json(await request.post(BASE + "/api/debug/game-fixture", { data: { token: fixture.token, clientSeed: GAME_CLIENT_SEED, targetPrizeId: prizeId } }), "search a real committed seed for this fixture");
   if (!/^[a-f0-9]{64}$/.test(prepared.nextServerSeedHash) || !Number.isSafeInteger(prepared.attempts) || prepared.attempts < 1) throw new Error("invalid bounded game seed fixture reply");

@@ -23,7 +23,7 @@ export function gameSaveFeatureAllowed(wheel: CreatorGameWheel, savedJson: strin
   if (canCreateGame(kind, features)) return true;
   try {
     const saved = JSON.parse(savedJson) as CreatorGameWheel;
-    return saved.id === wheel.id && creatorGameKind(saved) === kind;
+    return saved.id === wheel.id && creatorGameKind(saved) === kind && (kind !== "bingo" || saved.gameReady !== false);
   } catch { return false; }
 }
 export const creatorGameKind = (wheel: CreatorGameWheel): GameKind => wheel.gameKind ?? "wheel";
@@ -49,12 +49,13 @@ export function gameDraftError(wheel: CreatorGameWheel): string | null {
 const REFUSALS: Record<string, string> = {
   game_unavailable: "This game type is not available yet. Your current game and draft are kept.",
   game_not_ready: "Finish and save this game before making it available to fans.",
-  feature_disabled: "This game type is no longer enabled for your account. Existing fan links keep working. Ask your admin to enable it before creating or changing to this type.",
+  feature_disabled: "This game type is no longer enabled for your account. Existing fan links keep working. Ask your admin to enable this type before publishing a draft, creating another game or changing type.",
   game_kind_locked: "This game already has credited plays. Keep its type to preserve those plays, or create a new game.",
   invalid_game_config: "These game settings are not valid. Review the type and line prize; your draft is still here.",
   bingo_needs_cells: "Bingo needs nine distinct unlimited, non-code prizes with positive tickets. Your draft is still here.",
   bingo_needs_fallback: "Bingo needs an unlimited rare-or-better fallback with positive tickets. Your draft is still here.",
   bingo_active_card: "An active bingo card still needs one of these prizes. Keep its prize, unlimited stock, non-code delivery and positive tickets so paid progress remains markable. Your draft is still here.",
   game_in_use: "This game still has active bingo progress. It cannot be removed or reset while those promises are owed.",
+  stock_changed: "Stock changed while you were editing (fans kept playing). Reload this game to see the current stock, then save again. Your draft is still here.",
 };
 export const gameRefusalMessage = (code: unknown): string | null => typeof code === "string" && Object.hasOwn(REFUSALS, code) ? REFUSALS[code] : null;

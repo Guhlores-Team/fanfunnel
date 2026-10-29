@@ -37,6 +37,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { testBingoRuntime } from "./bingo-runtime-fixture.mjs";
 
 try {
   for (const line of readFileSync(new URL("../../.env.local", import.meta.url), "utf8").split("\n")) {
@@ -251,6 +252,19 @@ async function main() {
     const { data: bWheelAfter } = await admin.from("wheels").select("id").eq("id", B.wheelId);
     check((bWheelAfter?.length ?? 0) === 1, "B's wheel still exists");
 
+    // 0061: a happy hour may only boost its own creator's game. The RLS
+    // with-check refuses a creator session, the BEFORE trigger refuses every
+    // role, and a creator's own wheel still accepts one.
+    const hhWindow = { starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3_600_000).toISOString() };
+    const forgedHappyHour = await a.from("happy_hours").insert({ creator_id: A.id, wheel_id: B.wheelId, multiplier: 5, ...hhWindow }).select("id");
+    check(!!forgedHappyHour.error && (forgedHappyHour.data?.length ?? 0) === 0, "A cannot attach a happy hour to B's wheel (RLS with-check)");
+    const serviceForgedHappyHour = await admin.from("happy_hours").insert({ creator_id: A.id, wheel_id: B.wheelId, multiplier: 5, ...hhWindow }).select("id");
+    check(serviceForgedHappyHour.error?.code === "42501", `not even the service role can attach a happy hour to another creator's wheel (got ${serviceForgedHappyHour.error?.code ?? "no error"})`);
+    const { data: bHappyHours } = await admin.from("happy_hours").select("id").eq("wheel_id", B.wheelId);
+    check((bHappyHours?.length ?? 0) === 0, `B's wheel carries no foreign happy hour (got ${bHappyHours?.length ?? 0})`);
+    const ownHappyHour = await a.from("happy_hours").insert({ creator_id: A.id, wheel_id: A.wheelId, multiplier: 2, ...hhWindow }).select("id");
+    check(!ownHappyHour.error && (ownHappyHour.data?.length ?? 0) === 1, `A can still schedule a happy hour on its own wheel (${ownHappyHour.error?.message ?? "ok"})`);
+
     // A cannot PROMOTE itself. The profiles UPDATE policy is admin-only, so a
     // creator setting its own role must match zero rows (RLS no-op), and the
     // role must remain unchanged when re-read with the service role. This pins
@@ -354,13 +368,15 @@ async function main() {
     check((await a.from("wheels").insert(scratchSettings)).error?.code==="42501","A cannot create scratch for another creator even when that creator is enabled");
     check(!!(await createClient(URL_,ANON,{auth:{persistSession:false}}).from("wheels").insert(scratchSettings)).error,"anon cannot create scratch games");
     check((await b.from("wheels").insert({...scratchSettings,game_config:{style:"classic",secret:"not allowed"}})).error?.code==="22023","extra game configuration fields are refused");
-    check((await admin.from("wheels").insert({...scratchSettings,game_kind:"bingo",game_config:{size:3,linePrizeId:B.prizeId}})).error?.code==="22023","0060 refuses bingo even if its feature flag is true");
+    check((await admin.from("wheels").insert({...scratchSettings,game_kind:"bingo",game_config:{size:3,linePrizeId:B.prizeId}})).error?.code==="22023","unconfigured Bingo cannot publish even if its feature flag is true");
     check((await b.from("wheels").update({game_kind:"scratch",game_config:{style:"classic"}}).eq("id",B.wheelId)).error?.code==="22023","first credited play locks game kind against direct table conversion");
     await setBGameFeatures(false);
     must(await b.from("wheels").update({title:"grandfathered scratch",game_config:{style:"classic"}}).eq("id",scratchWheel.id).select("id").single(),"same-kind scratch metadata survives feature removal");
     check((await admin.from("wheels").insert({...scratchSettings,title:"duplicate existing scratch"})).error?.code==="42501","duplicating grandfathered scratch cannot mint a disabled new game");
     for(const client of [a,createClient(URL_,ANON,{auth:{persistSession:false}}),admin])check((await client.rpc("_game_feature_allowed",{p_creator:B.id,p_kind:"scratch"})).error?.code==="42501","API roles cannot execute the private game permission helper");
     must(await admin.from("profiles").update({features:originalGameFeatures}).eq("id",B.id).select("id").single(),"restore disposable B features");
+
+    await testBingoRuntime({admin,a,anonymous:createClient(URL_,ANON,{auth:{persistSession:false}}),actorA:A.id,makeUser,signedClient,must,check});
 
     // RM-4 (0046): the home-screen icon setter writes only the caller's row.
     const setIcon = await a.rpc("set_pwa_icon_mode", { p_mode: "avatar" });

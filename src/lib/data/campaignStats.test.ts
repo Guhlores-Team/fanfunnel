@@ -35,6 +35,7 @@ function fakeClient(db: Db, opts: FakeOptions = {}) {
     let head = false;
     let countExact = false;
     let range: [number, number] | null = null;
+    let limitN: number | null = null;
 
     const valueOf = (r: Row, col: string) => {
       if (!col.includes(".")) return r[col];
@@ -59,6 +60,9 @@ function fakeClient(db: Db, opts: FakeOptions = {}) {
         filters.push((r) => valueOf(r, col) === val);
         return q;
       },
+      gt(col: string, val: string) { filters.push(row => String(valueOf(row, col)) > val); return q; },
+      lte(col: string, val: string) { filters.push(row => String(valueOf(row, col)) <= val); return q; },
+      limit(size: number) { limitN = size; return q; },
       in(col: string, vals: unknown[]) {
         filters.push((r) => vals.includes(valueOf(r, col)));
         return q;
@@ -92,6 +96,7 @@ function fakeClient(db: Db, opts: FakeOptions = {}) {
         }
         const count = rows.length;
         if (range) rows = rows.slice(range[0], range[1] + 1);
+        if (limitN !== null) rows = rows.slice(0, limitN);
         rows = rows.slice(0, maxRows);
         const picked = rows.map((r) => {
           const out: Row = {};
@@ -189,7 +194,7 @@ function fixture(): Db {
   ];
   let g = 0;
   const grant = (creator: string, campaign: string | null, fan: string, spins: number, cents: number): Row => ({
-    id: `g${String(++g).padStart(3, "0")}`, creator_id: creator, campaign_id: campaign, fan_id: fan, spins, amount_cents: cents,
+    id: `g${String(++g).padStart(3, "0")}`, creator_id: creator, campaign_id: campaign, fan_id: fan, spins, amount_cents: cents, created_at: "2026-05-01T00:00:00Z",
   });
   const grants: Row[] = [
     grant(ME, "c1", "f1", 10, 1000),
@@ -222,7 +227,7 @@ function fixture(): Db {
   ];
   let r = 0;
   const red = (spinId: string, creator: string, status: string): Row => ({
-    id: `r${String(++r).padStart(3, "0")}`, spin_id: spinId, creator_id: creator, status,
+    id: `r${String(++r).padStart(3, "0")}`, spin_id: spinId, creator_id: creator, status, created_at: "2026-05-01T00:00:00Z",
   });
   const redemptions: Row[] = [
     red("s001", ME, "fulfilled"),
@@ -278,7 +283,7 @@ async function main() {
   const big = fixture();
   for (let i = 0; i < 40; i++) {
     big.campaigns.push({ id: `b${i}`, creator_id: ME, name: `Bulk ${i}`, is_active: true, created_at: `2025-01-${String((i % 28) + 1).padStart(2, "0")}T00:00:${String(i).padStart(2, "0")}Z`, pinned_wheel_id: null });
-    big.grants.push({ id: `gb${i}`, creator_id: ME, campaign_id: `b${i}`, fan_id: `fb${i}`, spins: 2, amount_cents: 200 });
+    big.grants.push({ id: `gb${i}`, creator_id: ME, campaign_id: `b${i}`, fan_id: `fb${i}`, spins: 2, amount_cents: 200, created_at: "2026-05-01T00:00:00Z" });
     big.spins.push({ id: `sb${i}`, creator_id: ME, campaign_id: `b${i}`, prize_label: "Sticker", prize_rarity: "common", created_at: `2026-06-01T00:00:${String(i).padStart(2, "0")}Z` });
   }
   const bigLegacy = fakeClient(big);

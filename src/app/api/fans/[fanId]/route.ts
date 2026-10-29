@@ -1,3 +1,4 @@
+import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { getFanDetail, deleteFan, updateFanMeta } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -7,10 +8,12 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ fanId: string }> }
 ) {
-  const { fanId } = await params;
-  const detail = await getFanDetail(fanId);
-  if (!detail) return NextResponse.json({ error: "not_found" }, { status: 404 });
-  return NextResponse.json(detail);
+  return completeReadResponse(async () => {
+    const { fanId } = await params;
+    const detail = await getFanDetail(fanId);
+    if (!detail) return NextResponse.json({ error: "not_found" }, { status: 404 });
+    return NextResponse.json(detail);
+  });
 }
 
 // Patch creator-applied metadata (notes and/or tags) on a fan account.

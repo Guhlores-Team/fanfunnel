@@ -32,7 +32,9 @@ export async function readPlayCounts(
         .from("spins")
         .select("id", { count: "exact", head: true })
         .eq("fan_id", fanId)
-        .gte("created_at", since(ms));
+        .eq("kind", "play")
+        .gte("created_at", since(ms))
+        .lte("created_at", new Date(now).toISOString());
       return error || typeof n !== "number" ? 0 : n;
     } catch {
       return 0;

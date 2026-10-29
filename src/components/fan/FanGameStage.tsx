@@ -8,7 +8,7 @@ import BingoCard from "./BingoCard";
 import ScratchTicket from "./ScratchTicket";
 
 /** Only the wheel has a rotating animation. Other games complete one primary presentation. */
-export default function FanGameStage({ kind, presentation, card, receiptKey, prizeLabel, recovered, reducedMotion, onComplete }: {
+export default function FanGameStage({ kind, presentation, card, receiptKey, prizeLabel, recovered, reducedMotion, engaged, onComplete }: {
   kind: Exclude<FanGameKind, "wheel">;
   presentation: GamePresentation | null;
   card: BingoState | null;
@@ -16,6 +16,8 @@ export default function FanGameStage({ kind, presentation, card, receiptKey, pri
   prizeLabel?: string;
   recovered: boolean;
   reducedMotion: boolean;
+  /** F6 engagement gate; false keeps the card's copy neutral. */
+  engaged: boolean;
   onComplete: () => void;
 }) {
   useEffect(() => {
@@ -23,7 +25,7 @@ export default function FanGameStage({ kind, presentation, card, receiptKey, pri
     const timer = setTimeout(onComplete, 120);
     return () => clearTimeout(timer);
   }, [presentation, receiptKey, onComplete]);
-  if (kind === "bingo") return <BingoCard card={card} presentation={presentation?.kind === "bingo" ? presentation : null} prizeLabel={prizeLabel} savedPlay={recovered} />;
+  if (kind === "bingo") return <BingoCard card={card} presentation={presentation?.kind === "bingo" ? presentation : null} prizeLabel={prizeLabel} savedPlay={recovered} engaged={engaged} />;
   if (presentation?.kind === "scratch" && receiptKey) return <ScratchTicket key={receiptKey} presentation={presentation} reducedMotion={reducedMotion || recovered} onReveal={onComplete} />;
   return <section aria-label="Scratch ticket" className="w-full rounded-2xl border border-line bg-surface p-5 text-center" data-testid="scratch-ready">
     <h2 className="text-lg font-bold text-ink">Scratch ticket</h2>

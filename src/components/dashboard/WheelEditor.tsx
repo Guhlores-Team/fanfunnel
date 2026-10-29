@@ -285,6 +285,13 @@ export default function WheelEditor({
     void save();
   }
 
+  function loadedStock(): Record<string, number | null> {
+    try {
+      const saved = JSON.parse(savedJson) as WheelConfig;
+      if (saved.id !== wheel.id) return {};
+      return Object.fromEntries(saved.prizes.map((p) => [p.id, p.stock ?? null]));
+    } catch { return {}; }
+  }
   async function save() {
     setSaving(true);
     setSaveError("");
@@ -293,7 +300,9 @@ export default function WheelEditor({
       const res = await fetch("/api/wheel", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wheel: editableGamePayload(gameWheel) }),
+        // The stock each saved prize had when loaded: SQL applies a stock edit
+        // as a delta over the live value, so fans' spins are never un-decremented.
+        body: JSON.stringify({ wheel: editableGamePayload(gameWheel), expectedStock: loadedStock() }),
       });
       const data = await res.json();
       if (res.ok && data.wheel) {

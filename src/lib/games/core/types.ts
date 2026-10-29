@@ -143,7 +143,8 @@ export interface PublicWheelConfig
 export interface SpinResult {
   gameKind?: "wheel" | "scratch" | "bingo";
   presentation?: import("./play").GamePresentation;
-  bonusWins?: { prize: PublicPrize; shareId: string; reward?: DeliveredReward }[];
+  bingoCard?: import("../bingo/engine").BingoState | null;
+  bonusWins?: { line: number; prize: PublicPrize; shareId: string; instant?: boolean; awardedAt?: string; reward?: DeliveredReward }[];
   /** Immutable receipt timestamp; recovery must not relabel an old win as new. */
   awardedAt?: string;
   odds?: import("@/lib/data/focusView").FanOddsView;

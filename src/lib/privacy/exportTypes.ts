@@ -60,6 +60,9 @@ export interface FanDataExport extends ExportStatus {
   topUps: { at: string; spins: number; bonusSpins: number }[];
   spins: {
     gameKind?: string;
+    kind?: "play" | "bonus";
+    parentSpinId?: string | null;
+    bingoLine?: number | null;
     presentation?: Json | null;
     id: string;
     at: string;
@@ -82,6 +85,8 @@ export interface FanDataExport extends ExportStatus {
   prizes: { spinId: string | null; prize: string; status: string; wonAt: string; fulfilledAt: string | null }[];
   /** Delivery metadata only; downloaded files never contain redeemable values. */
   instantReceipts: { spinId: string; kind: string; views: number; lastViewedAt: string | null; createdAt: string; erasedAt: string | null }[];
+  bingoCards: {id:string;wheelId:string;cells:Json;markedMask:number;awardedLinesMask:number;version:number;status:string;createdAt:string|null;completedAt:string|null}[];
+  bingoLineAwards: {cardId:string;line:number;primarySpinId:string;bonusSpinId:string;at:string|null}[];
   focusPacks: { kind: string; prize: string; multiplier: number; totalSpins: number; spinsLeft: number; chaseCounter: number; status: string; at: string | null; endedAt: string | null }[];
   spinAttempts: { status: string; error: string | null; at: string | null; finishedAt: string | null }[];
   wishlist: { prize: string; rarity: string; addedAt: string }[];
@@ -119,7 +124,7 @@ export const CREATOR_EXPORT_EXCLUDED = [
 ];
 export const FAN_EXPORT_ABOUT =
   "Your records with this creator: profile, links and balances, spent-spin fairness proofs, " +
-  "prizes, instant delivery and view metadata, wishlist, messages you sent, consents, play settings, check-ins, outreach history " +
+  "prizes, instant delivery and view metadata, personal bingo cards and line awards, wishlist, messages you sent, consents, play settings, check-ins, outreach history " +
   "and reports you submitted. Read complete, failed and truncated before relying on this file. " +
   "Listed exclusions protect private fields and credentials. Records are read while the file is prepared.";
 export const CREATOR_EXPORT_ABOUT =

@@ -11,8 +11,8 @@ assert.equal(canCreateGame("bingo", null), false);
 assert.equal(canCreateGame("scratch", enabled), true);
 assert.equal(canCreateGame("bingo", readGameFeatures({ features: { scratch: true, bingo: false } })), false);
 assert.deepEqual(defaultFeatures(), { wheel: true, scratch: false, bingo: false }, "release does not auto-grant features to accounts");
-assert.equal(FEATURES.find(feature => feature.key === "scratch")?.comingSoon, undefined, "0060 releases scratch");
-assert.equal(FEATURES.find(feature => feature.key === "bingo")?.comingSoon, true, "0060 keeps bingo unavailable until its separate ledger release");
+assert.equal(FEATURES.find(feature => feature.key === "scratch")?.comingSoon, undefined, "scratch remains released");
+assert.equal(FEATURES.find(feature => feature.key === "bingo")?.comingSoon, undefined, "0061 releases Bingo behind its server-controlled feature");
 
 const wheel: CreatorGameWheel = { id: "game", title: "Bingo", gameKind: "bingo", gameConfig: { size: 3, linePrizeId: "p0" }, gameKindLocked: false, gameReady: true, prizes: Array.from({ length: 9 }, (_, index) => ({ id: `p${index}`, label: `Prize ${index}`, rarity: index === 0 ? "rare" : "common", weight: 1, stock: null })) };
 assert.equal(gameDraftError(wheel), null);
@@ -47,3 +47,5 @@ assert.equal(gameSaveFeatureAllowed(scratch, JSON.stringify(scratch), denied), t
 assert.equal(gameSaveFeatureAllowed(scratch, JSON.stringify({ ...scratch, gameKind: "wheel", gameConfig: {} }), denied), false, "conversion cannot borrow a lost feature");
 assert.equal(gameSaveFeatureAllowed(scratch, JSON.stringify({ ...scratch, id: "different-game" }), denied), false, "another game's saved metadata cannot grandfather this conversion");
 assert.equal(gameSaveFeatureAllowed(scratch, "{bad", denied), false, "unknown saved metadata stays closed");
+
+assert.equal(gameSaveFeatureAllowed({...wheel,gameReady:false},JSON.stringify({...wheel,gameReady:false}),denied),false,"an unpublished Bingo draft cannot borrow a removed capability");

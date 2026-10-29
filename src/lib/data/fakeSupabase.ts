@@ -50,7 +50,7 @@ const TABLE_DEFAULTS: Record<string, Row> = {
     last_spin_at: null,
   },
   grants: { spins: 0, amount_cents: 0, bonus_spins: 0, campaign_id: null, fan_pass_id: null },
-  wheels: { is_active: false, archived_at: null },
+  wheels: { is_active: false, archived_at: null, game_ready: true },
   campaigns: { pinned_wheel_id: null },
 };
 
@@ -368,12 +368,14 @@ class Query implements PromiseLike<Result> {
   private mode: "many" | "single" | "maybeSingle" = "many";
   private returning = false;
   private countOnly = false;
+  private countRequested = false;
 
   constructor(private db: FakeSupabase, private table: string) {}
 
   select(_cols?: string, opts?: { count?: string; head?: boolean }) {
     if (this.op !== "select") this.returning = true;
     if (opts?.head && opts.count) this.countOnly = true;
+    if (opts?.count === "exact") this.countRequested = true;
     return this;
   }
   insert(rows: Row | Row[]) {
@@ -393,6 +395,15 @@ class Query implements PromiseLike<Result> {
   eq(col: string, val: unknown) {
     this.filters.push({ col, operator: "eq", value: val, test: (r) => r[col] === val });
     return this;
+  }
+  gt(col: string, val: string) {
+    this.filters.push({ col, operator: "gt", value: val, test: row => String(row[col]) > val }); return this;
+  }
+  gte(col: string, val: string) {
+    this.filters.push({ col, operator: "gte", value: val, test: row => String(row[col]) >= val }); return this;
+  }
+  lte(col: string, val: string) {
+    this.filters.push({ col, operator: "lte", value: val, test: row => String(row[col]) <= val }); return this;
   }
   neq(col: string, val: unknown) {
     this.filters.push({ col, operator: "neq", value: val, test: (r) => r[col] !== val });
@@ -430,6 +441,8 @@ class Query implements PromiseLike<Result> {
     }
     const { rows, error } = this.db.execute(this.table, this.op, this.filters, this.payload);
     if (error) return { data: null, error, count: null };
+    const total = rows.length;
+    const resultCount = this.countRequested ? total : null;
     let out = rows;
     if (this.orderBy.length > 0) {
       out = out.slice().sort((a, b) => {
@@ -441,16 +454,16 @@ class Query implements PromiseLike<Result> {
       });
     }
     if (this.limitN != null) out = out.slice(0, this.limitN);
-    if (this.countOnly) return { data: null, error: null, count: out.length };
+    if (this.countOnly) return { data: null, error: null, count: total };
     if (this.op !== "select" && !this.returning) return { data: null, error: null, count: null };
-    if (this.mode === "many") return { data: out, error: null, count: null };
+    if (this.mode === "many") return { data: out, error: null, count: resultCount };
     if (out.length > 1) {
       return { data: null, error: { message: "multiple rows returned", code: "PGRST116" }, count: null };
     }
     if (out.length === 0 && this.mode === "single") {
       return { data: null, error: { message: "no rows returned", code: "PGRST116" }, count: null };
     }
-    return { data: out[0] ?? null, error: null, count: null };
+    return { data: out[0] ?? null, error: null, count: resultCount };
   }
 
   then<R1 = Result, R2 = never>(

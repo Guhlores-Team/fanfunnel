@@ -1,3 +1,4 @@
+import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { getAutopilot, dismissAutopilotCard } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -5,8 +6,10 @@ import { ValidationError, str } from "@/lib/api/validate";
 
 // The creator's ranked action feed.
 export async function GET() {
-  const cards = await getAutopilot();
-  return NextResponse.json({ cards });
+  return completeReadResponse(async () => {
+    const cards = await getAutopilot();
+    return NextResponse.json({ cards });
+  });
 }
 
 // Dismiss or snooze a card. Body: { key, snoozeUntil? }.

@@ -11,7 +11,7 @@ export interface FeatureDef {
 export const FEATURES: FeatureDef[] = [
   { key: "wheel", label: "Prize Wheel", emoji: "🎡", base: true },
   { key: "scratch", label: "Scratch Tickets", emoji: "🎫", base: false },
-  { key: "bingo", label: "Bingo", emoji: "🔢", base: false, comingSoon: true },
+  { key: "bingo", label: "Bingo", emoji: "🔢", base: false },
 ];
 
 /** Default feature set granted to a new creator. */

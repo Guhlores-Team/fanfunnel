@@ -1,3 +1,4 @@
+import { bingoReadyError } from "./bingo";
 import { gameSettings, gameWriteError, requireGameFeature } from "./gameSettings";
 // Data layer — wheels: which wheel a link resolves to right now, wheel CRUD,
 // prize rows, scheduling and archiving.
@@ -35,8 +36,9 @@ import type { AnyClient, DbWheelRow } from "./shared";
  * The creator's currently-live wheel among their non-archived wheels:
  *   1. a scheduled wheel whose window contains `now` (prefer latest
  *      active_from, tie-break newest created_at);
- *   2. else the wheel flagged is_active;
+ *   2. else the wheel flagged is_active (oldest first);
  *   3. else the oldest non-archived wheel.
+ * Mirrors SQL _creator_default_wheel (0061), which issuance and spin time share.
  */
 export async function resolveActiveWheelId(
   sb: AnyClient,
@@ -58,7 +60,7 @@ export async function resolveActiveWheelId(
     game_kind?: string;
     game_ready?: boolean;
   }[];
-  const rows = rawRows.filter(row => row.game_ready !== false && row.game_kind !== "bingo");
+  const rows = rawRows.filter(row => row.game_ready !== false);
   if (rows.length === 0) return null;
 
   const nowMs = now.getTime();
@@ -79,7 +81,8 @@ export async function resolveActiveWheelId(
     return inWindow[0].id;
   }
 
-  const active = rows.filter((w) => w.is_active).sort((a, b) => a.id.localeCompare(b.id))[0];
+  // Same tie-break as SQL: created_at, then id.
+  const active = rows.filter((w) => w.is_active).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0];
   if (active) return active.id;
 
   // Oldest non-archived wheel.
@@ -115,7 +118,7 @@ export async function resolveWheelId(
         .eq("creator_id", pass.creator_id)
         .maybeSingle();
       const row = pinned as { id: string; archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
-      if (row && !row.archived_at && row.game_ready !== false && row.game_kind !== "bingo") return row.id;
+      if (row && !row.archived_at && row.game_ready !== false) return row.id;
     }
   }
 
@@ -123,7 +126,7 @@ export async function resolveWheelId(
   if (active) return active;
   const { data: stored } = await sb.from("wheels").select("id,archived_at,game_kind,game_ready").eq("id", pass.wheel_id).eq("creator_id", pass.creator_id).maybeSingle();
   const row = stored as { id: string; archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
-  return row && !row.archived_at && row.game_ready !== false && row.game_kind !== "bingo" ? row.id : null;
+  return row && !row.archived_at && row.game_ready !== false ? row.id : null;
 }
 
 /**
@@ -134,13 +137,18 @@ export async function resolveWheelId(
 export async function getActiveHappyHour(
   sb: AnyClient,
   wheelId: string,
-  now: Date
+  now: Date,
+  creatorId?: string
 ): Promise<HappyHourStatus> {
   const iso = now.toISOString();
-  const { data } = await sb
+  // Only the game owner's own happy hours count (same filter as SQL
+  // _spin_attempt_context); the policy and trigger refuse cross-tenant rows.
+  let query = sb
     .from("happy_hours")
     .select("multiplier, ends_at")
-    .eq("wheel_id", wheelId)
+    .eq("wheel_id", wheelId);
+  if (creatorId) query = query.eq("creator_id", creatorId);
+  const { data } = await query
     .lte("starts_at", iso)
     .gt("ends_at", iso);
 
@@ -219,9 +227,18 @@ export async function getWheel(): Promise<WheelConfig | null> {
   return { ...toWheelConfig(data as unknown as DbWheelRow), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
 }
 
+/** The stock each prize had when the editor loaded it, by prize id (null =
+ *  unlimited). SQL applies a stock edit as the creator's delta over the live
+ *  value (spins that landed meanwhile are never un-decremented) and refuses a
+ *  limited/unlimited switch the creator did not see with `stock_changed`. */
+export type ExpectedStock = Record<string, number | null>;
 export async function saveWheel(
-  config: WheelConfig
+  config: WheelConfig,
+  options: { expectedStock?: ExpectedStock } = {}
 ): Promise<{ wheel: WheelConfig } | { error: string }> {
+  const expectedStock = options.expectedStock ?? {};
+  const withExpectedStock = <T extends { id: string | null }>(row: T, prizeId: string) =>
+    Object.hasOwn(expectedStock, prizeId) && isUuid(prizeId) ? { ...row, expected_stock: expectedStock[prizeId] } : row;
   // The editor's wheel rules (≥ 2 prizes, every prize named, one prize with
   // tickets > 0), enforced here for both data paths before anything is read or
   // written. This also refuses an empty prize set, which is almost always a
@@ -255,15 +272,15 @@ export async function saveWheel(
   let settings;
   try {
     settings = gameSettings(config.gameKind ?? existing.gameKind ?? "wheel", config.gameConfig ?? existing.gameConfig);
-    if (settings.gameKind !== (existing.gameKind ?? "wheel")) {
-      if (existing.gameKindLocked !== false) return { error: "game_kind_locked" };
-      await requireGameFeature(sb, user.id, settings.gameKind);
-    }
+    const kindChanged=settings.gameKind !== (existing.gameKind ?? "wheel");
+    if(kindChanged && existing.gameKindLocked !== false)return {error:"game_kind_locked"};
+    if(kindChanged || (settings.gameKind === "bingo" && existing.gameReady === false))await requireGameFeature(sb,user.id,settings.gameKind);
   } catch(error) { return { error: error instanceof Error ? error.message : "invalid_game" }; }
 
   const upd: Record<string, unknown> = {
     game_kind: settings.gameKind,
     game_config: settings.gameConfig,
+    game_ready:true,
     title: config.title.slice(0, 120),
     subtitle: config.subtitle?.slice(0, 200) ?? null,
     brand_color: config.brandColor ?? "#ec4899",
@@ -282,6 +299,22 @@ export async function saveWheel(
   if (typeof config.showStock === "boolean") upd.show_stock = config.showStock;
   if (config.activeFrom !== undefined) upd.active_from = config.activeFrom;
   if (config.activeUntil !== undefined) upd.active_until = config.activeUntil;
+
+  if (settings.gameKind === "bingo") {
+    const normalized = { ...config, gameKind: "bingo" as const, gameConfig: settings.gameConfig };
+    const invalid = bingoReadyError(normalized);
+    if (invalid) return { error: invalid };
+    const ids=new Map(config.prizes.map(prize=>[prize.id,isUuid(prize.id)?prize.id:crypto.randomUUID()]));
+    const gameConfig={size:3,linePrizeId:ids.get((settings.gameConfig as {linePrizeId:string}).linePrizeId)!};
+    const payload = config.prizes.map((prize,index) => withExpectedStock({ ...prizeRow(wheelId,prize,index), id:ids.get(prize.id)! }, prize.id));
+    // Metadata/readiness and the real prize IDs publish together. Never set
+    // game_ready=true on an incomplete draft before the inventory transaction.
+    const { error } = await createServiceClient().rpc("save_game_wheel", {p_wheel:wheelId,p_creator:user.id,p_actor:user.id,p_prizes:payload as unknown as Json,
+      p_config:{title:upd.title,subtitle:upd.subtitle,brand_color:upd.brand_color,label_color:upd.label_color,label_size:upd.label_size,show_stock:showsStock(config),game_kind:"bingo",game_config:gameConfig} as unknown as Json});
+    if(error)return {error:gameWriteError(error)};
+    const saved=await getWheelById(wheelId);
+    return saved?{wheel:saved}:{error:"db_error"};
+  }
 
   // The RLS-scoped client only sees the creator's own wheels, so this verifies
   // ownership: a foreign/unknown id matches no row.
@@ -329,7 +362,7 @@ export async function saveWheel(
   // The session/RLS update above established the caller owns this wheel. The
   // service-only transaction rechecks that owner and retains reward-bearing ids.
   const svc = createServiceClient();
-  const payload = config.prizes.map((p, i) => ({ ...rows[i], id: isUuid(p.id) ? p.id : null }));
+  const payload = config.prizes.map((p, i) => withExpectedStock({ ...rows[i], id: isUuid(p.id) ? p.id : null }, p.id));
   const { error: saveError } = await svc.rpc("save_wheel_prizes", {
     p_wheel: wheelId, p_creator: user.id, p_prizes: payload as unknown as Json,
   });
@@ -473,7 +506,7 @@ export async function createWheel(opts?: {
   let subtitle: string | null = null;
   let brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
   let seedPrizes: Omit<Prize, "id">[] = [];
-  let settings = gameSettings(opts?.gameKind, opts?.gameConfig);
+  let settings = gameSettings(opts?.gameKind, opts?.gameConfig,true);
 
   if (opts?.fromTemplateId) {
     const { data: tpl } = await sb
@@ -495,7 +528,7 @@ export async function createWheel(opts?: {
       subtitle = t.subtitle;
       brandColor = t.brand_color ?? "#ec4899";
       seedPrizes = t.prizes ?? [];
-      settings = gameSettings(t.game_kind, t.game_config);
+      settings = gameSettings(t.game_kind, t.game_config,true);
     }
   }
 
@@ -507,16 +540,22 @@ export async function createWheel(opts?: {
     .insert({
       creator_id: user.id,
       game_kind: settings.gameKind,
-      game_config: settings.gameConfig,
+      game_config: settings.gameKind === "bingo" ? {size:3,linePrizeId:null} : settings.gameConfig,
+      game_ready:settings.gameKind !== "bingo",
       title: title.slice(0, 120),
       subtitle: subtitle?.slice(0, 200) ?? null,
       brand_color: brandColor,
-      is_active: isFirst,
+      is_active: isFirst && settings.gameKind !== "bingo",
     })
     .select("id")
     .single();
   if (error || !wheel) throw new Error(gameWriteError(error));
 
+  if(settings.gameKind === "bingo" && seedPrizes.length>0 && settings.gameConfig.linePrizeId) {
+    const ids=new Map(seedPrizes.map(prize=>[(prize as Partial<Prize>).id,crypto.randomUUID()]));
+    const config:WheelConfig={id:wheel.id,title,subtitle:subtitle??undefined,brandColor,gameKind:"bingo",gameConfig:{size:3,linePrizeId:ids.get(settings.gameConfig.linePrizeId)??""},prizes:seedPrizes.map(prize=>({...prize,id:ids.get((prize as Partial<Prize>).id)!}))};
+    const result=await saveWheel(config);if("error" in result)throw new Error(result.error);return result;
+  }
   if (seedPrizes.length > 0) {
     await sb.from("prizes").insert(
       seedPrizes
@@ -544,7 +583,7 @@ export async function duplicateWheel(
 
   const source = await getWheelById(id);
   if (!source) throw new Error("not_found");
-  const settings = gameSettings(source.gameKind, source.gameConfig);
+  const settings = gameSettings(source.gameKind, source.gameConfig,true);
   await requireGameFeature(sb, user.id, settings.gameKind);
 
   const { data: wheel, error } = await sb
@@ -552,7 +591,8 @@ export async function duplicateWheel(
     .insert({
       creator_id: user.id,
       game_kind: settings.gameKind,
-      game_config: settings.gameConfig,
+      game_config: settings.gameKind === "bingo" ? {size:3,linePrizeId:null} : settings.gameConfig,
+      game_ready:settings.gameKind !== "bingo",
       title: source.title.slice(0, 120),
       subtitle: source.subtitle?.slice(0, 200) ?? null,
       brand_color: source.brandColor ?? "#ec4899",
@@ -568,6 +608,11 @@ export async function duplicateWheel(
     .single();
   if (error || !wheel) throw new Error(gameWriteError(error));
 
+  if(settings.gameKind === "bingo" && settings.gameConfig.linePrizeId) {
+    const ids=new Map(source.prizes.map(prize=>[prize.id,crypto.randomUUID()]));
+    const config:WheelConfig={...source,id:wheel.id,gameConfig:{size:3,linePrizeId:ids.get(settings.gameConfig.linePrizeId)??""},prizes:source.prizes.map(prize=>({...prize,id:ids.get(prize.id)!}))};
+    const result=await saveWheel(config);if("error" in result)throw new Error(result.error);return result;
+  }
   if (source.prizes.length > 0) {
     await sb.from("prizes").insert(
       source.prizes.slice(0, MAX_WHEEL_PRIZES).map((p, i) => prizeRow(wheel.id, p, i))
@@ -608,7 +653,7 @@ export async function archiveWheel(
     .update({ archived_at: new Date().toISOString(), is_active: false })
     .eq("id", id)
     .eq("creator_id", user.id);
-  if (error) return { error: "db_error" };
+  if (error) return { error: gameWriteError(error) };
 
   // If we just archived the active wheel, promote the oldest survivor.
   if (row.is_active) {
@@ -617,6 +662,7 @@ export async function archiveWheel(
       .select("id")
       .eq("creator_id", user.id)
       .is("archived_at", null)
+      .eq("game_ready",true)
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -646,7 +692,7 @@ export async function unarchiveWheel(
     .update({ archived_at: null })
     .eq("id", id)
     .eq("creator_id", user.id);
-  return error ? { error: "db_error" } : { ok: true };
+  return error ? { error: gameWriteError(error) } : { ok: true };
 }
 
 /**
@@ -686,7 +732,7 @@ export async function deleteWheel(
     .delete()
     .eq("id", id)
     .eq("creator_id", user.id);
-  if (error) return { error: "db_error" };
+  if (error) return { error: gameWriteError(error) };
 
   // If the deleted wheel was active, promote the oldest survivor.
   if (row.is_active) {
@@ -720,11 +766,12 @@ export async function setActiveWheel(
 
   const { data: target } = await sb
     .from("wheels")
-    .select("id")
+    .select("id,game_ready")
     .eq("id", id)
     .eq("creator_id", user.id)
     .maybeSingle();
   if (!target) return { error: "not_found" };
+  if(target.game_ready === false)return {error:"game_not_ready"};
 
   // Clear every flag for this creator, then set the chosen wheel.
   const { error: clearErr } = await sb
@@ -738,7 +785,7 @@ export async function setActiveWheel(
     .update({ is_active: true })
     .eq("id", id)
     .eq("creator_id", user.id);
-  return error ? { error: "db_error" } : { ok: true };
+  return error ? { error: gameWriteError(error) } : { ok: true };
 }
 
 /** Set (or clear) a wheel's scheduled active window. */
@@ -770,7 +817,7 @@ export async function setWheelSchedule(
     .eq("creator_id", user.id)
     .select("id")
     .maybeSingle();
-  if (error) return { error: "db_error" };
+  if (error) return { error: gameWriteError(error) };
   if (!updated) return { error: "not_found" };
   return { ok: true };
 }

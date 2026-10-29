@@ -20,7 +20,7 @@ import { PUSH_STUB, pushConfig, openPushCard, turnPushOn, clearPushDevices } fro
 import { instantA11yStates } from "./instant-a11y.mjs";
 import { themingA11yStates } from "./theming-a11y.mjs";
 import { focusA11yStates } from "./focus-a11y.mjs";
-import { scratchA11yStates } from "./games-a11y.mjs";
+import { scratchA11yStates, bingoA11yStates } from "./games-a11y.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -316,6 +316,7 @@ const openCloseAccount = async (page) => {
 
 const PAGES = [
   ...scratchA11yStates(),
+  ...bingoA11yStates(),
   ...focusA11yStates(),
   ...instantA11yStates(DASH_ADVISORY),
   ...themingA11yStates(DASH_ADVISORY),
