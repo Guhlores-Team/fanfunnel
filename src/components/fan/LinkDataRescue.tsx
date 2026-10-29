@@ -3,16 +3,20 @@
 import { useId, useState } from "react";
 import { usePathname } from "next/navigation";
 import { FanDataActions } from "./FanDataControls";
+import { LeaderboardWithdrawal } from "./FanLeaderboard";
 
 /**
  * Under the 404 of a fan link that doesn't open (paused, blocked, switched off
- * or mistyped): the fan can still download or delete their data with the
+ * or mistyped): the fan can still withdraw leaderboard consent, download or
+ * delete their data with the
  * link's token. The page stays a 404 either way, and the server only answers
  * for a token that really exists, so this reveals nothing about a link.
  */
 export default function LinkDataRescue() {
   const pathname = usePathname();
-  const token = /^\/spin\/([^/?#]+)/.exec(pathname ?? "")?.[1] ?? null;
+  const encodedToken = /^\/spin\/([^/?#]+)/.exec(pathname ?? "")?.[1] ?? null;
+  let token: string | null = null;
+  try { if (encodedToken) token = decodeURIComponent(encodedToken); } catch { /* Malformed links have no privacy credential. */ }
   const [open, setOpen] = useState(false);
   const panelId = useId();
   if (!token) return null;
@@ -27,8 +31,14 @@ export default function LinkDataRescue() {
       >
         Was this your link? Download or delete your data
       </button>
+      <p className="mt-2 text-center text-xs text-muted">You can also remove yourself from the leaderboard here.</p>
       <div id={panelId} hidden={!open} className="mt-3">
-        {open && <FanDataActions token={decodeURIComponent(token)} />}
+        {open && <>
+          <FanDataActions key={`data:${token}`} token={token} />
+          <div className="mt-4">
+            <LeaderboardWithdrawal key={`leaderboard-withdraw:${token}`} token={token} onWithdrawn={() => {}} />
+          </div>
+        </>}
       </div>
     </div>
   );

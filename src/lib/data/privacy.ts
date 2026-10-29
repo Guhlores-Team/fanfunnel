@@ -28,6 +28,7 @@ import {
   mockExportCreatorData,
   mockExportFanData,
   mockGetFanLinkStatus,
+  mockSetFanLeaderboardOptIn,
 } from "./mock";
 
 import { EXPORT_PAGE_SIZE, EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
@@ -49,13 +50,37 @@ async function resolveAnyToken(
   svc: Svc,
   token: string
 ): Promise<{ fanId: string; creatorId: string } | null> {
-  const { data } = await svc
+  const { data, error } = await svc
     .from("fan_passes")
     .select("fan_id, creator_id")
     .eq("token", token)
     .maybeSingle();
+  if (error) return null;
   const row = data as { fan_id: string; creator_id: string } | null;
   return row ? { fanId: row.fan_id, creatorId: row.creator_id } : null;
+}
+
+
+/** Privacy withdrawal remains available when a known link cannot play. Its
+ * credential is the same token used by download/delete, including paused links;
+ * it cannot join a board, rename a fan, reactivate a link or change a balance. */
+export async function withdrawFanLeaderboardConsent(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isPlausibleToken(token)) return { error: "not_found" };
+  if (!isSupabaseConfigured()) return mockSetFanLeaderboardOptIn(token, false);
+  try {
+    const svc = createServiceClient();
+    const who = await resolveAnyToken(svc, token);
+    if (!who) return { error: "not_found" };
+    const { error } = await svc.from("fans")
+      .update({ leaderboard_opt_in: false })
+      .eq("id", who.fanId)
+      .eq("creator_id", who.creatorId);
+    return error ? { error: "db_error" } : { ok: true };
+  } catch {
+    return { error: "db_error" };
+  }
 }
 
 type ExportRow = Record<string, unknown>;

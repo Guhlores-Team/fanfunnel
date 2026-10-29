@@ -28,6 +28,7 @@ import {
   mockGetSpinVerification,
 } from "./mock";
 import { resolveFanByToken } from "./fans";
+import { withdrawFanLeaderboardConsent } from "./privacy";
 
 // ---------------------------------------------------------------------------
 // Phase 3: happy hours, share cards, wishlist, leaderboard, referrals, chat,
@@ -370,6 +371,7 @@ export async function setFanLeaderboardOptIn(
   optIn: boolean,
   handle?: string
 ): Promise<{ ok: true } | { error: string }> {
+  if (optIn === false) return withdrawFanLeaderboardConsent(token);
   if (!isSupabaseConfigured())
     return mockSetFanLeaderboardOptIn(token, optIn, handle);
 

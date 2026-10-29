@@ -19,7 +19,8 @@ runs out. A local commit is not a pushed, hosted or verified release.
   passed at `540f018`; that exact commit is now on the stable TEST Preview.
   Focus (0059) was pushed through `6e83047`; its TEST migration is applied, but
   the real database runtime suite fails because pgcrypto lives in `extensions`
-  on TEST. The correction is being prepared locally. **No 0059 Preview has been
+  on TEST. The correction and additional paused/archived-link privacy fixes are
+  committed locally and need two fresh full rounds. **No 0059 Preview has been
   deployed.** The unit runner accepts literal Next.js bracket paths and fails
   process errors. See the checkpoint for precise verification boundaries.
 - **Preview (TEST database `snmcrmhgevfqggxdiomu`):**

@@ -2996,9 +2996,9 @@ export function mockSetFanLeaderboardOptIn(
   handle?: string
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
-  if (!fan) return { error: "not_found" };
+  if (!fan || (optIn && fan.selfExcludedAt)) return { error: "not_found" };
   fan.leaderboardOptIn = !!optIn;
-  if (handle !== undefined) {
+  if (optIn && handle !== undefined) {
     const trimmed = handle.trim();
     fan.handle = trimmed || undefined;
   }

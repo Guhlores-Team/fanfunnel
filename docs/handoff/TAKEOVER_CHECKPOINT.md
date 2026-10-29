@@ -1,4 +1,4 @@
-# Takeover checkpoint — 2026-10-28
+# Takeover checkpoint — 2026-10-29
 
 Read this, `AGENTS.md`, `HANDOFF.md`, then the artifact index before making changes.
 The owner requested a committed, portable stopping point before the usage
@@ -65,6 +65,31 @@ opacity animation temporarily failed contrast. Remaining-game controller changes
 must be mapped to `FanGameController`; 0060 intentionally replaces `SpinClient`
 with a thin wrapper. Never copy an entire newer game's controller into 0060.
 
+An additional actual data-layer reproduction found that archiving every wheel
+left fans publicly listed but prevented withdrawal. Pausing a link also made
+the old active-pass resolver refuse withdrawal. This checkpoint corrects both:
+`privacy.ts` now provides a false-only withdrawal using its existing known-token
+download/delete contract, including inactive links. `boosts.ts` delegates only
+literal `optIn === false` to it. The write changes only `leaderboard_opt_in:false`
+and filters by **both** the token-derived fan ID and creator ID. It never changes
+a handle, balance, wheel, link state or joining permission. Unknown/deleted tokens
+and database errors fail closed. The mock also refuses joining after self-exclusion.
+
+The existing 404 `LinkDataRescue` panel offers the same explicit withdrawal
+control beside download/delete. Opening it performs no public leaderboard read
+or automatic POST; its generic responses do not expose a fan's identity or consent.
+The existing page status and discovery button label stay unchanged. Malformed
+pathname decoding is guarded. No table, route, RPC or dependency was added.
+Focused verification passed **63 actual real/mock data cases and 19 rescue UI
+cases**, including cross-creator refusal, false-only writes, errors/retry and
+preserving paid balances/history. The original 72/35/38/28 UI cases are byte-exact.
+
+Authorization evidence: `src/lib/data/privacy.ts` (`resolveAnyToken` and
+`withdrawFanLeaderboardConsent`), `src/lib/data/boosts.ts` (`optIn === false`),
+`src/lib/supabase/server.ts` (server-only `createServiceClient`), and
+`src/lib/data/leaderboardWithdrawal.test.ts` (actual negative authorization cases).
+No role is read from user-editable metadata; no service key enters a client module.
+
 ## Verification boundaries
 
 At `9642dfd4d24518c201f736f93387443e43d80a8f`, two complete local rounds genuinely
@@ -80,6 +105,13 @@ The earlier repair diagnostics separately passed 46 transport/guard cases,
 drift/RLS matrices, 28 actual-component history cases, 35 engagement admission
 cases, 72 withdrawal lifecycle cases and 38 existing recovery cases. Preserve those tests and all original
 assertions; run the current complete tree, not just these focused checks.
+
+The superseded `15a1e305a359d858a16205d6ba87773629eb8c4f` repair subsequently
+passed installation, lint, types, both complete drift layouts, 43 MJS syntax
+checks, all 204 unit files, the debug build and all 163 browser steps with zero
+signals. Its axe run was intentionally interrupted when the backend privacy gap
+above was confirmed. **It is not a completed full round.** Preserve that history;
+restart both full rounds on the final source that includes the six-path repair.
 
 One isolated Bingo diagnostic passed all 174 functional steps with zero browser
 signals after history/F6 fixes and corrected fixture admission pacing, but its
