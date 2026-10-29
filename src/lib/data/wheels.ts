@@ -1,3 +1,4 @@
+import { gameSettings, gameWriteError, requireGameFeature } from "./gameSettings";
 // Data layer — wheels: which wheel a link resolves to right now, wheel CRUD,
 // prize rows, scheduling and archiving.
 import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
@@ -44,17 +45,20 @@ export async function resolveActiveWheelId(
 ): Promise<string | null> {
   const { data } = await sb
     .from("wheels")
-    .select("id, is_active, active_from, active_until, created_at")
+    .select("id, is_active, active_from, active_until, created_at, game_kind, game_ready")
     .eq("creator_id", creatorId)
     .is("archived_at", null);
 
-  const rows = (data ?? []) as {
+  const rawRows = (data ?? []) as {
     id: string;
     is_active: boolean;
     active_from: string | null;
     active_until: string | null;
     created_at: string;
+    game_kind?: string;
+    game_ready?: boolean;
   }[];
+  const rows = rawRows.filter(row => row.game_ready !== false && row.game_kind !== "bingo");
   if (rows.length === 0) return null;
 
   const nowMs = now.getTime();
@@ -106,20 +110,20 @@ export async function resolveWheelId(
     if (pinnedId) {
       const { data: pinned } = await sb
         .from("wheels")
-        .select("id, archived_at")
+        .select("id, archived_at, game_kind, game_ready")
         .eq("id", pinnedId)
         .eq("creator_id", pass.creator_id)
         .maybeSingle();
-      const row = pinned as { id: string; archived_at: string | null } | null;
-      if (row && !row.archived_at) return row.id;
+      const row = pinned as { id: string; archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
+      if (row && !row.archived_at && row.game_ready !== false && row.game_kind !== "bingo") return row.id;
     }
   }
 
   const active = await resolveActiveWheelId(sb, pass.creator_id, now);
   if (active) return active;
-  const { data: stored } = await sb.from("wheels").select("id,archived_at").eq("id", pass.wheel_id).eq("creator_id", pass.creator_id).maybeSingle();
-  const row = stored as { id: string; archived_at: string | null } | null;
-  return row && !row.archived_at ? row.id : null;
+  const { data: stored } = await sb.from("wheels").select("id,archived_at,game_kind,game_ready").eq("id", pass.wheel_id).eq("creator_id", pass.creator_id).maybeSingle();
+  const row = stored as { id: string; archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
+  return row && !row.archived_at && row.game_ready !== false && row.game_kind !== "bingo" ? row.id : null;
 }
 
 /**
@@ -211,7 +215,8 @@ export async function getWheel(): Promise<WheelConfig | null> {
   // dashboard falls back to a sample wheel, so return null instead of passing
   // null into toWheelConfig (which dereferences `.prizes` and crashes the render).
   if (!data) return null;
-  return toWheelConfig(data as unknown as DbWheelRow);
+  const { count, error: historyError } = await sb.from("spins").select("id", { count: "exact", head: true }).eq("wheel_id", (data as unknown as DbWheelRow).id);
+  return { ...toWheelConfig(data as unknown as DbWheelRow), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
 }
 
 export async function saveWheel(
@@ -224,7 +229,9 @@ export async function saveWheel(
   const rule = wheelRulesError(config.prizes);
   if (rule) return { error: rule };
 
-  if (!isSupabaseConfigured()) return { wheel: mockSaveWheel(config) };
+  if (!isSupabaseConfigured()) {
+    try { return { wheel: mockSaveWheel(config) }; } catch(error) { return { error: error instanceof Error ? error.message : "db_error" }; }
+  }
 
   const sb = await createClient();
   const {
@@ -243,7 +250,20 @@ export async function saveWheel(
   const wheelId = config.id;
   if (!wheelId) return { error: "no_wheel" };
 
+  const existing = await getWheelById(wheelId);
+  if (!existing) return { error: "not_found" };
+  let settings;
+  try {
+    settings = gameSettings(config.gameKind ?? existing.gameKind ?? "wheel", config.gameConfig ?? existing.gameConfig);
+    if (settings.gameKind !== (existing.gameKind ?? "wheel")) {
+      if (existing.gameKindLocked !== false) return { error: "game_kind_locked" };
+      await requireGameFeature(sb, user.id, settings.gameKind);
+    }
+  } catch(error) { return { error: error instanceof Error ? error.message : "invalid_game" }; }
+
   const upd: Record<string, unknown> = {
+    game_kind: settings.gameKind,
+    game_config: settings.gameConfig,
     title: config.title.slice(0, 120),
     subtitle: config.subtitle?.slice(0, 200) ?? null,
     brand_color: config.brandColor ?? "#ec4899",
@@ -272,7 +292,7 @@ export async function saveWheel(
     .eq("creator_id", user.id)
     .select("id")
     .maybeSingle();
-  if (wErr) return { error: "db_error" };
+  if (wErr) return { error: gameWriteError(wErr) };
   if (!updated) return { error: "not_found" };
 
   // Replace prizes wholesale. Spin history is safe because spins snapshot the
@@ -313,7 +333,7 @@ export async function saveWheel(
   const { error: saveError } = await svc.rpc("save_wheel_prizes", {
     p_wheel: wheelId, p_creator: user.id, p_prizes: payload as unknown as Json,
   });
-  if (saveError) return { error: "db_error" };
+  if (saveError) return { error: gameWriteError(saveError) };
 
   const saved = await getWheelById(wheelId);
   return saved ? { wheel: saved } : { error: "db_error" };
@@ -363,7 +383,8 @@ export async function getWheelById(id: string): Promise<WheelConfig | null> {
     .eq("creator_id", user.id)
     .maybeSingle();
   if (!data) return null;
-  return toWheelConfig(data as unknown as DbWheelRow);
+  const { count, error: historyError } = await sb.from("spins").select("id", { count: "exact", head: true }).eq("wheel_id", (data as unknown as DbWheelRow).id);
+  return { ...toWheelConfig(data as unknown as DbWheelRow), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
 }
 
 /** All the creator's wheels (newest first), with a prize count each. */
@@ -382,7 +403,7 @@ export async function listWheels(
     .from("wheels")
     .select(
       `id, title, subtitle, brand_color, is_active, archived_at,
-       active_from, active_until, updated_at, prizes(id)`
+       active_from, active_until, updated_at, game_kind, game_ready, prizes(id)`
     )
     .eq("creator_id", user.id)
     .order("created_at", { ascending: false });
@@ -399,6 +420,8 @@ export async function listWheels(
     active_from: string | null;
     active_until: string | null;
     updated_at: string;
+    game_kind?: "wheel" | "scratch" | "bingo";
+    game_ready?: boolean;
     prizes: { id: string }[] | null;
   }[];
 
@@ -413,6 +436,8 @@ export async function listWheels(
     activeUntil: r.active_until,
     prizeCount: (r.prizes ?? []).length,
     updatedAt: r.updated_at,
+    gameKind: r.game_kind ?? "wheel",
+    gameReady: r.game_ready !== false,
   }));
 }
 
@@ -425,6 +450,8 @@ export async function listWheels(
 export async function createWheel(opts?: {
   fromTemplateId?: string;
   name?: string;
+  gameKind?: unknown;
+  gameConfig?: unknown;
 }): Promise<{ wheel: WheelConfig }> {
   if (!isSupabaseConfigured()) return mockCreateWheel(opts);
 
@@ -446,11 +473,12 @@ export async function createWheel(opts?: {
   let subtitle: string | null = null;
   let brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
   let seedPrizes: Omit<Prize, "id">[] = [];
+  let settings = gameSettings(opts?.gameKind, opts?.gameConfig);
 
   if (opts?.fromTemplateId) {
     const { data: tpl } = await sb
       .from("wheel_templates")
-      .select("title, subtitle, brand_color, prizes")
+      .select("title, subtitle, brand_color, prizes, game_kind, game_config")
       .eq("id", opts.fromTemplateId)
       .eq("creator_id", user.id)
       .maybeSingle();
@@ -459,21 +487,27 @@ export async function createWheel(opts?: {
       subtitle: string | null;
       brand_color: string | null;
       prizes: Omit<Prize, "id">[] | null;
+      game_kind?: unknown;
+      game_config?: unknown;
     } | null;
     if (t) {
       title = t.title;
       subtitle = t.subtitle;
       brandColor = t.brand_color ?? "#ec4899";
       seedPrizes = t.prizes ?? [];
+      settings = gameSettings(t.game_kind, t.game_config);
     }
   }
 
   if (opts?.name) title = opts.name;
+  await requireGameFeature(sb, user.id, settings.gameKind);
 
   const { data: wheel, error } = await sb
     .from("wheels")
     .insert({
       creator_id: user.id,
+      game_kind: settings.gameKind,
+      game_config: settings.gameConfig,
       title: title.slice(0, 120),
       subtitle: subtitle?.slice(0, 200) ?? null,
       brand_color: brandColor,
@@ -481,7 +515,7 @@ export async function createWheel(opts?: {
     })
     .select("id")
     .single();
-  if (error || !wheel) throw new Error("db_error");
+  if (error || !wheel) throw new Error(gameWriteError(error));
 
   if (seedPrizes.length > 0) {
     await sb.from("prizes").insert(
@@ -510,11 +544,15 @@ export async function duplicateWheel(
 
   const source = await getWheelById(id);
   if (!source) throw new Error("not_found");
+  const settings = gameSettings(source.gameKind, source.gameConfig);
+  await requireGameFeature(sb, user.id, settings.gameKind);
 
   const { data: wheel, error } = await sb
     .from("wheels")
     .insert({
       creator_id: user.id,
+      game_kind: settings.gameKind,
+      game_config: settings.gameConfig,
       title: source.title.slice(0, 120),
       subtitle: source.subtitle?.slice(0, 200) ?? null,
       brand_color: source.brandColor ?? "#ec4899",
@@ -528,7 +566,7 @@ export async function duplicateWheel(
     })
     .select("id")
     .single();
-  if (error || !wheel) throw new Error("db_error");
+  if (error || !wheel) throw new Error(gameWriteError(error));
 
   if (source.prizes.length > 0) {
     await sb.from("prizes").insert(

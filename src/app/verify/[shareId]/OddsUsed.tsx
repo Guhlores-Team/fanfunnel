@@ -7,7 +7,7 @@ import { ODDS_LIMIT_LINE, ODDS_LOCKED_LINE, formatChance, modifierLines } from "
  * them, and whether replaying the recorded inputs reproduces the result. Only
  * fan-safe fields reach here (the snapshot is built from PublicPrize).
  */
-export function OddsUsed({ replay, poolHash }: { replay: V3Replay; poolHash: string | null }) {
+export function OddsUsed({ replay, poolHash, game = false }: { replay: V3Replay; poolHash: string | null; game?: boolean }) {
   const s = replay.snapshot;
   const odds = s ? snapshotOdds(s) : null;
   const wonId = replay.ok ? replay.replayed?.id : null;
@@ -112,14 +112,14 @@ export function OddsUsed({ replay, poolHash }: { replay: V3Replay; poolHash: str
       <dl className="mt-4 space-y-4 text-sm">
         <div>
           <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted">
-            Odds fingerprint (SHA-256)
+            {game ? "Game and odds fingerprint (SHA-256)" : "Odds fingerprint (SHA-256)"}
           </dt>
           <dd className="mt-1 break-all rounded-lg border border-line bg-surface px-3 py-2 font-mono text-xs text-ink">
             {poolHash ?? "Not recorded"}
           </dd>
           <dd className="mt-1 text-xs text-muted">
             {replay.poolHashOk
-              ? "Re-hashing the odds above gives this fingerprint."
+              ? game ? "Re-hashing the odds, game settings, safe pre-play card and bonus pools gives this fingerprint." : "Re-hashing the odds above gives this fingerprint."
               : "Re-hashing the odds above does not give this fingerprint."}
           </dd>
         </div>

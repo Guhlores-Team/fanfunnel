@@ -141,21 +141,21 @@ export default function TemplateLibrary({
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       {/* Wheel templates */}
-      <section className={well} aria-label="Wheel templates">
+      <section className={well} aria-label="Game templates">
         <h3 className="flex items-center gap-2 text-[15px] font-bold text-ink">
           {tick}
-          Wheel templates
+          Game templates
         </h3>
         <p className="mt-1 text-sm text-muted">
-          Reusable wheel presets — apply one to start a new wheel, or save the
-          wheel you&rsquo;re editing as a template.
+          Reusable game presets — apply one to start a new game, or save the
+          game you&rsquo;re editing as a template.
         </p>
 
         {/* Save current wheel as a template */}
         <div className="mt-4 flex flex-wrap items-end gap-2">
           <label className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
-              Save current wheel as template
+              Save current game as template
             </span>
             <input
               className="ff-input"
@@ -169,7 +169,7 @@ export default function TemplateLibrary({
                   saveCurrentWheel();
                 }
               }}
-              aria-label="New wheel template name"
+              aria-label="New game template name"
             />
           </label>
           <button
@@ -191,8 +191,8 @@ export default function TemplateLibrary({
             </div>
           ) : wheelTemplates.length === 0 ? (
             <EmptyState
-              title="No wheel templates yet"
-              body="Save the wheel you're editing above to reuse it as a starting point later."
+              title="No game templates yet"
+              body="Save the game you're editing above to reuse it as a starting point later."
             />
           ) : (
             <ul className="space-y-2">
@@ -271,7 +271,7 @@ export default function TemplateLibrary({
           )}
         </div>
         <p className="mt-1 text-sm text-muted">
-          Reusable prizes you can drop into any wheel.
+          Reusable prizes you can drop into any game.
         </p>
 
         <div className="mt-5">
@@ -284,7 +284,7 @@ export default function TemplateLibrary({
           ) : prizes.length === 0 ? (
             <EmptyState
               title="No saved prizes yet"
-              body="Save a prize to the library to reuse it across wheels without re-entering it."
+              body="Save a prize to the library to reuse it across games without re-entering it."
             />
           ) : (
             <ul className="space-y-2">

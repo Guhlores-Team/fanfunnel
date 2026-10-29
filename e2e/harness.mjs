@@ -232,6 +232,8 @@ export const NAV_ITEMS = "nav[aria-label='Dashboard sections']:visible button:no
 export const MORE_BUTTON = "nav[aria-label='Dashboard sections']:visible button[aria-haspopup='dialog']";
 
 export async function clickTab(page, name) {
+  // Historical wheel scenarios now live in the semantic Games section.
+  name = /^(wheel|wheels)$/i.test(name) ? "Games" : name;
   if (await clickNavItem(page, name)) return true;
   // Phone layout: sections not on the bar live in the More sheet.
   const more = page.locator(MORE_BUTTON);

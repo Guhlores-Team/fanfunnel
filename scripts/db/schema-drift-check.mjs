@@ -40,6 +40,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { probeFocusLedger } from "./focusLedgerProbe.mjs";
 import {probeRewardViews} from "./rewardViewsProbe.mjs";
+import { probeScratchGames } from "./scratchGamesProbe.mjs";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
 import { probeTheme } from "./themeProbe.mjs";
@@ -1346,6 +1347,7 @@ try {
       return r.stdout;
     });
     await probeRewardViews(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"reward view SQL failed");return r.stdout;});
+    await probeScratchGames(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"scratch SQL failed");return r.stdout;});
     const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
     if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }

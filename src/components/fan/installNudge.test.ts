@@ -63,7 +63,16 @@ check("offered only once armed by a win", /armed && eligible/.test(src));
 check("uses the native prompt on Android, never on its own", /preventDefault\(\)/.test(src) && /deferred\.prompt\(\)/.test(src));
 check("never stores the token", !/token/i.test(src.replace(/\/\/.*$/gm, "")));
 const spinClient = readFileSync(join(import.meta.dirname, "..", "SpinClient.tsx"), "utf8");
-check("SpinClient mounts it once, armed by a revealed win only outside pause/break", (spinClient.match(/<InstallNudge\b/g) ?? []).length === 1 && /<InstallNudge armed=\{reveal && won !== null && engaged\} \/>/.test(spinClient) &&
-  /const engaged = fanEngagementAllowed\(\{ blocked: pass\.blocked, selfExcluded: paused, breakUntil \}, now\)/.test(spinClient));
+const controller = readFileSync(join(import.meta.dirname, "FanGameController.tsx"), "utf8");
+check("SpinClient delegates its token-bound pass and gallery to exactly one shared controller",
+  /import FanGameController from "\.\/fan\/FanGameController"/.test(spinClient) &&
+  (spinClient.match(/<FanGameController\b/g) ?? []).length === 1 &&
+  /<FanGameController key=\{pass\.token\} pass=\{pass\} gallery=\{gallery\} \/>/.test(spinClient) &&
+  !/fetch\(|useSpinRecovery\(/.test(spinClient));
+check("SpinClient mounts it once, armed by a revealed win only outside pause/break",
+  (spinClient.match(/<InstallNudge\b/g) ?? []).length === 0 &&
+  (controller.match(/<InstallNudge\b/g) ?? []).length === 1 &&
+  /<InstallNudge armed=\{reveal && won !== null && engaged\} \/>/.test(controller) &&
+  /const engaged = fanEngagementAllowed\(\{ blocked: pass\.blocked, selfExcluded: paused, breakUntil \}, now\)/.test(controller));
 
 console.log(`install nudge: ${passed} checks passed`);

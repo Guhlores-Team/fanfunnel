@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import Wheel from "@/components/Wheel";
+import GamePreview from "./GamePreview";
+import GameSettingsEditor from "./GameSettingsEditor";
+import { gameSaveFeatureAllowed, editableGamePayload, gameDraftError, gameRefusalMessage, type CreatorGameWheel } from "./gameEditor";
+import { useGameFeatures } from "./useGameFeatures";
+import { useCreatorDraft } from "./CreatorDrafts";
 import { prizeOdds } from "@/lib/games/wheel/engine";
 import { showsStock } from "@/lib/games/wheel/publicView";
 import {
@@ -164,6 +168,11 @@ export default function WheelEditor({
   }, [odds]);
   const toast = useToast();
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const capabilities = useGameFeatures();
+  const gameWheel = wheel as CreatorGameWheel;
+  const featureBlocked = !gameSaveFeatureAllowed(gameWheel, savedJson, capabilities.features);
+  useCreatorDraft("game-editor", "a game save", false, saving);
   const [justSaved, setJustSaved] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   // Per-prize "More" disclosure (emoji picks), keyed by prize id.
@@ -172,6 +181,12 @@ export default function WheelEditor({
   // refetches and the favorite shows up immediately — no page refresh.
   const [librarySignal, setLibrarySignal] = useState(0);
   const dirty = JSON.stringify(wheel) !== savedJson;
+  const savedGame = useMemo(() => {
+    try {
+      const value = JSON.parse(savedJson) as CreatorGameWheel;
+      return { id: value.id, title: value.title, prizeCount: value.prizes.length, gameKind: value.gameKind, gameReady: value.gameReady };
+    } catch { return undefined; }
+  }, [savedJson]);
   const [deliveryDrafts, setDeliveryDrafts] = useState<Record<string, boolean>>({});
   const [deliveryRequests, setDeliveryRequests] = useState<Record<string, boolean>>({});
   const hasDeliveryDrafts = Object.values(deliveryDrafts).some(Boolean);
@@ -212,7 +227,11 @@ export default function WheelEditor({
   } | null>(null);
   // Leaving the page with unsaved edits is guarded by DashboardClient (it owns
   // the saved snapshot), so the guard holds while another section is open.
-  const validation = useMemo(() => validateWheelDraft(wheel), [wheel]);
+  const validation = useMemo(() => {
+    const base = validateWheelDraft(wheel);
+    const gameError = gameDraftError(wheel as CreatorGameWheel);
+    return { ...base, issues: [...(gameError ? [{ key: "gameSettings", message: gameError }] : []), ...base.issues] };
+  }, [wheel]);
   // Errors show for a field once it has been left (blur) or after a save
   // attempt, so a half-typed hex isn't flagged mid-keystroke.
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -240,6 +259,7 @@ export default function WheelEditor({
   }
 
   function issueTargetId(issue: ValidationIssue): string {
+    if (issue.key === "gameSettings") return "wf-game-settings";
     if (issue.key === "prizeCount") {
       return wheel.prizes.length === 0 ? "wf-add-first-prize" : "wf-add-prize";
     }
@@ -256,7 +276,7 @@ export default function WheelEditor({
     });
   }
   function attemptSave() {
-    if (deliveryPending) return;
+    if (deliveryPending || saving || featureBlocked) return;
     if (validation.issues.length > 0) {
       setSubmitted(true);
       focusFirstIssue();
@@ -267,12 +287,13 @@ export default function WheelEditor({
 
   async function save() {
     setSaving(true);
+    setSaveError("");
     setJustSaved(false);
     try {
       const res = await fetch("/api/wheel", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wheel }),
+        body: JSON.stringify({ wheel: editableGamePayload(gameWheel) }),
       });
       const data = await res.json();
       if (res.ok && data.wheel) {
@@ -286,8 +307,12 @@ export default function WheelEditor({
         // Refresh the onboarding "wheelBuilt" signal now that this wheel saved.
         onWheelMutated();
       } else {
-        toast(wheelSaveErrorMessage(data.error), { tone: "error" });
+        const message = gameRefusalMessage(data.error) ?? wheelSaveErrorMessage(data.error);
+        setSaveError(message);
+        toast(message, { tone: "error" });
       }
+    } catch {
+      setSaveError("The game save couldn't be confirmed. Your draft is still here; refresh the saved game before relying on the changes.");
     } finally {
       setSaving(false);
     }
@@ -339,7 +364,7 @@ export default function WheelEditor({
   // with the full config) targets the right wheel.
   async function loadWheel(id: string): Promise<boolean> {
     if (deliveryPending) {
-      toast("Wait for delivery to finish saving before changing wheels.", { tone: "info" });
+      toast("Wait for delivery to finish saving before changing games.", { tone: "info" });
       return false;
     }
     // Switching wheels replaces the editor state: don't silently drop edits.
@@ -350,14 +375,15 @@ export default function WheelEditor({
       const discard = await new Promise<boolean>((resolve) => setPendingSwitch({ id, resolve }));
       if (!discard) return false;
     }
+    try {
     const res = await fetch(`/api/wheels/${id}`, { cache: "no-store" });
     if (!res.ok) {
-      toast("Couldn't open that wheel.", { tone: "error" });
+      toast("Couldn't open that game.", { tone: "error" });
       return false;
     }
     const data = (await res.json()) as { wheel?: WheelConfig };
     if (!data.wheel) {
-      toast("Couldn't open that wheel.", { tone: "error" });
+      toast("Couldn't open that game.", { tone: "error" });
       return false;
     }
     setWheel(data.wheel);
@@ -366,6 +392,10 @@ export default function WheelEditor({
     setSubmitted(false);
     setTouched({});
     return true;
+    } catch {
+      toast("That game couldn't load. Your current draft is still here.", { tone: "error" });
+      return false;
+    }
   }
   // Apply a saved wheel template: it mints a fresh wheel from the template
   // server-side, then opens that new wheel in the editor.
@@ -520,7 +550,7 @@ export default function WheelEditor({
     <div className="flex flex-col">
       {pendingSwitch && (
         <DiscardChangesDialog
-          what="this wheel"
+          what="this game"
           onKeep={() => {
             pendingSwitch.resolve(false);
             setPendingSwitch(null);
@@ -536,7 +566,11 @@ export default function WheelEditor({
           currentWheelId={editingWheelId}
           onEdit={loadWheel}
           onChanged={onWheelMutated}
+          features={capabilities.features}
+          savedGame={savedGame}
         />
+        {capabilities.error && <p role="alert" className="mt-2 text-xs text-amber-200">{capabilities.error} <button type="button" onClick={() => void capabilities.reload()} className="font-semibold underline">Check permissions again</button></p>}
+        {featureBlocked && <p role="status" className="mt-2 text-xs text-amber-200">This game type is not enabled for your account. Existing fan links and edits to their current type keep working. Ask your admin to enable this type before changing to it or creating another.</p>}
       </div>
 
       {/* Save bar. Top of the editor on desktop; on phones it moves to the end
@@ -565,13 +599,14 @@ export default function WheelEditor({
         </p>
         <button
           onClick={attemptSave}
-          disabled={saving || deliveryPending || !dirty}
+          disabled={saving || deliveryPending || featureBlocked || !dirty}
           aria-describedby={showErrors ? SAVE_SUMMARY_ID : undefined}
           className="btn-brand min-h-[38px] rounded-[9px] px-5 text-[13.5px] font-bold"
         >
-          {saving ? "Saving…" : "Save wheel"}
+          {saving ? "Saving…" : "Save game"}
         </button>
         <div id={SAVE_SUMMARY_ID} role="alert" className="w-full empty:hidden">
+          {saveError && <p className="text-sm text-amber-200">{saveError}</p>}
           {showErrors && (
             <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] text-[#fca5a5]">
               <span>
@@ -599,14 +634,7 @@ export default function WheelEditor({
           className={`flex flex-col items-center gap-4 self-start rounded-[18px] p-4 sm:p-6 lg:sticky lg:top-24 lg:order-2 ${raised}`}
         >
           <p className={cap}>Live preview</p>
-          <Wheel
-            prizes={wheel.prizes}
-            brandColor={wheel.brandColor ?? "#ec4899"}
-            labelColor={wheel.labelColor}
-            labelSize={wheel.labelSize}
-            result={null}
-            size={280}
-          />
+          <GamePreview wheel={gameWheel} />
           <p className="text-center text-xs text-muted text-pretty">
             A prize&rsquo;s chance is its <strong className="text-ink">tickets ÷ all tickets</strong>.
             The <span className="text-brand">%</span> updates live. Out-of-stock prizes leave the
@@ -615,6 +643,9 @@ export default function WheelEditor({
         </div>
 
         <div className="min-w-0 lg:order-1">
+          <GameSettingsEditor wheel={gameWheel} features={capabilities.features} disabled={saving || deliveryPending} onChange={(patch) => { setSaveError(""); setWheel((current) => ({ ...current, ...patch })); }} />
+          <fieldset disabled={saving || featureBlocked} className="min-w-0">
+          <legend className="sr-only">Game appearance and prizes</legend>
           <div className="grid gap-3.5 sm:grid-cols-2">
             <Lbl label="Title">
               <input
@@ -1178,7 +1209,7 @@ export default function WheelEditor({
             >
               <span className="flex items-center gap-2 text-sm font-semibold text-ink">
                 <Glyph d={P.book} size={17} strokeWidth={1.7} className="text-brand" />
-                Prize &amp; wheel library
+                Prize &amp; game library
               </span>
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-muted">
                 <span className="max-sm:hidden">
@@ -1204,6 +1235,7 @@ export default function WheelEditor({
               </div>
             )}
           </div>
+          </fieldset>
         </div>
       </div>
     </div>

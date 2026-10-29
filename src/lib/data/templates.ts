@@ -1,3 +1,4 @@
+import { gameSettings, gameWriteError, requireGameFeature } from "./gameSettings";
 // Data layer — reusable prize and wheel templates.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import type { Prize, Rarity, WheelConfig } from "@/lib/games/wheel/types";
@@ -103,7 +104,7 @@ export async function createPrizeTemplate(input: {
     })
     .select(PRIZE_TEMPLATE_SELECT)
     .single();
-  if (error || !data) throw new Error("db_error");
+  if (error || !data) throw new Error(gameWriteError(error));
   return toPrizeTemplate(data as Parameters<typeof toPrizeTemplate>[0]);
 }
 
@@ -134,8 +135,11 @@ function toWheelTemplate(r: {
   brand_color: string | null;
   prizes: Omit<Prize, "id">[] | null;
   created_at: string;
+  game_kind?: unknown;
+  game_config?: unknown;
 }): WheelTemplate {
   return {
+    ...gameSettings(r.game_kind, r.game_config),
     id: r.id,
     name: r.name,
     title: r.title,
@@ -147,7 +151,7 @@ function toWheelTemplate(r: {
 }
 
 const WHEEL_TEMPLATE_SELECT =
-  "id, name, title, subtitle, brand_color, prizes, created_at";
+  "id, name, title, subtitle, brand_color, prizes, created_at, game_kind, game_config";
 
 export async function listWheelTemplates(): Promise<WheelTemplate[]> {
   if (!isSupabaseConfigured()) return mockListWheelTemplates();
@@ -189,6 +193,8 @@ export async function createWheelTemplate(input: {
     source = await getWheelById(input.fromWheelId);
   }
   if (!source) throw new Error("no_source");
+  const settings = gameSettings(source.gameKind, source.gameConfig);
+  await requireGameFeature(sb, user.id, settings.gameKind);
 
   // Strip ids off the prize snapshot.
   const prizes: Omit<Prize, "id">[] = source.prizes
@@ -200,6 +206,8 @@ export async function createWheelTemplate(input: {
     .insert({
       creator_id: user.id,
       name: input.name.slice(0, 120) || "Template",
+      game_kind: settings.gameKind,
+      game_config: settings.gameConfig,
       title: source.title.slice(0, 120),
       subtitle: source.subtitle?.slice(0, 200) ?? null,
       brand_color: source.brandColor ?? "#ec4899",
@@ -207,7 +215,7 @@ export async function createWheelTemplate(input: {
     })
     .select(WHEEL_TEMPLATE_SELECT)
     .single();
-  if (error || !data) throw new Error("db_error");
+  if (error || !data) throw new Error(gameWriteError(error));
   return toWheelTemplate(data as unknown as Parameters<typeof toWheelTemplate>[0]);
 }
 

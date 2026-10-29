@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { gameRefusalMessage } from "./gameEditor";
 import {
   MAX_CODES_PER_PASTE,
   MAX_CODE_LENGTH,
@@ -146,7 +147,7 @@ export default function PrizeDeliveryEditor({
     } catch (e) {
       if (mounted.current) {
         const code = e instanceof Error ? e.message : "";
-        setError(ERROR[code] ?? "Couldn't save delivery. Your draft is still here; try again.");
+        setError(gameRefusalMessage(code) ?? ERROR[code] ?? "Couldn't save delivery. Your draft is still here; try again.");
       }
     } finally {
       onBusyChange(prizeId, false);
@@ -161,7 +162,7 @@ export default function PrizeDeliveryEditor({
       </button>
       {open && (
         <div id={`${id}-panel`} className="min-w-0 pt-2">
-          {!canSave && <p className="text-xs text-muted">Save your wheel changes before setting delivery for this prize.</p>}
+          {!canSave && <p className="text-xs text-muted">Save your game changes before setting delivery for this prize.</p>}
           {loading && <p role="status" className="text-xs text-muted">Loading delivery…</p>}
           {error && <p id={`${id}-error`} role="alert" data-testid="delivery-error" className="mb-2 text-xs text-[#fca5a5]">{error}</p>}
           {!view && canSave && !loading && <button type="button" onClick={() => void load()} className={button}>Load delivery</button>}

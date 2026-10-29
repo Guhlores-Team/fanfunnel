@@ -174,11 +174,17 @@ const start = (rarity: Rarity, reducedMotion = false, spinsBefore = 0): RevealEv
 // The outcome request carries only fan identity, seed and durable attempt binding.
 // Theater state must not cross the transport boundary or pick the awarded prize.
 {
-  const client = readFileSync(new URL("../SpinClient.tsx", import.meta.url), "utf8");
+  const wrapper = readFileSync(new URL("../SpinClient.tsx", import.meta.url), "utf8");
+  const client = readFileSync(new URL("../fan/FanGameController.tsx", import.meta.url), "utf8");
+  check("SpinClient delegates the exact token-bound pass and gallery without another transport",
+    /import FanGameController from "\.\/fan\/FanGameController"/.test(wrapper) &&
+    (wrapper.match(/<FanGameController\b/g) ?? []).length === 1 &&
+    /<FanGameController key=\{pass\.token\} pass=\{pass\} gallery=\{gallery\} \/>/.test(wrapper) &&
+    !/fetch\(|useSpinRecovery\(/.test(wrapper));
   const recovery = readFileSync(new URL("../fan/useSpinRecovery.ts", import.meta.url), "utf8");
   check("SpinClient delegates spins to the recovery hook, without a second spin transport",
-    /import \{ useSpinRecovery \} from "\.\/fan\/useSpinRecovery"/.test(client) &&
-    /const recovery = useSpinRecovery\(\{[\s\S]*?onCommitted, onRefusal \}\)/.test(client) &&
+    /import \{ useSpinRecovery \} from "\.\/useSpinRecovery"/.test(client) &&
+    /const recovery = useSpinRecovery\(\{[\s\S]*?onCommitted, onRefusal, validateResult: validateGameResult \}\)/.test(client) &&
     /await recovery\.begin\(clientSeed, nextSpinHash\)/.test(client) && !/fetch\("\/api\/spin"/.test(client));
   const calls = [...recovery.matchAll(/postIntent\("\/api\/spin", token, saved\)/g)];
   check("the recovery hook has exactly one /api/spin call", calls.length === 1);
@@ -193,6 +199,13 @@ const start = (rarity: Rarity, reducedMotion = false, spinsBefore = 0): RevealEv
     passed++;
   }
   const committed = client.slice(client.indexOf("const onCommitted ="), client.indexOf("const onRefusal ="));
+  const validation = client.slice(client.indexOf("const validateGameResult ="), client.indexOf("const onCommitted ="));
+  check("game validation rejects an unreadable server outcome before any presentation",
+    /readCommittedGame\(data, passGameKind \?\? "wheel"\) !== null/.test(validation) &&
+    /const game = readCommittedGame\(data, passGameKind \?\? "wheel"\)/.test(committed) &&
+    /if \(!game\) throw new Error\("Unconfirmed game outcome"\)/.test(committed) &&
+    committed.indexOf("if (!game) throw") < committed.indexOf("setGameOutcome(game)") &&
+    committed.indexOf("if (!game) throw") < committed.indexOf("dispatchReveal("));
   check("the reveal starts only from the committed server prize",
     /dispatchReveal\(\{\s*type: "start", rarity: data\.prize\.rarity/.test(committed) &&
     /setWon\(data\.prize\)/.test(committed) && /setResult\(\{ index: data\.prizeIndex/.test(committed));

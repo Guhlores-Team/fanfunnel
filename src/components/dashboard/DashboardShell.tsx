@@ -61,7 +61,7 @@ export function Icon({ d, size = 19, className = "" }: { d: string; size?: numbe
 
 export const NAV_GROUPS: { title: string; items: [Tab, string][] }[] = [
   { title: "Run", items: [["today", "Today"], ["inbox", "Inbox"], ["prizes", "Fulfilment"]] },
-  { title: "Build", items: [["editor", "Wheels"], ["campaigns", "Campaigns"]] },
+  { title: "Build", items: [["editor", "Games"], ["campaigns", "Campaigns"]] },
   { title: "Grow", items: [["fans", "Fans"], ["boosts", "Boosts"]] },
   { title: "Measure", items: [["analytics", "Analytics"]] },
   { title: "Account", items: [["settings", "Settings"]] },
@@ -75,7 +75,7 @@ export const SECTION_META: Record<Tab, [title: string, subtitle: string]> = {
   today: ["Today", "what moves the needle"],
   inbox: ["Inbox", "Fan conversations — spin-gated, real-time"],
   prizes: ["Fulfilment", "Deliver wins, then mark them done"],
-  editor: ["Wheels", "Build prizes, rarity, tickets & stock"],
+  editor: ["Games", "Build games, prizes, odds & stock"],
   campaigns: ["Campaigns", "Compare promotions side by side"],
   fans: ["Fans", "Your audience, links & lifetime value"],
   boosts: ["Boosts", "Happy hours, leaderboard & referrals"],
