@@ -110,6 +110,7 @@ function wheelRow(stock: number | null) {
     active_from: null,
     active_until: null,
     archived_at: null,
+    game_ready: true,
     prizes: [
       {
         id: "prize-1",

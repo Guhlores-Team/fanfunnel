@@ -58,7 +58,7 @@ const TABLES: Record<string, (ops: Op[]) => Resp> = {
             { id: "b", label: "B", description: null, rarity: "rare", weight: 1, color: null, emoji: null, image_url: null, cost_cents: null, stock: null, sort_order: 1 },
           ],
         })
-      : ok([{ id: "wheel-1", is_active: true, active_from: null, active_until: null, created_at: "2026-01-01T00:00:00Z" }]),
+      : ok([{ id: "wheel-1", is_active: true, active_from: null, active_until: null, game_ready: true, created_at: "2026-01-01T00:00:00Z" }]),
   fans: () => ok({ pity_counter: 0 }),
   happy_hours: () => ok([]),
   spins: () => ok({ id: "spin-1", share_id: "share-1" }),

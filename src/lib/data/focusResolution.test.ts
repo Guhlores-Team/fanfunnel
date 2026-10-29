@@ -6,7 +6,7 @@ import { mockResolveActiveWheelId, mockResolvedSpinWheelId } from "./mock";
 interface Row extends Record<string, unknown> { id: string; creator_id: string; is_active: boolean; active_from: string | null; active_until: string | null; archived_at: string | null; created_at: string }
 const OWNER = "owner", OTHER = "other", NOW = new Date("2026-10-28T12:00:00Z");
 let wheels: Row[] = [], campaigns: Record<string, unknown>[] = [];
-const old = (id: string, patch: Partial<Row> = {}): Row => ({ id, creator_id: OWNER, is_active: false, active_from: null, active_until: null, archived_at: null, created_at: "2026-01-01T00:00:00Z", ...patch });
+const old = (id: string, patch: Partial<Row> = {}): Row => ({ id, creator_id: OWNER, is_active: false, active_from: null, active_until: null, archived_at: null, game_ready: true, created_at: "2026-01-01T00:00:00Z", ...patch });
 const client = { from: (table: string) => {
   let rows: Record<string, unknown>[] = table === "wheels" ? [...wheels] : [...campaigns];
   const chain: Record<string, unknown> = {};

@@ -146,6 +146,7 @@ function prizeTable(specs: PrizeSpec[]) {
     active_from: null,
     active_until: null,
     archived_at: null,
+    game_ready: true,
     prizes: specs.map((p, i) => ({
       id: p.id,
       label: p.id,

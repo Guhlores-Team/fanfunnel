@@ -93,7 +93,7 @@ function fakeClient(handlers: Record<string, Handler>) {
 function wheelRow() {
   return {
     id: "wheel-1", title: "W", subtitle: null, brand_color: null, label_color: null,
-    label_size: null, is_active: true, active_from: null, active_until: null, archived_at: null,
+    label_size: null, is_active: true, active_from: null, active_until: null, archived_at: null, game_ready: true,
     prizes: [{
       id: "prize-1", label: "Only prize", description: null, rarity: "common", weight: 1,
       color: null, emoji: null, image_url: null, cost_cents: null, stock: null, sort_order: 0,

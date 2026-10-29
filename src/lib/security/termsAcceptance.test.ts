@@ -82,7 +82,7 @@ function builder(client: Call["client"], table: string) {
     if (table === "profiles") return profileRow ? [profileRow] : [];
     // The token's stored wheel is owned and live; resolver fallback now checks
     // this explicitly instead of trusting a bare stored id.
-    if (table === "wheels") return [{ id: "w1", creator_id: "creator-1", archived_at: null, is_active: true, active_from: null, active_until: null, created_at: "2026-01-01T00:00:00Z" }];
+    if (table === "wheels") return [{ id: "w1", creator_id: "creator-1", archived_at: null, is_active: true, active_from: null, active_until: null, game_ready: true, created_at: "2026-01-01T00:00:00Z" }];
     if (table === "fan_passes") {
       const tok = call.ops.find(([op, a]) => op === "eq" && a[0] === "token")?.[1][1] as string | undefined;
       const fanId = tok ? passes[tok] : undefined;

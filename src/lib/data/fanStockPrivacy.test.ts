@@ -50,7 +50,7 @@ let wheelUpdates: Record<string, unknown>[] = [];
 const wheelRow = () => ({
   id: WHEEL_ID, title: "Live wheel", subtitle: null, brand_color: "#ec4899", label_color: null, label_size: null,
   ...(showStockColumn === undefined ? {} : { show_stock: showStockColumn }),
-  is_active: true, active_from: null, active_until: null, archived_at: null, prizes: PRIZE_ROWS,
+  is_active: true, active_from: null, active_until: null, archived_at: null, game_ready: true, prizes: PRIZE_ROWS,
 });
 const PASS_ROW = {
   id: "pass-1", creator_id: CREATOR, campaign_id: null, wheel_id: WHEEL_ID, fan_id: "fan-1", is_active: true,
@@ -68,7 +68,7 @@ const TABLES: Record<string, (ops: Op[]) => Resp> = {
     }
     if (has(ops, "select", "prizes(")) return ok(wheelRow());
     if (has(ops, "maybeSingle")) return ok({ id: WHEEL_ID });
-    return ok([{ id: WHEEL_ID, is_active: true, active_from: null, active_until: null, created_at: "2026-01-01T00:00:00Z" }]);
+    return ok([{ id: WHEEL_ID, is_active: true, active_from: null, active_until: null, game_ready: true, created_at: "2026-01-01T00:00:00Z" }]);
   },
   prizes: (ops) => {
     if (has(ops, "update")) return ok({ id: "pz-2" }); // the CAS takes a unit

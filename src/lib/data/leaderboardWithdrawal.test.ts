@@ -12,7 +12,7 @@ const other = { id: "fan-b", creator_id: otherCreator, handle: "other_handle", l
 const pass = { token: "withdraw-token", fan_id: fan.id, creator_id: creator, campaign_id: null,
   wheel_id: "wheel-a", is_active: true, self_excluded_at: null as string | null, spins_remaining: 7 };
 const wheel = { id: "wheel-a", creator_id: creator, archived_at: null as string | null, is_active: true,
-  active_from: null, active_until: null, created_at: "2026-01-01T00:00:00Z" };
+  active_from: null, active_until: null, game_ready: true, created_at: "2026-01-01T00:00:00Z" };
 const svc = new FakeTables({
   fans: [fan, other], fan_passes: [pass], wheels: [wheel], campaigns: [],
   grants: [{ fan_id: fan.id, creator_id: creator, spins: 10 }],

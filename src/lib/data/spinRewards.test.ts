@@ -68,7 +68,7 @@ function world(specs: PrizeSpec[], opts: { codes?: Record<string, string[]>; lin
     wheels: (ops) =>
       has(ops, "eq", "creator") && !has(ops, "maybeSingle") ? ok([]) : ok({
         id: "wheel-1", title: "W", subtitle: null, brand_color: null, label_color: null, label_size: null,
-        show_stock: true, is_active: true, active_from: null, active_until: null, archived_at: null,
+        show_stock: true, is_active: true, active_from: null, active_until: null, archived_at: null, game_ready: true,
         prizes: specs.map((p, i) => ({
           id: p.id, label: p.id, description: null, rarity: "common", weight: p.weight, color: null, emoji: null,
           image_url: null, cost_cents: null, stock: stock.get(p.id) ?? null, sort_order: i, delivery: delivery(p.id),

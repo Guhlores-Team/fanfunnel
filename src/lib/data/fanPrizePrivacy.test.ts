@@ -64,7 +64,7 @@ const PRIZE_ROWS = [
 ];
 const WHEEL_ROW = {
   id: WHEEL_ID, title: "Live wheel", subtitle: null, brand_color: "#ec4899", label_color: null, label_size: null,
-  is_active: true, active_from: null, active_until: null, archived_at: null, prizes: PRIZE_ROWS,
+  is_active: true, active_from: null, active_until: null, archived_at: null, game_ready: true, prizes: PRIZE_ROWS,
 };
 const PASS_ROW = {
   id: "pass-1", creator_id: CREATOR, campaign_id: null, wheel_id: WHEEL_ID, fan_id: "fan-1", is_active: true,
@@ -77,7 +77,7 @@ const TABLES: Record<string, (ops: Op[]) => Resp> = {
   wheels: (ops) =>
     has(ops, "select", "prizes(")
       ? ok(WHEEL_ROW)
-      : ok([{ id: WHEEL_ID, is_active: true, active_from: null, active_until: null, created_at: "2026-01-01T00:00:00Z" }]),
+      : ok([{ id: WHEEL_ID, is_active: true, active_from: null, active_until: null, game_ready: true, created_at: "2026-01-01T00:00:00Z" }]),
   spins: (ops) => (has(ops, "insert") ? ok({ id: "spin-1", share_id: "share-1" }) : ok([])),
   wishlists: () => ok([]),
   happy_hours: () => ok([]),
