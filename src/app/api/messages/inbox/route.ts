@@ -1,8 +1,20 @@
 import { NextResponse } from "next/server";
-import { listThreads } from "@/lib/data";
+import { hasThreadWith, listThreads } from "@/lib/data";
+import { badRequest } from "@/lib/api/handler";
 
-// The creator's inbox: one thread per fan, with unread counts (RLS-scoped).
-export async function GET() {
-  const threads = await listThreads();
-  return NextResponse.json({ threads });
+// The creator's inbox: one thread per fan, with unread counts (RLS-scoped),
+// newest activity first. `?before=<cursor>` reads the next (older) page;
+// `?fanId=<id>` only answers whether that fan has a conversation.
+export async function GET(req: Request) {
+  const params = new URL(req.url).searchParams;
+  const fanId = params.get("fanId");
+  if (fanId !== null) {
+    if (!fanId || fanId.length > 64) return badRequest();
+    return NextResponse.json({ hasThread: await hasThreadWith(fanId) });
+  }
+  const before = params.get("before");
+  if (before !== null && before.length > 120) return badRequest();
+  const page = await listThreads(before);
+  if ("error" in page) return badRequest();
+  return NextResponse.json(page);
 }

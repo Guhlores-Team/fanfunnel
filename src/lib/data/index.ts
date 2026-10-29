@@ -71,6 +71,7 @@ export {
   sendFanMessage,
   getFanMessages,
   listThreads,
+  hasThreadWith,
   getThread,
   sendCreatorMessage,
   getChatSettings,
