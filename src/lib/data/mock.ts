@@ -1016,7 +1016,7 @@ export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
   if (wheel.archivedAt) return { ok: true };
-  const progress=mockBingoEditError(id,null);if(progress)return {error:progress};
+  // Archiving keeps active bingo cards; unarchive restores play (0061).
 
   const wasActive = wheel.isActive;
   for (const focus of mockFocusState().focuses.values()) if (focus.wheel_id === id) mockCancelFanFocus(focus.fan_id);

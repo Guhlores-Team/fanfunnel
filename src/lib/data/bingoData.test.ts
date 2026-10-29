@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mockAckFan,mockAddPrizeCodes,mockArchiveWheel,mockCreatePass,mockCreateWheel,mockDeleteFan,mockDeleteWheel,mockExportFanData,mockGameFixture,mockGetOverview,mockGetFanDetail,mockGetPrizeRoi,mockGetProfitSummary,mockGetMetricsExtra,mockGetEngagementHeatmap,mockGetFanPass,mockGetFanReward,mockGetMyAccount,mockGetPrizeDelivery,mockGetSpinVerification,mockGetWheelById,mockListFans,mockReadSpinAttempt,mockSaveWheel,mockSetPrizeDelivery,mockSetActiveWheel,mockSpin,mockUpdateAccount } from "./mock";
+import { mockAckFan,mockAddPrizeCodes,mockArchiveWheel,mockCreatePass,mockCreateWheel,mockDeleteFan,mockDeleteWheel,mockExportFanData,mockGameFixture,mockGetOverview,mockGetFanDetail,mockGetPrizeRoi,mockGetProfitSummary,mockGetMetricsExtra,mockGetEngagementHeatmap,mockGetFanPass,mockGetFanReward,mockGetMyAccount,mockGetPrizeDelivery,mockGetSpinVerification,mockGetWheelById,mockListFans,mockReadSpinAttempt,mockSaveWheel,mockSetPrizeDelivery,mockSetActiveWheel,mockSpin,mockUnarchiveWheel,mockUpdateAccount } from "./mock";
+import { BINGO_FULL_MASK } from "@/lib/games/bingo/engine";
 import { currentMockBingo,mockBingoStore } from "./mockBingo";
 import { mockFocusState } from "./mockFocus";
 import { replayGameV3 } from "@/lib/games/core/replay";
@@ -80,7 +81,9 @@ async function main(){
   const active=mockGetWheelById(game.id)!;const activeCell=currentMockBingo(fan.fanId,game.id)!.state.cells[0];
   for(const patch of [{stock:1},{weight:0}]){assert.throws(()=>mockSaveWheel({...active,prizes:active.prizes.map(prize=>prize.id===activeCell.id?{...prize,...patch}:prize)}),/bingo_active_card/);passed++;}
   const blockedCodes=mockAddPrizeCodes(activeCell.id,["SHOULD-NOT-LAND"]);check("active card square cannot become a finite code list","error"in blockedCodes&&blockedCodes.error==="bingo_active_card");
-  check("archive/delete cannot orphan paid active progress","error"in mockArchiveWheel(game.id)&&"error"in mockDeleteWheel(game.id));
+  check("delete cannot orphan paid active progress","error"in mockDeleteWheel(game.id));
+  check("archiving keeps the paid card and stops serving the game","ok"in mockArchiveWheel(game.id)&&currentMockBingo(fan.fanId,game.id)!.state.markedMask!==BINGO_FULL_MASK&&(await mockGetFanPass(fan.token))?.wheel.id!==game.id);
+  check("unarchiving restores play on the same card","ok"in mockUnarchiveWheel(game.id)&&"ok"in mockSetActiveWheel(game.id)&&(await mockGetFanPass(fan.token))?.bingoCard?.version===currentMockBingo(fan.fanId,game.id)!.state.version);
   const privateText="PRIVATE-ATOMIC-MULTILINE-TEXT";
   mockSetPrizeDelivery(line.id,"text",privateText);
   const updated=mockGetWheelById(game.id)!;mockSaveWheel({...updated,prizes:updated.prizes.map(prize=>prize.id===line.id?{...prize,stock:null}:prize)});

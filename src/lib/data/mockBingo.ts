@@ -11,7 +11,7 @@ export function currentMockBingo(fanId:string,wheelId:string):MockBingoCard|null
 export function mockBingoEditError(wheelId:string,next:WheelConfig|null):string|null {
   const cards=[...mockBingoStore().cards.values()].filter(card=>card.wheelId===wheelId&&card.state.markedMask!==BINGO_FULL_MASK);
   if(!cards.length)return null;
-  if(!next||next.archivedAt)return "game_in_use";
+  if(!next)return "game_in_use";
   for(const card of cards)for(const cell of card.state.cells)if(!next.prizes.some(prize=>prize.id===cell.id&&bingoEligible(prize)))return "bingo_active_card";
   return null;
 }
