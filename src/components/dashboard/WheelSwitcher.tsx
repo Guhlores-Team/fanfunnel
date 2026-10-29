@@ -9,6 +9,10 @@ import NewGameDialog from "./NewGameDialog";
 import { canCreateGame, GAME_LABEL, gameRefusalMessage, type GameFeatures } from "./gameEditor";
 import type { GameKind } from "@/lib/games/core/gameProof";
 import { MIN_WHEEL_PRIZES } from "@/lib/games/wheel/validate";
+import Modal from "@/components/ui/Modal";
+import { formatWhen, scheduleTakeover } from "@/lib/games/liveGame";
+import { KindBadge, GameName } from "./GameChoice";
+import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
 
 type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
 
@@ -25,6 +29,7 @@ type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
  *   currentWheelId  the wheel the editor is presently editing (highlighted)
  *   onEdit(id)      open a wheel in the editor; resolves true once it is open
  *   onChanged?()    fired after any mutation that may affect editor state
+ *   onOpenCampaigns?()  jump to Campaigns (to change which game a campaign plays)
  */
 export default function WheelSwitcher({
   currentWheelId,
@@ -32,12 +37,14 @@ export default function WheelSwitcher({
   onChanged,
   features,
   savedGame,
+  onOpenCampaigns,
 }: {
   currentWheelId: string | null;
   onEdit: (id: string) => boolean | void | Promise<boolean | void>;
   onChanged?: () => void;
   features: GameFeatures | null;
   savedGame?: { id: string; title: string; prizeCount: number; gameKind?: GameKind; gameReady?: boolean };
+  onOpenCampaigns?: () => void;
 }) {
   const toast = useToast();
   const [wheels, setWheels] = useState<GameSummary[] | null>(null);
@@ -45,6 +52,11 @@ export default function WheelSwitcher({
   const [newOpen, setNewOpen] = useState(false);
   const [newError, setNewError] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [campaigns, setCampaigns] = useState<ChoiceCampaign[] | null>(null);
+  // A schedule that would take over the live game waits here for the creator's OK.
+  const [takeover, setTakeover] = useState<{ body: { activeFrom: string | null; activeUntil: string | null }; replaces: GameSummary; startsNow: boolean; at: Date } | null>(null);
+  const takeoverKeepRef = useRef<HTMLButtonElement>(null);
+  const [now, setNow] = useState(() => new Date());
   const leave = useCreatorLeave();
   // Two-step archive confirm, keyed by wheel id (mirrors the delete-fan pattern).
   const [confirmArchive, setConfirmArchive] = useState<string | null>(null);
@@ -63,23 +75,43 @@ export default function WheelSwitcher({
     const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
     if (res.ok) {
       const data = (await res.json()) as { wheels?: GameSummary[] };
-      setWheels(data.wheels ?? []);
+      const list = data.wheels ?? [];
+      setWheels(list);
+      setNow(new Date());
       setLoadError("");
+      return list;
     } else {
       throw new Error("games_unavailable");
     }
+  }, []);
+  // Campaigns only feed "Used by campaigns"; the switcher works without them.
+  const loadCampaigns = useCallback(async () => {
+    const res = await fetch("/api/campaigns", { cache: "no-store" }).catch(() => null);
+    if (!res?.ok) return;
+    const data = (await res.json().catch(() => null)) as { campaigns?: ChoiceCampaign[] } | null;
+    setCampaigns(data?.campaigns ?? []);
   }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     void load().catch(() => setLoadError("Saved games couldn't load. Check again before creating or changing a game."));
-  }, [load]);
+    void loadCampaigns();
+  }, [load, loadCampaigns]);
+  // Keep "Live for fans now" honest when a schedule opens or closes while the
+  // page stays open.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Sync the schedule inputs whenever the selected wheel (or list) changes.
   // Reflect a confirmed editor save without refetching/replacing a schedule
   // the creator is still typing in this component.
   const visibleWheels = useMemo(() => wheels?.map((game) => game.id === savedGame?.id ? { ...game, title: savedGame.title, prizeCount: savedGame.prizeCount, ...(savedGame.gameKind ? { gameKind: savedGame.gameKind } : {}), ...(typeof savedGame.gameReady === "boolean" ? { gameReady: savedGame.gameReady } : {}) } : game) ?? null, [wheels, savedGame]);
   const selected = visibleWheels?.find((w) => w.id === currentWheelId) ?? null;
+  const live = useMemo(() => (visibleWheels ? liveExplanation(visibleWheels, now) : null), [visibleWheels, now]);
+  const pinnedCount = useMemo(() => (campaigns ?? []).filter((c) => c.pinnedWheelId).length, [campaigns]);
+  const selectedCampaigns = selected && campaigns ? campaignsUsing(selected.id, campaigns) : [];
   const scheduleDirty = from !== toLocalInput(selected?.activeFrom ?? null) || until !== toLocalInput(selected?.activeUntil ?? null);
   useCreatorDraft("game-management", "this game schedule", scheduleDirty, busy);
   function openGame(id: string) {
@@ -180,8 +212,15 @@ export default function WheelSwitcher({
         return false;
       }
       toast(okMsg, { tone: "success" });
-      await load();
+      const list = await load();
       onChanged?.();
+      // Setting a game active doesn't beat an open schedule: say so plainly.
+      if (body.isActive === true && list) {
+        const nowLive = liveExplanation(list, new Date());
+        if (nowLive && nowLive.game.id !== id && nowLive.reason.kind === "scheduled") {
+          toast(`${nowLive.game.title} is still live for fans because ${nowLive.because}. Clear its schedule to switch now.`, { tone: "info" });
+        }
+      }
       return true;
     } catch {
       toast("The game update couldn't be confirmed. Your settings are still here; check its saved state before retrying.", { tone: "error" });
@@ -276,14 +315,23 @@ export default function WheelSwitcher({
       toast("Enter a complete date and time.", { tone: "error" });
       return;
     }
-    await patchWheel(
-      selected.id,
-      {
-        activeFrom: fromDate ? fromDate.toISOString() : null,
-        activeUntil: untilDate ? untilDate.toISOString() : null,
-      },
-      "Schedule updated",
-    );
+    const body = {
+      activeFrom: fromDate ? fromDate.toISOString() : null,
+      activeUntil: untilDate ? untilDate.toISOString() : null,
+    };
+    const change = visibleWheels ? scheduleTakeover(visibleWheels, selected.id, body, new Date()) : null;
+    if (change) {
+      setTakeover({ body, replaces: change.replaces, startsNow: change.startsNow, at: change.at });
+      return;
+    }
+    await patchWheel(selected.id, body, "Schedule updated");
+  }
+
+  async function confirmTakeover() {
+    if (!selected || !takeover) return;
+    const body = takeover.body;
+    setTakeover(null);
+    await patchWheel(selected.id, body, "Schedule updated");
   }
 
   async function clearSchedule() {
@@ -300,6 +348,68 @@ export default function WheelSwitcher({
     <section aria-label="Game switcher">
       {loadError && <p role="alert" className="mb-2 text-xs text-amber-200">{loadError} <button type="button" className="font-semibold underline" disabled={busy} onClick={() => void load().catch(() => setLoadError("Saved games still couldn't load."))}>Check games again</button></p>}
       {newOpen && <NewGameDialog features={features} busy={busy} error={newError} onClose={() => { setNewOpen(false); setNewError(""); }} onCreate={(kind, name) => leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void createWheel(kind, name); }, { scope: "game-management", consequence: "Creating a game discards this unsaved schedule. Existing game prize edits are kept until you choose whether to open the new game." })} />}
+      {takeover && selected && (
+        <Modal
+          onClose={() => setTakeover(null)}
+          labelledBy="schedule-takeover-title"
+          initialFocus={takeoverKeepRef}
+          className="w-full max-w-sm rounded-2xl border border-[var(--hair)] p-6 text-ink shadow-[var(--lift)] [background:var(--s1)]"
+        >
+          <div data-testid="schedule-takeover">
+            <h2 id="schedule-takeover-title" className="flex items-center gap-[9px] text-lg font-bold tracking-[-0.01em]">
+              <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[#f59e0b]" />
+              Replace {takeover.replaces.title} for fans?
+            </h2>
+            <p className="mt-2 text-[13.5px] text-muted text-pretty">
+              {takeover.startsNow ? "Starting now" : `Starting ${formatWhen(takeover.at)}`}
+              {takeover.body.activeUntil ? ` until ${formatWhen(takeover.body.activeUntil)}` : " with no end date"}, fans
+              on every link whose campaign hasn&rsquo;t chosen its own game will get{" "}
+              <strong className="text-ink">{selected.title}</strong> ({KIND_LABEL(selected.gameKind)}) instead of{" "}
+              <strong className="text-ink">{takeover.replaces.title}</strong> ({KIND_LABEL(takeover.replaces.gameKind)}).
+            </p>
+            <p className="mt-2 text-[12.5px] text-muted text-pretty">Campaigns that chose a game keep playing it.</p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                ref={takeoverKeepRef}
+                type="button"
+                onClick={() => setTakeover(null)}
+                className="flex-1 rounded-[10px] border border-line px-3 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              >
+                Don&rsquo;t schedule
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmTakeover()}
+                className="btn-brand flex-1 rounded-[10px] px-3 py-2.5 text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              >
+                Yes, schedule it
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {live && (
+        <div
+          data-testid="live-game"
+          data-live-game-id={live.game.id}
+          aria-live="polite"
+          className="mb-3 rounded-xl border border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] bg-[color-mix(in_oklab,var(--brand)_8%,transparent)] px-3.5 py-2.5 text-[13px] text-muted"
+        >
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <span className="font-semibold text-ink">Live for fans now:</span>
+            <GameName game={live.game} />
+            <span>because {live.because}.</span>
+          </p>
+          <p className="mt-1 text-[12px] text-pretty">
+            {live.overriddenActive
+              ? `Your active game, ${live.overriddenActive.title}, comes back when this schedule ends. `
+              : ""}
+            {pinnedCount > 0
+              ? `Links in ${pinnedCount === 1 ? "1 campaign that has" : `${pinnedCount} campaigns that have`} chosen a game play that game instead.`
+              : "Every fan link plays this game unless its campaign chooses one."}
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {visibleWheels === null
           ? Array.from({ length: 3 }).map((_, i) => (
@@ -336,7 +446,12 @@ export default function WheelSwitcher({
                       style={{ backgroundColor: w.brandColor }}
                     />
                     <span className="truncate">{w.title}</span>
-                    <span className="sr-only">{`, ${GAME_LABEL[w.gameKind ?? "wheel"]}`}</span>
+                    <KindBadge kind={w.gameKind} />
+                    {live?.game.id === w.id && (
+                      <span className="shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-ink">
+                        Live
+                      </span>
+                    )}
                     {w.gameReady === false && <span className="shrink-0 rounded-full border border-amber-300/30 px-1.5 py-px text-[9.5px] font-semibold">Draft</span>}
                     {w.isActive && (
                       <span className="shrink-0 rounded-full bg-[var(--brand)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[var(--brand-ink)]">
@@ -543,6 +658,9 @@ export default function WheelSwitcher({
             </span>
           </div>
           {selected.gameReady === false && <p className="mt-2 text-xs text-amber-200">Finish and save this draft before activating it or setting a schedule.</p>}
+          <p id="schedule-effect" className="mt-2 text-[12px] text-muted text-pretty">
+            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link whose campaign hasn&rsquo;t chosen its own game. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game.
+          </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex min-w-0 flex-col gap-1.5">
               <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
@@ -554,6 +672,7 @@ export default function WheelSwitcher({
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
                 aria-label="Active from"
+                aria-describedby="schedule-effect"
                 disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
@@ -567,6 +686,7 @@ export default function WheelSwitcher({
                 value={until}
                 onChange={(e) => setUntil(e.target.value)}
                 aria-label="Active until"
+                aria-describedby="schedule-effect"
                 disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
@@ -589,11 +709,34 @@ export default function WheelSwitcher({
               Always on
             </button>
           </div>
+          <div data-testid="game-used-by" className="mt-3 border-t border-[var(--hair)] pt-3 text-[12.5px] text-muted">
+            {campaigns === null ? (
+              <p>Checking which campaigns play this game…</p>
+            ) : selectedCampaigns.length > 0 ? (
+              <p className="text-pretty">
+                <span className="font-semibold text-ink">Used by campaigns:</span>{" "}
+                {selectedCampaigns.map((c) => c.name).join(", ")}. Their links always play this game.
+              </p>
+            ) : (
+              <p className="text-pretty">No campaign has chosen this game. Its links follow your live game.</p>
+            )}
+            {onOpenCampaigns && (
+              <button
+                type="button"
+                onClick={onOpenCampaigns}
+                className="mt-2 inline-flex min-h-9 items-center rounded-[9px] border border-[var(--hair)] px-3 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              >
+                Choose games for campaigns
+              </button>
+            )}
+          </div>
         </section>
       )}
     </section>
   );
 }
+
+const KIND_LABEL = (kind: GameKind | undefined) => GAME_LABEL[kind ?? "wheel"];
 
 function Icon({ d, size = 16, strokeWidth = 1.8 }: { d: string; size?: number; strokeWidth?: number }) {
   return (

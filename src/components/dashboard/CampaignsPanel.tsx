@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { Campaign, CampaignStats, WheelSummary } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
@@ -8,6 +8,16 @@ import { formatCents } from "@/lib/format";
 import { Field } from "./ui";
 import PackEditor from "./PackEditor";
 import { useCreatorLeave } from "./CreatorDrafts";
+import { CampaignGameSelect, GameName, FOLLOW_LIVE } from "./GameChoice";
+import { KIND_SHORT, campaignGame, defaultCampaignGameId, kindOf, liveExplanation, type CampaignGame } from "./gameAssignment";
+
+/** Plain-language refusal for choosing a campaign's game. */
+function pinRefusal(error: string | undefined): string {
+  if (error === "game_not_playable") return "That game can't be chosen: it's archived, a draft, or bingo. Pick a finished wheel or scratch game.";
+  if (error === "not_found") return "That game wasn't found in your games. Refresh and pick again.";
+  if (error === "unauthorized") return "You're signed out. Sign in and try again.";
+  return "Couldn't change this campaign's game. Nothing changed; try again.";
+}
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -69,13 +79,18 @@ function StatGrid({ cells }: { cells: { label: string; value: string | number }[
 // links they mint, then compare performance (spins, fans, fulfilment, top
 // prize) across promotions. Owns its own fetch + refresh so it can live behind
 // a lazily-mounted tab. Command Center styling; mobile-first, no horizontal overflow.
-export default function CampaignsPanel() {
+export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: string) => void } = {}) {
   const toast = useToast();
   const [stats, setStats] = useState<CampaignStats[] | null>(null);
   const [uncat, setUncat] = useState<{ revenue: number; spinsBought: number; spinsPlayed: number; fans: number } | null>(null);
   const [wheels, setWheels] = useState<WheelSummary[]>([]);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  // null = not touched yet: default to whatever fans get right now.
+  const [newGameId, setNewGameId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
+  const newGameSelectId = useId();
+  const newGameHelpId = useId();
 
   const load = useCallback(async () => {
     // Stats already carry the campaign rows (newest first), so one fetch covers
@@ -91,12 +106,17 @@ export default function CampaignsPanel() {
 
   // Fetch the creator's wheels once so each campaign can offer a pin selector.
   const loadWheels = useCallback(async () => {
-    const res = await fetch("/api/wheels", { cache: "no-store" });
+    // Archived games too, so a campaign still set to one can say so.
+    const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
     if (res.ok) {
       const data = (await res.json()) as { wheels?: WheelSummary[] };
       setWheels(data.wheels ?? []);
+      setNow(new Date());
     }
   }, []);
+  const live = useMemo(() => liveExplanation(wheels, now), [wheels, now]);
+  const liveTitle = live ? `${live.game.title} · ${KIND_SHORT[kindOf(live.game)]}` : null;
+  const chosenNewGame = newGameId ?? defaultCampaignGameId(wheels, now);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
@@ -112,20 +132,23 @@ export default function CampaignsPanel() {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+        body: JSON.stringify({ name: trimmed, pinnedWheelId: chosenNewGame || null }),
       });
       const data = (await res.json()) as { campaign?: Campaign; error?: string };
       if (!res.ok || !data.campaign) {
         toast(
           data.error === "unauthorized"
             ? "Couldn't create campaign. Are you signed in?"
-            : "Couldn't create campaign. Try again.",
+            : data.error === "game_not_playable" || data.error === "not_found"
+              ? `Couldn't create campaign. ${pinRefusal(data.error)}`
+              : "Couldn't create campaign. Try again.",
           { tone: "error" }
         );
         return;
       }
       setName("");
-      await load();
+      setNewGameId(null);
+      await Promise.all([load(), loadWheels()]);
     } finally {
       setCreating(false);
     }
@@ -137,8 +160,8 @@ export default function CampaignsPanel() {
       <section className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
         <SectionTitle>Create a campaign</SectionTitle>
         <p className="mt-1 text-[13px] text-muted">
-          Name a promotion, then attach it to the links you mint to compare how
-          each one performs.
+          Name a promotion, pick the game its fans play, then attach it to the
+          links you mint to compare how each one performs.
         </p>
         <div className="mt-3.5 flex flex-wrap items-end gap-3">
           <div className="min-w-0 flex-1 basis-56 sm:max-w-60 sm:flex-none">
@@ -155,6 +178,21 @@ export default function CampaignsPanel() {
               />
             </Field>
           </div>
+          <div className="flex min-w-0 flex-1 basis-56 flex-col gap-1.5 sm:max-w-80 sm:flex-none">
+            <label htmlFor={newGameSelectId} className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
+              Game fans play
+            </label>
+            <CampaignGameSelect
+              id={newGameSelectId}
+              value={chosenNewGame}
+              games={wheels}
+              liveTitle={liveTitle}
+              disabled={creating}
+              describedBy={newGameHelpId}
+              onChange={setNewGameId}
+              className="w-full"
+            />
+          </div>
           <button
             onClick={createCampaign}
             disabled={creating || !name.trim()}
@@ -163,6 +201,11 @@ export default function CampaignsPanel() {
             {creating ? "Creating…" : "Create campaign"}
           </button>
         </div>
+        <p id={newGameHelpId} className="mt-2 text-xs text-muted text-pretty">
+          {chosenNewGame === FOLLOW_LIVE
+            ? "Follow my live game: this campaign's links play whatever is live on your Games screen, so scheduling or activating another game changes it."
+            : "This campaign's links always play the game you pick here, even if you schedule or activate another game. You can change it later on the campaign card."}
+        </p>
       </section>
 
       {/* Uncategorized: revenue/spins not tagged to any campaign, so it's never
@@ -211,7 +254,7 @@ export default function CampaignsPanel() {
       ) : (
         <div className="flex flex-col gap-[18px]">
           {stats.map((s) => (
-            <CampaignCard key={s.campaign.id} stats={s} wheels={wheels} onRefresh={load} />
+            <CampaignCard key={s.campaign.id} stats={s} wheels={wheels} now={now} liveTitle={liveTitle} onRefresh={load} onOpenGame={onOpenGame} />
           ))}
         </div>
       )}
@@ -222,12 +265,20 @@ export default function CampaignsPanel() {
 function CampaignCard({
   stats,
   wheels,
+  now,
+  liveTitle,
   onRefresh,
+  onOpenGame,
 }: {
   stats: CampaignStats;
   wheels: WheelSummary[];
+  now: Date;
+  liveTitle: string | null;
   onRefresh: () => Promise<void> | void;
+  onOpenGame?: (wheelId: string) => void;
 }) {
+  const gameSelectId = useId();
+  const gameHelpId = useId();
   const toast = useToast();
   const leave = useCreatorLeave();
   const { campaign, revenue, arpu, spinsBought, spinsPlayed, uniqueFans, fulfilled, topPrize } =
@@ -291,16 +342,19 @@ function CampaignCard({
         body: JSON.stringify({ pinnedWheelId: value || null }),
       });
       if (!res.ok) {
-        toast("Couldn't update the pinned wheel. Try again.", { tone: "error" });
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        toast(pinRefusal(data?.error), { tone: "error" });
         return;
       }
-      toast(value ? "Pinned wheel updated." : "Pin removed.", { tone: "success" });
+      const picked = wheels.find((w) => w.id === value);
+      toast(picked ? `${campaign.name} now plays ${picked.title}.` : `${campaign.name} now follows your live game.`, { tone: "success" });
       await onRefresh();
     } finally {
       setPinning(false);
     }
   }
 
+  const plays = campaignGame(campaign, wheels, now);
   const cells = [
     { label: "Revenue", value: formatCents(revenue) },
     { label: "ARPU", value: formatCents(arpu) },
@@ -380,29 +434,26 @@ function CampaignCard({
         )}
       </div>
 
+      <PlaysLine plays={plays} onOpenGame={onOpenGame} />
+
       <div className="mt-4">
         <StatGrid cells={cells} />
       </div>
 
       <div className="mt-3.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-3 border-t border-[var(--hair)] pt-3.5">
-        {/* Pinned wheel selector. */}
-        <label className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted">
-          Pinned wheel
-          <select
-            className="ff-input min-w-0 max-w-full text-[13px]"
-            style={{ width: "auto" }}
-            value={campaign.pinnedWheelId ?? ""}
+        {/* Which game this campaign's links play. */}
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted">
+          <label htmlFor={gameSelectId}>Change game</label>
+          <CampaignGameSelect
+            id={gameSelectId}
+            value={campaign.pinnedWheelId ?? FOLLOW_LIVE}
+            games={wheels}
+            liveTitle={liveTitle}
             disabled={pinning}
-            onChange={(e) => pinWheel(e.target.value)}
-          >
-            <option value="">No pin (use active wheel)</option>
-            {wheels.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.title}
-              </option>
-            ))}
-          </select>
-        </label>
+            describedBy={gameHelpId}
+            onChange={(value) => void pinWheel(value)}
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Spin packs (collapsible to keep the panel tidy). */}
           <button
@@ -454,8 +505,8 @@ function CampaignCard({
           )}
         </div>
       </div>
-      <p className="mt-2 text-xs text-muted">
-        Pinned: fans in this campaign always spin this wheel.
+      <p id={gameHelpId} className="mt-2 text-xs text-muted text-pretty">
+        Applies to every link in this campaign, new and existing. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.
       </p>
 
       {showPacks && (
@@ -464,5 +515,47 @@ function CampaignCard({
         </div>
       )}
     </section>
+  );
+}
+
+function PlaysLine({ plays, onOpenGame }: { plays: CampaignGame<WheelSummary>; onOpenGame?: (wheelId: string) => void }) {
+  const target = plays.mode === "pinned" ? plays.game : plays.live;
+  return (
+    <div data-testid="campaign-plays" data-plays-game-id={target?.id ?? ""} className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-[10px] border border-[var(--hair)] px-3 py-2 text-[13px] text-muted [background:var(--s2)]">
+      {plays.mode === "pinned" ? (
+        <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span className="font-semibold text-ink">Plays:</span>
+          <GameName game={plays.game} />
+        </p>
+      ) : (
+        <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-pretty">
+          {plays.ignored && (
+            <span className="w-full text-amber-200">
+              Set to play {plays.ignored.title ?? "a game"}, but {plays.ignored.why}, so fans get your live game. Pick another game below.
+            </span>
+          )}
+          <span className="font-semibold text-ink">Follows your live game</span>
+          {plays.live ? (
+            <>
+              <span>(currently</span>
+              <GameName game={plays.live} />
+              <span>)</span>
+            </>
+          ) : (
+            <span>(no playable game yet)</span>
+          )}
+        </p>
+      )}
+      {target && onOpenGame && (
+        <button
+          type="button"
+          onClick={() => onOpenGame(target.id)}
+          aria-label={`Edit game ${target.title}`}
+          className="ml-auto inline-flex min-h-8 items-center rounded-[8px] border border-line px-2.5 text-[12px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+        >
+          Edit game
+        </button>
+      )}
+    </div>
   );
 }

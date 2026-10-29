@@ -271,6 +271,11 @@ export default function DashboardClient({
     });
   };
 
+  // "Edit game" / "Change game" shortcuts from Campaigns and the fan drawer.
+  const [gameRequest, setGameRequest] = useState<{ id: string; nonce: number } | null>(null);
+  const openGameEditor = (id: string) => goToSection("editor", () => setGameRequest((s) => ({ id, nonce: (s?.nonce ?? 0) + 1 })));
+  const openCampaigns = () => goToSection("campaigns");
+
   // "Your first steps" lives inside Today (replacing the old every-section
   // checklist). Rendered here so its signals + dismissal stay owned by the
   // dashboard; TodayPanel only places it.
@@ -465,9 +470,11 @@ export default function DashboardClient({
             onMessage={(fanId) => {
               goToSection("inbox", () => setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 })));
             }}
+            onOpenGame={openGameEditor}
+            onOpenCampaigns={openCampaigns}
           />
         )}
-        {tab === "campaigns" && <CampaignsPanel />}
+        {tab === "campaigns" && <CampaignsPanel onOpenGame={openGameEditor} />}
         {tab === "boosts" && (
           <BoostsPanel
             leaderboardEnabled={overview.data?.metrics.leaderboardEnabled ?? false}
@@ -506,6 +513,9 @@ export default function DashboardClient({
             onWheelMutated={overview.refresh}
             onDeliveryDraftChange={deliveryDraftChanged}
             onDeliveryPendingChange={deliveryPendingChanged}
+            openGameRequest={gameRequest}
+            onOpenGameHandled={() => setGameRequest(null)}
+            onOpenCampaigns={openCampaigns}
           />
         )}
         {tab === "settings" && (
