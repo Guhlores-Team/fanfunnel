@@ -1,3 +1,4 @@
+import { readGamePlayCounts } from "./gameAnalytics";
 import { focusTag } from "./focusTag";
 // Data layer — analytics: creator overview, deeper metrics (heatmap, prize
 // ROI, profit, cohorts) and the Autopilot feed.
@@ -53,6 +54,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     { count: pendingCount },
     { count: fulfilledCount },
     { data: oldestPendingRow },
+    gamePlays,
   ] = await Promise.all([
     sb
       .from("redemptions")
@@ -99,6 +101,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle(),
+    readGamePlayCounts(sb, user.id),
   ]);
 
   const rows = (reds ?? []) as unknown as {
@@ -158,6 +161,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     );
 
   return {
+    gamePlays,
     metrics: {
       fans: fans ?? 0,
       spinsPlayed: spinsPlayed ?? 0,

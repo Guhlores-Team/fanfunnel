@@ -64,7 +64,7 @@ export async function creatorJourney(page, { step, assert }) {
     const title = page.getByTestId("wheel-title-input");
     assert(await title.count(), "found the wheel title input");
     await title.fill("E2E Wheel " + Date.now());
-    await page.locator("button:has-text('Save wheel')").first().click();
+    await page.locator("button:has-text('Save game')").first().click();
     // Web-first wait for the save bar's own confirmation. Match the whole status
     // text: a bare /saved/ also matches "Unsaved changes", which shows before
     // the save has landed.
@@ -94,7 +94,7 @@ export async function creatorJourney(page, { step, assert }) {
     const errText = await page.locator(`[id="${errId}"]`).innerText();
     assert(/hex color/i.test(errText), `error text explains the format (saw "${errText}")`);
 
-    await page.locator("button:has-text('Save wheel')").first().click();
+    await page.locator("button:has-text('Save game')").first().click();
     await page.waitForFunction(() => /can't save yet/i.test(document.body.innerText)).catch(() => {});
     assert(/can't save yet/i.test(await page.locator('[role="alert"]').allInnerTexts().then((t) => t.join(" "))), "save blocked with a summary");
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brand color hex").catch(() => {});
@@ -111,7 +111,7 @@ export async function creatorJourney(page, { step, assert }) {
       .catch(() => {});
     assert((await hex.inputValue()) === "#aabbcc", "shorthand normalized on blur");
     assert((await hex.getAttribute("aria-invalid")) === null, "error cleared once valid");
-    const save = page.locator("button:has-text('Save wheel')").first();
+    const save = page.locator("button:has-text('Save game')").first();
     await save.click();
     await page.waitForFunction(() => !/unsaved changes/i.test(document.body.innerText)).catch(() => {});
     const after = await page.locator("body").innerText();
@@ -158,9 +158,10 @@ export async function creatorJourney(page, { step, assert }) {
         (await page.getByRole("textbox", { name: "Description (shown on win)" }).count()) >= 2,
         "each prize shows its win description field",
       );
-      // "New wheel" creates a wheel and tries to open it → the guard must fire.
-      // exact: a wheel created with the default title is itself called "New wheel".
-      await page.getByRole("button", { name: "New wheel", exact: true }).click();
+      // Creating a Wheel through New game still asks before replacing dirty prize edits.
+      await page.getByRole("button", { name: "New game", exact: true }).click();
+      await page.getByTestId("new-game-kind-wheel").check();
+      await page.getByRole("button", { name: "Create game", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: /discard unsaved changes/i });
       await dialog.waitFor({ timeout: 8000 });
       assert(await dialog.count(), "an in-app discard dialog opened");
@@ -179,7 +180,7 @@ export async function creatorJourney(page, { step, assert }) {
       await dialog.waitFor({ state: "hidden", timeout: 4000 });
       assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "Escape kept the draft");
       // Clicking the chip of the wheel already open must not reload it over the edits.
-      const switcher = page.locator("section[aria-label='Wheel switcher']");
+      const switcher = page.locator("section[aria-label='Game switcher']");
       await switcher.locator("button[title*='prize'][aria-current='true']").click();
       await page.waitForTimeout(600);
       assert((await page.getByTestId("wheel-title-input").inputValue()) === draft, "re-clicking the open wheel kept the draft");
@@ -190,7 +191,7 @@ export async function creatorJourney(page, { step, assert }) {
       assert(count >= 1, `expected another wheel chip, saw ${count}`);
       // P21: "Set active" is one click on an inactive wheel's chip, not in the menu.
       assert(
-        await page.locator("section[aria-label='Wheel switcher']").getByRole("button", { name: /^Set .+ active$/ }).count(),
+        await page.locator("section[aria-label='Game switcher']").getByRole("button", { name: /^Set .+ active$/ }).count(),
         "Set active is visible on an inactive wheel's chip",
       );
       await chips.first().click();
@@ -1142,7 +1143,7 @@ export async function firstRunJourney(page, { step, assert }, ctx) {
     assert(/Your first steps/.test(text), "checklist heading");
     assert(/1 of 5 done/.test(text), `progress reads '1 of 5 done' (saw: ${text.match(/\d of \d done/)?.[0]})`);
     assert((await list().locator("li").count()) === 5, "five steps");
-    for (const t of ["Create your account", "Build your first wheel", "Mint your first fan link", "Share their spin link", "Fulfil your first win"]) {
+    for (const t of ["Create your account", "Build your first game", "Mint your first fan link", "Share their spin link", "Fulfil your first win"]) {
       assert(text.includes(t), `step present: ${t}`);
     }
     // Honest first-run framing: no invented numbers, muted chips, no badges.
@@ -1174,9 +1175,9 @@ export async function firstRunJourney(page, { step, assert }, ctx) {
   });
 
   await step("first run: a step's CTA opens its section", async () => {
-    await list().getByRole("button", { name: "Open wheel editor" }).click();
-    await navItem(/Wheels/).and(page.locator("[aria-current='page']")).waitFor({ timeout: 4000 }).catch(() => {});
-    assert(await isCurrent(/Wheels/), "'Open wheel editor' opens Wheels");
+    await list().getByRole("button", { name: "Open game editor" }).click();
+    await navItem(/Games/).and(page.locator("[aria-current='page']")).waitFor({ timeout: 4000 }).catch(() => {});
+    assert(await isCurrent(/Games/), "'Open game editor' opens Games");
     await clickTab(page, "Today");
     await list().waitFor({ timeout: 6000 }).catch(() => {});
     assert(await list().count(), "the checklist is still on Today");

@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { visibleIdentity } from "../core/visibleIdentity";
+import vectors from "./visibleIdentity.vectors.json";
+import { scratchFace } from "./engine";
+import { parseGamePresentation } from "../core/presentation";
+let checks=0;
+for(const vector of vectors){assert.equal(visibleIdentity(vector.input),vector.expected,JSON.stringify(vector.input));checks++;}
+assert.notEqual(visibleIdentity("İ"),visibleIdentity("i"));checks++;
+assert.notEqual(visibleIdentity("ΟΣ"),visibleIdentity("οσ"));checks++;
+assert.equal(visibleIdentity(" K Ａ "),"k a");checks++;
+const winner={id:"winner",label:"İ",emoji:"☀️"};
+const face=scratchFace(winner,[winner,{id:"lowercase",label:"i",emoji:"🎁"},{id:"duplicate-emoji",label:"Different",emoji:"☀︎"},{id:"invisible",label:"Blank",emoji:"\uFEFF"},{id:"compatibility-label",label:"I\u0307",emoji:"🔥"}],()=>0.5);
+assert.ok(face.cells.some(cell=>cell.id==="lowercase"),"Turkish capital dotted I and ASCII i stay distinct without locale folding");checks++;
+assert.ok(!face.cells.some(cell=>cell.id==="duplicate-emoji"||cell.id==="invisible"||cell.id==="compatibility-label"),"variation collisions, invisible symbols and NFKC-equivalent labels remain excluded");checks++;
+assert.ok(parseGamePresentation(face,{kind:"scratch",prizeId:winner.id,label:winner.label}));checks++;
+assert.equal(face.cells.filter(cell=>cell.id===winner.id).length,3);checks++;
+const nonwinning=face.cells.filter(cell=>cell.id!==winner.id);
+assert.equal(new Set(nonwinning.map(cell=>visibleIdentity(cell.label))).size,6);checks++;
+assert.equal(new Set(nonwinning.map(cell=>visibleIdentity(cell.emoji!))).size,6);checks++;
+console.log(`scratch visible identity: ${checks} checks passed`);

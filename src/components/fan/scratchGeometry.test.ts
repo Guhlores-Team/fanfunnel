@@ -1,0 +1,25 @@
+import assert from "node:assert/strict";
+import { addScratchCoverage, scratchPoint, SCRATCH_GRID, SCRATCH_REVEAL_FRACTION } from "./scratchGeometry";
+let passed = 0;
+function check(label: string, condition: unknown) { assert.ok(condition, label); passed++; }
+const a = scratchPoint(110, 220, { left: 10, top: 20, width: 200, height: 400 });
+const b = scratchPoint(210, 420, { left: 10, top: 20, width: 400, height: 800 });
+assert.deepEqual(a, { x: 0.5, y: 0.5 }); passed++;
+assert.deepEqual(a,b); passed++;
+check("zero geometry waits for a measurable canvas", scratchPoint(0,0,{left:0,top:0,width:0,height:0}) === null);
+check("unreadable pointer geometry is ignored", scratchPoint(Number.NaN,0,{left:0,top:0,width:200,height:200}) === null);
+assert.deepEqual(scratchPoint(-20,900,{left:0,top:0,width:200,height:200}),{x:0,y:1});passed++;
+const dots = new Set<number>();
+const initial = addScratchCoverage(dots,{x:0.5,y:0.5},{x:0.5,y:0.5});
+check("a single click cannot reveal the complete ticket", initial > 0 && initial < SCRATCH_REVEAL_FRACTION);
+const duplicate = addScratchCoverage(dots,{x:0.5,y:0.5},{x:0.5,y:0.5});
+check("repeating one scratched point does not mint coverage", duplicate === initial);
+const forward = new Set<number>();const reverse = new Set<number>();
+addScratchCoverage(forward,{x:0.1,y:0.1},{x:0.9,y:0.9});
+addScratchCoverage(reverse,{x:0.9,y:0.9},{x:0.1,y:0.1});
+assert.deepEqual([...forward].sort(),[...reverse].sort());passed++;
+const filled = new Set<number>();
+for (let row=0;row<=10;row++) addScratchCoverage(filled,{x:0,y:row/10},{x:1,y:row/10});
+check("complete strokes reach accessible automatic reveal threshold", filled.size/(SCRATCH_GRID*SCRATCH_GRID)>=SCRATCH_REVEAL_FRACTION);
+check("coverage cannot exceed the normalized grid", filled.size<=SCRATCH_GRID*SCRATCH_GRID);
+console.log(`scratchGeometry.test: ${passed} checks passed`);

@@ -19,11 +19,12 @@ async function postIntent(path: string, token: string, intent: BrowserSpinIntent
 }
 
 /** A status read can recover a play, but can never start another one. */
-export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal }: {
+export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, validateResult }: {
   token: string;
   canRetry: boolean;
   onCommitted: (result: SpinResult, options: { present: boolean; recovered: boolean }) => void;
   onRefusal: (code: unknown) => void;
+  validateResult?: (result: unknown) => boolean;
 }) {
   const [phase, setPhase] = useState<"loading" | "ready" | "sending" | "pending" | "revealing" | "storage">("loading");
   const [message, setMessage] = useState<string | null>(null);
@@ -31,15 +32,16 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal }: {
   const intent = useRef<BrowserSpinIntent | null>(null);
   const running = useRef(false);
   const presented = useRef(new Set<string>());
-  const handlers = useRef({ canRetry, onCommitted, onRefusal });
-  useEffect(() => { handlers.current = { canRetry, onCommitted, onRefusal }; }, [canRetry, onCommitted, onRefusal]);
+  const handlers = useRef({ canRetry, onCommitted, onRefusal, validateResult });
+  useEffect(() => { handlers.current = { canRetry, onCommitted, onRefusal, validateResult }; }, [canRetry, onCommitted, onRefusal, validateResult]);
 
   const apply = useCallback((data: SpinResult, id: string, recovered: boolean) => {
     if (data?.attemptId !== id || !data.prize || !Number.isInteger(data.prizeIndex)
       || !Number.isSafeInteger(data.spinsRemaining) || data.spinsRemaining < 0) throw new Error("Unconfirmed response");
+    if (handlers.current.validateResult && !handlers.current.validateResult(data)) throw new Error("Unconfirmed game presentation");
     const present = !presented.current.has(id);
-    presented.current.add(id);
     handlers.current.onCommitted(data, { present, recovered: recovered || data.replayed === true });
+    presented.current.add(id);
     setPhase("revealing");
     setMessage(null);
   }, []);

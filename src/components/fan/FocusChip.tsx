@@ -1,12 +1,12 @@
 import type { FanFocusView } from "@/lib/data/focusView";
 
 export const FOCUS_PAUSE_COPY = {
+  on_break: "Your pack is paused during your break. Your progress is kept.",
   sold_out: "Your selected prize is sold out. Your focused spins are kept.",
   other_wheel: "This wheel does not include your selected prize. Your pack is paused here.",
   no_increase: "Your focus is paused while it cannot improve your odds. Your focused spins are kept.",
   pity: "Your rare-prize guarantee takes priority. Your focused spins are kept.",
   unavailable: "Your pack is paused while its prize is unavailable. Your progress is kept.",
-  on_break: "Your pack is paused during your break. Your progress is kept.",
 } as const;
 
 export default function FocusChip({ focus, onBreak = false }: { focus: FanFocusView | null; onBreak?: boolean }) {

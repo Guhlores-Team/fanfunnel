@@ -35,10 +35,10 @@ export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
     },
     {
       key: "wheel",
-      title: "Build your first wheel",
+      title: "Build your first game",
       body: "Set your prizes, odds and brand colour. We started you with a sample.",
       done: s.wheelSaved,
-      cta: { label: "Open wheel editor", go: "editor" },
+      cta: { label: "Open game editor", go: "editor" },
     },
     {
       key: "fan",

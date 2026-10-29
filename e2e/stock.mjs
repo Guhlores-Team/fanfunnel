@@ -45,7 +45,7 @@ async function setSwitchInEditor(page, on, { assert }) {
   if ((await sw.getAttribute("aria-checked")) !== String(on)) await sw.click();
   assert((await sw.getAttribute("aria-checked")) === String(on), `the switch reads ${on ? "on" : "off"}`);
   const saved = page.waitForResponse((r) => r.url().endsWith("/api/wheel") && r.request().method() === "PUT");
-  await page.getByRole("button", { name: /^Save wheel$/ }).click();
+  await page.getByRole("button", { name: /^Save game$/ }).click();
   assert((await saved).ok(), "the wheel saves");
   await page.waitForFunction(() => !/unsaved changes|saving…/i.test(document.body.innerText)).catch(() => {});
 }

@@ -99,6 +99,10 @@ export interface DbWheelRow
     Partial<
       Pick<WheelRow, "label_color" | "label_size" | "show_stock" | "is_active" | "active_from" | "active_until" | "archived_at">
     > {
+  game_kind?: string;
+  game_config?: unknown;
+  game_ready?: boolean;
+  game_kind_locked?: boolean;
   prizes: DbPrizeRow[];
 }
 
@@ -109,7 +113,7 @@ type _RarityMatchesDb = AssertTrue<Same<Rarity, Enums<"prize_rarity">>>;
 
 // The columns we select to load a wheel's full config (prizes joined).
 export const WHEEL_SELECT =
-  `id, title, subtitle, brand_color, label_color, label_size, show_stock, is_active, active_from, active_until, archived_at,
+  `id, title, subtitle, brand_color, label_color, label_size, show_stock, game_kind, game_config, game_ready, is_active, active_from, active_until, archived_at,
    prizes(id, label, description, rarity, weight, color, emoji, image_url, cost_cents, stock, sort_order, delivery, boostable)`;
 
 // Any Supabase client (auth-scoped or service-role) we resolve wheels with.
@@ -153,6 +157,10 @@ export function toWheelConfig(wheel: DbWheelRow): WheelConfig {
   return {
     id: wheel.id,
     title: wheel.title,
+    gameKind: wheel.game_kind === "scratch" ? "scratch" : wheel.game_kind === "bingo" ? "bingo" : "wheel",
+    gameConfig: wheel.game_kind === "scratch" ? { style: "classic" } : wheel.game_kind === "bingo" ? wheel.game_config as WheelConfig["gameConfig"] : {},
+    gameReady: wheel.game_ready !== false,
+    gameKindLocked: wheel.game_kind_locked !== false,
     subtitle: wheel.subtitle ?? undefined,
     brandColor: wheel.brand_color ?? "#ec4899",
     // #11: undefined when unset so Wheel.tsx falls back to its auto-pick.

@@ -40,6 +40,7 @@ import { themingJourney } from "./theming.mjs";
 import { focusJourney } from "./focus.mjs";
 import { creatorRecoveryJourney } from "./creator-recovery.mjs";
 import { safetyJourney } from "./safety.mjs";
+import { scratchJourney } from "./games.mjs";
 
 let server = null;
 let browser = null;
@@ -77,6 +78,7 @@ try {
     await instantJourney(page, runner, ctx); // private reward setup, winner-only delivery, complete history (own wheel/fan)
     await themingJourney(page, runner, ctx);
     await focusJourney(page, runner, ctx); // durable play recovery, focused odds, reserved-code chase (own fixtures)
+    await scratchJourney(browser, runner, sink, ctx); //0060: real scratch ticket and durable recovery
     await creatorRecoveryJourney(page, runner, ctx); // durable grant-edit retry, reload and cancellation
     await safetyJourney(page, runner, ctx); // A1 report → Admin › Reports → resolve; A4 blocked fan (own fans)
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)

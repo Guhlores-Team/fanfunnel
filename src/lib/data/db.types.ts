@@ -2264,10 +2264,12 @@ export type Database = {
           fair_version: number | null
           fan_id: string | null
           fan_pass_id: string | null
+          game_kind: string
           id: string
           nonce: number | null
           pool_hash: string | null
           pool_snapshot: Json | null
+          presentation: Json | null
           prize_id: string | null
           prize_image_url: string | null
           prize_label: string
@@ -2287,10 +2289,12 @@ export type Database = {
           fair_version?: number | null
           fan_id?: string | null
           fan_pass_id?: string | null
+          game_kind?: string
           id?: string
           nonce?: number | null
           pool_hash?: string | null
           pool_snapshot?: Json | null
+          presentation?: Json | null
           prize_id?: string | null
           prize_image_url?: string | null
           prize_label: string
@@ -2310,10 +2314,12 @@ export type Database = {
           fair_version?: number | null
           fan_id?: string | null
           fan_pass_id?: string | null
+          game_kind?: string
           id?: string
           nonce?: number | null
           pool_hash?: string | null
           pool_snapshot?: Json | null
+          presentation?: Json | null
           prize_id?: string | null
           prize_image_url?: string | null
           prize_label?: string
@@ -2435,6 +2441,9 @@ export type Database = {
           brand_color: string
           created_at: string
           creator_id: string
+          game_config: Json
+          game_kind: string
+          game_ready: boolean
           id: string
           name: string
           prizes: Json
@@ -2445,6 +2454,9 @@ export type Database = {
           brand_color?: string
           created_at?: string
           creator_id: string
+          game_config?: Json
+          game_kind?: string
+          game_ready?: boolean
           id?: string
           name: string
           prizes?: Json
@@ -2455,6 +2467,9 @@ export type Database = {
           brand_color?: string
           created_at?: string
           creator_id?: string
+          game_config?: Json
+          game_kind?: string
+          game_ready?: boolean
           id?: string
           name?: string
           prizes?: Json
@@ -2479,6 +2494,9 @@ export type Database = {
           brand_color: string
           created_at: string
           creator_id: string
+          game_config: Json
+          game_kind: string
+          game_ready: boolean
           id: string
           is_active: boolean
           label_color: string | null
@@ -2495,6 +2513,9 @@ export type Database = {
           brand_color?: string
           created_at?: string
           creator_id: string
+          game_config?: Json
+          game_kind?: string
+          game_ready?: boolean
           id?: string
           is_active?: boolean
           label_color?: string | null
@@ -2511,6 +2532,9 @@ export type Database = {
           brand_color?: string
           created_at?: string
           creator_id?: string
+          game_config?: Json
+          game_kind?: string
+          game_ready?: boolean
           id?: string
           is_active?: boolean
           label_color?: string | null
@@ -2640,6 +2664,10 @@ export type Database = {
         Args: { p_excluded: Json; p_snapshot: Json }
         Returns: boolean
       }
+      _game_feature_allowed: {
+        Args: { p_creator: string; p_kind: string }
+        Returns: boolean
+      }
       _grant_focus_pack_core: {
         Args: {
           p_creator: string
@@ -2678,10 +2706,15 @@ export type Database = {
       _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
       _release_fan_focus: { Args: { p_fan: string }; Returns: Json }
       _resolved_spin_wheel: { Args: { p_pass: string }; Returns: string }
+      _scratch_visible: { Args: { p_value: string }; Returns: string }
       _spin_attempt_context: { Args: { p_pass: string }; Returns: Json }
       _spin_attempt_receipt: {
         Args: { p_attempt: string; p_replayed: boolean }
         Returns: Json
+      }
+      _valid_scratch_presentation: {
+        Args: { p_presentation: Json; p_prize: string; p_snapshot: Json }
+        Returns: boolean
       }
       add_reward_codes: {
         Args: { p_codes: Json; p_creator: string; p_prize: string }

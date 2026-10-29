@@ -12,7 +12,7 @@ export async function GET(req: Request) {
 
 // Create a new wheel, optionally seeded from a template and/or named.
 export async function POST(req: Request) {
-  let body: { fromTemplateId?: string; name?: string };
+  let body: { fromTemplateId?: string; name?: string; gameKind?: unknown; gameConfig?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -23,6 +23,8 @@ export async function POST(req: Request) {
     const result = await createWheel({
       fromTemplateId: body.fromTemplateId,
       name: body.name,
+      gameKind: body.gameKind,
+      gameConfig: body.gameConfig,
     });
     return NextResponse.json(result);
   } catch (err) {

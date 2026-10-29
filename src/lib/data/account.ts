@@ -1,3 +1,4 @@
+import { creatorGameFeatures } from "./gameSettings";
 // Data layer — the signed-in creator's own account: profile prefs,
 // onboarding state, brand colour and the full data reset.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
@@ -114,6 +115,7 @@ export interface NotificationPrefs {
 }
 
 export interface MyAccount {
+  features: ReturnType<typeof creatorGameFeatures>;
   email: string | null;
   displayName: string | null;
   notifications: NotificationPrefs;
@@ -133,20 +135,22 @@ export async function getMyAccount(): Promise<MyAccount> {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) {
-    return { email: null, displayName: null, notifications: { ...DEFAULT_NOTIFICATION_PREFS } };
+    return { features: creatorGameFeatures(null), email: null, displayName: null, notifications: { ...DEFAULT_NOTIFICATION_PREFS } };
   }
   const { data } = await sb
     .from("profiles")
-    .select("display_name, notify_new_spin, notify_low_balance, notify_messages")
+    .select("display_name, features, notify_new_spin, notify_low_balance, notify_messages")
     .eq("id", user.id)
     .maybeSingle();
   const row = data as {
     display_name: string | null;
+    features?: unknown;
     notify_new_spin: boolean | null;
     notify_low_balance: boolean | null;
     notify_messages: boolean | null;
   } | null;
   return {
+    features: creatorGameFeatures(row?.features),
     email: user.email ?? null,
     displayName: row?.display_name ?? null,
     notifications: {

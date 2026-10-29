@@ -62,6 +62,7 @@ let passed = 0;
 function check(label: string, value: unknown) { assert.ok(value, label); passed++; }
 async function main() {
   const { default: SpinClient } = await import("./SpinClient");
+  const { default: FanGameController } = await import("./fan/FanGameController");
   const { default: Wheel } = await import("./Wheel");
   const { default: InstallNudge } = await import("./fan/InstallNudge");
   const { default: PrizeBook } = await import("./fan/PrizeBook");
@@ -70,7 +71,11 @@ async function main() {
     wheel: { id: "wheel", title: "Wheel", prizes: [prize] },
     focus: { kind: "focus", prizeId: prize.id, prizeLabel: prize.label, multiplier: 3, totalSpins: 10,
       spinsLeft: 7, chaseWithin: 10, chaseCounter: 0, status: "active", pauseReason: null } };
-  const render = (current = pass) => { cursor = 0; callbacks = []; return elements(SpinClient({ pass: current })); };
+  const wrapped = SpinClient({ pass });
+  check("wrapper delegates to the actual shared game controller", wrapped.type === FanGameController);
+  check("wrapper preserves exact pass identity", wrapped.props.pass === pass);
+  check("wrapper remounts recovery on bearer-link change", wrapped.key === pass.token);
+  const render = (current = pass) => { cursor = 0; callbacks = []; return elements(FanGameController({ pass: current })); };
   const propsFor = (tree: Element[], type: unknown) => { const element = tree.find(element => element.type === type); assert.ok(element); return element.props; };
   mock.timers.enable({ apis: ["setTimeout"] });
   const originalFetch = globalThis.fetch;

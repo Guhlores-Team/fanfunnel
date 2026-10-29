@@ -6,7 +6,7 @@
 import { attachSink, goto, clickTab, NAV_ITEMS, MORE_BUTTON } from "./harness.mjs";
 
 const PHONE = { width: 390, height: 844 };
-const BAR = ["Today", "Inbox", "Wheels", "Fans"];
+const BAR = ["Today", "Inbox", "Games", "Fans"];
 // Demo mode is an admin (server-derived), so Admin is listed.
 const MORE = ["Fulfilment", "Campaigns", "Boosts", "Analytics", "Settings", "Admin"];
 
@@ -166,10 +166,10 @@ export async function mobileJourney(browser, { step, assert }, sink) {
       const title = page.getByTestId("wheel-title-input");
       if (await title.count()) {
         await title.fill((await title.inputValue()) + " ");
-        const save = page.getByRole("button", { name: /^Save wheel$/ });
+        const save = page.getByRole("button", { name: /^Save game$/ });
         await save.waitFor({ timeout: 4000 });
         const sb = await save.boundingBox();
-        assert(sb && sb.y + sb.height <= (await barTop()), "the sticky Save wheel sits above the bar");
+        assert(sb && sb.y + sb.height <= (await barTop()), "the sticky Save game sits above the bar");
         await title.fill((await title.inputValue()).trimEnd());
       }
     });

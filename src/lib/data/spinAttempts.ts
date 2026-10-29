@@ -1,4 +1,8 @@
 import { recordRewardDisclosures } from "./rewardDisclosures";
+import { buildScratchPoolSnapshot, hashGamePoolSnapshot, primarySnapshot, type GamePoolSnapshot } from "@/lib/games/core/gameProof";
+import { makeGameRngV3 } from "@/lib/games/core/fairness";
+import { finishGame, type GamePresentation, type GameTrace } from "@/lib/games/core/play";
+import { parseGamePresentation } from "@/lib/games/core/presentation";
 import { getFanFocusDisplay } from "./focus";
 import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -36,12 +40,13 @@ type Context = {
   reservation: { code_id?: string; prize_id?: string } | null;
   wheel: DbWheelRow; prizes: DbWheelRow["prizes"]; commitment: "fresh" | "stored";
 };
-type SpinRow = { id: string; creator_id: string; fan_id: string; wheel_id: string; prize_id: string; prize_label: string; prize_rarity: Prize["rarity"]; prize_image_url?: string | null; pool_hash?: string; created_at?: string };
+type SpinRow = { id: string; creator_id: string; fan_id: string; wheel_id: string; prize_id: string; prize_label: string; prize_rarity: Prize["rarity"]; prize_image_url?: string | null; pool_hash?: string; created_at?: string; game_kind?: "wheel" | "scratch" | "bingo"; presentation?: unknown };
 type Receipt = {
   status: "committed"; id: string; shareId: string; replayed?: boolean; balance: number; nextServerSeedHash: string;
   stockAfter: number | null; focus: FocusRow | null; spin: SpinRow;
   pityAwarded?: boolean; chaseAwarded?: boolean; chaseCompleted?: boolean; focusConsumed?: boolean; chaseConsumed?: boolean;
   prize?: Prize; prizeIndex?: number; showStock?: boolean;
+  gameKind?: "wheel" | "scratch" | "bingo"; presentation?: unknown; bonusWins?: [];
   reward?: { kind: DeliveredReward["kind"]; cipher: string; iv: string; keyVersion: number } | null;
 };
 export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" } | { status: "declined"; error: SpinError["error"] };
@@ -57,7 +62,12 @@ async function call(sb: Service, name: string, args: Record<string, unknown>): P
 function resultFromReceipt(receipt: Receipt, requestId: string): SpinResult {
   const p = receipt.prize ?? { id: receipt.spin.prize_id, label: receipt.spin.prize_label, rarity: receipt.spin.prize_rarity, weight: 0, imageUrl: receipt.spin.prize_image_url ?? null };
   const reward = receipt.reward ? { kind: receipt.reward.kind, value: openReward(receipt.reward, receipt.spin.creator_id) } : null;
+  const kind = receipt.gameKind ?? receipt.spin.game_kind ?? "wheel";
+  if (kind !== "wheel" && kind !== "scratch") throw new Error("Unreleased game receipt");
+  const presentation = kind === "scratch" ? parseGamePresentation(receipt.presentation ?? receipt.spin.presentation, { kind, prizeId: p.id, label: p.label }) : null;
+  if (kind === "scratch" && (!presentation || (receipt.bonusWins !== undefined && (!Array.isArray(receipt.bonusWins) || receipt.bonusWins.length !== 0)))) throw new Error("Invalid committed scratch presentation");
   return {
+    ...(kind === "scratch" ? { gameKind: kind, presentation: presentation!, bonusWins: [] } : {}),
     attemptId: requestId, replayed: receipt.replayed === true,
     ...(receipt.spin.created_at ? { awardedAt: receipt.spin.created_at } : {}),
     prize: toPublicPrize(p, { showStock: receipt.showStock ?? true }), prizeIndex: receipt.prizeIndex ?? 0,
@@ -139,22 +149,39 @@ export async function commitSpinAttempt(token: string, intent: SpinIntent, sb = 
     const ctx = prepared.context as Context;
     const config = toWheelConfig({ ...ctx.wheel, prizes: ctx.prizes });
     const focus = toFanFocusView(ctx.focus);
-    let snapshot: ReturnType<typeof buildFocusPoolSnapshot>;
+    let snapshot: ReturnType<typeof buildFocusPoolSnapshot> | GamePoolSnapshot;
+    const gameKind = config.gameKind ?? "wheel";
+    if (gameKind === "bingo" || config.gameReady === false) return declineAttempt(sb, token, intent);
     try {
-      snapshot = buildFocusPoolSnapshot(config, {
+      const options = {
         happyHourMultiplier: ctx.happyHourMultiplier, pityCounter: ctx.pityCounter,
         ...(focus?.kind === "focus" ? { focus: { prizeId: focus.prizeId, multiplier: focus.multiplier, spinsLeft: focus.spinsLeft, totalSpins: focus.totalSpins } } : {}),
         ...(focus?.kind === "chase" ? { chase: { prizeId: focus.prizeId, counter: focus.chaseCounter, within: focus.chaseWithin, reserved: !!ctx.reservation } } : {}),
-      });
+      };
+      snapshot = gameKind === "scratch" ? buildScratchPoolSnapshot(config, options) : buildFocusPoolSnapshot(config, options);
     } catch { return declineAttempt(sb, token, intent); }
-    const poolHash = await hashPoolSnapshot(snapshot);
-    const rng = await makeFairRngV3(ctx.serverSeed, normalizeClientSeed(intent.clientSeed), ctx.nonce, poolHash);
+    const gameSnapshot = snapshot.game === "scratch" ? snapshot as GamePoolSnapshot : null;
+    const poolHash = gameSnapshot ? await hashGamePoolSnapshot(gameSnapshot) : await hashPoolSnapshot(snapshot as ReturnType<typeof buildFocusPoolSnapshot>);
+    let rng = gameSnapshot ? await makeGameRngV3(ctx.serverSeed, normalizeClientSeed(intent.clientSeed), ctx.nonce, poolHash) : await makeFairRngV3(ctx.serverSeed, normalizeClientSeed(intent.clientSeed), ctx.nonce, poolHash);
     const excluded = new Set<string>();
     const excludedOrder: string[] = [];
     let reprepare = false;
     for (let candidateTry = 0; candidateTry < snapshot.prizes.length + 1; candidateTry++) {
     let draw: ReturnType<typeof drawFromSnapshot>;
-    try { draw = drawFromSnapshot(snapshot, excluded, rng); } catch { return declineAttempt(sb, token, intent); }
+    try {
+      if (gameSnapshot) {
+        // Rebuild only after a failed allocation. Cosmetic face draws from that
+        // failed candidate must never shift the next primary draw.
+        rng = await makeGameRngV3(ctx.serverSeed, normalizeClientSeed(intent.clientSeed), ctx.nonce, poolHash);
+        const replayExclusions = new Set<string>();
+        for (const id of excludedOrder) {
+          const prior = drawFromSnapshot(primarySnapshot(gameSnapshot), replayExclusions, rng);
+          if (prior.prize.id !== id) throw new Error("Stock trace changed");
+          replayExclusions.add(id);
+        }
+      }
+      draw = drawFromSnapshot(gameSnapshot ? primarySnapshot(gameSnapshot) : snapshot as ReturnType<typeof buildFocusPoolSnapshot>, excluded, rng);
+    } catch { return declineAttempt(sb, token, intent); }
     const index = config.prizes.findIndex(p => p.id === draw.prize.id);
     const prize = config.prizes[index];
     if (!prize) return { error: "db_error" };
@@ -166,6 +193,15 @@ export async function commitSpinAttempt(token: string, intent: SpinIntent, sb = 
       excluded.add(prize.id); excludedOrder.push(prize.id); continue;
     }
     let expected = candidate.candidate;
+    let presentation: GamePresentation | undefined;
+    let trace: GameTrace | { excluded: string[]; won: string } = { excluded: [...excludedOrder], won: prize.id };
+    if (gameSnapshot) {
+      try {
+        const played = finishGame(gameSnapshot, draw, trace, rng);
+        presentation = played.presentation;
+        trace = played.trace;
+      } catch { return declineAttempt(sb, token, intent); }
+    }
     const nextSeed = randomSeedHex();
     const upgraded = draw as typeof draw & { focusConsumed?: boolean; chaseConsumed?: boolean; chaseCompleted?: boolean; chaseAwarded?: boolean; nextFocusSpinsLeft?: number | null; nextChaseCounter?: number | null };
     const spin = {
@@ -174,7 +210,8 @@ export async function commitSpinAttempt(token: string, intent: SpinIntent, sb = 
       campaign_id: ctx.campaignId, server_seed: ctx.serverSeed, server_seed_hash: ctx.serverSeedHash, nonce: ctx.nonce,
       client_seed: normalizeClientSeed(intent.clientSeed) || null,
       seed_commitment: ctx.commitment === "fresh" ? "fresh" : intent.publishedSeedHash?.toLowerCase() === ctx.serverSeedHash.toLowerCase() ? "published" : "stored",
-      fair_version: 3, pool_snapshot: snapshot, pool_hash: poolHash, fair_trace: { excluded: [...excludedOrder], won: prize.id },
+      fair_version: 3, pool_snapshot: snapshot, pool_hash: poolHash, fair_trace: trace,
+      ...(gameSnapshot ? { game_kind: gameKind, presentation } : {}),
       next_pity_counter: draw.nextPityCounter, pity_awarded: draw.pityAwarded,
       focus_consumed: upgraded.focusConsumed ?? false, chase_consumed: upgraded.chaseConsumed ?? false,
       chase_completed: upgraded.chaseCompleted ?? false, chase_awarded: upgraded.chaseAwarded ?? false,

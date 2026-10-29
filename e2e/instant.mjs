@@ -67,7 +67,7 @@ export async function chooseInstantPrize(request, fixture, prizeId) {
 export async function openInstantEditor(page, fixture, prize = fixture.code) {
   await goto(page, "/dashboard", 800);
   if (!(await clickTab(page, "Wheel"))) throw new Error("wheel navigation was not available");
-  const chip = page.getByRole("region", { name: "Wheel switcher" })
+  const chip = page.getByRole("region", { name: "Game switcher" })
     .getByRole("button").filter({ has: page.getByText(fixture.title, { exact: true }) });
   await chip.waitFor({ timeout: 10000 });
   await chip.click();
