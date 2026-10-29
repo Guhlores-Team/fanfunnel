@@ -500,7 +500,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
       </> : activeGameKind ? <FanGameStage kind={activeGameKind} presentation={gameOutcome?.presentation ?? null}
         card={currentCard} receiptKey={receiptKey} prizeLabel={won?.label} recovered={recoveredPresentation}
-        reducedMotion={rv.tier?.animate === false} onComplete={handleGameComplete} /> : null}
+        reducedMotion={rv.tier?.animate === false} engaged={engaged} onComplete={handleGameComplete} /> : null}
       {!canPresentGame && <p role="status" className="rounded-xl border border-line bg-surface p-4 text-center text-sm text-ink" data-testid="game-unavailable">We could not load this game safely. Reload this link to check its current state before playing.</p>}
 
       <div className="lift-in flex w-full flex-col items-center gap-4" style={{ animationDelay: "0.25s", animationFillMode: "both" }}>
