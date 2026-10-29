@@ -77,8 +77,12 @@ Supabase only follows a link to an allowed URL.
 - [ ] **OWNER**: Upstash: confirm the integration injected `KV_REST_API_URL` and
       `KV_REST_API_TOKEN` into **both** Production and Preview. Without them the rate limits are
       per instance, not shared.
-- [ ] **OWNER**: Later, only when those features ship: `REWARD_ENCRYPTION_KEY` (#26) and the
-      web-push VAPID keypair.
+- [ ] **OWNER**: **Production** scope, generated fresh for LIVE (never copied from Preview):
+      `CRON_SECRET` (`openssl rand -hex 32`; without it the retention cron refuses to run and
+      Admin › Errors alerts), `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY` (each
+      `openssl rand -base64 32`, Sensitive, backed up securely, never rotated), the web-push
+      VAPID trio, and `RESEND_API_KEY` + `ALERT_EMAIL_TO` for alerts. Names, scopes and warnings:
+      the table in [`DEPLOY.md` section 3](../DEPLOY.md#3-vercel-project-and-environment-variables).
 - [ ] **AGENT**: On the Preview, the teal "PREVIEW · TEST database" badge shows. If it is red,
       Preview points at the wrong database: stop.
 

@@ -33,6 +33,8 @@ mock.module("@/lib/supabase/server", {
 mock.module("@/lib/data", {
   namedExports: { recordAudit: async (e: Record<string, unknown>) => void audits.push(e) },
 });
+// Failure alerts are covered by routeAlerts.test.ts; keep this file's RPC count exact.
+mock.module("@/lib/monitoring/capture", { namedExports: { captureNow: async () => {} } });
 
 async function main() {
   const { GET } = await import("./route");

@@ -72,10 +72,15 @@ Development = TEST.
 | `FF_REQUIRE_SUPABASE` | `1` | `1` | Fail closed instead of falling back to the in-memory demo. `VERCEL_ENV=production` already forces this on Vercel. |
 | `NEXT_PUBLIC_ENABLE_DEBUG` | **unset** | `1` | Turns on the `?debug=1` error console and the "PREVIEW · TEST database" badge. Must never be set on Production. |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | set by the Upstash integration | same | Shared rate-limit counters across instances (`src/lib/rateLimit.ts`). `UPSTASH_REDIS_REST_URL`/`_TOKEN` also work. Unset = per-instance in-memory limits. |
-| `VAPID_PUBLIC_KEY` | separate public key | separate public key | Web push; see setup below. |
+| `VAPID_PUBLIC_KEY` | separate public key | separate public key | Web push; see setup below. `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is accepted as an alternative name. |
 | `VAPID_PRIVATE_KEY` | private key (Sensitive) | private key (Sensitive) | Server-only; never a `NEXT_PUBLIC_*` variable. |
 | `VAPID_SUBJECT` | `mailto:you@yourdomain` | same | Contact for browser push services. |
-| `NEXT_PUBLIC_SITE_URL` | optional | optional | Only for self-hosting behind a proxy that strips the scheme. |
+| `NEXT_PUBLIC_SITE_URL` | optional | optional | Only for self-hosting behind a proxy that strips the scheme. Also the origin used for links in alert e-mails. |
+| `CRON_SECRET` | random secret (Sensitive) | optional | Authorizes the daily retention cron (`vercel.json` → `/api/cron/retention`). At least 16 characters; generate with `openssl rand -hex 32`. Unset or too short: the cron refuses to run (fails closed) and records a "Retention cron is not configured" error in Admin › Errors, which e-mails `ALERT_EMAIL_TO`. Vercel only runs crons on Production. |
+| `REWARD_ENCRYPTION_KEY` | 32 random bytes, base64 (Sensitive) | separate key (Sensitive) | Encrypts instant-delivery codes, links and texts (#26, `src/lib/rewards/crypto.ts`). Generate with `openssl rand -base64 32`. **Never rotate or replace it** without re-encrypting stored rewards: old codes become unreadable. Back up the original securely. Unset: instant-delivery prizes can't be saved or delivered. |
+| `REWARD_ENCRYPTION_KEY_VERSION` | optional, integer | optional | The key version stamped on new ciphertexts (default `1`). Only changes as part of a planned re-encryption. |
+| `REWARD_CODE_FINGERPRINT_KEY` | 32 random bytes, base64 (Sensitive) | separate key (Sensitive) | Keeps reward codes unique across pastes (keyed fingerprint). Generate with `openssl rand -base64 32`, independent of the encryption key. **Never rotate it**: erased codes could be pasted and handed out again. |
+| `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM`, `ALERT_ENVIRONMENTS` | see Monitoring | optional | Error alerts and urgent safety-report alerts. Details under **Monitoring** below. |
 
 Add the TEST trio as GitHub secrets too (same names), so the `E2E (real Supabase)` workflow and
 `scripts/security/rls-runtime-test.mjs` run instead of skipping.
@@ -160,7 +165,10 @@ the Preview is tested and PROD before (or at) the merge to `main`. Only admins
 - Re-running `migrations_combined.sql` is safe.
 - Realtime chat needs nothing extra: Supabase Realtime is on for the `messages` table once the
   schema is loaded.
-- Optional later key: `REWARD_ENCRYPTION_KEY` (encrypted digital rewards).
+- Instant-delivery prizes (#26) need `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY`
+  (see the table in section 3). Back both up before any real reward is stored.
+- Every variable the code reads is listed in section 3 and, with how to generate it, in
+  `.env.example`. Values never go in the repo.
 - Web push is off until the three `VAPID_*` variables are set. The Inbox alert
   link opens the same opt-in in Settings › Notifications.
 
