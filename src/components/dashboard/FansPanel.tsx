@@ -128,7 +128,9 @@ export default function FansPanel({
     if (res.ok) setTemplates((await res.json()).templates ?? []);
   }, []);
   const loadWheels = useCallback(async () => {
-    const res = await fetch("/api/wheels", { cache: "no-store" });
+    // Archived games too, so a campaign still set to one is shown as such in
+    // the fan drawer instead of looking like "Follow my live game".
+    const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
     if (res.ok) {
       const d = (await res.json()) as { wheels?: WheelSummary[] };
       setWheels(d.wheels ?? []);

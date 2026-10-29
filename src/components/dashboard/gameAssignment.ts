@@ -52,14 +52,11 @@ export type CampaignGame<T extends ChoiceGame = ChoiceGame> =
 export function campaignGame<T extends ChoiceGame>(campaign: { pinnedWheelId?: string | null }, games: readonly T[], now: Date): CampaignGame<T> {
   const playing = resolvePlayingGame(games, { pinnedWheelId: campaign.pinnedWheelId ?? null }, now);
   if (playing?.reason.kind === "pinned") return { mode: "pinned", game: playing.game };
-  const ignored = playing?.ignoredPin ?? (campaign.pinnedWheelId ? "missing" : undefined);
   return {
     mode: "follows",
     live: playing?.game ?? null,
     because: playing ? playReasonText(playing.reason) : null,
-    ignored: ignored === undefined ? null : ignored === "missing"
-      ? { title: null, why: "it was deleted" }
-      : { title: ignored.title, why: pinUnavailableReason(ignored) ?? "it can't be played" },
+    ignored: ignoredPinText(playing?.ignoredPin ?? (campaign.pinnedWheelId ? "missing" : undefined)),
   };
 }
 
@@ -68,6 +65,14 @@ export interface LinkGame<T extends ChoiceGame = ChoiceGame> {
   via: "campaign" | "live" | "stored";
   campaign: ChoiceCampaign | null;
   because: string;
+  /** The campaign chose a game that can't be played, so the link falls through to the live game. */
+  ignored: { title: string | null; why: string } | null;
+}
+
+/** Why a chosen game is being skipped, in the words the campaign card uses. */
+function ignoredPinText<T extends ChoiceGame>(ignoredPin: T | "missing" | undefined): { title: string | null; why: string } | null {
+  if (ignoredPin === undefined) return null;
+  return ignoredPin === "missing" ? { title: null, why: "it was deleted" } : { title: ignoredPin.title, why: pinUnavailableReason(ignoredPin) ?? "it can't be played" };
 }
 
 /**
@@ -79,7 +84,7 @@ export function linkGame<T extends ChoiceGame>(pass: { wheelId: string; campaign
   const playing = resolvePlayingGame(games, { pinnedWheelId: campaign?.pinnedWheelId ?? null, storedWheelId: pass.wheelId }, now);
   if (!playing) return null;
   const via = playing.reason.kind === "pinned" ? "campaign" : playing.reason.kind === "stored" ? "stored" : "live";
-  return { game: playing.game, via, campaign, because: playReasonText(playing.reason, campaign?.name) };
+  return { game: playing.game, via, campaign, because: playReasonText(playing.reason, campaign?.name), ignored: ignoredPinText(playing.ignoredPin) };
 }
 
 /** Campaigns set to play this game. */

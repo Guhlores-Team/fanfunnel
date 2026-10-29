@@ -10,7 +10,7 @@ import { canCreateGame, GAME_LABEL, gameRefusalMessage, type GameFeatures } from
 import type { GameKind } from "@/lib/games/core/gameProof";
 import { MIN_WHEEL_PRIZES } from "@/lib/games/wheel/validate";
 import Modal from "@/components/ui/Modal";
-import { formatWhen, scheduleTakeover } from "@/lib/games/liveGame";
+import { formatWhen, isPlayableGame, scheduleTakeover } from "@/lib/games/liveGame";
 import { KindBadge, GameName } from "./GameChoice";
 import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
 
@@ -110,7 +110,8 @@ export default function WheelSwitcher({
   const visibleWheels = useMemo(() => wheels?.map((game) => game.id === savedGame?.id ? { ...game, title: savedGame.title, prizeCount: savedGame.prizeCount, ...(savedGame.gameKind ? { gameKind: savedGame.gameKind } : {}), ...(typeof savedGame.gameReady === "boolean" ? { gameReady: savedGame.gameReady } : {}) } : game) ?? null, [wheels, savedGame]);
   const selected = visibleWheels?.find((w) => w.id === currentWheelId) ?? null;
   const live = useMemo(() => (visibleWheels ? liveExplanation(visibleWheels, now) : null), [visibleWheels, now]);
-  const pinnedCount = useMemo(() => (campaigns ?? []).filter((c) => c.pinnedWheelId).length, [campaigns]);
+  // Campaigns whose chosen game is actually served (an archived or draft choice falls back to the live game).
+  const pinnedCount = useMemo(() => (campaigns ?? []).filter((c) => c.pinnedWheelId && visibleWheels?.some((w) => w.id === c.pinnedWheelId && isPlayableGame(w))).length, [campaigns, visibleWheels]);
   const selectedCampaigns = selected && campaigns ? campaignsUsing(selected.id, campaigns) : [];
   const scheduleDirty = from !== toLocalInput(selected?.activeFrom ?? null) || until !== toLocalInput(selected?.activeUntil ?? null);
   useCreatorDraft("game-management", "this game schedule", scheduleDirty, busy);

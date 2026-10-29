@@ -811,19 +811,22 @@ function TopUpForm({
   onModifierPick: (pack: CampaignPack) => void;
   engagementBlocked: boolean;
 }) {
-  // Which wheel the top-up targets (per-wheel spins). Default to the fan's
-  // first existing wheel-pass, else the first wheel.
-  const [wheelId, setWheelId] = useState<string>(
-    summary?.passes[0]?.wheelId ?? wheels[0]?.id ?? ""
-  );
   // Balances are kept per game a link was made for; a game with no link for
-  // this fan yet gets a new one.
+  // this fan yet gets a new one. Only games the server will issue a link for
+  // (isPlayableGame: not archived, saved and complete) are offered.
   const topUpTargets = wheels
     .filter((w) => isPlayableGame(w))
     .map((w) => {
       const own = summary?.passes.find((p) => p.wheelId === w.id);
       return { id: w.id, label: own ? `${w.title} balance (${own.spinsRemaining} spins)` : `${w.title} balance (new link)` };
     });
+  // Which balance the top-up targets. Default to the fan's first link whose
+  // game is still offered, else the first offered game, so the select never
+  // shows one choice while the request carries another.
+  const [wheelId, setWheelId] = useState<string>(() => {
+    const own = summary?.passes.find((p) => topUpTargets.some((t) => t.id === p.wheelId));
+    return own?.wheelId ?? topUpTargets[0]?.id ?? "";
+  });
   const [spins, setSpins] = useState(3);
   // Per-spin price as its own state so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
@@ -1188,6 +1191,11 @@ function LinkPlays({
 
   return (
     <div data-testid="link-plays" data-plays-game-id={plays?.game.id ?? ""} className="mt-1.5 text-[12.5px] text-muted">
+      {plays?.ignored && (
+        <p className="text-pretty text-amber-200">
+          &ldquo;{campaign?.name ?? "Its campaign"}&rdquo; is set to play {plays.ignored.title ?? "a game"}, but {plays.ignored.why}, so this link gets your live game.
+        </p>
+      )}
       {plays ? (
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-pretty">
           <span className="font-semibold text-ink">This link plays:</span>
@@ -1201,7 +1209,7 @@ function LinkPlays({
           </span>
         </p>
       ) : (
-        <p>No playable game right now. Finish a wheel or scratch game first.</p>
+        <p>No playable game right now. Finish and save a game first.</p>
       )}
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {plays && onOpenGame && (

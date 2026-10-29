@@ -59,6 +59,10 @@ eq(pickLiveGame([game("z-new", { isActive: true, createdAt: "2026-03-01T00:00:00
 eq(pickLiveGame([game("b", { isActive: true }), game("a", { isActive: true })], NOW)?.game.id, "a", "same created_at: id breaks the tie");
 eq(pickLiveGame([game("older-open", { activeUntil: "2026-12-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z" }), game("newer-open", { activeUntil: "2026-12-01T00:00:00Z", createdAt: "2026-05-01T00:00:00Z" })], NOW)?.game.id, "newer-open", "open-ended windows: newest created wins");
 eq(pickLiveGame([game("late", { activeFrom: "2026-10-29T11:30:00Z" }), game("early", { activeFrom: "2026-10-29T10:00:00Z", createdAt: "2026-06-01T00:00:00Z" })], NOW)?.game.id, "late", "latest start wins over a newer creation");
+const draftLink = linkGame({ wheelId: "spin", campaignId: "c2" }, [{ id: "c2", name: "Winter", pinnedWheelId: "draft" }], [...games, game("draft", { title: "Draft", gameReady: false })], NOW);
+eq([draftLink?.via, draftLink?.game.id, draftLink?.ignored], ["live", "scratch", { title: "Draft", why: "draft: finish and save it first" }], "a link whose campaign chose a draft says so and plays the live game");
+eq(linkGame({ wheelId: "spin", campaignId: "c3" }, [{ id: "c3", name: "Gone", pinnedWheelId: "deleted" }], games, NOW)?.ignored, { title: null, why: "it was deleted" }, "a deleted campaign game is reported on the link");
+eq(pinnedLink?.ignored, null, "a played campaign game is not reported as ignored");
 eq(campaignsUsing("spin", [{ id: "c1", name: "A", pinnedWheelId: "spin" }, { id: "c2", name: "B", pinnedWheelId: null }]).map((c) => c.id), ["c1"], "used-by list");
 eq(defaultCampaignGameId(games, NOW), "scratch", "new campaigns default to what fans get now");
 
