@@ -7651,7 +7651,7 @@ begin
  if w.game_kind is distinct from 'bingo' or not exists(select 1 from public.profiles where id=w.creator_id) then if tg_op='DELETE' then return old; else return new; end if; end if;
  -- Bingo only: serialize against card play. Every writer locks wheel -> prize
  -- (commit_spin_attempt, save_wheel_prizes, set_prize_delivery, add_reward_codes,
- -- _release_fan_focus), so this lock never closes a cycle.
+ -- _release_fan_focus, _grant_focus_pack_core), so this lock never closes a cycle.
  select * into w from public.wheels where id=w.id for update;
  if old_id is not null and exists(select 1 from public.bingo_cards c,jsonb_array_elements(c.cells) cell where c.wheel_id=w.id and c.status='active' and cell->>'id'=old_id::text) then
   if tg_op='DELETE' or new.wheel_id is distinct from old.wheel_id or new.stock is not null or new.delivery='codes' or new.weight<=0 then raise exception 'bingo_active_card' using errcode='22023'; end if;
@@ -8406,6 +8406,66 @@ begin
   return to_jsonb(f);
 end $$;
 
+-- Wheel before prize: the target's game is locked before the prize it reserves,
+-- so a grant racing a credited play (fan_focus FK, Bingo prize guard) never
+-- closes a cycle.
+create or replace function public._grant_focus_pack_core(p_request uuid,p_creator uuid,p_fan uuid,p_pass uuid,p_pack uuid,p_prize uuid)
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
+declare p public.fan_passes%rowtype; f public.fans%rowtype; pack public.campaign_packs%rowtype; pr public.prizes%rowtype;
+ ff public.fan_focus%rowtype; code public.prize_reward_codes%rowtype; g public.grants%rowtype; h text; b integer; n integer; v_wheel uuid;
+begin
+ if p_request is null then raise exception 'invalid request' using errcode='22023'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_request::text,59));
+ h:=encode(digest(jsonb_build_array(p_creator,p_fan,p_pass,p_pack,p_prize)::text,'sha256'),'hex');
+ select * into f from public.fans where id=p_fan and creator_id=p_creator for update;
+ select * into p from public.fan_passes where id=p_pass and fan_id=p_fan and creator_id=p_creator for update;
+ if f.id is null or p.id is null or not exists(select 1 from public.profiles where id=p_creator and is_active and (approval_status='approved' or role='admin')) then return jsonb_build_object('status','unavailable'); end if;
+ select * into g from public.grants where id=p_request;
+ if found then
+   if g.request_hash is distinct from h then return jsonb_build_object('status','conflict'); end if;
+   select * into ff from public.fan_focus where grant_id=g.id;
+   return jsonb_build_object('status','granted','focus',to_jsonb(ff),'balance',p.spins_remaining,'grantId',g.id,'replayed',true);
+ end if;
+ if f.id is null or p.id is null or not p.is_active or p.self_excluded_at is not null or f.blocked_at is not null or f.break_until>now()
+   or exists(select 1 from public.fan_passes where fan_id=p_fan and self_excluded_at is not null)
+   or not exists(select 1 from public.profiles where id=p_creator and is_active and (approval_status='approved' or role='admin')) then return jsonb_build_object('status','unavailable'); end if;
+
+ select * into pack from public.campaign_packs where id=p_pack and creator_id=p_creator for share;
+ if pack.id is null or pack.pack_kind not in('focus','chase') or (pack.campaign_id is not null and pack.campaign_id is distinct from p.campaign_id)
+   or exists(select 1 from public.focus_creator_config where creator_id=p_creator and not focus_enabled)
+   or (pack.pack_kind='chase' and not exists(select 1 from public.focus_creator_config where creator_id=p_creator and focus_enabled and chase_enabled)) then return jsonb_build_object('status','invalid_pack'); end if;
+ n:=case when pack.pack_kind='focus' then pack.focus_spins else pack.chase_within end;
+ if pack.spins+pack.bonus_spins<n then return jsonb_build_object('status','invalid_pack'); end if;
+ if exists(select 1 from public.fan_focus where fan_id=p_fan and status in('active','paused')) then return jsonb_build_object('status','focus_exists'); end if;
+ select wheel_id into v_wheel from public.prizes where id=p_prize;
+ perform 1 from public.wheels where id=v_wheel for update;
+ select * into pr from public.prizes where id=p_prize and wheel_id=v_wheel for update;
+ if pr.id is null or not pr.boostable or pr.wheel_id is distinct from public._resolved_spin_wheel(p_pass)
+   or not exists(select 1 from public.wheels where id=pr.wheel_id and creator_id=p_creator and archived_at is null)
+   or (pack.pack_kind='focus' and pr.weight=0) then return jsonb_build_object('status','invalid_target'); end if;
+ if pr.stock is not null and pr.stock<=0 then return jsonb_build_object('status','sold_out'); end if;
+ if pack.pack_kind='chase' and pr.delivery='codes' then
+   select * into code from public.prize_reward_codes where prize_id=pr.id and spin_id is null and reserved_focus_id is null order by created_at,id limit 1 for update;
+   if not found then return jsonb_build_object('status','sold_out'); end if;
+ end if;
+ perform set_config('fanfunnel.economic_write','on',true);
+ insert into public.grants(id,creator_id,fan_id,fan_pass_id,campaign_id,spins,bonus_spins,amount_cents,request_hash)
+ values(p_request,p_creator,p_fan,p_pass,pack.campaign_id,pack.spins+pack.bonus_spins,pack.bonus_spins,pack.amount_cents,h);
+ insert into public.fan_focus(creator_id,fan_id,fan_pass_id,wheel_id,prize_id,prize_label,grant_id,kind,multiplier,total_spins,spins_left)
+ values(p_creator,p_fan,p_pass,pr.wheel_id,pr.id,pr.label,p_request,pack.pack_kind,pack.focus_multiplier,n,n) returning * into ff;
+ if pack.pack_kind='chase' then
+   insert into public.chase_reservations(focus_id,creator_id,prize_id,kind,code_id)
+   values(ff.id,p_creator,pr.id,case when pr.delivery='codes' then 'code' when pr.stock is null then 'unlimited' else 'stock' end,code.id);
+   if pr.delivery='codes' then
+     update public.prize_reward_codes set reserved_focus_id=ff.id where id=code.id;
+     update public.prizes set stock=stock where id=pr.id;
+   elsif pr.stock is not null then update public.prizes set stock=stock-1 where id=pr.id; end if;
+ end if;
+ update public.fan_passes set spins_remaining=spins_remaining+pack.spins+pack.bonus_spins,
+   spins_granted_total=spins_granted_total+pack.spins+pack.bonus_spins where id=p.id returning spins_remaining into b;
+ return jsonb_build_object('status','granted','focus',to_jsonb(ff),'balance',b,'grantId',p_request,'replayed',false);
+end $$;
+
 -- A happy hour may only boost one of its own creator's games: RLS with-check
 -- for browser sessions and a BEFORE trigger for every role (defence in depth).
 create or replace function public._guard_happy_hour_tenant()
@@ -8423,6 +8483,7 @@ create policy happy_hours_rw on public.happy_hours for all
   with check (((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
     and exists (select 1 from public.wheels w where w.id = wheel_id and w.creator_id = happy_hours.creator_id));
 revoke execute on function public._release_fan_focus(uuid) from public,anon,authenticated,service_role;
+revoke execute on function public._grant_focus_pack_core(uuid,uuid,uuid,uuid,uuid,uuid) from public,anon,authenticated,service_role;
 revoke execute on function public.add_reward_codes(uuid,uuid,jsonb) from public,anon,authenticated;
 grant execute on function public.add_reward_codes(uuid,uuid,jsonb) to service_role;
 revoke execute on function public.set_prize_delivery(uuid,uuid,text,text,text,smallint) from public,anon,authenticated;

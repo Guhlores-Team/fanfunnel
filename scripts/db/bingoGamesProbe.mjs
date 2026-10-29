@@ -107,6 +107,14 @@ export async function probeBingoGames(sqlInput){
   const plainPrize=(await sql(`select id from public.prizes where wheel_id=${q(plainWheel)} and label='Plain';`)).trim();
   await lockRace("wheel set_prize_delivery",plainWheel,plainPrize,()=>sql(`select public.set_prize_delivery(${q(plainPrize)},${q(owner)},'text','plain-cipher','plain-iv');`));
   await lockRace("wheel add_reward_codes",plainWheel,plainPrize,()=>sql(`select public.add_reward_codes(${q(plainPrize)},${q(owner)},${j([{cipher:"plain-code",iv:"plain-code-iv",key_version:1,hint:"p",fingerprint:hash("plain-code")}])});`));
+  // A creator's focus-pack grant on a wheel game: its fan_focus insert needs the wheel, so it must lock the wheel first.
+  const plainCampaign=randomUUID();await sql(`insert into public.campaigns(id,creator_id,name,pinned_wheel_id) values(${q(plainCampaign)},${q(owner)},'Plain pin',${q(plainWheel)});update public.prizes set boostable=true where id=${q(plainPrize)};`);
+  const plainFan=await rpc("create_pass_grant",[q(randomUUID()),q(owner),"null",q(plainWheel),q("Plain fan"),"10","0","100",q(plainCampaign)]);
+  check(plainFan.status==="granted"&&(await sql(`select public._resolved_spin_wheel(${q(plainFan.passId)});`)).trim()===plainWheel,"a pinned campaign link resolves to the plain wheel game");
+  const plainPack=randomUUID();await sql(`insert into public.campaign_packs(id,creator_id,label,spins,pack_kind,focus_multiplier,focus_spins) values(${q(plainPack)},${q(owner)},'Plain focus',5,'focus',3,5);`);
+  const plainFocus=await lockRace("wheel _grant_focus_pack_core",plainWheel,plainPrize,()=>rpc("grant_focus_pack",[q(randomUUID()),q(owner),q(plainFan.fanId),q(plainFan.passId),q(plainPack),q(plainPrize),q(owner)]));
+  check(plainFocus.status==="granted","the wheel focus grant settles once the racing play releases the game");
+  check((await rpc("cancel_fan_focus",[q(owner),q(plainFan.fanId),q(plainFocus.focus.id),q(owner)])).status==="released","the raced wheel focus is released again");
   // The real race: a credited Bingo play and a delivery edit on the same game, concurrently.
   // Its own fan, so the main fixture fan's pity sequence (tuned below) is untouched.
   { const raceFan=await addFan(),a=await prep(raceFan),b=await build(a);
@@ -209,6 +217,11 @@ export async function probeBingoGames(sqlInput){
   check((await sql(`select state||','||(select count(*) from public.prize_reward_codes where reserved_focus_id=${q(heldGrant.focus.id)} and spin_id is null) from public.chase_reservations where focus_id=${q(heldGrant.focus.id)};`)).trim()==="held,1","held code identity remains reserved after all line bonuses");
   check((await sql(`select chase_counter from public.fan_focus where id=${q(heldGrant.focus.id)};`)).trim()==="1","primary advances chase once and four bonuses never advance it again");
   await lockRace("bingo _release_fan_focus",codeWheel,codeLine,()=>rpc("cancel_fan_focus",[q(owner),q(heldFan.fan),q(heldGrant.focus.id),q(owner)]));
+  // A creator's chase grant on the Bingo game reserves the line prize, so it must lock the game first.
+  const raceChaseFan=await addFan(codeWheel);
+  const raceChase=await lockRace("bingo _grant_focus_pack_core",codeWheel,codeLine,()=>rpc("grant_focus_pack",[q(randomUUID()),q(owner),q(raceChaseFan.fan),q(raceChaseFan.pass),q(chasePack),q(codeLine),q(owner)]));
+  check(raceChase.status==="granted"&&(await sql(`select stock from public.prizes where id=${q(codeLine)};`)).trim()==="0","the Bingo chase grant settles once the racing play releases the game");
+  check((await rpc("cancel_fan_focus",[q(owner),q(raceChaseFan.fan),q(raceChase.focus.id),q(owner)])).status==="released"&&(await sql(`select stock from public.prizes where id=${q(codeLine)};`)).trim()==="1","the raced Bingo chase returns its code");
 
   // Permission revocation while a save waits on its game lock must be seen in
   // the transaction, not merely by a route check made before dispatch.
