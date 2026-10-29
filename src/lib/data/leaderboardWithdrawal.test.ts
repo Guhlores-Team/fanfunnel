@@ -7,8 +7,8 @@ import { FakeTables, eqValue, on } from "@/lib/privacy/fakeTables";
 const creator = "creator-a", otherCreator = "creator-b";
 const fan = { id: "fan-a", creator_id: creator, display_name: "Private Name", handle: "chosen_handle",
   leaderboard_opt_in: true, blocked_at: null as string | null, break_until: null as string | null,
-  spins_remaining: 7, spins_granted_total: 10 };
-const other = { id: "fan-b", creator_id: otherCreator, handle: "other_handle", leaderboard_opt_in: true, spins_remaining: 11 };
+  spins_remaining: 7, spins_granted_total: 10, created_at: "2026-01-01T00:00:00Z" };
+const other = { id: "fan-b", creator_id: otherCreator, handle: "other_handle", leaderboard_opt_in: true, spins_remaining: 11, created_at: "2026-01-01T00:00:00Z" };
 const pass = { token: "withdraw-token", fan_id: fan.id, creator_id: creator, campaign_id: null,
   wheel_id: "wheel-a", is_active: true, self_excluded_at: null as string | null, spins_remaining: 7 };
 const wheel = { id: "wheel-a", creator_id: creator, archived_at: null as string | null, is_active: true,
@@ -16,7 +16,7 @@ const wheel = { id: "wheel-a", creator_id: creator, archived_at: null as string 
 const svc = new FakeTables({
   fans: [fan, other], fan_passes: [pass], wheels: [wheel], campaigns: [],
   grants: [{ fan_id: fan.id, creator_id: creator, spins: 10 }],
-  spins: [{ id: "earned-win", fan_id: fan.id, creator_id: creator, prize_rarity: "rare" }],
+  spins: [{ id: "earned-win", fan_id: fan.id, creator_id: creator, prize_rarity: "rare", created_at: "2026-01-01T00:00:00Z" }],
   profiles: [{ id: creator, public_slug: creator, display_name: "Creator", leaderboard_enabled: true }],
 });
 let inconsistentRead = false;
@@ -50,6 +50,7 @@ async function main() {
     fan.break_until = state === "break" ? "2099-01-01T00:00:00Z" : null;
     pass.is_active = !state.startsWith("paused"); pass.self_excluded_at = pass.is_active ? null : "2026-01-01T00:00:00Z";
     wheel.archived_at = state.includes("archived") ? "2026-01-01T00:00:00Z" : null;
+    check(`${state}: the opted-in entry is public before withdrawal`, (await getLeaderboard(creator)).entries.some(entry => entry.handle === "chosen_handle"));
     const beforeEconomic = JSON.stringify({ pass, wheel, grants: svc.rows("grants"), spins: svc.rows("spins"), balance: fan.spins_remaining });
     svc.statements.length = 0;
     const result = await setFanLeaderboardOptIn(pass.token, false, "UNREQUESTED-RENAME");
