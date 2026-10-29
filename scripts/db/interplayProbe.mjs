@@ -35,13 +35,22 @@ export async function probeInterplay(sqlInput, options = {}) {
   const lastLine = out => out.trim().split("\n").filter(Boolean).at(-1) ?? "";
   const asUser = (user, stmt) => sql(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(user)},true);select set_config('request.jwt.claim.role','authenticated',true);${stmt};commit;`).then(lastLine);
 
-  const addCreator = async (id, features = { scratch: true }) => {
+  const addCreator = async (id, features = { scratch: true, bingo: true }) => {
     creators.push(id);
     await sql(`insert into auth.users(id,email) values(${quote(id)},'interplay-${id}@example.test');update public.profiles set is_active=true,approval_status='approved',features=${json(features)} where id=${quote(id)};`);
     return id;
   };
   const addWheel = async (id, creator, spec, title = id.slice(-1)) => {
     const ts = h => h == null ? "null" : `now()+interval '${h} hours'`;
+    if (spec.k === "bingo") {
+      // A Bingo game starts as a draft and is published through the atomic saver (0061); a draft stays unready.
+      await sql(`insert into public.wheels(id,creator_id,title,show_stock,created_at,game_kind,game_config,game_ready) values(${quote(id)},${quote(creator)},${quote(title)},false,now()-interval '${spec.age ?? 60} minutes','bingo','{"size":3,"linePrizeId":null}',false);`);
+      if (spec.ready === false) return;
+      const line = randomUUID(), cells = Array.from({ length: 10 }, (_, i) => ({ id: randomUUID(), label: `Cell ${i}`, emoji: "🟦", rarity: i === 0 ? "rare" : "common", weight: 1, stock: null, sort_order: i, delivery: "manual", boostable: true }));
+      await rpc("save_game_wheel", [quote(id), quote(creator), json([...cells, { id: line, label: "Line", emoji: "🏆", rarity: "rare", weight: 0, stock: null, sort_order: 10, delivery: "manual", boostable: true }]), json({ game_kind: "bingo", game_config: { size: 3, linePrizeId: line }, title }), quote(creator)]);
+      await sql(`update public.wheels set is_active=${spec.active ? "true" : "false"},active_from=${ts(spec.from)},active_until=${ts(spec.until)},archived_at=${spec.archived ? "now()" : "null"} where id=${quote(id)};`);
+      return;
+    }
     await sql(`insert into public.wheels(id,creator_id,title,show_stock,is_active,active_from,active_until,archived_at,created_at,game_kind,game_config) values(${quote(id)},${quote(creator)},${quote(title)},false,${spec.active ? "true" : "false"},${ts(spec.from)},${ts(spec.until)},${spec.archived ? "now()" : "null"},now()-interval '${spec.age ?? 60} minutes',${quote(spec.k)},${spec.k === "scratch" ? `'{"style":"classic"}'` : "'{}'"}::jsonb);
       insert into public.prizes(wheel_id,label,weight,emoji,sort_order) values(${quote(id)},'Common',1,'🟦',0),(${quote(id)},'Other',1,'🟥',1);`);
   };
@@ -100,7 +109,8 @@ export async function probeInterplay(sqlInput, options = {}) {
 
   try {
     // ------------------------------------------------------------ 1. matrix
-    check((await scalar(`select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in('_resolved_spin_wheel','_create_pass_grant_core','_spin_attempt_context');`)) === "3", "all three SQL resolution paths exist");
+    check((await scalar(`select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in('_resolved_spin_wheel','_create_pass_grant_core','_spin_attempt_context','_creator_default_wheel');`)) === "4", "all three SQL resolution paths and the shared ranking exist");
+    check((await scalar(`select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in('_resolved_spin_wheel','_create_pass_grant_core') and pg_get_functiondef(p.oid) like '%_creator_default_wheel(%';`)) === "2", "issuance and spin time both call the one shared ranking (cannot drift)");
     const recorded = [];
     for (const [index, c] of CASES.entries()) {
       const n = index + 1, creator = await addCreator(uid(n, "10")), ids = {}, letters = {};
@@ -240,21 +250,36 @@ export async function probeInterplay(sqlInput, options = {}) {
     const SW = uid(2000, "b"); await addWheel(SW, cc, { k: "wheel", active: false }, "S");
     await sql(`update public.wheels set is_active=false where id=${quote(CW)};update public.wheels set is_active=true where id=${quote(SW)};update public.prizes set stock=3,label='Limited' where wheel_id=${quote(SW)} and label='Common';`);
     const SL = await prizeId(SW, "Limited"), SO = await prizeId(SW, "Other");
-    const saveRows = stock => json([{ id: SL, label: "Limited", rarity: "common", weight: 1, stock, emoji: "🟦" }, { id: SO, label: "Other", rarity: "common", weight: 1, emoji: "🟥" }]);
+    // The editor sends the stock it loaded (expected_stock); SQL applies the edit as a delta over the live value.
+    const saveRows = (stock, expected) => json([{ id: SL, label: "Limited", rarity: "common", weight: 1, stock, emoji: "🟦", ...(expected === undefined ? {} : { expected_stock: expected }) }, { id: SO, label: "Other", rarity: "common", weight: 1, emoji: "🟥", expected_stock: null }]);
     const racers = []; for (let i = 0; i < 12; i++) { const who = await grantFan(cc, SW, null, 2); racers.push({ who, a: await prep(who) }); }
-    const mixed = await settled([...racers.map(f => commit(f.who, f.a, wheelBody(f.a, SL))), ...Array.from({ length: 5 }, () => rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(3)]))]);
+    const mixed = await settled([...racers.map(f => commit(f.who, f.a, wheelBody(f.a, SL))), ...Array.from({ length: 5 }, () => rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(3, 3)]))]);
     check(mixed.every(x => x.ok), `prize saves interleaved with spins never raise (${mixed.find(x => !x.ok)?.error})`);
     const awardedRace = Number(await scalar(`select count(*) from public.spins where prize_id=${quote(SL)};`));
     check(await stockOf(SL) >= 0, "stock never goes negative under concurrent saves");
     const leftovers = await settled(racers.filter((_, i) => mixed[i].value.status !== "committed").map(async f => { const a = await prep(f.who, f.a.id); return commit(f.who, a, wheelBody(a, SO, [SL])); }));
     check(leftovers.every(x => x.ok && x.value.status === "committed"), `fans refused during the saves settle on the fallback prize (${leftovers.find(x => !x.ok || x.value.status !== "committed")?.error ?? JSON.stringify(leftovers.find(x => x.value?.status !== "committed")?.value)})`);
     // Deterministic form of the same race: spin, stale save, spin, stale save.
-    await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(2)]);
+    await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(2, await stockOf(SL))]);
+    check(await stockOf(SL) === 2, "a fresh edit over the stock the creator just loaded sets it exactly");
     const seq = []; for (let i = 0; i < 3; i++) seq.push(await grantFan(cc, SW, null, 1));
     let awardedSeq = 0;
-    for (const who of seq) { const a = await prep(who); if ((await commit(who, a, wheelBody(a, SL))).status === "committed") awardedSeq++; await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(2)]); }
-    if (awardedSeq > 2 || awardedRace > 3) known("A2_STALE_STOCK_SAVE", `save_wheel_prizes overwrites live stock with the value the creator loaded: ${awardedSeq} units awarded from a stock of 2 (${awardedRace} from 3 under the parallel race); fix: treat stock as a CAS (expected_stock) or apply deltas in save_wheel_prizes (supabase/schema.sql save_wheel_prizes upsert) and in src/lib/data/wheels.ts saveWheel`);
-    else check(awardedSeq <= 2 && awardedRace <= 3, "limited stock is never exceeded by a stale creator save");
+    // Each fan takes a unit while one is left (the service excludes a sold-out prize from the pool), then the creator re-saves the stale loaded value.
+    for (const who of seq) { const a = await prep(who); const left = await stockOf(SL); if ((await commit(who, a, left > 0 ? wheelBody(a, SL) : wheelBody(a, SO, [SL]))).status === "committed" && left > 0) awardedSeq++; await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(2, 2)]); }
+    check(awardedSeq === 2 && awardedRace <= 3, `limited stock is never exceeded by a stale creator save (${awardedSeq} from 2 sequential, ${awardedRace} from 3 parallel)`);
+    check(await stockOf(SL) === 0, "the stale re-saves of the loaded value left the spent stock alone (0, not 2)");
+    // Compare-and-set semantics: a stock edit over moved stock is the creator's delta; an unseen limited/unlimited switch is a conflict.
+    await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(5, 0)]);
+    check(await stockOf(SL) === 5, "restocking from the loaded 0 to 5 lands 5");
+    await sql(`update public.prizes set stock=stock-1 where id=${quote(SL)};`);
+    await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(7, 5)]);
+    check(await stockOf(SL) === 6, "an edit of +2 over stock that moved 5->4 meanwhile lands 6, never the stale 7");
+    check(await refused(`select public.save_wheel_prizes(${quote(SW)},${quote(cc)},${saveRows(3, null)});`, /stock_changed/), "a limit set over stock the creator saw as unlimited is a clean stock_changed conflict");
+    check(await stockOf(SL) === 6, "the refused save changed nothing");
+    await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(null, 6)]);
+    check(await stockOf(SL) === null, "making a prize unlimited is honoured whatever the live count");
+    await rpc("save_wheel_prizes", [quote(SW), quote(cc), saveRows(4)]);
+    check(await stockOf(SL) === 4, "a save without expected_stock (no loaded value) still sets the stock");
     // 3d. A top-up lands while spins run.
     const topped = await grantFan(cc, SW, null, 2);
     let open = []; for (let i = 0; i < 6; i++) open.push(await prep(topped));
@@ -284,13 +309,13 @@ export async function probeInterplay(sqlInput, options = {}) {
     check(await asUser(tb, `with u as(update public.wheels set is_active=true where id=${quote(WA)} returning 1) select count(*) from u`) === "0", "B cannot flip A's active flag");
     check(await asUser(tb, `with u as(update public.campaigns set pinned_wheel_id=${quote(WB)} where id=${quote(CA)} returning 1) select count(*) from u`) === "0", "B cannot pin A's campaign");
     check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(tb)},true);insert into public.prizes(wheel_id,label) values(${quote(WA)},'forged');commit;`, /row-level security|permission denied/), "B cannot add a prize to A's game");
-    // happy_hours RLS checks creator_id = auth.uid() only; nothing ties wheel_id to that creator.
-    const hhForged = !(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(tb)},true);insert into public.happy_hours(creator_id,wheel_id,multiplier,starts_at,ends_at) values(${quote(tb)},${quote(WA)},5,now(),now()+interval '1 hour');commit;`));
-    if (hhForged) {
-      const boosted = await scalar(`select public._spin_attempt_context(${quote(fanA.pass)})->>'happyHourMultiplier';`);
-      known("CROSS_TENANT_HAPPY_HOUR", `creator B inserted a 5x happy hour on creator A's wheel through RLS (happy_hours_rw checks creator_id=auth.uid() only, supabase/schema.sql:2754) and A's fans now see happyHourMultiplier=${boosted} (0059 _spin_attempt_context reads happy_hours by wheel_id only); fix: add 'and exists(select 1 from public.wheels w where w.id=wheel_id and w.creator_id=creator_id)' to the policy's with check, or a BEFORE trigger, and filter by creator_id in _spin_attempt_context`);
-      await sql(`delete from public.happy_hours where wheel_id=${quote(WA)};`);
-    } else check(true, "B cannot attach a happy hour to A's game");
+    // A happy hour may only boost its own creator's game: RLS with-check for sessions, a BEFORE trigger for every role, and a creator filter at play time.
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(tb)},true);insert into public.happy_hours(creator_id,wheel_id,multiplier,starts_at,ends_at) values(${quote(tb)},${quote(WA)},5,now(),now()+interval '1 hour');commit;`, /row-level security|another creator/), "B cannot attach a happy hour to A's game through RLS");
+    check(await refused(`insert into public.happy_hours(creator_id,wheel_id,multiplier,starts_at,ends_at) values(${quote(tb)},${quote(WA)},5,now(),now()+interval '1 hour');`, /another creator/), "not even the service role can attach a happy hour to another creator's game (trigger)");
+    check(await asUser(tb, `with i as(insert into public.happy_hours(creator_id,wheel_id,multiplier,starts_at,ends_at) values(${quote(tb)},${quote(WB)},5,now(),now()+interval '1 hour') returning 1) select count(*) from i`) === "1", "B still schedules a happy hour on B's own game");
+    await sql(`alter table public.happy_hours disable trigger aa_happy_hour_tenant;insert into public.happy_hours(creator_id,wheel_id,multiplier,starts_at,ends_at) values(${quote(tb)},${quote(WA)},5,now(),now()+interval '1 hour');alter table public.happy_hours enable trigger aa_happy_hour_tenant;`);
+    check(await scalar(`select public._spin_attempt_context(${quote(fanA.pass)})->>'happyHourMultiplier';`) === "1" && await scalar(`select public._spin_attempt_context(${quote(fanB.pass)})->>'happyHourMultiplier';`) === "5", "a cross-tenant happy hour row that predates the guard never boosts A's game while B's own boosts B");
+    await sql(`delete from public.happy_hours where wheel_id in(${quote(WA)},${quote(WB)});`);
     check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(tb)},true);select public.prepare_spin_attempt(gen_random_uuid(),${quote(fanA.token)},repeat('a',64));commit;`, /permission denied/), "browser roles cannot reach the spin RPC at all");
     check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(tb)},true);select public._resolved_spin_wheel(${quote(fanA.pass)});commit;`, /permission denied/), "the resolver is private to the atomic boundary");
     check((await rpc("create_pass_grant", [quote(randomUUID()), quote(ta), "null", "null", "'x'", "1", "0", "0", "null", "null", "null", "1", quote(tb)])).status === "unavailable", "B acting as actor cannot mint A's links through the service RPC");

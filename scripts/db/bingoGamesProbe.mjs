@@ -75,7 +75,44 @@ export async function probeBingoGames(sqlInput){
   check(await refused(`update public.prizes set stock=1 where id=${q(centerId)};`,/bingo_active_card/),"active cell cannot become finite");
   check(await refused(`update public.prizes set weight=0 where id=${q(centerId)};`,/bingo_active_card/),"active cell cannot lose ordinary positive weight");
   check(await refused(`delete from public.prizes where id=${q(centerId)};`,/bingo_active_card/),"active card cell cannot be deleted");
-  check(await refused(`update public.wheels set archived_at=now() where id=${q(wheel)};`,/bingo_active_card/),"archive cannot silently discard paid incomplete card progress");
+  // Retirement: archiving keeps the paid card, stops serving the game, and unarchiving restores play.
+  const retiredVersion=(await card(fan)).card.version;
+  await sql(`update public.wheels set archived_at=now() where id=${q(wheel)};`);
+  check((await card(fan)).status==="ok"&&(await card(fan)).card===null&&(await sql(`select count(*) from public.bingo_cards where wheel_id=${q(wheel)} and status='active';`)).trim()==="1","archiving a game with active cards keeps the paid card and stops showing the retired game");
+  const retired=await rpc("prepare_spin_attempt",[q(randomUUID()),q(fan.token),q(hash("bingo-archived"))]);check(retired.status==="declined"&&retired.error==="no_wheel","an archived Bingo game is no longer served");
+  await sql(`update public.wheels set archived_at=null where id=${q(wheel)};`);
+  check((await card(fan)).card?.version===retiredVersion,"unarchiving shows the same card again");
+  const restored=await prep(fan);check(restored.context.bingoCard?.version===retiredVersion,"unarchiving restores play on the same card");await rpc("cancel_spin_attempt",[q(restored.id),q(fan.token),q(restored.binding)]);
+  check(await refused(`delete from public.wheels where id=${q(wheel)};`,/bingo_active_card/),"deleting a game with active cards is still refused");
+  check(await refused(`update public.wheels set game_ready=false where id=${q(wheel)};`,/bingo_active_card|game_not_ready/),"un-publishing a game with active cards is still refused");
+  // A blocked fan keeps the same read-only card page as on wheel/scratch; only play is refused.
+  const blockedFan=await addFan();await play(blockedFan,{notCenter:true});
+  await sql(`update public.fans set blocked_at=now() where id=${q(blockedFan.fan)};`);
+  const blockedRead=await card(blockedFan);check(blockedRead.status==="ok"&&blockedRead.card?.version===1,"a blocked fan can still read their own card");
+  check((await rpc("prepare_spin_attempt",[q(randomUUID()),q(blockedFan.token),q(hash("bingo-blocked"))])).status==="unavailable","a blocked fan cannot start a new paid attempt");
+  await sql(`update public.profiles set approval_status='pending' where id=${q(owner)};`);
+  check((await card(blockedFan)).status==="ok","the card read does not depend on creator approval");
+  await sql(`update public.profiles set approval_status='approved' where id=${q(owner)};update public.fans set blocked_at=null where id=${q(blockedFan.fan)};`);
+  // Two sessions in commit's lock order (wheel -> prize) against a prize-first creator edit: never 40P01.
+  const lockRace=async(label,wheelId,prizeId,editor)=>{
+   const holder=sql(`begin;select 1 from public.wheels where id=${q(wheelId)} for update;select pg_sleep(0.5);update public.prizes set label=label where id=${q(prizeId)};commit;`);
+   let sleeping=false;for(let i=0;i<200;i++){if((await sql(`select count(*) from pg_stat_activity where pid<>pg_backend_pid() and wait_event='PgSleep' and query like '%${wheelId}%';`)).trim()==="1"){sleeping=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}
+   check(sleeping,`${label}: the play holds the game lock before the creator edit starts`);
+   const settled=await Promise.allSettled([holder,editor()]);
+   check(settled.every(r=>r.status==="fulfilled"),`${label}: a creator edit racing a credited play never deadlocks (${settled.find(r=>r.status==="rejected")?.reason?.message?.trim()??""})`);
+   return settled[1].value;
+  };
+  await lockRace("bingo set_prize_delivery",wheel,centerId,()=>sql(`select public.set_prize_delivery(${q(centerId)},${q(owner)},'manual');`));
+  const plainWheel=randomUUID();await sql(`insert into public.wheels(id,creator_id,title,is_active) values(${q(plainWheel)},${q(owner)},'Plain wheel',false);insert into public.prizes(wheel_id,label,weight,emoji,sort_order) values(${q(plainWheel)},'Plain',1,'🟦',0),(${q(plainWheel)},'Other',1,'🟥',1);`);
+  const plainPrize=(await sql(`select id from public.prizes where wheel_id=${q(plainWheel)} and label='Plain';`)).trim();
+  await lockRace("wheel set_prize_delivery",plainWheel,plainPrize,()=>sql(`select public.set_prize_delivery(${q(plainPrize)},${q(owner)},'text','plain-cipher','plain-iv');`));
+  await lockRace("wheel add_reward_codes",plainWheel,plainPrize,()=>sql(`select public.add_reward_codes(${q(plainPrize)},${q(owner)},${j([{cipher:"plain-code",iv:"plain-code-iv",key_version:1,hint:"p",fingerprint:hash("plain-code")}])});`));
+  // The real race: a credited Bingo play and a delivery edit on the same game, concurrently.
+  { const a=await prep(fan),b=await build(a,{target:firstPrize});
+   const settled=await Promise.allSettled([commit(fan,a,b),sql(`select public.set_prize_delivery(${q(centerId)},${q(owner)},'manual');`)]);
+   check(settled.every(r=>r.status==="fulfilled"),`concurrent commit and set_prize_delivery on one Bingo game never raise (${settled.find(r=>r.status==="rejected")?.reason?.message?.trim()??""})`);
+   let out=settled[0].value;if(out.status==="retry_context"){const again=await prep(fan,a.id);out=await commit(fan,again,await build(again,{target:firstPrize}));}
+   check(out.status==="committed","the racing play settles as a committed play");primaryPlays++; }
   check(await refused(`update public.wheels set game_config=jsonb_build_object('size',3,'linePrizeId',${q(centerId)}) where id=${q(wheel)};`,/bingo_active_card/),"line reward promise cannot change while a card is incomplete");
   const oldLabel=state.cells[4].label;await sql(`update public.prizes set label='Renamed future prize' where id=${q(centerId)};`);
   check((await card(fan)).card.cells[4].label===oldLabel,"ordinary label edits never rewrite an existing card's immutable label");
@@ -128,7 +165,7 @@ export async function probeBingoGames(sqlInput){
   await publish(codeWheel,codeRows,codeLine);
   await sql(`update public.wheels set is_active=false where creator_id=${q(owner)};update public.wheels set is_active=true where id=${q(codeWheel)};`);
   const codeValue=n=>({cipher:`bingo-code-${n}`,iv:`bingo-iv-${n}`,key_version:1,hint:`b${n}`,fingerprint:hash(`bingo-${owner}-${n}`)});
-  await rpc("add_reward_codes",[q(codeLine),q(owner),j([codeValue(0)])]);
+  await lockRace("bingo add_reward_codes",codeWheel,codeLine,()=>rpc("add_reward_codes",[q(codeLine),q(owner),j([codeValue(0)])]));
   const codeFan=await addFan(codeWheel),codeFirst=await play(codeFan,{notCenter:true,centerCommon:true}),codeState=(await card(codeFan)).card,codeCenter=codeState.cells[4].id;
   for(const cell of codeState.cells){if(cell.id===codeCenter||cell.id===codeFirst.out.prize.id)continue;await play(codeFan,{target:cell.id});}
   check((await card(codeFan)).card.markedMask===495,"code fixture reaches actual eight non-center marks through paid plays");
@@ -170,7 +207,7 @@ export async function probeBingoGames(sqlInput){
   check(heldWin.status==="committed"&&heldWin.bonusWins.length===4&&heldWin.bonusWins.every(x=>x.prize.id!==codeLine),"four new lines pay free rare fallback without stealing held primary code");
   check((await sql(`select state||','||(select count(*) from public.prize_reward_codes where reserved_focus_id=${q(heldGrant.focus.id)} and spin_id is null) from public.chase_reservations where focus_id=${q(heldGrant.focus.id)};`)).trim()==="held,1","held code identity remains reserved after all line bonuses");
   check((await sql(`select chase_counter from public.fan_focus where id=${q(heldGrant.focus.id)};`)).trim()==="1","primary advances chase once and four bonuses never advance it again");
-  await rpc("cancel_fan_focus",[q(owner),q(heldFan.fan),q(heldGrant.focus.id),q(owner)]);
+  await lockRace("bingo _release_fan_focus",codeWheel,codeLine,()=>rpc("cancel_fan_focus",[q(owner),q(heldFan.fan),q(heldGrant.focus.id),q(owner)]));
 
   // Permission revocation while a save waits on its game lock must be seen in
   // the transaction, not merely by a route check made before dispatch.

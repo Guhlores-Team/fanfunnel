@@ -1,29 +1,26 @@
 {
  "generatedBy": "scripts/db/interplayProbe.mjs",
- "bugs": {
-  "ISSUANCE_IGNORES_SCHEDULE": "issuance (_create_pass_grant_core, 0060:404-408) ignores schedule windows while spin-time (_resolved_spin_wheel, 0060:135-138) ranks an open window above is_active",
-  "ACTIVE_ORDER_MISMATCH": "with several is_active games issuance orders by created_at (0060:407) but spin-time orders by id (0060:139)"
- },
+ "bugs": {},
  "surprises": {
   "S1": "pass.wheel_id is a label, not routing: an open schedule, the active flag or a pin serves a different game than the one the link was minted for",
   "S2": "a schedule window overrides the creator's active flag at play time, even for an unpinned link",
   "S3": "a game whose only schedule is in the future or already expired still serves as the oldest-game fallback when nothing else is live",
   "S4": "no DB guard stops a creator pinning another creator's wheel id; the resolver silently ignores such a pin and falls through",
   "S5": "a pinned game is served regardless of its own schedule window (future or expired)",
-  "S6": "disabling the scratch feature leaves an existing scratch game pinned/scheduled/active and fans keep playing it (grandfathered)",
+  "S6": "disabling the scratch or bingo feature leaves an existing game pinned/scheduled/active and fans keep playing it (grandfathered)",
   "S7": "archiving the only live game turns the fan link into 'no_wheel' with credits intact"
  },
  "cases": [
   {
    "id": "one-wheel",
-   "now": "2026-10-29T18:06:16.619921+00:00",
+   "now": "2026-10-29T18:41:47.331488+00:00",
    "creatorId": "00000001-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000001-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:16.578046+00:00",
+     "created_at": "2026-10-29T17:41:47.290995+00:00",
      "creator_id": "00000001-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -38,6 +35,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -55,14 +53,14 @@
   },
   {
    "id": "one-scratch",
-   "now": "2026-10-29T18:06:16.738522+00:00",
+   "now": "2026-10-29T18:41:47.431588+00:00",
    "creatorId": "00000002-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000002-0000-4000-8000-00000000000a",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:16.694251+00:00",
+     "created_at": "2026-10-29T17:41:47.397344+00:00",
      "creator_id": "00000002-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -77,6 +75,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -94,14 +93,14 @@
   },
   {
    "id": "one-active-scratch",
-   "now": "2026-10-29T18:06:16.853875+00:00",
+   "now": "2026-10-29T18:41:47.530615+00:00",
    "creatorId": "00000003-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000003-0000-4000-8000-00000000000a",
      "game_kind": "scratch",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:16.809514+00:00",
+     "created_at": "2026-10-29T17:41:47.491485+00:00",
      "creator_id": "00000003-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -116,6 +115,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -133,17 +133,17 @@
   },
   {
    "id": "one-future",
-   "now": "2026-10-29T18:06:16.968758+00:00",
+   "now": "2026-10-29T18:41:47.622343+00:00",
    "creatorId": "00000004-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000004-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:16.929334+00:00",
+     "created_at": "2026-10-29T17:41:47.588879+00:00",
      "creator_id": "00000004-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-30T18:06:16.929334+00:00",
+     "active_from": "2026-10-30T18:41:47.588879+00:00",
      "archived_at": null,
      "active_until": null
     }
@@ -155,6 +155,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -173,19 +174,19 @@
   },
   {
    "id": "one-expired",
-   "now": "2026-10-29T18:06:17.074708+00:00",
+   "now": "2026-10-29T18:41:47.716314+00:00",
    "creatorId": "00000005-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000005-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:17.040929+00:00",
+     "created_at": "2026-10-29T17:41:47.681906+00:00",
      "creator_id": "00000005-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
      "archived_at": null,
-     "active_until": "2026-10-28T18:06:17.040929+00:00"
+     "active_until": "2026-10-28T18:41:47.681906+00:00"
     }
    ],
    "campaigns": [],
@@ -195,6 +196,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -213,18 +215,18 @@
   },
   {
    "id": "one-archived-after",
-   "now": "2026-10-29T18:06:17.181889+00:00",
+   "now": "2026-10-29T18:41:47.828911+00:00",
    "creatorId": "00000006-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000006-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:17.139709+00:00",
+     "created_at": "2026-10-29T17:41:47.779113+00:00",
      "creator_id": "00000006-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:17.172145+00:00",
+     "archived_at": "2026-10-29T18:41:47.818599+00:00",
      "active_until": null
     }
    ],
@@ -235,6 +237,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -253,14 +256,14 @@
   },
   {
    "id": "active-vs-blank",
-   "now": "2026-10-29T18:06:17.265041+00:00",
+   "now": "2026-10-29T18:41:47.915667+00:00",
    "creatorId": "00000007-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000007-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:56:17.219573+00:00",
+     "created_at": "2026-10-29T18:31:47.866013+00:00",
      "creator_id": "00000007-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -271,7 +274,7 @@
      "id": "00000007-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T16:36:17.230659+00:00",
+     "created_at": "2026-10-29T17:11:47.876721+00:00",
      "creator_id": "00000007-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -286,6 +289,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -304,14 +308,14 @@
   },
   {
    "id": "blank-blank-oldest",
-   "now": "2026-10-29T18:06:17.377137+00:00",
+   "now": "2026-10-29T18:41:48.031609+00:00",
    "creatorId": "00000008-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000008-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:56:17.332043+00:00",
+     "created_at": "2026-10-29T18:31:47.97805+00:00",
      "creator_id": "00000008-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -322,7 +326,7 @@
      "id": "00000008-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T16:36:17.341821+00:00",
+     "created_at": "2026-10-29T17:11:47.987782+00:00",
      "creator_id": "00000008-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -337,6 +341,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -355,14 +360,14 @@
   },
   {
    "id": "active-vs-open-window",
-   "now": "2026-10-29T18:06:17.480967+00:00",
+   "now": "2026-10-29T18:41:48.154042+00:00",
    "creatorId": "00000009-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000009-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:17.438019+00:00",
+     "created_at": "2026-10-29T17:41:48.096547+00:00",
      "creator_id": "00000009-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -373,21 +378,22 @@
      "id": "00000009-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:17.447229+00:00",
+     "created_at": "2026-10-29T17:41:48.107906+00:00",
      "creator_id": "00000009-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:17.447229+00:00",
+     "active_from": "2026-10-28T18:41:48.107906+00:00",
      "archived_at": null,
      "active_until": null
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "00000009-0000-4000-8000-00000000000a",
+    "wheel_id": "00000009-0000-4000-8000-00000000000b",
     "creator_id": "00000009-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -395,27 +401,26 @@
     "00000009-0000-4000-8000-00000000000b": "B"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
+    "issuance": "B",
     "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE",
     "surprise": "S2"
    }
   },
   {
    "id": "active-wheel-vs-open-scratch",
-   "now": "2026-10-29T18:06:17.581347+00:00",
+   "now": "2026-10-29T18:41:48.28286+00:00",
    "creatorId": "0000000a-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000000a-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:17.538357+00:00",
+     "created_at": "2026-10-29T17:41:48.235059+00:00",
      "creator_id": "0000000a-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -426,21 +431,22 @@
      "id": "0000000a-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:17.547577+00:00",
+     "created_at": "2026-10-29T17:41:48.245931+00:00",
      "creator_id": "0000000a-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:17.547577+00:00",
+     "active_from": "2026-10-28T18:41:48.245931+00:00",
      "archived_at": null,
-     "active_until": "2026-10-30T18:06:17.547577+00:00"
+     "active_until": "2026-10-30T18:41:48.245931+00:00"
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "0000000a-0000-4000-8000-00000000000a",
+    "wheel_id": "0000000a-0000-4000-8000-00000000000b",
     "creator_id": "0000000a-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -448,27 +454,26 @@
     "0000000a-0000-4000-8000-00000000000b": "B"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
+    "issuance": "B",
     "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE",
     "surprise": "S2"
    }
   },
   {
    "id": "active-vs-until-only",
-   "now": "2026-10-29T18:06:17.679918+00:00",
+   "now": "2026-10-29T18:41:48.38576+00:00",
    "creatorId": "0000000b-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000000b-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:17.637615+00:00",
+     "created_at": "2026-10-29T17:41:48.341699+00:00",
      "creator_id": "0000000b-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -479,21 +484,22 @@
      "id": "0000000b-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:17.647173+00:00",
+     "created_at": "2026-10-29T17:41:48.351143+00:00",
      "creator_id": "0000000b-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
      "archived_at": null,
-     "active_until": "2026-10-30T18:06:17.647173+00:00"
+     "active_until": "2026-10-30T18:41:48.351143+00:00"
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "0000000b-0000-4000-8000-00000000000a",
+    "wheel_id": "0000000b-0000-4000-8000-00000000000b",
     "creator_id": "0000000b-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -501,27 +507,26 @@
     "0000000b-0000-4000-8000-00000000000b": "B"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
+    "issuance": "B",
     "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE",
     "surprise": "S2"
    }
   },
   {
    "id": "active-vs-future",
-   "now": "2026-10-29T18:06:17.778274+00:00",
+   "now": "2026-10-29T18:41:48.484906+00:00",
    "creatorId": "0000000c-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000000c-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:17.736179+00:00",
+     "created_at": "2026-10-29T17:41:48.44317+00:00",
      "creator_id": "0000000c-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -532,10 +537,10 @@
      "id": "0000000c-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:17.745261+00:00",
+     "created_at": "2026-10-29T17:41:48.45276+00:00",
      "creator_id": "0000000c-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-30T18:06:17.745261+00:00",
+     "active_from": "2026-10-30T18:41:48.45276+00:00",
      "archived_at": null,
      "active_until": null
     }
@@ -547,6 +552,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -565,14 +571,14 @@
   },
   {
    "id": "active-vs-expired",
-   "now": "2026-10-29T18:06:17.878353+00:00",
+   "now": "2026-10-29T18:41:48.580746+00:00",
    "creatorId": "0000000d-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000000d-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:17.835167+00:00",
+     "created_at": "2026-10-29T17:41:48.538895+00:00",
      "creator_id": "0000000d-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -583,12 +589,12 @@
      "id": "0000000d-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:17.84433+00:00",
+     "created_at": "2026-10-29T17:41:48.548227+00:00",
      "creator_id": "0000000d-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-27T18:06:17.84433+00:00",
+     "active_from": "2026-10-27T18:41:48.548227+00:00",
      "archived_at": null,
-     "active_until": "2026-10-28T18:06:17.84433+00:00"
+     "active_until": "2026-10-28T18:41:48.548227+00:00"
     }
    ],
    "campaigns": [],
@@ -598,6 +604,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -616,14 +623,14 @@
   },
   {
    "id": "open-window-archived",
-   "now": "2026-10-29T18:06:17.975706+00:00",
+   "now": "2026-10-29T18:41:48.682282+00:00",
    "creatorId": "0000000e-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000000e-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:17.934312+00:00",
+     "created_at": "2026-10-29T17:41:48.638608+00:00",
      "creator_id": "0000000e-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -634,11 +641,11 @@
      "id": "0000000e-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:17.943262+00:00",
+     "created_at": "2026-10-29T17:41:48.648855+00:00",
      "creator_id": "0000000e-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:17.943262+00:00",
-     "archived_at": "2026-10-29T18:06:17.943262+00:00",
+     "active_from": "2026-10-28T18:41:48.648855+00:00",
+     "archived_at": "2026-10-29T18:41:48.648855+00:00",
      "active_until": null
     }
    ],
@@ -649,6 +656,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -667,14 +675,14 @@
   },
   {
    "id": "two-active-same-order",
-   "now": "2026-10-29T18:06:18.086064+00:00",
+   "now": "2026-10-29T18:41:48.782471+00:00",
    "creatorId": "0000000f-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000000f-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T16:36:18.037225+00:00",
+     "created_at": "2026-10-29T17:11:48.738647+00:00",
      "creator_id": "0000000f-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -685,7 +693,7 @@
      "id": "0000000f-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:56:18.049426+00:00",
+     "created_at": "2026-10-29T18:31:48.748559+00:00",
      "creator_id": "0000000f-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -700,6 +708,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -718,14 +727,14 @@
   },
   {
    "id": "two-active-id-vs-age",
-   "now": "2026-10-29T18:06:18.193821+00:00",
+   "now": "2026-10-29T18:41:48.885202+00:00",
    "creatorId": "00000010-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000010-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:56:18.146445+00:00",
+     "created_at": "2026-10-29T18:31:48.842569+00:00",
      "creator_id": "00000010-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -736,7 +745,7 @@
      "id": "00000010-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T16:36:18.156331+00:00",
+     "created_at": "2026-10-29T17:11:48.852213+00:00",
      "creator_id": "00000010-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -751,6 +760,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -759,28 +769,27 @@
    },
    "result": {
     "issuance": "B",
-    "context": "A",
-    "spin": "A"
+    "context": "B",
+    "spin": "B"
    },
    "expected": {
     "issuance": "B",
-    "spin": "A",
-    "bug": "ACTIVE_ORDER_MISMATCH"
+    "spin": "B"
    }
   },
   {
    "id": "overlapping-windows",
-   "now": "2026-10-29T18:06:18.320449+00:00",
+   "now": "2026-10-29T18:41:48.984731+00:00",
    "creatorId": "00000011-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000011-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T16:36:18.264637+00:00",
+     "created_at": "2026-10-29T17:11:48.941665+00:00",
      "creator_id": "00000011-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-27T18:06:18.264637+00:00",
+     "active_from": "2026-10-27T18:41:48.941665+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -788,21 +797,22 @@
      "id": "00000011-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:56:18.27575+00:00",
+     "created_at": "2026-10-29T18:31:48.951347+00:00",
      "creator_id": "00000011-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:18.27575+00:00",
+     "active_from": "2026-10-28T18:41:48.951347+00:00",
      "archived_at": null,
      "active_until": null
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "00000011-0000-4000-8000-00000000000a",
+    "wheel_id": "00000011-0000-4000-8000-00000000000b",
     "creator_id": "00000011-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -810,29 +820,28 @@
     "00000011-0000-4000-8000-00000000000b": "B"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
-    "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE"
+    "issuance": "B",
+    "spin": "B"
    }
   },
   {
    "id": "overlapping-windows-same-start",
-   "now": "2026-10-29T18:06:18.446949+00:00",
+   "now": "2026-10-29T18:41:49.08689+00:00",
    "creatorId": "00000012-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000012-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T16:36:18.391439+00:00",
+     "created_at": "2026-10-29T17:11:49.040374+00:00",
      "creator_id": "00000012-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:18.391439+00:00",
+     "active_from": "2026-10-28T18:41:49.040374+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -840,21 +849,22 @@
      "id": "00000012-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:56:18.404111+00:00",
+     "created_at": "2026-10-29T18:31:49.053594+00:00",
      "creator_id": "00000012-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:18.404111+00:00",
+     "active_from": "2026-10-28T18:41:49.053594+00:00",
      "archived_at": null,
      "active_until": null
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "00000012-0000-4000-8000-00000000000a",
+    "wheel_id": "00000012-0000-4000-8000-00000000000b",
     "creator_id": "00000012-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -862,26 +872,25 @@
     "00000012-0000-4000-8000-00000000000b": "B"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
-    "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE"
+    "issuance": "B",
+    "spin": "B"
    }
   },
   {
    "id": "scratch-active-vs-wheel-window",
-   "now": "2026-10-29T18:06:18.553936+00:00",
+   "now": "2026-10-29T18:41:49.187057+00:00",
    "creatorId": "00000013-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000013-0000-4000-8000-00000000000a",
      "game_kind": "scratch",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:18.508402+00:00",
+     "created_at": "2026-10-29T17:41:49.144573+00:00",
      "creator_id": "00000013-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -892,21 +901,22 @@
      "id": "00000013-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:18.51964+00:00",
+     "created_at": "2026-10-29T17:41:49.154191+00:00",
      "creator_id": "00000013-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-29T17:06:18.51964+00:00",
+     "active_from": "2026-10-29T17:41:49.154191+00:00",
      "archived_at": null,
      "active_until": null
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "00000013-0000-4000-8000-00000000000a",
+    "wheel_id": "00000013-0000-4000-8000-00000000000b",
     "creator_id": "00000013-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -914,27 +924,26 @@
     "00000013-0000-4000-8000-00000000000b": "B"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
+    "issuance": "B",
     "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE",
     "surprise": "S2"
    }
   },
   {
    "id": "pin-valid",
-   "now": "2026-10-29T18:06:18.665906+00:00",
+   "now": "2026-10-29T18:41:49.29748+00:00",
    "creatorId": "00000014-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000014-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:18.614377+00:00",
+     "created_at": "2026-10-29T17:41:49.245013+00:00",
      "creator_id": "00000014-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -945,7 +954,7 @@
      "id": "00000014-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:18.623796+00:00",
+     "created_at": "2026-10-29T17:41:49.254561+00:00",
      "creator_id": "00000014-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -966,6 +975,7 @@
     "campaign_id": "00000014-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -984,14 +994,14 @@
   },
   {
    "id": "pin-scratch",
-   "now": "2026-10-29T18:06:18.777042+00:00",
+   "now": "2026-10-29T18:41:49.411435+00:00",
    "creatorId": "00000015-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000015-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:18.723393+00:00",
+     "created_at": "2026-10-29T17:41:49.358307+00:00",
      "creator_id": "00000015-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1002,7 +1012,7 @@
      "id": "00000015-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:18.732907+00:00",
+     "created_at": "2026-10-29T17:41:49.368125+00:00",
      "creator_id": "00000015-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1023,6 +1033,7 @@
     "campaign_id": "00000015-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1041,17 +1052,17 @@
   },
   {
    "id": "pin-over-schedule",
-   "now": "2026-10-29T18:06:18.884888+00:00",
+   "now": "2026-10-29T18:41:49.523102+00:00",
    "creatorId": "00000016-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000016-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:18.833761+00:00",
+     "created_at": "2026-10-29T17:41:49.470774+00:00",
      "creator_id": "00000016-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:18.833761+00:00",
+     "active_from": "2026-10-28T18:41:49.470774+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1059,7 +1070,7 @@
      "id": "00000016-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:18.843206+00:00",
+     "created_at": "2026-10-29T17:41:49.480932+00:00",
      "creator_id": "00000016-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1080,6 +1091,7 @@
     "campaign_id": "00000016-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1098,14 +1110,14 @@
   },
   {
    "id": "pin-future-window",
-   "now": "2026-10-29T18:06:18.995656+00:00",
+   "now": "2026-10-29T18:41:49.642172+00:00",
    "creatorId": "00000017-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000017-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:18.943761+00:00",
+     "created_at": "2026-10-29T17:41:49.583148+00:00",
      "creator_id": "00000017-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1116,10 +1128,10 @@
      "id": "00000017-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:18.95339+00:00",
+     "created_at": "2026-10-29T17:41:49.594493+00:00",
      "creator_id": "00000017-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-30T18:06:18.95339+00:00",
+     "active_from": "2026-10-30T18:41:49.594493+00:00",
      "archived_at": null,
      "active_until": null
     }
@@ -1137,6 +1149,7 @@
     "campaign_id": "00000017-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1156,14 +1169,14 @@
   },
   {
    "id": "pin-expired-window",
-   "now": "2026-10-29T18:06:19.11362+00:00",
+   "now": "2026-10-29T18:41:49.761714+00:00",
    "creatorId": "00000018-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000018-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.055943+00:00",
+     "created_at": "2026-10-29T17:41:49.706001+00:00",
      "creator_id": "00000018-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1174,12 +1187,12 @@
      "id": "00000018-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.069454+00:00",
+     "created_at": "2026-10-29T17:41:49.716738+00:00",
      "creator_id": "00000018-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
      "archived_at": null,
-     "active_until": "2026-10-28T18:06:19.069454+00:00"
+     "active_until": "2026-10-28T18:41:49.716738+00:00"
     }
    ],
    "campaigns": [
@@ -1195,6 +1208,7 @@
     "campaign_id": "00000018-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1214,14 +1228,14 @@
   },
   {
    "id": "pin-archived",
-   "now": "2026-10-29T18:06:19.228189+00:00",
+   "now": "2026-10-29T18:41:49.873055+00:00",
    "creatorId": "00000019-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000019-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.174724+00:00",
+     "created_at": "2026-10-29T17:41:49.821668+00:00",
      "creator_id": "00000019-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1232,11 +1246,11 @@
      "id": "00000019-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.184063+00:00",
+     "created_at": "2026-10-29T17:41:49.831207+00:00",
      "creator_id": "00000019-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:19.184063+00:00",
+     "archived_at": "2026-10-29T18:41:49.831207+00:00",
      "active_until": null
     }
    ],
@@ -1253,6 +1267,7 @@
     "campaign_id": "00000019-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1271,14 +1286,14 @@
   },
   {
    "id": "pin-archived-with-schedule",
-   "now": "2026-10-29T18:06:19.350055+00:00",
+   "now": "2026-10-29T18:41:49.997355+00:00",
    "creatorId": "0000001a-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000001a-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.287634+00:00",
+     "created_at": "2026-10-29T17:41:49.931308+00:00",
      "creator_id": "0000001a-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1289,21 +1304,21 @@
      "id": "0000001a-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.297694+00:00",
+     "created_at": "2026-10-29T17:41:49.941194+00:00",
      "creator_id": "0000001a-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:19.297694+00:00",
+     "archived_at": "2026-10-29T18:41:49.941194+00:00",
      "active_until": null
     },
     {
      "id": "0000001a-0000-4000-8000-00000000000c",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.307084+00:00",
+     "created_at": "2026-10-29T17:41:49.951122+00:00",
      "creator_id": "0000001a-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:19.307084+00:00",
+     "active_from": "2026-10-28T18:41:49.951122+00:00",
      "archived_at": null,
      "active_until": null
     }
@@ -1316,11 +1331,12 @@
     }
    ],
    "pass": {
-    "wheel_id": "0000001a-0000-4000-8000-00000000000a",
+    "wheel_id": "0000001a-0000-4000-8000-00000000000c",
     "creator_id": "0000001a-0000-4000-8000-000000000010",
     "campaign_id": "0000001a-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1329,27 +1345,26 @@
     "0000001a-0000-4000-8000-00000000000c": "C"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "C",
     "context": "C",
     "spin": "C"
    },
    "expected": {
-    "issuance": "A",
+    "issuance": "C",
     "spin": "C",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE",
     "surprise": "S2"
    }
   },
   {
    "id": "pin-cross-tenant",
-   "now": "2026-10-29T18:06:19.479919+00:00",
+   "now": "2026-10-29T18:41:50.13058+00:00",
    "creatorId": "0000001b-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000001b-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.408088+00:00",
+     "created_at": "2026-10-29T17:41:50.056674+00:00",
      "creator_id": "0000001b-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1360,7 +1375,7 @@
      "id": "0000001b-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.417935+00:00",
+     "created_at": "2026-10-29T17:41:50.066128+00:00",
      "creator_id": "0000001b-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1371,7 +1386,7 @@
      "id": "0000001b-0000-4000-8000-00000000000f",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.437203+00:00",
+     "created_at": "2026-10-29T17:41:50.085583+00:00",
      "creator_id": "0000001b-0000-4000-8000-000000000011",
      "game_ready": true,
      "active_from": null,
@@ -1392,6 +1407,7 @@
     "campaign_id": "0000001b-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1412,14 +1428,14 @@
   },
   {
    "id": "pin-archived-after",
-   "now": "2026-10-29T18:06:19.598079+00:00",
+   "now": "2026-10-29T18:41:50.255186+00:00",
    "creatorId": "0000001c-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000001c-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.53682+00:00",
+     "created_at": "2026-10-29T17:41:50.18958+00:00",
      "creator_id": "0000001c-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1430,11 +1446,11 @@
      "id": "0000001c-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.546997+00:00",
+     "created_at": "2026-10-29T17:41:50.199829+00:00",
      "creator_id": "0000001c-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:19.589537+00:00",
+     "archived_at": "2026-10-29T18:41:50.246281+00:00",
      "active_until": null
     }
    ],
@@ -1451,6 +1467,7 @@
     "campaign_id": "0000001c-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1470,29 +1487,29 @@
   },
   {
    "id": "pin-everything-archived",
-   "now": "2026-10-29T18:06:19.731349+00:00",
+   "now": "2026-10-29T18:41:50.38709+00:00",
    "creatorId": "0000001d-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000001d-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.655894+00:00",
+     "created_at": "2026-10-29T17:41:50.314082+00:00",
      "creator_id": "0000001d-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:19.711594+00:00",
+     "archived_at": "2026-10-29T18:41:50.368054+00:00",
      "active_until": null
     },
     {
      "id": "0000001d-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.665915+00:00",
+     "created_at": "2026-10-29T17:41:50.324137+00:00",
      "creator_id": "0000001d-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:19.720818+00:00",
+     "archived_at": "2026-10-29T18:41:50.378113+00:00",
      "active_until": null
     }
    ],
@@ -1509,6 +1526,7 @@
     "campaign_id": "0000001d-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1528,14 +1546,14 @@
   },
   {
    "id": "pass-explicit-vs-active",
-   "now": "2026-10-29T18:06:19.814644+00:00",
+   "now": "2026-10-29T18:41:50.476223+00:00",
    "creatorId": "0000001e-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000001e-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.769759+00:00",
+     "created_at": "2026-10-29T17:41:50.422143+00:00",
      "creator_id": "0000001e-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1546,7 +1564,7 @@
      "id": "0000001e-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.779925+00:00",
+     "created_at": "2026-10-29T17:41:50.431939+00:00",
      "creator_id": "0000001e-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1561,6 +1579,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1580,14 +1599,14 @@
   },
   {
    "id": "pass-explicit-active-vs-scheduled-scratch",
-   "now": "2026-10-29T18:06:19.91911+00:00",
+   "now": "2026-10-29T18:41:50.579859+00:00",
    "creatorId": "0000001f-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000001f-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:19.87426+00:00",
+     "created_at": "2026-10-29T17:41:50.535999+00:00",
      "creator_id": "0000001f-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1598,12 +1617,12 @@
      "id": "0000001f-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.884539+00:00",
+     "created_at": "2026-10-29T17:41:50.545785+00:00",
      "creator_id": "0000001f-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:19.884539+00:00",
+     "active_from": "2026-10-28T18:41:50.545785+00:00",
      "archived_at": null,
-     "active_until": "2026-10-30T18:06:19.884539+00:00"
+     "active_until": "2026-10-30T18:41:50.545785+00:00"
     }
    ],
    "campaigns": [],
@@ -1613,6 +1632,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1632,25 +1652,25 @@
   },
   {
    "id": "pass-archived-stored",
-   "now": "2026-10-29T18:06:20.031506+00:00",
+   "now": "2026-10-29T18:41:50.694234+00:00",
    "creatorId": "00000020-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000020-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:19.97638+00:00",
+     "created_at": "2026-10-29T17:41:50.640418+00:00",
      "creator_id": "00000020-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:20.022736+00:00",
+     "archived_at": "2026-10-29T18:41:50.685131+00:00",
      "active_until": null
     },
     {
      "id": "00000020-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:56:19.985966+00:00",
+     "created_at": "2026-10-29T18:31:50.650323+00:00",
      "creator_id": "00000020-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1665,6 +1685,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1684,18 +1705,18 @@
   },
   {
    "id": "pass-archived-stored-only",
-   "now": "2026-10-29T18:06:20.14308+00:00",
+   "now": "2026-10-29T18:41:50.792186+00:00",
    "creatorId": "00000021-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000021-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.096648+00:00",
+     "created_at": "2026-10-29T17:41:50.750414+00:00",
      "creator_id": "00000021-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:20.13368+00:00",
+     "archived_at": "2026-10-29T18:41:50.783499+00:00",
      "active_until": null
     }
    ],
@@ -1706,6 +1727,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1724,14 +1746,14 @@
   },
   {
    "id": "pass-explicit-then-schedule",
-   "now": "2026-10-29T18:06:20.233742+00:00",
+   "now": "2026-10-29T18:41:50.881587+00:00",
    "creatorId": "00000022-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000022-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:20.181088+00:00",
+     "created_at": "2026-10-29T17:41:50.827024+00:00",
      "creator_id": "00000022-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1742,10 +1764,10 @@
      "id": "00000022-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.190739+00:00",
+     "created_at": "2026-10-29T17:41:50.836838+00:00",
      "creator_id": "00000022-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-29T17:06:20.225896+00:00",
+     "active_from": "2026-10-29T17:41:50.872013+00:00",
      "archived_at": null,
      "active_until": null
     }
@@ -1757,6 +1779,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1776,14 +1799,14 @@
   },
   {
    "id": "four-mixed",
-   "now": "2026-10-29T18:06:20.357069+00:00",
+   "now": "2026-10-29T18:41:51.006634+00:00",
    "creatorId": "00000023-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000023-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:20.291834+00:00",
+     "created_at": "2026-10-29T17:41:50.941927+00:00",
      "creator_id": "00000023-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1794,10 +1817,10 @@
      "id": "00000023-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.301674+00:00",
+     "created_at": "2026-10-29T17:41:50.951824+00:00",
      "creator_id": "00000023-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:20.301674+00:00",
+     "active_from": "2026-10-28T18:41:50.951824+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1805,10 +1828,10 @@
      "id": "00000023-0000-4000-8000-00000000000c",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.311596+00:00",
+     "created_at": "2026-10-29T17:41:50.961973+00:00",
      "creator_id": "00000023-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-30T18:06:20.311596+00:00",
+     "active_from": "2026-10-30T18:41:50.961973+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1816,21 +1839,22 @@
      "id": "00000023-0000-4000-8000-00000000000d",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.322629+00:00",
+     "created_at": "2026-10-29T17:41:50.972592+00:00",
      "creator_id": "00000023-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:20.322629+00:00",
+     "archived_at": "2026-10-29T18:41:50.972592+00:00",
      "active_until": null
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "00000023-0000-4000-8000-00000000000a",
+    "wheel_id": "00000023-0000-4000-8000-00000000000b",
     "creator_id": "00000023-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1840,27 +1864,26 @@
     "00000023-0000-4000-8000-00000000000d": "D"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
+    "issuance": "B",
     "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE",
     "surprise": "S2"
    }
   },
   {
    "id": "four-pin-future",
-   "now": "2026-10-29T18:06:20.495982+00:00",
+   "now": "2026-10-29T18:41:51.134842+00:00",
    "creatorId": "00000024-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000024-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:20.416888+00:00",
+     "created_at": "2026-10-29T17:41:51.063347+00:00",
      "creator_id": "00000024-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -1871,10 +1894,10 @@
      "id": "00000024-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.426743+00:00",
+     "created_at": "2026-10-29T17:41:51.072924+00:00",
      "creator_id": "00000024-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:20.426743+00:00",
+     "active_from": "2026-10-28T18:41:51.072924+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1882,10 +1905,10 @@
      "id": "00000024-0000-4000-8000-00000000000c",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.436787+00:00",
+     "created_at": "2026-10-29T17:41:51.082825+00:00",
      "creator_id": "00000024-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-30T18:06:20.436787+00:00",
+     "active_from": "2026-10-30T18:41:51.082825+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1893,11 +1916,11 @@
      "id": "00000024-0000-4000-8000-00000000000d",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.446308+00:00",
+     "created_at": "2026-10-29T17:41:51.092869+00:00",
      "creator_id": "00000024-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
-     "archived_at": "2026-10-29T18:06:20.446308+00:00",
+     "archived_at": "2026-10-29T18:41:51.092869+00:00",
      "active_until": null
     }
    ],
@@ -1914,6 +1937,7 @@
     "campaign_id": "00000024-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1935,17 +1959,17 @@
   },
   {
    "id": "four-windows-latest-start",
-   "now": "2026-10-29T18:06:20.640798+00:00",
+   "now": "2026-10-29T18:41:51.255357+00:00",
    "creatorId": "00000025-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000025-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T14:06:20.561451+00:00",
+     "created_at": "2026-10-29T14:41:51.192906+00:00",
      "creator_id": "00000025-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-26T18:06:20.561451+00:00",
+     "active_from": "2026-10-26T18:41:51.192906+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1953,10 +1977,10 @@
      "id": "00000025-0000-4000-8000-00000000000b",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T15:06:20.574618+00:00",
+     "created_at": "2026-10-29T15:41:51.202493+00:00",
      "creator_id": "00000025-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-27T18:06:20.574618+00:00",
+     "active_from": "2026-10-27T18:41:51.202493+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1964,10 +1988,10 @@
      "id": "00000025-0000-4000-8000-00000000000c",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T16:06:20.586812+00:00",
+     "created_at": "2026-10-29T16:41:51.212232+00:00",
      "creator_id": "00000025-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:20.586812+00:00",
+     "active_from": "2026-10-28T18:41:51.212232+00:00",
      "archived_at": null,
      "active_until": null
     },
@@ -1975,21 +1999,22 @@
      "id": "00000025-0000-4000-8000-00000000000d",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.597783+00:00",
+     "created_at": "2026-10-29T17:41:51.222128+00:00",
      "creator_id": "00000025-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:20.597783+00:00",
+     "active_from": "2026-10-28T18:41:51.222128+00:00",
      "archived_at": null,
-     "active_until": "2026-10-29T17:06:20.597783+00:00"
+     "active_until": "2026-10-29T17:41:51.222128+00:00"
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "00000025-0000-4000-8000-00000000000a",
+    "wheel_id": "00000025-0000-4000-8000-00000000000c",
     "creator_id": "00000025-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -1999,26 +2024,25 @@
     "00000025-0000-4000-8000-00000000000d": "D"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "C",
     "context": "C",
     "spin": "C"
    },
    "expected": {
-    "issuance": "A",
-    "spin": "C",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE"
+    "issuance": "C",
+    "spin": "C"
    }
   },
   {
    "id": "four-all-active",
-   "now": "2026-10-29T18:06:20.775446+00:00",
+   "now": "2026-10-29T18:41:51.377855+00:00",
    "creatorId": "00000026-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000026-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:56:20.705885+00:00",
+     "created_at": "2026-10-29T18:31:51.313806+00:00",
      "creator_id": "00000026-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2029,7 +2053,7 @@
      "id": "00000026-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": true,
-     "created_at": "2026-10-29T17:46:20.71651+00:00",
+     "created_at": "2026-10-29T18:21:51.323791+00:00",
      "creator_id": "00000026-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2040,7 +2064,7 @@
      "id": "00000026-0000-4000-8000-00000000000c",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:36:20.727239+00:00",
+     "created_at": "2026-10-29T18:11:51.335114+00:00",
      "creator_id": "00000026-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2051,7 +2075,7 @@
      "id": "00000026-0000-4000-8000-00000000000d",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:26:20.739105+00:00",
+     "created_at": "2026-10-29T18:01:51.344582+00:00",
      "creator_id": "00000026-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2066,6 +2090,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": true
    },
    "letters": {
@@ -2076,25 +2101,24 @@
    },
    "result": {
     "issuance": "D",
-    "context": "A",
-    "spin": "A"
+    "context": "D",
+    "spin": "D"
    },
    "expected": {
     "issuance": "D",
-    "spin": "A",
-    "bug": "ACTIVE_ORDER_MISMATCH"
+    "spin": "D"
    }
   },
   {
    "id": "flag-off-pinned-scratch",
-   "now": "2026-10-29T18:06:20.905965+00:00",
+   "now": "2026-10-29T18:41:51.491362+00:00",
    "creatorId": "00000027-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000027-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:20.834604+00:00",
+     "created_at": "2026-10-29T17:41:51.433653+00:00",
      "creator_id": "00000027-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2105,7 +2129,7 @@
      "id": "00000027-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.844712+00:00",
+     "created_at": "2026-10-29T17:41:51.442984+00:00",
      "creator_id": "00000027-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2126,6 +2150,7 @@
     "campaign_id": "00000027-0000-4000-8000-00000000000e"
    },
    "features": {
+    "bingo": true,
     "scratch": false
    },
    "letters": {
@@ -2145,14 +2170,14 @@
   },
   {
    "id": "flag-off-scheduled-scratch",
-   "now": "2026-10-29T18:06:21.019012+00:00",
+   "now": "2026-10-29T18:41:51.597334+00:00",
    "creatorId": "00000028-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000028-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:20.96861+00:00",
+     "created_at": "2026-10-29T17:41:51.547882+00:00",
      "creator_id": "00000028-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2163,21 +2188,22 @@
      "id": "00000028-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:20.97793+00:00",
+     "created_at": "2026-10-29T17:41:51.557466+00:00",
      "creator_id": "00000028-0000-4000-8000-000000000010",
      "game_ready": true,
-     "active_from": "2026-10-28T18:06:20.97793+00:00",
+     "active_from": "2026-10-28T18:41:51.557466+00:00",
      "archived_at": null,
      "active_until": null
     }
    ],
    "campaigns": [],
    "pass": {
-    "wheel_id": "00000028-0000-4000-8000-00000000000a",
+    "wheel_id": "00000028-0000-4000-8000-00000000000b",
     "creator_id": "00000028-0000-4000-8000-000000000010",
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": false
    },
    "letters": {
@@ -2185,27 +2211,26 @@
     "00000028-0000-4000-8000-00000000000b": "B"
    },
    "result": {
-    "issuance": "A",
+    "issuance": "B",
     "context": "B",
     "spin": "B"
    },
    "expected": {
-    "issuance": "A",
+    "issuance": "B",
     "spin": "B",
-    "bug": "ISSUANCE_IGNORES_SCHEDULE",
     "surprise": "S6"
    }
   },
   {
    "id": "flag-off-active-scratch",
-   "now": "2026-10-29T18:06:21.127046+00:00",
+   "now": "2026-10-29T18:41:51.704574+00:00",
    "creatorId": "00000029-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "00000029-0000-4000-8000-00000000000a",
      "game_kind": "wheel",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:21.075869+00:00",
+     "created_at": "2026-10-29T17:41:51.65535+00:00",
      "creator_id": "00000029-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2216,7 +2241,7 @@
      "id": "00000029-0000-4000-8000-00000000000b",
      "game_kind": "scratch",
      "is_active": true,
-     "created_at": "2026-10-29T17:06:21.084889+00:00",
+     "created_at": "2026-10-29T17:41:51.664619+00:00",
      "creator_id": "00000029-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2231,6 +2256,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": false
    },
    "letters": {
@@ -2250,14 +2276,14 @@
   },
   {
    "id": "flag-off-only-scratch",
-   "now": "2026-10-29T18:06:21.227107+00:00",
+   "now": "2026-10-29T18:41:51.801056+00:00",
    "creatorId": "0000002a-0000-4000-8000-000000000010",
    "wheels": [
     {
      "id": "0000002a-0000-4000-8000-00000000000a",
      "game_kind": "scratch",
      "is_active": false,
-     "created_at": "2026-10-29T17:06:21.184745+00:00",
+     "created_at": "2026-10-29T17:41:51.759718+00:00",
      "creator_id": "0000002a-0000-4000-8000-000000000010",
      "game_ready": true,
      "active_from": null,
@@ -2272,6 +2298,7 @@
     "campaign_id": null
    },
    "features": {
+    "bingo": true,
     "scratch": false
    },
    "letters": {
@@ -2286,6 +2313,425 @@
     "issuance": "A",
     "spin": "A",
     "surprise": "S6"
+   }
+  },
+  {
+   "id": "one-bingo",
+   "now": "2026-10-29T18:41:51.916416+00:00",
+   "creatorId": "0000002b-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "0000002b-0000-4000-8000-00000000000a",
+     "game_kind": "bingo",
+     "is_active": false,
+     "created_at": "2026-10-29T17:41:51.856462+00:00",
+     "creator_id": "0000002b-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    }
+   ],
+   "campaigns": [],
+   "pass": {
+    "wheel_id": "0000002b-0000-4000-8000-00000000000a",
+    "creator_id": "0000002b-0000-4000-8000-000000000010",
+    "campaign_id": null
+   },
+   "features": {
+    "bingo": true,
+    "scratch": true
+   },
+   "letters": {
+    "0000002b-0000-4000-8000-00000000000a": "A"
+   },
+   "result": {
+    "issuance": "A",
+    "context": "A",
+    "spin": "A"
+   },
+   "expected": {
+    "issuance": "A",
+    "spin": "A"
+   }
+  },
+  {
+   "id": "active-wheel-vs-open-bingo",
+   "now": "2026-10-29T18:41:52.041461+00:00",
+   "creatorId": "0000002c-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "0000002c-0000-4000-8000-00000000000a",
+     "game_kind": "wheel",
+     "is_active": true,
+     "created_at": "2026-10-29T17:41:51.974859+00:00",
+     "creator_id": "0000002c-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    },
+    {
+     "id": "0000002c-0000-4000-8000-00000000000b",
+     "game_kind": "bingo",
+     "is_active": false,
+     "created_at": "2026-10-29T17:41:51.984144+00:00",
+     "creator_id": "0000002c-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": "2026-10-28T18:41:52.008188+00:00",
+     "archived_at": null,
+     "active_until": "2026-10-30T18:41:52.008188+00:00"
+    }
+   ],
+   "campaigns": [],
+   "pass": {
+    "wheel_id": "0000002c-0000-4000-8000-00000000000b",
+    "creator_id": "0000002c-0000-4000-8000-000000000010",
+    "campaign_id": null
+   },
+   "features": {
+    "bingo": true,
+    "scratch": true
+   },
+   "letters": {
+    "0000002c-0000-4000-8000-00000000000a": "A",
+    "0000002c-0000-4000-8000-00000000000b": "B"
+   },
+   "result": {
+    "issuance": "B",
+    "context": "B",
+    "spin": "B"
+   },
+   "expected": {
+    "issuance": "B",
+    "spin": "B",
+    "surprise": "S2"
+   }
+  },
+  {
+   "id": "pin-bingo",
+   "now": "2026-10-29T18:41:52.177846+00:00",
+   "creatorId": "0000002d-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "0000002d-0000-4000-8000-00000000000a",
+     "game_kind": "wheel",
+     "is_active": true,
+     "created_at": "2026-10-29T17:41:52.101098+00:00",
+     "creator_id": "0000002d-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    },
+    {
+     "id": "0000002d-0000-4000-8000-00000000000b",
+     "game_kind": "bingo",
+     "is_active": false,
+     "created_at": "2026-10-29T17:41:52.110788+00:00",
+     "creator_id": "0000002d-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    }
+   ],
+   "campaigns": [
+    {
+     "id": "0000002d-0000-4000-8000-00000000000e",
+     "creator_id": "0000002d-0000-4000-8000-000000000010",
+     "pinned_wheel_id": "0000002d-0000-4000-8000-00000000000b"
+    }
+   ],
+   "pass": {
+    "wheel_id": "0000002d-0000-4000-8000-00000000000b",
+    "creator_id": "0000002d-0000-4000-8000-000000000010",
+    "campaign_id": "0000002d-0000-4000-8000-00000000000e"
+   },
+   "features": {
+    "bingo": true,
+    "scratch": true
+   },
+   "letters": {
+    "0000002d-0000-4000-8000-00000000000a": "A",
+    "0000002d-0000-4000-8000-00000000000b": "B"
+   },
+   "result": {
+    "issuance": "B",
+    "context": "B",
+    "spin": "B"
+   },
+   "expected": {
+    "issuance": "B",
+    "spin": "B"
+   }
+  },
+  {
+   "id": "two-active-bingo-vs-wheel-age",
+   "now": "2026-10-29T18:41:52.3217+00:00",
+   "creatorId": "0000002e-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "0000002e-0000-4000-8000-00000000000a",
+     "game_kind": "bingo",
+     "is_active": true,
+     "created_at": "2026-10-29T18:31:52.237939+00:00",
+     "creator_id": "0000002e-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    },
+    {
+     "id": "0000002e-0000-4000-8000-00000000000b",
+     "game_kind": "wheel",
+     "is_active": true,
+     "created_at": "2026-10-29T17:11:52.273709+00:00",
+     "creator_id": "0000002e-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    }
+   ],
+   "campaigns": [],
+   "pass": {
+    "wheel_id": "0000002e-0000-4000-8000-00000000000b",
+    "creator_id": "0000002e-0000-4000-8000-000000000010",
+    "campaign_id": null
+   },
+   "features": {
+    "bingo": true,
+    "scratch": true
+   },
+   "letters": {
+    "0000002e-0000-4000-8000-00000000000a": "A",
+    "0000002e-0000-4000-8000-00000000000b": "B"
+   },
+   "result": {
+    "issuance": "B",
+    "context": "B",
+    "spin": "B"
+   },
+   "expected": {
+    "issuance": "B",
+    "spin": "B"
+   }
+  },
+  {
+   "id": "bingo-draft-never-served",
+   "now": "2026-10-29T18:41:52.450388+00:00",
+   "creatorId": "0000002f-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "0000002f-0000-4000-8000-00000000000a",
+     "game_kind": "wheel",
+     "is_active": false,
+     "created_at": "2026-10-29T17:11:52.396196+00:00",
+     "creator_id": "0000002f-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    },
+    {
+     "id": "0000002f-0000-4000-8000-00000000000b",
+     "game_kind": "bingo",
+     "is_active": false,
+     "created_at": "2026-10-29T18:31:52.407288+00:00",
+     "creator_id": "0000002f-0000-4000-8000-000000000010",
+     "game_ready": false,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    }
+   ],
+   "campaigns": [],
+   "pass": {
+    "wheel_id": "0000002f-0000-4000-8000-00000000000a",
+    "creator_id": "0000002f-0000-4000-8000-000000000010",
+    "campaign_id": null
+   },
+   "features": {
+    "bingo": true,
+    "scratch": true
+   },
+   "letters": {
+    "0000002f-0000-4000-8000-00000000000a": "A",
+    "0000002f-0000-4000-8000-00000000000b": "B"
+   },
+   "result": {
+    "issuance": "A",
+    "context": "A",
+    "spin": "A"
+   },
+   "expected": {
+    "issuance": "A",
+    "spin": "A"
+   }
+  },
+  {
+   "id": "pin-bingo-draft",
+   "now": "2026-10-29T18:41:52.55771+00:00",
+   "creatorId": "00000030-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "00000030-0000-4000-8000-00000000000a",
+     "game_kind": "wheel",
+     "is_active": true,
+     "created_at": "2026-10-29T17:41:52.507467+00:00",
+     "creator_id": "00000030-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    },
+    {
+     "id": "00000030-0000-4000-8000-00000000000b",
+     "game_kind": "bingo",
+     "is_active": false,
+     "created_at": "2026-10-29T17:41:52.517131+00:00",
+     "creator_id": "00000030-0000-4000-8000-000000000010",
+     "game_ready": false,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    }
+   ],
+   "campaigns": [
+    {
+     "id": "00000030-0000-4000-8000-00000000000e",
+     "creator_id": "00000030-0000-4000-8000-000000000010",
+     "pinned_wheel_id": "00000030-0000-4000-8000-00000000000b"
+    }
+   ],
+   "pass": {
+    "wheel_id": "00000030-0000-4000-8000-00000000000a",
+    "creator_id": "00000030-0000-4000-8000-000000000010",
+    "campaign_id": "00000030-0000-4000-8000-00000000000e"
+   },
+   "features": {
+    "bingo": true,
+    "scratch": true
+   },
+   "letters": {
+    "00000030-0000-4000-8000-00000000000a": "A",
+    "00000030-0000-4000-8000-00000000000b": "B"
+   },
+   "result": {
+    "issuance": "A",
+    "context": "A",
+    "spin": "A"
+   },
+   "expected": {
+    "issuance": "A",
+    "spin": "A"
+   }
+  },
+  {
+   "id": "flag-off-active-bingo",
+   "now": "2026-10-29T18:41:52.696199+00:00",
+   "creatorId": "00000031-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "00000031-0000-4000-8000-00000000000a",
+     "game_kind": "wheel",
+     "is_active": false,
+     "created_at": "2026-10-29T17:41:52.616177+00:00",
+     "creator_id": "00000031-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    },
+    {
+     "id": "00000031-0000-4000-8000-00000000000b",
+     "game_kind": "bingo",
+     "is_active": true,
+     "created_at": "2026-10-29T17:41:52.626058+00:00",
+     "creator_id": "00000031-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    }
+   ],
+   "campaigns": [],
+   "pass": {
+    "wheel_id": "00000031-0000-4000-8000-00000000000b",
+    "creator_id": "00000031-0000-4000-8000-000000000010",
+    "campaign_id": null
+   },
+   "features": {
+    "bingo": false,
+    "scratch": true
+   },
+   "letters": {
+    "00000031-0000-4000-8000-00000000000a": "A",
+    "00000031-0000-4000-8000-00000000000b": "B"
+   },
+   "result": {
+    "issuance": "B",
+    "context": "B",
+    "spin": "B"
+   },
+   "expected": {
+    "issuance": "B",
+    "spin": "B",
+    "surprise": "S6"
+   }
+  },
+  {
+   "id": "bingo-archived-after",
+   "now": "2026-10-29T18:41:52.842063+00:00",
+   "creatorId": "00000032-0000-4000-8000-000000000010",
+   "wheels": [
+    {
+     "id": "00000032-0000-4000-8000-00000000000a",
+     "game_kind": "wheel",
+     "is_active": false,
+     "created_at": "2026-10-29T17:11:52.761828+00:00",
+     "creator_id": "00000032-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": null,
+     "active_until": null
+    },
+    {
+     "id": "00000032-0000-4000-8000-00000000000b",
+     "game_kind": "bingo",
+     "is_active": true,
+     "created_at": "2026-10-29T18:31:52.771936+00:00",
+     "creator_id": "00000032-0000-4000-8000-000000000010",
+     "game_ready": true,
+     "active_from": null,
+     "archived_at": "2026-10-29T18:41:52.833139+00:00",
+     "active_until": null
+    }
+   ],
+   "campaigns": [],
+   "pass": {
+    "wheel_id": "00000032-0000-4000-8000-00000000000b",
+    "creator_id": "00000032-0000-4000-8000-000000000010",
+    "campaign_id": null
+   },
+   "features": {
+    "bingo": true,
+    "scratch": true
+   },
+   "letters": {
+    "00000032-0000-4000-8000-00000000000a": "A",
+    "00000032-0000-4000-8000-00000000000b": "B"
+   },
+   "result": {
+    "issuance": "B",
+    "context": "A",
+    "spin": "A"
+   },
+   "expected": {
+    "issuance": "B",
+    "spin": "A",
+    "surprise": "S1"
    }
   }
  ]
