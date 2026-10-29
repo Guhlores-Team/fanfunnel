@@ -6,6 +6,42 @@ allowance runs out. Usage percentage is not exposed to the agent; no reset time
 or automatic continuation is promised. Resume the existing objective: finish
 all roadmap items safely on `dashboard-redesign`, draft PR #78, never `main`.
 
+## Weekly-usage checkpoint rule
+
+The owner's latest instruction is **3% weekly usage remaining**, replacing the
+earlier 2% threshold. The agent cannot read or monitor the account's usage meter.
+Treat the owner's report that the threshold has arrived as the trigger; do not
+claim automatic monitoring, forced context compaction or a known reset time.
+
+At the threshold:
+
+1. Stop starting features, merges and other substantial work. Finish a bounded
+   active repair safely or preserve it explicitly as unfinished. Quota pressure
+   never changes release gates, test expectations or the prohibition on Production.
+2. Capture the exact branch, local/remote HEAD, deployed application SHA, TEST
+   migration state, provider/deployment IDs and actual verification results.
+   Distinguish passed, failed, interrupted, pending and unrun checks.
+3. Collect every agent's reviewed output and stop its work at a recoverable
+   boundary. Stop owned test servers. Preserve source, patches, manifests and
+   reconstruction instructions in allowlisted portable artifacts; do not rely
+   on chat history or the current environment's temporary files.
+4. Update this checkpoint, `HANDOFF.md` and `RESUME_BRIEF.md`. Record all gaps,
+   unfinished work, known bugs/flakes, decisions, outstanding owner actions,
+   connection limitations, next commands and migration/release order. Include
+   secret names and secure configuration locations only, never secret values.
+5. Commit the safe result and push authorized verified work to
+   `dashboard-redesign`. Never push unverified executable work to an automatically
+   deployed branch to save it; preserve it as clearly unreleased source artifacts
+   or a local incremental Git bundle instead. Record any unpushed commits and
+   exact recovery prerequisites. Never push/merge `main` or write Production.
+6. Verify the final working-tree/remote state and provide a short, self-contained
+   takeover summary with clickable file links. Keep pending CI or acceptance
+   checks explicit. Pause new work so the next agent can resume from the files.
+
+Prepare checkpoints before the limit when practical. This rule prioritizes a
+reviewable, recoverable state; it does not authorize rushed deployment or treating
+an unfinished task as complete. Refresh the concise brief at each later checkpoint.
+
 ## Verified TEST release and resume point
 
 - **Application release:** `5f72680e4bf621cf205867b94975eb2c2f3fc428`.

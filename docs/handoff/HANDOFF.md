@@ -3,6 +3,12 @@
 Read this first, then `AGENTS.md` (binding), then the other files in `docs/handoff/`.
 Everything below was true at the time of writing; verify with `git` before acting.
 
+**Owner's weekly-usage rule: at 3% remaining, prepare the safe handoff and pause.**
+This supersedes the earlier 2% threshold. The agent cannot observe the usage meter;
+the owner must flag the threshold. Follow the [checkpoint procedure](./TAKEOVER_CHECKPOINT.md#weekly-usage-checkpoint-rule)
+and refresh the [concise resume brief](./RESUME_BRIEF.md). Do not start another
+feature at the threshold or let unfinished work exist only in chat or temporary files.
+
 **Takeover checkpoint:** read [TAKEOVER_CHECKPOINT.md](./TAKEOVER_CHECKPOINT.md)
 before the historical merge notes below. It records the verified TEST release,
 actual CI/deployment evidence, portable remaining-feature sources and the exact
