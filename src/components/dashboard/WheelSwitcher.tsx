@@ -438,7 +438,7 @@ export default function WheelSwitcher({
                     disabled={busy}
                     aria-current={current ? "true" : undefined}
                     title={hint}
-                    className="flex min-h-[32px] max-w-[220px] items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="flex min-h-[32px] max-w-[300px] items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
                     <span
                       aria-hidden="true"
