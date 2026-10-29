@@ -21,7 +21,7 @@ import { pickGrantPass } from "./grantPass";
 import { readFansOnBreak } from "./playGuard";
 import { isOnBreak } from "@/lib/play/playGuard";
 import { fanVisitsLast7, visitsByFan } from "./checkins";
-import { contactToken } from "@/lib/engagement";
+import { contactToken, fanEngagementAllowed } from "@/lib/engagement";
 import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
 import { listRecentOutreach } from "./outreach";
 import { LEGAL } from "@/lib/legal";
@@ -276,7 +276,8 @@ export interface CreatorCrm {
  *     converted (selectDormant in src/lib/winback/list.ts).
  *     Spend safety: a fan failing the engagement gate (blocked, paused a link,
  *     on a break), a fan with no active link, a fan contacted within the
- *     cooldown and a snoozed fan are never suggested. If the outreach log
+ *     cooldown and a snoozed fan are never suggested. Whales pass the same F6
+ *     gate (they drive Autopilot's top-spender and out-of-spins cards). If the outreach log
  *     can't be read, nobody is suggested (fail closed).
  * The link offered on any row is the fan's newest ACTIVE link (never a paused
  * one), and none at all for a fan failing the engagement gate.
@@ -308,7 +309,13 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
   const totalLtv = spenders.reduce((s, f) => s + f.totalSpent, 0);
   const avgLtv = spenders.length ? Math.round(totalLtv / spenders.length) : 0;
 
-  const whales = [...spenders].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 10);
+  // F6: whales feed "check in with your top spenders" and "out of spins" nudges,
+  // so a blocked, paused or on-break fan is never one.
+  const engaged = new Set(fans.filter((f) => fanEngagementAllowed(f, now)).map((f) => f.fanId));
+  const whales = spenders
+    .filter((f) => engaged.has(f.fanId))
+    .sort((a, b) => b.totalSpent - a.totalSpent)
+    .slice(0, 10);
   // primaryToken is null exactly when the fan fails the gate (see enrich).
   const dormant = outreach ? selectDormant(spenders, outreach, now) : [];
   const winback = winbackStats(all, outreach ?? [], now);

@@ -70,8 +70,8 @@ async function main() {
   check("alerts off (no Resend key / recipient) does not e-mail", !(await alertUrgentReport({ reason: PHOTO_REPORT_REASON, at }, { cfg: { ...cfg, enabled: false }, send, limit })));
   check("a failing sender never throws", (await alertUrgentReport({ reason: PHOTO_REPORT_REASON, at }, { cfg, limit, send: async () => { throw new Error("boom"); } })) === false);
 
-  check("the link opens Admin › Reports", adminReportsUrl({ NEXT_PUBLIC_SITE_URL: "https://fanfunnel.example" } as NodeJS.ProcessEnv) === "https://fanfunnel.example/dashboard?section=admin#reports");
-  check("no origin, no link", adminReportsUrl({} as NodeJS.ProcessEnv) === null);
+  check("the link opens Admin › Reports", adminReportsUrl({ NEXT_PUBLIC_SITE_URL: "https://fanfunnel.example" } as unknown as NodeJS.ProcessEnv) === "https://fanfunnel.example/dashboard?section=admin#reports");
+  check("no origin, no link", adminReportsUrl({} as unknown as NodeJS.ProcessEnv) === null);
 
   console.log(`reports/alert.test: ${passed} checks passed`);
 }
