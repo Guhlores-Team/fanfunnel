@@ -13,7 +13,7 @@ export async function probeBingoGames(sqlInput){
  const root=join(import.meta.dirname,"../.."),bridge=spawn("npx",["tsx","scripts/db/bingoProofFixture.ts"],{cwd:root,stdio:["pipe","pipe","pipe"]}),waiters=[];let stderr="";
  bridge.stderr.on("data",b=>stderr+=b);bridge.on("error",e=>{for(const w of waiters.splice(0))w.reject(e);});bridge.on("exit",code=>{for(const w of waiters.splice(0))w.reject(Error(`Bingo fixture exited ${code}: ${stderr}`));});
  createInterface({input:bridge.stdout}).on("line",line=>{const w=waiters.shift();if(!w)return;try{const out=JSON.parse(line);if(!out.ok)throw Error(out.error);w.resolve(out.value);}catch(e){w.reject(e);}});
- const generate=input=>new Promise((resolve,reject)=>{waiters.push({resolve,reject});bridge.stdin.write(JSON.stringify(input)+"\n");});
+ const generate=input=>new Promise((resolve,reject)=>{waiters.push({resolve,reject});bridge.stdin.write(JSON.stringify(input)+"\n");}).catch(e=>{throw Error(`${e.message} for ${JSON.stringify({...input,context:{card:input.context.bingoCard?.marked_mask??null,focus:input.context.focus?.kind??null,prizes:input.context.prizes.map(p=>[p.label,p.weight,p.stock,p.delivery])}})}`);});
  const owner=randomUUID(),other=randomUUID(),wheel=randomUUID(),linePrize=randomUUID();let primaryPlays=0;
  const makeRows=(id=wheel,line=linePrize)=>[...Array.from({length:10},(_,i)=>({id:randomUUID(),label:`Cell ${i}`,emoji:["🍎","🍋","🍉","🍇","🍒","🍓","🥝","🍊","🍌","🍐"][i],rarity:i===0?"rare":"common",weight:1,stock:null,sort_order:i,delivery:"manual",boostable:true})),{id:line,label:"Zero-weight line prize",emoji:"🏆",rarity:"rare",weight:0,stock:null,sort_order:10,delivery:"manual",boostable:true}];
  const publish=async(id,rows,line,actor=owner)=>rpc("save_game_wheel",[q(id),q(owner),j(rows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:line},title:"Published Bingo"}),q(actor)]);
@@ -108,11 +108,12 @@ export async function probeBingoGames(sqlInput){
   await lockRace("wheel set_prize_delivery",plainWheel,plainPrize,()=>sql(`select public.set_prize_delivery(${q(plainPrize)},${q(owner)},'text','plain-cipher','plain-iv');`));
   await lockRace("wheel add_reward_codes",plainWheel,plainPrize,()=>sql(`select public.add_reward_codes(${q(plainPrize)},${q(owner)},${j([{cipher:"plain-code",iv:"plain-code-iv",key_version:1,hint:"p",fingerprint:hash("plain-code")}])});`));
   // The real race: a credited Bingo play and a delivery edit on the same game, concurrently.
-  { const a=await prep(fan),b=await build(a,{target:firstPrize});
-   const settled=await Promise.allSettled([commit(fan,a,b),sql(`select public.set_prize_delivery(${q(centerId)},${q(owner)},'manual');`)]);
+  // Its own fan, so the main fixture fan's pity sequence (tuned below) is untouched.
+  { const raceFan=await addFan(),a=await prep(raceFan),b=await build(a);
+   const settled=await Promise.allSettled([commit(raceFan,a,b),sql(`select public.set_prize_delivery(${q(centerId)},${q(owner)},'manual');`)]);
    check(settled.every(r=>r.status==="fulfilled"),`concurrent commit and set_prize_delivery on one Bingo game never raise (${settled.find(r=>r.status==="rejected")?.reason?.message?.trim()??""})`);
-   let out=settled[0].value;if(out.status==="retry_context"){const again=await prep(fan,a.id);out=await commit(fan,again,await build(again,{target:firstPrize}));}
-   check(out.status==="committed","the racing play settles as a committed play");primaryPlays++; }
+   let out=settled[0].value;if(out.status==="retry_context"){const again=await prep(raceFan,a.id);out=await commit(raceFan,again,await build(again));}
+   check(out.status==="committed","the racing play settles as a committed play"); }
   check(await refused(`update public.wheels set game_config=jsonb_build_object('size',3,'linePrizeId',${q(centerId)}) where id=${q(wheel)};`,/bingo_active_card/),"line reward promise cannot change while a card is incomplete");
   const oldLabel=state.cells[4].label;await sql(`update public.prizes set label='Renamed future prize' where id=${q(centerId)};`);
   check((await card(fan)).card.cells[4].label===oldLabel,"ordinary label edits never rewrite an existing card's immutable label");
