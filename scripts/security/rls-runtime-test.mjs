@@ -264,6 +264,28 @@ async function main() {
     const { data: aRole } = await admin.from("profiles").select("role").eq("id", A.id).maybeSingle();
     check(aRole?.role !== "admin", `A's role is still not admin after self-promote attempt (got ${aRole?.role})`);
 
+    // 0064: the safety-report queue is admin(aal2)-only, webhook signing secrets
+    // are server-only, hooks are capped, and the queue/inbox RPCs stay inside
+    // the caller's tenant and refuse anon.
+    const report = must(await admin.from("creator_reports").insert({ creator_id: B.id, fan_id: B.fanId, reason: "Other", detail: "runtime 0064" }).select("id").single(), "seed a report about B");
+    check(((await a.from("creator_reports").select("id")).data?.length ?? 0) === 0, "a creator reads no safety reports");
+    const selfResolve = await b.from("creator_reports").update({ status: "dismissed", resolution_note: "not me" }).eq("id", report.id).select("id");
+    check((selfResolve.data?.length ?? 0) === 0, "the reported creator cannot dismiss its own report");
+    const { data: reportAfter } = await admin.from("creator_reports").select("status, resolved_by").eq("id", report.id).maybeSingle();
+    check(reportAfter?.status === "open" && reportAfter?.resolved_by === null, `the report is still open and unreviewed (got ${reportAfter?.status})`);
+    check(!!(await a.from("webhook_secrets").select("secret")).error, "a creator cannot read webhook_secrets");
+    check(!!(await a.from("webhook_secrets").insert({ creator_id: A.id, secret: "a".repeat(64) })).error, "a creator cannot write its own webhook secret");
+    for (let i = 0; i < 5; i++) must(await a.from("webhooks").insert({ creator_id: A.id, url: `https://93.184.216.34/rls-${RUN}-${i}`, event: "all" }).select("id").single(), `A's hook ${i + 1}`);
+    check(!!(await a.from("webhooks").insert({ creator_id: A.id, url: `https://93.184.216.34/rls-${RUN}-6`, event: "all" })).error, "a sixth webhook is refused");
+    check(!!(await a.from("webhooks").insert({ creator_id: B.id, url: `https://93.184.216.34/rls-${RUN}-x`, event: "all" })).error, "A cannot add a webhook to B");
+    const aQueue = await a.rpc("creator_redemption_queue", { p_limit: 100 });
+    check(!aQueue.error && (aQueue.data ?? []).length > 0 && !(aQueue.data ?? []).some((r) => r.prize_label === "b prize"), "A's fulfilment queue holds its own wins and none of B's");
+    const aThreads = await a.rpc("creator_inbox_threads", { p_limit: 100 });
+    check(!aThreads.error && !(aThreads.data ?? []).some((t) => t.fan_id === B.fanId), "A's inbox threads hold none of B's fans");
+    const anonRpc = createClient(URL_, ANON, { auth: { persistSession: false } });
+    check(!!(await anonRpc.rpc("creator_redemption_queue", {})).error, "anon cannot call creator_redemption_queue");
+    check(!!(await anonRpc.rpc("creator_inbox_threads", {})).error, "anon cannot call creator_inbox_threads");
+
     // Non-vacuous own/cross-tenant promise fixtures, using only service RPCs.
     must(await admin.from("prizes").update({boostable:true,stock:1}).eq("id",B.prizeId).select("id").single(),"prepare B boostable finite target");
     must(await admin.from("focus_creator_config").insert({creator_id:B.id,chase_enabled:true}).select("creator_id").single(),"enable chase for disposable B only");
