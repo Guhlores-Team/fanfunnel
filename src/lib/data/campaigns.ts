@@ -12,11 +12,12 @@ import {
   mockUpdateCampaignPack,
   mockDeleteCampaignPack,
   mockSetCampaignPinnedWheel,
+  mockCampaignPinError,
   mockRenameCampaign,
   mockDeleteCampaign,
   mockGetUncategorizedStats,
 } from "./mock";
-import { creatorOwnsCampaign, isUuid } from "./shared";
+import { campaignPinError, creatorOwnsCampaign, isUuid } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Campaigns: named groupings of links a creator can compare against each other.
@@ -26,8 +27,10 @@ export async function createCampaign(
   name: string,
   pinnedWheelId?: string | null
 ): Promise<{ campaign: Campaign } | { error: string }> {
-  if (!isSupabaseConfigured())
-    return { campaign: mockCreateCampaign(name, pinnedWheelId) };
+  if (!isSupabaseConfigured()) {
+    const pinError = mockCampaignPinError(pinnedWheelId);
+    return pinError ? { error: pinError } : { campaign: mockCreateCampaign(name, pinnedWheelId) };
+  }
 
   const sb = await createClient();
   const {
@@ -35,18 +38,11 @@ export async function createCampaign(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  // Verify the pinned wheel belongs to this creator before referencing it, so a
-  // campaign can't be created pointing at another creator's wheel id (mirrors the
-  // check in setCampaignPinnedWheel).
-  if (pinnedWheelId) {
-    const { data: ownWheel } = await sb
-      .from("wheels")
-      .select("id")
-      .eq("id", pinnedWheelId)
-      .eq("creator_id", user.id)
-      .maybeSingle();
-    if (!ownWheel) return { error: "not_found" };
-  }
+  // The chosen game must be this creator's own playable game, so a campaign
+  // can't be created pointing at another creator's wheel id (same check as
+  // setCampaignPinnedWheel and the PATCH route).
+  const pinError = await campaignPinError(sb, user.id, pinnedWheelId);
+  if (pinError) return { error: pinError };
 
   const { data, error } = await sb
     .from("campaigns")
@@ -301,7 +297,7 @@ export async function deleteCampaignPack(
   return error ? { error: "db_error" } : { ok: true };
 }
 
-/** Pin (or unpin) a campaign's default wheel. */
+/** Choose the game a campaign plays (null: follow the creator's live game). */
 export async function setCampaignPinnedWheel(
   campaignId: string,
   wheelId: string | null
@@ -315,17 +311,9 @@ export async function setCampaignPinnedWheel(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  // Verify the pinned wheel belongs to this creator before referencing it, so a
-  // campaign can't be pointed at another creator's wheel id.
-  if (wheelId) {
-    const { data: ownWheel } = await sb
-      .from("wheels")
-      .select("id")
-      .eq("id", wheelId)
-      .eq("creator_id", user.id)
-      .maybeSingle();
-    if (!ownWheel) return { error: "not_found" };
-  }
+  // The chosen game must be this creator's own playable game.
+  const pinError = await campaignPinError(sb, user.id, wheelId);
+  if (pinError) return { error: pinError };
 
   const { data: updated, error } = await sb
     .from("campaigns")

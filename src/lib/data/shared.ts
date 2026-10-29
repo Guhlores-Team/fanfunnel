@@ -67,6 +67,32 @@ export async function creatorOwnsCampaign(
   return !!data;
 }
 
+/**
+ * Why a campaign may not be set to play `wheelId`, or null when it may: the
+ * wheel must belong to `userId` ("not_found" otherwise, so another creator's
+ * id is indistinguishable from a missing one), not be archived, be saved and
+ * complete (game_ready), and be a link-playable kind (never bingo). A null
+ * wheel ("follow my live game") is always allowed.
+ */
+export async function campaignPinError(
+  sb: AnyClient,
+  userId: string,
+  wheelId: string | null | undefined
+): Promise<"not_found" | "game_not_playable" | null> {
+  if (wheelId == null) return null;
+  if (!isUuid(wheelId)) return "not_found";
+  const { data } = await sb
+    .from("wheels")
+    .select("id, archived_at, game_kind, game_ready")
+    .eq("id", wheelId)
+    .eq("creator_id", userId)
+    .maybeSingle();
+  const row = data as { archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
+  if (!row) return "not_found";
+  if (row.archived_at || row.game_ready === false || row.game_kind === "bingo") return "game_not_playable";
+  return null;
+}
+
 // Phase 3 referral economy: how many referrals a fan can be credited for, and
 // how many bonus spins each credited referral grants to BOTH parties.
 export const REFERRAL_CAP = 3;
