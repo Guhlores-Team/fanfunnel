@@ -227,9 +227,18 @@ export async function getWheel(): Promise<WheelConfig | null> {
   return { ...toWheelConfig(data as unknown as DbWheelRow), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
 }
 
+/** The stock each prize had when the editor loaded it, by prize id (null =
+ *  unlimited). SQL applies a stock edit as the creator's delta over the live
+ *  value (spins that landed meanwhile are never un-decremented) and refuses a
+ *  limited/unlimited switch the creator did not see with `stock_changed`. */
+export type ExpectedStock = Record<string, number | null>;
 export async function saveWheel(
-  config: WheelConfig
+  config: WheelConfig,
+  options: { expectedStock?: ExpectedStock } = {}
 ): Promise<{ wheel: WheelConfig } | { error: string }> {
+  const expectedStock = options.expectedStock ?? {};
+  const withExpectedStock = <T extends { id: string | null }>(row: T, prizeId: string) =>
+    Object.hasOwn(expectedStock, prizeId) && isUuid(prizeId) ? { ...row, expected_stock: expectedStock[prizeId] } : row;
   // The editor's wheel rules (≥ 2 prizes, every prize named, one prize with
   // tickets > 0), enforced here for both data paths before anything is read or
   // written. This also refuses an empty prize set, which is almost always a
@@ -297,7 +306,7 @@ export async function saveWheel(
     if (invalid) return { error: invalid };
     const ids=new Map(config.prizes.map(prize=>[prize.id,isUuid(prize.id)?prize.id:crypto.randomUUID()]));
     const gameConfig={size:3,linePrizeId:ids.get((settings.gameConfig as {linePrizeId:string}).linePrizeId)!};
-    const payload = config.prizes.map((prize,index) => ({ ...prizeRow(wheelId,prize,index), id:ids.get(prize.id)! }));
+    const payload = config.prizes.map((prize,index) => withExpectedStock({ ...prizeRow(wheelId,prize,index), id:ids.get(prize.id)! }, prize.id));
     // Metadata/readiness and the real prize IDs publish together. Never set
     // game_ready=true on an incomplete draft before the inventory transaction.
     const { error } = await createServiceClient().rpc("save_game_wheel", {p_wheel:wheelId,p_creator:user.id,p_actor:user.id,p_prizes:payload as unknown as Json,
@@ -353,7 +362,7 @@ export async function saveWheel(
   // The session/RLS update above established the caller owns this wheel. The
   // service-only transaction rechecks that owner and retains reward-bearing ids.
   const svc = createServiceClient();
-  const payload = config.prizes.map((p, i) => ({ ...rows[i], id: isUuid(p.id) ? p.id : null }));
+  const payload = config.prizes.map((p, i) => withExpectedStock({ ...rows[i], id: isUuid(p.id) ? p.id : null }, p.id));
   const { error: saveError } = await svc.rpc("save_wheel_prizes", {
     p_wheel: wheelId, p_creator: user.id, p_prizes: payload as unknown as Json,
   });

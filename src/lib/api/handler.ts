@@ -69,6 +69,7 @@ export function statusForError(code: string): number {
     case "game_in_use":
     case "game_not_ready":
     case "bingo_active_card":
+    case "stock_changed":
     case "already_delivered":
     case "has_history":
     case "conflict":

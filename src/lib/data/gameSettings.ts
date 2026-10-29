@@ -23,5 +23,5 @@ export async function requireGameFeature(sb: AnyClient, creatorId: string, kind:
 export function gameWriteError(error: { message?: string } | null | undefined): string {
   const message = error?.message ?? "";
   if(message === "creator_unavailable")return "forbidden";
-  return ["feature_disabled", "game_kind_locked", "invalid_game_config", "game_unavailable", "game_not_ready", "game_in_use", "bingo_active_card", "bingo_needs_cells", "bingo_needs_fallback"].find(code => message === code || message.startsWith(code + ":")) ?? "db_error";
+  return ["feature_disabled", "game_kind_locked", "invalid_game_config", "game_unavailable", "game_not_ready", "game_in_use", "bingo_active_card", "bingo_needs_cells", "bingo_needs_fallback", "stock_changed"].find(code => message === code || message.startsWith(code + ":")) ?? "db_error";
 }
