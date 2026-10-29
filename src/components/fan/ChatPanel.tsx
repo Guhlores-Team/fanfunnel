@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/data/types";
 import { startPoll } from "@/lib/poll";
+import { blockedFanMessage } from "./blockedFan";
 
 /** A locally-tracked optimistic outbound message awaiting / failing its send. */
 interface PendingMessage {
@@ -58,6 +59,8 @@ export default function ChatPanel({
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   const [hasUnread, setHasUnread] = useState(false);
+  // A4: set when the server says the creator blocked this fan mid-session.
+  const [blockedNote, setBlockedNote] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   // Guard so the auto-intro is only requested once per mount.
   const introRequested = useRef(false);
@@ -204,6 +207,14 @@ export default function ChatPanel({
           setPending((p) => p.filter((m) => m.localId !== localId));
           return true;
         }
+        if (res.status === 403) {
+          const note = blockedFanMessage((await res.json().catch(() => null))?.error);
+          if (note) {
+            setBlockedNote(note);
+            setPending((p) => p.filter((m) => m.localId !== localId));
+            return false;
+          }
+        }
       } catch {
         /* fall through to failed */
       }
@@ -333,6 +344,11 @@ export default function ChatPanel({
                 ))}
                 <div ref={endRef} />
               </div>
+              {blockedNote ? (
+                <p role="alert" className="mt-2 text-center text-xs text-muted">
+                  {blockedNote}
+                </p>
+              ) : (
               <div className="mt-2 flex items-center gap-2">
                 <input
                   aria-label={`Message ${creatorTitle}`}
@@ -358,6 +374,7 @@ export default function ChatPanel({
                   Send
                 </button>
               </div>
+              )}
             </>
           )}
         </div>

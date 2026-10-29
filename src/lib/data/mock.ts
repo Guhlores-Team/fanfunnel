@@ -2831,6 +2831,7 @@ export function mockAddWishlist(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const label = prizeLabel.trim();
   if (!label) return { error: "invalid_label" };
 
@@ -2862,6 +2863,7 @@ export function mockRemoveWishlist(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const label = prizeLabel.trim();
   store.wishlists = store.wishlists.filter(
     (w) => !(w.fanId === fan.id && w.prizeLabel === label)
@@ -3012,6 +3014,7 @@ export function mockSetFanLeaderboardOptIn(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan || (optIn && fan.selfExcludedAt)) return { error: "not_found" };
+  if (optIn && fan.blockedAt) return { error: "blocked" }; // A4: opting out always works
   fan.leaderboardOptIn = !!optIn;
   if (optIn && handle !== undefined) {
     const trimmed = handle.trim();
@@ -3095,9 +3098,10 @@ export function mockGetReferralStats(): {
 export function mockSendFanMessage(
   token: string,
   body: string
-): { ok: true } | { error: "not_found" | "locked" | "empty" } {
+): { ok: true } | { error: "not_found" | "blocked" | "locked" | "empty" } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (!chatUnlockedFor(fan)) return { error: "locked" };
   const text = body.trim();
   if (text.length < 1 || text.length > 2000) return { error: "empty" };
@@ -3229,6 +3233,7 @@ export function mockEnsureChatIntro(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const intro = (store.chatIntro ?? "").trim();
   if (!intro) return { ok: true };
   const hasAny = store.messages.some((m) => m.fanId === fan.id);
@@ -3254,6 +3259,7 @@ export function mockSendChatOutro(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const outro = (store.chatOutro ?? "").trim();
   if (!outro) return { ok: true };
   const mine = store.messages

@@ -664,7 +664,11 @@ export async function ackFan(
 
 // --- Wishlist ---------------------------------------------------------------
 
-/** Resolve the fan + creator + active wheel behind a token (service role). */
+/**
+ * Resolve the fan + creator + active wheel behind a token (service role).
+ * `blocked` is the creator's block (fans.blocked_at): callers that let a fan
+ * reach the creator (chat, wishlist, leaderboard opt-in) refuse it (A4).
+ */
 export async function resolveFanByToken(
   sb: ReturnType<typeof createServiceClient>,
   token: string
@@ -673,10 +677,11 @@ export async function resolveFanByToken(
   creatorId: string;
   campaignId: string | null;
   wheelId: string;
+  blocked: boolean;
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select("creator_id, campaign_id, wheel_id, fan_id")
+    .select("creator_id, campaign_id, wheel_id, fan_id, fan:fans(blocked_at)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -685,6 +690,7 @@ export async function resolveFanByToken(
     campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
+    fan?: { blocked_at: string | null } | null;
   } | null;
   if (!pass) return null;
   const wheelId = await resolveWheelId(sb, pass, new Date());
@@ -694,5 +700,6 @@ export async function resolveFanByToken(
     creatorId: pass.creator_id,
     campaignId: pass.campaign_id,
     wheelId,
+    blocked: !!pass.fan?.blocked_at,
   };
 }

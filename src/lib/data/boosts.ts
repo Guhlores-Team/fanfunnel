@@ -258,6 +258,7 @@ export async function addWishlist(
   const sb = createServiceClient();
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
+  if (resolved.blocked) return { error: "blocked" };
 
   // The label must exist on the fan's resolved wheel; snapshot its rarity.
   const { data: prize } = await sb
@@ -293,6 +294,7 @@ export async function removeWishlist(
   const sb = createServiceClient();
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
+  if (resolved.blocked) return { error: "blocked" };
 
   const { error } = await sb
     .from("wishlists")
@@ -378,6 +380,7 @@ export async function setFanLeaderboardOptIn(
   const sb = createServiceClient();
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
+  if (resolved.blocked) return { error: "blocked" };
 
   const upd: Record<string, unknown> = { leaderboard_opt_in: optIn };
   if (handle !== undefined) upd.handle = handle;

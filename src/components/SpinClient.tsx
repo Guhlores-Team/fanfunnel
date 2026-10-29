@@ -39,6 +39,7 @@ const WheelAura = dynamic(
 );
 import HappyHourBanner from "./fan/HappyHourBanner";
 import WishlistSection from "./fan/WishlistSection";
+import { BLOCKED_FAN_MESSAGE } from "./fan/blockedFan";
 import ChatPanel from "./fan/ChatPanel";
 import TopUpMoment from "./fan/TopUpMoment";
 import InstallNudge from "./fan/InstallNudge";
@@ -602,18 +603,26 @@ export default function SpinClient({
         <LeaderboardWithdrawal key={`leaderboard-withdraw:${pass.token}`} token={pass.token} onWithdrawn={() => router.refresh()} />
       )}
 
-      <WishlistSection
-        token={pass.token}
-        prizes={pass.wheel.prizes}
-        initial={pass.wishlist ?? []}
-      />
+      {/* A4: a blocked fan can't reach the creator; the server refuses it too. */}
+      {pass.blocked ? (
+        <p role="note" data-testid="fan-blocked-note" className="max-w-sm text-center text-xs text-muted">
+          {BLOCKED_FAN_MESSAGE}
+        </p>
+      ) : (
+        <>
+          <WishlistSection
+            token={pass.token}
+            prizes={pass.wheel.prizes}
+            initial={pass.wishlist ?? []}
+          />
 
-
-      <ChatPanel
-        token={pass.token}
-        unlocked={pass.chatUnlocked ?? false}
-        creatorTitle={pass.creatorTitle}
-      />
+          <ChatPanel
+            token={pass.token}
+            unlocked={pass.chatUnlocked ?? false}
+            creatorTitle={pass.creatorTitle}
+          />
+        </>
+      )}
 
       {theaterOn && rv.tier && (
         <RevealTheater

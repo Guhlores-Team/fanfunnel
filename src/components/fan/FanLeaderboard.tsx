@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useFetch } from "@/lib/hooks/useFetch";
+import { blockedFanMessage } from "./blockedFan";
 
 interface Entry {
   rank: number;
@@ -286,7 +287,7 @@ function LeaderboardOptIn({
             ? "Board names are 2–40 characters: letters, numbers, _ . or - only."
             : code === "handle_required"
               ? "Pick a board name to join."
-              : "Couldn't save that — try again."
+              : blockedFanMessage(code) ?? "Couldn't save that — try again."
         );
         return;
       }
