@@ -1,6 +1,6 @@
 import { recordRewardDisclosures } from "./rewardDisclosures";
 import { gameProposal, addBonusFailure } from "./gameProposal";
-import { readBingoCard } from "./bingo";
+import { readBingoCardState } from "./bingo";
 import { parseBingoState } from "@/lib/games/bingo/state";
 import type { BingoState } from "@/lib/games/bingo/engine";
 import { buildBingoPoolSnapshot, buildScratchPoolSnapshot, hashGamePoolSnapshot, type GamePoolSnapshot } from "@/lib/games/core/gameProof";
@@ -86,9 +86,17 @@ function resultFromReceipt(receipt: Receipt, requestId: string): SpinResult {
     focus: toFanFocusView(receipt.focus), ...(reward ? { reward } : {}),
   };
 }
+/** A committed play is never reported pending because of who the fan is now: a
+ *  blocked fan reads their card normally, and a paused/deactivated link shows
+ *  the card exactly as this committed play left it. */
+async function receiptBingoCard(token:string,result:SpinResult,sb:Service):Promise<BingoState|null> {
+  const read=await readBingoCardState(token,sb);
+  if(read.status==="ok")return read.card;
+  return result.presentation?.kind==="bingo"?result.presentation.after:null;
+}
 async function refreshReceipt(token:string,receipt:Receipt,requestId:string,sb:Service):Promise<SpinResult> {
   const result=resultFromReceipt(receipt,requestId);
-  const response={...result,...(await readPlayAfterSpin(sb,receipt.spin.fan_id)),...(await getFanFocusDisplay(token,sb)),...(result.gameKind==="bingo"?{bingoCard:await readBingoCard(token,sb)}:{})};
+  const response={...result,...(await readPlayAfterSpin(sb,receipt.spin.fan_id)),...(await getFanFocusDisplay(token,sb)),...(result.gameKind==="bingo"?{bingoCard:await receiptBingoCard(token,result,sb)}:{})};
   const exposed=[...(result.reward?[receipt.spin.id]:[]),...(result.bonusWins??[]).flatMap((bonus,index)=>bonus.reward?[receipt.bonusWins![index].spin.id]:[])];
   if(!await recordRewardDisclosures(sb,token,exposed))throw new Error("reward_disclosure_pending");
   return response;
