@@ -42,6 +42,32 @@ Prepare checkpoints before the limit when practical. This rule prioritizes a
 reviewable, recoverable state; it does not authorize rushed deployment or treating
 an unfinished task as complete. Refresh the concise brief at each later checkpoint.
 
+## Owner-confirmed stopping point
+
+The owner reported **2% weekly usage remaining**, crossing the saved 3% threshold.
+Stop new work and leave the existing verified application running on TEST.
+At this check, the worktree was clean and local/remote `dashboard-redesign` both
+matched `a4c276adc472da466b06605a391903c48b5b4044`; no background agents remained.
+This pause update changes documentation only and does not deploy application code.
+
+The owner confirms access to “New repository secret” in GitHub, but suspects an
+Actions allowance exhaustion overnight. **The quota issue is not established.**
+A read-only lookup showed all four workflows for `a4c276a` completed successfully:
+[CI](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40803565437),
+[migrations](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40803569641),
+[real Supabase](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40803565440),
+[login UI](https://github.com/Guhlores-Team/fanfunnel/actions/runs/40803565524).
+These workflow-level statuses do not establish the remaining billing allowance.
+Before resuming, inspect current required runs and GitHub billing/Actions usage.
+Do not bypass CI or turn on paid usage without the owner's authorization. New
+pause-documentation CI may still be pending; do not claim it passed from these
+older results. No application tests were rerun for this documentation-only update.
+
+Phone settings link supplied to the owner:
+https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/dashboard?section=settings
+The owner has not yet confirmed seeing “Look & feel”; keep that manual acceptance
+open. Never request authenticator codes or secret values in chat.
+
 ## Verified TEST release and resume point
 
 - **Application release:** `5f72680e4bf621cf205867b94975eb2c2f3fc428`.

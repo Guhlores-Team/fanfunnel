@@ -3,6 +3,13 @@
 Read `AGENTS.md`, this brief, `HANDOFF.md`, then `TAKEOVER_CHECKPOINT.md`.
 This is a saved context summary; verify Git and provider state before acting.
 
+- **Paused: owner reported 2% weekly usage remaining, crossing the 3% threshold.**
+  Resume deliberately from this saved checkpoint; no new feature work was started.
+  Owner suspects GitHub Actions quota exhaustion, which is unconfirmed. All four
+  workflows for `a4c276a` succeeded; inspect current usage and required runs before
+  resuming. Do not bypass CI or enable paid usage without authorization. The final
+  pause-note commit may have pending CI. Owner can access repository secret setup.
+  Phone “Look & feel” acceptance remains unconfirmed.
 - Work on **`dashboard-redesign`**, draft PR #78. Never push/merge `main` or write
   Production Supabase `ttlogfmogcccwiraaoae`.
 - Verified application: **`5f72680e4bf621cf205867b94975eb2c2f3fc428`**.

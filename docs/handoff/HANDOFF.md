@@ -15,6 +15,14 @@ actual CI/deployment evidence, portable remaining-feature sources and the exact
 resume gates. The owner requested a committed handoff before the usage allowance
 runs out. A local commit is not a pushed, hosted or verified release.
 
+**Pause triggered:** the owner has now reported **2% weekly usage remaining**.
+The 3% checkpoint threshold has been crossed; new feature work is paused.
+The owner can access GitHub repository secrets, but suspects the GitHub Actions
+allowance was exhausted overnight. This is unconfirmed: all four workflows for
+`a4c276adc472da466b06605a391903c48b5b4044` completed successfully. Check current
+Actions/billing before the next release; do not bypass required CI or enable paid
+usage without authorization. The final pause-note commit may have pending CI.
+
 ## 1. Where things stand
 
 - **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`).
