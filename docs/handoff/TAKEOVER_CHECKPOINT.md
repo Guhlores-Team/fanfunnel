@@ -83,6 +83,13 @@ pathname decoding is guarded. No table, route, RPC or dependency was added.
 Focused verification passed **63 actual real/mock data cases and 19 rescue UI
 cases**, including cross-creator refusal, false-only writes, errors/retry and
 preserving paid balances/history. The original 72/35/38/28 UI cases are byte-exact.
+An isolated fresh demo install/build also passed 24 actual browser checks and
+three phone axe states with zero blocking violations: a paused link remains an
+HTTP 404, opening its rescue panel performs no automatic I/O, explicit withdrawal
+removes the public entry, rejoining stays refused, and unknown credentials produce
+a generic retryable error. No competitive browser reads or page errors occurred.
+This is local browser evidence; archived-wheel behavior was exercised through
+actual data functions with a replaced Supabase transport, not a hosted browser.
 
 Authorization evidence: `src/lib/data/privacy.ts` (`resolveAnyToken` and
 `withdrawFanLeaderboardConsent`), `src/lib/data/boosts.ts` (`optIn === false`),
@@ -160,10 +167,13 @@ Only after both rounds pass:
 
 ## Recoverable remaining work
 
-The [source-only capsule and index](./artifacts/INDEX.md) preserve unfinished
-work independently of `/workspace/.tools`. Hash-check and reconstruct outside
+Start with the [repaired-common candidate index](./artifacts/REPAIRED_COMMON_INDEX.md).
+It preserves all prepared future features with the latest common repairs through
+`5877d94` already carried. The [original source capsule](./artifacts/INDEX.md)
+remains immutable provenance. Both preserve unfinished work independently of
+`/workspace/.tools`. Hash-check and reconstruct outside
 the checkout before applying anything. The frozen originals are **inputs**, not
-new release approvals. Rebase their deltas onto the repaired common source,
+new release approvals. Review their deltas against the current common source,
 retain all tests and previous mirror prefixes, and establish new source hashes.
 
 Root independently extracted the final archive, verified all 392 checksummed
@@ -177,6 +187,26 @@ descriptor normalization: its optional privacy parser expects snake_case hashes,
 whereas the immutable privacy manifest has `beforeSha256` / `afterSha256` and a
 separate mapped object. Normalize a derived descriptor; do not edit the original
 hashed manifest or run that unfinished builder blindly.
+
+The repaired-common successor includes a finished portable restore and
+recomposition entrypoint, normalized derived descriptors and the exact six-path
+privacy authority. Prefer it over the old unfinished builder. Root independently
+verified its 352 checksummed members, applied all six sequential patches and
+matched complete trees (95/82/67/34/7/36 changed paths). Archive SHA-256:
+`403b25e768ac478c4ab8ec3fb946e601b4540c458acd11b228250666d8d42f17`.
+Its recorded source counts are 1590/1613/1634/1653/1656/1675 and native syntax
+counts 47/50/56/59/60/70. **No full future unit/build/browser/drift or hosted pass
+is claimed.** Current committed handoff facts take precedence over preserved notes.
+
+The optional recomposer accepts `5877d94` or a documentation/artifact-only
+descendant, rejects any changed application blob or file mode, preserves current
+committed documentation and generates new source identities for each new root.
+It reads a Git archive, excludes dirty working documents and writes only outside
+the checkout. Actual release verification still requires a clean, unchanged HEAD.
+Use the final checked branch commit as the new root when deliberately integrating
+0060, then release only the next numeric phase after its own complete gates.
+If a shallow clone lacks either recorded base, fetch the integration branch's
+history; do not recreate, rewrite or force-push the historical authorities.
 
 Release order is strictly: repaired **0059 → 0060 scratch → 0061 bingo → 0062
 account security → 0063 ledger operations → code-only small fixes → final audit**.
