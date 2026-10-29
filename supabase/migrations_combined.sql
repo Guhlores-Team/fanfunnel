@@ -7127,8 +7127,12 @@ declare w public.wheels%rowtype; pr public.prizes%rowtype; old_id uuid; eligible
 begin
  old_id:=case when tg_op='INSERT' then null else old.id end;
  if tg_op='UPDATE' and new.wheel_id is distinct from old.wheel_id and exists(select 1 from public.wheels where id in(old.wheel_id,new.wheel_id) and game_kind='bingo') then raise exception 'bingo_active_card' using errcode='22023';end if;
- select * into w from public.wheels where id=case when tg_op='DELETE' then old.wheel_id else new.wheel_id end for update;
+ select * into w from public.wheels where id=case when tg_op='DELETE' then old.wheel_id else new.wheel_id end;
  if w.game_kind is distinct from 'bingo' or not exists(select 1 from public.profiles where id=w.creator_id) then if tg_op='DELETE' then return old; else return new; end if; end if;
+ -- Bingo only: serialize against card play. Every writer locks wheel -> prize
+ -- (commit_spin_attempt, save_wheel_prizes, set_prize_delivery, add_reward_codes,
+ -- _release_fan_focus), so this lock never closes a cycle.
+ select * into w from public.wheels where id=w.id for update;
  if old_id is not null and exists(select 1 from public.bingo_cards c,jsonb_array_elements(c.cells) cell where c.wheel_id=w.id and c.status='active' and cell->>'id'=old_id::text) then
   if tg_op='DELETE' or new.wheel_id is distinct from old.wheel_id or new.stock is not null or new.delivery='codes' or new.weight<=0 then raise exception 'bingo_active_card' using errcode='22023'; end if;
  end if;
@@ -7145,16 +7149,19 @@ revoke execute on function public._guard_bingo_prize_change() from public,anon,a
 drop trigger if exists ab_bingo_prize_guard on public.prizes;
 create trigger ab_bingo_prize_guard before insert or update or delete on public.prizes for each row execute function public._guard_bingo_prize_change();
 
+-- Retirement: archiving a Bingo game with active cards is allowed. The cards
+-- persist, resolution already ignores archived games, and unarchiving restores
+-- play. Deleting the game or un-publishing it would discard paid progress.
 create or replace function public._guard_bingo_wheel_lifecycle()
 returns trigger language plpgsql security definer set search_path=public as $$
 begin
  if old.game_kind='bingo' and exists(select 1 from public.profiles where id=old.creator_id) and exists(select 1 from public.bingo_cards where wheel_id=old.id and status='active')
-  and(tg_op='DELETE' or new.archived_at is not null or not new.game_ready) then raise exception 'bingo_active_card' using errcode='22023'; end if;
+  and(tg_op='DELETE' or not new.game_ready) then raise exception 'bingo_active_card' using errcode='22023'; end if;
  if tg_op='DELETE' then return old; else return new; end if;
 end $$;
 revoke execute on function public._guard_bingo_wheel_lifecycle() from public,anon,authenticated,service_role;
 drop trigger if exists ab_bingo_wheel_lifecycle on public.wheels;
-create trigger ab_bingo_wheel_lifecycle before delete or update of archived_at,game_ready on public.wheels for each row execute function public._guard_bingo_wheel_lifecycle();
+create trigger ab_bingo_wheel_lifecycle before delete or update of game_ready on public.wheels for each row execute function public._guard_bingo_wheel_lifecycle();
 
 create or replace function public._game_actor_edit_allowed(p_actor uuid,p_creator uuid)
 returns boolean language plpgsql security definer set search_path=public as $$
@@ -7192,12 +7199,15 @@ end $$;
 revoke execute on function public.save_game_wheel(uuid,uuid,jsonb,jsonb,uuid) from public,anon,authenticated;
 grant execute on function public.save_game_wheel(uuid,uuid,jsonb,jsonb,uuid) to service_role;
 
+-- A read of the fan's own card. It is not gated on the creator blocking the
+-- fan or on creator approval: a blocked fan keeps the same read-only page as
+-- on wheel/scratch, and play is refused by prepare/commit, never by this read.
 create or replace function public.get_bingo_card_state(p_token text)
 returns jsonb language plpgsql security definer set search_path=public as $$
 declare p public.fan_passes%rowtype; card public.bingo_cards%rowtype; wheel uuid;
 begin
- select fp.* into p from public.fan_passes fp join public.fans f on f.id=fp.fan_id join public.profiles c on c.id=fp.creator_id
- where fp.token=p_token and fp.is_active and fp.self_excluded_at is null and f.creator_id=fp.creator_id and f.blocked_at is null and c.is_active and(c.approval_status='approved' or c.role='admin');
+ select fp.* into p from public.fan_passes fp join public.fans f on f.id=fp.fan_id
+ where fp.token=p_token and fp.is_active and fp.self_excluded_at is null and f.creator_id=fp.creator_id;
  if not found then return jsonb_build_object('status','unavailable');end if;
  wheel:=public._resolved_spin_wheel(p.id);
  select * into card from public.bingo_cards where fan_id=p.fan_id and wheel_id=wheel order by(status='active') desc,created_at desc,id desc limit 1;
@@ -7306,17 +7316,28 @@ begin
  return jsonb_build_object('line',p_line,'shareId',s.share_id,'prize',p_bonus->'response_prize','spin',to_jsonb(s)-'fan_id'-'fan_pass_id','stockAfter',v_stock_after);
 end $$;
 revoke execute on function public._commit_bingo_bonus(uuid,jsonb,integer) from public,anon,authenticated,service_role;
-create or replace function public._resolved_spin_wheel(p_pass uuid)
+-- The one ranking every path uses to pick a creator's live game: campaign pin,
+-- then an open schedule window, then the is_active flag, then the oldest live
+-- game. Issuance (_create_pass_grant_core), the prepare context and spin time
+-- (_resolved_spin_wheel) all call this, so a link is minted for the game the
+-- fan will actually play. Mirrored in src/lib/data/wheels.ts resolveActiveWheelId.
+create or replace function public._creator_default_wheel(p_creator uuid,p_campaign uuid)
 returns uuid language sql stable security definer set search_path=public as $$
  select coalesce(
   (select w.id from public.campaigns c join public.wheels w on w.id=c.pinned_wheel_id
-    where c.id=fp.campaign_id and w.creator_id=fp.creator_id and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo')),
-  (select w.id from public.wheels w where w.creator_id=fp.creator_id and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo')
+    where c.id=p_campaign and c.creator_id=p_creator and w.creator_id=p_creator and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo')),
+  (select w.id from public.wheels w where w.creator_id=p_creator and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo')
     and (w.active_from is not null or w.active_until is not null)
     and (w.active_from is null or w.active_from<=now()) and (w.active_until is null or w.active_until>now())
     order by w.active_from desc nulls last,w.created_at desc,w.id limit 1),
-  (select w.id from public.wheels w where w.creator_id=fp.creator_id and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo') and w.is_active order by w.id limit 1),
-  (select w.id from public.wheels w where w.creator_id=fp.creator_id and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo') order by w.created_at,w.id limit 1),
+  (select w.id from public.wheels w where w.creator_id=p_creator and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo') and w.is_active order by w.created_at,w.id limit 1),
+  (select w.id from public.wheels w where w.creator_id=p_creator and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo') order by w.created_at,w.id limit 1));
+$$;
+revoke execute on function public._creator_default_wheel(uuid,uuid) from public,anon,authenticated,service_role;
+
+create or replace function public._resolved_spin_wheel(p_pass uuid)
+returns uuid language sql stable security definer set search_path=public as $$
+ select coalesce(public._creator_default_wheel(fp.creator_id,fp.campaign_id),
   (select w.id from public.wheels w where w.id=fp.wheel_id and w.creator_id=fp.creator_id and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo')))
  from public.fan_passes fp where fp.id=p_pass;
 $$;
@@ -7334,7 +7355,8 @@ begin
  select coalesce(jsonb_agg(to_jsonb(pr) || jsonb_build_object('stock',case when r.prize_id=pr.id and r.state='held' and pr.stock is not null then pr.stock+1 else pr.stock end) order by pr.sort_order,pr.id),'[]'::jsonb)
    into v_prizes from public.prizes pr where pr.wheel_id=w.id;
  select coalesce(jsonb_agg(x-'stock' order by x->>'id'),'[]'::jsonb) into v_hash_prizes from jsonb_array_elements(v_prizes) x;
- select least(5,coalesce(max(multiplier),1)) into hh from public.happy_hours where wheel_id=w.id and starts_at<=now() and ends_at>now();
+ -- Only the game owner's own happy hours boost the game (tenancy, defence in depth).
+ select least(5,coalesce(max(multiplier),1)) into hh from public.happy_hours where wheel_id=w.id and creator_id=w.creator_id and starts_at<=now() and ends_at>now();
  v:=jsonb_build_object('fanId',p.fan_id,'passId',p.id,'creatorId',p.creator_id,'campaignId',p.campaign_id,
   'wheelId',w.id,'wheel',to_jsonb(w),'serverSeed',p.next_server_seed,'serverSeedHash',p.next_server_seed_hash,
   'nonce',p.next_spin_nonce,'pityCounter',f.pity_counter,'happyHourMultiplier',hh,
@@ -7623,12 +7645,9 @@ begin
    p_bonus:=(pack.bonus_spins::bigint*p_pack_units)::int;p_amount:=(pack.amount_cents::bigint*p_pack_units)::int;
  end if;
  if p_campaign is not null and not exists(select 1 from public.campaigns where id=p_campaign and creator_id=p_creator) then return jsonb_build_object('status','invalid','error','campaign_not_found'); end if;
- if p_wheel is null then
-   select w.id into p_wheel from public.campaigns c join public.wheels w on w.id=c.pinned_wheel_id
-     where c.id=p_campaign and c.creator_id=p_creator and w.creator_id=p_creator and w.archived_at is null and w.game_ready and w.game_kind in('wheel','scratch','bingo');
-   if p_wheel is null then select id into p_wheel from public.wheels where creator_id=p_creator and archived_at is null and game_ready and game_kind in('wheel','scratch','bingo') and is_active order by created_at,id limit 1; end if;
-   if p_wheel is null then select id into p_wheel from public.wheels where creator_id=p_creator and archived_at is null and game_ready and game_kind in('wheel','scratch','bingo') order by created_at,id limit 1; end if;
- end if;
+ -- Same ranking as spin time (pin, open window, active flag, oldest), so the
+ -- link is minted for the game the fan will actually play.
+ if p_wheel is null then p_wheel:=public._creator_default_wheel(p_creator,p_campaign); end if;
  if not exists(select 1 from public.wheels where id=p_wheel and creator_id=p_creator and archived_at is null and game_ready and game_kind in('wheel','scratch','bingo')) then return jsonb_build_object('status','invalid','error','no_wheel'); end if;
  if p_fan is null then
    insert into public.fans(creator_id,display_name) values(p_creator,left(p_name,200)) returning * into f;
@@ -7668,6 +7687,9 @@ declare
   v_id uuid;
   v_ids uuid[] := '{}';
   v_order integer := 0;
+  v_stock integer;
+  v_current integer;
+  v_expected integer;
 begin
   perform 1 from public.wheels where id = p_wheel and creator_id = p_creator for update;
   if not found then raise exception 'wheel not found' using errcode = 'P0002'; end if;
@@ -7678,8 +7700,21 @@ begin
   perform 1 from public.prizes where wheel_id = p_wheel order by id for update;
   for v_row in select * from jsonb_array_elements(p_prizes) loop
     v_id := null;
+    v_stock := (v_row->>'stock')::integer;
     if (v_row->>'id') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
-      select id into v_id from public.prizes where id = (v_row->>'id')::uuid and wheel_id = p_wheel;
+      select id, stock into v_id, v_current from public.prizes where id = (v_row->>'id')::uuid and wheel_id = p_wheel;
+    end if;
+    -- Stock is a compare-and-set against the value the editor loaded
+    -- (expected_stock), so a save never "un-decrements" spins that landed
+    -- while the creator was editing. A finite edit over moved stock is applied
+    -- as the creator's delta; a limited/unlimited switch that no longer matches
+    -- what they saw is a stock_changed conflict (reload and retry).
+    if v_id is not null and (v_row ? 'expected_stock') then
+      v_expected := (v_row->>'expected_stock')::integer;
+      if v_current is distinct from v_expected and v_stock is not null then
+        if v_current is null or v_expected is null then raise exception 'stock_changed' using errcode = '22023'; end if;
+        v_stock := greatest(0, v_current + (v_stock - v_expected));
+      end if;
     end if;
     if v_id is null and current_setting('fanfunnel.game_configuration',true)=p_wheel::text and(v_row->>'id') ~* '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' then
       if exists(select 1 from public.prizes where id=(v_row->>'id')::uuid) then raise exception 'invalid_game_config' using errcode='22023';end if;
@@ -7690,7 +7725,7 @@ begin
     insert into public.prizes (id,wheel_id,label,description,rarity,weight,color,emoji,image_url,cost_cents,stock,sort_order,boostable)
     values(v_id,p_wheel,v_row->>'label',v_row->>'description',(v_row->>'rarity')::public.prize_rarity,
       (v_row->>'weight')::integer,v_row->>'color',v_row->>'emoji',v_row->>'image_url',
-      (v_row->>'cost_cents')::integer,(v_row->>'stock')::integer,v_order,coalesce((v_row->>'boostable')::boolean,false))
+      (v_row->>'cost_cents')::integer,v_stock,v_order,coalesce((v_row->>'boostable')::boolean,false))
     on conflict(id) do update set label=excluded.label,description=excluded.description,rarity=excluded.rarity,
       weight=excluded.weight,color=excluded.color,emoji=excluded.emoji,image_url=excluded.image_url,
       cost_cents=excluded.cost_cents,stock=excluded.stock,sort_order=excluded.sort_order,boostable=excluded.boostable;
@@ -7733,3 +7768,142 @@ grant execute on function public.commit_spin_attempt(uuid,text,text,jsonb,jsonb,
 revoke execute on function public.save_wheel_prizes(uuid,uuid,jsonb) from public,anon,authenticated;
 grant execute on function public.save_wheel_prizes(uuid,uuid,jsonb) to service_role;
 revoke execute on function public._create_pass_grant_core(uuid,uuid,uuid,uuid,text,integer,integer,integer,uuid,text,uuid,integer) from public,anon,authenticated,service_role;
+
+-- Lock ordering: every prize writer takes the wheel row before the prize row,
+-- the order commit_spin_attempt and save_wheel_prizes already use, so a
+-- creator edit racing a credited play can never deadlock (40P01).
+create or replace function public.add_reward_codes(p_prize uuid, p_creator uuid, p_codes jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_wheel uuid;
+  v_left integer;
+  v_new integer;
+  v_added integer;
+begin
+  select wheel_id into v_wheel from public.prizes where id = p_prize;
+  perform 1 from public.wheels where id = v_wheel and creator_id = p_creator for update;
+  if not found then
+    raise exception 'prize not found' using errcode = 'P0002';
+  end if;
+  perform 1 from public.prizes where id = p_prize and wheel_id = v_wheel for update;
+  if not found then
+    raise exception 'prize not found' using errcode = 'P0002';
+  end if;
+  if p_codes is null or jsonb_typeof(p_codes) <> 'array' or jsonb_array_length(p_codes) = 0 then
+    raise exception 'codes must be a non-empty array' using errcode = '22023';
+  end if;
+  select count(*) into v_left from public.prize_reward_codes where prize_id = p_prize and spin_id is null;
+  select count(distinct e->>'fingerprint') into v_new from jsonb_array_elements(p_codes) e
+   where not exists (select 1 from public.prize_reward_codes c where c.prize_id = p_prize and c.fingerprint = e->>'fingerprint');
+  if v_left + v_new > 5000 then
+    raise exception 'too many codes on one prize' using errcode = '22023';
+  end if;
+  with added as (
+    insert into public.prize_reward_codes (prize_id, creator_id, cipher, iv, key_version, hint, fingerprint)
+    select p_prize, p_creator, e->>'cipher', e->>'iv', coalesce((e->>'key_version')::smallint, 1), nullif(e->>'hint', ''), e->>'fingerprint'
+      from jsonb_array_elements(p_codes) e
+    on conflict (prize_id, fingerprint) do nothing
+    returning 1
+  ) select count(*) into v_added from added;
+  delete from public.prize_rewards where prize_id = p_prize;
+  update public.prizes set delivery = 'codes' where id = p_prize;
+  select stock into v_left from public.prizes where id = p_prize;
+  return v_added;
+end;
+$$;
+
+create or replace function public.set_prize_delivery(
+  p_prize uuid,
+  p_creator uuid,
+  p_kind text,
+  p_cipher text default null,
+  p_iv text default null,
+  p_key_version smallint default 1
+)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_wheel uuid;
+begin
+  if p_kind is null or p_kind not in ('manual', 'link', 'text') then
+    raise exception 'invalid delivery' using errcode = '22023';
+  end if;
+  select wheel_id into v_wheel from public.prizes where id = p_prize;
+  perform 1 from public.wheels where id = v_wheel and creator_id = p_creator for update;
+  if not found then
+    raise exception 'prize not found' using errcode = 'P0002';
+  end if;
+  perform 1 from public.prizes where id = p_prize and wheel_id = v_wheel for update;
+  if not found then
+    raise exception 'prize not found' using errcode = 'P0002';
+  end if;
+  if p_kind = 'manual' then
+    delete from public.prize_rewards where prize_id = p_prize;
+  else
+    if p_cipher is null or p_iv is null then
+      raise exception 'reward value required' using errcode = '22023';
+    end if;
+    insert into public.prize_rewards (prize_id, creator_id, kind, cipher, iv, key_version, updated_at)
+    values (p_prize, p_creator, p_kind, p_cipher, p_iv, coalesce(p_key_version, 1), now())
+    on conflict (prize_id) do update
+      set creator_id = excluded.creator_id, kind = excluded.kind, cipher = excluded.cipher,
+          iv = excluded.iv, key_version = excluded.key_version, updated_at = now();
+  end if;
+  update public.prizes set delivery = p_kind where id = p_prize;
+  delete from public.prize_reward_codes where prize_id = p_prize and spin_id is null;
+  return p_kind;
+end;
+$$;
+
+create or replace function public._release_fan_focus(p_fan uuid)
+returns jsonb language plpgsql security definer set search_path=public as $$
+declare f public.fan_focus%rowtype; r public.chase_reservations%rowtype;
+begin
+  perform 1 from public.fans where id=p_fan for update;
+  perform 1 from public.fan_passes where fan_id=p_fan order by id for update;
+  select * into f from public.fan_focus where fan_id=p_fan and status in('active','paused') for update;
+  if not found then return null; end if;
+  select * into r from public.chase_reservations where focus_id=f.id for update;
+  if found and r.state='held' then
+    perform 1 from public.wheels where id=(select wheel_id from public.prizes where id=r.prize_id) for update;
+    perform 1 from public.prizes where id=r.prize_id for update;
+    if r.kind='code' then
+      update public.prize_reward_codes set reserved_focus_id=null where id=r.code_id and reserved_focus_id=f.id and spin_id is null;
+      if current_setting('fanfunnel.focus_prize_lifecycle',true) is distinct from r.prize_id::text then update public.prizes set stock=stock where id=r.prize_id; end if;
+    elsif r.kind='stock' then
+      if current_setting('fanfunnel.focus_prize_lifecycle',true) is distinct from r.prize_id::text then update public.prizes set stock=stock+1 where id=r.prize_id and stock is not null; end if;
+    end if;
+    update public.chase_reservations set state='released',ended_at=now() where id=r.id and state='held';
+  end if;
+  update public.fan_focus set status='released',version=version+1,ended_at=now() where id=f.id returning * into f;
+  return to_jsonb(f);
+end $$;
+
+-- A happy hour may only boost one of its own creator's games: RLS with-check
+-- for browser sessions and a BEFORE trigger for every role (defence in depth).
+create or replace function public._guard_happy_hour_tenant()
+returns trigger language plpgsql security definer set search_path=public as $$
+begin
+ if not exists(select 1 from public.wheels where id=new.wheel_id and creator_id=new.creator_id) then raise exception 'happy hour wheel belongs to another creator' using errcode='42501'; end if;
+ return new;
+end $$;
+revoke execute on function public._guard_happy_hour_tenant() from public,anon,authenticated,service_role;
+drop trigger if exists aa_happy_hour_tenant on public.happy_hours;
+create trigger aa_happy_hour_tenant before insert or update of wheel_id,creator_id on public.happy_hours for each row execute function public._guard_happy_hour_tenant();
+drop policy if exists happy_hours_rw on public.happy_hours;
+create policy happy_hours_rw on public.happy_hours for all
+  using ((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+  with check (((creator_id = auth.uid() and public.current_user_active()) or public.is_admin())
+    and exists (select 1 from public.wheels w where w.id = wheel_id and w.creator_id = happy_hours.creator_id));
+revoke execute on function public._release_fan_focus(uuid) from public,anon,authenticated,service_role;
+revoke execute on function public.add_reward_codes(uuid,uuid,jsonb) from public,anon,authenticated;
+grant execute on function public.add_reward_codes(uuid,uuid,jsonb) to service_role;
+revoke execute on function public.set_prize_delivery(uuid,uuid,text,text,text,smallint) from public,anon,authenticated;
+grant execute on function public.set_prize_delivery(uuid,uuid,text,text,text,smallint) to service_role;

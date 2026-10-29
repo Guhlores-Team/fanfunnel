@@ -2752,6 +2752,10 @@ export type Database = {
         Args: { p_actor: string; p_creator: string }
         Returns: boolean
       }
+      _creator_default_wheel: {
+        Args: { p_campaign: string; p_creator: string }
+        Returns: string
+      }
       _creator_request_finish: {
         Args: { p_creator: string; p_outcome: Json; p_request: string }
         Returns: Json
