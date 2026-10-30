@@ -5,7 +5,7 @@ import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useLinkPause } from "./LinkPauseProvider";
 import { PAUSED_CONFIRMATION, pauseErrorMessage } from "./linkPause";
 import { FAN_DELETED_CONFIRMATION, FanDeleteFlow, downloadFanData } from "./FanDataControls";
-import { PHOTO_REPORT_REASON } from "@/lib/creatorTheme/config";
+import { REPORT_REASONS } from "@/lib/reports/config";
 
 /**
  * A discreet safety menu on the fan page: report the creator (predatory /
@@ -195,12 +195,9 @@ export default function SafetyMenu({ token }: { token: string }) {
                   onChange={(e) => setReason(e.target.value)}
                 >
                   <option value="">Pick a reason…</option>
-                  <option>Predatory / pressuring behaviour</option>
-                  <option>Not delivering won prizes</option>
-                  <option>Harassment or abuse</option>
-                  <option>Illegal content or activity</option>
-                  <option>{PHOTO_REPORT_REASON}</option>
-                  <option>Other</option>
+                  {REPORT_REASONS.map((r) => (
+                    <option key={r}>{r}</option>
+                  ))}
                 </select>
                 <textarea
                   aria-label="Additional details (optional)"

@@ -102,6 +102,20 @@ const SECTIONS: LegalSection[] = [
             similar preferences.
           </li>
           <li>
+            <strong>Photos and page look:</strong> gallery photos you upload for your public page, their
+            captions and order, and when you confirmed each photo is safe for work; and the theme you pick for
+            your pages (colours and style choices).
+          </li>
+          <li>
+            <strong>Two-factor sign-in:</strong> if you turn it on, the authenticator app factor is held by
+            our sign-in provider. We see only whether it is set up and verified, never your one-time codes.
+          </li>
+          <li>
+            <strong>Push devices:</strong> if you allow browser notifications, the push address and keys your
+            browser gives us, a short device description (at most 80 characters of your browser’s user agent),
+            whether notifications may show details, and when delivery last worked or failed.
+          </li>
+          <li>
             <strong>Agencies:</strong> agency name, members and their roles, invitation email addresses and
             which creator accounts each member can work on.
           </li>
@@ -114,7 +128,16 @@ const SECTIONS: LegalSection[] = [
             the spins they give you, any amount they note against those spins for their own records, and the
             campaign it belongs to;
           </li>
-          <li>whether the creator has blocked you.</li>
+          <li>whether the creator has blocked you;</li>
+          <li>
+            <strong>win-back records:</strong> when the creator marked you as contacted, or snoozed a reminder
+            to contact you, and which message template they used;
+          </li>
+          <li>
+            <strong>Focus and Chase boosts:</strong> when a creator gives you a boosted set of spins, the prize
+            it is aimed at, the boost and spin count, how many boosted spins are left and whether it is active,
+            paused or finished, plus, for a Chase, the prize held back for you until it is won or released.
+          </li>
         </ul>
 
         <h3>From fans</h3>
@@ -126,8 +149,16 @@ const SECTIONS: LegalSection[] = [
           <li>your leaderboard choice and, if you opt in, the board name you pick;</li>
           <li>prizes you add to your wishlist;</li>
           <li>chat messages between you and the creator;</li>
-          <li>reports you send us about a creator;</li>
-          <li>when you pause your own link.</li>
+          <li>
+            reports you send us about a creator (the reason, any details you add, and which creator and link it
+            came from). Our staff review each report and record whether it was resolved or dismissed, with a
+            short note;
+          </li>
+          <li>when you pause your own link;</li>
+          <li>
+            breaks and play reminders you set: when a break you chose ends, and the daily spin count after
+            which you asked to be reminded to stop.
+          </li>
         </ul>
 
         <h3>Created as you use the Service</h3>
@@ -140,6 +171,20 @@ const SECTIONS: LegalSection[] = [
             <strong>Fairness records:</strong> for each spin, the committed secret value and its hash, the
             random value your browser contributed, a counter, the prizes and odds in play, and a share code
             for the spin’s share and verify pages.
+          </li>
+          <li>
+            <strong>Spin attempts:</strong> a short record of each spin request (a hash of the spin link and of
+            the request, whether it went through or was declined, the outcome and the times) so a retried or
+            doubled tap never spends a spin twice.
+          </li>
+          <li>
+            <strong>Visit check-ins:</strong> the days (in UTC) you opened your spin link, used to show the
+            visit streak glow. Nothing else about the visit is kept.
+          </li>
+          <li>
+            <strong>Instant rewards:</strong> if a creator sets a prize to deliver itself (a link, text or a
+            one-time code), the value you won is stored encrypted, together with how many times you viewed it
+            and when you last did.
           </li>
           <li>
             <strong>Referrals:</strong> if a creator uses referral bonuses, a referral code and which fan
@@ -232,7 +277,10 @@ const SECTIONS: LegalSection[] = [
         </li>
         <li>
           <strong>{OP} staff</strong> can access data when needed to provide support, review reports, keep
-          the Service secure or meet legal duties.
+          the Service secure or meet legal duties. Reports are reviewed by our admins, who can see the report,
+          the creator and the fan record it came from. Urgent reports (child safety, illegal content and
+          inappropriate photos) also send our team an email alert that names only the reason and the time,
+          never the fan.
         </li>
         <li>
           <strong>Other websites:</strong> if a creator uses a prize image or a link hosted elsewhere, your
@@ -262,7 +310,8 @@ const SECTIONS: LegalSection[] = [
           </li>
           <li>
             <strong>Webhooks a creator sets up:</strong> when a fan wins, we send the prize name, its rarity
-            and the time to the address the creator chose. We do not include the fan’s name, handle or link.
+            and the time to the address the creator chose, signed so the creator can check it came from us. We
+            do not include the fan’s name, handle or link.
           </li>
           <li>
             <strong>Authorities or others</strong> where the law requires it, or where needed to protect
@@ -344,6 +393,28 @@ const SECTIONS: LegalSection[] = [
           account or personal spin links, so past prizes can still be fulfilled and counted.
         </li>
         <li>
+          <strong>Check-ins, breaks and play reminders, Focus and Chase boosts and win-back records:</strong>{" "}
+          kept with the fan record they belong to, and deleted with it (when the fan deletes their data, the
+          creator deletes the fan or the account is closed).
+        </li>
+        <li>
+          <strong>Spin attempts:</strong> kept with the creator account like the spins they protect. When a
+          fan is deleted, their attempts stay without a link to the fan, and they are removed when the account
+          is closed.
+        </li>
+        <li>
+          <strong>Instant rewards:</strong> the encrypted value is erased when the fan deletes their data or the
+          creator deletes the fan; only anonymous delivery facts (the kind of reward, view count and times)
+          remain with the retained win. Everything is removed when the account is closed.
+        </li>
+        <li>
+          <strong>Gallery photos and theme:</strong> until you remove them, an admin removes a photo after a
+          report, or the account is closed.
+        </li>
+        <li>
+          <strong>Two-factor factors:</strong> until you remove them or the account is closed.
+        </li>
+        <li>
           <strong>Push delivery logs:</strong> deleted after {RETENTION_DAYS.pushLog} days, including
           when an account has no new notifications. Device subscriptions stay until the device is
           removed, its push service reports it is gone, or the account is closed.
@@ -368,7 +439,8 @@ const SECTIONS: LegalSection[] = [
         </li>
         <li>
           <strong>Access requests and reports:</strong> for as long as the related creator account exists, so
-          decisions can be reviewed.
+          decisions can be reviewed, including the review outcome and note. If the fan who sent a report is
+          deleted, the report stays without a link to them.
         </li>
         <li>
           <strong>Rate-limit counters:</strong> expire automatically, within an hour at most.

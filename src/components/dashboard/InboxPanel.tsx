@@ -85,6 +85,48 @@ export default function InboxPanel({
   const toast = useToast();
   const [threads, setThreads] = useState<FanThread[]>([]);
   const [loading, setLoading] = useState(true);
+  // A13: the inbox is read a page at a time (newest activity first). Older
+  // pages stay listed while the first page's last thread is unchanged; if new
+  // activity shifts it, they are dropped (and reloadable), so no thread can
+  // slip into a gap between the two.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const olderRef = useRef<{ anchor: string; items: FanThread[]; next: string | null } | null>(null);
+  const firstAnchor = useRef("");
+  const applyFirstPage = useCallback((page: { threads?: FanThread[]; next?: string | null }) => {
+    const first = page.threads ?? [];
+    const last = first[first.length - 1];
+    const anchor = last ? `${last.lastAt}|${last.fanId}` : "";
+    firstAnchor.current = anchor;
+    if (olderRef.current && olderRef.current.anchor !== anchor) olderRef.current = null;
+    const older = olderRef.current;
+    setThreads([...first, ...(older ? older.items.filter((t) => !first.some((x) => x.fanId === t.fanId)) : [])]);
+    setNextCursor(older ? older.next : page.next ?? null);
+  }, []);
+  const clearUnread = useCallback((fanId: string) => {
+    setThreads((prev) => prev.map((x) => (x.fanId === fanId ? { ...x, unread: 0 } : x)));
+    const older = olderRef.current;
+    if (older) older.items = older.items.map((x) => (x.fanId === fanId ? { ...x, unread: 0 } : x));
+  }, []);
+  const loadOlder = useCallback(async () => {
+    const cursor = olderRef.current ? olderRef.current.next : nextCursor;
+    if (!cursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(`/api/messages/inbox?before=${encodeURIComponent(cursor)}`, { cache: "no-store" });
+      if (!res.ok) throw new Error();
+      const page = (await res.json()) as { threads?: FanThread[]; next?: string | null };
+      const prev = olderRef.current?.items ?? [];
+      const items = [...prev, ...(page.threads ?? []).filter((t) => !prev.some((x) => x.fanId === t.fanId))];
+      olderRef.current = { anchor: firstAnchor.current, items, next: page.next ?? null };
+      setThreads((cur) => [...cur, ...(page.threads ?? []).filter((t) => !cur.some((x) => x.fanId === t.fanId))]);
+      setNextCursor(page.next ?? null);
+    } catch {
+      toast("Couldn't load older conversations — try again.", { tone: "error" });
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [nextCursor, loadingOlder, toast]);
   const [openFan, setOpenFan] = useState<FanThread | null>(null);
   // Keep the open fan id in a ref so the realtime handler reads the latest value
   // without re-subscribing on every selection.
@@ -115,38 +157,41 @@ export default function InboxPanel({
   const handledFocus = useRef(0);
   useEffect(() => {
     if (loading || !initialFanId || handledFocus.current === initialFanNonce) return;
-    handledFocus.current = initialFanNonce;
     const t = threads.find((x) => x.fanId === initialFanId);
+    // An older conversation may be on a later page: keep reading until found.
+    if (!t && nextCursor) {
+      if (!loadingOlder) void loadOlder();
+      return;
+    }
+    handledFocus.current = initialFanNonce;
     if (!t) {
       toast("No conversation with this fan yet.", { tone: "info" });
       return;
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- select the deep-linked thread once the list is loaded
     setOpenFan(t);
-    if (t.unread > 0) {
-      setThreads((prev) => prev.map((x) => (x.fanId === t.fanId ? { ...x, unread: 0 } : x)));
-    }
+    if (t.unread > 0) clearUnread(t.fanId);
     requestAnimationFrame(() => {
       itemRefs.current[t.fanId]?.scrollIntoView({
         behavior: prefersReducedMotion() ? "auto" : "smooth",
         block: "nearest",
       });
     });
-  }, [loading, threads, initialFanId, initialFanNonce, toast]);
+  }, [loading, threads, initialFanId, initialFanNonce, toast, nextCursor, loadingOlder, loadOlder, clearUnread]);
 
   // Resolves whether the load succeeded so the poll fallback can back off.
   const loadThreads = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch("/api/messages/inbox", { cache: "no-store" });
       if (!res.ok) return false;
-      setThreads((await res.json()).threads ?? []);
+      applyFirstPage(await res.json());
       return true;
     } catch {
       return false;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyFirstPage]);
 
   // Web push replaces the old in-tab "Enable alerts" opt-in: one system, set
   // up in Settings › Notifications. Whether THIS browser already gets pushes.
@@ -187,7 +232,6 @@ export default function InboxPanel({
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial thread-list load
     loadThreads();
 
     // Real Supabase Realtime for the authed creator (RLS passes on messages).
@@ -263,9 +307,10 @@ export default function InboxPanel({
       try {
         const res = await fetch("/api/messages/inbox", { cache: "no-store" });
         if (!res.ok) return false;
-        const next: FanThread[] = (await res.json()).threads ?? [];
+        const body = (await res.json()) as { threads?: FanThread[]; next?: string | null };
+        const next: FanThread[] = body.threads ?? [];
         if (cancelled) return true;
-        setThreads(next);
+        applyFirstPage(body);
 
         if (seeded) {
           for (const t of next) {
@@ -306,7 +351,7 @@ export default function InboxPanel({
       cancelled = true;
       poll.stop();
     };
-  }, [loadThreads, alertInbound]);
+  }, [loadThreads, alertInbound, applyFirstPage]);
 
   const unreadTotal = threads.reduce((n, t) => n + t.unread, 0);
 
@@ -389,13 +434,7 @@ export default function InboxPanel({
                         // Optimistically clear the badge the moment the thread is
                         // opened; opening the Thread marks it read server-side and
                         // a reload reconciles the authoritative count.
-                        if (t.unread > 0) {
-                          setThreads((prev) =>
-                            prev.map((x) =>
-                              x.fanId === t.fanId ? { ...x, unread: 0 } : x
-                            )
-                          );
-                        }
+                        if (t.unread > 0) clearUnread(t.fanId);
                       }}
                       className={`flex w-full items-center gap-3 rounded-xl border px-[13px] py-[11px] text-left transition-[border-color,background-color] duration-150 ${
                         on
@@ -422,6 +461,19 @@ export default function InboxPanel({
                   </li>
                 );
               })}
+              {nextCursor && (
+                <li className="flex justify-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => void loadOlder()}
+                    disabled={loadingOlder}
+                    data-testid="inbox-load-older"
+                    className="inline-flex min-h-9 items-center rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+                  >
+                    {loadingOlder ? "Loading…" : "Load older conversations"}
+                  </button>
+                </li>
+              )}
             </ul>
 
             <div className={`min-h-[26rem] ${openFan ? "" : "hidden lg:block"}`}>

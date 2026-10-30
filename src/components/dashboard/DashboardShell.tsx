@@ -253,7 +253,7 @@ export function Sidebar({
                         <>
                           <CountBadge n={badge} />
                           <span className="sr-only">
-                            {id === "inbox" ? " unread" : " waiting"}
+                            {id === "inbox" ? " unread" : id === "admin" ? " open reports" : " waiting"}
                           </span>
                         </>
                       )}

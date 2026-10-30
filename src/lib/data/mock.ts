@@ -19,6 +19,7 @@ import { randomBytes } from "node:crypto";
 import { demoCodeFingerprint } from "@/lib/rewards/demoFingerprint";
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
 import { mockGetTheme, mockListMedia } from "./mockTheme";
+import { addMockReport, mockReportStore } from "./mockReports";
 import { toDbTheme } from "@/lib/creatorTheme/config";
 import { makeFairRng, makeFairRngV3, normalizeClientSeed, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import {
@@ -2144,6 +2145,39 @@ export function mockGetOverview(): CreatorOverview {
   };
 }
 
+/**
+ * A5: the whole fulfilment queue, filtered and keyset-paginated (newest first),
+ * like creator_redemption_queue(): status, a fan/prize search and a
+ * (created_at, id) cursor, so every pending prize is reachable.
+ */
+export function mockListRedemptionQueue(opts: {
+  status?: RedemptionStatus;
+  query?: string;
+  before?: { at: string; id: string } | null;
+  limit: number;
+}): RedemptionItem[] {
+  const q = (opts.query ?? "").trim().toLowerCase();
+  const before = opts.before;
+  return store.redemptions
+    .filter((r) => !opts.status || r.status === opts.status)
+    .filter((r) => !q || r.fanName.toLowerCase().includes(q) || r.prizeLabel.toLowerCase().includes(q))
+    .filter((r) => !before || r.at < before.at || (r.at === before.at && r.id < before.id))
+    .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
+    .slice(0, Math.min(Math.max(1, opts.limit), 100))
+    .map((r) => structuredClone({
+      id: r.id,
+      fanName: r.fanName,
+      prizeLabel: r.prizeLabel,
+      rarity: r.rarity,
+      emoji: r.emoji,
+      status: r.status,
+      at: r.at,
+      notes: r.notes ?? null,
+      dueAt: r.dueAt ?? null,
+      ...((r.auto ?? mockAutoInfo(r.shareId)) ? { auto: r.auto ?? mockAutoInfo(r.shareId) } : {}),
+    }));
+}
+
 export function mockGetMetricsExtra(days: number): CreatorMetricsExtra {
   const n = clampDays(days);
   const trend = bucketByDay(
@@ -2995,9 +3029,6 @@ export function mockSelfExclude(token: string): { ok: true } | { error: string }
   return { ok: true };
 }
 
-// In-memory record of fan→creator reports (demo only; mirrors creator_reports).
-const mockReports: { token: string; reason: string; detail: string | null; at: string }[] = [];
-
 /** A fan reports the creator behind their token (demo: store it, validate reason). */
 export function mockReportCreator(
   token: string,
@@ -3007,13 +3038,30 @@ export function mockReportCreator(
   if (!reason.trim()) return { error: "empty" };
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
-  mockReports.push({
+  addMockReport({
+    creatorId: MOCK_REPORTED_CREATOR,
+    fanId: fan.id,
     token,
     reason: reason.slice(0, 120),
     detail: detail?.slice(0, 2000) ?? null,
-    at: new Date().toISOString(),
   });
   return { ok: true };
+}
+
+// Every demo fan belongs to the signed-in demo account.
+const MOCK_REPORTED_CREATOR = "acc-you";
+
+/** Admin › Reports context for a demo report (null when the row is gone). */
+export function mockReportParties(creatorId: string, fanId: string | null): {
+  creator: { name: string; email: string | null } | null;
+  fanName: string | null;
+} {
+  const account = store.accounts.find((a) => a.id === creatorId);
+  const fan = fanId ? store.fans.get(fanId) : undefined;
+  return {
+    creator: account ? { name: account.displayName, email: account.email } : null,
+    fanName: fan ? fan.name : null,
+  };
 }
 
 // --- Phase 3: Wishlist ------------------------------------------------------
@@ -3024,6 +3072,7 @@ export function mockAddWishlist(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const label = prizeLabel.trim();
   if (!label) return { error: "invalid_label" };
 
@@ -3055,6 +3104,7 @@ export function mockRemoveWishlist(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const label = prizeLabel.trim();
   store.wishlists = store.wishlists.filter(
     (w) => !(w.fanId === fan.id && w.prizeLabel === label)
@@ -3209,6 +3259,7 @@ export function mockSetFanLeaderboardOptIn(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan || (optIn && fan.selfExcludedAt)) return { error: "not_found" };
+  if (optIn && fan.blockedAt) return { error: "blocked" }; // A4: opting out always works
   fan.leaderboardOptIn = !!optIn;
   if (optIn && handle !== undefined) {
     const trimmed = handle.trim();
@@ -3292,9 +3343,10 @@ export function mockGetReferralStats(): {
 export function mockSendFanMessage(
   token: string,
   body: string
-): { ok: true } | { error: "not_found" | "locked" | "empty" } {
+): { ok: true } | { error: "not_found" | "blocked" | "locked" | "empty" } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (!chatUnlockedFor(fan)) return { error: "locked" };
   const text = body.trim();
   if (text.length < 1 || text.length > 2000) return { error: "empty" };
@@ -3426,6 +3478,7 @@ export function mockEnsureChatIntro(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const intro = (store.chatIntro ?? "").trim();
   if (!intro) return { ok: true };
   const hasAny = store.messages.some((m) => m.fanId === fan.id);
@@ -3451,6 +3504,7 @@ export function mockSendChatOutro(
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
+  if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   const outro = (store.chatOutro ?? "").trim();
   if (!outro) return { ok: true };
   const mine = store.messages
@@ -3796,7 +3850,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
     play: { breakUntil: fan.breakUntil ?? null, reminderDaily: fan.playReminderDaily ?? null, reminderUpdatedAt: null },
     checkIns: [...checkinDays(fan.id)].sort().map((day) => ({ day, recordedAt: null })),
     outreach: outreachLog().filter((row) => row.fanId === fan.id).map((row) => ({ at: row.createdAt, contactedAt: row.contactedAt })),
-    reportsYouSent: mockReports.filter((row) => (fan.passes ?? []).some((pass) => pass.token === row.token)).map((row) => ({ at: row.at, reason: row.reason, detail: row.detail })),
+    reportsYouSent: mockReportStore().filter((row) => (fan.passes ?? []).some((pass) => pass.token === row.token)).map((row) => ({ at: row.createdAt, reason: row.reason, detail: row.detail })),
     messagesYouSent: store.messages
       .filter((m) => m.fanId === fan.id && m.sender === "fan")
       .map((m) => ({ at: m.at, body: m.body })),

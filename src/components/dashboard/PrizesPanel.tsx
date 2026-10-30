@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import type { CreatorOverview, RedemptionItem, RedemptionStatus } from "@/lib/data/types";
+import { OVERVIEW_REDEMPTION_WINDOW } from "@/lib/data/queueWindow";
 
 // 24×24 stroke paths (Command Center prototype line icons).
 const P = {
@@ -54,10 +55,18 @@ export default function PrizesPanel({
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const PER_PAGE = 15;
+  // A5: wins older than the overview's newest-200 window, fetched from the
+  // server for the current filter/search. `anchor` is the window row they
+  // continue from; if the window moves (new wins), they are dropped and can
+  // be loaded again, so no prize can fall into a gap between the two lists.
+  const [older, setOlder] = useState<{ key: string; anchor: string; items: RedemptionItem[]; next: string | null } | null>(null);
+  const [olderBusy, setOlderBusy] = useState(false);
+  const [olderError, setOlderError] = useState(false);
 
   // PATCH a redemption: status and/or notes/dueAt. Optimistically patch the
   // shared overview so the row updates instantly, then refresh authoritatively.
   async function patchRow(id: string, patch: Patch) {
+    setOlder((o) => (o ? { ...o, items: o.items.map((r) => (r.id === id ? { ...r, ...patch } : r)) } : o));
     setData((d) =>
       d
         ? {
@@ -89,8 +98,43 @@ export default function PrizesPanel({
         r.fanName.toLowerCase().includes(q) ||
         r.prizeLabel.toLowerCase().includes(q)
     );
-  const shown = matched.slice(0, page * PER_PAGE);
-  const hasMore = matched.length > shown.length;
+  // The window holds every win newer than its oldest row; anything older
+  // (and so every older pending prize) is read page by page from the server.
+  const capped = redemptions.length >= OVERVIEW_REDEMPTION_WINDOW;
+  const windowEnd = redemptions[redemptions.length - 1];
+  const anchor = windowEnd ? `${windowEnd.at}|${windowEnd.id}` : "";
+  const olderKey = `${filter}|${q}`;
+  const olderRows =
+    older && older.key === olderKey && older.anchor === anchor
+      ? older.items.filter((r) => (filter === "all" || r.status === filter) && !redemptions.some((x) => x.id === r.id))
+      : [];
+  const olderLive = !!older && older.key === olderKey && older.anchor === anchor;
+  const all = [...matched, ...olderRows];
+  const shown = all.slice(0, page * PER_PAGE);
+  const hasMore = all.length > shown.length;
+  const canLoadOlder = capped && !hasMore && (!olderLive || older?.next !== null);
+
+  async function loadOlder() {
+    if (olderBusy || !windowEnd) return;
+    setOlderBusy(true);
+    setOlderError(false);
+    try {
+      const cursor = olderLive && older?.next ? older.next : anchor;
+      const qs = new URLSearchParams({ before: cursor, ...(filter === "all" ? {} : { status: filter }), ...(q ? { q } : {}) });
+      const res = await fetch(`/api/redemptions?${qs}`, { cache: "no-store" });
+      if (!res.ok) throw new Error();
+      const body = (await res.json()) as { items: RedemptionItem[]; next: string | null };
+      setOlder((o) => {
+        const prev = o && o.key === olderKey && o.anchor === anchor ? o.items : [];
+        return { key: olderKey, anchor, items: [...prev, ...body.items.filter((r) => !prev.some((x) => x.id === r.id))], next: body.next };
+      });
+      setPage((p) => p + 1);
+    } catch {
+      setOlderError(true);
+    } finally {
+      setOlderBusy(false);
+    }
+  }
   // Server count (metrics.pending), not the list length: the list is capped.
   const pendingCount = data?.metrics.pending ?? 0;
 
@@ -99,7 +143,9 @@ export default function PrizesPanel({
       ? "No prizes match that search. Clear it to see the rest of the queue."
       : redemptions.length === 0
         ? "Wins show up here the moment a fan spins. Create a fan link and share it."
-        : "No prizes in this status. Switch filters to see the rest of the queue.";
+        : capped
+          ? "None among your latest wins. Load older wins to keep looking."
+          : "No prizes in this status. Switch filters to see the rest of the queue.";
 
   return (
     <div className="max-w-[780px]">
@@ -180,11 +226,28 @@ export default function PrizesPanel({
         </ul>
       )}
 
-      {!loading && shown.length > 0 && (
-        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted">
+      {!loading && (shown.length > 0 || canLoadOlder) && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
           <span className="tnum">
-            Showing {shown.length} of {matched.length}
+            Showing {shown.length} of {all.length}
+            {capped && " loaded"}
           </span>
+          {olderError && (
+            <span role="alert" className="text-[#fca5a5]">
+              Couldn&rsquo;t load older wins.
+            </span>
+          )}
+          {canLoadOlder && (
+            <button
+              type="button"
+              onClick={() => void loadOlder()}
+              disabled={olderBusy}
+              data-testid="prizes-load-older"
+              className={`${ghostBtn} text-ink`}
+            >
+              {olderBusy ? "Loading…" : "Load older wins"}
+            </button>
+          )}
           {hasMore && (
             <button
               type="button"

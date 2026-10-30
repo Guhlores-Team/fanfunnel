@@ -13,6 +13,7 @@ import AdminErrors from "./AdminErrors";
 import SystemHealthCard from "./SystemHealthCard";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
+import AdminReports from "./AdminReports";
 
 interface PendingApp {
   id: string;
@@ -329,6 +330,8 @@ export default function AdminClient() {
             </ul>
           </section>
         )}
+
+        <AdminReports />
 
         <section aria-labelledby="admin-accounts" className={`lift-in overflow-hidden rounded-2xl ${raised}`}>
           <SectionTitle

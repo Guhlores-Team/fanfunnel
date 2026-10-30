@@ -759,9 +759,24 @@ function Stat({ label, value }: { label: string; value: number }) {
 /* Webhooks (advanced; not in the design but the e2e and integrations rely)  */
 /* ------------------------------------------------------------------------ */
 
+// A16: what each hook is sent, and why a create can be refused.
+const WEBHOOK_EVENT_LABEL: Record<string, string> = {
+  all: "Every win",
+  prize_pending: "Wins to fulfil",
+  prize_delivered: "Auto-delivered wins",
+};
+const WEBHOOK_MAX = 5;
+const WEBHOOK_ERROR: Record<string, string> = {
+  webhook_limit: `You can have up to ${WEBHOOK_MAX} webhooks. Remove one first.`,
+  blocked_url: "That address points at a private or local network, so FanFunnel can't send to it.",
+  invalid_url: "Enter a full web address starting with http(s)://",
+  rate_limited: "Too many tries. Wait a minute and try again.",
+};
+
 function WebhooksCard() {
   const [hooks, setHooks] = useState<Webhook[]>([]);
   const [url, setUrl] = useState("");
+  const [event, setEvent] = useState("all");
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
@@ -787,15 +802,15 @@ function WebhooksCard() {
       const res = await fetch("/api/webhooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: value }),
+        body: JSON.stringify({ url: value, event }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.webhook) throw new Error();
+      if (!res.ok || !data.webhook) throw new Error(typeof data.error === "string" ? data.error : "");
       setHooks((h) => [data.webhook, ...h]);
       setUrl("");
       toast("Webhook added");
-    } catch {
-      toast("Couldn't add webhook");
+    } catch (e) {
+      toast(WEBHOOK_ERROR[e instanceof Error ? e.message : ""] ?? "Couldn't add webhook", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -854,17 +869,30 @@ function WebhooksCard() {
             className="ff-input w-full min-w-0 font-mono normal-case tracking-normal"
           />
         </label>
-        <button type="submit" disabled={busy} className={primaryBtn}>
+        <label className={fieldLabel}>
+          Send
+          <select value={event} onChange={(e) => setEvent(e.target.value)} className="ff-input normal-case tracking-normal">
+            {Object.entries(WEBHOOK_EVENT_LABEL).map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" disabled={busy || hooks.length >= WEBHOOK_MAX} className={primaryBtn}>
           Add
         </button>
       </form>
+      {hooks.length >= WEBHOOK_MAX && (
+        <p className="mt-2 text-xs text-muted">You have the maximum of {WEBHOOK_MAX} webhooks.</p>
+      )}
 
       {hooks.length > 0 && (
         <ul className="mt-3 flex flex-col gap-2">
           {hooks.map((h) => (
             <li key={h.id} className={`flex flex-wrap items-center gap-3 rounded-[11px] px-3.5 py-2.5 text-sm ${recessed}`}>
               <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] px-2 py-0.5 text-[11px] font-semibold text-brand">
-                {h.event}
+                {WEBHOOK_EVENT_LABEL[h.event] ?? h.event}
               </span>
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">{h.url}</span>
               <RemoveConfirm
@@ -878,7 +906,81 @@ function WebhooksCard() {
           ))}
         </ul>
       )}
+      <WebhookSecret />
     </Card>
+  );
+}
+
+/**
+ * A16: the creator's signing secret. Hidden until asked for; every delivery
+ * carries X-FanFunnel-Signature: t=<unix>,v1=<HMAC-SHA256 of "t.body">.
+ */
+function WebhookSecret() {
+  const toast = useToast();
+  const [secret, setSecret] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
+  async function load(rotate: boolean) {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/webhooks/secret", { method: rotate ? "POST" : "GET", cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || typeof data.secret !== "string") throw new Error();
+      setSecret(data.secret);
+      setConfirmRotate(false);
+      if (rotate) toast("Signing secret rotated. Update your receivers.", { tone: "success" });
+    } catch {
+      toast("Couldn't load the signing secret.", { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className={`mt-3 flex flex-col gap-2 rounded-xl p-3.5 ${recessed}`} data-testid="webhook-secret">
+      <p className="text-[12.5px] font-semibold text-ink">Signing secret</p>
+      <p className="text-xs text-muted text-pretty">
+        Each delivery has an <code className="font-mono">X-FanFunnel-Signature: t=…,v1=…</code> header: an HMAC-SHA256 of
+        the timestamp, a dot and the raw body, made with this secret. Check it before trusting a request.
+      </p>
+      {secret ? (
+        <code className="break-all rounded-lg bg-base/60 p-2 font-mono text-xs text-ink" aria-label="Signing secret">
+          {secret}
+        </code>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {!secret && (
+          <button type="button" disabled={busy} onClick={() => void load(false)} className={secondaryBtn}>
+            Show secret
+          </button>
+        )}
+        {secret && (
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard?.writeText(secret).then(() => toast("Secret copied"), () => {})}
+            className={secondaryBtn}
+          >
+            Copy
+          </button>
+        )}
+        {confirmRotate ? (
+          <>
+            <button type="button" disabled={busy} onClick={() => void load(true)} className={secondaryBtn}>
+              Confirm rotate
+            </button>
+            <button type="button" onClick={() => setConfirmRotate(false)} className={quietBtn}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button type="button" disabled={busy} onClick={() => setConfirmRotate(true)} className={quietBtn}>
+            Rotate secret
+          </button>
+        )}
+      </div>
+      {confirmRotate && (
+        <p className="text-xs text-muted">The old secret stops working at once; receivers checking it will reject new deliveries until updated.</p>
+      )}
+    </div>
   );
 }
 

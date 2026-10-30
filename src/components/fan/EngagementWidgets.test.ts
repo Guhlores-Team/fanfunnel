@@ -55,6 +55,8 @@ async function main() {
   const { default: RecentWinsTicker } = await import("./RecentWinsTicker");
   const { default: PrizeBook } = await import("./PrizeBook");
   const { default: WinsGallery } = await import("./WinsGallery");
+  const { default: ChatPanel } = await import("./ChatPanel");
+  const { default: WishlistSection } = await import("./WishlistSection");
   const prize = { id: "prize", label: "Paid prize", rarity: "common" as const, weight: 1, color: "#123456" };
   const history = [{ label: "Earned win", rarity: "common" as const, at: "2026-10-27T00:00:00Z" }];
   const pass: FanPassView = { token: "unit-fan", fanName: "Fan", creatorTitle: "Creator", creatorId: "creator",
@@ -83,6 +85,10 @@ async function main() {
     const gallery = tree.find(element => element.type === WinsGallery);
     check(`${state}: purchased focus progress remains readable`, (book?.props.focus as { spinsLeft?: number })?.spinsLeft === 7);
     check(`${state}: earned history remains available`, JSON.stringify(gallery?.props.history) === JSON.stringify(history));
+    // A4: a blocked fan can't reach the creator, so chat and the wishlist are gone.
+    const reach = tree.filter(element => element.type === ChatPanel || element.type === WishlistSection).length;
+    check(`${state}: chat and wishlist follow the creator's block`, reach === (state === "blocked" ? 0 : 2));
+    check(`${state}: a blocked fan is told why`, tree.some(element => element.props["data-testid"] === "fan-blocked-note") === (state === "blocked"));
   }
   console.log(`EngagementWidgets: ${passed} actual parent/widget/read-admission checks passed`);
 }

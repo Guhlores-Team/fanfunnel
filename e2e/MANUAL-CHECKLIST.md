@@ -159,3 +159,23 @@ the TEST project only). Block one of them, and on another fan's link use the fan
 - [ ] Fans tab: **Copy link** on the paused fan says they paused their link and copies nothing;
       on the blocked fan it says they are blocked.
 - [ ] Signed in as a **second** creator: none of the first creator's fans or contacts appear.
+
+## 8. Safety reports, blocked fans, webhooks (audit #2, Preview on the TEST database)
+
+Needs migration 0064 on the TEST project, `ALERT_EMAIL_TO`/`RESEND_API_KEY` set for Preview
+with `ALERT_ENVIRONMENTS` including `preview`, and an admin signed in with two-factor.
+
+- [ ] On a fan link, Safety & privacy › Report this creator › **Involves someone under 18**.
+      Within a minute the Admin nav item shows a count, and `ALERT_EMAIL_TO` gets an e-mail
+      naming only the reason and time (no fan name, link or details).
+- [ ] Admin › **Reports**: the report is marked Urgent, names the creator, the fan and a short
+      link hint; **What the fan wrote** reveals the details. Resolve it with a note: it moves to
+      Resolved with the note and time, the nav count drops, and Admin › Activity logs it.
+- [ ] Signed in as a creator without admin (or an admin without two-factor),
+      `/api/admin/reports` answers 401/403.
+- [ ] Block a fan from the Fans drawer. Their link says chat and wishlists are off, shows no chat
+      or wishlist, and a chat tab left open from before shows the same note on send.
+- [ ] Boosts › Webhooks: add a hook for **Wins to fulfil** pointing at a request bin. A manual
+      prize win delivers it with `X-FanFunnel-Signature`; an auto-delivered win does not. Verify
+      the signature with the secret shown under the hooks. A 6th hook, `http://localhost/` and
+      `http://169.254.169.254/` are refused.

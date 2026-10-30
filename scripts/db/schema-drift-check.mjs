@@ -23,6 +23,9 @@
 // spins on a 5-code prize hand out exactly 5 distinct codes.
 // And the theming probe (0058, themeProbe.mjs): own-row theme writes from an
 // allow-list only; creator_media owner-only, server-only inserts, capped at 12.
+// And the completeness-gaps probe (0064, gapsProbe.mjs): report review is
+// aal2-admin only and database-stamped; webhooks capped with a server-only
+// secret; the queue/inbox RPCs refuse anon and stay tenant-isolated.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -51,6 +54,7 @@ import { probeCreatorActorContexts } from "./creatorActorContextProbe.mjs";
 import { probeTheme } from "./themeProbe.mjs";
 import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.mjs";
 import { probeCryptoNamespace } from "./cryptoNamespaceProbe.mjs";
+import { probeGaps } from "./gapsProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -297,6 +301,8 @@ const SIGNED_IN_ONLY = [
   "org_add_member(uuid, text, public.org_role)",
   "org_remove_member(uuid)",
   "org_scope_creator(uuid, uuid, boolean)",
+  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer)",
+  "creator_inbox_threads(timestamp with time zone, uuid, integer)",
 ];
 const RLS_HELPERS = [
   "is_admin()", "can_act_for(uuid, text)", "current_user_active()", "_owns_org(uuid)",
@@ -992,6 +998,17 @@ function probeApproval(db) {
   }
 }
 
+function probeCompletenessGaps(db) {
+  const bad = probeGaps(db, psql);
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: report review, server queues and webhooks (0064)`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: reports are aal2-admin only with a database-stamped, immutable review trail; 6th webhook and unknown events refused; webhook_secrets is service-role only; queue/inbox RPCs refuse anon and stay tenant-isolated`);
+  }
+}
+
 async function probeCreatorStorage(db) {
   const bad = [
     ...probeTheme(db, psql).map((message) => `theming: ${message}`),
@@ -1357,6 +1374,7 @@ try {
     await probeInstantRewards(db);
     await probeCreatorStorage(db);
     await probeCreatorActorContexts(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"actor context SQL failed");return r.stdout;});
+    probeCompletenessGaps(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

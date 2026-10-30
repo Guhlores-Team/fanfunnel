@@ -130,7 +130,7 @@ const MESSAGE_SELECT = "id, sender, body, created_at, read_at";
 export async function sendFanMessage(
   token: string,
   body: string
-): Promise<{ ok: true } | { error: "not_found" | "locked" | "empty" | "db_error" }> {
+): Promise<{ ok: true } | { error: "not_found" | "blocked" | "locked" | "empty" | "db_error" }> {
   if (!isSupabaseConfigured()) {
     const res = mockSendFanMessage(token, body);
     if ("ok" in res) {
@@ -140,7 +140,7 @@ export async function sendFanMessage(
     }
     // The mock may use its own validation code ("invalid_body"); normalize any
     // unknown error to the contract's "empty".
-    const known = ["not_found", "locked", "empty", "db_error"] as const;
+    const known = ["not_found", "blocked", "locked", "empty", "db_error"] as const;
     type Known = (typeof known)[number];
     const code = (known as readonly string[]).includes(res.error)
       ? (res.error as Known)
@@ -151,7 +151,7 @@ export async function sendFanMessage(
   const sb = createServiceClient();
   const { data: passData } = await sb
     .from("fan_passes")
-    .select("creator_id, fan:fans(id, spins_remaining, spins_granted_total)")
+    .select("creator_id, fan:fans(id, spins_remaining, spins_granted_total, blocked_at)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -161,9 +161,12 @@ export async function sendFanMessage(
       id: string;
       spins_remaining: number;
       spins_granted_total: number;
+      blocked_at?: string | null;
     } | null;
   } | null;
   if (!pass || !pass.fan) return { error: "not_found" };
+  // A4: a fan the creator blocked can no longer message them.
+  if (pass.fan.blocked_at) return { error: "blocked" };
 
   // GATE: chat unlocks while the fan holds spins OR has ever been granted any.
   if (!(pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0))
@@ -229,50 +232,98 @@ export async function getFanMessages(token: string): Promise<ChatMessage[]> {
   return rows.map(toChatMessage);
 }
 
-/** The creator's inbox: one row per fan, newest activity first (authed/RLS). */
-export async function listThreads(): Promise<FanThread[]> {
-  if (!isSupabaseConfigured()) return mockListThreads();
+/** Conversations per Inbox page (the RPC's maximum). */
+export const THREAD_PAGE_SIZE = 100;
 
+export interface ThreadPage {
+  threads: FanThread[];
+  /** Cursor for the next (older) page; null on the last one. */
+  next: string | null;
+}
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** "<lastAt>|<fanId>": the position of the last thread a caller holds. */
+export function decodeThreadCursor(raw: string | null | undefined): { at: string; fanId: string } | null {
+  if (!raw) return null;
+  const i = raw.lastIndexOf("|");
+  if (i <= 0) return null;
+  const at = raw.slice(0, i);
+  const fanId = raw.slice(i + 1);
+  if (!SAFE_ID.test(fanId) || at.length > 40 || Number.isNaN(Date.parse(at))) return null;
+  return { at, fanId };
+}
+const threadCursor = (t: FanThread) => `${t.lastAt}|${t.fanId}`;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The creator's inbox: one row per fan (latest message + unread count), newest
+ * activity first, a page at a time (A13). The Supabase path asks the database
+ * for exactly that (creator_inbox_threads, 0064, SECURITY INVOKER so RLS
+ * applies) instead of reading every message, so old and unread threads never
+ * fall off the end of a capped read.
+ */
+export async function listThreads(
+  before?: string | null,
+  limit: number = THREAD_PAGE_SIZE,
+): Promise<ThreadPage | { error: "bad_request" }> {
+  const size = Math.min(Math.max(1, limit), THREAD_PAGE_SIZE);
+  const cursor = decodeThreadCursor(before);
+  if (before && !cursor) return { error: "bad_request" };
+
+  if (!isSupabaseConfigured()) {
+    const all = mockListThreads().sort((a, b) => b.lastAt.localeCompare(a.lastAt) || b.fanId.localeCompare(a.fanId));
+    const rows = cursor
+      ? all.filter((t) => t.lastAt < cursor.at || (t.lastAt === cursor.at && t.fanId < cursor.fanId))
+      : all;
+    const threads = rows.slice(0, size);
+    return { threads, next: rows.length > size ? threadCursor(threads[threads.length - 1]) : null };
+  }
+
+  if (cursor && !UUID_RE.test(cursor.fanId)) return { error: "bad_request" };
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (!user) return [];
+  if (!user) return { threads: [], next: null };
 
-  const { data } = await sb
-    .from("messages")
-    .select(
-      "fan_id, sender, body, read_at, created_at, fan:fans(display_name, handle)"
-    )
-    .eq("creator_id", user.id)
-    .order("created_at", { ascending: false });
-
-  const rows = (data ?? []) as unknown as {
+  // One look-ahead row says whether an older page exists.
+  const { data } = await sb.rpc("creator_inbox_threads", {
+    p_before_at: cursor?.at,
+    p_before_fan: cursor?.fanId,
+    p_limit: size + 1,
+  });
+  const rows = ((data ?? []) as {
     fan_id: string;
-    sender: "fan" | "creator";
-    body: string;
-    read_at: string | null;
-    created_at: string;
-    fan: { display_name: string | null; handle: string | null } | null;
-  }[];
+    fan_name: string;
+    last_body: string;
+    last_at: string;
+    unread: number;
+  }[]).map((r) => ({
+    fanId: r.fan_id,
+    fanName: r.fan_name || "Fan",
+    lastBody: r.last_body,
+    lastAt: r.last_at,
+    unread: r.unread ?? 0,
+  }));
+  const threads = rows.slice(0, size);
+  return { threads, next: rows.length > size ? threadCursor(threads[threads.length - 1]) : null };
+}
 
-  const threads = new Map<string, FanThread>();
-  for (const r of rows) {
-    // Rows are newest-first, so the FIRST row per fan is the latest message.
-    let t = threads.get(r.fan_id);
-    if (!t) {
-      t = {
-        fanId: r.fan_id,
-        fanName: r.fan?.display_name ?? r.fan?.handle ?? "Fan",
-        lastBody: r.body,
-        lastAt: r.created_at,
-        unread: 0,
-      };
-      threads.set(r.fan_id, t);
-    }
-    if (r.sender === "fan" && r.read_at === null) t.unread += 1;
-  }
-  return [...threads.values()];
+/** Whether the creator has any conversation with this fan (Fans drawer). */
+export async function hasThreadWith(fanId: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) return mockListThreads().some((t) => t.fanId === fanId);
+  if (!UUID_RE.test(fanId)) return false;
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return false;
+  const { count } = await sb
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_id", user.id)
+    .eq("fan_id", fanId);
+  return (count ?? 0) > 0;
 }
 
 export async function getThread(fanId: string): Promise<ChatMessage[]> {
@@ -416,6 +467,7 @@ export async function ensureChatIntro(
   const sb = createServiceClient();
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
+  if (resolved.blocked) return { error: "blocked" };
 
   const { data: profile } = await sb
     .from("profiles")
@@ -454,6 +506,7 @@ export async function sendChatOutro(
   const sb = createServiceClient();
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
+  if (resolved.blocked) return { error: "blocked" };
 
   const { data: profile } = await sb
     .from("profiles")

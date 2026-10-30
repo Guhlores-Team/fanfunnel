@@ -22,7 +22,7 @@ import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
 import { isOnBreak } from "@/lib/play/playGuard";
 import { fanVisitsLast7, visitsByFan } from "./checkins";
-import { contactToken } from "@/lib/engagement";
+import { contactToken, fanEngagementAllowed } from "@/lib/engagement";
 import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
 import { listRecentOutreach } from "./outreach";
 import { LEGAL } from "@/lib/legal";
@@ -252,7 +252,8 @@ export interface CreatorCrm {
  *     converted (selectDormant in src/lib/winback/list.ts).
  *     Spend safety: a fan failing the engagement gate (blocked, paused a link,
  *     on a break), a fan with no active link, a fan contacted within the
- *     cooldown and a snoozed fan are never suggested. If the outreach log
+ *     cooldown and a snoozed fan are never suggested. Whales pass the same F6
+ *     gate (they drive Autopilot's top-spender and out-of-spins cards). If the outreach log
  *     can't be read, nobody is suggested (fail closed).
  * The link offered on any row is the fan's newest ACTIVE link (never a paused
  * one), and none at all for a fan failing the engagement gate.
@@ -284,7 +285,13 @@ export async function getCreatorCrm(): Promise<CreatorCrm> {
   const totalLtv = spenders.reduce((s, f) => s + f.totalSpent, 0);
   const avgLtv = spenders.length ? Math.round(totalLtv / spenders.length) : 0;
 
-  const whales = [...spenders].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 10);
+  // F6: whales feed "check in with your top spenders" and "out of spins" nudges,
+  // so a blocked, paused or on-break fan is never one.
+  const engaged = new Set(fans.filter((f) => fanEngagementAllowed(f, now)).map((f) => f.fanId));
+  const whales = spenders
+    .filter((f) => engaged.has(f.fanId))
+    .sort((a, b) => b.totalSpent - a.totalSpent)
+    .slice(0, 10);
   // primaryToken is null exactly when the fan fails the gate (see enrich).
   const dormant = outreach ? selectDormant(spenders, outreach, now) : [];
   const winback = winbackStats(all, outreach ?? [], now);
@@ -622,7 +629,11 @@ export async function ackFan(
 
 // --- Wishlist ---------------------------------------------------------------
 
-/** Resolve the fan + creator + active wheel behind a token (service role). */
+/**
+ * Resolve the fan + creator + active wheel behind a token (service role).
+ * `blocked` is the creator's block (fans.blocked_at): callers that let a fan
+ * reach the creator (chat, wishlist, leaderboard opt-in) refuse it (A4).
+ */
 export async function resolveFanByToken(
   sb: ReturnType<typeof createServiceClient>,
   token: string
@@ -631,10 +642,11 @@ export async function resolveFanByToken(
   creatorId: string;
   campaignId: string | null;
   wheelId: string;
+  blocked: boolean;
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select("creator_id, campaign_id, wheel_id, fan_id")
+    .select("creator_id, campaign_id, wheel_id, fan_id, fan:fans(blocked_at)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -643,6 +655,7 @@ export async function resolveFanByToken(
     campaign_id: string | null;
     wheel_id: string;
     fan_id: string;
+    fan?: { blocked_at: string | null } | null;
   } | null;
   if (!pass) return null;
   const wheelId = await resolveWheelId(sb, pass, new Date());
@@ -652,5 +665,6 @@ export async function resolveFanByToken(
     creatorId: pass.creator_id,
     campaignId: pass.campaign_id,
     wheelId,
+    blocked: !!pass.fan?.blocked_at,
   };
 }

@@ -42,6 +42,7 @@ import { creatorRecoveryJourney } from "./creator-recovery.mjs";
 import { scratchJourney, bingoJourney } from "./games.mjs";
 import { checkSystemHealth, systemHealthJourney } from "./system-health.mjs";
 import { gameSwitchingJourney } from "./game-switching.mjs";
+import { safetyJourney } from "./safety.mjs";
 
 let server = null;
 let browser = null;
@@ -85,6 +86,7 @@ try {
     await creatorRecoveryJourney(page, runner, ctx); // durable grant-edit retry, reload and cancellation
     await runner.step("System health: demo status never claims connected protection", () => checkSystemHealth(page));
     await systemHealthJourney(page, runner);
+    await safetyJourney(page, runner, ctx); // A1 report → Admin › Reports → resolve; A4 blocked fan (own fans)
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

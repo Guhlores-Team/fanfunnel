@@ -59,6 +59,9 @@ const SIGNED_IN_ONLY = [
   "org_add_member",
   "org_remove_member",
   "org_scope_creator",
+  // 0064: SECURITY INVOKER queue/inbox reads, pinned to auth.uid().
+  "creator_redemption_queue",
+  "creator_inbox_threads",
 ];
 // RLS policies call these, so anon must keep EXECUTE (an anon read that
 // evaluates a policy would otherwise error instead of returning no rows).

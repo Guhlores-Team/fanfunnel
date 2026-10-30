@@ -97,7 +97,10 @@ const SECTIONS: LegalSection[] = [
             refund is between the creator and the fan.
           </li>
           <li>
-            <strong>We do not supply prizes.</strong> We do not own, check, store, ship or guarantee them.
+            <strong>We do not supply prizes.</strong> We do not own, check, ship or guarantee them. If a
+            creator chooses instant delivery, we store the link, text or one-time codes the creator gives us,
+            encrypted, only so we can show each one to the fan who wins it. The creator remains responsible for
+            what those codes and links are and whether they work.
           </li>
           <li>
             <strong>Spins have no cash value.</strong> A spin cannot be exchanged for money, cashed out,
@@ -165,7 +168,10 @@ const SECTIONS: LegalSection[] = [
             <strong>Odds are set by the creator</strong>, by giving each prize a weight. The odds can also
             change for a time, for example during a creator’s “happy hour” (which makes rare prizes more
             likely), when a limited prize runs out, or through the guarantee of a rare prize after a run of
-            spins without one. Each spin’s verify page shows the odds that applied to it.
+            spins without one. A creator can also give you a <strong>Focus</strong> boost, which makes one
+            chosen prize more likely for a set number of spins, or a <strong>Chase</strong>, which guarantees
+            that prize within a set number of spins and holds one back for you until then. Each spin’s verify
+            page shows the odds that applied to it.
           </li>
           <li>
             <strong>Creators supply and deliver prizes.</strong> When and how a prize is delivered, and any
@@ -279,6 +285,12 @@ const SECTIONS: LegalSection[] = [
             and offer a fair substitute.
           </li>
           <li>
+            <strong>Your public photos are safe for work.</strong> Gallery photos, avatars and prize images
+            appear on public pages, so they must not contain nudity or sexual content, and you confirm this for
+            each gallery photo you upload. We may remove any photo that breaks this rule, including after a fan
+            reports it.
+          </li>
+          <li>
             <strong>You only deal with adults.</strong> Never send a spin link to anyone you know or suspect
             is under {AGE}.
           </li>
@@ -376,12 +388,19 @@ const SECTIONS: LegalSection[] = [
     title: "Reports, pausing and blocking",
     body: (
       <ul>
-        <li>Fans can report a creator from the spin page. We review reports and may act on them.</li>
+        <li>
+          Fans can report a creator from the spin page. Our admins review every report, record whether it
+          was resolved or dismissed, and may act on it, for example by removing photos or suspending an
+          account. Reports about a minor, illegal content or inappropriate photos are treated as urgent.
+        </li>
         <li>
           Fans can pause their own link at any time. A paused link stops working, and the creator can send a
           new one if the fan asks.
         </li>
-        <li>Creators can block a fan, which stops that fan’s links working.</li>
+        <li>
+          Creators can block a fan. A blocked fan’s link no longer spins, and the fan can no longer chat with
+          the creator, change their wishlist or join the leaderboard.
+        </li>
       </ul>
     ),
   },

@@ -726,6 +726,9 @@ export type Database = {
           fan_id: string | null
           id: string
           reason: string
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
           status: string
           token: string | null
         }
@@ -736,6 +739,9 @@ export type Database = {
           fan_id?: string | null
           id?: string
           reason: string
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           status?: string
           token?: string | null
         }
@@ -746,6 +752,9 @@ export type Database = {
           fan_id?: string | null
           id?: string
           reason?: string
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           status?: string
           token?: string | null
         }
@@ -762,6 +771,13 @@ export type Database = {
             columns: ["fan_id"]
             isOneToOne: false
             referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creator_reports_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -2684,6 +2700,35 @@ export type Database = {
         }
         Relationships: []
       }
+      webhook_secrets: {
+        Row: {
+          created_at: string
+          creator_id: string
+          rotated_at: string | null
+          secret: string
+        }
+        Insert: {
+          created_at?: string
+          creator_id: string
+          rotated_at?: string | null
+          secret: string
+        }
+        Update: {
+          created_at?: string
+          creator_id?: string
+          rotated_at?: string | null
+          secret?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webhook_secrets_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       webhooks: {
         Row: {
           created_at: string
@@ -3189,6 +3234,41 @@ export type Database = {
             }
             Returns: Json
           }
+      creator_inbox_threads: {
+        Args: { p_before_at?: string; p_before_fan?: string; p_limit?: number }
+        Returns: {
+          fan_id: string
+          fan_name: string
+          last_at: string
+          last_body: string
+          last_sender: Database["public"]["Enums"]["message_sender"]
+          unread: number
+        }[]
+      }
+      creator_redemption_queue: {
+        Args: {
+          p_before_at?: string
+          p_before_id?: string
+          p_limit?: number
+          p_query?: string
+          p_status?: string
+        }
+        Returns: {
+          created_at: string
+          due_at: string
+          fair_trace: Json
+          fan_name: string
+          id: string
+          notes: string
+          pool_snapshot: Json
+          prize_label: string
+          prize_rarity: Database["public"]["Enums"]["prize_rarity"]
+          reward_kind: string
+          reward_last_viewed_at: string
+          reward_views: number
+          status: Database["public"]["Enums"]["redemption_status"]
+        }[]
+      }
       creator_storage_account: {
         Args: {
           p_action?: string

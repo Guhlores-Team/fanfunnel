@@ -151,11 +151,28 @@ export default function FansPanel({
     loadWheels();
     loadThreads();
   }, [load, loadCampaigns, loadTemplates, loadWheels, loadThreads]);
-  // Re-check threads whenever a drawer opens: a fan may have written since.
+  // Re-check whenever a drawer opens: a fan may have written since, and an old
+  // conversation can sit beyond the Inbox's first page (A13), so ask per fan.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- refetch on open (state lands after the fetch)
-    if (openFanId) void loadThreads();
-  }, [openFanId, loadThreads]);
+    if (!openFanId) return;
+    let live = true;
+    void fetch(`/api/messages/inbox?fanId=${encodeURIComponent(openFanId)}`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((d: { hasThread?: boolean } | null) => {
+        if (!live || typeof d?.hasThread !== "boolean") return;
+        setThreadIds((prev) => {
+          if (prev.has(openFanId) === d.hasThread) return prev;
+          const next = new Set(prev);
+          if (d.hasThread) next.add(openFanId);
+          else next.delete(openFanId);
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [openFanId]);
 
   // Every distinct tag across loaded accounts, for the tag filter dropdown.
   const allTags = useMemo(() => {
