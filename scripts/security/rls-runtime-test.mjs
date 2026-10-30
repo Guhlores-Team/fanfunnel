@@ -952,6 +952,11 @@ async function main() {
     check((await low.rpc("can_act_for",{target_creator:A.id,perm:"edit_wheel"})).data===false,"0062 enrolled aal1 loses own mutation authority");
     const ownHigh=await a.from("wheels").select("id").eq("id",A.wheelId);
     check(!ownHigh.error&&ownHigh.data?.length===1,"0062 challenged aal2 creator regains own business read");
+    const lowQueue=await low.rpc("creator_redemption_queue",{p_limit:100}),lowThreads=await low.rpc("creator_inbox_threads",{p_limit:100}),lowHooks=await low.from("webhooks").select("id");
+    check(!lowQueue.error&&lowQueue.data?.length===0&&!lowThreads.error&&lowThreads.data?.length===0,"0064 enrolled aal1 session reads no fulfilment queue or inbox thread");
+    check(!lowHooks.error&&lowHooks.data?.length===0,"0064 enrolled aal1 session reads no webhook");
+    const highQueue=await a.rpc("creator_redemption_queue",{p_limit:100});
+    check(!highQueue.error&&(highQueue.data?.length??0)>0,"0064 challenged aal2 creator regains own fulfilment queue");
     check((await a.rpc("can_act_for",{target_creator:C.id,perm:"grant"})).data===true,"0062 challenged aal2 manager regains rightful agency authority");
     const serviceIntent={p_request:randomUUID(),p_creator:A.id,p_actor:A.id,p_fan:A.fanId,p_pass:A.passId,p_spins:1,p_bonus:0,p_amount:0,p_campaign:null};
     const sessionRace=await admin.rpc("grant_pass_spins",{...serviceIntent,p_context:beforeEnrollmentContext});
