@@ -33,6 +33,7 @@ import { playJourney } from "./play.mjs";
 import { glowJourney } from "./glow.mjs";
 import { winbackJourney } from "./winback.mjs";
 import { privacyJourney } from "./privacy.mjs";
+import { urlSafetyJourney } from "./urlSafety.mjs";
 
 import { pushJourney } from "./push.mjs";
 import { instantJourney } from "./instant.mjs";
@@ -85,6 +86,7 @@ try {
     await creatorRecoveryJourney(page, runner, ctx); // durable grant-edit retry, reload and cancellation
     await runner.step("System health: demo status never claims connected protection", () => checkSystemHealth(page));
     await systemHealthJourney(page, runner);
+    await urlSafetyJourney(page, runner, ctx); // malformed URL privacy/security-header regression
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

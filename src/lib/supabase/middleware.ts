@@ -12,8 +12,9 @@ import { aalFromAccessToken, hasVerifiedFactor } from "@/lib/auth/assurance";
  * Route Handlers (`/api/*`, `/auth/*`) write their own refreshed cookies and
  * client pages use the browser client, so neither needs the proxy.
  *
- * `config.matcher` in src/proxy.ts must cover exactly these paths;
- * src/proxy.test.ts fails if the two drift apart.
+ * The auth matchers in src/proxy.ts cover these paths (src/proxy.test.ts).
+ * A separate percent-path matcher validates encoding, then skips this session
+ * refresh entirely for valid public/API routes.
  */
 export function needsSessionRefresh(path: string): boolean {
   return (

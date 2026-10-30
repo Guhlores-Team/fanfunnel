@@ -1,176 +1,131 @@
-# Go-live checklist
+# Future go-live checklist
 
-One ordered list for taking FanFunnel live: merging the current work to `main`, which deploys
-https://fanfunnel.vercel.app on the LIVE Supabase project `ttlogfmogcccwiraaoae`. Work top to
-bottom. Don't start a section until the one before it is done.
+This runbook prepares a possible future release to `main`, Vercel Production and
+LIVE Supabase `ttlogfmogcccwiraaoae`. **Current takeover authorization is TEST
+only.** Nothing here authorizes an agent to push/merge `main`, write LIVE, send
+email, purchase a plan, copy data or retire deployments. Give the nontechnical
+owner only the next applicable step with its full clickable link.
 
 **Who does each line:**
-- **OWNER**: a dashboard click or a decision only the owner can make.
-- **AGENT**: Claude can do it in the repo or on the TEST project. Agents never touch LIVE or the
-  live site.
-- **OWNER + AGENT**: the agent prepares it and the owner runs or approves it.
 
-References: [`DEPLOY.md`](../DEPLOY.md) (settings in detail), [`ENVIRONMENTS.md`](ENVIRONMENTS.md)
-(LIVE vs TEST), [`AGENTS.md`](../AGENTS.md) (preview-before-prod rule),
-[`e2e/MANUAL-CHECKLIST.md`](../e2e/MANUAL-CHECKLIST.md) (click-through QA).
+- **OWNER**: performs an account action, decision or separately authorized LIVE operation.
+- **AGENT**: the coding agent prepares/reviews source and evidence on the branch, local environment or TEST; it does not operate LIVE.
+- **OWNER + AGENT**: the agent prepares a concrete plan; the owner reviews it and performs or explicitly authorizes its defined action.
 
----
+Follow this in order. An unchecked item is not a pass. Record the exact release
+SHA, target, date, result and redacted evidence. Never paste passwords, API keys,
+reward values, fan links, exports or authenticator codes into chat or logs.
 
-## 1. Decisions and sign-offs (before anything else)
+References: [binding rules](../AGENTS.md), [current handoff](handoff/HANDOFF.md),
+[TEST owner steps](handoff/OWNER_STEPS.md), [environment identities](ENVIRONMENTS.md),
+[deployment settings](../DEPLOY.md), [controlled Preview release](PREVIEW_DEPLOY.md),
+[manual checklist](../e2e/MANUAL-CHECKLIST.md) and [security audit brief](handoff/SEC_AUDIT_BRIEF.md).
 
-- [ ] **OWNER**: Supply the final **Terms** and **Privacy** text. Both pages are labelled
-      placeholders today (`src/components/LegalPage.tsx`). AGENT then replaces the page bodies.
-- [ ] **OWNER**: Review the break-reminder and responsible-play copy.
-- [ ] **OWNER**: Decide on error monitoring (Sentry, a Vercel log drain, or none for alpha).
-- [ ] **OWNER**: Answer the open product decisions (PROPOSALS §2 items 3–7 and 9–15) and the
-      TEAM_CHECKLIST §3 sign-offs: dark text on default-pink buttons (`readableInk`), the nav
-      labels, the line-icon set.
-- [ ] **OWNER**: Run all of [`e2e/MANUAL-CHECKLIST.md`](../e2e/MANUAL-CHECKLIST.md) §1–3 and §6 on
-      the Preview (TEST data), and §5 if you want the load check.
+## 1. Finish and accept the complete TEST release
 
-## 2. GitHub settings
+- [ ] **AGENT**: Complete the owner's full pre-alpha scope and small fixes from the handoff, in migration order. This includes privacy0054, legal0055, push0056, instant delivery0057, theming0058, Focus0059, Scratch0060, personal Bingo0061, account security0062 and operational integrity0063. Include any subsequently reviewed migrations; this list is scope, not a claim that they are applied anywhere.
+- [ ] **AGENT**: After each integration, complete both full verification rounds specified in the handoff: install, lint, types, unit/security tests, debug build, PostgreSQL16 drift, all e2e/scripts.mjs syntax checks, and e2e then accessibility on the same fresh server. Preserve failures and skips honestly.
+- [ ] **AGENT**: Confirm exact-SHA CI jobs `verify`, `schema-drift`, migration `test`, `supabase` and `login-ui` all completed successfully, with actual TEST migration history, generated-type comparison and non-skipped runtime/login tests. Deploy that exact source to Preview only after TEST is ready; verify actual hosted clicks.
+- [ ] **AGENT**: Complete two fresh independent security audits plus privacy-promise and outside-attacker passes per the audit brief; verify/fix confirmed Critical and High findings and record remaining limits in the final report. Earlier feature reviews are not substitutes.
+- [ ] **OWNER + AGENT**: Complete the TEST manual checklist on real phones as creator and fan, including age/Terms consent, breaks, export/deletion, instant rewards using dummy values, theming, Focus, Scratch, Bingo and account recovery. Record revision/device/result. Review measured themed Preview LCP and the actual hosted feature-smoke cleanup result.
+- [ ] **OWNER**: Review [TEST Terms](https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/terms), [TEST Privacy](https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/privacy), responsible-play copy and [legal questions](LEGAL_NOTES.md). The legal pages and in-house error monitoring have been implemented; owner/legal acceptance and actual alert receipt are separate checks.
+- [ ] **OWNER + AGENT**: Review the saved product defaults in [PROPOSALS](handoff/PROPOSALS.md), including price/cost warnings, opt-in Boostable prizes and lock-screen privacy. Keep the chosen recommended defaults behind their named constants; do not restart settled decisions. Hosted Chase stays OFF until documented Focus soak and a separately approved one-creator TEST pilot pass.
+- [ ] **OWNER**: Explicitly confirm acceptance of the exact tested Preview revision. This is necessary for a future release; it is not permission for an agent to merge or write LIVE.
 
-- [ ] **OWNER**: Branch protection on `main` (Settings → Branches): require a PR, require the
-      checks `verify`, `schema-drift`, `supabase` and `login-ui`, and require 1 approval.
-- [ ] **OWNER**: Settings → Environments → `production`: add yourself as a **required reviewer**,
-      so the LIVE migration job waits for your click.
-- [ ] **OWNER**: Settings → Code security: turn on **secret scanning** and push protection.
-      Dependabot is already configured (`.github/dependabot.yml`).
-- [ ] **OWNER**: Repository secrets for the migration workflow: `SUPABASE_ACCESS_TOKEN`,
-      `SUPABASE_TEST_PROJECT_REF`, `SUPABASE_TEST_DB_PASSWORD`, `SUPABASE_PROD_PROJECT_REF`,
-      `SUPABASE_PROD_DB_PASSWORD`.
-- [ ] **OWNER**: The TEST trio as secrets too (`NEXT_PUBLIC_SUPABASE_URL`,
-      `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`), so `E2E (real Supabase)` and
-      the RLS runtime test run instead of skipping.
-- [ ] **AGENT**: Confirm on the release PR that all four checks ran (not skipped) and are green.
+## 2. Confirm provider security and GitHub protections
 
-## 3. Supabase Auth, in BOTH projects
+- [ ] **OWNER**: Verify provider two-factor and recovery for everyone with access, using [GitHub security](https://github.com/settings/security), [Vercel account](https://vercel.com/account), [Supabase account security](https://supabase.com/dashboard/account/security) and the owning email account. Save recovery codes privately; do not share logins/factors.
+- [ ] **OWNER**: Review [branch rules](https://github.com/Guhlores-Team/fanfunnel/settings/branches) for `main`: require a PR, the exact required green jobs and an approval. Record any plan limitation rather than assuming protection is enabled.
+- [ ] **OWNER**: In [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments), require your review for `production` database operations. This gate does not delay Vercel's independent deployment; section5 must resolve that ordering separately.
+- [ ] **OWNER**: Review [repository security](https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis): secret scanning, push protection and dependency alerts where supported. Dependabot configuration alone does not prove these settings are enabled.
+- [ ] **OWNER + AGENT**: Confirm required Actions secret names and target identity without exposing values: migration access token, TEST/PROD project refs and database passwords, plus TEST URL/anon/service credentials for real tests. A working Git connection does not prove permission to manage [Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions).
 
-Every auth email link returns to `<site>/auth/callback?next=…` on the site that sent it.
-Supabase only follows a link to an allowed URL.
+## 3. Verify Auth and recovery on TEST; prepare LIVE separately
 
-- [ ] **OWNER**: Authentication → URL Configuration on **LIVE**: Site URL
-      `https://fanfunnel.vercel.app`, Redirect URL `https://fanfunnel.vercel.app/**`. Both were
-      added on 2026-10-27; re-check them.
-- [ ] **OWNER**: Same on **TEST**: Site URL = the Preview URL, Redirect URLs = the Preview
-      wildcard `https://fanfunnel-*-easy-simple-sites.vercel.app/**` (added 2026-10-27) and
-      `http://localhost:3000/**`.
-- [ ] **OWNER**: Authentication → Emails → Templates: paste the 5 link templates from
-      `supabase/templates/`, each with its subject from `supabase/templates/README.md`:
-      `recovery.html` (Reset password), `confirmation.html` (Confirm signup), `magic_link.html`
-      (Magic link), `invite.html` (Invite user), `email_change.html` (Change email address).
-- [ ] **OWNER**: Same screen, **Security notices**: turn ON and paste `password_changed.html`
-      (Password changed) and `email_address_changed.html` (Email address changed).
-- [ ] **OWNER**: Authentication → Providers → Email: **Confirm email ON**. Turn on
-      **leaked-password protection**.
-- [ ] **OWNER**: Enable **MFA** on the admin account.
-- [ ] **AGENT**: On the TEST Preview, sign up a throwaway address, then do a password reset and an
-      email change. Each email must arrive branded, and its link must land back on the Preview.
+Auth email links must return to the correct site's `/auth/callback?next=…` through
+an allowed URL. Prepared templates are not proof of delivery or correct redirects.
 
-## 4. Vercel environment variables
+- [ ] **OWNER + AGENT**: Review [TEST URL configuration](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/url-configuration). Its intended Site URL is `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`; inspect the actual value and review existing Preview/local redirect allowances before changing them. Never substitute the LIVE ref.
+- [ ] **OWNER**: Review email confirmation and leaked-password protection; record unavailable plan features without purchasing anything. Keep confirmation ON.
+- [ ] **OWNER**: Verify configured SMTP and the five [link templates](../supabase/templates/README.md): recovery, confirmation, magic link, invite and email change; review password/email security notices too. Do not blindly replace working settings merely because files exist.
+- [ ] **OWNER**: Perform reset and email-change checks using a disposable TEST address you control, or explicitly authorize a defined TEST send. Confirm branded receipt, required confirmation links and return to TEST. An agent must not send real email without that authorization.
+- [ ] **OWNER + AGENT**: Confirm two independent trusted TEST admins can sign in with their own two-factor and demonstrate recovery on a disposable creator. The owner has already enrolled FanFunnel admin two-factor; do not repeat enrollment or experiment on the only working admin.
+- [ ] **OWNER**: For a separately approved future release, review the analogous [LIVE URL configuration](https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/auth/url-configuration), email protections, SMTP and templates. Intended LIVE Site URL is `https://fanfunnel.vercel.app` until a separately approved domain changes it. No current agent operation targets LIVE.
 
-- [ ] **OWNER**: **Production** scope: LIVE `NEXT_PUBLIC_SUPABASE_URL`,
-      `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`; `ADMIN_EMAILS` (your address);
-      `FF_REQUIRE_SUPABASE=1`. **`NEXT_PUBLIC_ENABLE_DEBUG` must NOT be set.**
-- [ ] **OWNER**: **Preview** scope: the TEST trio, the same `ADMIN_EMAILS`,
-      `FF_REQUIRE_SUPABASE=1` and `NEXT_PUBLIC_ENABLE_DEBUG=1`.
-- [ ] **OWNER**: Upstash: confirm the integration injected `KV_REST_API_URL` and
-      `KV_REST_API_TOKEN` into **both** Production and Preview. Without them the rate limits are
-      per instance, not shared.
-- [ ] **OWNER**: Later, only when those features ship: `REWARD_ENCRYPTION_KEY` (#26) and the
-      web-push VAPID keypair.
-- [ ] **AGENT**: On the Preview, the teal "PREVIEW · TEST database" badge shows. If it is red,
-      Preview points at the wrong database: stop.
+## 4. Verify configuration, original keys and operational recovery
 
-## 5. LIVE database: before the code (DB before code)
+- [ ] **OWNER + AGENT**: Review [Vercel environment settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables) by scope. Preview must use TEST URL/anon/service credentials; future Production must use LIVE credentials. Service keys remain server-only. `FF_REQUIRE_SUPABASE=1` prevents accidental mock fallback; `NEXT_PUBLIC_ENABLE_DEBUG=1` belongs only in Preview and must be absent from Production.
+- [ ] **OWNER + AGENT**: Confirm server-controlled admin profiles and independent two-factor access. `ADMIN_EMAILS` is configuration, not a substitute for checking actual role/active/approval state or RLS.
+- [ ] **OWNER + AGENT**: Verify the shared rate-limit service and failure behavior. Supported variable pairs are `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL`/`KV_REST_API_TOKEN`. Without shared storage, bounded per-instance fallback does not provide a global distributed quota.
+- [ ] **OWNER + AGENT**: Verify Preview's existing VAPID configuration without replacing it: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`. Real installed-iPhone/Android receipt and privacy checks remain necessary. A future Production pair/configuration is a separate reviewed action.
+- [ ] **OWNER + AGENT**: Securely back up the ORIGINAL `REWARD_ENCRYPTION_KEY`, its `REWARD_ENCRYPTION_KEY_VERSION` (default1 when unset), and the separate stable `REWARD_CODE_FINGERPRINT_KEY` through the existing private backup/operator path. Never rotate keys to silence an error, display values in logs or generate replacements and call them a backup. Review [instant delivery](INSTANT_DELIVERY.md).
+- [ ] **OWNER + AGENT**: Complete a disposable TEST restore rehearsal before real-value inventory. Prove dummy reward decryption, erased-code non-reuse, financial/data relationships and canary health using the original keys. Specify whether database, Auth associations, public media bytes/storage metadata and configuration are covered; record exclusions. A database backup and a key backup are both required, and their existence alone is not a restore pass.
+- [ ] **OWNER + AGENT**: After verified0063 rollout, inspect actual legacy erased/live-code and anchor counts, then follow the current System health result. Counts alone do not validate original keys or authorize initialization. Legacy erasure without an anchor requires the reviewed recovery path; never bless replacement keys or overwrite a mismatch.
+- [ ] **AGENT**: Verify real authenticated TEST retention/storage maintenance and healthy key/inventory/reservation/credit diagnostics. Observe the actual daily scheduler's enqueue, HTTP and application completion; setup/manual invocation alone is insufficient. Vercel cron is Production-only; the reviewed TEST scheduler is separate.
+- [ ] **OWNER**: After an explicitly authorized safe TEST alert, confirm actual receipt in the intended private inbox. Verify `RESEND_API_KEY`/`ALERT_EMAIL_TO` scope without exposing values. Monitoring code or a green UI does not prove email delivery.
+- [ ] **OWNER + AGENT**: Before any future Production configuration, prepare its own original-key backups, restore proof, maintenance/alert plan and rollback compatibility. Do not copy Preview secrets or pretend TEST evidence proves LIVE operations.
+- [ ] **AGENT**: Confirm the verified TEST Preview shows the teal TEST badge. A red environment badge is a stop condition.
 
-LIVE must have every migration the release needs **before** the new code serves traffic. The
-CI `production` job applies migrations on the merge push, at the same time as Vercel builds, so
-it has to be finished and green before anyone uses the new deploy.
+## 5. Plan LIVE database-before-code ordering before any merge
 
-- [ ] **OWNER**: If LIVE was originally set up by pasting SQL and this hasn't been done yet, run
-      `docs/auto-migration-reconcile.sql` once in the LIVE SQL Editor (TEST too, if needed).
-- [ ] **OWNER**: In the LIVE SQL Editor, check what is already applied:
-      `select version from supabase_migrations.schema_migrations order by version;`
-- [ ] **OWNER + AGENT**: Pre-check for 0052, which is read-only and safe on LIVE. Every count
-      should be 0. If one isn't, 0052 skips that CHECK and logs a WARNING (it never rewrites
-      data); send the numbers to the agent.
-      ```sql
-      select (select count(*) from public.fan_passes where spins_granted_total < 0) as pass_granted,
-             (select count(*) from public.fans where spins_granted_total < 0)       as fan_granted,
-             (select count(*) from public.fans where rl_count < 0)                  as rl_count,
-             (select count(*) from public.prizes where stock < 0)                   as stock,
-             (select count(*) from public.prizes where cost_cents < 0)              as cost;
-      ```
-- [ ] **OWNER**: Migration order on LIVE is strictly numeric:
-      **0039 → 0048** (apply now if the query above shows them missing), then **0049, 0050, 0051** (RM-6, RM-3, RM-5) and
-      **0052** (agency RLS fix and ledger CHECKs). Missing numbers are applied by the `production`
-      job on the merge push (approve it at once if a reviewer is required). If you want them in
-      **before** the merge, paste each missing `supabase/migrations/00NN_*.sql` file into the LIVE
-      SQL Editor in order, then record them so CI doesn't run them again:
-      `insert into supabase_migrations.schema_migrations (version) values ('00NN') on conflict do nothing;`
-      (0039–0048 and 0052 are idempotent, so a re-run would be harmless. Check 0049–0051 when
-      they land.)
-- [ ] **OWNER**: After applying, Supabase → Database → Advisors on LIVE: no new security errors.
+**This section is future owner work, not current authorization.** A reviewed,
+backed-up LIVE schema must be ready before code that requires it can serve traffic.
 
-## 6. Optional: carry over chosen TEST data to LIVE
+The current [migration workflow](../.github/workflows/supabase-migrations.yml)
+runs TEST on pull requests. Its Production job runs only on a push to `main`
+that changes migration/config paths, uses the `production` environment, links the
+configured project and runs `supabase db push`. Vercel can independently deploy
+`main` at the same time. Workflow concurrency and an approval gate do **not**
+establish database-before-code ordering. Code-only pushes do not trigger that
+Production migration job, and it does not itself list history or compare types.
 
-Only if you want some TEST accounts on LIVE. Do it **after section 5** (LIVE has the full
-schema) and **before section 8** (the new code goes live).
+- [ ] **OWNER + AGENT**: Prepare and approve a concrete release plan before any main merge. One option is owner-run pre-application of the exact reviewed migrations while the old code remains safely served, but only after proving old-code/new-schema compatibility. If that cannot be proved, prepare a separately reviewed traffic/deployment hold and restoration plan. Do not assume additive numbering makes an old deployment compatible; later auth/RPC contracts can deliberately retire old calls.
+- [ ] **OWNER**: Verify a recoverable LIVE backup and the original-key backup, intended project identity and actual migration history. Keep LIVE credentials in approved private controls; the agent does not obtain or use them. Never run `supabase/reset.sql` on LIVE.
+- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations0001–0063 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes0059 Focus,0060 Scratch,0061 Bingo,0062 account security and0063 operational integrity.
+- [ ] **OWNER + AGENT**: If historical SQL was pasted manually, investigate history/schema divergence with a separate reviewed reconciliation plan and backup. Do not mark a migration applied merely to make CI green, infer execution from a history row, or assume a rerun is harmless.
+- [ ] **OWNER + AGENT**: Review the existing ledger prechecks and migration-specific constraints on actual data, including negative balances/grants, stock and costs. A warning or skipped constraint is not proof of the intended invariant. Resolve unexpected counts before proceeding; do not repair financial records automatically.
+- [ ] **OWNER**: Only after explicit approval for that exact Production operation, use the pinned supported Supabase CLI from the final checked source, verify the selected project is LIVE, inspect `supabase migration list --linked` and the pending migration plan, then perform the reviewed `supabase db push --linked` in strict numeric order. Credentials go through secure operator controls, not chat, saved scripts or command logs. Review configured Vault/seed/role behavior and supported CLI flags rather than adding broad include/reset flags. This runbook is not an instruction to execute those commands now.
+- [ ] **OWNER + AGENT**: Record actual completed application, re-read history and compare generated database types/schema with the exact release contract. Check Advisors and relevant invariants/security expectations. A success message or manually inserted history record is not enough. Failed, partial or uncertain application stops release pending inspection.
+- [ ] **OWNER**: Confirm the reviewed DB-before-code plan is complete and authorizes admission of the new code only after every prerequisite is verified.
 
-- [ ] **OWNER**: Name the exact accounts (emails) to carry over. Nothing else moves.
-- [ ] **AGENT**: Build a one-off carry-over script. It does not exist yet. The script reads those
-      accounts' wheels, prizes, fans, passes, grants and campaigns from TEST and writes them to
-      LIVE with fresh IDs. Logins are re-created on LIVE, and each person sets a new password
-      through the reset email.
-- [ ] **OWNER + AGENT**: **Dry run first.** It prints, per account, exactly what it would copy
-      and writes nothing. The owner reviews the counts.
-- [ ] **OWNER**: Approve, then run it for real with the LIVE keys. The owner runs this step,
-      because agents never hold LIVE credentials.
-- [ ] **OWNER**: Spot-check one carried account on LIVE: balances match (`fans` = SUM of passes),
-      and the wheel and prizes look right.
+## 6. Optional chosen TEST data transfer — separate approval
 
-## 7. Preview sign-off and Deployment Protection
+The owner wants to keep selected TEST work at go-live. No transfer script or
+Production operation is authorized by this checklist.
 
-- [ ] **OWNER**: Final Preview pass on the release branch: the change and
-      [`MANUAL-CHECKLIST.md`](../e2e/MANUAL-CHECKLIST.md) §1–3 pass.
-- [ ] **OWNER**: **Re-enable Vercel Deployment Protection.** It was turned OFF on 2026-10-27 for
-      owner testing. Project → Settings → Deployment Protection → Vercel Authentication →
-      **Standard Protection** (the previous value, `all_except_custom_domains`).
-- [ ] **OWNER**: In a private window (logged out of Vercel), check that a Preview URL now asks for
-      a Vercel login **and** that https://fanfunnel.vercel.app still loads publicly. If the
-      production domain is blocked too, the setting is wrong: fix it before merging.
+- [ ] **OWNER**: Identify the exact accounts/data to keep; unselected TEST records must not move.
+- [ ] **AGENT**: Prepare a schema-complete, privacy-conscious transfer and rollback plan against the final migrations. A one-off script does not yet exist. Specify Auth recreation, fresh-password delivery, media bytes/metadata, original versus new IDs, fairness/economic history, Focus/Bingo state and secret re-encryption/creator associated-data implications. Do not blindly copy encrypted rows or assume changing IDs preserves historical proofs.
+- [ ] **OWNER + AGENT**: Dry-run with no LIVE writes and review per-account counts, balances (`fans` equals sum of passes), included/excluded data, key handling and failure/rollback behavior. Keep identifiers and exports private.
+- [ ] **OWNER**: Approve the exact transfer only after the dry run and prerequisites, then perform the reviewed LIVE operation using private credentials. A password reset or invitation email needs separate explicit send authorization. Verify one carried account and reconcile all recorded counts.
 
-## 8. Merge (the go-live moment)
+## 7. Preview protection and old deployment retirement
 
-- [ ] **AGENT**: Confirm CI is green on the release PR (`verify`, `schema-drift`, `supabase`,
-      `login-ui`). Report the result; never merge.
-- [ ] **OWNER**: Merge the release PR into `main`. `dashboard-redesign` and other large work go to
-      `main` only with your explicit sign-off.
-- [ ] **OWNER**: GitHub → Actions → **Supabase migrations** → `production`: approve it if asked,
-      and wait for it to go green.
+- [ ] **OWNER + AGENT**: Complete the final Preview acceptance before changing access protection. Review [Vercel project settings](https://vercel.com/easy-simple-sites/fanfunnel/settings) → Deployment Protection; its prior setting was Standard Protection (`all_except_custom_domains`), but inspect current behavior and the intended real-device testing needs first.
+- [ ] **OWNER**: Approve the concrete protection change when ready. In a private window, verify the intended Preview requires Vercel login while the LIVE domain remains accessible as intended. Do not generate bypass secrets or change Production protection incidentally.
+- [ ] **AGENT**: Refresh the old immutable Preview inventory and prepare a concrete retirement/recreation-prevention plan after the replacement is fully verified. Stable-alias movement alone does not disable old endpoints or complete legacy-byte cleanup.
+- [ ] **OWNER**: Review and explicitly approve any exact retirement list. Preserve all Production/current Preview deployments, Git history and TEST data. Deletion does not guarantee instant cancellation: verify no new requests reach legacy code, allow each old function's actual maximum execution bound, then reconcile any untracked bytes. No retirement is authorized by the general takeover instruction.
 
-## 9. Post-merge smoke test (LIVE, read-only clicks)
+## 8. Future release approval and owner merge
 
-- [ ] **OWNER**: The Vercel Production deployment is **Ready**, and the Supabase LIVE project is
-      **Healthy** (not paused).
-- [ ] **OWNER**: https://fanfunnel.vercel.app shows **no** environment badge, and `?debug=1` does
-      nothing.
-- [ ] **OWNER**: [`MANUAL-CHECKLIST.md`](../e2e/MANUAL-CHECKLIST.md) §4: sign in, open every
-      section, open a fan link for a fan you control, spin once, fulfil the win.
-- [ ] **OWNER**: Password reset from `/forgot-password`: the email arrives branded, and its link
-      lands on `https://fanfunnel.vercel.app`.
-- [ ] **OWNER**: `/terms` and `/privacy` show the final text.
-- [ ] **OWNER**: `/admin` loads for you, and a non-admin account is turned away.
+- [ ] **AGENT**: Report the full checked SHA, both verification rounds, actual exact-SHA CI/TEST results, final audit status, hosted/manual evidence and outstanding limits. Confirm the branch has not advanced since the accepted Preview.
+- [ ] **OWNER**: Explicitly approve that exact release only after sections1–7 and the DB-before-code plan are complete. Any new code/schema change invalidates the affected sign-off and requires its checks again.
+- [ ] **OWNER**: Perform the reviewed merge to `main`; the coding agent does not merge or push main. Confirm which Production deployment serves traffic and its exact source.
+- [ ] **OWNER**: Inspect any triggered Production migration job and approve it only under the reviewed plan. If migrations were safely pre-applied it should be a verified no-op, not a race relied on for ordering. A code-only merge may not trigger this job. Confirm genuine history/types and deployment readiness before admitting new traffic.
 
-## 10. Rollback
+## 9. Owner-operated LIVE smoke checks after separate release approval
 
-- [ ] **OWNER**: For a bad deploy, revert the merge commit on `main` (GitHub → the PR → Revert,
-      then merge the revert PR). Vercel redeploys the previous build in a few minutes. For an
-      instant switch, use Vercel → Deployments → the previous Production deployment →
-      **Promote to Production** (Instant Rollback), then revert on `main` so the next merge
-      doesn't bring the bad code back.
-- [ ] **OWNER**: Migrations are **not** reverted. They are additive and the previous code runs on
-      the newer schema. Never run `supabase/reset.sql` on LIVE.
-- [ ] **AGENT**: Reproduce the problem on a branch Preview (TEST), fix it there, and go back
-      through sections 7–9.
+These checks include writes and email; they are not “read-only” and do not grant
+an agent permission to exercise Production.
+
+- [ ] **OWNER**: Confirm the Production deployment is READY, the intended LIVE database is healthy and the reviewed schema is in place before use.
+- [ ] **OWNER**: Confirm `https://fanfunnel.vercel.app` (or the approved domain) shows no TEST/debug badge and `?debug=1` cannot activate the debug console.
+- [ ] **OWNER**: Follow the manual LIVE smoke with only controlled data: sign in, inspect sections, open a controlled fan link, perform the approved test play and fulfilment, then reconcile its records. Confirm real admin two-factor and normal-user denial.
+- [ ] **OWNER**: If authorized, request and complete a controlled password reset; confirm branded receipt and return to the LIVE domain. Review final Terms/Privacy and actual alert/maintenance evidence.
+- [ ] **OWNER**: Record the outcome and any required incident response. TEST success does not waive these LIVE checks.
+
+## 10. Rollback and recovery
+
+- [ ] **OWNER + AGENT**: Before release, identify the exact safe rollback deployment and prove its compatibility with the new database/auth contracts on TEST. Do not assume an older build is compatible with retired RPCs or that code rollback restores schema/data.
+- [ ] **OWNER**: If a release fails, execute only the approved traffic/code rollback plan. A separately reviewed Vercel rollback and/or revert PR on main is an owner operation; preserve evidence and prevent an automatic redeploy of known-unsafe code.
+- [ ] **OWNER**: Do not reverse migrations, reset LIVE, rotate reward keys or repair economic records as a shortcut. Follow the reviewed backup/restore and incident plan if data recovery is needed; record exactly what was restored and re-verify invariants before reopening traffic.
+- [ ] **AGENT**: Reproduce/fix on a branch Preview with TEST data, repeat affected full verification/audit/hosted gates, then prepare a new concrete release for owner approval.

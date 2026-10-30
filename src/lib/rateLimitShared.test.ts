@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import { rateLimitShared } from "./rateLimit";
 
 // The shared limiter must find Vercel's Upstash integration (KV_REST_API_*), keep
@@ -47,12 +48,19 @@ async function main() {
   const r = await rateLimitShared("chat:1.2.3.4", 5, 60_000);
   check("Vercel's KV_REST_API_* vars are used", calls.length === 1 && calls[0].url === "https://kv.example/pipeline");
   check("with the KV token", calls[0].auth === "Bearer kvtok");
-  check("the counter key is namespaced by environment", calls[0].body[0][1] === "rl:preview:chat:1.2.3.4");
+  check("the counter key is namespaced by environment", calls[0].body[0][1] === `rl:preview:${createHash("sha256").update("chat:1.2.3.4").digest("hex")}`);
   check("a call under the limit passes", r.ok);
+  const bearer = "fan-token-0123456789abcdef0123456789abcdef";
+  const beforePrivate = calls.length;
+  await rateLimitShared(`play:203.0.113.8:${bearer}`, 5, 60_000);
+  const privateBody = JSON.stringify(calls[beforePrivate].body);
+  check("Redis receives neither the bearer token nor the address", !privateBody.includes(bearer) && !privateBody.includes("203.0.113.8"));
+  check("all pipeline commands use the same opaque key", calls[beforePrivate].body.every((command) => command[1] === calls[beforePrivate].body[0][1]));
+  calls.splice(beforePrivate, 1);
 
   setEnv({ KV_REST_API_URL: "https://kv.example", KV_REST_API_TOKEN: "kvtok", VERCEL_ENV: "production" });
   await rateLimitShared("chat:1.2.3.4", 5, 60_000);
-  check("production uses a separate counter from preview", calls[1].body[0][1] === "rl:production:chat:1.2.3.4");
+  check("production uses a separate counter from preview", calls[1].body[0][1] === `rl:production:${createHash("sha256").update("chat:1.2.3.4").digest("hex")}`);
 
   setEnv({
     UPSTASH_REDIS_REST_URL: "https://up.example",

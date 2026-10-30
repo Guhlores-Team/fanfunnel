@@ -79,13 +79,17 @@ export default async function SpinPage({
     >
       <ThemeBackdrop bgUrl={look.bgUrl} heavyGrain={plan.grains.length > 1} />
       <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null}>
-        <div className="relative z-[1] flex w-full justify-center">
+        {/* z-40: the fan UI (and every fixed overlay inside it: reward reveal,
+            saved-reward and break dialogs) paints above the backdrop and above
+            the Preview-only EnvBadge (z-30), which must never cover a fan's
+            action. Those overlays' own z-index only orders them inside here. */}
+        <div className="relative z-40 flex w-full justify-center">
           <SpinClient
             pass={pass}
             gallery={look.media.length ? <PhotoGallery media={look.media} creatorTitle={pass.creatorTitle} /> : null}
           />
         </div>
-        <footer className="relative z-[1] mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted">
+        <footer className="relative z-40 mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted">
           <span>Powered by FanFunnel · every spin wins</span>
           <SafetyMenu token={token} />
         </footer>
