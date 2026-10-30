@@ -10,11 +10,15 @@ const allowed = new Set([
   "success", "crash_before_first", "crash_after_pass", "crash_last_journey",
   "step_failure", "browser_signal", "server_setup_failure", "browser_setup_failure",
   "context_setup_failure", "screenshot_failure", "report_failure",
-  "close_failure_after_crash", "close_failure_success", "stop_failure",
+  "close_failure_after_crash", "close_failure_success", "stop_failure", "helper_failure",
 ]);
 if (!allowed.has(scenario)) throw new Error("Unknown runner fixture scenario");
 const runnerUrl = pathToFileURL(resolve("e2e/run.mjs"));
 const source = readFileSync(runnerUrl, "utf8");
+// A registered runner.step can call an imported page helper rather than a
+// journey that owns steps. Only helpers visibly registered this way may omit
+// runner; unexpected missing-runner calls still fail the actual orchestrator.
+const registeredStepHelpers = new Set([...source.matchAll(/runner\.step\([^;\n]*=>\s*([A-Za-z_$][\w$]*)\(/g)].map(match => match[1]));
 const events = [];
 const note = (type, detail = null) => events.push({ type, detail });
 let activeSink;
@@ -94,11 +98,16 @@ for (const match of source.matchAll(/^import\s*\{([^}]+)\}\s*from\s*["'](\.\/[^"
   for (const entry of names.split(",").map((name) => name.trim()).filter(Boolean)) {
     const name = entry.split(/\s+as\s+/)[0];
     namedExports[name] = async (...args) => {
+      const runner = args.find((arg) => arg && typeof arg.step === "function" && typeof arg.report === "function");
+      if (!runner) {
+        if (!registeredStepHelpers.has(name)) throw new Error("Actual journey did not receive its runner");
+        note("step_helper", name);
+        if (scenario === "helper_failure") throw new Error("injected registered page-helper failure");
+        return;
+      }
       note("journey", name);
       if (name === "creatorJourney" && ["crash_before_first", "screenshot_failure", "close_failure_after_crash"].includes(scenario)) throw new Error("injected crash before steps");
       if (name === "firstRunJourney" && scenario === "crash_last_journey") throw new Error("injected last journey crash");
-      const runner = args.find((arg) => arg && typeof arg.step === "function" && typeof arg.report === "function");
-      if (!runner) throw new Error("Actual journey did not receive its runner");
       await runner.step(name, async () => {
         if (name === "creatorJourney" && scenario === "step_failure") throw new Error("injected recorded step failure");
       });

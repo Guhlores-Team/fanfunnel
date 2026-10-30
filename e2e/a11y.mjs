@@ -18,6 +18,7 @@ import { staleTermsRoute } from "./journeys.mjs";
 
 import { PUSH_STUB, pushConfig, openPushCard, turnPushOn, clearPushDevices } from "./push.mjs";
 import { instantA11yStates } from "./instant-a11y.mjs";
+import { systemHealthA11yStates } from "./system-health.mjs";
 import { themingA11yStates } from "./theming-a11y.mjs";
 import { focusA11yStates } from "./focus-a11y.mjs";
 import { scratchA11yStates, bingoA11yStates } from "./games-a11y.mjs";
@@ -321,6 +322,7 @@ const PAGES = [
   ...focusA11yStates(),
   ...instantA11yStates(DASH_ADVISORY),
   ...themingA11yStates(DASH_ADVISORY),
+  ...systemHealthA11yStates(DASH_ADVISORY),
   ...gameSwitchingA11yStates(DASH_ADVISORY),
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
@@ -331,6 +333,7 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard (Wheel editor)", prep: openTab("Wheel"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Fans)", prep: openTab("Fans"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Fulfilment)", prep: openTab("Fulfilment"), advisory: DASH_ADVISORY },
+  { path: "/admin", name: "admin System health", prep: async page => { await page.getByRole("region", { name: "System health", exact: true }).getByText("Demo only. No connected database or real reward keys have been checked.", { exact: true }).waitFor(); }, advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Admin)", prep: openTab("Admin"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Analytics)", prep: openTab("Analytics"), advisory: DASH_ADVISORY },
   { path: "/dashboard", name: "dashboard (Boosts)", prep: openTab("Boosts"), advisory: DASH_ADVISORY },

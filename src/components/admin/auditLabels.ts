@@ -18,6 +18,7 @@ const ACTION_LABELS: Record<string, string> = {
   "error.resolve": "resolved an error report",
   "error.reopen": "reopened an error report",
   "mfa.factor_removed": "removed a two-factor app",
+  "system.canary.initialize": "initialized verified reward key protection",
   "retention.cleanup": "ran the retention cleanup",
 };
 

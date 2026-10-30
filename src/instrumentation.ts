@@ -1,5 +1,13 @@
 import type { Instrumentation } from "next";
 
+// A bounded runtime self-check runs once per Node server. Builds and mock mode
+// perform no database or alert I/O (see operations/startup.ts).
+export async function register() {
+  if (process.env.NEXT_RUNTIME !== "nodejs" || process.env.NEXT_PHASE === "phase-production-build") return;
+  const { registerOperationalChecks } = await import("@/lib/operations/startup");
+  await registerOperationalChecks();
+}
+
 // Server errors (route handlers, server components, server actions, proxy)
 // → app_errors, redacted, with an e-mail alert after the response. Node.js
 // runtime only: the store uses the service-role client.

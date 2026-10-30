@@ -40,6 +40,7 @@ import { themingJourney } from "./theming.mjs";
 import { focusJourney } from "./focus.mjs";
 import { creatorRecoveryJourney } from "./creator-recovery.mjs";
 import { scratchJourney, bingoJourney } from "./games.mjs";
+import { checkSystemHealth, systemHealthJourney } from "./system-health.mjs";
 import { gameSwitchingJourney } from "./game-switching.mjs";
 
 let server = null;
@@ -82,6 +83,8 @@ try {
     await bingoJourney(browser, runner, sink, ctx); //0061: real personal bingo and linked line rewards
     await gameSwitchingJourney(browser, runner, sink, ctx); // schedule takeover warning; campaign card, drawer and fan page agree
     await creatorRecoveryJourney(page, runner, ctx); // durable grant-edit retry, reload and cancellation
+    await runner.step("System health: demo status never claims connected protection", () => checkSystemHealth(page));
+    await systemHealthJourney(page, runner);
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

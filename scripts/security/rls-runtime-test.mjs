@@ -35,7 +35,9 @@ import { fixtureCreatorRpc, fixtureActorContext } from "./actor-context-fixture.
  * `finally`, and users left behind by a killed run (> 1h old) are swept first.
  * It refuses to run against the PRODUCTION project.
  */
+import { testOperationalIntegrityRuntime } from "./operational-integrity-runtime-fixture.mjs";
 import { createClient } from "@supabase/supabase-js";
+import { isLegacyCanaryTestProject, readLegacyCanaryCounts } from "./legacy-canary-counts.mjs";
 import { fixtureTotp } from "./totp-fixture.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -70,6 +72,12 @@ if (REQUIRED_REF) {
     console.error(`✗ Refusing to run: NEXT_PUBLIC_SUPABASE_URL is not the expected project (${REQUIRED_REF}).`);
     process.exit(1);
   }
+}
+
+// Fixed TEST boundary also protects the later count-only rollout snapshot.
+if (!isLegacyCanaryTestProject(URL_)) {
+  console.error("✗ Refusing to run: the fixed FanFunnel TEST project is required.");
+  process.exit(1);
 }
 
 const admin = createClient(URL_, SERVICE, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -402,6 +410,7 @@ async function main() {
     const directIcon = await a.from("profiles").update({ pwa_icon_mode: "avatar" }).eq("id", B.id).select("id");
     check((directIcon.data?.length ?? 0) === 0, "A cannot UPDATE B's pwa_icon_mode directly");
     const anonClient = createClient(URL_, ANON, { auth: { persistSession: false } });
+    await testOperationalIntegrityRuntime({ a, anonymous: anonClient, check });
     const anonIcon = await anonClient.rpc("set_pwa_icon_mode", { p_mode: "avatar" });
     check(!!anonIcon.error, "anon cannot execute set_pwa_icon_mode");
 
@@ -969,6 +978,14 @@ async function main() {
   }
   if (cleanupFailed) {
     console.error("\n✗ RLS checks passed, but cleanup failed — test users were left behind.");
+    process.exit(1);
+  }
+  // Only after all prior assertions and successful fixture cleanup: these are
+  // actual remaining TEST rows, not disposable fixture inventory/key evidence.
+  const legacyCounts = await readLegacyCanaryCounts({ projectUrl: URL_, clientFactory: () => admin });
+  console.log("LEGACY_CANARY_COUNTS " + JSON.stringify(legacyCounts));
+  if (legacyCounts.status !== "available") {
+    console.error("✗ Legacy canary counts unavailable; rollout evidence is incomplete. Do not deploy.");
     process.exit(1);
   }
   console.log("\n✓ RLS runtime test passed — tenants are isolated.");

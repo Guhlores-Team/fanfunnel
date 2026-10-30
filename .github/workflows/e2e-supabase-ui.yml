@@ -21,7 +21,6 @@ jobs:
     env:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
       - uses: actions/checkout@v7
 
@@ -44,6 +43,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Login-UI E2E (skips if secrets unset)
+        env:
+          # Only the Next runtime and login fixture need the private key.
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # This localhost auth server must not report shared deployment health.
+          FANFUNNEL_CI_LOCAL_SERVER: "1"
         run: |
           npx next start -p 3000 &
           SERVER_PID=$!

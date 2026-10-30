@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 
 // These are native child processes executing the actual e2e/run.mjs. A helper
 // returning false cannot satisfy this check if the real orchestrator ignores it.
@@ -10,7 +11,7 @@ const scenarios = [
   ["server_setup_failure", 1], ["browser_setup_failure", 1],
   ["context_setup_failure", 1], ["screenshot_failure", 1],
   ["report_failure", 1], ["close_failure_after_crash", 1],
-  ["close_failure_success", 0], ["stop_failure", 1],
+  ["close_failure_success", 0], ["stop_failure", 1], ["helper_failure", 1],
 ] as const;
 type Event = { type: string; detail: unknown };
 type Receipt = { scenario: string; code: number; stepCount: number; failures: number; events: Event[] };
@@ -43,7 +44,11 @@ assert.equal(result("crash_before_first").stepCount, 0);
 assert.equal(result("crash_after_pass").stepCount, 1);
 assert.ok(result("crash_last_journey").stepCount > 1, "completion cannot be marked before all registered journeys return");
 assert.equal(result("step_failure").failures, 1);
-for (const scenario of ["step_failure", "browser_signal"]) {
+assert.equal(result("helper_failure").failures, 1, "a page helper failure is recorded by the actual runner.step");
+assert.ok(has(result("helper_failure"), "step_helper"), "the injected failure executes the registered helper");
+assert.ok(result("helper_failure").events.some((entry) => entry.type === "step_fail" && String(entry.detail).includes("System health")), "actual System health step records its failed helper");
+assert.ok(!result("helper_failure").events.some((entry) => entry.type === "log" && String(entry.detail).startsWith("Journey crashed:")), "the helper fails inside runner.step rather than simulating an outer crash");
+for (const scenario of ["step_failure", "browser_signal", "helper_failure"]) {
   assert.ok(result(scenario).events.some((entry) => entry.type === "report" && entry.detail === false));
   assert.ok(has(result(scenario), "screenshot"));
 }
@@ -59,7 +64,10 @@ const success = result("success");
 const called = success.events.filter((entry) => entry.type === "journey").map((entry) => entry.detail);
 assert.equal(called[0], "creatorJourney");
 assert.equal(called.at(-1), "firstRunJourney", "the account wipe remains the last registered journey");
-assert.equal(called.length, success.stepCount, "every registered successful journey ran its step");
+const registeredStepHelpers = [...readFileSync(resolve("e2e/run.mjs"), "utf8").matchAll(/runner\.step\([^;\n]*=>\s*([A-Za-z_$][\w$]*)\(/g)].map(match => match[1]);
+const helpers = success.events.filter((entry) => entry.type === "step_helper").map((entry) => entry.detail);
+assert.deepEqual(helpers, registeredStepHelpers, "every actual registered page helper ran inside its recorded step");
+assert.equal(called.length + helpers.length, success.stepCount, "every registered successful journey and page-helper step was accounted for");
 assert.ok(called.length >= 18, "the mock must exercise the actual full orchestrator");
 assert.ok(!has(success, "screenshot"));
 assert.ok(has(success, "browser_close") && has(success, "server_stop"));

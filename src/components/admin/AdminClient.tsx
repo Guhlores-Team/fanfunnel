@@ -10,6 +10,7 @@ import Modal from "@/components/ui/Modal";
 import { accountErrorMessage, deleteErrorMessage, inviteErrorMessage, mfaResetErrorMessage } from "./adminErrors";
 import { P, Glyph, SectionTitle, raised, recessed, btnGhost, btnDanger, pill } from "./adminUi";
 import AdminErrors from "./AdminErrors";
+import SystemHealthCard from "./SystemHealthCard";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
 
@@ -374,6 +375,7 @@ export default function AdminClient() {
           )}
         </section>
 
+        <SystemHealthCard />
         <AdminErrors />
         <AdminActivity />
       </div>

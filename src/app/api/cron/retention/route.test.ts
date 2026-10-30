@@ -15,6 +15,9 @@ const check = (label: string, cond: unknown) => {
 const rpcCalls: { fn: string; args: Record<string, number> }[] = [];
 const audits: Record<string, unknown>[] = [];
 let deleted: Record<string, number | null> = { admin_audit_log: 0, creator_notices: 0, link_tombstones: 0, app_errors: null };
+let healthRuns = 0;
+let healthOkay = true;
+mock.module("@/lib/operations/runtime", { namedExports: { runOperationalChecks: async (source: string) => { assert.equal(source, "maintenance"); healthRuns++; return { ok: healthOkay }; } } });
 let storageRuns = 0;
 let storage = { completed: 0, pending: 0, failed: 0, reviewRequired: 0, accountsCompleted: 0, accountsPending: 0 };
 mock.module("@/lib/storage/work", { namedExports: { processPendingStorageWork: async () => { storageRuns++; return storage; } } });
@@ -56,6 +59,7 @@ async function main() {
   }
   check("nothing ran without the right header", rpcCalls.length === 0);
   check("unauthorized requests never process durable storage work", storageRuns === 0);
+  check("unauthorized requests never run integrity checks", healthRuns === 0);
 
   res = await call(`Bearer ${SECRET}`);
   check("right header → 200", res.status === 200 && /no-store/.test(res.headers.get("cache-control") ?? ""));
@@ -89,6 +93,9 @@ async function main() {
   storage = { ...storage, accountsPending: 0, failed: 1 };
   res = await call(`Bearer ${SECRET}`);
   check("retry failures are reported503 rather than completed cleanup", res.status === 503 && (await res.json()).ok === false);
+  storage = { ...storage, failed: 0 }; healthOkay = false;
+  res = await call(`Bearer ${SECRET}`);
+  check("integrity failure returns503 with honest health status", res.status === 503 && (await res.json()).health.ok === false);
   console.log(`retention cron route: ${passed} checks passed`);
 }
 

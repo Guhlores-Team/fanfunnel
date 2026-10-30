@@ -46,6 +46,7 @@ import { probeInterplay } from "./interplayProbe.mjs";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
 import { probeAccountSecurity } from "./accountSecurityProbe.mjs";
+import { probeOperationalIntegrity } from "./operationalIntegrityProbe.mjs";
 import { probeCreatorActorContexts } from "./creatorActorContextProbe.mjs";
 import { probeTheme } from "./themeProbe.mjs";
 import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.mjs";
@@ -1365,6 +1366,9 @@ try {
     await probeScratchGames(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"scratch SQL failed");return r.stdout;});
     await probeBingoGames(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"bingo SQL failed");return r.stdout;});
     await probeInterplay(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"interplay SQL failed");return r.stdout;});
+    const integrity = await probeOperationalIntegrity(db, psql, psqlAsync);
+    if (integrity.bad.length) { failures++; for (const message of integrity.bad) console.log(`FAIL  ${db}: operational integrity: ${message}`); }
+    else console.log(`PASS  ${db}: operational integrity: ${integrity.checks} checks`);
     const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
     if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }

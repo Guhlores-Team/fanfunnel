@@ -26,7 +26,8 @@ export type AuditAction =
   | "error.resolve"
   | "error.reopen"
   | "mfa.factor_removed"
-  | "retention.cleanup";
+  | "retention.cleanup"
+  | "system.canary.initialize";
 
 export interface AuditInput {
   actorId: string | null;

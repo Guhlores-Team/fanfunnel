@@ -4,9 +4,12 @@ import { recordAudit } from "@/lib/data";
 import { RETENTION_DAYS } from "@/lib/privacy/retention";
 import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
 import { cronAuthorized, MIN_CRON_SECRET_LENGTH } from "@/lib/privacy/cron";
+import { runOperationalChecks } from "@/lib/operations/runtime";
 import { processPendingStorageWork } from "@/lib/storage/work";
 
-// Daily data-retention cleanup, run by Vercel Cron (vercel.json). Vercel sends
+// Authenticated maintenance entry point: retention, integrity and storage retry.
+// A scheduler must be configured separately; this route does not prove it runs.
+// Vercel sends
 // `Authorization: Bearer $CRON_SECRET`; anything else is refused, and with no
 // CRON_SECRET set the route refuses everything (fails closed), so nobody can
 // trigger deletions from outside. The periods come from
@@ -38,6 +41,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "cleanup_failed" }, { status: 500, headers: NO_STORE_HEADERS });
   }
 
+  const health = await runOperationalChecks("maintenance", svc);
   const storage = await processPendingStorageWork(svc);
   const deleted = (data ?? {}) as Record<string, number | null>;
   const total = Object.values(deleted).reduce<number>((s, n) => s + (Number(n) || 0), 0);
@@ -56,7 +60,7 @@ export async function GET(req: Request) {
     });
   }
   const pending = storage.pending > 0 || storage.accountsPending > 0;
-  return NextResponse.json({ ok: !pending && storage.failed === 0, pending, storage, deleted, periods: RETENTION_DAYS }, {
-    status: storage.failed > 0 ? 503 : pending ? 202 : 200, headers: NO_STORE_HEADERS,
+  return NextResponse.json({ ok: health.ok && !pending && storage.failed === 0, health, pending, storage, deleted, periods: RETENTION_DAYS }, {
+    status: !health.ok || storage.failed > 0 ? 503 : pending ? 202 : 200, headers: NO_STORE_HEADERS,
   });
 }

@@ -494,6 +494,107 @@ export type Database = {
           },
         ]
       }
+      chase_stock_evidence: {
+        Row: {
+          created_at: string
+          creator_id: string
+          origin_transaction: string
+          prize_id: string
+          reservation_id: string
+          units_taken: number
+          witnessed_at: string | null
+        }
+        ComputedFields: never
+        Insert: {
+          created_at?: string
+          creator_id: string
+          origin_transaction?: string
+          prize_id: string
+          reservation_id: string
+          units_taken?: number
+          witnessed_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          creator_id?: string
+          origin_transaction?: string
+          prize_id?: string
+          reservation_id?: string
+          units_taken?: number
+          witnessed_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chase_stock_evidence_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chase_stock_evidence_prize_id_fkey"
+            columns: ["prize_id"]
+            isOneToOne: false
+            referencedRelation: "prizes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chase_stock_evidence_reservation_id_fkey"
+            columns: ["reservation_id"]
+            isOneToOne: true
+            referencedRelation: "chase_reservations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      creator_actor_contexts: {
+        Row: {
+          aal: string
+          actor_id: string
+          created_at: string
+          creator_id: string | null
+          expires_at: string
+          id: string
+          permission: string
+          session_id: string
+        }
+        Insert: {
+          aal: string
+          actor_id: string
+          created_at?: string
+          creator_id?: string | null
+          expires_at: string
+          id?: string
+          permission: string
+          session_id: string
+        }
+        Update: {
+          aal?: string
+          actor_id?: string
+          created_at?: string
+          creator_id?: string | null
+          expires_at?: string
+          id?: string
+          permission?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creator_actor_contexts_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creator_actor_contexts_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       creator_applications: {
         Row: {
           audience_size: string | null
@@ -2237,6 +2338,34 @@ export type Database = {
           },
         ]
       }
+      reward_crypto_canary: {
+        Row: {
+          cipher: string
+          created_at: string
+          fingerprint: string
+          iv: string
+          key_version: number
+          singleton: boolean
+        }
+        ComputedFields: never
+        Insert: {
+          cipher: string
+          created_at?: string
+          fingerprint: string
+          iv: string
+          key_version: number
+          singleton?: boolean
+        }
+        Update: {
+          cipher?: string
+          created_at?: string
+          fingerprint?: string
+          iv?: string
+          key_version?: number
+          singleton?: boolean
+        }
+        Relationships: []
+      }
       spin_attempts: {
         Row: {
           context: Json | null
@@ -2518,6 +2647,43 @@ export type Database = {
           },
         ]
       }
+      system_health_checks: {
+        Row: {
+          canary_checked_at: string | null
+          canary_failure_at: string | null
+          canary_status: string
+          invariant_counts: NonNullable<Json>
+          invariants_checked_at: string | null
+          invariants_status: string
+          last_maintenance_at: string | null
+          last_source: string
+          singleton: boolean
+        }
+        ComputedFields: never
+        Insert: {
+          canary_checked_at?: string | null
+          canary_failure_at?: string | null
+          canary_status?: string
+          invariant_counts?: NonNullable<Json>
+          invariants_checked_at?: string | null
+          invariants_status?: string
+          last_maintenance_at?: string | null
+          last_source?: string
+          singleton?: boolean
+        }
+        Update: {
+          canary_checked_at?: string | null
+          canary_failure_at?: string | null
+          canary_status?: string
+          invariant_counts?: NonNullable<Json>
+          invariants_checked_at?: string | null
+          invariants_status?: string
+          last_maintenance_at?: string | null
+          last_source?: string
+          singleton?: boolean
+        }
+        Relationships: []
+      }
       webhooks: {
         Row: {
           created_at: string
@@ -2720,55 +2886,6 @@ export type Database = {
           },
         ]
       }
-
-      creator_actor_contexts: {
-        Row: {
-          aal: string
-          actor_id: string
-          created_at: string
-          creator_id: string | null
-          expires_at: string
-          id: string
-          permission: string
-          session_id: string
-        }
-        Insert: {
-          aal: string
-          actor_id: string
-          created_at?: string
-          creator_id?: string | null
-          expires_at: string
-          id?: string
-          permission: string
-          session_id: string
-        }
-        Update: {
-          aal?: string
-          actor_id?: string
-          created_at?: string
-          creator_id?: string | null
-          expires_at?: string
-          id?: string
-          permission?: string
-          session_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "creator_actor_contexts_actor_id_fkey"
-            columns: ["actor_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "creator_actor_contexts_creator_id_fkey"
-            columns: ["creator_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
     }
     Views: {
       [_ in never]: never
@@ -2799,6 +2916,25 @@ export type Database = {
           p_wheel: string
         }
         Returns: Json
+      }
+      _creator_actor_allowed: {
+        Args: {
+          p_actor: string
+          p_context: string
+          p_creator: string
+          p_permission: string
+          p_scope: string
+        }
+        Returns: boolean
+      }
+      _creator_actor_context_valid: {
+        Args: {
+          p_actor: string
+          p_context: string
+          p_creator: string
+          p_permission: string
+        }
+        Returns: boolean
       }
       _creator_actor_grant_allowed:
         | { Args: { p_actor: string; p_creator: string }; Returns: boolean }
@@ -2894,7 +3030,24 @@ export type Database = {
       _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
       _release_fan_focus: { Args: { p_fan: string }; Returns: Json }
       _resolved_spin_wheel: { Args: { p_pass: string }; Returns: string }
+      _reward_crypto_inventory: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          cipher: string
+          creator_id: string
+          cursor: string
+          fingerprint: string
+          iv: string
+          key_version: number
+          prize_id: string
+          row_digest: string
+        }[]
+      }
       _scratch_visible: { Args: { p_value: string }; Returns: string }
+      _session_mfa_satisfied: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
       _spin_attempt_context: { Args: { p_pass: string }; Returns: Json }
       _spin_attempt_receipt: {
         Args: { p_attempt: string; p_replayed: boolean }
@@ -3245,7 +3398,20 @@ export type Database = {
             }
             Returns: Json
           }
+      initialize_reward_crypto_canary: {
+        Args: {
+          p_actor?: string
+          p_canary: Json
+          p_context?: string
+          p_inventory_digest: string
+        }
+        Returns: Json
+      }
       is_admin: { Args: never; Returns: boolean }
+      issue_creator_actor_context: {
+        Args: { p_creator: string; p_permission: string }
+        Returns: string
+      }
       org_account_stats: {
         Args: { p_org: string }
         Returns: {
@@ -3297,6 +3463,10 @@ export type Database = {
         Args: { p_attempt: string; p_request_hash: string; p_token: string }
         Returns: Json
       }
+      read_reward_crypto_canary: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       reconcile_creator_request:
         | {
             Args: {
@@ -3343,6 +3513,10 @@ export type Database = {
         Returns: number
       }
       record_reward_view: { Args: { p_spin: string }; Returns: number }
+      record_system_health_check: {
+        Args: { p_canary_status: string; p_invariants?: Json; p_source: string }
+        Returns: Json
+      }
       record_terms_acceptance: {
         Args: { p_user: string; p_version: string }
         Returns: string
@@ -3361,6 +3535,10 @@ export type Database = {
         Args: { p_user: string }
         Returns: string
       }
+      reward_crypto_inventory_page: {
+        Args: { p_after?: string; p_limit?: number }
+        Returns: Json
+      }
       rollback_claimed_spin: {
         Args: { p_prize_id: string; p_token: string }
         Returns: undefined
@@ -3373,6 +3551,10 @@ export type Database = {
           p_notice_days: number
           p_tombstone_days: number
         }
+        Returns: Json
+      }
+      run_reward_ledger_invariants: {
+        Args: { p_row_limit?: number }
         Returns: Json
       }
       save_game_wheel:
@@ -3445,33 +3627,6 @@ export type Database = {
         Returns: undefined
       }
       set_pwa_icon_mode: { Args: { p_mode: string }; Returns: undefined }
-      _creator_actor_allowed: {
-        Args: {
-          p_actor: string
-          p_context: string
-          p_creator: string
-          p_permission: string
-          p_scope: string
-        }
-        Returns: boolean
-      }
-      _creator_actor_context_valid: {
-        Args: {
-          p_actor: string
-          p_context: string
-          p_creator: string
-          p_permission: string
-        }
-        Returns: boolean
-      }
-      issue_creator_actor_context: {
-        Args: { p_creator: string; p_permission: string }
-        Returns: string
-      }
-      _session_mfa_satisfied: {
-        Args: Record<PropertyKey, never>
-        Returns: boolean
-      }
     }
     Enums: {
       app_role: "admin" | "creator"
