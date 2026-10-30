@@ -53,7 +53,15 @@ export async function testBingoRuntime({admin,a,anonymous,actorA,makeUser,signed
  check(publicCard.status==="ok"&&publicCard.card&&!("id"in publicCard.card)&&!("fanId"in publicCard.card),"fan DTO excludes database card/fan identity");
  check(must(await admin.rpc("get_bingo_card_state",{p_token:`unknown-${randomUUID()}`}),"unknown token refusal").status==="unavailable","unknown bearer reveals no private Bingo state");
  check((await admin.from("prizes").update({stock:1}).eq("id",cells[0].id)).error?.code==="22023","direct service cannot make a paid active cell finite");
- check((await admin.from("wheels").update({archived_at:new Date().toISOString()}).eq("id",wheel.id)).error?.code==="22023","direct archive cannot discard incomplete paid progress");
+ const activeCards=async()=>(await admin.from("bingo_cards").select("id").eq("wheel_id",wheel.id).eq("status","active")).data?.length??-1;
+ const cardsBefore=await activeCards();
+ check(cardsBefore>0,"an incomplete paid card exists before archiving");
+ check(!(await admin.from("wheels").update({archived_at:new Date().toISOString()}).eq("id",wheel.id)).error,"archiving a Bingo game with incomplete paid cards is allowed");
+ check(await activeCards()===cardsBefore,"archiving keeps every incomplete paid card");
+ check((await admin.from("wheels").update({game_ready:false}).eq("id",wheel.id)).error?.code==="22023","un-publishing cannot discard incomplete paid progress");
+ check((await admin.from("wheels").delete().eq("id",wheel.id)).error?.code==="22023","deleting cannot discard incomplete paid progress");
+ check(!(await admin.from("wheels").update({archived_at:null}).eq("id",wheel.id)).error,"un-archiving restores the Bingo game");
+ check(must(await admin.rpc("get_bingo_card_state",{p_token:grant.token}),"read card after un-archive").status==="ok"&&await activeCards()===cardsBefore,"the fan's card survives archive and un-archive");
  // All rows belong to makeUser's registered UUID; the caller's finally deletes
  // that user and the database cascades cards/awards/spins with it.
 }
