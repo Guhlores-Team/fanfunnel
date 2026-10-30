@@ -24,14 +24,14 @@ async function main() {
   const impostor = { id: actorId, client: { auth: { getUser: async () => ({ data: { user: { id: randomUUID() } }, error: null }) } } };
   await assert.rejects(() => createFixturePass(admin, impostor, { wheelId: randomUUID(), spins: 5 }), /authenticated creator/); passed++;
   check("mismatched authenticated actor never reaches economic RPC", rpcCalls === 0);
-  const actor = { id: actorId, client: { auth: { getUser: async () => ({ data: { user: { id: actorId } }, error: null }) } } };
+  const actor = { id: actorId, client: { rpc: async (name: string) => { assert.equal(name, "issue_creator_actor_context"); return { data: randomUUID(), error: null }; }, auth: { getUser: async () => ({ data: { user: { id: actorId } }, error: null }) } } };
   approved = false;
   await assert.rejects(() => createFixturePass(admin, actor, { wheelId: randomUUID(), spins: 5 }), /approved, active/); passed++;
   check("pending fixture creator never reaches economic RPC", rpcCalls === 0);
   approved = true;
   const requestId = randomUUID();
   await createFixturePass(admin, actor, { wheelId: randomUUID(), spins: 5, requestId });
-  check("service grant binds the actual actor explicitly", calls[0].args.p_actor === actorId && calls[0].args.p_creator === actorId);
+  check("service grant binds the actual actor explicitly", calls[0].args.p_actor === actorId && calls[0].args.p_creator === actorId && typeof calls[0].args.p_context === "string");
   check("provided durable identity is preserved", calls[0].args.p_request === requestId);
 
   const prize = { id: randomUUID(), label: "Only fixture prize", emoji: null, rarity: "common", weight: 10, stock: null, delivery: "manual", image_url: null };

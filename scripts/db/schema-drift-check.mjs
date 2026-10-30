@@ -45,6 +45,8 @@ import { probeBingoGames } from "./bingoGamesProbe.mjs";
 import { probeInterplay } from "./interplayProbe.mjs";
 import { ORG_PROBE_SQL, checkOrgProbe } from "./orgIsolationProbe.mjs";
 import { APPROVAL_PROBE_SQL, checkApprovalProbe } from "./approvalProbe.mjs";
+import { probeAccountSecurity } from "./accountSecurityProbe.mjs";
+import { probeCreatorActorContexts } from "./creatorActorContextProbe.mjs";
 import { probeTheme } from "./themeProbe.mjs";
 import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.mjs";
 import { probeCryptoNamespace } from "./cryptoNamespaceProbe.mjs";
@@ -700,6 +702,8 @@ function probeAppErrors(db) {
   }
 
   const suspended = run(`
+    insert into auth.users(id,email) values('00000000-0000-4000-8000-0000000053b0','probe-0053backup@example.test');
+    update public.profiles set role='admin',is_active=true where id='00000000-0000-4000-8000-0000000053b0';
     update public.profiles set is_active = false where id = '${ADMIN_UID}';
     ${as(ADMIN_UID, "select 'suspended-sees:' || count(*) from public.app_errors")}`);
   if (lastLine(suspended) !== "suspended-sees:0") bad.push(`a suspended admin can read app_errors (${lastLine(suspended) ?? firstErr(suspended)})`);
@@ -1042,6 +1046,7 @@ const rwSpin = (id, prize) =>
   `insert into public.spins (id, fan_pass_id, creator_id, wheel_id, fan_id, prize_id, prize_label)
    values ('${id}', '${RW_PASS}', '${RW_A}', '${RW_WA}', '${RW_FAN}', '${prize}', 'probe');`;
 
+
 function psqlAsync(db, sqlText) {
   return new Promise((resolve) => {
     const p = spawn(
@@ -1337,6 +1342,12 @@ try {
   for (const db of ["ffa", "ffb", "ffc"]) {
     probeGrants(db);
     probeOrgIsolation(db);
+    const security = await probeAccountSecurity(db, psql, psqlAsync);
+    if (security.bad.length) {
+      failures++;
+      console.log(`FAIL ${db}: account security (${security.checks} checks)`);
+      for (const problem of security.bad) console.log(`  - ${problem}`);
+    } else console.log(`PASS ${db}: account security ${security.checks} checks, MFA/invite expiry/active-admin races`);
     probeCheckins(db);
     probeAppErrors(db);
     probePrivacy(db);
@@ -1344,6 +1355,7 @@ try {
     probeApproval(db);
     await probeInstantRewards(db);
     await probeCreatorStorage(db);
+    await probeCreatorActorContexts(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"actor context SQL failed");return r.stdout;});
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

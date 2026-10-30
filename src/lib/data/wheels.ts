@@ -1,3 +1,4 @@
+import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { bingoReadyError } from "./bingo";
 import { gameSettings, gameWriteError, requireGameFeature } from "./gameSettings";
 // Data layer — wheels: which wheel a link resolves to right now, wheel CRUD,
@@ -292,7 +293,9 @@ export async function saveWheel(
     const payload = config.prizes.map((prize,index) => withExpectedStock({ ...prizeRow(wheelId,prize,index), id:ids.get(prize.id)! }, prize.id));
     // Metadata/readiness and the real prize IDs publish together. Never set
     // game_ready=true on an incomplete draft before the inventory transaction.
-    const { error } = await createServiceClient().rpc("save_game_wheel", {p_wheel:wheelId,p_creator:user.id,p_actor:user.id,p_prizes:payload as unknown as Json,
+    const context = await issueCreatorActorContext(sb, user.id, "edit_wheel");
+    if (!context) return { error: "db_error" };
+    const { error } = await createServiceClient().rpc("save_game_wheel", {p_wheel:wheelId,p_creator:user.id,p_actor:user.id,p_context:context,p_prizes:payload as unknown as Json,
       p_config:{title:upd.title,subtitle:upd.subtitle,brand_color:upd.brand_color,label_color:upd.label_color,label_size:upd.label_size,show_stock:showsStock(config),game_kind:"bingo",game_config:gameConfig} as unknown as Json});
     if(error)return {error:gameWriteError(error)};
     const saved=await getWheelById(wheelId);

@@ -1,3 +1,4 @@
+import { fixtureCreatorRpc, fixtureActorContext } from "./actor-context-fixture.mjs";
 // Disposable TEST-only fixture, invoked by rls-runtime-test.mjs after its
 // Production/expected-project guards. It receives the same scoped clients and
 // user-cleanup registry; it never discovers credentials or contacts a new host.
@@ -19,8 +20,8 @@ export async function testBingoRuntime({admin,a,anonymous,actorA,makeUser,signed
  const wheel=must(await admin.from("wheels").insert({creator_id:BG.id,title:"Bingo draft",game_kind:"bingo",game_config:{size:3,linePrizeId:null},game_ready:false,is_active:false}).select("id").single(),"seed inactive Bingo draft");
  const line=randomUUID(),rows=[...Array.from({length:9},(_,i)=>({id:randomUUID(),label:`Bingo ${i}`,rarity:i===0?"rare":"common",weight:1,emoji:["🍎","🍋","🍉","🍇","🍒","🍓","🥝","🍊","🍌"][i],stock:null,boostable:false})),{id:line,label:"Line reward",rarity:"rare",weight:0,emoji:"🏆",stock:null,boostable:false}];
  const config={title:"Runtime Bingo",game_kind:"bingo",game_config:{size:3,linePrizeId:line}},save={p_wheel:wheel.id,p_creator:BG.id,p_actor:BG.id,p_prizes:rows,p_config:config};
- const saved=await admin.rpc("save_game_wheel",save);if(saved.error)throw Error(`publish runtime Bingo: ${saved.error.message}`);
- const grant=must(await admin.rpc("create_pass_grant",{p_request:randomUUID(),p_creator:BG.id,p_fan:null,p_wheel:wheel.id,p_name:"Bingo fan",p_spins:20,p_bonus:0,p_amount:100,p_campaign:null,p_actor:BG.id}),"seed paid Bingo fan");
+ const saved=await fixtureCreatorRpc(admin,bg,"save_game_wheel",save);if(saved.error)throw Error(`publish runtime Bingo: ${saved.error.message}`);
+ const grant=must(await fixtureCreatorRpc(admin,bg,"create_pass_grant",{p_request:randomUUID(),p_creator:BG.id,p_fan:null,p_wheel:wheel.id,p_name:"Bingo fan",p_spins:20,p_bonus:0,p_amount:100,p_campaign:null,p_actor:BG.id}),"seed paid Bingo fan");
  if(grant.status!=="granted")throw Error(`Bingo grant refused ${grant.status}`);
  must(await admin.from("fans").update({acked_at:new Date().toISOString(),acked_terms_version:"2026-10-27"}).eq("id",grant.fanId).select("id").single(),"ack disposable Bingo fan");
  const play=async target=>{
@@ -48,7 +49,7 @@ export async function testBingoRuntime({admin,a,anonymous,actorA,makeUser,signed
  check((await a.rpc("save_game_wheel",save)).error?.code==="42501","creator role cannot execute atomic game saver");
  check((await anonymous.rpc("get_bingo_card_state",{p_token:grant.token})).error?.code==="42501","anon cannot execute token-card RPC");
  check((await anonymous.rpc("save_game_wheel",save)).error?.code==="42501","anon cannot execute atomic game saver");
- check((await admin.rpc("save_game_wheel",{...save,p_actor:actorA})).error?.code==="42501","game saver refuses a forged/missing actual actor");
+ check((await admin.rpc("save_game_wheel",{...save,p_actor:actorA,p_context:await fixtureActorContext(bg,BG.id,"edit_wheel")})).error?.code==="42501","game saver refuses a forged/missing actual actor");
  const publicCard=must(await admin.rpc("get_bingo_card_state",{p_token:grant.token}),"read safe runtime card");
  check(publicCard.status==="ok"&&publicCard.card&&!("id"in publicCard.card)&&!("fanId"in publicCard.card),"fan DTO excludes database card/fan identity");
  check(must(await admin.rpc("get_bingo_card_state",{p_token:`unknown-${randomUUID()}`}),"unknown token refusal").status==="unavailable","unknown bearer reveals no private Bingo state");

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import CreatorMfaRecovery from "@/components/auth/CreatorMfaRecovery";
 import { claimErrorMessage } from "./adminErrors";
 
 /**
@@ -11,6 +12,7 @@ import { claimErrorMessage } from "./adminErrors";
 export default function AdminClaim() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const claim = async () => {
@@ -23,6 +25,7 @@ export default function AdminClaim() {
         return;
       }
       const body = await res.json().catch(() => ({}));
+      if (body.error === "mfa_required") { setMfaRequired(true); return; }
       setMsg(claimErrorMessage(body.error));
     } finally {
       setBusy(false);
@@ -60,6 +63,7 @@ export default function AdminClaim() {
       >
         {busy ? "Claiming…" : "Claim admin access"}
       </button>
+      <CreatorMfaRecovery required={mfaRequired} destination="admin" />
       {msg && (
         <p role="alert" className="mt-3 text-[13px] text-[#fcd34d]">
           {msg}

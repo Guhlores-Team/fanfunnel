@@ -18,8 +18,20 @@ for (const file of ["supabase/migrations/0056_push_subscriptions.sql", "supabase
   for (const name of ["current_user_active", "can_act_for", "_owns_org", "_is_org_member", "_owns_org_seat", "org_invite_respond", "org_add_member", "org_add_creator", "org_invite_creator"]) {
     const body = lastFn(sql, name);
     check(`${file}: ${name} is defined`, !!body);
-    check(`${file}: ${name} requires approved status or the server-controlled admin role`, /approval_status = 'approved' or (?:p\.)?role = 'admin'/.test(body));
-    check(`${file}: ${name} remains SECURITY DEFINER with a pinned search path`, /security definer set search_path = public/.test(body));
+    const profileApproval = /approval_status\s*=\s*'approved' or (?:p\.)?role\s*=\s*'admin'/;
+    //0062 delegates the invitee gate to the same profiles-backed predicate,
+    // including a fresh check after the recipient row lock;0056 stays inline.
+    const delegatedInvitee = name === "org_invite_respond" && /if not public\.current_user_active\(\)/.test(body);
+    const callerGate = lastFn(sql, "current_user_active");
+    check(`${file}: ${name} requires approved status or the server-controlled admin role`, delegatedInvitee
+      ? profileApproval.test(callerGate) && /where id = auth\.uid\(\) and is_active/.test(callerGate) &&
+        /if not public\.current_user_active\(\) then return 'inactive'; end if;/.test(body)
+      : profileApproval.test(body));
+    if (delegatedInvitee) {
+      check(`${file}: invitee approval is rechecked after its own profile lock`, /select \* into v_profile from public\.profiles where id=auth\.uid\(\) for update; if not public\.current_user_active\(\) then return 'inactive'; end if;/.test(body));
+      check(`${file}: delegated invitee predicate also enforces current MFA`, /public\._session_mfa_satisfied\(\)/.test(callerGate));
+    }
+    check(`${file}: ${name} remains SECURITY DEFINER with a pinned search path`, /security definer set search_path\s*=\s*public/.test(body));
     check(`${file}: ${name} never reads editable auth metadata`, !/user_metadata|app_metadata|raw_user_meta_data/.test(body));
   }
   const active = lastFn(sql, "current_user_active");

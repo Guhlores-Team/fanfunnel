@@ -161,6 +161,7 @@ export class FakeSupabase {
       .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))[0];
   }
   private economicRpc(name: string, args: Row): unknown {
+    if (name === "issue_creator_actor_context") return crypto.randomUUID();
     if (name === "can_act_for") return this.permissions[String(args.target_creator)] ?? args.target_creator === this.userId;
     if (!["grant_pass_spins", "create_pass_grant", "edit_pass_grant", "award_fan_referral"].includes(name)) throw new Error(`fakeSupabase: rpc ${name} is not modelled`);
     const creator = args.p_creator;
@@ -216,7 +217,8 @@ export class FakeSupabase {
     }
 
     const request = String(args.p_request);
-    const rawIntent = args.p_pack ? { ...args, p_spins: null, p_bonus: null, p_amount: null } : args;
+    const economicArgs = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "p_context"));
+    const rawIntent = args.p_pack ? { ...economicArgs, p_spins: null, p_bonus: null, p_amount: null } : economicArgs;
     const intent = JSON.stringify([name, rawIntent]);
     const previous = this.economicRequests.get(request);
     if (previous) return previous.intent === intent ? { ...previous.receipt, replayed: true, balance: this.rows("fan_passes").find(p => p.id === previous.receipt.passId)?.spins_remaining ?? previous.receipt.balance } : { status: "conflict" };

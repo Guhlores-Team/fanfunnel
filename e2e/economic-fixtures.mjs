@@ -1,3 +1,4 @@
+import { fixtureCreatorRpc } from "../scripts/security/actor-context-fixture.mjs";
 // TEST-only fixtures use the application's durable economic writers. This file
 // never enables bypass settings or writes balances, grants or spins directly.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -29,7 +30,7 @@ export async function createFixturePass(admin, actor, { wheelId, fanId = null, n
   if (auth.error || auth.data?.user?.id !== actor.id) throw new Error("Fixture actor must be the authenticated creator.");
   const profile = fixtureData(await admin.from("profiles").select("is_active,approval_status,role").eq("id", actor.id).single(), "fixture actor profile");
   if (!profile.is_active || profile.approval_status !== "approved" || profile.role !== "creator") throw new Error("Fixture actor must be an approved, active creator.");
-  const result = fixtureData(await admin.rpc("create_pass_grant", {
+  const result = fixtureData(await fixtureCreatorRpc(admin, actor.client, "create_pass_grant", {
     p_request: requestId, p_actor: actor.id, p_creator: actor.id, p_fan: fanId, p_wheel: wheelId,
     p_name: name, p_spins: spins, p_bonus: 0, p_amount: amountCents, p_campaign: null,
   }), "create durable fixture grant");

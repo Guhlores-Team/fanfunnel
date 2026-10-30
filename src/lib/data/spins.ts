@@ -1,3 +1,4 @@
+import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { readBingoCard } from "./bingo";
 import { applyFocusStock } from "./focusDisplay";
 import { commitSpinAttempt, readSpinAttempt, type SpinIntent, type SpinAttemptStatus } from "./spinAttempts";
@@ -789,11 +790,13 @@ export async function createPass(opts: {
 
   // The wrapper binds the complete intent before creating anything. New fan,
   // zero-balance pass, grant and its credit either all commit or all roll back.
+  const context = await issueCreatorActorContext(sb, creatorId, "grant");
+  if (!context) return { error: "unavailable" };
   const result = await passTransaction("create_pass_grant", {
     p_request: requestId, p_creator: creatorId,
     p_fan: opts.fanId ?? null, p_wheel: wheelId, p_name: opts.name || "Fan",
     p_spins: balanceAdd, p_bonus: bonusSpins, p_amount: amountCents,
-    p_campaign: campaignId, p_referral_code: !opts.fanId ? opts.referralCode ?? null : null, p_pack: opts.packId ?? null, p_pack_units: packUnits, p_actor: user.id,
+    p_campaign: campaignId, p_referral_code: !opts.fanId ? opts.referralCode ?? null : null, p_pack: opts.packId ?? null, p_pack_units: packUnits, p_actor: user.id, p_context: context,
   });
   if (!result) return { error: "db_error" };
   if (result.status !== "granted" || typeof result.token !== "string" || typeof result.fanId !== "string") {

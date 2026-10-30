@@ -1,3 +1,4 @@
+import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
 // Data layer — admin console, agency (orgs + seats), account provisioning
 // and the gated-signup approval queue.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
@@ -42,6 +43,7 @@ export async function claimAdmin(): Promise<{ ok: true } | { error: string }> {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+  if (await creatorMfaStepUpResponse(sb, user)) return { error: "mfa_required" };
   const email = (user.email ?? "").toLowerCase();
   if (!allow.includes(email)) return { error: "not_allowed" };
 
@@ -199,7 +201,8 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     .from("org_invites")
     .select("id, email")
     .eq("org_id", org.id)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString());
   const invites: PendingInvite[] = ((inviteRows ?? []) as { id: string; email: string }[]).map(
     (r) => ({ id: r.id, email: r.email })
   );
@@ -291,11 +294,13 @@ export async function getMyInvites(): Promise<MyInvite[]> {
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (!user) return [];
+  if (!user?.email) return [];
   const { data } = await sb
     .from("org_invites")
     .select("id, org_id, status, org:orgs(name)")
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .eq("email", user.email.trim().toLowerCase())
+    .gt("expires_at", new Date().toISOString());
   return ((data ?? []) as unknown as {
     id: string;
     org_id: string;
@@ -308,7 +313,8 @@ export async function updateAccount(
   patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) {
-    return mockUpdateAccount(id, patch) ? { ok: true } : { error: "not_found" };
+    try { return mockUpdateAccount(id, patch) ? { ok: true } : { error: "not_found" }; }
+    catch (error) { return { error: error instanceof Error && error.message === "last_admin" ? "last_admin" : "db_error" }; }
   }
 
   const sb = await createClient();
@@ -320,8 +326,12 @@ export async function updateAccount(
   if (patch.features) upd.features = patch.features;
   if (Object.keys(upd).length === 0) return { ok: true };
 
-  const { error } = await sb.from("profiles").update(upd).eq("id", id);
-  return error ? { error: "db_error" } : { ok: true };
+  const { data, error } = await sb.from("profiles").update(upd).eq("id", id).select("id").maybeSingle();
+  if (error) return { error: error.message === "last_active_admin" ? "last_admin"
+    : error.message === "account cleanup pending" ? "account_cleanup_pending"
+    : error.code === "42501" ? "forbidden" : "db_error" };
+  // An RLS-filtered or absent target is not a successful mutation/audit event.
+  return data ? { ok: true } : { error: "not_found" };
 }
 
 export async function createCreatorAccount(

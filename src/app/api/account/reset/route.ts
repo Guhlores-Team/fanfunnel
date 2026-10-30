@@ -1,3 +1,4 @@
+import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
 import { NextResponse } from "next/server";
 import { clearMyData } from "@/lib/data";
 import { clientIp } from "@/lib/api/clientIp";
@@ -19,6 +20,8 @@ export async function POST(req: Request) {
       data: { user },
     } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    const step = await creatorMfaStepUpResponse(sb, user);
+    if (step) return step;
     limitKey = "reset:user:" + user.id;
   }
   const limited = await rateLimitOr429(limitKey, 3, 60 * 60 * 1000);

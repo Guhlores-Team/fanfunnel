@@ -22,7 +22,7 @@ export const RETENTION_DAYS = {
   linkTombstones: 180,
   /** Error reports an admin marked resolved (app_errors, migration 0053). */
   resolvedAppErrors: 90,
-  /** Agency invites that were declined or revoked (org_invites; they hold an
+  /** Agency invites that were declined, revoked or expired (org_invites; they hold an
    *  email address). Pending and accepted invites are kept. */
   closedAgencyInvites: 90,
 } as const;

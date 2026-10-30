@@ -195,6 +195,12 @@ export function probeStorageWork(db, psql) {
  * deciding which security intent wins. @param {string} db @param {Function} psql @param {Function} psqlAsync */
 export async function probeStorageSecurityRaces(db, psql, psqlAsync) {
   const bad=[];
+  // These committed two-session fixtures must not delete the database's last
+  // active administrator during cleanup. This separate control survives only
+  // until the disposable local cluster is dropped; no old assertion changes.
+  const control=uid('af');
+  const controlSetup=psql(db,['-c',`insert into auth.users(id,email) values('${control}','storage-race-control@example.test') on conflict(id) do nothing; update public.profiles set role='admin',is_active=true where id='${control}';`],{allowFail:true});
+  if(controlSetup.status!==0) return ['security race control fixture failed'];
   for(const target of [A,D]) for(const adminFirst of [true,false]) {
     const label=`${target===A?'suspension':'demotion'} ${adminFirst?'admin-before-pause':'pause-before-admin'}`;
     const setup=psql(db,['-c',`begin; grant select,update on public.profiles to authenticated; ${seed.replace(" update public.profiles set role='creator';",'')} ${account('begin',target,`,p_actor=>'${target}'`)} ${account('claim',target)} commit;`],{allowFail:true});

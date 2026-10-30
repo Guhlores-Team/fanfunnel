@@ -37,7 +37,7 @@ async function transaction(args: Record<string, unknown>) {
 }
 mock.module("@/lib/supabase/server", { namedExports: {
   isSupabaseConfigured: () => configured,
-  createClient: async () => ({ auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER, user_metadata: { role: "admin" } } : null }, error: null }) }, rpc: async (_name: string, args: Record<string, unknown>) => { assert.equal(args.perm, "grant"); return { data: allowed, error: null }; } }),
+  createClient: async () => ({ auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER, user_metadata: { role: "admin" } } : null }, error: null }) }, rpc: async (_name: string, args: Record<string, unknown>) => { if (_name === "issue_creator_actor_context") return { data: crypto.randomUUID(), error: null }; assert.equal(args.perm, "grant"); return { data: allowed, error: null }; } }),
   createServiceClient: () => { serviceClients++; return { rpc: async (name: string, args: Record<string, unknown>) => { assert.equal(name, "import_fans_durable"); return transaction(args); } }; },
 } });
 mock.module("@/lib/data/mock", { namedExports: { mockImportFans: async (id: string, hash: string, rows: ImportSlot[]) => (await transaction({ p_batch: id, p_creator: OWNER, p_request_hash: hash, p_rows: rows })).data } });

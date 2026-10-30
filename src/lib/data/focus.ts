@@ -1,3 +1,4 @@
+import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { resolveWheelId } from "./wheels";
 import { focusDisplay } from "./focusDisplay";
 import { toWheelConfig, type DbWheelRow } from "./shared";
@@ -17,7 +18,7 @@ async function rpc(service: Service, name: string, args: Record<string, unknown>
   catch { return null; }
 }
 /** Session getUser and explicit grant permission; JWT metadata is never an authority. */
-async function creatorForFan(fanId: string): Promise<{ creatorId: string; actorId: string; service: Service; blocked: boolean; breakUntil: string | null } | FocusError> {
+async function creatorForFan(fanId: string): Promise<{ creatorId: string; actorId: string; session: Awaited<ReturnType<typeof createClient>>; service: Service; blocked: boolean; breakUntil: string | null } | FocusError> {
   if (!isUuid(fanId)) return { error: "not_found" };
   const session = await createClient();
   const { data: { user }, error } = await session.auth.getUser();
@@ -26,7 +27,7 @@ async function creatorForFan(fanId: string): Promise<{ creatorId: string; actorI
   if (readError || !fan) return { error: "not_found" };
   const { data: permitted, error: permissionError } = await session.rpc("can_act_for", { target_creator: fan.creator_id, perm: "grant" });
   if (permissionError || permitted !== true) return { error: "forbidden" };
-  return { creatorId: fan.creator_id, actorId: user.id, service: createServiceClient(), blocked: !!fan.blocked_at, breakUntil: fan.break_until };
+  return { creatorId: fan.creator_id, actorId: user.id, session, service: createServiceClient(), blocked: !!fan.blocked_at, breakUntil: fan.break_until };
 }
 export async function getFanFocus(token: string): Promise<FanFocusView | null> { return (await getFanFocusDisplay(token)).focus; }
 export async function getFanFocusDisplay(token: string, service?: Service): Promise<{ focus: FanFocusView | null; odds?: FanOddsView; stock?: Record<string, import("@/lib/games/wheel/types").PublicStock> }> {
@@ -85,7 +86,9 @@ export async function grantFocusPack(fanId: string, input: { requestId: string; 
   if (!isSupabaseConfigured()) return mockGrantFocusPack(fanId, input);
   const auth = await creatorForFan(fanId);
   if ("error" in auth) return auth;
-  const result = await rpc(auth.service, "grant_focus_pack", { p_request: input.requestId, p_creator: auth.creatorId, p_fan: fanId, p_pass: input.passId, p_pack: input.packId, p_prize: input.prizeId, p_actor: auth.actorId });
+  const context = await issueCreatorActorContext(auth.session, auth.creatorId, "grant");
+  if (!context) return { error: "db_error" };
+  const result = await rpc(auth.service, "grant_focus_pack", { p_request: input.requestId, p_creator: auth.creatorId, p_fan: fanId, p_pass: input.passId, p_pack: input.packId, p_prize: input.prizeId, p_actor: auth.actorId, p_context: context });
   if (!result) return { error: "db_error" };
   if (result.status !== "granted") {
     const allowed = ["unavailable", "invalid_pack", "invalid_target", "focus_exists", "sold_out", "conflict", "cancelled", "rejected", "gone"] as const;
@@ -101,7 +104,9 @@ export async function cancelFanFocus(fanId: string, focusId: string): Promise<{ 
   }
   const auth = await creatorForFan(fanId);
   if ("error" in auth) return auth;
-  const result = await rpc(auth.service, "cancel_fan_focus", { p_creator: auth.creatorId, p_fan: fanId, p_focus: focusId, p_actor: auth.actorId });
+  const context = await issueCreatorActorContext(auth.session, auth.creatorId, "grant");
+  if (!context) return { error: "db_error" };
+  const result = await rpc(auth.service, "cancel_fan_focus", { p_creator: auth.creatorId, p_fan: fanId, p_focus: focusId, p_actor: auth.actorId, p_context: context });
   // The gateway intentionally uses the same unavailable shape for a lost
   // permission and a concurrently removed fan; do not expose that distinction.
   if (result?.status === "unavailable") return { error: "forbidden" };

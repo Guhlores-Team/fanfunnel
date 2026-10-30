@@ -7,7 +7,7 @@ import { MIN_PASSWORD_LENGTH } from "@/lib/api/password";
 import { useToast } from "@/components/ui/Toast";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 import Modal from "@/components/ui/Modal";
-import { deleteErrorMessage, inviteErrorMessage, mfaResetErrorMessage } from "./adminErrors";
+import { accountErrorMessage, deleteErrorMessage, inviteErrorMessage, mfaResetErrorMessage } from "./adminErrors";
 import { P, Glyph, SectionTitle, raised, recessed, btnGhost, btnDanger, pill } from "./adminUi";
 import AdminErrors from "./AdminErrors";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
@@ -131,11 +131,14 @@ export default function AdminClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, ...patch }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(typeof body?.error === "string" ? body.error : "unknown");
+      }
       refresh();
-    } catch {
+    } catch (error) {
       setData(snapshot);
-      toast("Couldn't update the account — try again.", { tone: "error" });
+      toast(accountErrorMessage(error instanceof Error ? error.message : null), { tone: "error" });
     } finally {
       setBusyAccounts((s) => {
         const next = new Set(s);

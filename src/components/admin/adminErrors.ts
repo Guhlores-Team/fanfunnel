@@ -81,3 +81,11 @@ export function mfaResetErrorMessage(err: unknown): string {
       return "Couldn't reset two-factor. Try again.";
   }
 }
+
+/** Role and suspension changes must leave an active admin for recovery. */
+export function accountErrorMessage(error: unknown): string {
+  if (error === "account_cleanup_pending") return "This account is still being deleted. Finish or resolve deletion before reactivating it.";
+  if (error === "last_admin") return "Keep at least one active admin. Add or reactivate another admin first.";
+  if (error === "mfa_required") return "Sign in with your two-factor code first.";
+  return "Couldn't update the account — try again.";
+}

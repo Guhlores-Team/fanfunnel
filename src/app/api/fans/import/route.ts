@@ -1,3 +1,4 @@
+import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { mockImportFans } from "@/lib/data/mock";
@@ -19,9 +20,9 @@ function receipt(value: unknown, batchId: string, count: number): value is Extra
   }
   return true;
 }
-async function transact(batchId: string, creatorId: string, actorId: string, rows: ImportSlot[], requestHash: string): Promise<unknown> {
+async function transact(batchId: string, creatorId: string, actorId: string, rows: ImportSlot[], requestHash: string, context: string): Promise<unknown> {
   const service = createServiceClient() as unknown as ServiceRpc;
-  const args = { p_batch: batchId, p_creator: creatorId, p_request_hash: requestHash, p_rows: rows, p_actor: actorId };
+  const args = { p_batch: batchId, p_creator: creatorId, p_request_hash: requestHash, p_rows: rows, p_actor: actorId, p_context: context };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const { data, error } = await service.rpc("import_fans_durable", args);
@@ -58,8 +59,10 @@ export async function POST(req: Request) {
   }
   const slots = normalizeImportRows(body.rows);
   const requestHash = await importRequestHash(slots);
+  const context = session && creatorId ? await issueCreatorActorContext(session, creatorId, "grant") : null;
+  if (configured && !context) return NextResponse.json({ error: "import_pending", batchId }, { status: 503, headers: { "Cache-Control": "no-store" } });
   let result: unknown;
-  try { result = configured && creatorId ? await transact(batchId, creatorId, user!.id, slots, requestHash) : await mockImportFans(batchId, requestHash, slots); }
+  try { result = configured && creatorId ? await transact(batchId, creatorId, user!.id, slots, requestHash, context!) : await mockImportFans(batchId, requestHash, slots); }
   catch { result = null; }
   if (result && typeof result === "object" && "status" in result && result.status === "conflict") return NextResponse.json({ error: "conflict", batchId }, { status: 409 });
   if (result && typeof result === "object" && "status" in result && result.status === "unavailable") return NextResponse.json({ error: "forbidden", batchId }, { status: 403 });

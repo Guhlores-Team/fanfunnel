@@ -12,6 +12,7 @@ import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUGS, CASES, SURPRISES } from "./interplayCases.mjs";
+import { withActorContext } from "./actorContextFixture.mjs";
 const quote = s => `'${String(s).replaceAll("'", "''")}'`;
 const json = v => `${quote(JSON.stringify(v))}::jsonb`;
 const hash = s => createHash("sha256").update(s).digest("hex");
@@ -28,7 +29,9 @@ export async function probeInterplay(sqlInput, options = {}) {
   let checks = 0; const knownBugs = []; const surprises = new Set(); const creators = [];
   const check = (v, label) => { checks++; if (!v) throw Error(`interplay ${label}`); };
   const known = (id, detail) => { checks++; knownBugs.push(`${id}: ${detail}`); };
-  const rpc = async (name, args) => JSON.parse((await sql(`select public.${name}(${args.join(",")});`)).trim() || "null");
+  // 0062: the creator gateways take an actor context minted by a real
+  // authenticated stub session; every RPC runs as the service role, like production.
+  const rpc = async (name, args) => withActorContext(sql, name, args, async bound => JSON.parse((await sql(`begin;set local role service_role;select public.${name}(${bound.join(",")});commit;`)).trim() || "null"));
   const scalar = async q => (await sql(q)).trim();
   const refused = async (q, pattern) => { try { await sql(q); return false; } catch (e) { if (pattern && !pattern.test(e.message)) throw Error(`Unexpected SQL refusal: ${e.message}`); return true; } };
   const settled = ps => Promise.all(ps.map(p => p.then(value => ({ ok: true, value }), e => ({ ok: false, error: e.message }))));

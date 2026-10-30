@@ -29,7 +29,7 @@ function metadataQuery(table: string) {
 }
 mock.module("@/lib/supabase/server", { namedExports: {
   isSupabaseConfigured: () => configured,
-  createClient: async () => ({ from: metadataQuery, auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER, user_metadata: { role: "admin" } } : null }, error: null }) }, rpc: async (name: string, args: Record<string, unknown>) => { assert.equal(name, "can_act_for"); assert.equal(args.perm, "grant"); return { data: permitted, error: null }; } }),
+  createClient: async () => ({ from: metadataQuery, auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER, user_metadata: { role: "admin" } } : null }, error: null }) }, rpc: async (name: string, args: Record<string, unknown>) => { if (name === "issue_creator_actor_context") return { data: crypto.randomUUID(), error: null }; assert.equal(name, "can_act_for"); assert.equal(args.perm, "grant"); return { data: permitted, error: null }; } }),
   createServiceClient: () => {
     services++;
     return {

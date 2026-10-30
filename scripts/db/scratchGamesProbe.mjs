@@ -1,3 +1,4 @@
+import { withActorContext } from "./actorContextFixture.mjs";
 // Disposable PostgreSQL probe. Real pure engine generation comes through a
 // bounded stdin bridge; this test does not duplicate production RNG/math.
 import { spawn } from "node:child_process";
@@ -11,7 +12,7 @@ const hash=s=>createHash("sha256").update(s).digest("hex");
 export async function probeScratchGames(sql) {
  let checks=0;const check=(v,label)=>{checks++;if(!v)throw Error(`0060 ${label}`);};
  const pending=new Set();const query=q=>{const p=sql(q);pending.add(p);p.then(()=>pending.delete(p),()=>pending.delete(p));return p;};
- const rpc=async(name,args)=>JSON.parse((await query(`select public.${name}(${args.join(",")});`)).trim()||"null");
+ const rpc=async(name,args)=>withActorContext(query,name,args,async bound=>JSON.parse((await query(`begin;set local role service_role;select public.${name}(${bound.join(",")});commit;`)).trim()||"null"));
  const root=join(import.meta.dirname,"../.."),fixture=spawn("npx",["tsx","scripts/db/scratchProofFixture.ts"],{cwd:root,stdio:["pipe","pipe","pipe"]});
  const waiters=[];let fixtureError="";fixture.stderr.on("data",b=>fixtureError+=b);
  fixture.on("error",e=>{for(const w of waiters.splice(0))w.reject(e);});

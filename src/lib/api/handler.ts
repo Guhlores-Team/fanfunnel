@@ -62,6 +62,7 @@ export function statusForError(code: string): number {
     case "not_allowed":
     case "not_configured":
     case "on_break":
+    case "mfa_required":
       return 403;
     case "not_found":
       return 404;
@@ -73,7 +74,11 @@ export function statusForError(code: string): number {
     case "already_delivered":
     case "has_history":
     case "conflict":
+    case "last_admin":
+    case "account_cleanup_pending":
       return 409;
+    case "expired":
+      return 410;
     case "rate_limited":
       return 429;
     default:

@@ -1,3 +1,4 @@
+import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { CompleteReadError, readScopedRows } from "./readPages";
 // Data layer — fans and grants: creator CRM, fan detail, grant edits, fan
 // moderation, and the token-scoped fan actions (ack, self-exclude, report).
@@ -78,7 +79,9 @@ export async function editGrant(
   if (permissionError || allowed !== true) return { error: "unauthorized" };
   // The transaction checks the actual actor again and recovers an existing
   // receipt before validating live stock, break status or edited campaign rows.
-  const result = await economicRpc("edit_pass_grant", { p_request: requestId, p_creator: grant.creator_id, p_grant: grantId, p_patch: exact, p_actor: user.id }, "edit_pending");
+  const context = await issueCreatorActorContext(sb, grant.creator_id, "grant");
+  if (!context) return { error: "edit_pending" };
+  const result = await economicRpc("edit_pass_grant", { p_request: requestId, p_creator: grant.creator_id, p_grant: grantId, p_patch: exact, p_actor: user.id, p_context: context }, "edit_pending");
   if (!result) return { error: "db_error" };
   if (result.status === "updated") {
     if (result.grantId !== grantId || typeof result.replayed !== "boolean") return { error: "edit_pending" };
@@ -119,7 +122,9 @@ export async function grantSpins(
   if (!fan) return { error: "not_found" };
   if (fan.blocked_at) return { error: "blocked" };
   if (isOnBreak(fan.break_until)) return { error: "on_break" };
-  const result = await economicRpc("grant_pass_spins", { p_request: requestId, p_creator: pass.creator_id, p_fan: pass.fan_id, p_pass: pass.id, p_spins: add, p_bonus: 0, p_amount: 0, p_campaign: pass.campaign_id, p_actor: user.id });
+  const context = await issueCreatorActorContext(sb, pass.creator_id, "grant");
+  if (!context) return { error: "db_error" };
+  const result = await economicRpc("grant_pass_spins", { p_request: requestId, p_creator: pass.creator_id, p_fan: pass.fan_id, p_pass: pass.id, p_spins: add, p_bonus: 0, p_amount: 0, p_campaign: pass.campaign_id, p_actor: user.id, p_context: context });
   if (!result) return { error: "db_error" };
   return result.status === "granted" && typeof result.balance === "number" ? { spinsRemaining: result.balance } : { error: result.status === "conflict" ? "conflict" : "not_found" };
 }

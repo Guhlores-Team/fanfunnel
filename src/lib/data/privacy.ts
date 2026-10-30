@@ -393,7 +393,7 @@ export async function exportCreatorData(): Promise<CreatorDataExport | null> {
   await Promise.all([
     related("prizes", "prizes", "id, wheel_id, label, description, rarity, weight, stock, cost_cents, color, emoji, image_url, sort_order, delivery, boostable, created_at", "wheel_id", wheelIds),
     related("agency_owned_members", "org_members", "id, org_id, profile_id, role, created_at", "org_id", orgIds),
-    related("agency_invitations", "org_invites", "id, org_id, email, status, created_at", "org_id", orgIds),
+    related("agency_invitations", "org_invites", "id, org_id, email, status, created_at, expires_at", "org_id", orgIds),
     related("agency_scopes", "org_member_creators", "member_id, creator_id", "member_id", memberIds, ["member_id", "creator_id"]),
   ]);
   const ownedMemberIds = sections.agency_owned_members.map((row) => row.id);
