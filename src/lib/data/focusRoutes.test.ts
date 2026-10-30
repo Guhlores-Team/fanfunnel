@@ -40,7 +40,7 @@ mock.module("@/lib/supabase/server", { namedExports: {
   isSupabaseConfigured: () => true,
   createClient: async () => ({ auth: { getUser: async () => ({ data: { user }, error: null }) },
     from: () => query(visible ? { creator_id: OWNER, blocked_at: null, break_until: null } : null),
-    rpc: async (name: string) => ({ data: name === "can_act_for" ? permitted : false, error: null }) }),
+    rpc: async (name: string) => ({ data: name === "issue_creator_actor_context" ? crypto.randomUUID() : name === "can_act_for" ? permitted : false, error: null }) }),
   createServiceClient: () => { serviceClients++; return service; },
 } });
 mock.module("@/lib/rateLimit", { namedExports: { rateLimitShared: async () => ({ ok: true, retryAfter: 0 }) } });
@@ -64,7 +64,7 @@ async function main() {
   check("authorized grant200 no-store", allowed.status === 200 && allowed.headers.get("Cache-Control") === "no-store");
   check("response strips internal focus/grant/fan/cipher fields", !/INTERNAL|PRIVATE|fan_id|grant_id|cipher/.test(JSON.stringify(body)));
   const write = calls.find(call => call.name === "grant_focus_pack")!;
-  check("stored pack/prize references are the only supplied economics", write.args.p_creator === OWNER && write.args.p_fan === FAN && write.args.p_pack === PACK && write.args.p_prize === PRIZE && Object.keys(write.args).length === 7 && write.args.p_actor === OWNER);
+  check("stored pack/prize references are the only supplied economics", write.args.p_creator === OWNER && write.args.p_fan === FAN && write.args.p_pack === PACK && write.args.p_prize === PRIZE && Object.keys(write.args).length === 8 && typeof write.args.p_context === "string" && write.args.p_actor === OWNER);
   const before = calls.length;
   check("focus cancellation requires exact saved ID before RPC", (await creator.DELETE(request("/api/fans/focus", {}), context)).status === 400 && calls.length === before);
   const cancelled = await creator.DELETE(request("/api/fans/focus", { focusId: PRIZE }), context);

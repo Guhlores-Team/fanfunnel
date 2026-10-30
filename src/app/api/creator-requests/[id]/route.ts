@@ -1,3 +1,4 @@
+import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { mockReconcileCreatorRequest } from "@/lib/data/mock";
@@ -8,7 +9,7 @@ import { isCreatorRequestKind, readCreatorRequestResult, type CreatorRequestKind
 
 type Context = { params: Promise<{ id: string }> };
 const CHECKS_PER_MINUTE = 30;
-type ReconcileRpc = { rpc(name: "reconcile_creator_request", args: { p_request: string; p_creator: string | null; p_actor: string; p_kind: CreatorRequestKind; p_cancel: boolean; p_authorized: boolean }): PromiseLike<{ data: unknown; error: unknown }> };
+type ReconcileRpc = { rpc(name: "reconcile_creator_request", args: { p_request: string; p_creator: string | null; p_actor: string; p_kind: CreatorRequestKind; p_cancel: boolean; p_authorized: boolean; p_context: string }): PromiseLike<{ data: unknown; error: unknown }> };
 async function reconcile(id: string, kind: CreatorRequestKind, creatorId: string | undefined, cancel: boolean) {
   if (!isSupabaseConfigured()) {
     const result = readCreatorRequestResult(await mockReconcileCreatorRequest(id, kind, cancel), id, kind);
@@ -34,8 +35,10 @@ async function reconcile(id: string, kind: CreatorRequestKind, creatorId: string
   // Unknown context never becomes an assumed own-account operation. The actor
   // fence can safely cancel that actor's UUID across scopes; a prior actor may
   // receive a bare outcome after permission loss, never a business receipt.
+  const context = await issueCreatorActorContext(session, creatorId ?? null, "reconcile");
+  if (!context) return NextResponse.json({ error: "request_pending" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   const service = createServiceClient() as unknown as ReconcileRpc;
-  const { data, error } = await service.rpc("reconcile_creator_request", { p_request: id, p_creator: creatorId ?? null, p_actor: user.id, p_kind: kind, p_cancel: cancel, p_authorized: authorized });
+  const { data, error } = await service.rpc("reconcile_creator_request", { p_request: id, p_creator: creatorId ?? null, p_actor: user.id, p_kind: kind, p_cancel: cancel, p_authorized: authorized, p_context: context });
   const result = !error ? readCreatorRequestResult(data, id, kind) : null;
   if (!result) return NextResponse.json({ error: "request_pending" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });

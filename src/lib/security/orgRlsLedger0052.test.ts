@@ -124,18 +124,26 @@ for (const [name, sql] of sources) {
     `${name}: org_create refuses a suspended caller`,
     /if not public\.current_user_active\(\) then raise exception 'account is not active' using errcode = '42501'; end if;/.test(lastFn(sql, "org_create")!)
   );
+  const lifecycle = name !== "migration 0052" && !!lastFn(sql, "_session_mfa_satisfied");
+  const respond = lastFn(sql, "org_invite_respond")!;
   check(
     `${name}: org_invite_respond refuses a suspended invitee (accept and decline)`,
-    /if not coalesce\(v_active, false\) then return 'inactive'; end if; select \* into v_inv/.test(lastFn(sql, "org_invite_respond")!)
+    lifecycle
+      ? /begin if not public\.current_user_active\(\) then return 'inactive'; end if; select \* into v_profile from public\.profiles where id=auth\.uid\(\) for update; if not public\.current_user_active\(\) then return 'inactive'; end if; select \* into v_inv/.test(respond)
+      : /if not coalesce\(v_active, false\) then return 'inactive'; end if; select \* into v_inv/.test(respond)
   );
+  if (lifecycle) {
+    check(`${name}: effective invitee gate includes MFA and active approved profile authority`, /select public\._session_mfa_satisfied\(\) and exists\([\s\S]*from public\.profiles where id = auth\.uid\(\) and is_active[\s\S]*approval_status = 'approved'/.test(lastFn(sql, "current_user_active")!));
+    check(`${name}: invitation sender authority is fresh after recipient and invitation waits`, /select \* into v_inv from public\.org_invites[\s\S]*for update; if not public\._owns_org\(p_org\) then return 'not_owner'; end if; v_time:=clock_timestamp\(\);/.test(lastFn(sql, "org_invite_creator")!));
+  }
   // Not redefined by 0052 (they already go through _owns_org): check the
   // effective definitions in the full snapshots.
   if (name !== "migration 0052") {
     for (const fn of ["org_add_member", "org_remove_creator", "org_invite_creator"]) {
       check(`${name}: ${fn} is owner-guarded by _owns_org`, /if not public\._owns_org\(p_org\) then return 'not_owner'; end if;/.test(lastFn(sql, fn) ?? ""));
     }
-    check(`${name}: org_invite_revoke is owner-guarded by _owns_org`, /public\._owns_org\(i\.org_id\)/.test(lastFn(sql, "org_invite_revoke") ?? ""));
-    check(`${name}: org_invites_owner is owner-guarded by _owns_org`, /using \(public\._owns_org\(org_id\) or public\.is_admin\(\)\)/.test(lastPolicy(sql, "org_invites_owner", "org_invites") ?? ""));
+    check(`${name}: org_invite_revoke is owner-guarded by _owns_org`, (lifecycle ? /if not public\._owns_org\(v_inv\.org_id\) then return 'not_owner'; end if;/.test(lastFn(sql, "org_invite_revoke") ?? "") : /public\._owns_org\(i\.org_id\)/.test(lastFn(sql, "org_invite_revoke") ?? "")));
+    check(`${name}: org_invites_owner is owner-guarded by _owns_org`, /using\s*\(public\._owns_org\(org_id\) or public\.is_admin\(\)\)/.test(lastPolicy(sql, "org_invites_owner", "org_invites") ?? ""));
   }
 
   const stats = lastFn(sql, "org_account_stats");

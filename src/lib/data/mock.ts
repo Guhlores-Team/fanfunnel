@@ -2728,6 +2728,12 @@ export function mockUpdateAccount(
 ) {
   const acc = store.accounts.find((a) => a.id === id);
   if (!acc) return null;
+  const nextRole = patch.role ?? acc.role;
+  const nextActive = patch.isActive ?? acc.isActive;
+  if (acc.role === "admin" && acc.isActive && (nextRole !== "admin" || !nextActive)
+    && !store.accounts.some((other) => other.id !== id && other.role === "admin" && other.isActive)) {
+    throw new Error("last_admin");
+  }
   if (patch.role) acc.role = patch.role;
   if (typeof patch.isActive === "boolean") acc.isActive = patch.isActive;
   if (patch.features) acc.features = { ...acc.features, ...patch.features };

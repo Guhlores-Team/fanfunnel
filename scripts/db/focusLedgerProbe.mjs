@@ -1,3 +1,4 @@
+import { withActorContext, mintActorContext } from "./actorContextFixture.mjs";
 // Local SQL economics tests; sql() must run each call in its own real session.
 import { createHash, randomUUID } from "node:crypto";
 const quote = (s) => `'${String(s).replaceAll("'", "''")}'`;
@@ -9,7 +10,7 @@ export async function probeFocusLedger(sqlInput) {
   const sql = q => { const p=sqlInput(q); pending.add(p); p.then(()=>pending.delete(p),()=>pending.delete(p)); return p; };
   let checks = 0;
   const check = (v, label) => { checks++; if (!v) throw Error(`0059 ${label}`); };
-  const rpc = async (name, args) => { const raw=(await sql(`select public.${name}(${args.join(",")});`)).trim(); return name==="set_prize_delivery" ? raw : JSON.parse(raw||"null"); };
+  const rpc = async (name, args) => withActorContext(sql,name,args,async bound => { const raw=(await sql(`begin;set local role service_role;select public.${name}(${bound.join(",")});commit;`)).trim(); return name==="set_prize_delivery" ? raw : JSON.parse(raw||"null"); });
   const owner = randomUUID(), other = randomUUID(), wheel = randomUUID(), target = randomUUID(), normal = randomUUID();
   const tokens = new Map();
   await sql(`insert into auth.users(id,email) values(${quote(owner)},'focus-a-${owner}@example.test'),(${quote(other)},'focus-b-${other}@example.test');
@@ -391,7 +392,7 @@ export async function probeFocusLedger(sqlInput) {
     check((await sql(`select has_function_privilege('service_role','public._edit_grant_patch_core(uuid,uuid,jsonb)','execute');`)).trim()==="f","service cannot bypass journal by calling private patch core");
     const raceEditId=randomUUID(),racePatch={spins:17};
     const editArgs=[quote(raceEditId),quote(owner),quote(editGrant),json(racePatch),quote(owner)];
-    const editOriginal=sql(`begin;select public.edit_pass_grant(${editArgs.join(",")});select pg_sleep(0.4);commit;`);
+    const editOriginal=withActorContext(sql,"edit_pass_grant",editArgs,bound=>sql(`begin;set local role service_role;select public.edit_pass_grant(${bound.join(",")});select pg_sleep(0.4);commit;`));
     let editSleeping=false;for(let i=0;i<100;i++){if((await sql(`select count(*) from pg_stat_activity where pid<>pg_backend_pid() and wait_event='PgSleep' and query like '%${raceEditId}%';`)).trim()==="1"){editSleeping=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}
     check(editSleeping,"edit race barrier observes its original transaction after uncommitted mutation");
     const editWaited=await reconcile(raceEditId,"edit",{cancel:true});await editOriginal;
@@ -420,13 +421,14 @@ export async function probeFocusLedger(sqlInput) {
     await sql(`insert into public.prizes(id,wheel_id,label,weight,boostable,stock) values(${quote(cancelTarget)},${quote(newDefault)},'Cancel reserved target',1,true,1);`);
     const cancelHeld=await rpc("grant_focus_pack",[quote(randomUUID()),quote(owner),quote(cancelFan.fan),quote(cancelFan.pass),quote(chasePack),quote(cancelTarget),quote(owner)]);
     check(cancelHeld.status==="granted"&&(await sql(`select state from public.chase_reservations where focus_id=${quote(cancelHeld.focus.id)};`)).trim()==="held","revocation fixture holds a real paid chase unit");
-    check((await sql(`select public._creator_actor_grant_allowed(${quote(other)},${quote(owner)});`)).trim()==="t","agency actor had cancellation permission when its route began");
+    check((await sql(`begin;set local role authenticated;do $$begin perform set_config('request.jwt.claim.sub',${quote(other)},true);end$$;select public.can_act_for(${quote(owner)},'grant');rollback;`)).trim()==="t","agency actor had cancellation permission when its route began");
+    const admittedCancel=await mintActorContext(sql,other,owner,"grant");
     // Hold the same fan row while revocation commits, so an already-dispatched
     // cancellation waits and must check permission AFTER acquiring that lock.
     const revoker=sql(`begin;select 1 from public.fans where id=${quote(cancelFan.fan)} for update;delete from public.org_members where org_id=${quote(org)} and profile_id=${quote(other)};select pg_sleep(0.4);commit;`);
     let revocationSleeping=false;for(let i=0;i<100;i++){if((await sql(`select count(*) from pg_stat_activity where pid<>pg_backend_pid() and wait_event='PgSleep' and query like '%${cancelFan.fan}%';`)).trim()==="1"){revocationSleeping=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}
     check(revocationSleeping,"focus cancellation race barrier observes pending agency revocation under fan lock");
-    const revokedCancel=await rpc("cancel_fan_focus",[quote(owner),quote(cancelFan.fan),quote(cancelHeld.focus.id),quote(other)]);await revoker;
+    const revokedCancel=JSON.parse((await sql(`begin;set local role service_role;select public.cancel_fan_focus(${[quote(admittedCancel.context),quote(owner),quote(cancelFan.fan),quote(cancelHeld.focus.id),quote(other)].join(",")});commit;`)).trim());await revoker;
     check(revokedCancel.status==="unavailable","already-dispatched cancellation rechecks and refuses the now-revoked actual actor");
     check((await sql(`select state||','||(select stock from public.prizes where id=${quote(cancelTarget)}) from public.chase_reservations where focus_id=${quote(cancelHeld.focus.id)};`)).trim()==="held,0","revoked cancellation leaves reservation held and free stock unchanged");
     let oldCancelDenied=false;try{await sql(`set role service_role;select public.cancel_fan_focus(${quote(owner)},${quote(cancelFan.fan)},${quote(cancelHeld.focus.id)});`)}catch(e){oldCancelDenied=/permission denied/.test(e.message)}
@@ -449,7 +451,7 @@ export async function probeFocusLedger(sqlInput) {
     // then cancel from another session. Cancellation must wait, observe commit
     // and return committed, rather than reporting a false successful cancel.
     const lockedRequest=randomUUID(),lockedArgs=[quote(lockedRequest),quote(owner),"null",quote(newDefault),quote("Uncommitted creator fan"),"5","0","100","null"];
-    const original=sql(`begin;select public.create_pass_grant(${lockedArgs.join(",")});select pg_sleep(0.4);commit;`);
+    const original=withActorContext(sql,"create_pass_grant",lockedArgs,bound=>sql(`begin;set local role service_role;select public.create_pass_grant(${bound.join(",")});select pg_sleep(0.4);commit;`));
     let sleeping=false;for(let i=0;i<100;i++){if((await sql(`select count(*) from pg_stat_activity where pid<>pg_backend_pid() and wait_event='PgSleep' and query like '%${lockedRequest}%';`)).trim()==="1"){sleeping=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}
     check(sleeping,"creator race barrier observes the original uncommitted transaction");
     const waited=await reconcile(lockedRequest,"pass",{cancel:true});await original;

@@ -1,3 +1,4 @@
+import { withActorContext, mintActorContext } from "./actorContextFixture.mjs";
 // Local disposable SQL tests with actual frozen pure-engine Bingo proofs.
 import {spawn} from "node:child_process";
 import {createInterface} from "node:readline";
@@ -8,8 +9,9 @@ const q=s=>`'${String(s).replaceAll("'","''")}'`,j=v=>`${q(JSON.stringify(v))}::
 export async function probeBingoGames(sqlInput){
  let checks=0;const check=(v,msg)=>{checks++;if(!v)throw Error(`0061 ${msg}`);};
  const pending=new Set(),sql=s=>{const p=sqlInput(s);pending.add(p);p.then(()=>pending.delete(p),()=>pending.delete(p));return p;};
- const rpc=async(name,args)=>JSON.parse((await sql(`select public.${name}(${args.join(",")});`)).trim()||"null");
+ const rpc=async(name,args)=>withActorContext(sql,name,args,async bound=>JSON.parse((await sql(`begin;set local role service_role;select public.${name}(${bound.join(",")});commit;`)).trim()||"null"));
  const refused=async(s,pattern)=>{try{await sql(s);return false;}catch(e){if(pattern&&!pattern.test(e.message))throw Error(`Unexpected Bingo refusal: ${e.message}`);return true;}};
+ const refusedPublish=async(args,pattern)=>{try{await rpc('save_game_wheel',args);return false;}catch(e){if(pattern&&!pattern.test(e.message))throw e;return true;}};
  const root=join(import.meta.dirname,"../.."),bridge=spawn("npx",["tsx","scripts/db/bingoProofFixture.ts"],{cwd:root,stdio:["pipe","pipe","pipe"]}),waiters=[];let stderr="";
  bridge.stderr.on("data",b=>stderr+=b);bridge.on("error",e=>{for(const w of waiters.splice(0))w.reject(e);});bridge.on("exit",code=>{for(const w of waiters.splice(0))w.reject(Error(`Bingo fixture exited ${code}: ${stderr}`));});
  createInterface({input:bridge.stdout}).on("line",line=>{const w=waiters.shift();if(!w)return;try{const out=JSON.parse(line);if(!out.ok)throw Error(out.error);w.resolve(out.value);}catch(e){w.reject(e);}});
@@ -49,19 +51,34 @@ export async function probeBingoGames(sqlInput){
   check(await refused(`update public.wheels set game_ready=true where id=${q(wheel)};`,/invalid_game_config/),"direct readiness write cannot publish a missing line prize");
   check(await refused(`update public.wheels set is_active=true where id=${q(wheel)};`,/game_not_ready/),"direct active flag cannot publish an incomplete Bingo draft");
   const rows=makeRows();
-  check(await refused(`select public.save_game_wheel(${[q(wheel),q(owner),j(rows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:linePrize}}),q(other)].join(",")});`,/forbidden/),"actual unauthorized actor cannot publish another creator's game");
+  check(await refusedPublish([q(wheel),q(owner),j(rows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:linePrize}}),q(other)],/forbidden/),"actual unauthorized actor cannot publish another creator's game");
   const revokedDraft=randomUUID(),revokedLine=randomUUID(),revokedRows=makeRows(revokedDraft,revokedLine);
   await sql(`insert into public.wheels(id,creator_id,title,game_kind,game_config,game_ready,is_active) values(${q(revokedDraft)},${q(owner)},'Revoked draft','bingo','{"size":3,"linePrizeId":null}',false,false);update public.profiles set features=features||'{"bingo":false}'::jsonb where id=${q(owner)};`);
-  check(await refused(`select public.save_game_wheel(${[q(revokedDraft),q(owner),j(revokedRows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:revokedLine}}),q(owner)].join(",")});`,/feature_disabled/),"first publication rechecks feature removed after draft creation");
+  check(await refusedPublish([q(revokedDraft),q(owner),j(revokedRows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:revokedLine}}),q(owner)],/feature_disabled/),"first publication rechecks feature removed after draft creation");
   check((await sql(`select game_ready||','||(select count(*) from public.prizes where wheel_id=${q(revokedDraft)}) from public.wheels where id=${q(revokedDraft)};`)).trim()==="false,0","revoked draft publication leaves no partial inventory or readiness");
   await sql(`update public.profiles set features=features||'{"bingo":true}'::jsonb where id=${q(owner)};`);
   const faultWheel=randomUUID(),faultLine=randomUUID(),faultRows=makeRows(faultWheel,faultLine);faultRows[1].label="Injected publish failure";
   await sql(`insert into public.wheels(id,creator_id,title,game_kind,game_config,game_ready,is_active) values(${q(faultWheel)},${q(owner)},'Unpublished','bingo','{"size":3,"linePrizeId":null}',false,false);
    create function public._bingo_publish_fault() returns trigger language plpgsql as $$begin if new.label='Injected publish failure' then raise exception 'injected Bingo publish failure';end if;return new;end $$;create trigger zz_bingo_publish_fault before insert or update on public.prizes for each row execute function public._bingo_publish_fault();`);
-  check(await refused(`select public.save_game_wheel(${[q(faultWheel),q(owner),j(faultRows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:faultLine},title:"Must roll back"}),q(owner)].join(",")});`,/injected Bingo publish failure/),"publication fault occurs after an earlier real prize insertion");
+  check(await refusedPublish([q(faultWheel),q(owner),j(faultRows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:faultLine},title:"Must roll back"}),q(owner)],/injected Bingo publish failure/),"publication fault occurs after an earlier real prize insertion");
   check((await sql(`select game_ready||','||title||','||(select count(*) from public.prizes where wheel_id=${q(faultWheel)}) from public.wheels where id=${q(faultWheel)};`)).trim()==="false,Unpublished,0","failed publication rolls metadata/prize IDs/readiness back together");
   await sql(`drop trigger zz_bingo_publish_fault on public.prizes;drop function public._bingo_publish_fault();`);
   await publish(wheel,rows,linePrize);await sql(`update public.wheels set is_active=true where id=${q(wheel)};`);
+  // Integration-only R3 closure: an enrolled actor must preserve actual signed
+  // assurance across authenticated mint -> separate service game publication.
+  // The local Auth stub models verified claims; hosted TOTP remains its own gate.
+  await sql(`insert into auth.mfa_factors(user_id,status) values(${q(owner)},'verified');`);
+  const enrolledLow=await mintActorContext(sql,owner,owner,'edit_wheel','aal1');
+  const mfaConfig={game_kind:"bingo",game_config:{size:3,linePrizeId:linePrize},title:"MFA protected publication"};
+  check(await refused(`begin;set local role service_role;select public.save_game_wheel(${[q(enrolledLow.context),q(wheel),q(owner),j(rows),j(mfaConfig),q(owner)].join(",")});commit;`,/forbidden/),"verified-factor AAL1 context cannot publish a game through the real service gateway");
+  check((await sql(`select title||','||game_ready||','||(select count(*) from public.prizes where wheel_id=${q(wheel)}) from public.wheels where id=${q(wheel)};`)).trim()==="Published Bingo,true,11","refused low-assurance publication preserves real metadata, inventory and readiness");
+  const enrolledHigh=await mintActorContext(sql,owner,owner,'edit_wheel','aal2');
+  await sql(`begin;set local role service_role;select public.save_game_wheel(${[q(enrolledHigh.context),q(wheel),q(owner),j(rows),j(mfaConfig),q(owner)].join(",")});commit;`);
+  check((await sql(`select title||','||game_ready||','||(select count(*) from public.prizes where wheel_id=${q(wheel)}) from public.wheels where id=${q(wheel)};`)).trim()==="MFA protected publication,true,11","verified-factor AAL2 context publishes actual game metadata, real prizes and readiness through the separate service JWT");
+  // Restore the ordinary fixture's state; every pre-existing assertion below
+  // still runs with its original optional-MFA setup and expected title.
+  await sql(`begin;set local role service_role;select public.save_game_wheel(${[q(enrolledHigh.context),q(wheel),q(owner),j(rows),j({...mfaConfig,title:"Published Bingo"}),q(owner)].join(",")});commit;`);
+  await sql(`delete from auth.mfa_factors where user_id=${q(owner)};delete from public.creator_actor_contexts where id in(${q(enrolledLow.context)},${q(enrolledHigh.context)});`);
   check((await sql(`select game_ready||','||(select count(*) from public.prizes where wheel_id=${q(wheel)}) from public.wheels where id=${q(wheel)};`)).trim()==="true,11","one save publishes real prize IDs/config/readiness atomically");
   const fan=await addFan(),first=await prep(fan),body=await build(first,{notCenter:true,centerCommon:true});
   const replies=await Promise.all(Array.from({length:20},()=>commit(fan,first,body)));
@@ -226,11 +243,12 @@ export async function probeBingoGames(sqlInput){
   // Permission revocation while a save waits on its game lock must be seen in
   // the transaction, not merely by a route check made before dispatch.
   const org=randomUUID();await sql(`insert into public.orgs(id,name,owner_id) values(${q(org)},'Bingo agency',${q(owner)});update public.profiles set org_id=${q(org)} where id=${q(owner)};insert into public.org_members(org_id,profile_id,role) values(${q(org)},${q(other)},'manager');`);
-  check((await sql(`select public._game_actor_edit_allowed(${q(other)},${q(owner)});`)).trim()==="t","agency save actor had permission at route admission");
+  check((await sql(`begin;set local role authenticated;do $$begin perform set_config('request.jwt.claim.sub',${q(other)},true);end$$;select public.can_act_for(${q(owner)},'edit_wheel');rollback;`)).trim()==="t","agency save actor had permission at route admission");
+  const admitted=await mintActorContext(sql,other,owner,'edit_wheel');
   const revoker=sql(`begin;select 1 from public.wheels where id=${q(codeWheel)} for update;delete from public.org_members where org_id=${q(org)} and profile_id=${q(other)};select pg_sleep(0.4);commit;`);
   let sleeping=false;for(let i=0;i<100;i++){if((await sql(`select count(*) from pg_stat_activity where pid<>pg_backend_pid() and wait_event='PgSleep' and query like '%${codeWheel}%';`)).trim()==="1"){sleeping=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}
   check(sleeping,"Bingo save barrier observes uncommitted agency revocation under game lock");
-  check(await refused(`select public.save_game_wheel(${[q(codeWheel),q(owner),j(codeRows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:codeLine},title:"Forbidden overwrite"}),q(other)].join(",")});`,/forbidden/),"already-dispatched save rechecks and refuses the now-revoked actor");await revoker;
+  check(await refused(`begin;set local role service_role;select public.save_game_wheel(${[q(admitted.context),q(codeWheel),q(owner),j(codeRows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:codeLine},title:"Forbidden overwrite"}),q(other)].join(",")});commit;`,/forbidden/),"already-dispatched save rechecks and refuses the now-revoked actor");await revoker;
   check((await sql(`select title from public.wheels where id=${q(codeWheel)};`)).trim()==="Published Bingo","revoked save leaves metadata and inventory unchanged");
   check(await refused(`set role service_role;select public.save_wheel_prizes(${q(codeWheel)},${q(owner)},${j(codeRows)});`,/use actor-bound game saver/),"old generic saver cannot bypass actor-bound Bingo publication");
   await sql(`update public.profiles set features=features||'{"bingo":false}'::jsonb where id=${q(owner)};`);

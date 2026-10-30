@@ -2,7 +2,8 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { supabaseUrl } from "@/lib/supabase/url";
-import { mfaStep, type SessionAssurance } from "./assurance";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
+import { aalFromAccessToken, hasVerifiedFactor, mfaStep, type SessionAssurance } from "./assurance";
 
 /**
  * Step-up checks for account actions that can't be undone or that hand data
@@ -32,4 +33,19 @@ export function mfaStepUpResponse(assurance: SessionAssurance): NextResponse | n
     { error: "mfa_required", step: "challenge" },
     { status: 403, headers: { "Cache-Control": "no-store, max-age=0" } }
   );
+}
+
+/** The user must come from this client's verified getUser() result. Callers
+ * without a verified factor keep the optional-2FA flow without an extra read. */
+export async function creatorMfaStepUpResponse(
+  sb: Pick<SupabaseClient, "auth">,
+  user: Pick<User, "factors">,
+): Promise<NextResponse | null> {
+  if (!hasVerifiedFactor(user)) return null;
+  try {
+    const { data: { session }, error } = await sb.auth.getSession();
+    return mfaStepUpResponse({ aal: error ? null : aalFromAccessToken(session?.access_token), hasVerifiedFactor: true });
+  } catch {
+    return mfaStepUpResponse({ aal: null, hasVerifiedFactor: true });
+  }
 }

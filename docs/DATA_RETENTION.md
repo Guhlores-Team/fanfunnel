@@ -16,7 +16,8 @@ storage work uses `COMPLETED_STORAGE_WORK_DAYS` in `src/lib/storage/work.ts`.
 | In-app notices to a creator (for example "a fan deleted their data") | `creator_notices` | **90 days** | older than the period |
 | Hashes of fan links that stopped working (so the fan sees "this creator has left" / "your data was deleted" rather than a bare 404) | `link_tombstones` | **180 days** | older than the period; after that the link is a plain 404 |
 | Error reports an admin marked resolved | `app_errors` | **90 days** after `resolved_at` | resolved and older than the period; unresolved reports are never auto-deleted |
-| Agency invites that were declined or revoked (they hold the invited email address) | `org_invites` | **90 days** after the invite was sent | declined or revoked and older than the period; pending and accepted invites are kept |
+| Creator service authorization contexts | `creator_actor_contexts` | **60 seconds maximum** | expired rows are removed on the next mint or retention cleanup; at most32 live contexts per actor; Auth session/account deletion cascades |
+| Declined, revoked and expired agency invitations | `org_invites` | **90 days** after sending (declined/revoked), or after deadline (expired) | expired pending rows are also pruned; accepted consent records follow account lifecycle |
 | Completed upload/removal work | `creator_storage_objects` | **30 days** after acknowledged removal | only settled stored/rejected work with `removed_at`; uncertain/inflight work is retained |
 | Completed account-cleanup jobs | `creator_storage_deletions` | **30 days** after completion | only state `complete`; pending/paused jobs are retained |
 | Settled destructive Storage/Auth calls and deletion manifests | `creator_storage_dispatches` | **30 days** after settlement | only acknowledged/rejected calls; active-attempt manifests and pending/uncertain calls are retained |
@@ -112,3 +113,9 @@ those endpoints. Tracking coverage must not be claimed until stale TEST Preview
 deployments with untracked upload routes have been disabled or removed through
 the authorized deployment-retirement process and that retirement is verified.
 No retirement or scheduler setup is claimed by this change.
+
+Pending agency consent invitations expire after seven days (0062). An expired
+invitation cannot join an agency and a fresh invitation gets a new ID. Daily
+retention removes expired invitations 90 days after their deadline, including
+old pending rows; unrelated writes and a repeated send do not extend a pending
+deadline. Accepted consent records follow the existing account-data lifecycle.

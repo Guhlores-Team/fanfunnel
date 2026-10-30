@@ -51,8 +51,12 @@ for(const name of ['pending','rejected','inactive','approved']) {
   const rows=[{name:'Approval import',spins:2,amountCents:0,campaignId:null,wheelId:wheel(name),error:null}];
   const hash=createHash('sha256').update(canonical(['fan-import-v1',rows])).digest('hex');
   const batch=uid(230+['pending','rejected','inactive','approved'].indexOf(name));
+  const sid=uid(400+['pending','rejected','inactive','approved'].indexOf(name));
+  const contextKey='approval-'+name;
+  lines.push(`insert into auth.sessions(id,user_id) values('${sid}','${U[name]}');`);
+  lines.push(`set local role authenticated;do $$begin perform set_config('request.jwt.claim.sub','${U[name]}',true);perform set_config('request.jwt.claims',jsonb_build_object('sub','${U[name]}','role','authenticated','aal','aal1','session_id','${sid}','exp',extract(epoch from now()+interval '1 hour')::bigint)::text,true);perform set_config('${contextKey.replaceAll('-','_')}.context',public.issue_creator_actor_context('${U[name]}','grant')::text,true);end$$;reset role;`);
   lines.push(`set local role service_role;`);
-  lines.push(value(`${name}.durable.import`, `select public.import_fans_durable('${batch}','${U[name]}','${hash}',${q(JSON.stringify(rows))}::jsonb,'${U[name]}')->>'status'`,allowed?'imported':'unavailable'));
+  lines.push(value(`${name}.durable.import`, `select public.import_fans_durable(current_setting('${contextKey.replaceAll('-','_')}.context')::uuid,'${batch}','${U[name]}','${hash}',${q(JSON.stringify(rows))}::jsonb,'${U[name]}')->>'status'`,allowed?'imported':'unavailable'));
   lines.push(`reset role;`);
   lines.push(value(`${name}.durable.import.fans`, `select count(*)::text from public.fans where creator_id='${U[name]}'`,allowed?'1':'0'));
   lines.push(value(`${name}.durable.import.credits`, `select coalesce(sum(spins_remaining),0)::text from public.fan_passes where creator_id='${U[name]}'`,allowed?'2':'0'));

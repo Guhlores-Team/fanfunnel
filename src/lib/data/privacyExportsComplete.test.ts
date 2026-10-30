@@ -56,7 +56,7 @@ const session = new FakeTables({
   orgs: [{ id: "org-own", owner_id: CA, name: "Own agency" }, { id: "org-other", owner_id: CB, name: "UNRELATED-AGENCY" }],
   org_members: [{ id: "member-own", org_id: "org-own", profile_id: CA, role: "owner" }, { id: "staff-own", org_id: "org-own", profile_id: "staff", role: "chatter" }, { id: "member-other", org_id: "org-other", profile_id: CB, role: "owner" }],
   org_member_creators: [{ member_id: "member-own", creator_id: CA }, { member_id: "staff-own", creator_id: CA }, { member_id: "member-other", creator_id: CB }],
-  org_invites: [{ id: "invite-own", org_id: "org-own", email: "staff@example.test", status: "pending" }, { id: "invite-other", org_id: "org-other", email: "UNRELATED-INVITE" }],
+  org_invites: [{ id: "invite-own", org_id: "org-own", email: "staff@example.test", status: "pending", expires_at: "2099-01-01T00:00:00Z" }, { id: "invite-other", org_id: "org-other", email: "UNRELATED-INVITE" }],
 });
 let configured = true;
 let creatorMode = false;

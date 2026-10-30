@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { AGENCY_INVITE_TTL_DAYS } from "@/lib/agency/config";
 import { formatCents } from "@/lib/format";
 
 interface CreatorStat {
@@ -54,6 +55,7 @@ const errLabel = (e: string) =>
   ({
     no_such_user: "No account with that email.",
     already_in_org: "That creator is already in another agency.",
+    expired: "That invitation has expired. Send a new invitation.",
     not_owner: "Only the agency owner can do that.",
     not_found: "That item no longer exists — refresh and try again.",
     invalid_role: "Pick a valid staff role.",
@@ -168,6 +170,7 @@ export default function AgencyClient() {
         )}
       </div>
 
+      {isOwner && <p className="mt-2 text-sm text-white/50">Invitations expire after {AGENCY_INVITE_TTL_DAYS} days. Send a new invitation if one expires.</p>}
       {isOwner && data.invites.length > 0 && (
         <div className="mt-3 space-y-2">
           {data.invites.map((inv) => (

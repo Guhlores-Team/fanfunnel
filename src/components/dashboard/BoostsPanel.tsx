@@ -1,6 +1,8 @@
 "use client";
 
 import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
+import CreatorMfaRecovery from "@/components/auth/CreatorMfaRecovery";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -891,6 +893,7 @@ function DangerZone() {
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
 
   async function reset() {
     setBusy(true);
@@ -906,6 +909,12 @@ function DangerZone() {
         // hard page reload. A short delay lets the toast register first.
         setTimeout(() => router.refresh(), 700);
       } else {
+        const body = await res.json().catch(() => null);
+        if (body?.error === "mfa_required") {
+          setMfaRequired(true);
+          setTyped("");
+          return;
+        }
         toast("Couldn't reset. Are you signed in?", { tone: "error" });
       }
     } finally {
@@ -926,6 +935,7 @@ function DangerZone() {
         </>
       }
     >
+      <CreatorMfaRecovery required={mfaRequired} destination="reset" />
       {!confirming ? (
         <button
           type="button"

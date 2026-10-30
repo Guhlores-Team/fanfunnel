@@ -1613,6 +1613,7 @@ export type Database = {
         Row: {
           created_at: string
           email: string
+          expires_at: string
           id: string
           org_id: string
           status: string
@@ -1620,6 +1621,7 @@ export type Database = {
         Insert: {
           created_at?: string
           email: string
+          expires_at?: string
           id?: string
           org_id: string
           status?: string
@@ -1627,6 +1629,7 @@ export type Database = {
         Update: {
           created_at?: string
           email?: string
+          expires_at?: string
           id?: string
           org_id?: string
           status?: string
@@ -2717,6 +2720,55 @@ export type Database = {
           },
         ]
       }
+
+      creator_actor_contexts: {
+        Row: {
+          aal: string
+          actor_id: string
+          created_at: string
+          creator_id: string | null
+          expires_at: string
+          id: string
+          permission: string
+          session_id: string
+        }
+        Insert: {
+          aal: string
+          actor_id: string
+          created_at?: string
+          creator_id?: string | null
+          expires_at: string
+          id?: string
+          permission: string
+          session_id: string
+        }
+        Update: {
+          aal?: string
+          actor_id?: string
+          created_at?: string
+          creator_id?: string | null
+          expires_at?: string
+          id?: string
+          permission?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creator_actor_contexts_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creator_actor_contexts_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -2748,10 +2800,17 @@ export type Database = {
         }
         Returns: Json
       }
-      _creator_actor_grant_allowed: {
-        Args: { p_actor: string; p_creator: string }
-        Returns: boolean
-      }
+      _creator_actor_grant_allowed:
+        | { Args: { p_actor: string; p_creator: string }; Returns: boolean }
+        | {
+            Args: {
+              p_actor: string
+              p_context: string
+              p_creator: string
+              p_scope?: string
+            }
+            Returns: boolean
+          }
       _creator_default_wheel: {
         Args: { p_campaign: string; p_creator: string }
         Returns: string
@@ -2787,10 +2846,12 @@ export type Database = {
         Args: { p_excluded: Json; p_snapshot: Json }
         Returns: boolean
       }
-      _game_actor_edit_allowed: {
-        Args: { p_actor: string; p_creator: string }
-        Returns: boolean
-      }
+      _game_actor_edit_allowed:
+        | { Args: { p_actor: string; p_creator: string }; Returns: boolean }
+        | {
+            Args: { p_actor: string; p_context: string; p_creator: string }
+            Returns: boolean
+          }
       _game_feature_allowed: {
         Args: { p_creator: string; p_kind: string }
         Returns: boolean
@@ -2889,6 +2950,16 @@ export type Database = {
       }
       cancel_fan_focus:
         | {
+            Args: {
+              p_actor: string
+              p_context: string
+              p_creator: string
+              p_fan: string
+              p_focus: string
+            }
+            Returns: Json
+          }
+        | {
             Args: { p_creator: string; p_fan: string; p_focus: string }
             Returns: Json
           }
@@ -2927,24 +2998,44 @@ export type Database = {
         }
         Returns: Json
       }
-      create_pass_grant: {
-        Args: {
-          p_actor?: string
-          p_amount: number
-          p_bonus: number
-          p_campaign: string
-          p_creator: string
-          p_fan: string
-          p_name: string
-          p_pack?: string
-          p_pack_units?: number
-          p_referral_code?: string
-          p_request: string
-          p_spins: number
-          p_wheel: string
-        }
-        Returns: Json
-      }
+      create_pass_grant:
+        | {
+            Args: {
+              p_actor?: string
+              p_amount: number
+              p_bonus: number
+              p_campaign: string
+              p_context: string
+              p_creator: string
+              p_fan: string
+              p_name: string
+              p_pack?: string
+              p_pack_units?: number
+              p_referral_code?: string
+              p_request: string
+              p_spins: number
+              p_wheel: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_actor?: string
+              p_amount: number
+              p_bonus: number
+              p_campaign: string
+              p_creator: string
+              p_fan: string
+              p_name: string
+              p_pack?: string
+              p_pack_units?: number
+              p_referral_code?: string
+              p_request: string
+              p_spins: number
+              p_wheel: string
+            }
+            Returns: Json
+          }
       creator_storage_account: {
         Args: {
           p_action?: string
@@ -3027,6 +3118,17 @@ export type Database = {
       edit_pass_grant:
         | {
             Args: {
+              p_actor: string
+              p_context: string
+              p_creator: string
+              p_grant: string
+              p_patch: Json
+              p_request: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
               p_amount: number
               p_bonus: number
               p_campaign?: string
@@ -3064,43 +3166,85 @@ export type Database = {
         Args: { p_attempt: string; p_request_hash: string; p_token: string }
         Returns: Json
       }
-      grant_focus_pack: {
-        Args: {
-          p_actor?: string
-          p_creator: string
-          p_fan: string
-          p_pack: string
-          p_pass: string
-          p_prize: string
-          p_request: string
-        }
-        Returns: Json
-      }
-      grant_pass_spins: {
-        Args: {
-          p_actor?: string
-          p_amount: number
-          p_bonus: number
-          p_campaign?: string
-          p_creator: string
-          p_fan: string
-          p_pass: string
-          p_request: string
-          p_spins: number
-        }
-        Returns: Json
-      }
+      grant_focus_pack:
+        | {
+            Args: {
+              p_actor?: string
+              p_context: string
+              p_creator: string
+              p_fan: string
+              p_pack: string
+              p_pass: string
+              p_prize: string
+              p_request: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_actor?: string
+              p_creator: string
+              p_fan: string
+              p_pack: string
+              p_pass: string
+              p_prize: string
+              p_request: string
+            }
+            Returns: Json
+          }
+      grant_pass_spins:
+        | {
+            Args: {
+              p_actor?: string
+              p_amount: number
+              p_bonus: number
+              p_campaign?: string
+              p_context: string
+              p_creator: string
+              p_fan: string
+              p_pass: string
+              p_request: string
+              p_spins: number
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_actor?: string
+              p_amount: number
+              p_bonus: number
+              p_campaign?: string
+              p_creator: string
+              p_fan: string
+              p_pass: string
+              p_request: string
+              p_spins: number
+            }
+            Returns: Json
+          }
       import_fans: { Args: { p_rows: Json }; Returns: undefined }
-      import_fans_durable: {
-        Args: {
-          p_actor?: string
-          p_batch: string
-          p_creator: string
-          p_request_hash: string
-          p_rows: Json
-        }
-        Returns: Json
-      }
+      import_fans_durable:
+        | {
+            Args: {
+              p_actor?: string
+              p_batch: string
+              p_creator: string
+              p_request_hash: string
+              p_rows: Json
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_actor?: string
+              p_batch: string
+              p_context: string
+              p_creator: string
+              p_request_hash: string
+              p_rows: Json
+            }
+            Returns: Json
+          }
       is_admin: { Args: never; Returns: boolean }
       org_account_stats: {
         Args: { p_org: string }
@@ -3153,17 +3297,30 @@ export type Database = {
         Args: { p_attempt: string; p_request_hash: string; p_token: string }
         Returns: Json
       }
-      reconcile_creator_request: {
-        Args: {
-          p_actor: string
-          p_authorized?: boolean
-          p_cancel?: boolean
-          p_creator: string
-          p_kind: string
-          p_request: string
-        }
-        Returns: Json
-      }
+      reconcile_creator_request:
+        | {
+            Args: {
+              p_actor: string
+              p_authorized?: boolean
+              p_cancel?: boolean
+              p_context: string
+              p_creator: string
+              p_kind: string
+              p_request: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_actor: string
+              p_authorized?: boolean
+              p_cancel?: boolean
+              p_creator: string
+              p_kind: string
+              p_request: string
+            }
+            Returns: Json
+          }
       record_app_error: {
         Args: {
           p_environment: string
@@ -3218,16 +3375,28 @@ export type Database = {
         }
         Returns: Json
       }
-      save_game_wheel: {
-        Args: {
-          p_actor: string
-          p_config: Json
-          p_creator: string
-          p_prizes: Json
-          p_wheel: string
-        }
-        Returns: undefined
-      }
+      save_game_wheel:
+        | {
+            Args: {
+              p_actor: string
+              p_config: Json
+              p_context: string
+              p_creator: string
+              p_prizes: Json
+              p_wheel: string
+            }
+            Returns: undefined
+          }
+        | {
+            Args: {
+              p_actor: string
+              p_config: Json
+              p_creator: string
+              p_prizes: Json
+              p_wheel: string
+            }
+            Returns: undefined
+          }
       save_wheel_prizes: {
         Args: { p_creator: string; p_prizes: Json; p_wheel: string }
         Returns: undefined
@@ -3276,6 +3445,33 @@ export type Database = {
         Returns: undefined
       }
       set_pwa_icon_mode: { Args: { p_mode: string }; Returns: undefined }
+      _creator_actor_allowed: {
+        Args: {
+          p_actor: string
+          p_context: string
+          p_creator: string
+          p_permission: string
+          p_scope: string
+        }
+        Returns: boolean
+      }
+      _creator_actor_context_valid: {
+        Args: {
+          p_actor: string
+          p_context: string
+          p_creator: string
+          p_permission: string
+        }
+        Returns: boolean
+      }
+      issue_creator_actor_context: {
+        Args: { p_creator: string; p_permission: string }
+        Returns: string
+      }
+      _session_mfa_satisfied: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "admin" | "creator"

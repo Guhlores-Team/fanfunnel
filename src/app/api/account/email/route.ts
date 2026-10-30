@@ -1,3 +1,4 @@
+import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
@@ -27,6 +28,9 @@ export async function POST(req: Request) {
   if (!user || !user.email) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  const step = await creatorMfaStepUpResponse(sb, user);
+  if (step) return step;
 
   const limited = await rateLimitOr429("emailchange:" + user.id, 5, 60 * 60 * 1000);
   if (limited) return limited;

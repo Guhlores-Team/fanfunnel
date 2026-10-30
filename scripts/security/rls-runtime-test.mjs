@@ -1,3 +1,4 @@
+import { fixtureCreatorRpc, fixtureActorContext } from "./actor-context-fixture.mjs";
 /**
  * Runtime cross-tenant RLS test — PROVES isolation against your live database.
  * The static lint (src/lib/security/rls.test.ts) checks the SQL; this checks the
@@ -35,6 +36,7 @@
  * It refuses to run against the PRODUCTION project.
  */
 import { createClient } from "@supabase/supabase-js";
+import { fixtureTotp } from "./totp-fixture.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { testBingoRuntime } from "./bingo-runtime-fixture.mjs";
@@ -79,6 +81,7 @@ const TEST_EMAIL = /^rlstest\+[^@]*@fanfunnel\.test$/i;
 const STALE_MS = 60 * 60 * 1000;
 const createdUserIds = [];
 const seededErrorIds = [];
+const seededFactorIds = [];
 let failures = 0;
 const check = (cond, msg) => {
   if (cond) console.log("  ✓", msg);
@@ -142,13 +145,15 @@ async function makeUser(tag) {
   return { id, email };
 }
 
+const creatorFixtureClients=new Map();
 async function makeCreator(tag) {
   const { id, email } = await makeUser(tag);
+  const session=await signedClient(email);creatorFixtureClients.set(id,session);
   // Seed one wheel + prize + fan + pass + grant + spin for this creator.
   const wheel = must(await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single(), `seed ${tag} wheel`);
   const prize = must(await admin.from("prizes").insert({ wheel_id: wheel.id, label: `${tag} prize`, rarity: "common", weight: 10 }).select("id").single(), `seed ${tag} prize`);
   const fan = must(await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, acked_at:new Date().toISOString(),acked_terms_version:"2026-10-27" }).select("id").single(), `seed ${tag} fan`);
-  const grant=must(await admin.rpc("create_pass_grant",{p_request:randomUUID(),p_creator:id,p_fan:fan.id,p_wheel:wheel.id,p_name:`${tag} fan`,p_spins:5,p_bonus:0,p_amount:1000,p_campaign:null}),`seed ${tag} atomic grant`);
+  const grant=must(await fixtureCreatorRpc(admin,session,"create_pass_grant",{p_request:randomUUID(),p_creator:id,p_fan:fan.id,p_wheel:wheel.id,p_name:`${tag} fan`,p_spins:5,p_bonus:0,p_amount:1000,p_campaign:null}),`seed ${tag} atomic grant`);
   if(grant.status!=="granted")throw Error(`seed ${tag} grant refused: ${grant.status}`);
   const result={id,email,wheelId:wheel.id,prizeId:prize.id,fanId:fan.id,passId:grant.passId,fanName:`${tag} fan`,token:grant.token,requestId:grant.grantId};
   await recordRuntimeSpin(result);
@@ -185,6 +190,15 @@ async function signedClient(email) {
   return c;
 }
 
+// The pending-only index intentionally allows immutable historical rows.
+// Seed only this run's existing pending fixture instead of relying on the old
+// global (org_id,email) upsert constraint.
+async function seedPendingInvite(orgId,email) {
+  const prior=await admin.from("org_invites").select("id").eq("org_id",orgId).eq("email",email).eq("status","pending").maybeSingle();
+  if(prior.error)throw Error("pending invite fixture lookup failed");
+  return prior.data ?? must(await admin.from("org_invites").insert({org_id:orgId,email,status:"pending"}).select("id").single(),"seed pending invite");
+}
+
 async function main() {
   let cleanupFailed = false;
   try {
@@ -218,7 +232,7 @@ async function main() {
         const noImport = await a.rpc("import_fans", { p_rows: [{ fan_id: randomUUID(), pass_id: randomUUID(), token: `approval-import-${RUN}-${approval}`, wheel_id: A.wheelId, campaign_id: null, name: "unapproved import", spins: 1, amount_cents: 0 }] });
         check(noImport.error?.code==="42501", `${approval} cannot execute the retired import API`);
         const deniedRows=[{name:"Unapproved durable import",spins:1,amountCents:0,campaignId:null,wheelId:A.wheelId,error:null}];
-        const noDurableImport=await admin.rpc("import_fans_durable",{p_batch:randomUUID(),p_creator:A.id,p_actor:A.id,p_request_hash:sha(canonicalProof(["fan-import-v1",deniedRows])),p_rows:deniedRows});
+        const noDurableImport=await fixtureCreatorRpc(admin,creatorFixtureClients.get(A.id),"import_fans_durable",{p_batch:randomUUID(),p_creator:A.id,p_actor:A.id,p_request_hash:sha(canonicalProof(["fan-import-v1",deniedRows])),p_rows:deniedRows});
         check(!noDurableImport.error&&noDurableImport.data?.status==="unavailable",`${approval} actor cannot import through the durable service gateway`);
         const leakedImport=await admin.from("fans").select("id").eq("creator_id",A.id).eq("display_name","Unapproved durable import");
         check(!leakedImport.error&&leakedImport.data?.length===0,`${approval} durable import denial creates no fan`);
@@ -283,7 +297,7 @@ async function main() {
     must(await admin.from("focus_creator_config").insert({creator_id:B.id,chase_enabled:true}).select("creator_id").single(),"enable chase for disposable B only");
     for(const kind of ["focus","chase"]) {
       const pack=must(await admin.from("campaign_packs").insert({creator_id:B.id,label:`runtime ${kind}`,spins:10,pack_kind:kind,focus_spins:5,chase_within:5}).select("id").single(),`seed ${kind} pack`);
-      const granted=must(await admin.rpc("grant_focus_pack",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_pack:pack.id,p_prize:B.prizeId}),`grant real ${kind} fixture`);
+      const granted=must(await fixtureCreatorRpc(admin,creatorFixtureClients.get(B.id),"grant_focus_pack",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_pack:pack.id,p_prize:B.prizeId}),`grant real ${kind} fixture`);
       check(granted.status==="granted",`real ${kind} RPC creates owned metadata`);
       must(await admin.rpc("cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:granted.focus.id,p_actor:B.id}),`release ${kind} fixture`);
     }
@@ -294,7 +308,7 @@ async function main() {
     check(!otherConfig.error&&otherConfig.data?.length===0,"A reads no B rollout settings");
     check((await b.from("focus_creator_config").update({chase_enabled:false}).eq("creator_id",B.id)).error?.code==="42501","creator cannot change rollout settings");
     const csvRows=[{name:"CSV runtime",spins:2,amountCents:100,campaignId:null,wheelId:null,error:null}];
-    const csv=must(await admin.rpc("import_fans_durable",{p_batch:randomUUID(),p_creator:B.id,p_request_hash:sha(canonicalProof(["fan-import-v1",csvRows])),p_rows:csvRows}),"seed real durable import metadata");
+    const csv=must(await fixtureCreatorRpc(admin,creatorFixtureClients.get(B.id),"import_fans_durable",{p_batch:randomUUID(),p_creator:B.id,p_request_hash:sha(canonicalProof(["fan-import-v1",csvRows])),p_rows:csvRows}),"seed real durable import metadata");
     check(csv.status==="imported"&&csv.items[0].token,"CSV RPC creates real owned ledger metadata");
     //0059: attempts and promise metadata follow tenant RLS; secret context is
     // never readable by creators. Every external economic RPC is service-only.
@@ -313,7 +327,7 @@ async function main() {
     check(!!(await a.from("creator_request_journal").select("request_hash,grant_id,batch_id")).error,"creator journal private bindings remain server-only");
     check(!!(await a.from("fan_import_batches").select("request_hash")).error,"CSV raw-content hash stays server-only");
     check(!!(await a.from("fan_passes").select("next_server_seed")).error,"unrevealed next seed is not creator-readable");
-    const actorFence=must(await admin.rpc("reconcile_creator_request",{p_request:randomUUID(),p_creator:null,p_actor:B.id,p_kind:"pass",p_cancel:true,p_authorized:false}),"record B actor cancellation fence");
+    const actorFence=must(await fixtureCreatorRpc(admin,creatorFixtureClients.get(B.id),"reconcile_creator_request",{p_request:randomUUID(),p_creator:null,p_actor:B.id,p_kind:"pass",p_cancel:true,p_authorized:false}),"record B actor cancellation fence");
     check(actorFence.status==="cancelled","a signed actor can withdraw an opaque own intent without guessing its target");
     const ownFences=await b.from("actor_request_cancellations").select("id").eq("actor_id",B.id);
     const otherFences=await a.from("actor_request_cancellations").select("id").eq("actor_id",B.id);
@@ -525,7 +539,7 @@ async function main() {
       } finally {
         must(await admin.from("profiles").update({ approval_status: "approved" }).eq("id", A.id).select("id").single(), "restore target approval");
       }
-      const inv = must(await admin.from("org_invites").upsert({ org_id: org.id, email: B.email, status: "pending" }, { onConflict: "org_id,email" }).select("id").single(), "seed approval invite");
+      const inv = await seedPendingInvite(org.id,B.email);
       must(await admin.from("profiles").update({ approval_status: approval }).eq("id", B.id).select("id").single(), "set invitee approval fixture");
       try {
         const noAccept = await b.rpc("org_invite_respond", { p_invite: inv.id, p_accept: true });
@@ -548,7 +562,7 @@ async function main() {
         check((noOwnerFans.data?.length ?? 0) === 0, `${state} agency owner prevents delegated seat access`);
         const noOwnerChat = await s.rpc("can_act_for", { target_creator: A.id, perm: "chat" });
         check(noOwnerChat.data === false, `${state} agency owner prevents delegated chat permission`);
-        const ownerInv = must(await admin.from("org_invites").upsert({ org_id: org.id, email: B.email, status: "pending" }, { onConflict: "org_id,email" }).select("id").single(), "seed ineligible owner invite");
+        const ownerInv = await seedPendingInvite(org.id,B.email);
         const noOwnerAccept = await b.rpc("org_invite_respond", { p_invite: ownerInv.id, p_accept: true });
         check(noOwnerAccept.data === "inactive", `${state} agency owner prevents invitation acceptance`);
       } finally {
@@ -767,9 +781,9 @@ async function main() {
       check(tombstone.cipher===null && tombstone.iv===null && tombstone.hint===null && tombstone.erased_at && tombstone.fingerprint===erasedFingerprint && tombstone.spin_id===erasureSpin,"erasure keeps only the consumed fingerprint and no coupon value");
       const repeated=await admin.rpc("add_reward_codes",{p_prize:rewardPrize.id,p_creator:B.id,p_codes:[encryptedCode]});
       check(!repeated.error && repeated.data===0,"re-uploading an erased delivered coupon cannot restock it");
-      const erasedIntent=must(await admin.rpc("reconcile_creator_request",{p_request:B.requestId,p_creator:B.id,p_actor:B.id,p_kind:"pass",p_authorized:true}),"reconcile erased creator intent");
+      const erasedIntent=must(await fixtureCreatorRpc(admin,creatorFixtureClients.get(B.id),"reconcile_creator_request",{p_request:B.requestId,p_creator:B.id,p_actor:B.id,p_kind:"pass",p_authorized:true}),"reconcile erased creator intent");
       check(erasedIntent.status==="gone"&&!erasedIntent.receipt,"erased fan leaves a terminal creator receipt without resurrecting a link");
-      const lateCreate=must(await admin.rpc("create_pass_grant",{p_request:B.requestId,p_creator:B.id,p_fan:B.fanId,p_wheel:B.wheelId,p_name:"b fan",p_spins:5,p_bonus:0,p_amount:1000,p_campaign:null,p_actor:B.id}),"late erased creator replay");
+      const lateCreate=must(await fixtureCreatorRpc(admin,creatorFixtureClients.get(B.id),"create_pass_grant",{p_request:B.requestId,p_creator:B.id,p_fan:B.fanId,p_wheel:B.wheelId,p_name:"b fan",p_spins:5,p_bonus:0,p_amount:1000,p_campaign:null,p_actor:B.id}),"late erased creator replay");
       check(lateCreate.status==="gone","late same-key bootstrap refuses to recreate an erased fan");
     }
     //0058: metadata-only fixtures. Never creates, lists or removes Storage bytes.
@@ -849,6 +863,77 @@ async function main() {
     }
     const retainedB=must(await admin.from("creator_media").select("caption,path").eq("id",mediaB).single(),"0058 foreign row remains");
     check(retainedB.caption===null&&retainedB.path===objectPath(B.id,mediaB),"0058 foreign media remains unchanged after all forged calls");
+
+    // 0062 consent deadlines: only this run's recipient/org are changed.
+    const recipient=await makeUser("expiry");
+    const recipientClient=await signedClient(recipient.email);
+    const ownerClient=await signedClient(OWN.email);
+    const sent=await ownerClient.rpc("org_invite_creator",{p_org:org.id,p_email:recipient.email});
+    check(!sent.error&&sent.data==="ok","0062 owner sends a seven-day consent invitation");
+    const firstInvite=must(await admin.from("org_invites").select("id,created_at,expires_at").eq("org_id",org.id).eq("email",recipient.email).eq("status","pending").single(),"0062 invitation metadata");
+    check(Date.parse(firstInvite.expires_at)-Date.parse(firstInvite.created_at)===7*86400000,"0062 pending lifetime is exactly seven days");
+    check(!!(await ownerClient.from("org_invites").update({expires_at:new Date(Date.now()+365*86400000).toISOString()}).eq("id",firstInvite.id)).error,"0062 owner cannot extend expiry with a direct update");
+    must(await admin.from("org_invites").update({expires_at:new Date(Date.now()-1000).toISOString()}).eq("id",firstInvite.id).select("id").single(),"0062 expire this run's fixture");
+    const expired=await recipientClient.rpc("org_invite_respond",{p_invite:firstInvite.id,p_accept:true});
+    check(!expired.error&&expired.data==="expired","0062 an expired invitation cannot join an agency");
+    const notJoined=must(await admin.from("profiles").select("org_id").eq("id",recipient.id).single(),"0062 recipient remains independent");
+    check(notJoined.org_id===null,"0062 expired acceptance leaves membership unchanged");
+    const reissued=await ownerClient.rpc("org_invite_creator",{p_org:org.id,p_email:recipient.email});
+    check(!reissued.error&&reissued.data==="ok","0062 owner can send a fresh invitation after expiry");
+    const freshInvite=must(await admin.from("org_invites").select("id").eq("org_id",org.id).eq("email",recipient.email).eq("status","pending").single(),"0062 fresh invitation");
+    check(freshInvite.id!==firstInvite.id,"0062 expired invitation ID is never reused");
+    check((await recipientClient.rpc("org_invite_respond",{p_invite:firstInvite.id,p_accept:true})).data==="expired","0062 replay of the stale ID cannot accept the new invitation");
+    const accepted=await recipientClient.rpc("org_invite_respond",{p_invite:freshInvite.id,p_accept:true});
+    check(!accepted.error&&accepted.data==="ok","0062 recipient can explicitly accept the fresh consent");
+    for(const client of [a,anonClient])for(const fn of ["_session_mfa_satisfied","_serialize_active_admins","_preserve_active_admin"]){
+      const denied=await client.rpc(fn);
+      check(fn === "_session_mfa_satisfied" ? denied.error?.code === "42501" : !!denied.error,"0062 hidden session/trigger helpers are not directly executable");
+    }
+
+    // 0062 actual Auth factor state, never user/app metadata. A is both a
+    // creator and an explicit manager only in this disposable fixture.
+    must(await admin.from("org_members").upsert({org_id:org.id,profile_id:A.id,role:"manager"},{onConflict:"org_id,profile_id"}).select("id").single(),"0062 manager fixture");
+    check((await a.rpc("can_act_for",{target_creator:C.id,perm:"grant"})).data===true,"0062 unenrolled creator retains ordinary agency access");
+    const beforeEnrollmentContext=await fixtureActorContext(a,A.id,"grant");
+    const enrolled=await a.auth.mfa.enroll({factorType:"totp",friendlyName:"RLS0062"});
+    check(!enrolled.error&&!!enrolled.data?.id&&!!enrolled.data?.totp?.secret,"0062 TEST supports actual TOTP enrollment");
+    if(enrolled.error||!enrolled.data?.id||!enrolled.data?.totp?.secret)throw Error("0062 TOTP fixture enrollment failed");
+    seededFactorIds.push({userId:A.id,id:enrolled.data.id});
+    const remaining=30000-Date.now()%30000;
+    if(remaining<2000)await new Promise(resolve=>setTimeout(resolve,remaining+100));
+    const verified=await a.auth.mfa.challengeAndVerify({factorId:enrolled.data.id,code:fixtureTotp(enrolled.data.totp.secret)});
+    check(!verified.error,"0062 actual authenticator challenge succeeds");
+    if(verified.error)throw Error("0062 TOTP fixture verification failed");
+    const authUser=await a.auth.getUser();
+    check(authUser.data.user?.factors?.some(f=>f.id===enrolled.data.id&&f.status==="verified"),"0062 Auth reports a verified factor");
+    const low=await signedClient(A.email);
+    const lowAssurance=await low.auth.mfa.getAuthenticatorAssuranceLevel();
+    check(lowAssurance.data?.currentLevel==="aal1"&&lowAssurance.data?.nextLevel==="aal2","0062 a fresh password session still needs its factor");
+    const ownLow=await low.from("wheels").select("id").eq("id",A.wheelId);
+    check(!ownLow.error&&ownLow.data?.length===0,"0062 enrolled aal1 session reads no business wheel");
+    const lowInsert=await low.from("wheels").insert({creator_id:A.id,title:"MFA refused fixture"}).select("id");
+    check(!!lowInsert.error&&(!lowInsert.data||lowInsert.data.length===0),"0062 enrolled aal1 session cannot create business data");
+    const beforeName=must(await admin.from("profiles").select("display_name").eq("id",A.id).single(),"0062 name before MFA refusal");
+    await low.rpc("set_display_name",{p_name:"forbidden MFA rename"});
+    const afterName=must(await admin.from("profiles").select("display_name").eq("id",A.id).single(),"0062 name after MFA refusal");
+    check(beforeName.display_name===afterName.display_name,"0062 enrolled aal1 cannot bypass with a self-setting RPC");
+    check((await low.rpc("can_act_for",{target_creator:C.id,perm:"grant"})).data===false,"0062 enrolled aal1 loses agency authority too");
+    check((await low.rpc("can_act_for",{target_creator:A.id,perm:"edit_wheel"})).data===false,"0062 enrolled aal1 loses own mutation authority");
+    const ownHigh=await a.from("wheels").select("id").eq("id",A.wheelId);
+    check(!ownHigh.error&&ownHigh.data?.length===1,"0062 challenged aal2 creator regains own business read");
+    check((await a.rpc("can_act_for",{target_creator:C.id,perm:"grant"})).data===true,"0062 challenged aal2 manager regains rightful agency authority");
+    const serviceIntent={p_request:randomUUID(),p_creator:A.id,p_actor:A.id,p_fan:A.fanId,p_pass:A.passId,p_spins:1,p_bonus:0,p_amount:0,p_campaign:null};
+    const sessionRace=await admin.rpc("grant_pass_spins",{...serviceIntent,p_context:beforeEnrollmentContext});
+    check(!sessionRace.error&&sessionRace.data?.status==="unavailable","0062 newly verified factor refuses prior aal1 service capability");
+    const serviceLow=await fixtureCreatorRpc(admin,low,"grant_pass_spins",{...serviceIntent,p_request:randomUUID()});
+    check(!serviceLow.error&&serviceLow.data?.status==="unavailable","0062 actual password session cannot enter service economic gateway");
+    const highRequest=randomUUID();
+    const serviceHigh=await fixtureCreatorRpc(admin,a,"grant_pass_spins",{...serviceIntent,p_request:highRequest});
+    check(!serviceHigh.error&&serviceHigh.data?.status==="granted","0062 challenged actual aal2 reaches real service economic gateway");
+    const highRetry=await fixtureCreatorRpc(admin,a,"grant_pass_spins",{...serviceIntent,p_request:highRequest});
+    check(!highRetry.error&&highRetry.data?.status==="granted"&&highRetry.data?.replayed===true,"0062 fresh context retains economic UUID and cannot award twice");
+    const publicFanState=await admin.rpc("get_fan_focus_state",{p_token:A.token});
+    check(!publicFanState.error&&publicFanState.data?.status==="ok","0062 token-bound fan state remains independent of creator login assurance");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
@@ -861,6 +946,10 @@ async function main() {
     if (createdUserIds.length) for (const table of ["creator_storage_dispatches","creator_storage_objects","creator_storage_deletions"]) {
       const {error}=await admin.from(table).delete().in("owner_id",createdUserIds);
       if(error){cleanupFailed=true;console.error("  ✗ Failed to delete this run's durable metadata",table,"—",error.message);}
+    }
+    for(const factor of seededFactorIds){
+      const removed=await admin.auth.admin.mfa.deleteFactor(factor);
+      if(removed.error){cleanupFailed=true;console.error("  ✗ Failed to remove this run's disposable MFA factor");}
     }
     console.log("\nCleaning up test users…");
     for (const id of createdUserIds) {

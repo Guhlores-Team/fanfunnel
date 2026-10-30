@@ -47,7 +47,14 @@ export default function InvitesBanner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ inviteId, accept }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        if (body?.error === "expired" || body?.error === "gone") {
+          toast("That invitation has expired. Ask the agency owner to send a new one.", { tone: "error" });
+          return;
+        }
+        throw new Error();
+      }
       // #9: re-run the server components (active creator context changes on
       // accept) without a full-page reload.
       if (accept) router.refresh();

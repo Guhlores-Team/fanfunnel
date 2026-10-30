@@ -37,6 +37,7 @@ const norm = (s: string) =>
     .toLowerCase();
 
 const SIGNED_IN_ONLY = [
+  "issue_creator_actor_context",
   "set_onboarding_dismissed",
   "set_leaderboard_enabled",
   "set_chat_settings",
@@ -129,6 +130,10 @@ for (const [name, sql] of [
     check(`${name}: anon cannot execute ${fn}`, !a.anon);
     check(`${name}: authenticated can execute ${fn}`, a.authenticated);
   }
+  check(`${name}: a service JWT cannot mint creator assurance`, acl.get("issue_creator_actor_context")?.service === false);
+  check(`${name}: context mint explicitly grants only the authenticated session role`,
+    /grant execute on function public\.issue_creator_actor_context\(uuid,\s*text\) to authenticated;/.test(sql) &&
+    /revoke execute on function public\.issue_creator_actor_context\(uuid,\s*text\) from public,\s*anon,\s*service_role;/.test(sql));
   for (const fn of RLS_HELPERS) {
     const a = acl.get(fn) ?? { anon: true, authenticated: true, service: true };
     check(`${name}: anon keeps EXECUTE on RLS helper ${fn}`, a.anon);

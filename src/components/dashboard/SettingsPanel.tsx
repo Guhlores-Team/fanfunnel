@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useToast } from "@/components/ui/Toast";
 import { useClipboard } from "@/lib/hooks/useClipboard";
 import { Field } from "./ui";
+import CreatorMfaRecovery from "@/components/auth/CreatorMfaRecovery";
 import HomeScreenIconCard from "./HomeScreenIconCard";
 import LookAndFeelCard from "./LookAndFeelCard";
 import ThemedProfilePreview from "./ThemedProfilePreview";
@@ -450,6 +451,7 @@ function EmailBlock({
   const [email, setEmail] = useState("");
   const [current, setCurrent] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
 
   async function save() {
@@ -471,6 +473,11 @@ function EmailBlock({
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (d.error === "mfa_required") {
+          setMfaRequired(true);
+          setCurrent("");
+          return;
+        }
         toast(
           d.error === "wrong_password"
             ? "Your current password is incorrect."
@@ -516,6 +523,7 @@ function EmailBlock({
           Pending confirmation: <span className="break-all font-semibold">{pending}</span>
         </p>
       )}
+      <CreatorMfaRecovery required={mfaRequired} destination="settings" />
       <div className="grid gap-3.5 sm:grid-cols-2">
         <Field label="New email">
           <input
@@ -561,6 +569,7 @@ function SecurityCard() {
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
 
   async function save() {
     if (next.length < 8) {
@@ -580,6 +589,13 @@ function SecurityCard() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (d.error === "mfa_required") {
+          setMfaRequired(true);
+          setCurrent("");
+          setNext("");
+          setConfirm("");
+          return;
+        }
         toast(
           d.error === "wrong_password"
             ? "Your current password is incorrect."
@@ -610,6 +626,7 @@ function SecurityCard() {
         title="Security"
         hint="You’ll re-enter your current password to confirm it’s you. Use at least 8 characters."
       />
+      <CreatorMfaRecovery required={mfaRequired} destination="settings" />
       <div className="grid gap-3.5 sm:grid-cols-2">
         <Field label="Current password" full>
           <input

@@ -12,6 +12,7 @@ create table auth.users (
   email text,
   raw_user_meta_data jsonb default '{}'::jsonb
 );
+create table auth.mfa_factors (id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade, status text not null);
 create function auth.uid() returns uuid language sql stable as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
 $$;
@@ -43,3 +44,5 @@ alter table storage.objects enable row level security;
 create function storage.foldername(name text) returns text[] language sql immutable as $$
   select string_to_array(name, '/')
 $$;
+
+create table auth.sessions(id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade, not_after timestamptz);
