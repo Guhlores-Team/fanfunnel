@@ -168,13 +168,25 @@ do $$begin
  end if;
 end$$;
 create or replace function public.initialize_reward_crypto_canary(p_canary jsonb,p_inventory_digest text,p_actor uuid default null,p_context uuid default null)
-returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp set lock_timeout='3s' as $$
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
 declare v_existing jsonb; v_count integer; v_digest text;
 begin
+ -- Transaction-local, not a function SET: direct-crypto functions keep exactly
+ -- the pinned search_path config (scripts/db/cryptoNamespaceProbe.mjs).
+ perform set_config('lock_timeout','3s',true);
  --0062 admin/profile writes take this fence before row/storage/inventory locks.
  -- Preserve that order: an admitted request must not outlive admin revocation.
  if p_actor is not null then perform pg_advisory_xact_lock(hashtextextended('fanfunnel-active-admins',0)); end if;
- perform pg_advisory_xact_lock(hashtextextended('reward-crypto-canary-initialize',0));
+ -- Concurrent initializers serialize here; no inventory writer takes this lock,
+ -- so waiting on it never stalls a play, and the loser returns 'existing'.
+ perform pg_advisory_xact_lock(hashtextextended('reward-crypto-canary-initializer',0));
+ -- Never queue behind in-flight inventory writers: a waiting exclusive request
+ -- would make later shared requests wait too, and an inventory writer that then
+ -- waits for a fan row (set_prize_delivery -> prize lifecycle -> _release_fan_focus)
+ -- could close a cycle with a credited play. Busy is a retryable outcome.
+ if not pg_try_advisory_xact_lock(hashtextextended('reward-crypto-canary-initialize',0)) then
+   return jsonb_build_object('status','inventory_busy');
+ end if;
  if p_actor is not null then
    if not public._creator_actor_allowed(p_context,p_actor,p_actor,'system_health','system_health') then return jsonb_build_object('status','forbidden');end if;
    perform 1 from public.profiles where id=p_actor and role='admin' and is_active;

@@ -38,7 +38,7 @@ export async function readCanary(svc: ReturnType<typeof createServiceClient>): P
 function newCanary() {
   return { ...sealReward(CANARY_TEXT, CANARY_CREATOR), fingerprint: rewardCodeFingerprint(CANARY_TEXT, CANARY_CREATOR, CANARY_PRIZE) };
 }
-export type CanaryInitialization = CanaryResult & { outcome: "initialized" | "existing" | "inventory_changed" | "inventory_limit" | "initialization_required" | "recovery_required" | "forbidden" | "validation_failed" | "unavailable"; inventoryRows?: number };
+export type CanaryInitialization = CanaryResult & { outcome: "initialized" | "existing" | "inventory_changed" | "inventory_busy" | "inventory_limit" | "initialization_required" | "recovery_required" | "forbidden" | "validation_failed" | "unavailable"; inventoryRows?: number };
 async function insertCanary(svc: ReturnType<typeof createServiceClient>, digest: string, actor: string | null, context: string | null = null): Promise<CanaryInitialization> {
   const configured = cryptoConfigurationStatus();
   if (configured !== "ready") return { status: configured, outcome: "unavailable" };
@@ -50,7 +50,7 @@ async function insertCanary(svc: ReturnType<typeof createServiceClient>, digest:
       const verified = verifyStoredCanary(result.canary);
       return { ...verified, initialized: result.status === "initialized", outcome: result.status, ...(typeof result.inventoryRows === "number" ? { inventoryRows: result.inventoryRows } : {}) };
     }
-    return { status: "missing", outcome: ["inventory_changed", "inventory_limit", "initialization_required", "recovery_required", "forbidden"].includes(result.status) ? result.status as CanaryInitialization["outcome"] : "unavailable" };
+    return { status: "missing", outcome: ["inventory_changed", "inventory_busy", "inventory_limit", "initialization_required", "recovery_required", "forbidden"].includes(result.status) ? result.status as CanaryInitialization["outcome"] : "unavailable" };
   } catch { return { status: "unavailable", outcome: "unavailable" }; }
 }
 /** Startup can bootstrap only an atomically empty inventory, including tombstones. */
@@ -58,6 +58,8 @@ export async function bootstrapEmptyCanary(svc: ReturnType<typeof createServiceC
   const checked = await readCanary(svc);
   if (checked.status !== "missing") return checked;
   const initialized = await insertCanary(svc, createHash("sha256").update("").digest("hex"), null);
+  // An in-flight inventory writer is a transient condition, not a missing anchor.
+  if (initialized.outcome === "inventory_busy") return { status: "unavailable" };
   return { status: initialized.status, ...(initialized.initialized ? { initialized: true } : {}) };
 }
 /** An admin never supplies ciphertext, a key, a digest or inventory rows. Every

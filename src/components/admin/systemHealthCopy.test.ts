@@ -4,6 +4,7 @@ assert.match(canaryMessage("mismatch"), /restore the original keys and version/i
 assert.match(canaryMessage("mismatch"), /do not replace/i);
 assert.match(canaryMessage("demo"), /no connected database/i);
 assert.match(initializationMessage("recovery_required"), /historical erased codes/i);
+assert.match(initializationMessage("inventory_busy"), /being written right now/i);
 assert.match(initializationMessage("inventory_changed"), /nothing was initialized/i);
 assert.match(initializationMessage("validation_failed"), /nothing was initialized/i);
 assert.match(ledgerMessage(null), /have not completed/i);

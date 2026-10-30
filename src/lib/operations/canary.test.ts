@@ -58,8 +58,12 @@ async function main() {
   check("wrong existing fingerprint blocks initialization", invalid.status === "mismatch" && invalid.outcome === "validation_failed");
   const unavailable = await initializeCanaryForAdmin(client([reply(null), () => { throw new Error("synthetic transport error"); }]), creator);
   check("inventory transport failure is unavailable, not key mismatch", unavailable.status === "unavailable");
+  const busyBoot = await bootstrapEmptyCanary(client([reply(null), reply({ status: "inventory_busy" })]));
+  check("startup bootstrap reports an in-flight inventory writer as unavailable, never as a missing anchor", busyBoot.status === "unavailable" && !busyBoot.initialized);
   const changed = await initializeCanaryForAdmin(client([reply(null), reply({ rows: [row] }), reply({ status: "inventory_changed" })]), creator);
   check("SQL inventory CAS race is surfaced without initialization", changed.outcome === "inventory_changed" && !changed.initialized);
+  const busy = await initializeCanaryForAdmin(client([reply(null), reply({ rows: [row] }), reply({ status: "inventory_busy" })]), creator);
+  check("an in-flight inventory writer is surfaced as busy without initialization", busy.outcome === "inventory_busy" && busy.status === "missing" && !busy.initialized);
   const tombstone = await initializeCanaryForAdmin(client([reply(null), reply({ rows: [] }), reply({ status: "recovery_required" })]), creator);
   check("legacy erased codes require operator recovery", tombstone.outcome === "recovery_required");
   const limit = await initializeCanaryForAdmin(client([reply(null), reply({ status: "inventory_limit", rows: [] })]), creator);

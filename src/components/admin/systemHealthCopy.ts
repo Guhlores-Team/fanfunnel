@@ -17,6 +17,7 @@ export function initializationMessage(outcome: unknown): string {
     case "existing": return "A protection record already exists. It has been kept. Run checks to confirm its status.";
     case "recovery_required": return "Operator recovery is required: historical erased codes cannot validate the original fingerprint key. Keep the original keys and database backup; do not create a replacement record.";
     case "inventory_changed": return "Inventory changed during verification. Nothing was initialized. Try again when inventory is quiet.";
+    case "inventory_busy": return "Reward inventory is being written right now. Nothing was initialized. Try again in a moment.";
     case "inventory_limit": return "Inventory exceeds the safe initialization limit. Ask your operator for a reviewed migration plan.";
     case "validation_failed": return "Existing rewards could not be verified. Nothing was initialized. Restore the original keys and version with your operator.";
     case "forbidden": return "Your administrator account could not be verified. Sign in again with two-factor authentication.";

@@ -99,8 +99,10 @@ export async function probeOperationalIntegrity(db, psql, psqlAsync) {
    // A stock debit in another transaction cannot witness an earlier promise.
    r=psql(raceDb,['-c',`${focus}${reservation}`],{allowFail:true});if(r.status!==0)throw Error('witness seed failed');
    r=psql(raceDb,['-c',`update public.prizes set stock=stock-1 where id='${Z}';select units_taken from public.chase_stock_evidence;`],{allowFail:true});checks++;if(r.status!==0||r.stdout.trim()!=='0')bad.push('cross-transaction debit incorrectly witnessed reservation');
-   // An in-flight encrypted write changes the CAS snapshot. Initialization
-   // waits on the advisory fence, then must use a fresh committed snapshot.
+   // An in-flight encrypted write holds the shared inventory fence. Initialization
+   // never queues behind it (a waiting exclusive request would also stall every
+   // later writer and can close a cycle with a credited play): it reports busy
+   // and creates nothing. Once the write commits, the stale digest is refused.
    psql(db,['-c',`drop database "${raceDb}" with(force);`],{allowFail:true});made=false;
    r=psql(db,['-c',`create database "${raceDb}" template "${db}";`],{allowFail:true});if(r.status!==0)throw Error('CAS clone failed');made=true;
    r=psql(raceDb,['-c',`${seed}${reward}`],{allowFail:true});if(r.status!==0)throw Error('CAS seed failed');
@@ -113,7 +115,10 @@ export async function probeOperationalIntegrity(db, psql, psqlAsync) {
    for(let n=0;n<40;n++){const b=await psqlAsync(raceDb,`select count(*) from pg_stat_activity where application_name='${tag}' and wait_event='PgSleep';`);if(b.stdout.trim()==='1'){ready=true;break;}await psqlAsync(raceDb,'select pg_sleep(0.01)');}
    if(!ready)throw Error('CAS writer barrier failed');
    const cas=await psqlAsync(raceDb,`select 'cas:'||(${init(q(A),q(old),q(casContext))}->>'status');`);const write=await writer;
-   checks++;if(write.status!==0||cas.status!==0||!cas.stdout.includes('cas:inventory_changed'))bad.push('inventory writer race did not refuse stale verified digest');
+   checks++;if(write.status!==0||cas.status!==0||!cas.stdout.includes('cas:inventory_busy'))bad.push('initialization queued behind an in-flight inventory writer instead of reporting busy');
+   const {context:staleContext}=await mintActorContext(raceSql,A,A,'system_health','aal2');
+   const stale=await psqlAsync(raceDb,`select 'cas:'||(${init(q(A),q(old),q(staleContext))}->>'status');`);
+   checks++;if(stale.status!==0||!stale.stdout.includes('cas:inventory_changed'))bad.push('committed inventory write did not refuse stale verified digest');
    r=psql(raceDb,['-c','select count(*) from public.reward_crypto_canary;'],{allowFail:true});checks++;if(r.stdout.trim()!=='0')bad.push('stale scan unexpectedly created anchor');
    // A request admitted before an admin demotion cannot initialize afterwards.
    const current=psql(raceDb,['-c',`select ${digest};`],{allowFail:true}).stdout.trim();
