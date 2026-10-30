@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { canaryMessage, initializationMessage, ledgerMessage, parseSystemHealthStatus } from "./systemHealthCopy";
+assert.match(canaryMessage("mismatch"), /restore the original keys and version/i);
+assert.match(canaryMessage("mismatch"), /do not replace/i);
+assert.match(canaryMessage("demo"), /no connected database/i);
+assert.match(initializationMessage("recovery_required"), /historical erased codes/i);
+assert.match(initializationMessage("inventory_changed"), /nothing was initialized/i);
+assert.match(initializationMessage("validation_failed"), /nothing was initialized/i);
+assert.match(ledgerMessage(null), /have not completed/i);
+assert.equal(parseSystemHealthStatus({}), null);
+assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"demo"},summary:null}), null);
+assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"unknown"},summary:null}), null);
+assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"healthy"},summary:{}}), null);
+assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"unavailable"},summary:null})?.canary.status, "unavailable");
+console.log("system health owner copy: 12 checks passed");
