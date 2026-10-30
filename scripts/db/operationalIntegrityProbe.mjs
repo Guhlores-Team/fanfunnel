@@ -94,7 +94,7 @@ export async function probeOperationalIntegrity(db, psql, psqlAsync) {
    let r=psql(db,['-c',`create database "${raceDb}" template "${db}";`],{allowFail:true});if(r.status!==0)throw Error('clone failed');made=true;
    r=psql(raceDb,['-c',seed],{allowFail:true});if(r.status!==0)throw Error('race seed failed');
    const results=await Promise.all([psqlAsync(raceDb,`select 'init:'||(${init()}->>'status');`),psqlAsync(raceDb,`select 'init:'||(${init()}->>'status');`)]);
-   checks++;if(results.some(r=>r.status!==0)||results.map(r=>r.stdout.trim()).sort().join('|')!=='init:existing|init:initialized')bad.push('concurrent first initialization did not serialize');
+   checks++;if(results.some(r=>r.status!==0)||results.map(r=>r.stdout.trim()).sort().join('|')!=='init:existing|init:initialized')bad.push(`concurrent first initialization did not serialize (${results.map(r=>`exit ${r.status} ${r.stdout.trim()||'-'} ${(r.stderr||'').split('\n').find(s=>s.includes('ERROR'))||''}`).join(' / ')})`);
    checks++;r=psql(raceDb,['-c',`select count(*) from public.reward_crypto_canary;`],{allowFail:true});if(r.stdout.trim()!=='1')bad.push('first initialization created more than one anchor');
    // A stock debit in another transaction cannot witness an earlier promise.
    r=psql(raceDb,['-c',`${focus}${reservation}`],{allowFail:true});if(r.status!==0)throw Error('witness seed failed');

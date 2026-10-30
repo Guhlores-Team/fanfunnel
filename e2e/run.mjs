@@ -33,6 +33,7 @@ import { playJourney } from "./play.mjs";
 import { glowJourney } from "./glow.mjs";
 import { winbackJourney } from "./winback.mjs";
 import { privacyJourney } from "./privacy.mjs";
+import { urlSafetyJourney } from "./urlSafety.mjs";
 
 import { pushJourney } from "./push.mjs";
 import { instantJourney } from "./instant.mjs";
@@ -87,6 +88,7 @@ try {
     await runner.step("System health: demo status never claims connected protection", () => checkSystemHealth(page));
     await systemHealthJourney(page, runner);
     await safetyJourney(page, runner, ctx); // A1 report → Admin › Reports → resolve; A4 blocked fan (own fans)
+    await urlSafetyJourney(page, runner, ctx); // malformed URL privacy/security-header regression
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

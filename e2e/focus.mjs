@@ -87,6 +87,105 @@ export async function readyChaseFinal(request, fixture) {
   return fanFocus(request, fixture.token);
 }
 
+async function assertFocusRewardActions(page, assert) {
+  const previousViewport = page.viewportSize();
+  try {
+    for (const viewport of [{ width: 360, height: 780 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      // The new size reaches the document on a later frame than the call resolves.
+      await page.waitForFunction(([width, height]) => innerWidth === width && innerHeight === height, [viewport.width, viewport.height]);
+      const reveal = page.getByTestId("reward-reveal");
+      const awesome = reveal.getByRole("button", { name: "Awesome!", exact: true });
+      // Use the real short-phone overflow path: the reveal scrolls, and while
+      // the fan scrolls, the final action passes under the fixed badge band.
+      // Content sits below the button, so at scroll-bottom they never touch;
+      // scroll so they intersect, shrinking the viewport (browser chrome) when
+      // the overflow is too short to scroll that far. No styles, hit-test rules
+      // or outcome data are changed.
+      const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const scrollToBottom = async () => { await reveal.evaluate(element => { element.scrollTop = element.scrollHeight; }); await settle(); };
+      await scrollToBottom();
+      const measure = () => awesome.evaluate(button => {
+        const badge = document.querySelector("[data-env-badge]");
+        const overlay = button.closest('[data-testid="reward-reveal"]');
+        if (!badge || !overlay) throw new Error("Preview badge and actual reward reveal are required");
+        const action = button.getBoundingClientRect();
+        const label = badge.getBoundingClientRect();
+        return { gap: label.top - action.bottom, overlap: Math.min(label.height, action.height) / 2, scrollTop: overlay.scrollTop, maxScroll: overlay.scrollHeight - overlay.clientHeight };
+      });
+      const intersects = () => awesome.evaluate(button => {
+        const action = button.getBoundingClientRect();
+        const label = document.querySelector("[data-env-badge]").getBoundingClientRect();
+        return Math.min(action.right, label.right) > Math.max(action.left, label.left) && Math.min(action.bottom, label.bottom) > Math.max(action.top, label.top);
+      });
+      // Arrange from a fresh measurement and verify the result: a layout pass
+      // that lands after the resize (or a late font swap) moves the button
+      // between a single read and the scroll, which once left the rectangles
+      // apart although the geometry itself is stable. The assertions below
+      // still read everything again and are unchanged.
+      let height = viewport.height;
+      for (let attempt = 0; attempt < 5 && !await intersects(); attempt++) {
+        await scrollToBottom();
+        let placement = await measure();
+        if (placement.gap < 0) continue;
+        let needed = Math.ceil(placement.gap + placement.overlap);
+        if (placement.maxScroll < needed) {
+          height -= needed - Math.floor(placement.maxScroll);
+          await page.setViewportSize({ width: viewport.width, height });
+          await page.waitForFunction(expected => innerHeight === expected, height);
+          await scrollToBottom();
+          placement = await measure();
+          needed = Math.ceil(placement.gap + placement.overlap);
+        }
+        await reveal.evaluate((element, by) => { element.scrollTop -= by; }, needed);
+        await settle();
+      }
+      const layout = await awesome.evaluate(button => {
+        const badge = document.querySelector("[data-env-badge]");
+        const overlay = button.closest('[data-testid="reward-reveal"]');
+        if (!badge || !overlay) throw new Error("Preview badge and actual reward reveal are required");
+        const action = button.getBoundingClientRect();
+        const label = badge.getBoundingClientRect();
+        const intersection = {
+          left: Math.max(action.left, label.left), right: Math.min(action.right, label.right),
+          top: Math.max(action.top, label.top), bottom: Math.min(action.bottom, label.bottom),
+        };
+        const overlaps = intersection.right > intersection.left && intersection.bottom > intersection.top;
+        const center = document.elementFromPoint(action.left + action.width / 2, action.top + action.height / 2);
+        // pointer-events:none makes a click test alone miss the visual bug, and
+        // comparing z-index numbers misses it too: the reveal sits inside the
+        // fan page's own stacking context, so its z-index never competes with
+        // the badge directly. Probe the actual paint order instead: make the
+        // badge hit-testable for this one synchronous read, then restore it.
+        const previous = badge.style.pointerEvents;
+        badge.style.pointerEvents = "auto";
+        let crossing = null;
+        try {
+          crossing = overlaps && document.elementFromPoint((intersection.left + intersection.right) / 2, (intersection.top + intersection.bottom) / 2);
+        } finally { badge.style.pointerEvents = previous; }
+        return {
+          overlaps,
+          badgeFixed: getComputedStyle(badge).position === "fixed", overlayFixed: getComputedStyle(overlay).position === "fixed",
+          badgeCoversAction: !!crossing && !!crossing.closest("[data-env-badge]"),
+          centerActionable: center === button || button.contains(center),
+          intersectionActionable: !!crossing && (crossing === button || button.contains(crossing)),
+          fullyVisible: action.left >= 0 && action.right <= innerWidth && action.top >= 0 && action.bottom <= innerHeight,
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      });
+      assert(layout.overlaps, `real reward action intersects the Preview badge at ${viewport.width}px`);
+      assert(layout.badgeFixed && layout.overlayFixed, "badge and reward reveal are both fixed overlays");
+      assert(!layout.badgeCoversAction, `Preview badge never paints over Awesome at ${viewport.width}px`);
+      assert(layout.fullyVisible && layout.centerActionable && layout.intersectionActionable && !await awesome.isDisabled(), `Awesome remains visible and actionable at ${viewport.width}px`);
+      assert(layout.overflow <= 0, `reward reveal has no horizontal overflow at ${viewport.width}px`);
+      const dir = ensureArtifacts() + "focus/"; mkdirSync(dir, { recursive: true });
+      await page.screenshot({ path: `${dir}chase-reward-actions-${viewport.width}.png` });
+    }
+  } finally {
+    if (previousViewport) await page.setViewportSize(previousViewport);
+  }
+}
+
 export async function focusJourney(page, { step, assert }, ctx) {
   let fixture;
   let chase;
@@ -216,6 +315,7 @@ export async function focusJourney(page, { step, assert }, ctx) {
       await page.getByTestId("chase-complete").waitFor({ timeout: 5000 });
       assert(await page.getByTestId("reward-value").innerText() === result.reward.value, "instant reward remains available inside the shared reveal");
       assert((await savedIntents(page)).every(([, value]) => !value.includes(result.reward.value)), "delivered value never enters browser storage");
+      await assertFocusRewardActions(page, assert);
       await closeInstantCard(page);
       assert(await page.getByTestId("fan-focus").count() === 0, "completed chase stops promoting another play");
     });

@@ -14,6 +14,28 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "Optional: immutable FanFunnel Preview URL for the separate hosted LCP measurement"
+        required: false
+        type: string
+        default: ""
+      expected_sha:
+        description: "Full checked dashboard-redesign commit SHA for that immutable Preview"
+        required: false
+        type: string
+        default: ""
+
+      preview_smoke_url:
+        description: "Optional immutable Preview URL for the separate real Focus/Scratch/Bingo browser smoke"
+        required: false
+        type: string
+        default: ""
+      preview_smoke_expected_sha:
+        description: "Full checked dashboard-redesign SHA for that immutable feature-smoke Preview"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   login-ui:
@@ -66,3 +88,108 @@ jobs:
           name: login-ui-artifacts
           path: e2e/artifacts/
           if-no-files-found: ignore
+
+  preview-lcp:
+    # Existing PR/push/login-ui behavior is unchanged. A requested measurement
+    # fails closed if credentials or exact Preview/source checks are missing.
+    if: github.event_name == 'workflow_dispatch' && inputs.preview_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: fanfunnel-preview-lcp
+      cancel-in-progress: false
+    env:
+      PREVIEW_PERF_URL: ${{ inputs.preview_url }}
+      PREVIEW_EXPECTED_SHA: ${{ inputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify manual source, authenticated Preview metadata and TEST-only configuration
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-lcp.mjs --preflight
+
+      - name: Install existing dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Measure real immutable Preview before and after creator theming
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-lcp.mjs
+
+      - name: Upload numeric Preview LCP report and anonymous public screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-lcp-${{ github.sha }}
+          path: e2e/artifacts/preview-lcp/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  preview-feature-smoke:
+    # Explicit manual opt-in only; existing login-ui and preview-lcp are unchanged.
+    if: github.event_name == 'workflow_dispatch' && inputs.preview_smoke_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: fanfunnel-preview-feature-smoke
+      cancel-in-progress: false
+    env:
+      PREVIEW_FEATURE_URL: ${{ inputs.preview_smoke_url }}
+      PREVIEW_EXPECTED_SHA: ${{ inputs.preview_smoke_expected_sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify exact source, immutable Preview metadata and TEST-only configuration
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-feature-smoke.mjs --preflight
+
+      - name: Install existing dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Click actual Preview login, terms, Focus, Scratch and bounded Bingo flows
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-feature-smoke.mjs
+
+      - name: Upload only sanitized feature-smoke provenance, counts and cleanup result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-feature-smoke-${{ github.sha }}
+          path: e2e/artifacts/preview-feature-smoke/
+          if-no-files-found: ignore
+          retention-days: 7

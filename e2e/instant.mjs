@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 // #26: private instant rewards, real creator routes and the real mock spin
 // path. Each fixture owns a wheel and fan; odds are set through creator APIs,
 // never by replacing a spin response. Run before firstRunJourney's reset.
-import { acknowledgeFixtureFan, BASE, NAV_ITEMS, clickTab, goto } from "./harness.mjs";
+import { acknowledgeFixtureFan, BASE, NAV_ITEMS, clickTab, goto, spinIntentKey } from "./harness.mjs";
 
 let fixtureNumber = 0;
 const json = async (response, operation) => {
@@ -93,6 +93,14 @@ export async function spinInstantForCard(page, fixture) {
 export async function closeInstantCard(page) {
   await page.getByRole("button", { name: "Awesome!" }).click();
   await page.getByTestId("reward-reveal").waitFor({ state: "hidden", timeout: 4000 });
+  // Closing acknowledges the saved spin request under a Web Lock while
+  // router.refresh() runs. A navigation that beats that write finds the request
+  // still saved, re-presents the same spin as recovered and keeps the play
+  // button locked (the product's durable-recovery contract), which a following
+  // step then waits on for its full click timeout. Return only once the saved
+  // identity of this link is gone.
+  const token = /^\/spin\/([^/?#]+)/.exec(new URL(page.url()).pathname)?.[1];
+  if (token) await page.waitForFunction((key) => localStorage.getItem(key) === null, spinIntentKey(decodeURIComponent(token)), { timeout: 4000 });
 }
 
 async function saveEditor(page, editor, route) {

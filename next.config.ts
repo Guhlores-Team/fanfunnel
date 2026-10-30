@@ -26,6 +26,15 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Resolve metadata before the document is sent, for every user agent. With
+  // streamed metadata, the <title> lives inside a Suspense boundary that a
+  // router.refresh() (the fan page refreshes after every reward close)
+  // remounts: when the refreshed metadata chunk lands after the tree commits,
+  // the document has no <title> at all for a few hundred milliseconds
+  // (measured on /spin: axe `document-title` failing intermittently). Blocking
+  // costs nothing here: no route has a loading boundary, so the shell already
+  // waits for the page, and /spin's viewport awaits the same cached read.
+  htmlLimitedBots: /.*/,
   // Tree-shake barrel imports from these packages so only the used symbols are
   // bundled (notably keeps the motion lib from bloating the fan spin page).
   experimental: {

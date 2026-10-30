@@ -20,7 +20,17 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch: # lets you run it on demand from the Actions tab
+  workflow_dispatch:
+    inputs:
+      test_maintenance_action:
+        description: "Optional TEST-only maintenance operation; setup only after verified 0063 Preview"
+        type: choice
+        options: ["off", "status", "setup"]
+        default: "off"
+      maintenance_expected_sha:
+        description: "Exact 40-character verified dashboard-redesign commit (required for maintenance)"
+        type: string
+        required: false
 
 jobs:
   supabase:
@@ -116,3 +126,44 @@ jobs:
               exit 1 ;;
           esac
           node scripts/security/rls-runtime-test.mjs
+
+  test-maintenance:
+    # Existing Supabase/RLS/spin tests above always run unchanged, including
+    # manual dispatches. This optional job never replaces or skips their gate.
+    if: github.event_name == 'workflow_dispatch' && inputs.test_maintenance_action != 'off'
+    needs: supabase
+    runs-on: ubuntu-latest
+    environment: test
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: fanfunnel-test-maintenance
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Test maintenance guards with fake APIs only
+        run: node scripts/ops/test-maintenance.test.mjs
+      - name: Guard exact Preview and set up or inspect TEST maintenance
+        env:
+          TEST_MAINTENANCE_ACTION: ${{ inputs.test_maintenance_action }}
+          MAINTENANCE_EXPECTED_SHA: ${{ inputs.maintenance_expected_sha }}
+          SUPABASE_TEST_PROJECT_REF: snmcrmhgevfqggxdiomu
+          TEST_MAINTENANCE_ORIGIN: https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          FANFUNNEL_TEST_CRON_SECRET: ${{ secrets.FANFUNNEL_TEST_CRON_SECRET }}
+        run: node scripts/ops/test-maintenance.mjs
+      - name: Save redacted TEST maintenance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-maintenance-${{ github.run_id }}
+          path: artifacts/test-maintenance-status.json
+          if-no-files-found: error
+          retention-days: 7

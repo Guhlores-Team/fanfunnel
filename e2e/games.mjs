@@ -1,7 +1,7 @@
 // RM-7 real game fixtures. Gestures only present outcomes returned by the real play endpoint.
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { acknowledgeFixtureFan, BASE, goto, attachSink, ensureArtifacts } from "./harness.mjs";
+import { acknowledgeFixtureFan, BASE, goto, attachSink, ensureArtifacts, spinIntentKey } from "./harness.mjs";
 import { json } from "./focus.mjs";
 import { closeInstantCard } from "./instant.mjs";
 
@@ -74,10 +74,25 @@ export async function cleanupGame(request, fixture) {
 }
 export async function clearOwnedGameIntent(page, token) {
   if (!token) return;
-  const key = "ff-spin-intent-v1:" + createHash("sha256").update(token).digest("hex");
-  await page.evaluate(key => localStorage.removeItem(key), key);
+  await page.evaluate(key => localStorage.removeItem(key), spinIntentKey(token));
+}
+/** Counts DOM mutation batches after which the document has no <title>, once
+ *  one has appeared. Every reward close calls router.refresh(), which replaces
+ *  the metadata subtree; next.config.ts blocks streamed metadata so that swap
+ *  can never leave the document untitled. Checked by openGame before leaving. */
+export async function watchDocumentTitle(page) {
+  await page.addInitScript(() => {
+    window.__titleGaps = 0;
+    let seen = false;
+    new MutationObserver(() => {
+      if (document.querySelector("title")) seen = true;
+      else if (seen) window.__titleGaps++;
+    }).observe(document, { childList: true, subtree: true });
+  });
 }
 export async function openGame(page, fixture, reduced = false) {
+  const titleGaps = await page.evaluate(() => window.__titleGaps ?? 0).catch(() => 0);
+  if (titleGaps) throw new Error(`document lost its <title> ${titleGaps} time(s) after a reward closed`);
   await page.emulateMedia({ reducedMotion: reduced ? "reduce" : "no-preference" });
   await goto(page, `/spin/${fixture.token}`, 250);
   await page.locator(`[data-testid='fan-game'][data-game-kind='${fixture.kind}']`).waitFor({ timeout: 10000 });
@@ -115,6 +130,7 @@ async function assertProof(page, result, kind, assert) {
 
 export async function scratchJourney(browser, { step, assert }, sink, ctx) {
   const page = await ctx.newPage(); attachSink(page, sink);
+  await watchDocumentTitle(page);
   let fixture; let original; let phoneContext;
   try {
     await step("scratch: real game, committed nine-cell ticket and one credit per play", async () => {
@@ -276,6 +292,7 @@ export async function readyBingoFinal(page, request, fixture) {
 export async function bingoJourney(browser, { step, assert }, sink, ctx) {
   const page = await ctx.newPage(); attachSink(page, sink);
   await knownGameClientSeed(page);
+  await watchDocumentTitle(page);
   let original; let fixture; let final;
   try {
     await step("bingo: first credited play creates a personal card and immutable result", async () => {

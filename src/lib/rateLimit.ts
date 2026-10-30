@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // Fixed-window rate limiter.
 //
 // NOTE: This is best-effort and single-instance only. The window state lives
@@ -16,6 +18,14 @@ interface Window {
 const g = globalThis as unknown as { __ffRateLimit?: Map<string, Window> };
 const store: Map<string, Window> = g.__ffRateLimit ?? (g.__ffRateLimit = new Map());
 
+// Bound memory even when many different tokens or addresses hit one instance.
+// Never evict a live counter: that would let new keys reset existing limits.
+const MAX_WINDOWS = 10_000;
+let nextSweep = 0;
+function digestKey(key: string): string {
+  return createHash("sha256").update(key, "utf8").digest("hex");
+}
+
 export function rateLimit(
   key: string,
   limit: number,
@@ -23,10 +33,23 @@ export function rateLimit(
   now: () => number = Date.now,
 ): { ok: boolean; retryAfter: number } {
   const t = now();
-  const existing = store.get(key);
+  const privateKey = digestKey(key);
+  const existing = store.get(privateKey);
+
+  if (store.size >= MAX_WINDOWS && t >= nextSweep) {
+    for (const [storedKey, window] of store) {
+      if (t >= window.resetAt) store.delete(storedKey);
+    }
+    nextSweep = t + 1000;
+  }
 
   if (!existing || t >= existing.resetAt) {
-    store.set(key, { count: 1, resetAt: t + windowMs });
+    if (!existing && store.size >= MAX_WINDOWS) {
+      // At capacity, refuse a new identity briefly rather than allocate without
+      // a bound or discard another identity's still-active counter.
+      return { ok: false, retryAfter: Math.max(1, Math.min(windowMs, 1000)) };
+    }
+    store.set(privateKey, { count: 1, resetAt: t + windowMs });
     return { ok: true, retryAfter: 0 };
   }
 
@@ -61,7 +84,9 @@ function upstashEnv(): { url: string; token: string } | null {
 // Preview and Production share one store, so namespace the counters: testing on
 // a Preview must never use up a visitor's limit on the live site.
 function storeKey(key: string): string {
-  return `rl:${process.env.VERCEL_ENV || "local"}:${key}`;
+  // Callers include fan bearer tokens and IP addresses. Do not send either as
+  // readable Redis keys. This is a pseudonymous digest, not anonymization.
+  return `rl:${process.env.VERCEL_ENV || "local"}:${digestKey(key)}`;
 }
 
 async function rateLimitUpstash(
@@ -84,11 +109,18 @@ async function rateLimitUpstash(
       ["PTTL", key],
     ]),
     cache: "no-store",
+    signal: AbortSignal.timeout(3000),
   });
   if (!res.ok) throw new Error(`upstash ${res.status}`);
-  const out = (await res.json()) as { result: number }[];
-  const count = Number(out[0]?.result ?? 0);
-  const pttl = Number(out[2]?.result ?? windowMs);
+  const out = (await res.json()) as { result?: unknown; error?: unknown }[];
+  if (!Array.isArray(out) || out.length !== 3 || out.some((entry) => !entry || entry.error)) {
+    throw new Error("invalid rate limit pipeline");
+  }
+  const count = Number(out[0]?.result);
+  const pttl = Number(out[2]?.result);
+  if (!Number.isSafeInteger(count) || count < 1 || !Number.isFinite(pttl)) {
+    throw new Error("invalid rate limit counter");
+  }
   if (count <= limit) return { ok: true, retryAfter: 0 };
   return { ok: false, retryAfter: pttl > 0 ? pttl : windowMs };
 }

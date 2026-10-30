@@ -73,6 +73,43 @@ export async function winbackJourney(page, { step, assert }, ctx) {
     assert(/You paste it into your own DMs/.test(await queue.innerText()), "the sheet says FanFunnel sends nothing");
   });
 
+  await step("win-back: Preview badge stays behind modal controls at 390px and desktop", async () => {
+    try {
+      for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+        await page.setViewportSize(viewport);
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await queue.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => {}))));
+        const layout = await page.evaluate(() => {
+          const badge = document.querySelector("[data-env-badge]");
+          const modal = document.querySelector('[data-testid="winback-queue"]');
+          if (!badge || !modal) throw new Error("Preview badge and Win-back fixture are required");
+          const br = badge.getBoundingClientRect();
+          const previous = badge.style.pointerEvents;
+          const overlaps = [];
+          const covered = [];
+          // Probe actual paint order, then restore the noninteractive badge in
+          // the same synchronous evaluation; no click or input is dispatched.
+          badge.style.pointerEvents = "auto";
+          try {
+            for (const button of modal.querySelectorAll("button")) {
+              const r = button.getBoundingClientRect();
+              const left = Math.max(r.left, br.left), right = Math.min(r.right, br.right);
+              const top = Math.max(r.top, br.top), bottom = Math.min(r.bottom, br.bottom);
+              if (right <= left || bottom <= top) continue;
+              const label = button.textContent.trim() || button.getAttribute("aria-label");
+              overlaps.push(label);
+              if (document.elementFromPoint((left + right) / 2, (top + bottom) / 2)?.closest("[data-env-badge]")) covered.push(label);
+            }
+          } finally { badge.style.pointerEvents = previous; }
+          return { overlaps, covered, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+        });
+        if (viewport.width === 390) assert(["Copy & next", "Skip"].every((label) => layout.overlaps.includes(label)) && layout.overlaps.some((label) => /^Snooze \d+d$/.test(label)), `phone geometry exercises the actual badge/action intersection (${JSON.stringify(layout)})`);
+        assert(layout.covered.length === 0, `Preview label never paints over modal controls at ${viewport.width}px (covered ${layout.covered.join(", ")})`);
+        assert(layout.overflow <= 0, `queue has no horizontal overflow at ${viewport.width}px`);
+      }
+    } finally { await page.setViewportSize({ width: 1280, height: 900 }); }
+  });
+
   await step("win-back: Copy & next copies the message, marks the fan and moves on", async () => {
     const preview = await page.getByTestId("winback-preview").innerText();
     await page.getByRole("button", { name: "Copy & next" }).click();
