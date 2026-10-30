@@ -5,7 +5,7 @@ import { json } from "./focus.mjs";
 import { closeInstantCard } from "./instant.mjs";
 import { getTheme, putTheme, themePng } from "./theming.mjs";
 import { gameFeatureSettings, setGameFeatures, gameFixture, cleanupGame, openGame, startGame,
-  knownGameClientSeed, playBingoPrize, readyBingoFinal, privateLineReward } from "./games.mjs";
+  knownGameClientSeed, playBingoPrize, readyBingoFinal, privateLineReward, watchDocumentTitle } from "./games.mjs";
 
 const owned = new WeakMap();
 const PHONE = { width: 390, height: 844 };
@@ -14,6 +14,7 @@ async function prepare(page, kind = "scratch") {
   const state = { original: await gameFeatureSettings(page.request), initialTheme: await getTheme(page.request), photoIds: [] };
   owned.set(page, state);
   await setGameFeatures(page.request, { ...state.original, [kind]: true });
+  await watchDocumentTitle(page);
   state.fixture = await gameFixture(page.request, kind, `A11y ${kind}`, 32);
   if (kind === "bingo") { await knownGameClientSeed(page); await privateLineReward(page.request, state.fixture); }
   return state.fixture;

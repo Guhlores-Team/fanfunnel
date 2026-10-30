@@ -208,18 +208,21 @@ export async function probeStorageSecurityRaces(db, psql, psqlAsync) {
     const admin=as(C,`update public.profiles set ${target===D?"role='creator',":''}is_active=false where id='${target}';`,'aal2');
     const pause=account('pause',target);
     const tag=`ff-storage-${target.slice(-2)}-${adminFirst?'admin':'pause'}`;
+    // The barrier is a lock, not a sleep window: the first session renames
+    // itself once its row is held, then keeps the row until it observes the
+    // second session blocked on a lock, and only then commits. A sleep-sized
+    // window (previously 350ms) is missed under load when one psql spawn takes
+    // longer than the window; the only timers left here are hang guards.
+    // pg_stat_activity is frozen per transaction: clear the snapshot each poll.
+    const seen=(name,condition)=>`do $$ begin for i in 1..800 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'${condition}); perform pg_sleep(0.01); end loop; end $$;`;
     let first;
     try {
-      first=psqlAsync(db,`begin; set local statement_timeout='5s'; set local application_name='${tag}'; ${adminFirst?admin:pause} select pg_sleep(0.35); commit;`);
-      let locked=false;
-      for(let i=0;i<100;i++) {
-        const ready=await psqlAsync(db,`select count(*) from pg_stat_activity where application_name='${tag}' and wait_event='PgSleep';`);
-        if(ready.stdout.trim()==='1'){locked=true;break;}
-        await psqlAsync(db,'select pg_sleep(0.01);');
-      }
-      if(!locked){bad.push(`${label}: first transaction never reached its held-row barrier`);await first;continue;}
-      const second=psqlAsync(db,`begin; set local statement_timeout='5s'; ${adminFirst?pause:admin} commit;`);
+      first=psqlAsync(db,`begin; set local statement_timeout='10s'; set local application_name='${tag}-init'; ${adminFirst?admin:pause} set local application_name='${tag}-held'; ${seen(`${tag}-second`," and wait_event_type='Lock'")} commit;`);
+      const ready=await psqlAsync(db,`${seen(`${tag}-held`,'')} select count(*) from pg_stat_activity where application_name='${tag}-held';`);
+      if(ready.stdout.trim()!=='1'){bad.push(`${label}: first transaction never reached its held-row barrier`);await first;continue;}
+      const second=psqlAsync(db,`begin; set local statement_timeout='5s'; set local application_name='${tag}-second'; ${adminFirst?pause:admin} commit;`);
       const results=await Promise.all([first,second]);
+      if(/statement timeout/.test(results[0].stderr)){bad.push(`${label}: second transaction never waited on the held row`);continue;}
       if(results.some(result=>result.status!==0)){bad.push(`${label}: concurrent transaction failed ${results.map(r=>r.stderr).join(' ')}`);continue;}
       const state=psql(db,['-c',`select role||':'||is_active from public.profiles where id='${target}'; select state from public.creator_storage_deletions where owner_id='${target}';`],{allowFail:true});
       if(state.status!==0||!state.stdout.split('\n').includes('creator:false')||!state.stdout.split('\n').includes('paused')) bad.push(`${label}: later admin security intent lost (${state.stdout.trim()})`);

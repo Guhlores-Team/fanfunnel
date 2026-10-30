@@ -7,8 +7,12 @@
 // and needs no external services: perfect for CI.
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+/** localStorage key of a fan link's saved spin request (src/components/fan/spinIntent.ts). */
+export const spinIntentKey = (token) => "ff-spin-intent-v1:" + createHash("sha256").update(token).digest("hex");
 
 /** Synchronous stdout write — survives process.exit() even when stdout is a
  *  pipe (CI), unlike the async console.log buffer. */

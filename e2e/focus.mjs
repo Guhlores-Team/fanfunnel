@@ -92,6 +92,8 @@ async function assertFocusRewardActions(page, assert) {
   try {
     for (const viewport of [{ width: 360, height: 780 }, { width: 390, height: 844 }]) {
       await page.setViewportSize(viewport);
+      // The new size reaches the document on a later frame than the call resolves.
+      await page.waitForFunction(([width, height]) => innerWidth === width && innerHeight === height, [viewport.width, viewport.height]);
       const reveal = page.getByTestId("reward-reveal");
       const awesome = reveal.getByRole("button", { name: "Awesome!", exact: true });
       // Use the real short-phone overflow path: the reveal scrolls, and while
@@ -111,13 +113,29 @@ async function assertFocusRewardActions(page, assert) {
         const label = badge.getBoundingClientRect();
         return { gap: label.top - action.bottom, overlap: Math.min(label.height, action.height) / 2, scrollTop: overlay.scrollTop, maxScroll: overlay.scrollHeight - overlay.clientHeight };
       });
-      let placement = await measure();
-      if (placement.gap >= 0) {
-        const needed = Math.ceil(placement.gap + placement.overlap);
+      const intersects = () => awesome.evaluate(button => {
+        const action = button.getBoundingClientRect();
+        const label = document.querySelector("[data-env-badge]").getBoundingClientRect();
+        return Math.min(action.right, label.right) > Math.max(action.left, label.left) && Math.min(action.bottom, label.bottom) > Math.max(action.top, label.top);
+      });
+      // Arrange from a fresh measurement and verify the result: a layout pass
+      // that lands after the resize (or a late font swap) moves the button
+      // between a single read and the scroll, which once left the rectangles
+      // apart although the geometry itself is stable. The assertions below
+      // still read everything again and are unchanged.
+      let height = viewport.height;
+      for (let attempt = 0; attempt < 5 && !await intersects(); attempt++) {
+        await scrollToBottom();
+        let placement = await measure();
+        if (placement.gap < 0) continue;
+        let needed = Math.ceil(placement.gap + placement.overlap);
         if (placement.maxScroll < needed) {
-          await page.setViewportSize({ width: viewport.width, height: viewport.height - (needed - Math.floor(placement.maxScroll)) });
+          height -= needed - Math.floor(placement.maxScroll);
+          await page.setViewportSize({ width: viewport.width, height });
+          await page.waitForFunction(expected => innerHeight === expected, height);
           await scrollToBottom();
           placement = await measure();
+          needed = Math.ceil(placement.gap + placement.overlap);
         }
         await reveal.evaluate((element, by) => { element.scrollTop -= by; }, needed);
         await settle();
