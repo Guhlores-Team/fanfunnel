@@ -847,6 +847,37 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     );
   });
 
+  await step("boosts: a failed list read is an error with Try again, never an empty list (A15)", async () => {
+    // A separate page (no error sink): the forced 500s are the point of the step.
+    const other = await ctx.newPage();
+    let fail = true;
+    const maybeFail = (route) =>
+      fail && route.request().method() === "GET"
+        ? route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"db_error"}' })
+        : route.continue();
+    try {
+      await other.route("**/api/webhooks", maybeFail);
+      await other.route("**/api/happy-hours", maybeFail);
+      await goto(other, "/dashboard", 1500);
+      await clickTab(other, "Boosts");
+      const hooks = other.getByRole("region", { name: /webhooks/i });
+      const hh = other.getByRole("region", { name: /happy hours/i });
+      await hooks.getByTestId("webhooks-load-error").waitFor({ timeout: 8000 });
+      await hh.getByTestId("happy-hours-load-error").waitFor({ timeout: 8000 });
+      assert((await hh.getByText(/No happy hours yet/).count()) === 0, "a failed happy-hour read never says 'No happy hours yet'");
+      assert(await hooks.getByRole("button", { name: "Add", exact: true }).isDisabled(), "Add webhook is off while the list is unknown");
+      assert(await hh.getByRole("button", { name: "Schedule", exact: true }).isDisabled(), "Schedule is off while the list is unknown");
+      fail = false;
+      await hooks.getByRole("button", { name: "Try again" }).click();
+      await hh.getByRole("button", { name: "Try again" }).click();
+      await hooks.getByTestId("webhooks-load-error").waitFor({ state: "hidden", timeout: 8000 });
+      await hh.getByTestId("happy-hours-load-error").waitFor({ state: "hidden", timeout: 8000 });
+      assert(!(await hh.getByRole("button", { name: "Schedule", exact: true }).isDisabled()), "Try again recovers the happy-hour list");
+    } finally {
+      await other.close().catch(() => {});
+    }
+  });
+
   await step("boosts: read-only link-in-bio card (link, Copy, jump to Settings)", async () => {
     // P43/P44: Boosts shows the public link read-only; editing lives in Settings.
     const card = page.locator("#boosts-link-in-bio").locator("xpath=ancestor::section[1]");
