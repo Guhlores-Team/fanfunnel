@@ -32,7 +32,8 @@ function fakeService() {
         if (table === "fan_passes") return { data: PASS, error: null };
         if (table === "prizes") return { data: { id: "p1", rarity: "common" }, error: null };
         if (table === "profiles") return { data: { chat_intro: "hello", chat_outro: "bye" }, error: null };
-        if (table === "wheels") return { data: single ? { id: "w1", archived_at: null } : [], error: null };
+        // A published, playable wheel (0060/0061 game_kind + game_ready; liveGame.ts).
+        if (table === "wheels") return { data: single ? { id: "w1", archived_at: null, game_kind: "wheel", game_ready: true } : [], error: null };
         return { data: null, error: null, count: 0 };
       };
       const proxy: unknown = new Proxy(

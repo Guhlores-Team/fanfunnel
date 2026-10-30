@@ -23,7 +23,10 @@ function fakeClient() {
         get(_t, prop) {
           if (prop === "then") {
             // Tables this test doesn't seed read as empty.
-            return (res: (v: unknown) => unknown) => Promise.resolve({ data: TABLES[table] ?? [], error: null, count: 0 }).then(res);
+            // listFans reads each table in exact-count id pages (readPages.ts);
+            // the whole seeded table is one complete page.
+            const rows = (TABLES[table] ?? []) as unknown[];
+            return (res: (v: unknown) => unknown) => Promise.resolve({ data: rows, error: null, count: rows.length }).then(res);
           }
           return () => proxy;
         },
@@ -81,26 +84,31 @@ async function main() {
   useSupabase = true;
   {
     const t = (d: number) => new Date(Date.now() - d * DAY).toISOString();
-    const pass = (token: string, over: Record<string, unknown> = {}) => ({
-      token, created_at: t(30), spins_remaining: 0, wheel_id: "w1", wheel: { title: "W" }, campaign: null,
-      is_active: true, self_excluded_at: null, ...over,
-    });
-    const fan = (id: string, cents: number, over: Record<string, unknown> = {}, passes = [pass(`${id}-link`)]) => ({
-      id, display_name: id, handle: null, spins_remaining: 0, spins_granted_total: 3, tags: [], created_at: t(60),
-      blocked_at: null, fan_passes: passes,
-      spins: [{ prize_label: "Shoutout", prize_rarity: "common", created_at: t(1) }],
-      grants: [{ amount_cents: cents, campaign_id: null, campaign: null }],
-      ...over,
-    });
-    TABLES = {
-      fans: [
-        fan("whale-blocked", 90_000, { blocked_at: t(2) }),
-        fan("whale-paused", 80_000, {}, [pass("whale-paused-link", { is_active: false, self_excluded_at: t(3) })]),
-        fan("whale-resting", 70_000, { break_until: new Date(Date.now() + 5 * DAY).toISOString() }),
-        fan("eligible", 500),
-      ],
-      fan_outreach: [],
+    // One row per table, keyed by fan_id, as listFans reads them (ids ascending).
+    const passRows: Record<string, unknown>[] = [];
+    const pass = (fanId: string, token: string, over: Record<string, unknown> = {}) =>
+      passRows.push({
+        id: `p${passRows.length}`, fan_id: fanId, token, created_at: t(30), spins_remaining: 0, wheel_id: "w1",
+        campaign_id: null, wheel: { title: "W" }, campaign: null, is_active: true, self_excluded_at: null, ...over,
+      });
+    const fans: Record<string, unknown>[] = [];
+    const spins: Record<string, unknown>[] = [];
+    const grants: Record<string, unknown>[] = [];
+    const fan = (id: string, cents: number, over: Record<string, unknown> = {}, ownPass = true) => {
+      fans.push({
+        id, display_name: id, handle: null, spins_remaining: 0, spins_granted_total: 3, tags: [], created_at: t(60),
+        blocked_at: null, break_until: null, ...over,
+      });
+      if (ownPass) pass(id, `${id}-link`);
+      spins.push({ id: `s${spins.length}`, fan_id: id, prize_label: "Shoutout", prize_rarity: "common", created_at: t(1) });
+      grants.push({ id: `g${grants.length}`, fan_id: id, amount_cents: cents, campaign_id: null, campaign: null });
     };
+    fan("eligible", 500);
+    fan("whale-blocked", 90_000, { blocked_at: t(2) });
+    fan("whale-paused", 80_000, {}, false);
+    pass("whale-paused", "whale-paused-link", { is_active: false, self_excluded_at: t(3) });
+    fan("whale-resting", 70_000, { break_until: new Date(Date.now() + 5 * DAY).toISOString() });
+    TABLES = { fans, fan_passes: passRows, spins, grants, fan_outreach: [] };
     const crm = await data.getCreatorCrm();
     check("supabase: only the eligible spender is a whale", crm.whales.map((w) => w.fanId).join(",") === "eligible");
 

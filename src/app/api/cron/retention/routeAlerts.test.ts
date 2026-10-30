@@ -17,6 +17,9 @@ const captured: { source: string; message: string; route?: string | null }[] = [
 mock.module("@/lib/monitoring/capture", {
   namedExports: { captureNow: async (e: { source: string; message: string; route?: string | null }) => void captured.push(e) },
 });
+// 0063 operational checks alert through their own fixed messages (runtime.test.ts);
+// keep them healthy here so only the retention route's own alerts are counted.
+mock.module("@/lib/operations/runtime", { namedExports: { runOperationalChecks: async () => ({ ok: true }) } });
 let rpcError: { message: string } | null = null;
 let storageFailed = 0;
 mock.module("@/lib/storage/work", {

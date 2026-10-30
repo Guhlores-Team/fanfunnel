@@ -15,6 +15,8 @@
 //    read or write it; only the service role can.
 //  - creator_redemption_queue / creator_inbox_threads: anon is refused; each
 //    creator sees only its own rows; search and keyset paging work.
+//  - 0062 enrolled MFA: once a creator has a verified factor, an aal1 session
+//    reads no queue, inbox or webhook row and cannot add a hook; aal2 can.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -181,5 +183,19 @@ export function probeGaps(db, psql) {
     ${as(A, "aal1", `select 'a-after-last:' || count(*) from public.creator_inbox_threads(now() - interval '1 hour', '${FA}');`)}`), [
     "a-threads:Ava 100%/reply/creator/2", "b-threads:Bo/b-secret/1", "a-after-last:0",
   ]);
+
+  // --- 0062 enrolled MFA: a verified factor makes aal1 sessions see nothing ---
+  const enrolled = `insert into auth.mfa_factors (user_id, status) values ('${A}', 'verified');`;
+  expect("an enrolled creator's aal1 session reaches no queue, inbox or webhook row; aal2 does", run(`${enrolled}
+    ${as(A, "aal1", `select 'aal1-queue:' || count(*) from public.creator_redemption_queue();`)}
+    ${as(A, "aal1", `select 'aal1-threads:' || count(*) from public.creator_inbox_threads();`)}
+    ${as(A, "aal2", `select 'aal2-queue:' || count(*) from public.creator_redemption_queue();`)}
+    ${as(A, "aal2", `select 'aal2-threads:' || count(*) from public.creator_inbox_threads();`)}
+    ${as(A, "aal2", `with i as (insert into public.webhooks (creator_id, url, event) values ('${A}', 'https://93.184.216.34/mfa', 'all') returning 1) select 'aal2-hook:' || count(*) from i;`)}
+    ${as(A, "aal1", `select 'aal1-hooks:' || count(*) from public.webhooks;`)}`), [
+    "aal1-queue:0", "aal1-threads:0", "aal2-queue:2", "aal2-threads:1", "aal2-hook:1", "aal1-hooks:0",
+  ]);
+  refused("an enrolled creator's aal1 webhook insert", run(`${enrolled}
+    ${as(A, "aal1", `insert into public.webhooks (creator_id, url, event) values ('${A}', 'https://93.184.216.34/mfa', 'all');`)}`), /row-level security/);
   return bad;
 }
