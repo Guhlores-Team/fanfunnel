@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { setCampaignPinnedWheel, renameCampaign, deleteCampaign } from "@/lib/data";
+import { setCampaignPinnedWheel, renameCampaign, setCampaignActive, deleteCampaign } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { campaignPinError } from "@/lib/data/shared";
@@ -7,15 +7,18 @@ import { campaignPinError } from "@/lib/data/shared";
 const statusFor = (e: string) =>
   e === "unauthorized" ? 401 : e === "not_found" ? 404 : 400;
 
-// Rename a campaign and/or pin (or unpin) its default wheel.
+// Rename a campaign, pin (or unpin) its default wheel, and/or archive or
+// reactivate it (isActive). Every write is scoped to the signed-in creator.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
 
-  const body = await parseJsonBody<{ pinnedWheelId?: string | null; name?: string }>(req);
-  if (body === BAD_REQUEST) return badRequest();
+  const body = await parseJsonBody<{ pinnedWheelId?: string | null; name?: string; isActive?: boolean }>(req);
+  if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
+  const hasActive = "isActive" in body;
+  if (hasActive && typeof body.isActive !== "boolean") return badRequest();
 
   // Validate name up front (same rules as before) so a bad value is rejected
   // before any write is attempted.
@@ -45,6 +48,12 @@ export async function PATCH(
         return NextResponse.json(result, { status: statusFor(result.error) });
       }
     }
+    if (hasActive) {
+      const result = await setCampaignActive(id, body.isActive as boolean);
+      if ("error" in result) {
+        return NextResponse.json(result, { status: statusFor(result.error) });
+      }
+    }
     return NextResponse.json({ ok: true });
   }
 
@@ -65,9 +74,10 @@ export async function PATCH(
     if (pinError) return NextResponse.json({ error: pinError }, { status: statusFor(pinError) });
   }
 
-  const patch: { name?: string; pinned_wheel_id?: string | null } = {};
+  const patch: { name?: string; pinned_wheel_id?: string | null; is_active?: boolean } = {};
   if (name !== undefined) patch.name = name;
   if (hasPin) patch.pinned_wheel_id = pinnedWheelId;
+  if (hasActive) patch.is_active = body.isActive as boolean;
 
   // Nothing to change — preserve the original no-op success response.
   if (Object.keys(patch).length === 0) {

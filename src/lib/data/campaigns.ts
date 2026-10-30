@@ -15,6 +15,7 @@ import {
   mockSetCampaignPinnedWheel,
   mockCampaignPinError,
   mockRenameCampaign,
+  mockSetCampaignActive,
   mockDeleteCampaign,
   mockGetUncategorizedStats,
 } from "./mock";
@@ -345,6 +346,34 @@ export async function renameCampaign(
   const { data: updated, error } = await sb
     .from("campaigns")
     .update({ name: trimmed })
+    .eq("id", campaignId)
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  if (!updated) return { error: "not_found" };
+  return { ok: true };
+}
+
+/**
+ * A28: archive (false) or reactivate (true) a campaign. Archiving only takes
+ * it out of the default for new fan links and marks it Archived; links already
+ * in it keep working and keep counting toward its stats.
+ */
+export async function setCampaignActive(
+  campaignId: string,
+  isActive: boolean
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetCampaignActive(campaignId, isActive);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { data: updated, error } = await sb
+    .from("campaigns")
+    .update({ is_active: isActive })
     .eq("id", campaignId)
     .eq("creator_id", user.id)
     .select("id")

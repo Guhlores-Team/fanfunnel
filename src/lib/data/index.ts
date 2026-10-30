@@ -61,6 +61,7 @@ export {
   deleteCampaignPack,
   setCampaignPinnedWheel,
   renameCampaign,
+  setCampaignActive,
   deleteCampaign,
 } from "./campaigns";
 export type { UncategorizedStats } from "./campaigns";

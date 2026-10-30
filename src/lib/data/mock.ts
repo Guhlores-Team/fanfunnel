@@ -2498,6 +2498,17 @@ export function mockRenameCampaign(
   return { ok: true };
 }
 
+/** Archive (false) or reactivate (true) a campaign. Fan links keep working. */
+export function mockSetCampaignActive(
+  campaignId: string,
+  isActive: boolean
+): { ok: true } | { error: string } {
+  const campaign = store.campaigns.find((c) => c.id === campaignId);
+  if (!campaign) return { error: "not_found" };
+  campaign.isActive = isActive;
+  return { ok: true };
+}
+
 export function mockDeleteCampaign(campaignId: string): { ok: true } | { error: string } {
   const before = store.campaigns.length;
   store.campaigns = store.campaigns.filter((c) => c.id !== campaignId);
