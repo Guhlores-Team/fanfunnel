@@ -7,7 +7,8 @@ type Filter = (row: Row) => boolean;
 const OWNER = "10000000-0000-4000-8000-000000000001", OTHER = "20000000-0000-4000-8000-000000000002";
 const FAN = "30000000-0000-4000-8000-000000000003", QUIET = "40000000-0000-4000-8000-000000000004";
 const NOW = Date.now(), HOUR = 3_600_000, DAY = 24 * HOUR;
-const recent = new Date(NOW - HOUR).toISOString(), older = new Date(NOW - 8 * DAY).toISOString();
+// `recent` stays inside today's UTC day: the one-day trend buckets by calendar day.
+const recent = new Date(NOW - Math.min(HOUR, (NOW % DAY) / 2)).toISOString(), older = new Date(NOW - 8 * DAY).toISOString();
 let signedIn = true, rowCap = 1000, failAfterCursorTable: string | null = null;
 let pageHook: ((table: string, after: string | null) => void) | null = null;
 const db: Record<string, Row[]> = {
