@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { setRedemptionStatus, setRedemptionMeta } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import type { RedemptionStatus } from "@/lib/data/types";
-import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 const VALID: RedemptionStatus[] = [
   "pending",
@@ -10,10 +10,6 @@ const VALID: RedemptionStatus[] = [
   "fulfilled",
   "cancelled",
 ];
-
-function mapError(error: string) {
-  return error === "unauthorized" ? 401 : error === "not_found" ? 404 : 400;
-}
 
 // Patch a won prize: change its status and/or its notes / due date.
 export async function PATCH(
@@ -61,7 +57,7 @@ export async function PATCH(
     if (body.status !== undefined) {
       const result = await setRedemptionStatus(id, body.status);
       if ("error" in result) {
-        return NextResponse.json(result, { status: mapError(result.error) });
+        return errorResponse(result.error);
       }
     }
 
@@ -71,7 +67,7 @@ export async function PATCH(
       if ("dueAt" in body) patch.dueAt = body.dueAt ?? null;
       const result = await setRedemptionMeta(id, patch);
       if ("error" in result) {
-        return NextResponse.json(result, { status: mapError(result.error) });
+        return errorResponse(result.error);
       }
     }
 
@@ -114,6 +110,11 @@ export async function PATCH(
     .select("id")
     .maybeSingle();
   if (error) {
+    // The instant-reward trigger refuses reopening or re-dating a win that was
+    // already delivered; say so (409) so the queue can explain the rollback.
+    if (error.code === "23514" && /already delivered/.test(error.message ?? "")) {
+      return errorResponse("already_delivered");
+    }
     return NextResponse.json({ error: "db_error" }, { status: 400 });
   }
   if (!updated) {

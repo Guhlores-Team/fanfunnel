@@ -571,6 +571,31 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     assert(before !== after, "the fulfilment queue changed after advancing a status");
   });
 
+  await step("redemptions: a refused status change rolls back and says why (A14)", async () => {
+    // A separate page (no error sink): the forced 409 is the point of the step.
+    const other = await ctx.newPage();
+    try {
+      await other.route("**/api/redemptions/*", (route) =>
+        route.request().method() === "PATCH"
+          ? route.fulfill({ status: 409, contentType: "application/json", body: '{"error":"already_delivered"}' })
+          : route.continue(),
+      );
+      await goto(other, "/dashboard", 1800);
+      await clickTab(other, "Fulfilment");
+      await other.getByRole("group", { name: "Filter by status" }).getByRole("button", { name: /^In progress/ }).click();
+      const action = other.getByRole("button", { name: /^Mark fulfilled: / }).first();
+      await action.waitFor({ timeout: 8000 });
+      const label = await action.getAttribute("aria-label");
+      await action.click();
+      await other.getByText(/delivered to the fan instantly/).first().waitFor({ timeout: 8000 });
+      // The optimistic "Fulfilled" is undone: the same row still offers Mark fulfilled.
+      await other.getByRole("button", { name: label, exact: true }).waitFor({ timeout: 8000 });
+      assert(await other.getByRole("button", { name: label, exact: true }).count(), "the row rolled back to In progress");
+    } finally {
+      await other.close().catch(() => {});
+    }
+  });
+
   await step("redemptions: note, due date and Cancel prize sit on the row; cancel asks first", async () => {
     // The row just moved to In progress; show that filter.
     await page.getByRole("group", { name: "Filter by status" }).getByRole("button", { name: /^In progress/ }).click();
