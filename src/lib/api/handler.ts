@@ -43,7 +43,7 @@ export function badRequest(code = "bad_request"): NextResponse {
  *  - `unauthorized`            → 401 (not signed in / no capability)
  *  - `forbidden`, `blocked`,
  *    `needs_ack`, `locked`,
- *    `not_allowed`,
+ *    `not_allowed`, `on_break`,
  *    `not_configured`          → 403 (allowed-in-principle but gated)
  *  - `not_found`               → 404
  *  - `has_history`, `conflict` → 409
@@ -54,15 +54,23 @@ export function statusForError(code: string): number {
   switch (code) {
     case "unauthorized":
       return 401;
+    case "feature_disabled":
     case "forbidden":
     case "blocked":
     case "needs_ack":
     case "locked":
     case "not_allowed":
     case "not_configured":
+    case "on_break":
       return 403;
     case "not_found":
       return 404;
+    case "game_kind_locked":
+    case "game_in_use":
+    case "game_not_ready":
+    case "bingo_active_card":
+    case "stock_changed":
+    case "already_delivered":
     case "has_history":
     case "conflict":
       return 409;

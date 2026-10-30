@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isUuid } from "@/lib/data/shared";
 import { createPass } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
@@ -13,9 +14,16 @@ export async function POST(req: Request) {
     campaignId?: string;
     amountDollars?: number;
     packId?: string;
+    packUnits?: number;
     bonusSpins?: number;
+    requestId?: string;
   }>(req);
-  if (body === BAD_REQUEST) return badRequest();
+  if (body === BAD_REQUEST || body === null || typeof body !== "object" || Array.isArray(body)) return badRequest();
+
+  if (body.requestId === undefined) return badRequest("upgrade_required");
+  if (typeof body.requestId !== "string" || !isUuid(body.requestId) || body.requestId !== body.requestId.toLowerCase()) return badRequest();
+
+  if (body.packUnits !== undefined && (!Number.isInteger(body.packUnits) || body.packUnits < 1 || body.packUnits > 1_000_000)) return badRequest();
 
   const spins = Number(body.spins ?? 0);
   if (!Number.isInteger(spins) || spins < 0 || spins > 1_000_000) {
@@ -43,7 +51,9 @@ export async function POST(req: Request) {
     campaignId: body.campaignId,
     amountCents: Math.round(amountDollars * 100),
     packId: body.packId,
+    packUnits: body.packUnits,
     bonusSpins,
+    requestId: body.requestId,
   });
 
   if ("error" in result) return errorResponse(result.error);

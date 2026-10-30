@@ -1,33 +1,63 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { WheelSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
+import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
+import NewGameDialog from "./NewGameDialog";
+import { canCreateGame, GAME_LABEL, gameRefusalMessage, type GameFeatures } from "./gameEditor";
+import type { GameKind } from "@/lib/games/core/gameProof";
+import { MIN_WHEEL_PRIZES } from "@/lib/games/wheel/validate";
+import Modal from "@/components/ui/Modal";
+import { formatWhen, isPlayableGame, scheduleTakeover } from "@/lib/games/liveGame";
+import { KindBadge, GameName } from "./GameChoice";
+import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
+
+type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
 
 /**
  * Header control for the wheel editor. Self-fetches the creator's wheels and
- * offers per-wheel management (edit, set active, duplicate, archive) plus an
- * inline schedule editor for the currently-selected wheel. Owns its own list
- * state and refetches after every mutation so the surrounding editor only has
- * to react to `onChanged`.
+ * draws them as chips (Command Center). "Set active" (the everyday action) sits
+ * on every eligible chip; the rare actions (duplicate, archive/restore, delete
+ * forever) live in each chip's "Manage" menu. The schedule card for the
+ * selected wheel is always shown under the chips, as it was before the
+ * redesign. Owns its own list state and refetches after every mutation so the
+ * surrounding editor only has to react to `onChanged`.
  *
  * Props:
  *   currentWheelId  the wheel the editor is presently editing (highlighted)
- *   onEdit(id)      open a wheel in the editor
+ *   onEdit(id)      open a wheel in the editor; resolves true once it is open
  *   onChanged?()    fired after any mutation that may affect editor state
+ *   onOpenCampaigns?()  jump to Campaigns (to change which game a campaign plays)
  */
 export default function WheelSwitcher({
   currentWheelId,
   onEdit,
   onChanged,
+  features,
+  savedGame,
+  onOpenCampaigns,
 }: {
   currentWheelId: string | null;
-  onEdit: (id: string) => void;
+  onEdit: (id: string) => boolean | void | Promise<boolean | void>;
   onChanged?: () => void;
+  features: GameFeatures | null;
+  savedGame?: { id: string; title: string; prizeCount: number; gameKind?: GameKind; gameReady?: boolean };
+  onOpenCampaigns?: () => void;
 }) {
   const toast = useToast();
-  const [wheels, setWheels] = useState<WheelSummary[] | null>(null);
+  const [wheels, setWheels] = useState<GameSummary[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newError, setNewError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [campaigns, setCampaigns] = useState<ChoiceCampaign[] | null>(null);
+  // A schedule that would take over the live game waits here for the creator's OK.
+  const [takeover, setTakeover] = useState<{ body: { activeFrom: string | null; activeUntil: string | null }; replaces: GameSummary; startsNow: boolean; at: Date } | null>(null);
+  const takeoverKeepRef = useRef<HTMLButtonElement>(null);
+  const [now, setNow] = useState(() => new Date());
+  const leave = useCreatorLeave();
   // Two-step archive confirm, keyed by wheel id (mirrors the delete-fan pattern).
   const [confirmArchive, setConfirmArchive] = useState<string | null>(null);
   // Two-step permanent-delete confirm, keyed by wheel id.
@@ -35,48 +65,135 @@ export default function WheelSwitcher({
   // Local edits to the selected wheel's schedule inputs.
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
+  // Which chip's "Manage" menu is open.
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuAnchorRef = useRef<HTMLButtonElement | null>(null);
 
   const load = useCallback(async () => {
     // Include archived wheels so they're visible (and restorable), not hidden.
     const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
     if (res.ok) {
-      const data = (await res.json()) as { wheels?: WheelSummary[] };
-      setWheels(data.wheels ?? []);
+      const data = (await res.json()) as { wheels?: GameSummary[] };
+      const list = data.wheels ?? [];
+      setWheels(list);
+      setNow(new Date());
+      setLoadError("");
+      return list;
     } else {
-      setWheels([]);
+      throw new Error("games_unavailable");
     }
+  }, []);
+  // Campaigns only feed "Used by campaigns"; the switcher works without them.
+  const loadCampaigns = useCallback(async () => {
+    const res = await fetch("/api/campaigns", { cache: "no-store" }).catch(() => null);
+    if (!res?.ok) return;
+    const data = (await res.json().catch(() => null)) as { campaigns?: ChoiceCampaign[] } | null;
+    setCampaigns(data?.campaigns ?? []);
   }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load();
-  }, [load]);
+    void load().catch(() => setLoadError("Saved games couldn't load. Check again before creating or changing a game."));
+    void loadCampaigns();
+  }, [load, loadCampaigns]);
+  // Keep "Live for fans now" honest when a schedule opens or closes while the
+  // page stays open.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Sync the schedule inputs whenever the selected wheel (or list) changes.
-  const selected = wheels?.find((w) => w.id === currentWheelId) ?? null;
+  // Reflect a confirmed editor save without refetching/replacing a schedule
+  // the creator is still typing in this component.
+  const visibleWheels = useMemo(() => wheels?.map((game) => game.id === savedGame?.id ? { ...game, title: savedGame.title, prizeCount: savedGame.prizeCount, ...(savedGame.gameKind ? { gameKind: savedGame.gameKind } : {}), ...(typeof savedGame.gameReady === "boolean" ? { gameReady: savedGame.gameReady } : {}) } : game) ?? null, [wheels, savedGame]);
+  const selected = visibleWheels?.find((w) => w.id === currentWheelId) ?? null;
+  const live = useMemo(() => (visibleWheels ? liveExplanation(visibleWheels, now) : null), [visibleWheels, now]);
+  // Campaigns whose chosen game is actually served (an archived or draft choice falls back to the live game).
+  const pinnedCount = useMemo(() => (campaigns ?? []).filter((c) => c.pinnedWheelId && visibleWheels?.some((w) => w.id === c.pinnedWheelId && isPlayableGame(w))).length, [campaigns, visibleWheels]);
+  const selectedCampaigns = selected && campaigns ? campaignsUsing(selected.id, campaigns) : [];
+  const scheduleDirty = from !== toLocalInput(selected?.activeFrom ?? null) || until !== toLocalInput(selected?.activeUntil ?? null);
+  useCreatorDraft("game-management", "this game schedule", scheduleDirty, busy);
+  function openGame(id: string) {
+    leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void onEdit(id); }, { scope: "game-management", consequence: "Switching games discards the unsaved schedule. It does not undo a request already sent." });
+  }
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror selection into editable inputs
     setFrom(toLocalInput(selected?.activeFrom ?? null));
     setUntil(toLocalInput(selected?.activeUntil ?? null));
   }, [selected?.id, selected?.activeFrom, selected?.activeUntil]);
 
-  async function createWheel() {
+  // Menu: close on Escape / outside click, and hand focus back to its trigger.
+  useEffect(() => {
+    if (!menuFor) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (menuRef.current?.contains(t) || menuAnchorRef.current?.contains(t)) return;
+      closeMenu(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu(true);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    // Move focus into the menu so keyboard users land on the first action.
+    menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuFor]);
+
+  function closeMenu(restoreFocus: boolean) {
+    setMenuFor(null);
+    setConfirmArchive(null);
+    setConfirmDelete(null);
+    if (restoreFocus) menuAnchorRef.current?.focus();
+  }
+
+  function onMenuKey(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']:not(:disabled)") ?? [],
+    );
+    if (items.length === 0) return;
+    e.preventDefault();
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? items.length - 1
+          : e.key === "ArrowDown"
+            ? (i + 1) % items.length
+            : (i - 1 + items.length) % items.length;
+    items[next].focus();
+  }
+
+  async function createWheel(gameKind: GameKind, name: string) {
+    if (busy || !canCreateGame(gameKind, features)) return;
     setBusy(true);
+    setNewError("");
     try {
       const res = await fetch("/api/wheels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ gameKind, gameConfig: gameKind === "wheel" ? {} : gameKind === "scratch" ? { style: "classic" } : { size: 3, linePrizeId: null }, ...(name.trim() ? { name: name.trim() } : {}) }),
       });
       const data = (await res.json()) as { wheel?: { id: string }; error?: string };
       if (!res.ok || !data.wheel) {
-        toast("Couldn't create wheel. Try again.", { tone: "error" });
+        setNewError(gameRefusalMessage(data.error) ?? "Couldn't confirm game creation. Check the game list before retrying.");
         return;
       }
-      toast("Wheel created", { tone: "success" });
+      toast(gameKind === "bingo" ? "Inactive bingo draft created" : "Game created", { tone: "success" });
+      setNewOpen(false);
       await load();
-      onEdit(data.wheel.id);
+      await onEdit(data.wheel.id);
       onChanged?.();
+    } catch {
+      setNewError("The result couldn't be confirmed. Close this form and check the game list before creating another.");
+      await load().catch(() => {});
     } finally {
       setBusy(false);
     }
@@ -91,24 +208,35 @@ export default function WheelSwitcher({
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        toast("Couldn't update wheel. Try again.", { tone: "error" });
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        toast(gameRefusalMessage(data?.error) ?? "Couldn't update this game. Your settings are still here.", { tone: "error" });
         return false;
       }
       toast(okMsg, { tone: "success" });
-      await load();
+      const list = await load();
       onChanged?.();
+      // Setting a game active doesn't beat an open schedule: say so plainly.
+      if (body.isActive === true && list) {
+        const nowLive = liveExplanation(list, new Date());
+        if (nowLive && nowLive.game.id !== id && nowLive.reason.kind === "scheduled") {
+          toast(`${nowLive.game.title} is still live for fans because ${nowLive.because}. Clear its schedule to switch now.`, { tone: "info" });
+        }
+      }
       return true;
+    } catch {
+      toast("The game update couldn't be confirmed. Your settings are still here; check its saved state before retrying.", { tone: "error" });
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   async function setActive(id: string) {
-    await patchWheel(id, { isActive: true }, "Wheel set active");
+    await patchWheel(id, { isActive: true }, "Game set active");
   }
 
   async function restore(id: string) {
-    await patchWheel(id, { archived: false }, "Wheel restored");
+    await patchWheel(id, { archived: false }, "Game restored");
   }
 
   async function duplicate(id: string) {
@@ -117,13 +245,15 @@ export default function WheelSwitcher({
       const res = await fetch(`/api/wheels/${id}/duplicate`, { method: "POST" });
       const data = (await res.json()) as { wheel?: { id: string }; error?: string };
       if (!res.ok) {
-        toast("Couldn't duplicate wheel. Try again.", { tone: "error" });
+        toast(gameRefusalMessage(data.error) ?? "Couldn't duplicate this game. Check its enabled feature and try again.", { tone: "error" });
         return;
       }
-      toast("Wheel duplicated", { tone: "success" });
+      toast("Game duplicated", { tone: "success" });
       await load();
-      if (data.wheel?.id) onEdit(data.wheel.id);
+      if (data.wheel?.id) await onEdit(data.wheel.id);
       onChanged?.();
+    } catch {
+      toast("The duplicate couldn't be confirmed. Check the game list before creating another.", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -134,13 +264,16 @@ export default function WheelSwitcher({
     try {
       const res = await fetch(`/api/wheels/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        toast("Couldn't archive wheel. Try again.", { tone: "error" });
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        toast(gameRefusalMessage(data?.error) ?? "Couldn't archive this game. Its active progress has been kept.", { tone: "error" });
         return;
       }
-      toast("Wheel archived", { tone: "success" });
+      toast("Game archived", { tone: "success" });
       setConfirmArchive(null);
       await load();
       onChanged?.();
+    } catch {
+      toast("The archive result couldn't be confirmed. The game list can be checked again before retrying.", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -151,20 +284,23 @@ export default function WheelSwitcher({
     try {
       const res = await fetch(`/api/wheels/${id}?hard=1`, { method: "DELETE" });
       if (res.status === 409) {
-        toast("This wheel has spins — archive it instead to keep your history.", {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        toast(gameRefusalMessage(data?.error) ?? "This game has plays — keep its history and active progress. Archive only when the server allows it.", {
           tone: "error",
         });
         setConfirmDelete(null);
         return;
       }
       if (!res.ok) {
-        toast("Couldn't delete wheel. Try again.", { tone: "error" });
+        toast("Couldn't delete this game. Try again.", { tone: "error" });
         return;
       }
-      toast("Wheel deleted", { tone: "success" });
+      toast("Game deleted", { tone: "success" });
       setConfirmDelete(null);
       await load();
       onChanged?.();
+    } catch {
+      toast("The delete result couldn't be confirmed. Check the game list before retrying.", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -180,14 +316,23 @@ export default function WheelSwitcher({
       toast("Enter a complete date and time.", { tone: "error" });
       return;
     }
-    await patchWheel(
-      selected.id,
-      {
-        activeFrom: fromDate ? fromDate.toISOString() : null,
-        activeUntil: untilDate ? untilDate.toISOString() : null,
-      },
-      "Schedule updated",
-    );
+    const body = {
+      activeFrom: fromDate ? fromDate.toISOString() : null,
+      activeUntil: untilDate ? untilDate.toISOString() : null,
+    };
+    const change = visibleWheels ? scheduleTakeover(visibleWheels, selected.id, body, new Date()) : null;
+    if (change) {
+      setTakeover({ body, replaces: change.replaces, startsNow: change.startsNow, at: change.at });
+      return;
+    }
+    await patchWheel(selected.id, body, "Schedule updated");
+  }
+
+  async function confirmTakeover() {
+    if (!selected || !takeover) return;
+    const body = takeover.body;
+    setTakeover(null);
+    await patchWheel(selected.id, body, "Schedule updated");
   }
 
   async function clearSchedule() {
@@ -197,174 +342,329 @@ export default function WheelSwitcher({
     await patchWheel(selected.id, { activeFrom: null, activeUntil: null }, "Set to always on");
   }
 
+  const menuItem =
+    "flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[13px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none disabled:opacity-50";
+
   return (
-    <section className="card rounded-xl p-4" aria-label="Wheel switcher">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-bold text-ink">Wheels</h3>
-        <button
-          type="button"
-          onClick={createWheel}
-          disabled={busy}
-          className="btn-brand rounded-lg px-3 py-1.5 text-sm font-bold disabled:opacity-50"
+    <section aria-label="Game switcher">
+      {loadError && <p role="alert" className="mb-2 text-xs text-amber-200">{loadError} <button type="button" className="font-semibold underline" disabled={busy} onClick={() => void load().catch(() => setLoadError("Saved games still couldn't load."))}>Check games again</button></p>}
+      {newOpen && <NewGameDialog features={features} busy={busy} error={newError} onClose={() => { setNewOpen(false); setNewError(""); }} onCreate={(kind, name) => leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void createWheel(kind, name); }, { scope: "game-management", consequence: "Creating a game discards this unsaved schedule. Existing game prize edits are kept until you choose whether to open the new game." })} />}
+      {takeover && selected && (
+        <Modal
+          onClose={() => setTakeover(null)}
+          labelledBy="schedule-takeover-title"
+          initialFocus={takeoverKeepRef}
+          className="w-full max-w-sm rounded-2xl border border-[var(--hair)] p-6 text-ink shadow-[var(--lift)] [background:var(--s1)]"
         >
-          ＋ New wheel
-        </button>
-      </div>
-      <p className="mt-1 text-xs text-muted">
-        One wheel is <strong>active</strong> (the one fans spin) at a time — set another active to
-        swap. <strong>Archive</strong> takes a wheel out of rotation but keeps its history (you can
-        Restore it). Wheels with no spins can be deleted outright.
-      </p>
-
-      {wheels === null ? (
-        <div className="mt-4 space-y-2">
-          {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="skeleton h-16 rounded-lg" />
-          ))}
-        </div>
-      ) : wheels.length === 0 ? (
-        <p className="mt-4 text-sm text-muted">No wheels yet. Create one to get started.</p>
-      ) : (
-        <ul className="mt-4 space-y-2">
-          {wheels.map((w) => {
-            const current = w.id === currentWheelId;
-            return (
-              <li
-                key={w.id}
-                className={`rounded-lg border bg-base/40 p-3 ${
-                  current ? "border-[var(--brand)]" : "border-line"
-                }`}
+          <div data-testid="schedule-takeover">
+            <h2 id="schedule-takeover-title" className="flex items-center gap-[9px] text-lg font-bold tracking-[-0.01em]">
+              <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[#f59e0b]" />
+              Replace {takeover.replaces.title} for fans?
+            </h2>
+            <p className="mt-2 text-[13.5px] text-muted text-pretty">
+              {takeover.startsNow ? "Starting now" : `Starting ${formatWhen(takeover.at)}`}
+              {takeover.body.activeUntil ? ` until ${formatWhen(takeover.body.activeUntil)}` : " with no end date"}, fans
+              on every link whose campaign hasn&rsquo;t chosen its own game will get{" "}
+              <strong className="text-ink">{selected.title}</strong> ({KIND_LABEL(selected.gameKind)}) instead of{" "}
+              <strong className="text-ink">{takeover.replaces.title}</strong> ({KIND_LABEL(takeover.replaces.gameKind)}).
+            </p>
+            <p className="mt-2 text-[12.5px] text-muted text-pretty">Campaigns that chose a game keep playing it.</p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                ref={takeoverKeepRef}
+                type="button"
+                onClick={() => setTakeover(null)}
+                className="flex-1 rounded-[10px] border border-line px-3 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 truncate font-semibold text-ink">{w.title}</span>
-                      {w.isActive && (
-                        <span className="shrink-0 rounded-full bg-[var(--brand)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                          Active
-                        </span>
-                      )}
-                      {w.archivedAt && (
-                        <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                          Archived
-                        </span>
-                      )}
-                    </div>
-                    <p className="tnum mt-0.5 text-xs text-muted">
-                      {w.prizeCount} {w.prizeCount === 1 ? "prize" : "prizes"} ·{" "}
-                      {scheduleHint(w.activeFrom, w.activeUntil, w.isActive)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2">
+                Don&rsquo;t schedule
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmTakeover()}
+                className="btn-brand flex-1 rounded-[10px] px-3 py-2.5 text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              >
+                Yes, schedule it
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {live && (
+        <div
+          data-testid="live-game"
+          data-live-game-id={live.game.id}
+          aria-live="polite"
+          className="mb-3 rounded-xl border border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] bg-[color-mix(in_oklab,var(--brand)_8%,transparent)] px-3.5 py-2.5 text-[13px] text-muted"
+        >
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <span className="font-semibold text-ink">Live for fans now:</span>
+            <GameName game={live.game} />
+            <span>because {live.because}.</span>
+          </p>
+          <p className="mt-1 text-[12px] text-pretty">
+            {live.overriddenActive
+              ? `Your active game, ${live.overriddenActive.title}, comes back when this schedule ends. `
+              : ""}
+            {pinnedCount > 0
+              ? `Links in ${pinnedCount === 1 ? "1 campaign that has" : `${pinnedCount} campaigns that have`} chosen a game play that game instead.`
+              : "Every fan link plays this game unless its campaign chooses one."}
+          </p>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {visibleWheels === null
+          ? Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="skeleton h-[34px] w-32 rounded-full" />
+            ))
+          : visibleWheels.map((w) => {
+              const current = w.id === currentWheelId;
+              const open = menuFor === w.id;
+              const hint = `${w.prizeCount} ${w.prizeCount === 1 ? "prize" : "prizes"} · ${scheduleHint(
+                w.activeFrom,
+                w.activeUntil,
+                w.isActive,
+              )}`;
+              return (
+                <div
+                  key={w.id}
+                  className={`relative inline-flex min-h-[34px] items-center rounded-full border pl-3.5 pr-1 text-[13px] font-semibold transition-colors duration-150 ${
+                    current
+                      ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-ink"
+                      : "border-[var(--hair)] text-muted hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] hover:text-ink"
+                  }`}
+                >
                   <button
                     type="button"
-                    onClick={() => onEdit(w.id)}
-                    className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5"
+                    onClick={() => openGame(w.id)}
+                    disabled={busy}
+                    aria-current={current ? "true" : undefined}
+                    title={hint}
+                    className="flex min-h-[32px] max-w-[300px] items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
-                    Edit
+                    <span
+                      aria-hidden="true"
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: w.brandColor }}
+                    />
+                    <span className="truncate">{w.title}</span>
+                    <KindBadge kind={w.gameKind} />
+                    {live?.game.id === w.id && (
+                      <span className="shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-ink">
+                        Live
+                      </span>
+                    )}
+                    {w.gameReady === false && <span className="shrink-0 rounded-full border border-amber-300/30 px-1.5 py-px text-[9.5px] font-semibold">Draft</span>}
+                    {w.isActive && (
+                      <span className="shrink-0 rounded-full bg-[var(--brand)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-[var(--brand-ink)]">
+                        Active
+                      </span>
+                    )}
+                    {w.archivedAt && (
+                      <span className="shrink-0 rounded-full border border-[var(--hair)] px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wide text-muted">
+                        Archived
+                      </span>
+                    )}
+                    <span className="sr-only">{`, ${hint}`}</span>
                   </button>
-                  {!w.isActive && !w.archivedAt && (
+                  {/* The one everyday wheel action stays visible (not in the menu). */}
+                  {!w.isActive && !w.archivedAt && w.gameReady !== false && (
                     <button
                       type="button"
                       onClick={() => setActive(w.id)}
-                      disabled={busy}
-                      className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5 disabled:opacity-50"
+                      disabled={busy || w.prizeCount < MIN_WHEEL_PRIZES || !canCreateGame(w.gameKind ?? "wheel", features)}
+                      title={w.prizeCount < MIN_WHEEL_PRIZES ? `Save at least ${MIN_WHEEL_PRIZES} prizes before activating this game.` : !canCreateGame(w.gameKind ?? "wheel", features) ? "Ask your admin to enable this game type before activating it." : undefined}
+                      aria-label={`Set ${w.title} active`}
+                      className="ml-1.5 shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-2 py-px text-[10.5px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
                     >
                       Set active
                     </button>
                   )}
-                  {w.archivedAt && (
-                    <button
-                      type="button"
-                      onClick={() => restore(w.id)}
-                      disabled={busy}
-                      className="rounded-lg border border-[var(--brand)]/50 px-2.5 py-1 text-xs font-semibold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] disabled:opacity-50"
-                    >
-                      Restore
-                    </button>
-                  )}
                   <button
                     type="button"
-                    onClick={() => duplicate(w.id)}
-                    disabled={busy}
-                    className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition hover:bg-white/5 disabled:opacity-50"
+                    onClick={(e) => {
+                      if (open) {
+                        closeMenu(false);
+                      } else {
+                        menuAnchorRef.current = e.currentTarget;
+                        setConfirmArchive(null);
+                        setConfirmDelete(null);
+                        setMenuFor(w.id);
+                      }
+                    }}
+                    aria-haspopup="menu"
+                    aria-expanded={open}
+                    aria-label={`Manage ${w.title}`}
+                    title="Manage game"
+                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
-                    Duplicate
+                    <Icon d="M5 12h.01M12 12h.01M19 12h.01" size={15} />
                   </button>
-                  {!w.archivedAt &&
-                    (confirmArchive === w.id ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => archive(w.id)}
-                          disabled={busy}
-                          className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
-                        >
-                          Confirm archive
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmArchive(null)}
-                          className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmArchive(w.id)}
-                        className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
-                      >
-                        Archive
-                      </button>
-                    ))}
-                  {confirmDelete === w.id ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => hardDelete(w.id)}
-                        disabled={busy}
-                        className="rounded-lg border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#ef4444] transition hover:bg-[#ef4444]/10 disabled:opacity-50"
-                      >
-                        Delete forever
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDelete(null)}
-                        className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-ink"
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDelete(w.id)}
-                      className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted transition hover:text-[#ef4444]"
+
+                  {open && (
+                    <div
+                      ref={menuRef}
+                      role="menu"
+                      aria-label={`Manage ${w.title}`}
+                      onKeyDown={onMenuKey}
+                      className="absolute left-0 top-[calc(100%+6px)] z-30 w-64 rounded-xl border border-[var(--hair)] p-1.5 shadow-[var(--lift)] [background:var(--s1)]"
                     >
-                      Delete
-                    </button>
+                      <div className="px-2.5 pb-2 pt-1.5">
+                        <p className="truncate text-[13px] font-bold text-ink">{w.title}</p>
+                        <p className="tnum mt-0.5 text-[11.5px] text-muted">{hint}</p>
+                      </div>
+                      {!current && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            openGame(w.id);
+                            closeMenu(true);
+                          }}
+                          className={menuItem}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          closeMenu(true);
+                          leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void duplicate(w.id); }, { scope: "game-management", consequence: "Opening a duplicate discards the unsaved schedule. Existing game prize edits stay until you choose whether to open it." });
+                        }}
+                        disabled={busy || !canCreateGame(w.gameKind ?? "wheel", features)}
+                        title={!canCreateGame(w.gameKind ?? "wheel", features) ? "Ask your admin to enable this game type before duplicating it." : undefined}
+                        className={menuItem}
+                      >
+                        Duplicate
+                      </button>
+                      {w.archivedAt ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={async () => {
+                            closeMenu(true);
+                            await restore(w.id);
+                          }}
+                          disabled={busy}
+                          className={`${menuItem} text-brand`}
+                        >
+                          Restore
+                        </button>
+                      ) : confirmArchive === w.id ? (
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={async () => {
+                              await archive(w.id);
+                              closeMenu(true);
+                            }}
+                            disabled={busy}
+                            className={`${menuItem} text-[#fca5a5]`}
+                          >
+                            Confirm archive
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => setConfirmArchive(null)}
+                            className={`${menuItem} w-auto text-muted`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => setConfirmArchive(w.id)}
+                          className={menuItem}
+                        >
+                          Archive
+                        </button>
+                      )}
+                      {confirmDelete === w.id ? (
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={async () => {
+                              await hardDelete(w.id);
+                              closeMenu(true);
+                            }}
+                            disabled={busy}
+                            className={`${menuItem} text-[#fca5a5]`}
+                          >
+                            Delete forever
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => setConfirmDelete(null)}
+                            className={`${menuItem} w-auto text-muted`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => setConfirmDelete(w.id)}
+                          className={`${menuItem} text-muted hover:text-[#fca5a5]`}
+                        >
+                          Delete…
+                        </button>
+                      )}
+                      <p className="mt-1 border-t border-[var(--hair)] px-2.5 pb-1 pt-2 text-[11px] leading-snug text-muted">
+                        One game is <strong>active</strong> at a time, except scheduled or campaign-pinned games.{" "}
+                        <strong>Archive</strong> keeps its history (you can Restore). Games with
+                        credited plays or owed bingo progress cannot be deleted.
+                      </p>
+                    </div>
                   )}
                 </div>
-              </li>
-            );
-          })}
-        </ul>
+              );
+            })}
+        <button
+          type="button"
+          onClick={() => { setNewError(""); setNewOpen(true); }}
+          disabled={busy}
+          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-dashed border-[var(--hair)] px-3.5 text-[13px] font-semibold text-muted transition-colors duration-150 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
+        >
+          <Icon d="M12 5v14M5 12h14" size={14} strokeWidth={2.2} />
+          New game
+        </button>
+      </div>
+      {wheels !== null && wheels.length === 0 && (
+        <p className="mt-2 text-sm text-muted">No games yet. Create one to get started.</p>
       )}
 
-      {/* Schedule editor for the selected wheel. */}
+      {/* Schedule for the selected wheel: always visible, so a time-boxed wheel
+          is obvious at a glance (prior design). */}
       {selected && (
-        <div className="mt-4 rounded-lg border border-line bg-base/40 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold text-ink">Schedule</h4>
-            <span className="min-w-0 truncate text-xs text-muted">{selected.title}</span>
+        <section
+          aria-label={`Schedule for ${selected.title}`}
+          className="mt-3 rounded-xl border border-[var(--hair)] p-3.5 [background:var(--s2)]"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="flex min-w-0 items-center gap-2 text-sm font-bold text-ink">
+              <span aria-hidden="true" className="h-3.5 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+              Schedule
+              <span className="min-w-0 truncate text-xs font-medium text-muted">{selected.title}</span>
+            </h4>
+            <span className="tnum text-xs text-muted">
+              {scheduleHint(selected.activeFrom, selected.activeUntil, selected.isActive)}
+            </span>
           </div>
+          {selected.gameReady === false && <p className="mt-2 text-xs text-amber-200">Finish and save this draft before activating it or setting a schedule.</p>}
+          <p id="schedule-effect" className="mt-2 text-[12px] text-muted text-pretty">
+            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link whose campaign hasn&rsquo;t chosen its own game. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game.
+          </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex min-w-0 flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
                 Active from
               </span>
               <input
@@ -373,10 +673,12 @@ export default function WheelSwitcher({
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
                 aria-label="Active from"
+                aria-describedby="schedule-effect"
+                disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
-            <label className="flex min-w-0 flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
                 Active until
               </span>
               <input
@@ -385,6 +687,8 @@ export default function WheelSwitcher({
                 value={until}
                 onChange={(e) => setUntil(e.target.value)}
                 aria-label="Active until"
+                aria-describedby="schedule-effect"
+                disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
           </div>
@@ -392,23 +696,66 @@ export default function WheelSwitcher({
             <button
               type="button"
               onClick={saveSchedule}
-              disabled={busy}
-              className="btn-brand rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
+              disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
+              className="btn-brand min-h-9 rounded-[9px] px-3.5 text-xs font-bold disabled:opacity-50"
             >
               Save schedule
             </button>
             <button
               type="button"
               onClick={clearSchedule}
-              disabled={busy || (!from && !until)}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5 disabled:opacity-50"
+              disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features) || (!from && !until)}
+              className="min-h-9 rounded-[9px] border border-[var(--hair)] px-3.5 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] disabled:opacity-50"
             >
               Always on
             </button>
           </div>
-        </div>
+          <div data-testid="game-used-by" className="mt-3 border-t border-[var(--hair)] pt-3 text-[12.5px] text-muted">
+            {campaigns === null ? (
+              <p>Checking which campaigns play this game…</p>
+            ) : selectedCampaigns.length > 0 ? (
+              <p className="text-pretty">
+                <span className="font-semibold text-ink">Used by campaigns:</span>{" "}
+                {selectedCampaigns.map((c) => c.name).join(", ")}. Their links always play this game.
+              </p>
+            ) : (
+              <p className="text-pretty">No campaign has chosen this game. Its links follow your live game.</p>
+            )}
+            {onOpenCampaigns && (
+              <button
+                type="button"
+                onClick={onOpenCampaigns}
+                className="mt-2 inline-flex min-h-9 items-center rounded-[9px] border border-[var(--hair)] px-3 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+              >
+                Choose games for campaigns
+              </button>
+            )}
+          </div>
+        </section>
       )}
     </section>
+  );
+}
+
+const KIND_LABEL = (kind: GameKind | undefined) => GAME_LABEL[kind ?? "wheel"];
+
+function Icon({ d, size = 16, strokeWidth = 1.8 }: { d: string; size?: number; strokeWidth?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className="shrink-0"
+    >
+      <path d={d} />
+    </svg>
   );
 }
 

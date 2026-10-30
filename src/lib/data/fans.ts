@@ -1,0 +1,651 @@
+import { CompleteReadError, readScopedRows } from "./readPages";
+// Data layer — fans and grants: creator CRM, fan detail, grant edits, fan
+// moderation, and the token-scoped fan actions (ack, self-exclude, report).
+import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import type { Rarity } from "@/lib/games/wheel/types";
+import type { FanAccountSummary, FanCampaignBreakdown, FanDetail, Grant } from "./types";
+import {
+  mockGrantSpins,
+  mockListFans,
+  mockGetFanDetail,
+  mockDeleteFan,
+  mockUpdateFanMeta,
+  mockEditGrant,
+  mockAckFan,
+  mockSelfExclude,
+  mockSetFanBlocked,
+  mockReportCreator,
+} from "./mock";
+import { isUuid } from "./shared";
+import { resolveWheelId } from "./wheels";
+import { pickGrantPass } from "./grantPass";
+import { isOnBreak } from "@/lib/play/playGuard";
+import { fanVisitsLast7, visitsByFan } from "./checkins";
+import { contactToken } from "@/lib/engagement";
+import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
+import { listRecentOutreach } from "./outreach";
+import { LEGAL } from "@/lib/legal";
+
+/** Service-only atomic economic writes. A transport retry reuses the same
+ * request payload; it never subtracts credits after an ambiguous response. */
+async function economicRpc(name: string, args: Record<string, unknown>, uncertainStatus?: string): Promise<Record<string, unknown> | null> {
+  const service = createServiceClient() as unknown as { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { data, error } = await service.rpc(name, args);
+      if (!error) return data && typeof data === "object" ? data as Record<string, unknown> : uncertainStatus ? { status: uncertainStatus } : null;
+      if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && error.code && !error.code.startsWith("PGRST")) return null;
+    } catch { /* Retry the same idempotent operation, never compensate. */ }
+  }
+  return uncertainStatus ? { status: uncertainStatus } : null;
+}
+
+/** Absolute grant edits and balance deltas commit in one database transaction.
+ * `grants.spins` includes its bonus subset, including pre-0059 grants. */
+export async function editGrant(
+  grantId: string,
+  patch: { spins?: number; amountCents?: number; campaignId?: string | null },
+  requestId: string = crypto.randomUUID(),
+): Promise<{ ok: true; requestId: string; grantId: string; replayed: boolean } | { error: string }> {
+  if (!isUuid(requestId) || requestId !== requestId.toLowerCase()) return { error: "invalid" };
+  // Bind the supplied patch, including presence, rather than deriving a new
+  // payload from mutable grant terms on each transport retry.
+  const exact: { spins?: number; amountCents?: number; campaignId?: string | null } = {};
+  if (patch.spins !== undefined) {
+    if (!Number.isInteger(patch.spins) || patch.spins < 0 || patch.spins > 1_000_000) return { error: "invalid" };
+    exact.spins = patch.spins;
+  }
+  if (patch.amountCents !== undefined) {
+    if (!Number.isInteger(patch.amountCents) || patch.amountCents < 0 || patch.amountCents > 100_000_000) return { error: "invalid" };
+    exact.amountCents = patch.amountCents;
+  }
+  if (patch.campaignId !== undefined) {
+    if (patch.campaignId !== null && (typeof patch.campaignId !== "string" || !patch.campaignId || patch.campaignId.length > 200)) return { error: "invalid" };
+    exact.campaignId = patch.campaignId;
+  }
+  if (!isSupabaseConfigured()) {
+    const result = mockEditGrant(grantId, exact, requestId);
+    return "error" in result ? result : { ok: true, requestId: result.requestId, grantId: result.grantId, replayed: result.replayed };
+  }
+  const sb = await createClient();
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  const { data: grant, error: readError } = await sb.from("grants")
+    .select("id, creator_id").eq("id", grantId).maybeSingle();
+  if (readError) return { error: "db_error" };
+  if (!grant) return { error: "not_found" };
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: grant.creator_id, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "unauthorized" };
+  // The transaction checks the actual actor again and recovers an existing
+  // receipt before validating live stock, break status or edited campaign rows.
+  const result = await economicRpc("edit_pass_grant", { p_request: requestId, p_creator: grant.creator_id, p_grant: grantId, p_patch: exact, p_actor: user.id }, "edit_pending");
+  if (!result) return { error: "db_error" };
+  if (result.status === "updated") {
+    if (result.grantId !== grantId || typeof result.replayed !== "boolean") return { error: "edit_pending" };
+    return { ok: true, requestId, grantId, replayed: result.replayed };
+  }
+  if (result.status === "conflict") return { error: "conflict" };
+  if (result.status === "gone" || result.status === "cancelled" || result.status === "rejected") return { error: typeof result.error === "string" ? result.error : result.status };
+  if (result.status === "invalid") return { error: ["insufficient_spins", "no_active_pass", "campaign_not_found"].includes(String(result.error)) ? String(result.error) : "invalid" };
+  if (result.status === "unavailable") return { error: ["on_break", "blocked", "forbidden"].includes(String(result.error)) ? String(result.error) : "not_found" };
+  return { error: "edit_pending" };
+}
+
+/** Top up this token's pass through an atomic, replay-safe grant transaction. */
+export async function grantSpins(
+  token: string,
+  n: number,
+  requestId: string = crypto.randomUUID(),
+): Promise<{ spinsRemaining: number } | { error: string }> {
+  if (!Number.isFinite(n) || n > 1_000_000 || !isUuid(requestId)) return { error: "invalid" };
+  const add = Math.max(1, Math.floor(n) || 0);
+  if (!isSupabaseConfigured()) {
+    try {
+      const remaining = mockGrantSpins(token, add, requestId);
+      return remaining === null ? { error: "not_found" } : { spinsRemaining: remaining };
+    } catch (error) { return { error: error instanceof Error && error.message === "conflict" ? "conflict" : "db_error" }; }
+  }
+  const sb = await createClient();
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  const { data: pass, error: readError } = await sb.from("fan_passes")
+    .select("id, creator_id, fan_id, campaign_id").eq("token", token).maybeSingle();
+  if (readError) return { error: "db_error" };
+  if (!pass) return { error: "not_found" };
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: pass.creator_id, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "unauthorized" };
+  const { data: fan, error: fanError } = await sb.from("fans").select("blocked_at, break_until").eq("id", pass.fan_id).eq("creator_id", pass.creator_id).maybeSingle();
+  if (fanError) return { error: "db_error" };
+  if (!fan) return { error: "not_found" };
+  if (fan.blocked_at) return { error: "blocked" };
+  if (isOnBreak(fan.break_until)) return { error: "on_break" };
+  const result = await economicRpc("grant_pass_spins", { p_request: requestId, p_creator: pass.creator_id, p_fan: pass.fan_id, p_pass: pass.id, p_spins: add, p_bonus: 0, p_amount: 0, p_campaign: pass.campaign_id, p_actor: user.id });
+  if (!result) return { error: "db_error" };
+  return result.status === "granted" && typeof result.balance === "number" ? { spinsRemaining: result.balance } : { error: result.status === "conflict" ? "conflict" : "not_found" };
+}
+
+/**
+ * The creator's persistent fan accounts (+ their links). Loaded by the Fans
+ * tab on mount so accounts survive a page refresh.
+ */
+export async function listFans(): Promise<FanAccountSummary[]> {
+  if (!isSupabaseConfigured()) return mockListFans();
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+
+  const cutoff = new Date().toISOString();
+  const [fanRows, passRows, spinRows, grantRows, visits] = await Promise.all([
+    readScopedRows<Record<string, unknown>>(sb, "fans", "display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at, break_until", q => q.eq("creator_id", user.id), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, token, created_at, spins_remaining, wheel_id, campaign_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "spins", "fan_id, prize_label, prize_rarity, created_at", q => q.eq("creator_id", user.id).not("fan_id", "is", null), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "grants", "fan_id, amount_cents, campaign_id, campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
+    visitsByFan(sb, user.id),
+  ]);
+  const groupByFan = (items: Record<string, unknown>[]) => {
+    const groups = new Map<string, Record<string, unknown>[]>();
+    for (const row of items) {
+      if (typeof row.fan_id !== "string") continue;
+      const group = groups.get(row.fan_id) ?? [];
+      group.push(row); groups.set(row.fan_id, group);
+    }
+    return groups;
+  };
+  const passesByFan = groupByFan(passRows), spinsByFan = groupByFan(spinRows), grantsByFan = groupByFan(grantRows);
+  fanRows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id.localeCompare(a.id));
+  const rows = fanRows.map(fan => ({ ...fan, fan_passes: passesByFan.get(fan.id) ?? [], spins: spinsByFan.get(fan.id) ?? [], grants: grantsByFan.get(fan.id) ?? [] })) as unknown as {
+    id: string; display_name: string | null; handle: string | null;
+    spins_remaining: number; spins_granted_total: number; tags: string[] | null;
+    blocked_at: string | null; break_until: string | null;
+    fan_passes: { token: string; created_at: string; spins_remaining: number; wheel_id: string; campaign_id: string | null; is_active: boolean; self_excluded_at: string | null; wheel: { title: string } | null; campaign: { name: string } | null }[];
+    spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[];
+    grants: { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[];
+  }[];
+
+  return rows.map((r) => {
+    const wins = (r.spins ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const grants = r.grants ?? [];
+    const totalSpent = grants.reduce((s, g) => s + g.amount_cents, 0);
+    const campaignNames: string[] = [];
+    const seen = new Set<string>();
+    for (const g of grants) {
+      if (!g.campaign_id || !g.campaign?.name) continue;
+      if (seen.has(g.campaign_id)) continue;
+      seen.add(g.campaign_id);
+      campaignNames.push(g.campaign.name);
+    }
+    const links = (r.fan_passes ?? [])
+      .slice()
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    // Only build per-wheel passes when the 0020 columns are present; pre-0020
+    // (legacy fallback) we leave passes empty and the card shows the single link.
+    const passes = links
+      .filter((p): p is typeof p & { wheel_id: string } => typeof p.wheel_id === "string")
+      .map((p) => ({
+        token: p.token,
+        wheelId: p.wheel_id,
+        wheelTitle: p.wheel?.title ?? "Wheel",
+        campaignId: p.campaign_id ?? null,
+        campaignName: p.campaign?.name ?? null,
+        spinsRemaining: p.spins_remaining ?? 0,
+      }));
+    return {
+      fanId: r.id,
+      name: r.display_name ?? r.handle ?? "Fan",
+      spinsRemaining: r.spins_remaining,
+      grantedTotal: r.spins_granted_total,
+      primaryToken: links[0]?.token ?? null,
+      totalSpent,
+      campaignNames,
+      tags: r.tags ?? [],
+      links: links.map((p) => ({ token: p.token })),
+      passes,
+      lastWin: wins[0]
+        ? { label: wins[0].prize_label, rarity: wins[0].prize_rarity, at: wins[0].created_at }
+        : null,
+      blocked: !!r.blocked_at,
+      selfExcluded: links.some((p) => !!p.self_excluded_at),
+      // The legacy select can't tell a paused link from a live one, so it
+      // offers none (is_active is undefined there).
+      activeToken: links.find((p) => p.is_active === true && !p.self_excluded_at)?.token ?? null,
+      // RM-6: only the break state, never the fan's reminder or counts.
+      breakUntil: isOnBreak(r.break_until) ? r.break_until : null,
+      visits7: visits.get(r.id) ?? 0,
+    };
+  });
+}
+
+// --- Creator CRM: whales (top LTV) + dormant fans to win back ----------------
+
+export interface CrmFan {
+  fanId: string;
+  name: string;
+  totalSpent: number; // cents (lifetime = LTV)
+  spinsRemaining: number;
+  lastActiveAt: string | null;
+  daysSince: number | null;
+  primaryToken: string | null;
+  lastWin: string | null; // label of the fan's last win (template {lastWin})
+}
+export interface CreatorCrm {
+  totalLtv: number; // cents across all fans
+  avgLtv: number; // cents per fan with spend
+  whales: CrmFan[]; // top spenders, desc
+  dormant: CrmFan[]; // spent before, quiet 14+ days, not contacted/snoozed: the win-back queue
+  winback: WinbackStats; // "N contacted · M came back" + recent contacts (RM-5)
+}
+
+/**
+ * Whale detection + win-back, derived from fan data plus the outreach log:
+ *   • LTV per fan = sum of their grant amounts (real money tied to their spins).
+ *   • Whales = fans ranked by LTV desc (your highest-value relationships).
+ *   • Dormant = fans who HAVE spent (LTV > 0) but whose last win/activity is
+ *     WINBACK_QUIET_DAYS+ ago — the cheapest revenue is a fan you already
+ *     converted (selectDormant in src/lib/winback/list.ts).
+ *     Spend safety: a fan failing the engagement gate (blocked, paused a link,
+ *     on a break), a fan with no active link, a fan contacted within the
+ *     cooldown and a snoozed fan are never suggested. If the outreach log
+ *     can't be read, nobody is suggested (fail closed).
+ * The link offered on any row is the fan's newest ACTIVE link (never a paused
+ * one), and none at all for a fan failing the engagement gate.
+ */
+export async function getCreatorCrm(): Promise<CreatorCrm> {
+  const now = Date.now();
+  const [fans, outreach] = await Promise.all([listFans(), listRecentOutreach(now)]);
+  const DAY = 86_400_000;
+
+  const enrich = (f: FanAccountSummary): CrmFan => {
+    const lastActiveAt = f.lastWin?.at ?? null;
+    const daysSince = lastActiveAt
+      ? Math.floor((now - new Date(lastActiveAt).getTime()) / DAY)
+      : null;
+    return {
+      fanId: f.fanId,
+      name: f.name,
+      totalSpent: f.totalSpent,
+      spinsRemaining: f.spinsRemaining,
+      lastActiveAt,
+      daysSince,
+      primaryToken: contactToken(f, now),
+      lastWin: f.lastWin?.label ?? null,
+    };
+  };
+
+  const all = fans.map(enrich);
+  const spenders = all.filter((f) => f.totalSpent > 0);
+  const totalLtv = spenders.reduce((s, f) => s + f.totalSpent, 0);
+  const avgLtv = spenders.length ? Math.round(totalLtv / spenders.length) : 0;
+
+  const whales = [...spenders].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 10);
+  // primaryToken is null exactly when the fan fails the gate (see enrich).
+  const dormant = outreach ? selectDormant(spenders, outreach, now) : [];
+  const winback = winbackStats(all, outreach ?? [], now);
+
+  return { totalLtv, avgLtv, whales, dormant, winback };
+}
+
+/**
+ * A single fan account's full detail, for the creator's fan drill-in. RLS keeps
+ * this scoped to the owning creator, so we use the auth-scoped client.
+ */
+export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
+  if (!isSupabaseConfigured()) return mockGetFanDetail(fanId);
+  const cutoff = new Date().toISOString();
+
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
+
+  const { data: fan, error: fanReadError } = await sb
+    .from("fans")
+    .select("id, display_name, handle, spins_remaining, spins_granted_total, notes, tags, blocked_at")
+    .eq("id", fanId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  if (fanReadError) throw new CompleteReadError();
+  if (!fan) return null;
+
+  const [{ data: spinRows }, breakRes] = await Promise.all([
+    readScopedRows<{ prize_label: string; prize_rarity: Rarity; campaign_id: string | null; created_at: string; kind?: "play" | "bonus" }>(sb, "spins", "prize_label, prize_rarity, campaign_id, created_at, kind", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff).then(data => ({ data: data.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)) })),
+    // RM-6: read on its own so a DB without 0049 still opens the drawer.
+    Promise.resolve(sb.from("fans").select("break_until").eq("id", fanId).maybeSingle()).catch(() => null),
+  ]);
+  const breakUntil = (breakRes?.data as { break_until?: string | null } | null)?.break_until ?? null;
+
+  const spins = (spinRows ?? []) as {
+    prize_label: string;
+    prize_rarity: Rarity;
+    campaign_id: string | null;
+    created_at: string;
+    kind?: "play" | "bonus";
+  }[];
+  const paidPlays = spins.filter(spin => spin.kind !== "bonus");
+  const totalSpins = paidPlays.length;
+  const lastActive = paidPlays[0]?.created_at ?? null;
+
+  const rarityCounts = new Map<Rarity, number>();
+  for (const s of spins) {
+    rarityCounts.set(s.prize_rarity, (rarityCounts.get(s.prize_rarity) ?? 0) + 1);
+  }
+  const winsByRarity = [...rarityCounts.entries()].map(([rarity, count]) => ({
+    rarity,
+    count,
+  }));
+
+  // Pending prizes: this fan's pending redemptions, joined back to the spin for
+  // the prize label/rarity. Emoji isn't stored on spins, so it's omitted.
+  const pendingRows = await readScopedRows<{ created_at: string; spin: { prize_label: string; prize_rarity: Rarity; fan_id: string } | null }>(sb, "redemptions", "created_at, spin:spins!inner(prize_label, prize_rarity, fan_id)", q => q.eq("creator_id", user.id).eq("status", "pending").eq("spin.fan_id", fanId), cutoff);
+  pendingRows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+
+  const pending = (pendingRows ?? []) as unknown as {
+    created_at: string;
+    spin: { prize_label: string; prize_rarity: Rarity; fan_id: string } | null;
+  }[];
+  const pendingPrizes = pending
+    .filter((r) => r.spin)
+    .map((r) => ({
+      label: r.spin!.prize_label,
+      rarity: r.spin!.prize_rarity,
+      at: r.created_at,
+    }));
+
+  // Every pass, oldest first in editGrant's order: the links list (newest
+  // first) and each grant's preview balance come from this one read.
+  const passRows = await readScopedRows<{ token: string; created_at: string; is_active: boolean; spins_remaining: number; wheel: { title: string } | null }>(sb, "fan_passes", "token, created_at, is_active, spins_remaining, wheel:wheels(title)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
+  passRows.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+
+  const passesOldestFirst = ((passRows ?? []) as unknown as {
+    id: string;
+    token: string;
+    created_at: string;
+    is_active: boolean;
+    spins_remaining: number;
+    wheel?: { title: string } | null;
+  }[]).map((p) => ({ ...p, isActive: p.is_active }));
+
+  const links = passesOldestFirst
+    .slice()
+    .reverse()
+    .map((p) => ({ token: p.token, createdAt: p.created_at }));
+
+  // This fan's grants, newest first, with campaign name resolved via a join.
+  const grantRows = await readScopedRows<{ created_at: string } & Record<string, unknown>>(sb, "grants", "fan_pass_id, spins, amount_cents, bonus_spins, campaign_id, created_at, campaign:campaigns(name)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
+  grantRows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+
+  const grantData = (grantRows ?? []) as unknown as {
+    id: string;
+    fan_pass_id: string | null;
+    spins: number;
+    amount_cents: number;
+    bonus_spins: number;
+    campaign_id: string | null;
+    created_at: string;
+    campaign: { name: string } | null;
+  }[];
+
+  const grants: Grant[] = grantData.map((g) => {
+    // The pass editGrant would move for this grant (same pickGrantPass rule).
+    const pass = pickGrantPass(passesOldestFirst, g.fan_pass_id);
+    return {
+      id: g.id,
+      spins: g.spins,
+      amountCents: g.amount_cents,
+      bonusSpins: g.bonus_spins,
+      campaignId: g.campaign_id,
+      campaignName: g.campaign?.name ?? null,
+      at: g.created_at,
+      editPass: pass ? { spinsRemaining: pass.spins_remaining, wheelTitle: pass.wheel?.title ?? null } : null,
+    };
+  });
+
+  const totalSpent = grantData.reduce((s, g) => s + g.amount_cents, 0);
+
+  // Per-campaign breakdown: grant rollups merged with FIFO-attributed spins.
+  // Bucket key is the campaignId, or "" for null-campaign grants/spins.
+  interface Bucket {
+    campaignId: string;
+    name: string;
+    spinsBought: number;
+    spinsPlayed: number;
+    spentCents: number;
+    prizeCounts: Map<string, { label: string; rarity: Rarity; count: number }>;
+  }
+  const buckets = new Map<string, Bucket>();
+  const nameById = new Map<string, string>();
+  for (const g of grantData) {
+    if (g.campaign_id && g.campaign?.name) nameById.set(g.campaign_id, g.campaign.name);
+  }
+  const bucketFor = (campaignId: string | null): Bucket => {
+    const key = campaignId ?? "";
+    let b = buckets.get(key);
+    if (!b) {
+      b = {
+        campaignId: key,
+        name: campaignId ? nameById.get(campaignId) ?? "Uncategorized" : "Uncategorized",
+        spinsBought: 0,
+        spinsPlayed: 0,
+        spentCents: 0,
+        prizeCounts: new Map(),
+      };
+      buckets.set(key, b);
+    }
+    return b;
+  };
+
+  for (const g of grantData) {
+    const b = bucketFor(g.campaign_id);
+    b.spinsBought += g.spins;
+    b.spentCents += g.amount_cents;
+  }
+  for (const s of spins) {
+    const b = bucketFor(s.campaign_id);
+    if (s.kind !== "bonus") b.spinsPlayed += 1;
+    const cur = b.prizeCounts.get(s.prize_label);
+    if (cur) cur.count += 1;
+    else b.prizeCounts.set(s.prize_label, { label: s.prize_label, rarity: s.prize_rarity, count: 1 });
+  }
+
+  const byCampaign: FanCampaignBreakdown[] = [...buckets.values()].map((b) => ({
+    campaignId: b.campaignId,
+    name: b.name,
+    spinsBought: b.spinsBought,
+    spinsPlayed: b.spinsPlayed,
+    spentCents: b.spentCents,
+    prizes: [...b.prizeCounts.values()],
+  }));
+
+  return {
+    dataStatus: "complete",
+    fanId: fan.id,
+    name: fan.display_name ?? fan.handle ?? "Fan",
+    blocked: !!(fan as { blocked_at?: string | null }).blocked_at,
+    breakUntil: isOnBreak(breakUntil) ? breakUntil : null,
+    notes: fan.notes ?? null,
+    tags: fan.tags ?? [],
+    spinsRemaining: fan.spins_remaining,
+    grantedTotal: fan.spins_granted_total,
+    totalSpins,
+    totalSpent,
+    lastActive,
+    winsByRarity,
+    pendingPrizes,
+    links,
+    grants,
+    byCampaign,
+    visits7: await fanVisitsLast7(sb, fanId),
+  };
+}
+
+/**
+ * Permanently delete a fan account. Schema FKs cascade the fan's links + grants
+ * and anonymize their spins, so a plain delete is safe. RLS keeps a creator
+ * scoped to their own fans.
+ */
+export async function deleteFan(
+  fanId: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    return mockDeleteFan(fanId) ? { ok: true } : { error: "not_found" };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const { error } = await sb
+    .from("fans")
+    .delete()
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** Block or unblock a fan — blocked fans' links stop working (enforced in claim_spin). */
+export async function setFanBlocked(
+  fanId: string,
+  blocked: boolean
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetFanBlocked(fanId, blocked);
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { error } = await sb
+    .from("fans")
+    .update({ blocked_at: blocked ? new Date().toISOString() : null })
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** A fan reports the creator behind their token (service-role; fans aren't authed). */
+export async function reportCreator(
+  token: string,
+  reason: string,
+  detail?: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!reason.trim()) return { error: "empty" };
+  if (!isSupabaseConfigured()) return mockReportCreator(token, reason, detail);
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("fan_passes")
+    .select("creator_id, fan_id")
+    .eq("token", token)
+    .maybeSingle();
+  const pass = data as { creator_id: string; fan_id: string } | null;
+  if (!pass) return { error: "not_found" };
+  const { error } = await sb.from("creator_reports").insert({
+    creator_id: pass.creator_id,
+    fan_id: pass.fan_id,
+    token,
+    reason: reason.slice(0, 120),
+    detail: detail?.slice(0, 2000) ?? null,
+  });
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/** A fan pauses (self-excludes) their own link from the spin page. */
+export async function selfExclude(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSelfExclude(token);
+  const sb = createServiceClient();
+  const { error } = await sb
+    .from("fan_passes")
+    .update({ self_excluded_at: new Date().toISOString(), is_active: false })
+    .eq("token", token);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+/**
+ * Patch a fan's creator-applied metadata (free-form notes and/or tags). RLS
+ * scopes the update to the owning creator, so we use the auth-scoped client.
+ */
+export async function updateFanMeta(
+  fanId: string,
+  patch: { notes?: string | null; tags?: string[] }
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockUpdateFanMeta(fanId, patch);
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+
+  const upd: Record<string, unknown> = {};
+  if ("notes" in patch) upd.notes = patch.notes ?? null;
+  if (patch.tags) upd.tags = patch.tags;
+  if (Object.keys(upd).length === 0) return { ok: true };
+
+  const { error } = await sb
+    .from("fans")
+    .update(upd)
+    .eq("id", fanId)
+    .eq("creator_id", user.id);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// --- Age-gate / ToS (#24) ---------------------------------------------------
+
+/**
+ * Stamp the age-gate / ToS acknowledgement, and the Terms version agreed to, on
+ * the fan behind a token. The version always comes from the server (LEGAL), never
+ * from the request, and only the fan resolved from this token is updated.
+ */
+export async function ackFan(
+  token: string
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockAckFan(token);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+
+  const { error } = await sb
+    .from("fans")
+    .update({ acked_at: new Date().toISOString(), acked_terms_version: LEGAL.version })
+    .eq("id", resolved.fanId);
+  return error ? { error: "db_error" } : { ok: true };
+}
+
+// --- Wishlist ---------------------------------------------------------------
+
+/** Resolve the fan + creator + active wheel behind a token (service role). */
+export async function resolveFanByToken(
+  sb: ReturnType<typeof createServiceClient>,
+  token: string
+): Promise<{
+  fanId: string;
+  creatorId: string;
+  campaignId: string | null;
+  wheelId: string;
+} | null> {
+  const { data } = await sb
+    .from("fan_passes")
+    .select("creator_id, campaign_id, wheel_id, fan_id")
+    .eq("token", token)
+    .eq("is_active", true)
+    .maybeSingle();
+  const pass = data as {
+    creator_id: string;
+    campaign_id: string | null;
+    wheel_id: string;
+    fan_id: string;
+  } | null;
+  if (!pass) return null;
+  const wheelId = await resolveWheelId(sb, pass, new Date());
+  if (!wheelId) return null;
+  return {
+    fanId: pass.fan_id,
+    creatorId: pass.creator_id,
+    campaignId: pass.campaign_id,
+    wheelId,
+  };
+}

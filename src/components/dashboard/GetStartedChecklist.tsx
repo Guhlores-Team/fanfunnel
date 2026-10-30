@@ -1,104 +1,79 @@
 "use client";
 
-interface Step {
-  key: string;
-  label: string;
-  hint: string;
-  done: boolean;
-  cta: string;
-  go: string; // tab to open
-}
+import { FIRST_STEPS_TOTAL, buildFirstSteps, firstStepsAllDone, type FirstStepSignals } from "./firstSteps";
 
 /**
- * First-run activation checklist. Guides a brand-new creator through the three
- * steps that actually matter — build a wheel, grant a fan spins, send the link —
- * and self-hides once all are done (or the creator dismisses it). Each step
- * deep-links to the tab where it happens.
+ * "Your first steps": the first-run checklist that lives inside Today (RD-5).
+ * Five steps — account, wheel, fan link, share, first fulfilment — each with a
+ * CTA into the section where it happens; the three steps the prior checklist
+ * tracked keep their exact signals (see firstSteps.ts). Self-hides once every
+ * step is done, or when the creator dismisses it.
  *
  * Dismissal is controlled by the parent and persisted to the creator's account
- * (so it follows them across devices and can be re-opened from the header),
- * rather than being kept in this browser's localStorage.
+ * (so it follows them across devices and can be re-opened from the sidebar's
+ * "Get started" button), rather than living in this browser's localStorage.
  */
 export default function GetStartedChecklist({
-  wheelSaved,
-  fans,
-  spins,
+  signals,
   dismissed,
   onDismiss,
   onGoTo,
 }: {
-  wheelSaved: boolean;
-  fans: number;
-  spins: number;
+  signals: FirstStepSignals;
   dismissed: boolean;
   onDismiss: () => void;
   onGoTo: (tab: string) => void;
 }) {
-  const steps: Step[] = [
-    {
-      key: "wheel",
-      label: "Build your prize wheel",
-      hint: "Set your prizes, odds, and brand colour. We started you with a sample.",
-      done: wheelSaved,
-      cta: "Edit wheel",
-      go: "editor",
-    },
-    {
-      key: "fan",
-      label: "Add a fan & grant spins",
-      hint: "Record a fan (and the spins they paid for) to mint their personal link.",
-      done: fans > 0,
-      cta: "Add a fan",
-      go: "fans",
-    },
-    {
-      key: "share",
-      label: "Send them their spin link",
-      hint: "Copy the fan's /spin link and drop it in a DM. When they spin, you're live.",
-      done: spins > 0,
-      cta: "Get the link",
-      go: "fans",
-    },
-  ];
-
+  if (dismissed || firstStepsAllDone(signals)) return null;
+  const steps = buildFirstSteps(signals);
   const doneCount = steps.filter((s) => s.done).length;
-  const allDone = doneCount === steps.length;
-  if (dismissed || allDone) return null;
 
   return (
-    <div className="card mt-5 rounded-2xl border-[var(--brand)]/30 p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="font-bold text-ink">🚀 Get started</h2>
-        <span className="text-sm text-muted tnum">{doneCount} of {steps.length}</span>
+    <section aria-labelledby="first-steps" data-testid="first-steps" className="relative">
+      <div className="mb-3.5 flex items-baseline justify-between gap-3">
+        <h2 id="first-steps" className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink">
+          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+          Your first steps
+        </h2>
+        <span className="tnum text-xs text-muted" aria-live="polite">
+          {doneCount} of {FIRST_STEPS_TOTAL} done
+        </span>
       </div>
-      <p className="mt-1 text-sm text-muted">Three steps to your first spin.</p>
 
-      <ol className="mt-4 space-y-2">
+      <ol className="flex flex-col gap-2.5">
         {steps.map((s) => (
           <li
             key={s.key}
-            className="flex items-start gap-3 rounded-xl border border-line p-3"
-            style={s.done ? { opacity: 0.6 } : undefined}
+            // Phones: the CTA drops under the text (aligned past the ring) so
+            // titles don't wrap around a wide button.
+            className="lift-in flex flex-wrap items-center gap-3.5 rounded-[14px] border border-[var(--hair)] px-4 py-3.5 shadow-[var(--lift)] [background:var(--s1)] sm:flex-nowrap sm:px-[18px]"
           >
             <span
-              className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-bold"
-              style={{
-                background: s.done ? "var(--brand)" : "color-mix(in oklab, var(--brand) 14%, transparent)",
-                color: s.done ? "#fff" : "var(--brand)",
-              }}
+              aria-hidden="true"
+              className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 ${
+                s.done ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-ink)]" : "border-[#2a2533] bg-transparent"
+              }`}
             >
-              {s.done ? "✓" : steps.indexOf(s) + 1}
+              {s.done && (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+              )}
             </span>
             <div className="min-w-0 flex-1">
-              <p className={`font-semibold text-ink ${s.done ? "line-through" : ""}`}>{s.label}</p>
-              {!s.done && <p className="mt-0.5 text-sm text-muted text-pretty">{s.hint}</p>}
+              <p className={`text-[14px] font-semibold ${s.done ? "text-[#8b8494]" : "text-ink"}`}>
+                {s.title}
+                <span className="sr-only">{s.done ? " (done)" : " (to do)"}</span>
+              </p>
+              <p className="mt-0.5 text-[12.5px] text-[#8b8494] text-pretty">{s.body}</p>
             </div>
-            {!s.done && (
+            {!s.done && s.cta && (
               <button
-                onClick={() => onGoTo(s.go)}
-                className="btn-brand shrink-0 rounded-lg px-3 py-1.5 text-sm font-bold"
+                type="button"
+                onClick={() => onGoTo(s.cta!.go)}
+                className="btn-brand min-h-[34px] shrink-0 rounded-[9px] px-3.5 text-[12.5px] font-bold max-sm:ml-[38px] max-sm:basis-[calc(100%-38px)]"
               >
-                {s.cta}
+                {s.cta.label}
               </button>
             )}
           </li>
@@ -106,11 +81,12 @@ export default function GetStartedChecklist({
       </ol>
 
       <button
+        type="button"
         onClick={onDismiss}
-        className="-mx-1 mt-3 px-1 py-2 text-xs font-semibold text-muted transition hover:text-ink"
+        className="-mx-1 mt-2.5 px-1 py-2 text-xs font-semibold text-muted transition-colors hover:text-ink"
       >
         Dismiss — I&rsquo;ll explore on my own
       </button>
-    </div>
+    </section>
   );
 }

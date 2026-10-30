@@ -1,0 +1,127 @@
+import assert from "node:assert";
+import { mock } from "node:test";
+
+// Route-level test for PUT /api/wheel, run against the in-memory mock data
+// layer. Clear the Supabase env before importing so the route can't reach a
+// real project.
+delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+// A successful save revalidates /c/<slug>; next/cache needs a Next request
+// context, so it is stubbed here (publicPage.test.ts asserts the calls).
+mock.module("next/cache", { namedExports: { revalidatePath: () => {} } });
+
+let passed = 0;
+function check(label: string, cond: boolean) {
+  assert.ok(cond, label);
+  passed++;
+}
+
+(async () => {
+  const { PUT } = await import("./route");
+  const { getWheel } = await import("@/lib/data");
+
+  const base = await getWheel();
+  assert.ok(base, "mock wheel available");
+
+  async function put(body: unknown) {
+    const res = await PUT(
+      new Request("http://localhost/api/wheel", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+    return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+  }
+
+  // Invalid brand color: rejected, nothing persisted.
+  {
+    const r = await put({ wheel: { ...base, brandColor: "garbage" } });
+    check("garbage brand color → 400", r.status === 400);
+    check("garbage brand color → bad_color", r.data.error === "bad_color");
+    const after = await getWheel();
+    check("garbage brand color not persisted", after?.brandColor === base!.brandColor);
+  }
+
+  {
+    const r = await put({ wheel: { ...base, labelColor: "white" } });
+    check("garbage label color → 400 bad_color", r.status === 400 && r.data.error === "bad_color");
+  }
+
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, color: "javascript:x" } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("garbage prize color → 400 bad_color", r.status === 400 && r.data.error === "bad_color");
+  }
+
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, stock: -3 } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("negative stock → 400 bad_stock", r.status === 400 && r.data.error === "bad_stock");
+  }
+
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, weight: 0.05 } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("fractional tickets → 400 bad_weight", r.status === 400 && r.data.error === "bad_weight");
+  }
+
+  // A deliberate 0-ticket prize still saves (the editor allows it too).
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, weight: 0 } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("0 tickets → 200", r.status === 200);
+    const saved = r.data.wheel as { prizes: { weight: number }[] };
+    check("0 tickets stored as 0", saved.prizes[0].weight === 0);
+  }
+
+  // A cleared prize color ("") is unset, not invalid: the editor allows it.
+  {
+    const prizes = base!.prizes.map((p, i) => (i === 0 ? { ...p, color: "" } : p));
+    const r = await put({ wheel: { ...base, prizes } });
+    check("empty prize color → 200", r.status === 200);
+    const saved = r.data.wheel as { prizes: { color?: string | null }[] };
+    check("empty prize color saved as unset", saved.prizes[0].color == null);
+  }
+
+  // Valid shorthand is accepted and normalized; the response shape is unchanged.
+  {
+    const r = await put({ wheel: { ...base, brandColor: "#ABC", labelColor: "#FFF" } });
+    check("valid #rgb → 200", r.status === 200);
+    const saved = r.data.wheel as { brandColor?: string; labelColor?: string; prizes?: unknown[] };
+    check("response still carries { wheel }", !!saved && Array.isArray(saved.prizes));
+    check("brand color normalized to #rrggbb", saved.brandColor === "#aabbcc");
+    check("label color normalized to #rrggbb", saved.labelColor === "#ffffff");
+  }
+
+  // Existing behavior kept: a plain save without colors still works.
+  {
+    const r = await put({ wheel: { ...base, brandColor: undefined, labelColor: undefined } });
+    check("save without colors → 200", r.status === 200);
+  }
+
+  // Owner decision: the server enforces the editor's wheel rules on save, with
+  // a stable code and a 400. Nothing is persisted on a rejected save.
+  {
+    const first = base!.prizes[0];
+    const cases: [string, unknown[], string][] = [
+      ["one prize", [first], "too_few_prizes"],
+      ["no prizes", [], "too_few_prizes"],
+      ["blank prize name", base!.prizes.map((p, i) => (i === 1 ? { ...p, label: "   " } : p)), "prize_name_required"],
+      ["every prize at 0 tickets", base!.prizes.map((p) => ({ ...p, weight: 0 })), "no_winnable_prize"],
+    ];
+    for (const [name, prizes, code] of cases) {
+      const r = await put({ wheel: { ...base, title: "Rejected", prizes } });
+      check(`${name} → 400`, r.status === 400);
+      check(`${name} → ${code}`, r.data.error === code);
+      const after = await getWheel();
+      check(`${name} → not persisted`, after?.title === base!.title && after?.prizes.length === base!.prizes.length);
+    }
+  }
+
+  console.log(`api/wheel route: ${passed} checks passed`);
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { setActiveWheelBrandColor } from "@/lib/data";
+import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 
 // Set the brand color of the creator's active wheel — the public /c/[slug] page
 // derives its brand color from that wheel, so this drives the Settings → Public
@@ -23,5 +24,6 @@ export async function PUT(req: Request) {
       result.error === "unauthorized" ? 401 : result.error === "no_wheel" ? 404 : 400;
     return NextResponse.json({ error: result.error }, { status });
   }
+  await revalidateMyPublicPage();
   return NextResponse.json({ ok: true, color });
 }

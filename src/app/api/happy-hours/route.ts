@@ -1,3 +1,4 @@
+import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
 import { NextResponse } from "next/server";
 import { listHappyHours, createHappyHour } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -18,13 +19,13 @@ export async function POST(req: Request) {
     startsAt?: string;
     endsAt?: string;
   }>(req);
-  if (body === BAD_REQUEST) return badRequest();
+  if (body === BAD_REQUEST || !body || typeof body !== "object") return badRequest();
   if (!body.wheelId || !body.startsAt || !body.endsAt) {
     return badRequest();
   }
 
   const multiplier = Number(body.multiplier ?? 2);
-  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 10) {
+  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > MAX_COMBINED_BOOST) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 

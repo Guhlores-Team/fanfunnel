@@ -88,3 +88,27 @@ export function bucketCentsByDay(
 
   return keys.map((date, i) => ({ date, cents: totals[i] }));
 }
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Weekly-active fans: distinct fans with at least one spin in the rolling 7 days
+ * ending at `now`, and in the 7 days before that (for the trend). Future or
+ * unparseable timestamps are ignored. Pure and deterministic given its inputs.
+ */
+export function activeFans(
+  events: { fanId: string; at: string }[],
+  now: Date = new Date()
+): { thisWeek: number; lastWeek: number } {
+  const t = now.getTime();
+  const thisWeek = new Set<string>();
+  const lastWeek = new Set<string>();
+  for (const ev of events) {
+    const at = Date.parse(ev.at);
+    if (!Number.isFinite(at) || at > t) continue;
+    const age = t - at;
+    if (age < WEEK_MS) thisWeek.add(ev.fanId);
+    else if (age < 2 * WEEK_MS) lastWeek.add(ev.fanId);
+  }
+  return { thisWeek: thisWeek.size, lastWeek: lastWeek.size };
+}

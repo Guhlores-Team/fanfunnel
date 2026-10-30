@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { clearMyData } from "@/lib/data";
-import { clientIp, rateLimitOr429 } from "@/lib/api/limit";
+import { clientIp } from "@/lib/api/clientIp";
+import { rateLimitOr429 } from "@/lib/api/limit";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { badRequest, errorResponse, parseJsonBody, BAD_REQUEST } from "@/lib/api/handler";
 

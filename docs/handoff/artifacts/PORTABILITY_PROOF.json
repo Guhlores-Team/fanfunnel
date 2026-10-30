@@ -1,0 +1,44 @@
+{
+  "kind": "ACTUAL PORTABLE SOURCE RECONSTRUCTION/RECOMPOSITION ONLY",
+  "archiveSha256": "403b25e768ac478c4ab8ec3fb946e601b4540c458acd11b228250666d8d42f17",
+  "rootCommit": "5877d94b1b9334ce5b0a93baf365dd6fdd5234f1",
+  "extractedMemberHashesVerified": 352,
+  "all6SequentialPatchesAndWholeTreesExact": true,
+  "independentPackagedBuilderReplayedFromTmpAuthorities": true,
+  "originalToolsAuthorityFallbackAllowed": false,
+  "phases": [
+    {
+      "phase": "0060",
+      "paths": 95,
+      "sourceTreeSha256": "9c3b1a7c10b54e7d7293de01f628e5237c3745bd8c96938650526d5ac3031bb4"
+    },
+    {
+      "phase": "0061",
+      "paths": 82,
+      "sourceTreeSha256": "d4fda8995ddbfb26ab5d6ff85adc69606b38c4352234999776309c8abbaae358"
+    },
+    {
+      "phase": "0062",
+      "paths": 67,
+      "sourceTreeSha256": "8f92a43c22d7b1b372e1ec13fe848c070840f5ab42db291cb82faa6c5a52efea"
+    },
+    {
+      "phase": "0063",
+      "paths": 34,
+      "sourceTreeSha256": "2e99dd3e44a91e087e60072467b530260df3dc000e0aa3c934c5a705d8f30f56"
+    },
+    {
+      "phase": "0063-safety",
+      "paths": 7,
+      "sourceTreeSha256": "10be3f02e1ba23302d3be758623ed30b4e50df4b268adce683975191f7411bbb"
+    },
+    {
+      "phase": "final",
+      "paths": 36,
+      "sourceTreeSha256": "beb32a253f43bc04c30911e256659d41c5a47cc8cac2c1df18c6b90f9e9aec74"
+    }
+  ],
+  "reviewedLatestPrivacy6Included": true,
+  "fullApplicationTestsBuildBrowserDriftHosted": false,
+  "liveCheckoutWrites": false
+}

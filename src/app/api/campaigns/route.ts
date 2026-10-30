@@ -1,3 +1,4 @@
+import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { createCampaign, listCampaigns } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -5,8 +6,10 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 // A creator's campaigns: named groupings of links they can compare against
 // each other. Creator-scoped; newest first.
 export async function GET() {
-  const campaigns = await listCampaigns();
-  return NextResponse.json({ campaigns });
+  return completeReadResponse(async () => {
+    const campaigns = await listCampaigns();
+    return NextResponse.json({ campaigns });
+  });
 }
 
 export async function POST(req: Request) {
@@ -18,6 +21,9 @@ export async function POST(req: Request) {
     return badRequest();
   }
 
+  // Optional: the game this campaign plays. Ownership and playability are
+  // checked in createCampaign (campaignPinError); null follows the live game.
+  if (body.pinnedWheelId != null && typeof body.pinnedWheelId !== "string") return badRequest();
   const result = await createCampaign(name, body.pinnedWheelId ?? null);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result);

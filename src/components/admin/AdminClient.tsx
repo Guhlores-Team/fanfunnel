@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useId, useState } from "react";
+import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/privacy/deletionResult";
 import { FEATURES } from "@/lib/features";
-import { ToastProvider, useToast } from "@/components/ui/Toast";
+import { MIN_PASSWORD_LENGTH } from "@/lib/api/password";
+import { useToast } from "@/components/ui/Toast";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 import Modal from "@/components/ui/Modal";
+import { deleteErrorMessage, inviteErrorMessage, mfaResetErrorMessage } from "./adminErrors";
+import { P, Glyph, SectionTitle, raised, recessed, btnGhost, btnDanger, pill } from "./adminUi";
+import AdminErrors from "./AdminErrors";
+import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
+import AdminActivity from "./AdminActivity";
 
 interface PendingApp {
   id: string;
@@ -19,20 +25,32 @@ interface PendingApp {
   createdAt: string;
 }
 
-// The /admin route renders this directly (no app-wide ToastProvider), so we
-// supply one here for the inner panel's success/error toasts.
-export default function AdminClient() {
+function initialsOf(name: string, email: string) {
+  const src = name.trim() || email;
   return (
-    <ToastProvider>
-      <AdminPanel />
-    </ToastProvider>
+    src
+      .replace(/^@/, "")
+      .split(/[\s._@-]+/)
+      .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ""))
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase())
+      .join("") || "?"
   );
 }
 
-function AdminPanel() {
+/**
+ * The "Account › Admin" section of the dashboard shell. The shell renders it
+ * only when the server resolved the viewer as an active admin (`is_admin()` via
+ * checkAdmin in dashboard/page.tsx); every /api/admin route re-checks with
+ * requireAdminRoute, so a 401/403 here still shows "Admins only".
+ */
+export default function AdminClient() {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
-  const [forbidden, setForbidden] = useState(false);
+  // "mfa": an admin whose session hasn't done two-factor (the server said
+  // mfa_required); "other": not an active admin / signed out.
+  const [forbidden, setForbidden] = useState<false | "mfa" | "other">(false);
   const [showInvite, setShowInvite] = useState(false);
   const [apps, setApps] = useState<PendingApp[]>([]);
   // In-flight ids so action buttons disable while their request is pending
@@ -44,8 +62,10 @@ function AdminPanel() {
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/admin", { cache: "no-store" });
-      if (res.status === 403) {
-        setForbidden(true);
+      // 401 = session expired while the panel was open; 403 = not an active admin.
+      if (res.status === 401 || res.status === 403) {
+        const body = await res.json().catch(() => null);
+        setForbidden(body?.error === "mfa_required" ? "mfa" : "other");
         return;
       }
       if (res.ok) setData(await res.json());
@@ -125,6 +145,27 @@ function AdminPanel() {
     }
   }
 
+  // Remove every two-factor app from an account (lost phone). The server
+  // re-checks admin + aal2, refuses the caller's own account, and logs it.
+  async function resetTwoFactor(id: string) {
+    const res = await fetch("/api/admin/account/mfa-reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      const d = await res.json().catch(() => ({}));
+      toast(
+        d.removed ? "Two-factor reset. They'll set it up again at next sign-in." : "No two-factor apps to remove.",
+        { tone: "success" }
+      );
+      return true;
+    }
+    const err = (await res.json().catch(() => null))?.error as string | undefined;
+    toast(mfaResetErrorMessage(err), { tone: "error" });
+    return false;
+  }
+
   // Irreversible hard-delete. The server re-verifies admin, the typed email,
   // self-delete and last-admin guards; we only echo the email it confirmed.
   async function deleteAccount(id: string, email: string) {
@@ -133,42 +174,55 @@ function AdminPanel() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, email }),
     });
-    if (res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const state = deletionResponseState(res.status, d);
+    if (state === "pending") {
+      toast(ACCOUNT_CLEANUP_PENDING_MESSAGE, { tone: "error" });
+      void refresh();
+      return false;
+    }
+    if (state === "complete") {
       setData((d) =>
         d ? { ...d, accounts: d.accounts.filter((a) => a.id !== id) } : d
       );
       toast("Account permanently deleted", { tone: "success" });
       return true;
     }
-    const err = (await res.json().catch(() => null))?.error as string | undefined;
-    const message =
-      err === "cannot_delete_self"
-        ? "You can't delete your own admin account."
-        : err === "last_admin"
-          ? "Can't delete the last remaining admin."
-          : err === "email_mismatch"
-            ? "Email didn't match — deletion cancelled."
-            : err === "unauthorized"
-              ? "Admins only."
-              : "Couldn't delete account. Try again.";
-    toast(message, { tone: "error" });
+    const err = d.error as string | undefined;
+    toast(deleteErrorMessage(err), { tone: "error" });
     return false;
+  }
+
+  if (forbidden === "mfa") {
+    return (
+      <div className={`mx-auto max-w-md rounded-2xl px-6 py-8 text-center ${raised}`} role="alert">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-[13px] bg-[#f59e0b]/15 text-[#fcd34d]">
+          <Glyph d={P.shield} size={22} />
+        </span>
+        <h2 className="mt-4 text-xl font-bold tracking-[-0.02em] text-ink">Two-factor needed</h2>
+        <p className="mt-2 text-[13.5px] text-muted">
+          Admin tools need a two-factor sign-in. Set it up, or enter your code, to continue.
+        </p>
+        <a
+          href={"/mfa?reason=admin&next=" + encodeURIComponent("/dashboard?section=admin")}
+          className="btn-brand mt-5 inline-flex min-h-10 items-center justify-center rounded-[10px] px-[18px] text-sm font-bold"
+        >
+          Continue to two-factor
+        </a>
+      </div>
+    );
   }
 
   if (forbidden) {
     return (
-      <div className="mx-auto max-w-md px-5 py-24 text-center text-white">
-        <p className="text-5xl">🔒</p>
-        <h1 className="mt-4 text-xl font-bold">Admins only</h1>
-        <p className="mt-2 text-sm text-white/50">
-          This area is restricted to admin accounts.
+      <div className={`mx-auto max-w-md rounded-2xl px-6 py-8 text-center ${raised}`} role="alert">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-[13px] bg-[#f59e0b]/15 text-[#fcd34d]">
+          <Glyph d={P.lock} size={22} />
+        </span>
+        <h2 className="mt-4 text-xl font-bold tracking-[-0.02em] text-ink">Admins only</h2>
+        <p className="mt-2 text-[13.5px] text-muted">
+          This area is restricted to active admin accounts. If your session expired, sign in again.
         </p>
-        <Link
-          href="/dashboard"
-          className="mt-6 inline-block rounded-xl bg-pink-500 px-5 py-2.5 font-bold"
-        >
-          Back to dashboard
-        </Link>
       </div>
     );
   }
@@ -180,122 +234,145 @@ function AdminPanel() {
     { label: "Total spins", value: m?.spins ?? 0 },
     { label: "Prizes pending", value: m?.pending ?? 0 },
   ];
+  const pending = apps.filter((a) => a.status === "pending");
+  const accounts = data?.accounts ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 text-white">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold">
-            Admin Panel{" "}
-            <span className="rounded-full bg-amber-400/15 px-2 py-0.5 align-middle text-xs font-bold text-amber-300">
-              cross-account
-            </span>
-          </h1>
-          <p className="text-sm text-white/50">
-            Manage every creator account, features and access.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/dashboard"
-            className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/5"
-          >
-            ← My dashboard
-          </Link>
-          <button
-            onClick={() => setShowInvite(true)}
-            className="rounded-lg bg-pink-500 px-4 py-1.5 text-xs font-bold hover:bg-pink-400"
-          >
-            + New creator
-          </button>
-        </div>
-      </header>
+    <div className="flex flex-col gap-[18px]">
+      <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
+        <span className={`${pill} bg-[#f59e0b]/15 text-[#fcd34d]`}>
+          <Glyph d={P.shield} size={11} className="mr-1" />
+          cross-account
+        </span>
+        Everything here spans every creator account. Changes apply immediately.
+      </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {tiles.map((t) => (
-          <div
-            key={t.label}
-            className="rounded-2xl border border-white/10 bg-white/5 p-5"
-          >
-            <p className="text-3xl font-extrabold text-pink-300">
-              {loading ? "—" : t.value}
-            </p>
-            <p className="mt-1 text-sm text-white/50">{t.label}</p>
-          </div>
-        ))}
-      </div>
+      <div className="flex flex-col gap-[18px]">
+        {/* Cross-account stat strip: one framed grid, 1px hairline gutters. */}
+        <dl
+          aria-label="Cross-account totals"
+          className="lift-in grid grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-[#1f1b27] bg-[#1f1b27] sm:grid-cols-4"
+        >
+          {tiles.map((t) => (
+            <div key={t.label} className="bg-base px-[18px] py-4">
+              <dd className="tnum m-0 text-[22px] font-bold leading-none tracking-[-0.02em] text-ink">
+                {loading ? <span className="text-muted">—</span> : t.value.toLocaleString()}
+              </dd>
+              <dt className="mt-1.5 text-[11px] uppercase tracking-[0.04em] text-muted">{t.label}</dt>
+            </div>
+          ))}
+        </dl>
 
-      {(() => {
-        const pending = apps.filter((a) => a.status === "pending");
-        if (pending.length === 0) return null;
-        return (
-          <section className="mt-8">
-            <h2 className="flex items-center gap-2 text-lg font-bold">
+        {pending.length > 0 && (
+          <section aria-labelledby="admin-requests" className={`lift-in overflow-hidden rounded-2xl ${raised}`}>
+            <SectionTitle
+              id="admin-requests"
+              extra={<span className="tnum text-xs text-muted">{pending.length} waiting</span>}
+            >
               Access requests
-              <span className="rounded-full bg-pink-500 px-2 py-0.5 text-xs font-bold">
+              <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
                 {pending.length}
               </span>
-            </h2>
-            <div className="mt-3 space-y-3">
-              {pending.map((a) => (
-                <div
-                  key={a.id}
-                  className="rounded-2xl border border-pink-400/30 bg-pink-500/5 p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-bold">{a.displayName ?? a.email ?? "Creator"}</p>
-                      <p className="text-xs text-white/50">{a.email}</p>
-                      {a.audienceSize && (
-                        <p className="mt-1 text-xs text-white/60">
-                          Audience: {a.audienceSize}
-                        </p>
-                      )}
-                      {a.socials && (
-                        <p className="mt-1 break-words text-xs text-white/60">
-                          Links: {a.socials}
-                        </p>
-                      )}
-                      {a.note && (
-                        <p className="mt-1 text-xs text-white/50">“{a.note}”</p>
-                      )}
+            </SectionTitle>
+            <ul className="flex flex-col gap-2.5 p-3 sm:p-4">
+              {pending.map((a) => {
+                const busy = busyApps.has(a.profileId);
+                const name = a.displayName ?? a.email ?? "Creator";
+                return (
+                  <li
+                    key={a.id}
+                    className={`flex flex-col gap-3 rounded-[13px] px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between ${recessed}`}
+                  >
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-xs font-bold text-ink">
+                        {initialsOf(a.displayName ?? "", a.email ?? "")}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[14px] font-semibold text-ink">{name}</p>
+                        {a.email && <p className="truncate text-[12.5px] text-muted">{a.email}</p>}
+                        {a.audienceSize && (
+                          <p className="mt-1 text-xs text-muted">Audience: {a.audienceSize}</p>
+                        )}
+                        {a.socials && (
+                          <p className="mt-1 break-words text-xs text-muted">Links: {a.socials}</p>
+                        )}
+                        {a.note && <p className="mt-1 text-xs text-[#8b8494]">“{a.note}”</p>}
+                      </div>
                     </div>
-                    <div className="flex shrink-0 gap-2">
+                    <div className="flex shrink-0 gap-2 pl-12 sm:pl-0">
                       <button
+                        type="button"
                         onClick={() => decideApp(a.profileId, "approved")}
-                        disabled={busyApps.has(a.profileId)}
-                        className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold hover:bg-emerald-400 disabled:opacity-50"
+                        disabled={busy}
+                        className="btn-brand inline-flex min-h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
                       >
+                        <Glyph d={P.check} size={14} />
                         Approve
                       </button>
                       <button
+                        type="button"
                         onClick={() => decideApp(a.profileId, "rejected")}
-                        disabled={busyApps.has(a.profileId)}
-                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 hover:bg-white/5 disabled:opacity-50"
+                        disabled={busy}
+                        className={btnGhost}
                       >
+                        <Glyph d={P.x} size={14} />
                         Reject
                       </button>
                     </div>
-                  </div>
-                </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        <section aria-labelledby="admin-accounts" className={`lift-in overflow-hidden rounded-2xl ${raised}`}>
+          <SectionTitle
+            id="admin-accounts"
+            extra={
+              <span className="flex items-center gap-3">
+                {!loading && (
+                  <span className="tnum text-xs text-muted">{accounts.length} total</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowInvite(true)}
+                  className="btn-brand inline-flex min-h-9 items-center gap-1.5 rounded-[9px] px-3.5 text-[13px] font-bold"
+                >
+                  <Glyph d={P.plus} size={15} />
+                  New account
+                </button>
+              </span>
+            }
+          >
+            Creator accounts
+          </SectionTitle>
+          {loading ? (
+            <div className="flex flex-col gap-px" aria-busy="true" aria-label="Loading accounts">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="skeleton h-[66px] border-b border-[#1f1b27] last:border-b-0" />
               ))}
             </div>
-          </section>
-        );
-      })()}
+          ) : accounts.length === 0 ? (
+            <p className="px-[18px] py-8 text-center text-[13.5px] text-muted">No creator accounts yet.</p>
+          ) : (
+            <ul>
+              {accounts.map((a) => (
+                <AccountRow
+                  key={a.id}
+                  account={a}
+                  onPatch={patchAccount}
+                  onDelete={deleteAccount}
+                  onResetTwoFactor={resetTwoFactor}
+                  busy={busyAccounts.has(a.id)}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
 
-      <div className="mt-8 space-y-3">
-        {loading && <p className="text-sm text-white/40">Loading…</p>}
-        {!loading &&
-          (data?.accounts ?? []).map((a) => (
-            <AccountRow
-              key={a.id}
-              account={a}
-              onPatch={patchAccount}
-              onDelete={deleteAccount}
-              busy={busyAccounts.has(a.id)}
-            />
-          ))}
+        <AdminErrors />
+        <AdminActivity />
       </div>
 
       {showInvite && (
@@ -315,6 +392,7 @@ function AccountRow({
   account,
   onPatch,
   onDelete,
+  onResetTwoFactor,
   busy,
 }: {
   account: AdminAccount;
@@ -323,11 +401,17 @@ function AccountRow({
     patch: Partial<Pick<AdminAccount, "role" | "isActive" | "features">>
   ) => void;
   onDelete: (id: string, email: string) => Promise<boolean>;
+  onResetTwoFactor: (id: string) => Promise<boolean>;
   busy: boolean;
 }) {
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [typedEmail, setTypedEmail] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const detailsId = useId();
+  const deleteId = useId();
 
   const emailMatches =
     typedEmail.trim().toLowerCase() === account.email.trim().toLowerCase() &&
@@ -347,129 +431,224 @@ function AccountRow({
     }
   }
 
+  const stats: [string, string, string, number][] = [
+    [P.wheel, "wheel", "wheels", account.wheels],
+    [P.users, "fan", "fans", account.fans],
+    [P.target, "spin", "spins", account.spins],
+    [P.gift, "pending", "pending", account.pending],
+  ];
+
   return (
-    <div
-      className={`rounded-2xl border p-4 transition ${
-        account.isActive
-          ? "border-white/10 bg-white/5"
-          : "border-red-500/20 bg-red-500/5"
+    <li
+      className={`border-b border-[#1f1b27] last:border-b-0 ${
+        account.isActive ? "" : "bg-[color-mix(in_oklab,#ef4444_4%,transparent)]"
       }`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="font-bold">
-            {account.displayName}
+      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 px-4 py-3.5 sm:px-[18px]">
+        <span className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-[13px] font-bold text-ink">
+          {initialsOf(account.displayName, account.email)}
+        </span>
+        <div className="min-w-0 flex-1 basis-40">
+          <p className="flex min-w-0 items-center gap-2 text-[14px] font-semibold text-ink">
+            <span className="truncate">{account.displayName}</span>
             {account.role === "admin" && (
-              <span className="ml-2 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+              <span className={`${pill} bg-[#f59e0b]/15 text-[#fcd34d]`}>
+                <Glyph d={P.shield} size={11} className="mr-1" />
                 ADMIN
               </span>
             )}
-            {!account.isActive && (
-              <span className="ml-2 rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-300">
-                SUSPENDED
-              </span>
-            )}
           </p>
-          <p className="text-xs text-white/40">{account.email}</p>
+          <p className="tnum mt-0.5 truncate text-[12.5px] text-muted" title={account.email}>
+            {account.email}
+          </p>
+          {/* Per-account counts at a glance (they were always visible before). */}
+          <p className="mt-1 flex flex-wrap gap-x-3.5 gap-y-1">
+            {stats.map(([d, one, many, value]) => (
+              <span key={many} className="tnum inline-flex items-center gap-1 text-xs text-muted">
+                <Glyph d={d} size={13} className="text-[#8b8494]" />
+                <span className="font-semibold text-ink">{value.toLocaleString()}</span>{" "}
+                {value === 1 ? one : many}
+              </span>
+            ))}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            className="ff-input text-xs disabled:opacity-50"
-            value={account.role}
-            disabled={busy}
-            onChange={(e) =>
-              onPatch(account.id, { role: e.target.value as AppRole })
-            }
-          >
-            <option value="creator">Creator</option>
-            <option value="admin">Admin</option>
-          </select>
+        <span
+          className={`${pill} ${
+            account.isActive
+              ? "bg-[#10b981]/15 text-[#6ee7b7]"
+              : "bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted"
+          }`}
+        >
+          {account.isActive ? "Active" : "Suspended"}
+        </span>
+        <div className="flex shrink-0 items-center gap-2">
           <button
+            type="button"
             onClick={() => onPatch(account.id, { isActive: !account.isActive })}
             disabled={busy}
-            className={`rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50 ${
-              account.isActive
-                ? "border border-white/15 text-white/70 hover:bg-white/5"
-                : "bg-green-500/90 text-white hover:bg-green-400"
-            }`}
+            className={account.isActive ? btnGhost : `${btnGhost} border-[#10b981]/40 text-[#6ee7b7]`}
           >
             {account.isActive ? "Suspend" : "Reactivate"}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmingDelete(true);
+              setOpen(true);
+            }}
+            disabled={busy || deleting}
+            aria-label={`Delete ${account.displayName}`}
+            aria-controls={deleteId}
+            aria-expanded={confirmingDelete}
+            className={btnDanger}
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            aria-controls={detailsId}
+            aria-label={`${open ? "Hide" : "Show"} role and features for ${account.displayName}`}
+            className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:text-ink"
+          >
+            <Glyph d={P.chevron} size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+          </button>
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-4 text-xs text-white/50">
-        <span>🎡 {account.wheels} wheels</span>
-        <span>👥 {account.fans} fans</span>
-        <span>🎯 {account.spins} spins</span>
-        <span>🎁 {account.pending} pending</span>
-      </div>
+      {/* Row disclosure (not drawn in the design): the privileged, rarely-changed
+          controls — role and feature flags — plus the delete confirm. */}
+      <div id={detailsId} hidden={!open} className="px-4 pb-4 sm:px-[18px]">
+        <div className={`flex flex-col gap-4 rounded-[13px] p-4 ${recessed}`}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+            <label className="flex flex-col gap-1.5 sm:shrink-0">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">Role</span>
+              <select
+                className="ff-input min-w-32 text-xs disabled:opacity-50"
+                value={account.role}
+                disabled={busy}
+                onChange={(e) => onPatch(account.id, { role: e.target.value as AppRole })}
+              >
+                <option value="creator">Creator</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {FEATURES.map((f) => {
-          const on = f.base || account.features[f.key];
-          return (
-            <button
-              key={f.key}
-              disabled={f.base || busy}
-              onClick={() =>
-                onPatch(account.id, {
-                  features: { [f.key]: !account.features[f.key] },
-                })
-              }
-              title={
-                f.base
-                  ? "Base feature — always on"
-                  : f.comingSoon
-                    ? "Coming soon — grant early access"
-                    : ""
-              }
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                on
-                  ? "bg-pink-500/20 text-pink-200 ring-1 ring-pink-500/40"
-                  : "bg-white/5 text-white/40 hover:bg-white/10"
-              } ${f.base ? "cursor-default" : ""}`}
-            >
-              {f.emoji} {f.label}
-              {f.comingSoon && !on ? " (soon)" : ""}
-              {on ? " ✓" : ""}
-            </button>
-          );
-        })}
-      </div>
+            <fieldset className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <legend className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">
+                Features
+              </legend>
+              <div className="flex flex-wrap gap-2">
+                {FEATURES.map((f) => {
+                  const on = f.base || account.features[f.key];
+                  return (
+                    <button
+                      key={f.key}
+                      type="button"
+                      role="switch"
+                      aria-checked={on}
+                      disabled={f.base || busy}
+                      onClick={() =>
+                        onPatch(account.id, {
+                          features: { [f.key]: !account.features[f.key] },
+                        })
+                      }
+                      title={
+                        f.base
+                          ? "Base feature — always on"
+                          : f.comingSoon
+                            ? "Coming soon — grant early access"
+                            : ""
+                      }
+                      className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
+                        on
+                          ? "bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand)_40%,transparent)]"
+                          : "bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] text-muted hover:text-ink"
+                      } ${f.base ? "cursor-default" : "disabled:opacity-50"}`}
+                    >
+                      {on && <Glyph d={P.check} size={13} className="text-brand" />}
+                      {f.label}
+                      {f.comingSoon && !on ? " (soon)" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          </div>
 
-      {/* Danger zone — irreversible hard-delete, kept distinct from Suspend. */}
-      <div className="mt-4 border-t border-red-500/20 pt-3">
-        {!confirmingDelete ? (
-          <button
-            type="button"
-            onClick={() => setConfirmingDelete(true)}
-            className="rounded-lg border border-red-500/50 px-3 py-1.5 text-xs font-semibold text-red-300 transition hover:bg-red-500/10"
+          <RemoveCreatorPhotosButton accountId={account.id} displayName={account.displayName || account.email} />
+
+          {/* Two-factor reset for a lost authenticator (no recovery codes exist). */}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span>Lost their authenticator app?</span>
+            {confirmingReset ? (
+              <>
+                <button
+                  type="button"
+                  disabled={resetting}
+                  onClick={async () => {
+                    setResetting(true);
+                    try {
+                      if (await onResetTwoFactor(account.id)) setConfirmingReset(false);
+                    } finally {
+                      setResetting(false);
+                    }
+                  }}
+                  className={btnDanger}
+                  aria-label={`Confirm two-factor reset for ${account.displayName}`}
+                >
+                  {resetting ? "Resetting…" : "Yes, remove their two-factor"}
+                </button>
+                <button type="button" disabled={resetting} onClick={() => setConfirmingReset(false)} className={btnGhost}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmingReset(true)}
+                className={btnGhost}
+                aria-label={`Reset two-factor for ${account.displayName}`}
+              >
+                Reset two-factor
+              </button>
+            )}
+          </div>
+
+          {/* Danger zone — irreversible hard-delete, kept distinct from Suspend.
+              The design shows one click; the typed-email confirm stays. */}
+          <div
+            id={deleteId}
+            hidden={!confirmingDelete}
+            className="rounded-[11px] border border-[#ef4444]/35 bg-[#ef4444]/10 p-3.5"
           >
-            Delete permanently…
-          </button>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs text-red-200">
-              This permanently deletes <strong>{account.displayName}</strong> and
-              all of their wheels, fans, spins, grants, campaigns and messages.
-              This <strong>cannot be undone</strong>. Type{" "}
-              <strong className="break-all">{account.email}</strong> to confirm:
-            </p>
+            <div className="flex items-start gap-2.5">
+              <Glyph d={P.alert} size={18} className="mt-px text-[#fca5a5]" />
+              <p className="text-xs leading-relaxed text-[#fecaca]">
+                This permanently deletes <strong className="text-ink">{account.displayName}</strong> and all
+                of their wheels, fans, spins, grants, campaigns and messages. This{" "}
+                <strong className="text-ink">cannot be undone</strong>. Type{" "}
+                <strong className="break-all text-ink">{account.email}</strong> to confirm:
+              </p>
+            </div>
             <input
               value={typedEmail}
               onChange={(e) => setTypedEmail(e.target.value)}
               placeholder={account.email}
               autoComplete="off"
-              className="ff-input w-full text-xs"
+              aria-label={`Type ${account.email} to confirm deletion`}
+              className="ff-input mt-3 w-full text-xs"
             />
-            <div className="flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={runDelete}
                 disabled={!emailMatches || deleting}
-                className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-red-400 disabled:opacity-40"
+                className="inline-flex min-h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-[#ef4444] px-3 text-xs font-bold text-white transition-colors hover:bg-[#f87171] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
               >
+                <Glyph d={P.trash} size={14} />
                 {deleting ? "Deleting…" : "Permanently delete this account"}
               </button>
               <button
@@ -479,15 +658,15 @@ function AccountRow({
                   setTypedEmail("");
                 }}
                 disabled={deleting}
-                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/5 disabled:opacity-40"
+                className={btnGhost}
               >
                 Cancel
               </button>
             </div>
           </div>
-        )}
+        </div>
       </div>
-    </div>
+    </li>
   );
 }
 
@@ -503,6 +682,7 @@ function InviteModal({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const titleId = useId();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -514,9 +694,11 @@ function InviteModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, displayName }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (res.ok) onCreated();
-      else setError(data.error ?? "Couldn't create account.");
+      else setError(inviteErrorMessage(data?.error));
+    } catch {
+      setError(inviteErrorMessage(undefined));
     } finally {
       setBusy(false);
     }
@@ -525,55 +707,74 @@ function InviteModal({
   return (
     <Modal
       onClose={onClose}
-      label="Create a creator account"
-      className="w-full max-w-sm rounded-2xl border border-white/10 bg-zinc-900 p-6 text-white"
+      labelledBy={titleId}
+      className={`w-full max-w-sm rounded-2xl p-6 text-ink ${raised}`}
     >
       <form onSubmit={submit}>
-        <h2 className="text-lg font-bold">Create a creator account</h2>
-        <p className="mt-1 text-sm text-white/50">
+        <h2 id={titleId} className="flex items-center gap-[9px] text-lg font-bold tracking-[-0.01em]">
+          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+          New account
+        </h2>
+        <p className="mt-1 text-[13.5px] text-muted">
           You set their login. Share the credentials with the creator.
         </p>
-        <div className="mt-4 space-y-3">
-          <input
-            className="ff-input w-full"
-            placeholder="Display name"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-          />
-          <input
-            type="email"
-            required
-            className="ff-input w-full"
-            placeholder="creator@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={6}
-            className="ff-input w-full"
-            placeholder="Temporary password (6+ chars)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+        <div className="mt-4 flex flex-col gap-3">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">Display name</span>
+            <input
+              className="ff-input w-full"
+              placeholder="Display name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">Email</span>
+            <input
+              type="email"
+              required
+              className="ff-input w-full"
+              placeholder="creator@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">
+              Temporary password
+            </span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={MIN_PASSWORD_LENGTH}
+              className="ff-input w-full"
+              placeholder={`${MIN_PASSWORD_LENGTH}+ chars, a letter and a number`}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
         </div>
-        {error && <p className="mt-3 text-sm text-amber-300">{error}</p>}
+        {error && (
+          <p role="alert" className="mt-3 flex items-start gap-2 text-[13px] text-[#fcd34d]">
+            <Glyph d={P.alert} size={16} className="mt-px" />
+            {error}
+          </p>
+        )}
         <div className="mt-5 flex gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-xl border border-white/15 py-2.5 text-sm font-semibold text-white/70 hover:bg-white/5"
+            className="flex-1 rounded-[10px] border border-line py-2.5 text-sm font-semibold text-muted transition-colors hover:text-ink"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={busy}
-            className="flex-1 rounded-xl bg-pink-500 py-2.5 text-sm font-bold hover:bg-pink-400 disabled:opacity-50"
+            className="btn-brand flex-1 rounded-[10px] py-2.5 text-sm font-bold"
           >
-            {busy ? "Creating…" : "Create"}
+            {busy ? "Creating…" : "Create account"}
           </button>
         </div>
       </form>

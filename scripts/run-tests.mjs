@@ -20,6 +20,11 @@ function findTests(dir) {
   /** @type {string[]} */
   const out = [];
   for (const entry of readdirSync(dir)) {
+    // Real directory entries are single names. Refuse traversal before join()
+    // can normalize it away, while allowing literal Next.js bracket segments.
+    if (entry === "." || entry === ".." || /[\\/]/.test(entry)) {
+      throw new Error("Refusing an unsafe discovered test entry: " + entry);
+    }
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) out.push(...findTests(p));
     else if (entry.endsWith(".test.ts")) out.push(p);
@@ -49,9 +54,10 @@ const files = findTests("src").sort();
 // Defense-in-depth: we spawn the resolved binary directly (no shell, so `f` is
 // never subject to shell interpretation), but still refuse any test path with
 // characters outside this strict allowlist before running it.
-const SAFE_PATH = /^[A-Za-z0-9_.\-/\\]+$/;
+const SAFE_PATH = /^[A-Za-z0-9_.\-/\\[\]]+$/;
 
 const npx = resolveBin("npx");
+const PRELOAD = join(import.meta.dirname, "test-preload.mjs");
 
 /** @type {string[]} */
 const failed = [];
@@ -62,8 +68,16 @@ for (const f of files) {
     process.exit(1);
   }
   console.log("# " + f);
-  const r = spawnSync(npx, ["tsx", f], { stdio: "inherit" });
-  if (r.status !== 0) failed.push(f);
+  // --experimental-test-module-mocks lets a test swap a module (e.g. the
+  // Supabase client for an in-memory fake) with node:test's mock.module.
+  // --import preloads the `server-only` stub (see scripts/test-preload.mjs) so
+  // tests can load src/lib/supabase/server.ts outside a React Server runtime.
+  const r = spawnSync(
+    npx,
+    ["tsx", "--experimental-test-module-mocks", "--import", PRELOAD, f],
+    { stdio: "inherit" },
+  );
+  if (r.error || r.signal || r.status !== 0) failed.push(f);
 }
 
 console.log("\n================ TEST SUMMARY ================");

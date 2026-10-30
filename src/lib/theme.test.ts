@@ -31,12 +31,19 @@ const base = parseHex("#0c0a0e")!;
   check("parseHex rejects empty/null", parseHex("") === null && parseHex(null) === null);
 }
 
-// --- readableInk: prefer white, flip to dark only when white is too faint ---
+// --- readableInk: pick the HIGHER-contrast ink (white vs dark #160d12) -------
 {
-  check("light yellow brand -> dark ink", readableInk("#f5d90a") === "#111111");
+  const DARK_INK = "#160d12";
+  check("light yellow brand -> dark ink", readableInk("#f5d90a") === DARK_INK);
   check("deep purple brand -> white ink", readableInk("#4a1d96") === "#ffffff");
-  check("default pink keeps white ink", readableInk(DEFAULT_BRAND) === "#ffffff");
-  check("white brand -> dark ink", readableInk("#ffffff") === "#111111");
+  // The tracked defect: white-on-default-pink is only 3.52:1, so the fix flips
+  // it to dark ink (~6:1, passes AA for normal text).
+  check("default pink -> dark ink (fixes 3.52:1 defect)", readableInk(DEFAULT_BRAND) === DARK_INK);
+  check(
+    "default pink + chosen ink clears AA (>=4.5:1)",
+    contrastRatio(parseHex(DEFAULT_BRAND)!, parseHex(readableInk(DEFAULT_BRAND))!) >= 4.5
+  );
+  check("white brand -> dark ink", readableInk("#ffffff") === DARK_INK);
   check("black brand -> white ink", readableInk("#000000") === "#ffffff");
   check("invalid color falls back readable", readableInk("garbage") === readableInk(DEFAULT_BRAND));
 }

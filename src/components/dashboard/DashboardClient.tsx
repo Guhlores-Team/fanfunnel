@@ -1,53 +1,42 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import Wheel from "@/components/Wheel";
 import { brandVars } from "@/lib/theme";
-import { prizeOdds } from "@/lib/games/wheel/engine";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
-import {
-  RARITY_COLORS,
-  RARITY_LABEL,
-  RARITY_ORDER,
-  type Prize,
-  type Rarity,
-  type WheelConfig,
-} from "@/lib/games/wheel/types";
-import type {
-  CampaignPack,
-  CreatorMetricsExtra,
-  CreatorOverview,
-  DmTemplate,
-  FanAccountSummary,
-  PrizeTemplate,
-  RedemptionItem,
-  RedemptionStatus,
-} from "@/lib/data/types";
-import { ToastProvider, useToast } from "@/components/ui/Toast";
-import { formatCents } from "@/lib/format";
+import type { WheelConfig } from "@/lib/games/wheel/types";
+import type { CreatorOverview } from "@/lib/data/types";
+import { ToastProvider } from "@/components/ui/Toast";
 import { useFetch } from "@/lib/hooks/useFetch";
-import { useClipboard, copyToClipboard } from "@/lib/hooks/useClipboard";
-import { useOrigin } from "@/lib/hooks/useOrigin";
-import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
-import { OddsBar } from "@/components/dashboard/OddsBar";
-import Sparkline from "@/components/dashboard/Sparkline";
-import Funnel from "@/components/dashboard/Funnel";
-import { EmptyState, Field, TagEditor } from "./ui";
-import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
-import WheelSwitcher from "@/components/dashboard/WheelSwitcher";
-import TemplateLibrary from "@/components/dashboard/TemplateLibrary";
-import PackPresets from "@/components/dashboard/PackPresets";
 import TodayPanel from "@/components/dashboard/TodayPanel";
+import PrizesPanel from "@/components/dashboard/PrizesPanel";
+import FansPanel from "@/components/dashboard/FansPanel";
+import MetricsPanel from "@/components/dashboard/MetricsPanel";
+import WheelEditor from "@/components/dashboard/WheelEditor";
 import InvitesBanner from "@/components/dashboard/InvitesBanner";
 import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
-import ImportFans from "@/components/dashboard/ImportFans";
+import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
+import NotificationBell from "@/components/dashboard/NotificationBell";
+import TermsPrompt from "@/components/dashboard/TermsPrompt";
+import { resolveSection } from "@/components/dashboard/dashboardSection";
+import { deliveryLeaveDecision, type DeliveryNavigationState } from "@/components/dashboard/deliveryNavigation";
+import { CreatorDraftProvider, type CreatorDraftScope, type CreatorDraftState, type CreatorLeaveOptions } from "./CreatorDrafts";
+import { creatorNavigationState, creatorScopeIncludes } from "./creatorNavigation";
+import {
+  Sidebar,
+  SetupChecklistButton,
+  TopBar,
+  SECTION_META,
+  accountInitials,
+  type Tab,
+} from "@/components/dashboard/DashboardShell";
+import MobileTabBar from "@/components/dashboard/MobileTabBar";
+import { prefersReducedMotion } from "@/lib/sound";
+import { firstStepsAllDone, isFirstRun } from "@/components/dashboard/firstSteps";
 
-// Code-split the tab-gated panels (and the qrcode-pulling QrButton) so the
-// initial dashboard bundle doesn't carry every tab a creator may never open.
+// Code-split the tab-gated panels so the initial dashboard bundle doesn't
+// carry every tab a creator may never open. (QrButton is split in FansPanel.)
 const PanelFallback = () => <div className="skeleton mt-4 h-64 rounded-xl" />;
-const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
 const CampaignsPanel = dynamic(() => import("@/components/dashboard/CampaignsPanel"), {
   loading: PanelFallback,
 });
@@ -63,25 +52,11 @@ const AnalyticsPanel = dynamic(() => import("@/components/dashboard/AnalyticsPan
 const SettingsPanel = dynamic(() => import("@/components/dashboard/SettingsPanel"), {
   loading: PanelFallback,
 });
-import {
-  EMOJI_SUGGESTIONS,
-  balanceOdds,
-  duplicatePrize,
-  newPrize,
-  reorder,
-  RARITY_DEFAULT_WEIGHT,
-} from "@/components/dashboard/editorHelpers";
-
-type Tab =
-  | "today"
-  | "prizes"
-  | "fans"
-  | "campaigns"
-  | "editor"
-  | "inbox"
-  | "boosts"
-  | "analytics"
-  | "settings";
+// Admin lives in the shell as "Account › Admin". It only renders behind the
+// server-derived `isAdmin` gate below, and every /api/admin route re-checks.
+const AdminClient = dynamic(() => import("@/components/admin/AdminClient"), {
+  loading: PanelFallback,
+});
 
 // Shared overview, polled (12s) + refreshed on tab focus so metrics + the
 // pending badge stay live. `setData` is exposed for optimistic account edits.
@@ -93,14 +68,21 @@ function useOverview() {
   return { data, loading, refresh: reload, setData };
 }
 
-// Enhanced metrics (spin trend + conversion funnel), polled like the overview
-// and refetched whenever the selected window (`days`) changes.
-function useMetricsExtra(days: number) {
-  const { data, loading } = useFetch<CreatorMetricsExtra>(
-    `/api/metrics?days=${days}`,
-    { pollMs: 12000 }
-  );
-  return { data, loading };
+// A Sign out from the phone More sheet arrives detached (the sheet closed to
+// make room for the unsaved-changes dialog), and only a connected form submits.
+function submitSignOut(form: HTMLFormElement) {
+  if (form.isConnected) return form.submit();
+  const copy = form.cloneNode(true) as HTMLFormElement;
+  copy.hidden = true;
+  document.body.appendChild(copy);
+  copy.submit();
+}
+
+interface DashboardLeaveRequest {
+  action: () => void;
+  what: string;
+  consequence: string;
+  scope?: CreatorDraftScope;
 }
 
 export default function DashboardClient({
@@ -108,14 +90,103 @@ export default function DashboardClient({
   email,
   initialWheel,
   initialOnboardingDismissed = false,
+  initialTab,
 }: {
+  /** Server-derived (dashboard/page.tsx): an active admin per is_admin(), or
+   *  demo mode. The only input to the Admin section gate. */
   isAdmin: boolean;
   email: string | null;
   initialWheel: WheelConfig;
   initialOnboardingDismissed?: boolean;
+  /** Deep link (`/dashboard?section=admin`, used by the /admin redirect). */
+  initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("today");
+  // The Admin section exists only when the server said so (never client state).
+  const adminVisible = isAdmin;
+  const [tab, setTab] = useState<Tab>(
+    initialTab && (initialTab !== "admin" || adminVisible) ? initialTab : "today"
+  );
   const [wheel, setWheel] = useState<WheelConfig>(() => structuredClone(initialWheel));
+  // Last saved/loaded wheel JSON. Lives beside `wheel` so "Unsaved changes"
+  // (and the edits themselves) survive leaving the Wheels section and coming back.
+  const [savedWheelJson, setSavedWheelJson] = useState(() => JSON.stringify(initialWheel));
+  const wheelDirty = useMemo(() => JSON.stringify(wheel) !== savedWheelJson, [wheel, savedWheelJson]);
+  // Only flags are lifted. Private delivery text/codes stay inside the prize
+  // editor and never enter the wheel JSON or dashboard state.
+  const [deliveryDirty, setDeliveryDirty] = useState(false);
+  const [deliveryPending, setDeliveryPending] = useState(false);
+  const deliveryState = useRef<DeliveryNavigationState>({ dirty: false, pending: false });
+  const [creatorDrafts, setCreatorDrafts] = useState<ReadonlyMap<string, CreatorDraftState>>(() => new Map());
+  const creatorDraftsRef = useRef<ReadonlyMap<string, CreatorDraftState>>(new Map());
+  const [blockedScope, setBlockedScope] = useState<CreatorDraftScope | undefined>(undefined);
+  const blockedScopeRef = useRef<CreatorDraftScope | undefined>(undefined);
+  const [blockedDeliveryLeave, setBlockedDeliveryLeave] = useState(false);
+  const [leaveRequest, setLeaveRequest] = useState<DashboardLeaveRequest | null>(null);
+  const leaveRequestRef = useRef<DashboardLeaveRequest | null>(null);
+  const registerCreatorDraft = useCallback((id: string, state: CreatorDraftState | null) => {
+    const current = creatorDraftsRef.current;
+    const old = current.get(id);
+    if (!state || (!state.dirty && !state.pending)) {
+      if (!old) return;
+    } else if (old?.scope === state.scope && old.description === state.description && old.dirty === state.dirty && old.pending === state.pending) return;
+    const next = new Map(current);
+    if (state && (state.dirty || state.pending)) next.set(id, state);
+    else next.delete(id);
+    creatorDraftsRef.current = next;
+    setCreatorDrafts(next);
+    if (!creatorNavigationState(next, deliveryState.current, blockedScopeRef.current).pending) setBlockedDeliveryLeave(false);
+  }, []);
+  const deliveryDraftChanged = useCallback((dirty: boolean) => {
+    deliveryState.current.dirty = dirty;
+    setDeliveryDirty(dirty);
+  }, []);
+  const deliveryPendingChanged = useCallback((pending: boolean) => {
+    deliveryState.current.pending = pending;
+    setDeliveryPending(pending);
+    if (!creatorNavigationState(creatorDraftsRef.current, deliveryState.current, blockedScopeRef.current).pending) setBlockedDeliveryLeave(false);
+  }, []);
+  const creatorNavigation = useMemo(() => creatorNavigationState(creatorDrafts, { dirty: deliveryDirty, pending: deliveryPending }), [creatorDrafts, deliveryDirty, deliveryPending]);
+  const blockedNavigation = useMemo(() => creatorNavigationState(creatorDrafts, { dirty: deliveryDirty, pending: deliveryPending }, blockedScope), [creatorDrafts, deliveryDirty, deliveryPending, blockedScope]);
+  // Leaving with unsaved wheel edits. Sign out asks in-app first (below); a
+  // reload/close can only get the browser's own beforeunload prompt. Lives
+  // here, not in the editor, so it holds while another section is open.
+  const leavingRef = useRef(false);
+  useEffect(() => {
+    if (!wheelDirty && !creatorNavigation.dirty && !creatorNavigation.pending) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      if (!leavingRef.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [wheelDirty, creatorNavigation.dirty, creatorNavigation.pending]);
+  const requestLeave = useCallback((action: () => void, intent: "section" | "signout", options?: CreatorLeaveOptions) => {
+    // A later push message must not replace a choice already being reviewed.
+    if (leaveRequestRef.current) return;
+    const state = creatorNavigationState(creatorDraftsRef.current, deliveryState.current, options?.scope);
+    const decision = deliveryLeaveDecision(state, wheelDirty, intent);
+    if (decision === "wait") {
+      blockedScopeRef.current = options?.scope;
+      setBlockedScope(options?.scope);
+      setBlockedDeliveryLeave(true);
+      return;
+    }
+    if (decision === "confirm") {
+      const request: DashboardLeaveRequest = {
+        action,
+        what: [...(intent === "signout" && wheelDirty ? ["your wheel"] : []), ...state.descriptions].join(" and ") || "your changes",
+        consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your wheel edits stay here."),
+        scope: options?.scope,
+      };
+      leaveRequestRef.current = request;
+      setLeaveRequest(request);
+      return;
+    }
+    action();
+  }, [wheelDirty]);
+  const draftRegistry = useMemo(() => ({ register: registerCreatorDraft, leave: (action: () => void, options?: CreatorLeaveOptions) => requestLeave(action, "section", options) }), [registerCreatorDraft, requestLeave]);
   // Which wheel the editor is currently editing. Lifted so it survives tab
   // switches and the WheelSwitcher highlights the right wheel. Seeded from the
   // initial active wheel's id so the switcher highlights it on first paint.
@@ -130,6 +201,7 @@ export default function DashboardClient({
   // still on the sample wheel (no saved wheel id of their own).
   const metricsFans = overview.data?.metrics.fans ?? 0;
   const metricsSpins = overview.data?.metrics.spinsPlayed ?? 0;
+  const metricsFulfilled = overview.data?.metrics.fulfilled ?? 0;
   // "Built a wheel" comes from the server (saved an edit, or has >1 wheel) so it
   // catches every edit and reliably survives reloads / new wheels. The local
   // content check is a fast pre-save hint so editing ticks the step instantly.
@@ -141,7 +213,13 @@ export default function DashboardClient({
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     initialOnboardingDismissed
   );
-  const onboardingAllDone = wheelSaved && metricsFans > 0 && metricsSpins > 0;
+  const firstStepSignals = {
+    wheelSaved,
+    fans: metricsFans,
+    spins: metricsSpins,
+    fulfilled: metricsFulfilled,
+  };
+  const onboardingAllDone = firstStepsAllDone(firstStepSignals);
   const setOnboardingHidden = useCallback((hidden: boolean) => {
     setOnboardingDismissed(hidden);
     // Fire-and-forget: the UI already reflects the change optimistically.
@@ -166,208 +244,216 @@ export default function DashboardClient({
     }
   }, [overview.loading, onboardingAllDone, onboardingDismissed, setOnboardingHidden]);
 
-  // New creators should land on the Wheel editor (their first task), not the
-  // empty "Today" feed. Switch once, on first data load, only if they haven't
-  // already navigated somewhere themselves.
-  const userPickedTab = useRef(false);
-  const autoLanded = useRef(false);
-  useEffect(() => {
-    if (autoLanded.current || overview.loading || userPickedTab.current) return;
-    autoLanded.current = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time landing choice after async overview load
-    if (metricsFans === 0 && metricsSpins === 0) setTab("editor");
-  }, [overview.loading, metricsFans, metricsSpins]);
-
-  const goTab = (t: Tab) => {
-    userPickedTab.current = true;
-    setTab(t);
-  };
-
-  // ARIA tabs keyboard pattern: Arrow keys move between tabs (wrapping), Home/End
-  // jump to the ends, and focus follows selection. `tabs` is defined below but is
-  // stable per render, so reading it here in the handler is safe.
-  const onTabKeyDown = (e: React.KeyboardEvent, id: Tab) => {
-    const ids = tabs.map(([t]) => t);
-    const i = ids.indexOf(id);
-    let next: Tab | null = null;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = ids[(i + 1) % ids.length];
-    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = ids[(i - 1 + ids.length) % ids.length];
-    else if (e.key === "Home") next = ids[0];
-    else if (e.key === "End") next = ids[ids.length - 1];
-    if (next) {
-      e.preventDefault();
-      goTab(next);
-      tabRefs.current[next]?.focus();
-    }
-  };
-
-  // Keep the active tab visible in the horizontally-scrolling tab bar on mobile
-  // (otherwise an earlier/later tab can sit clipped off-screen after switching).
-  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
-  useEffect(() => {
-    tabRefs.current[tab]?.scrollIntoView({
-      behavior: "smooth",
-      inline: "center",
-      block: "nearest",
-    });
-  }, [tab]);
+  // Brand-new creators land on Today, where "Your first steps" guides them
+  // (RD-5) — no auto-switch to the Wheel editor any more.
+  const goTab = useCallback((t: Tab, after?: () => void) => {
+    if (t === "admin" && !adminVisible) return;
+    const navigate = () => {
+      setTab(t);
+      after?.();
+    };
+    // A plain re-select preserves the mounted editor. Actions such as search
+    // can remount even the current section, so they still use the guard.
+    if (t === tab && !after) navigate();
+    else requestLeave(navigate, "section");
+  }, [tab, adminVisible, requestLeave]);
 
   // Onboarding CTAs: switch to the relevant tab AND scroll its panel into view,
   // so a creator on a phone is actually taken to the section to act on it.
   const panelRef = useRef<HTMLDivElement>(null);
-  const goToSection = (t: Tab) => {
-    goTab(t);
-    requestAnimationFrame(() => {
-      panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const checklistRef = useRef<HTMLDivElement>(null);
+  const goToSection = (t: Tab, after?: () => void) => {
+    goTab(t, () => {
+      after?.();
+      requestAnimationFrame(() => {
+        panelRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+      });
     });
   };
 
-  const tabs: [Tab, string][] = [
-    ["today", "Today"],
-    ["editor", "Wheel"],
-    ["fans", "Fans"],
-    ["prizes", "Prizes"],
-    ["campaigns", "Campaigns"],
-    ["boosts", "Boosts"],
-    ["inbox", "Inbox"],
-    ["analytics", "Analytics"],
-    ["settings", "Settings"],
-  ];
+  // "Edit game" / "Change game" shortcuts from Campaigns and the fan drawer.
+  const [gameRequest, setGameRequest] = useState<{ id: string; nonce: number } | null>(null);
+  const openGameEditor = (id: string) => goToSection("editor", () => setGameRequest((s) => ({ id, nonce: (s?.nonce ?? 0) + 1 })));
+  const openCampaigns = () => goToSection("campaigns");
+
+  // "Your first steps" lives inside Today (replacing the old every-section
+  // checklist). Rendered here so its signals + dismissal stay owned by the
+  // dashboard; TodayPanel only places it.
+  const checklistVisible = !overview.loading && !onboardingDismissed && !onboardingAllDone;
+  const firstSteps = checklistVisible ? (
+    <div ref={checklistRef} className="scroll-mt-24">
+      <GetStartedChecklist
+        signals={firstStepSignals}
+        dismissed={onboardingDismissed}
+        onDismiss={() => setOnboardingHidden(true)}
+        onGoTo={(t) => goToSection(t as Tab)}
+      />
+    </div>
+  ) : null;
+
+  // Display name for the sidebar workspace pill (no polling — it rarely changes).
+  const account = useFetch<{ displayName: string | null }>(email ? "/api/account" : null);
+  const accountName =
+    account.data?.displayName?.trim() || (email ? email.split("@")[0] : "Demo creator");
+  const accountSub = email ?? "Demo workspace — connect Supabase to go live";
+
+  // Shared by the sidebar (desktop) and the More sheet (phone).
+  const guardSignOut = (e: React.FormEvent, form: HTMLFormElement) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    requestLeave(() => {
+      leavingRef.current = true;
+      submitSignOut(form);
+    }, "signout");
+  };
+  const onSignOut = (e: React.FormEvent<HTMLFormElement>) => guardSignOut(e, e.currentTarget);
+  const setupOffered = !overview.loading && onboardingDismissed && !onboardingAllDone;
+  const reopenSetup = () => {
+    // The checklist lives on Today: open it there and bring it into view.
+    goTab("today", () => {
+      setOnboardingHidden(false);
+      requestAnimationFrame(() => {
+        checklistRef.current?.scrollIntoView({
+          behavior: prefersReducedMotion() ? "auto" : "smooth",
+          block: "start",
+        });
+      });
+    });
+  };
+
+  // Top-bar search routes the query to the Fans panel's existing name filter.
+  // The nonce remounts FansPanel so a repeat search re-applies the query.
+  const [fanSearch, setFanSearch] = useState({ q: "", nonce: 0 });
+  // "New fan link" → Fans, focus the mint form's name field.
+  const [mintFocus, setMintFocus] = useState(0);
+  // Fan drawer "Message" → Inbox with that fan's thread selected. The nonce lets
+  // the same fan be re-requested after the creator picked another thread.
+  const [inboxFocus, setInboxFocus] = useState<{ fanId: string | null; nonce: number }>({
+    fanId: null,
+    nonce: 0,
+  });
+  // Web push opt-in (Settings › Notifications): the bell footer and the Inbox
+  // open it; the nonce scrolls the card into view each time.
+  const [pushFocus, setPushFocus] = useState(0);
+  const openPushSettings = () => {
+    goTab("settings", () => setPushFocus((n) => n + 1));
+  };
+  // A tapped push notification while a dashboard is open: the service worker
+  // asks it to switch section in place (no reload, unsaved edits survive).
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (e: MessageEvent) => {
+      const d = e.data as { type?: unknown; url?: unknown } | null;
+      if (d?.type !== "ff:navigate" || typeof d.url !== "string") return;
+      let url: URL;
+      try { url = new URL(d.url, window.location.origin); }
+      catch { return; }
+      if (url.origin !== window.location.origin || url.pathname !== "/dashboard") return;
+      const section = resolveSection(url.searchParams.get("section") ?? undefined, adminVisible);
+      if (section) goTab(section);
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [adminVisible, goTab]);
+
+  const [title, subtitleText] = SECTION_META[tab];
+  // Phones show just the date on Today (the compressed top bar has no room).
+  const subtitle =
+    tab === "today" ? (
+      <>
+        {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+        <span className="max-lg:hidden"> · {subtitleText}</span>
+      </>
+    ) : (
+      subtitleText
+    );
 
   return (
     <ToastProvider>
+    <CreatorDraftProvider value={draftRegistry}>
     <div
-      className="mx-auto w-full max-w-5xl overflow-x-clip px-4 py-6 sm:px-6 sm:py-8"
+      className="flex min-h-[100dvh] flex-col lg:flex-row"
       // Live brand theming: the page shell seeds --brand at request time, but
       // binding it to the editor's wheel state here means picking a new brand
       // color re-tints the whole dashboard instantly — no refresh needed.
       // brandVars also derives --brand-ink / --brand-text so text stays legible
       // on ANY brand color (#1).
       style={brandVars(wheel.brandColor)}
+      onSubmitCapture={(event) => {
+        // Covers every sign-out form, including the Terms prompt, while the
+        // sidebar/phone handlers remain compatible with their existing API.
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        const action = new URL(form.action, window.location.origin);
+        if (action.origin === window.location.origin && action.pathname === "/auth/signout") guardSignOut(event, form);
+      }}
     >
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight text-ink sm:text-2xl">
-            Creator dashboard
-          </h1>
-          <p className="truncate text-sm text-muted">
-            {email ?? "Demo workspace — connect Supabase to go live"}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {!overview.loading && onboardingDismissed && !onboardingAllDone && (
-            <button
-              type="button"
-              onClick={() => setOnboardingHidden(false)}
-              className="rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-semibold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
-              title="Show the setup checklist again"
-            >
-              🚀 Get started
-            </button>
-          )}
-          {(isAdmin || !email) && (
-            <a
-              href="/admin"
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-            >
-              Admin
-            </a>
-          )}
-          {email && (
-            <form action="/auth/signout" method="post">
-              <button
-                type="submit"
-                className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-              >
-                Sign out
-              </button>
-            </form>
-          )}
-        </div>
-      </header>
+      <Sidebar
+        active={tab}
+        onSelect={goTab}
+        badges={{ prizes: pending, inbox: unread }}
+        // Server-derived gate: is_admin() via checkAdmin in dashboard/page.tsx
+        // (or demo mode, decided there too). The /api/admin routes re-check.
+        showAdmin={adminVisible}
+        accountName={accountName}
+        accountSub={accountSub}
+        showSignOut={!!email}
+        onSignOut={onSignOut}
+        footerExtra={setupOffered ? <SetupChecklistButton onClick={reopenSetup} /> : null}
+      />
 
-      {email && (
-        <div className="mt-5">
-          <InvitesBanner />
-        </div>
-      )}
-
-      {!overview.loading && (
-        <GetStartedChecklist
-          wheelSaved={wheelSaved}
-          fans={metricsFans}
-          spins={metricsSpins}
-          dismissed={onboardingDismissed}
-          onDismiss={() => setOnboardingHidden(true)}
-          onGoTo={(t) => goToSection(t as Tab)}
+      {/* Below `lg` the fixed bottom tab bar covers the last 60px (+ safe area,
+          which body already pads), so the column reserves that space. */}
+      <div className="flex min-w-0 flex-1 flex-col max-lg:pb-[60px]">
+        <TopBar
+          title={title}
+          subtitle={subtitle}
+          mobileLead={
+            <span
+              aria-hidden="true"
+              className="grid h-10 w-10 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-sm font-bold text-ink"
+            >
+              {accountInitials(accountName)}
+            </span>
+          }
+          onSearch={(q) => {
+            goToSection("fans", () => setFanSearch((s) => ({ q, nonce: s.nonce + 1 })));
+          }}
+          onNewFanLink={() => {
+            goTab("fans", () => setMintFocus((n) => n + 1));
+          }}
+          bell={
+            <NotificationBell
+              onOpenPushSettings={openPushSettings}
+              // Same in-app routes as the drawer "Message" and top-bar search.
+              onNavigate={({ section, fanId, fanName }) => {
+                goToSection(section, () => {
+                  if (section === "inbox" && fanId) setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 }));
+                  if (section === "fans" && fanName) setFanSearch((s) => ({ q: fanName, nonce: s.nonce + 1 }));
+                });
+              }}
+            />
+          }
         />
-      )}
 
-      {pending > 0 && tab !== "prizes" && (
-        <button
-          onClick={() => setTab("prizes")}
-          className="mt-5 flex w-full items-center gap-3 rounded-xl border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] px-4 py-3 text-left transition hover:bg-[color-mix(in_oklab,var(--brand)_18%,transparent)]"
-        >
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--brand)] text-sm font-bold text-white tnum">
-            {pending}
-          </span>
-          <span className="text-sm text-ink">
-            {pending === 1 ? "1 prize is" : `${pending} prizes are`} waiting to be
-            fulfilled
-          </span>
-          <span className="ml-auto text-sm font-semibold text-[var(--brand)]">
-            Open →
-          </span>
-        </button>
-      )}
-
-      <nav
-        role="tablist"
-        aria-label="Dashboard sections"
-        className="-mx-4 mt-6 flex flex-nowrap gap-0.5 overflow-x-auto overflow-y-hidden border-b border-line px-4 [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain] [scrollbar-width:none] [touch-action:pan-x] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"
-      >
-        {tabs.map(([id, label]) => (
-          <button
-            key={id}
-            ref={(el) => {
-              tabRefs.current[id] = el;
-            }}
-            role="tab"
-            aria-selected={tab === id}
-            aria-controls={`panel-${id}`}
-            id={`tab-${id}`}
-            tabIndex={tab === id ? 0 : -1}
-            onClick={() => goTab(id)}
-            onKeyDown={(e) => onTabKeyDown(e, id)}
-            className={`-mb-px flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] font-semibold transition sm:text-sm ${
-              tab === id
-                ? "border-[var(--brand)] text-ink"
-                : "border-transparent text-muted hover:text-ink"
-            }`}
-          >
-            {label}
-            {id === "prizes" && pending > 0 && (
-              <span className="tnum grid h-5 min-w-5 place-items-center rounded-full bg-[var(--brand)] px-1 text-[11px] font-bold text-white">
-                {pending}
-              </span>
-            )}
-            {id === "inbox" && unread > 0 && (
-              <span className="tnum grid h-5 min-w-5 place-items-center rounded-full bg-[var(--brand)] px-1 text-[11px] font-bold text-white">
-                {unread}
-              </span>
-            )}
-          </button>
-        ))}
-      </nav>
+        <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
+      {email && <InvitesBanner />}
 
       <div
         ref={panelRef}
-        className="scroll-mt-4 mt-7"
-        role="tabpanel"
+        className="scroll-mt-24"
         id={`panel-${tab}`}
-        aria-labelledby={`tab-${tab}`}
+        role="region"
+        aria-label={title}
       >
-        {tab === "today" && <TodayPanel onNavigate={(t) => setTab(t as Tab)} />}
+        {tab === "today" && (
+          <TodayPanel
+            onNavigate={(t) => goTab(t as Tab)}
+            overview={overview.data}
+            firstSteps={firstSteps}
+            firstRun={!overview.loading && isFirstRun(firstStepSignals)}
+          />
+        )}
         {tab === "prizes" && (
           <PrizesPanel
             data={overview.data}
@@ -376,2213 +462,122 @@ export default function DashboardClient({
             setData={overview.setData}
           />
         )}
-        {tab === "fans" && <FansPanel />}
-        {tab === "campaigns" && <CampaignsPanel />}
+        {tab === "fans" && (
+          <FansPanel
+            key={fanSearch.nonce}
+            initialSearch={fanSearch.q}
+            focusMintNonce={mintFocus}
+            onMessage={(fanId) => {
+              goToSection("inbox", () => setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 })));
+            }}
+            onOpenGame={openGameEditor}
+            onOpenCampaigns={openCampaigns}
+          />
+        )}
+        {tab === "campaigns" && <CampaignsPanel onOpenGame={openGameEditor} />}
         {tab === "boosts" && (
           <BoostsPanel
             leaderboardEnabled={overview.data?.metrics.leaderboardEnabled ?? false}
             onLeaderboardChange={overview.refresh}
+            onNavigate={(t) => goTab(t as Tab)}
           />
         )}
-        {tab === "inbox" && <InboxPanel onChanged={overview.refresh} />}
+        {tab === "inbox" && (
+          <InboxPanel
+            onChanged={overview.refresh}
+            initialFanId={inboxFocus.fanId}
+            initialFanNonce={inboxFocus.nonce}
+            onOpenPushSettings={openPushSettings}
+          />
+        )}
         {tab === "analytics" && (
-          /* One consolidated view: live performance (pulse, trends, funnel,
-             prize mix) up top, strategic insights (CRM, heatmap, profit,
-             cohorts) below — was two separate Metrics/Analytics tabs. */
-          <div className="space-y-10">
-            <MetricsPanel
-              overview={overview.data}
-              loading={overview.loading}
-              onGoTo={setTab}
-            />
-            <AnalyticsPanel />
-          </div>
+          /* One consolidated view: the Command Center's designed cards (stat
+             strip, trends, what's landing, rarity mix) up top, then profit &
+             prize costs, Audience (conversion, CRM, cohorts) and Timing
+             (heatmap) below. MetricsPanel hands its polled funnel down. */
+          <MetricsPanel
+            overview={overview.data}
+            loading={overview.loading}
+            onGoTo={goTab}
+            renderDeep={() => <AnalyticsPanel />}
+          />
         )}
         {tab === "editor" && (
           <WheelEditor
             wheel={wheel}
             setWheel={setWheel}
-            initialWheel={initialWheel}
+            savedJson={savedWheelJson}
+            setSavedJson={setSavedWheelJson}
             editingWheelId={editingWheelId}
             setEditingWheelId={setEditingWheelId}
             onWheelMutated={overview.refresh}
+            onDeliveryDraftChange={deliveryDraftChanged}
+            onDeliveryPendingChange={deliveryPendingChanged}
+            openGameRequest={gameRequest}
+            onOpenGameHandled={() => setGameRequest(null)}
+            onOpenCampaigns={openCampaigns}
           />
         )}
         {tab === "settings" && (
           <SettingsPanel
+            pushFocus={pushFocus}
             // Re-tint the whole dashboard the instant a new brand color is saved
             // in Settings (it persists to the active wheel; mirror it locally so
             // --brand updates with no refresh — #9).
             onBrandColorChange={(color) =>
               setWheel((w) => ({ ...w, brandColor: color }))
             }
+            // …and the sidebar's workspace name the moment a new one is saved.
+            onDisplayNameChange={(displayName) =>
+              account.setData((d) => ({ ...d, displayName }))
+            }
           />
         )}
+        {tab === "admin" && adminVisible && <AdminClient />}
+        {leaveRequest && (
+          <DiscardChangesDialog
+            what={leaveRequest.what}
+            consequence={leaveRequest.consequence}
+            onKeep={() => { leaveRequestRef.current = null; setLeaveRequest(null); }}
+            onDiscard={() => {
+              const next = leaveRequestRef.current;
+              leaveRequestRef.current = null;
+              setLeaveRequest(null);
+              if (!next) return;
+              if (creatorNavigationState(creatorDraftsRef.current, deliveryState.current, next.scope).pending) {
+                blockedScopeRef.current = next.scope; setBlockedScope(next.scope); setBlockedDeliveryLeave(true); return;
+              }
+              const remaining = new Map([...creatorDraftsRef.current].filter(([, record]) => !creatorScopeIncludes(next.scope, record.scope)));
+              creatorDraftsRef.current = remaining;
+              setCreatorDrafts(remaining);
+              if (next.scope === undefined) { deliveryState.current.dirty = false; setDeliveryDirty(false); }
+              next?.action();
+            }}
+          />
+        )}
+        {blockedDeliveryLeave && blockedNavigation.pending && (
+          <DiscardChangesDialog pending what="your changes" pendingTitle={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "A request still needs checking"} pendingMessage={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "Keep this page open while the request finishes. If its result is unconfirmed, use the form's Check again button before leaving. Then choose where to go next."} onKeep={() => setBlockedDeliveryLeave(false)} onDiscard={() => {}} />
+        )}
       </div>
+        </div>
+      </div>
+
+      <MobileTabBar
+        active={tab}
+        onSelect={goTab}
+        badges={{ prizes: pending, inbox: unread }}
+        // Same server-derived gate as the sidebar (never client state).
+        showAdmin={adminVisible}
+        accountName={accountName}
+        accountSub={accountSub}
+        initials={accountInitials(accountName)}
+        showSignOut={!!email}
+        onSignOut={onSignOut}
+        onSetup={setupOffered ? reopenSetup : undefined}
+      />
+      <TermsPrompt canSignOut={!!email} />
     </div>
+    </CreatorDraftProvider>
     </ToastProvider>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Metrics — a real read on what's working, not four vanity numbers.
-// ---------------------------------------------------------------------------
-function MetricsPanel({
-  overview,
-  loading,
-  onGoTo,
-}: {
-  overview: CreatorOverview | null;
-  loading: boolean;
-  onGoTo: (t: Tab) => void;
-}) {
-  const m = overview?.metrics;
-  const reds = useMemo(() => overview?.redemptions ?? [], [overview]);
-  const [days, setDays] = useState(14);
-  const { data: extra, loading: extraLoading } = useMetricsExtra(days);
-
-  const { topPrizes, rarityMix } = useMemo(() => {
-    const prizeMap = new Map<string, { label: string; count: number; emoji?: string; rarity: Rarity }>();
-    const rarity = new Map<Rarity, number>();
-    for (const r of reds) {
-      const key = r.prizeLabel;
-      const cur = prizeMap.get(key);
-      if (cur) cur.count += 1;
-      else prizeMap.set(key, { label: r.prizeLabel, count: 1, emoji: r.emoji, rarity: r.rarity });
-      rarity.set(r.rarity, (rarity.get(r.rarity) ?? 0) + 1);
-    }
-    return {
-      topPrizes: [...prizeMap.values()].sort((a, b) => b.count - a.count).slice(0, 6),
-      rarityMix: RARITY_ORDER.map((r) => ({ rarity: r, count: rarity.get(r) ?? 0 })).filter((x) => x.count > 0),
-    };
-  }, [reds]);
-
-  const stats = [
-    { label: "Fans", value: m?.fans ?? 0 },
-    { label: "Revenue", value: formatCents(m?.revenue ?? 0) },
-    { label: "Spins played", value: m?.spinsPlayed ?? 0 },
-    { label: "To fulfil", value: m?.pending ?? 0 },
-    { label: "Delivered", value: m?.fulfilled ?? 0 },
-  ];
-  const totalWins = reds.length;
-
-  if (loading) return <MetricsSkeleton />;
-
-  if (totalWins === 0 && (m?.fans ?? 0) === 0) {
-    return (
-      <EmptyState
-        title="No activity yet"
-        body="Create a fan account and send the link. As fans spin, you'll see what's landing here."
-        action={{ label: "Create a fan link", onClick: () => onGoTo("fans") }}
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Compact stat row (hairline-divided, tabular). */}
-      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-5">
-        {stats.map((s) => (
-          <div key={s.label} className="bg-base px-4 py-4">
-            <dd className="tnum text-2xl font-bold text-ink">{s.value}</dd>
-            <dt className="mt-0.5 text-xs font-medium uppercase tracking-wide text-muted">
-              {s.label}
-            </dt>
-          </div>
-        ))}
-      </dl>
-
-      <div className="grid gap-5 lg:grid-cols-2">
-        {/* Spins trend */}
-        <section className="card rounded-xl p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-ink">Spins trend</h3>
-              <p className="mt-0.5 text-xs text-muted">Daily spins over time.</p>
-            </div>
-            <div className="flex shrink-0 gap-1">
-              {([14, 30] as const).map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setDays(d)}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                    days === d
-                      ? "bg-[var(--brand)] text-white"
-                      : "border border-line text-muted hover:text-ink"
-                  }`}
-                >
-                  {d}d
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="mt-4">
-            {extraLoading || !extra ? (
-              <div className="skeleton h-14 w-full rounded" />
-            ) : (
-              <Sparkline data={extra.trend} />
-            )}
-          </div>
-        </section>
-
-        {/* Revenue trend */}
-        <section className="card rounded-xl p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-ink">Revenue trend</h3>
-              <p className="mt-0.5 text-xs text-muted">Daily revenue over time.</p>
-            </div>
-            {!extraLoading && extra && (
-              <span className="tnum shrink-0 text-sm font-bold text-ink">
-                {formatCents(extra.revenueTrend.reduce((s, d) => s + d.cents, 0))}
-              </span>
-            )}
-          </div>
-          <div className="mt-4">
-            {extraLoading || !extra ? (
-              <div className="skeleton h-14 w-full rounded" />
-            ) : (
-              <Sparkline
-                data={extra.revenueTrend.map((d) => ({ date: d.date, spins: d.cents }))}
-                format={formatCents}
-                noun="Revenue"
-              />
-            )}
-          </div>
-        </section>
-
-        {/* Conversion */}
-        <section className="card rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-ink">Conversion</h3>
-          <p className="mt-0.5 text-xs text-muted">Fans created → spun → fulfilled.</p>
-          <div className="mt-4">
-            {extraLoading || !extra ? (
-              <div className="space-y-2.5">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="skeleton h-3 w-full rounded" />
-                ))}
-              </div>
-            ) : (
-              <Funnel funnel={extra.funnel} />
-            )}
-          </div>
-        </section>
-      </div>
-
-      <div className="grid gap-5 lg:grid-cols-2">
-        {/* What's landing */}
-        <section className="card rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-ink">What&rsquo;s landing</h3>
-          <p className="mt-0.5 text-xs text-muted">Most-won prizes across recent spins.</p>
-          <div className="mt-4 space-y-2.5">
-            {topPrizes.length === 0 && <p className="text-sm text-muted">No spins yet.</p>}
-            {topPrizes.map((p) => {
-              const pct = totalWins ? (p.count / totalWins) * 100 : 0;
-              const c = RARITY_COLORS[p.rarity];
-              return (
-                <div key={p.label} className="flex items-center gap-3">
-                  <span className="w-32 shrink-0 truncate text-sm text-ink">
-                    {p.emoji ?? "🎁"} {p.label}
-                  </span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-2">
-                    <div
-                      className="h-full rounded-full"
-                      style={{ width: `${Math.max(6, pct)}%`, backgroundColor: c }}
-                    />
-                  </div>
-                  <span className="tnum w-6 shrink-0 text-right text-sm font-semibold text-muted">
-                    {p.count}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Rarity mix */}
-        <section className="card rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-ink">Rarity mix</h3>
-          <p className="mt-0.5 text-xs text-muted">How rare the wins skew.</p>
-          {rarityMix.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">No wins yet.</p>
-          ) : (
-            <>
-              <div className="mt-4 flex h-3 overflow-hidden rounded-full">
-                {rarityMix.map((x) => (
-                  <div
-                    key={x.rarity}
-                    style={{
-                      width: `${(x.count / totalWins) * 100}%`,
-                      backgroundColor: RARITY_COLORS[x.rarity],
-                    }}
-                    title={`${RARITY_LABEL[x.rarity]}: ${x.count}`}
-                  />
-                ))}
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                {rarityMix.map((x) => (
-                  <div key={x.rarity} className="flex items-center gap-2 text-sm">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: RARITY_COLORS[x.rarity] }}
-                    />
-                    <span className="text-muted">{RARITY_LABEL[x.rarity]}</span>
-                    <span className="tnum ml-auto font-semibold text-ink">{x.count}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </section>
-      </div>
-
-      <p className="text-xs text-muted">Updates live as fans spin.</p>
-    </div>
-  );
-}
-
-function MetricsSkeleton() {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="bg-base px-4 py-4">
-            <div className="skeleton h-7 w-12 rounded" />
-            <div className="skeleton mt-2 h-3 w-16 rounded" />
-          </div>
-        ))}
-      </div>
-      <div className="grid gap-5 lg:grid-cols-2">
-        {[0, 1].map((i) => (
-          <div key={i} className="card rounded-xl p-5">
-            <div className="skeleton h-4 w-32 rounded" />
-            <div className="mt-4 space-y-3">
-              {Array.from({ length: 4 }).map((_, j) => (
-                <div key={j} className="skeleton h-3 w-full rounded" />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Prizes fulfilment queue
-// ---------------------------------------------------------------------------
-function PrizesPanel({
-  data,
-  loading,
-  refresh,
-  setData,
-}: {
-  data: CreatorOverview | null;
-  loading: boolean;
-  refresh: () => void;
-  setData: React.Dispatch<React.SetStateAction<CreatorOverview | null>>;
-}) {
-  const [filter, setFilter] = useState<RedemptionStatus | "all">("pending");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const PER_PAGE = 15;
-
-  // PATCH a redemption: status and/or notes/dueAt. Optimistically patch the
-  // shared overview so the row updates instantly, then refresh authoritatively.
-  async function patchRow(
-    id: string,
-    patch: { status?: RedemptionStatus; notes?: string | null; dueAt?: string | null }
-  ) {
-    setData((d) =>
-      d
-        ? {
-            ...d,
-            redemptions: d.redemptions.map((r) =>
-              r.id === id ? { ...r, ...patch } : r
-            ),
-          }
-        : d
-    );
-    await fetch(`/api/redemptions/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    refresh();
-  }
-
-  const setStatus = (id: string, status: RedemptionStatus) =>
-    patchRow(id, { status });
-
-  const redemptions = data?.redemptions ?? [];
-  const q = search.trim().toLowerCase();
-  const matched = redemptions
-    .filter((r) => filter === "all" || r.status === filter)
-    .filter(
-      (r) =>
-        q === "" ||
-        r.fanName.toLowerCase().includes(q) ||
-        r.prizeLabel.toLowerCase().includes(q)
-    );
-  const shown = matched.slice(0, page * PER_PAGE);
-  const hasMore = matched.length > shown.length;
-  const pendingCount = redemptions.filter((r) => r.status === "pending").length;
-
-  return (
-    <div className="max-w-3xl">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-bold text-ink">Prize fulfilment</h3>
-          <p className="text-sm text-muted">Every fan spin lands here. Deliver it, then mark it done.</p>
-        </div>
-        <button
-          onClick={refresh}
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-        >
-          Refresh
-        </button>
-      </div>
-
-      <div className="mt-4 flex gap-2 overflow-x-auto [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {(["pending", "in_progress", "fulfilled", "cancelled", "all"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => {
-              setFilter(f);
-              setPage(1);
-            }}
-            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition ${
-              filter === f
-                ? "bg-[var(--brand)] text-white"
-                : "border border-line text-muted hover:text-ink"
-            }`}
-          >
-            {f === "all" ? "all" : STATUS_LABEL[f]}
-            {f === "pending" && pendingCount > 0 ? ` (${pendingCount})` : ""}
-          </button>
-        ))}
-      </div>
-
-      <input
-        value={search}
-        onChange={(e) => {
-          setSearch(e.target.value);
-          setPage(1);
-        }}
-        placeholder="Search by fan or prize…"
-        aria-label="Search redemptions by fan or prize"
-        className="ff-input mt-3 w-full"
-      />
-
-      <div className="mt-4 space-y-2">
-        {loading && (
-          <>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="skeleton h-16 rounded-xl" />
-            ))}
-          </>
-        )}
-        {!loading && shown.length === 0 && (
-          <EmptyState
-            title="Nothing here yet"
-            body="Create a fan link, open it, and spin. Wins show up here instantly."
-          />
-        )}
-        {shown.map((r) => (
-          <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} />
-        ))}
-        {!loading && shown.length > 0 && (
-          <div className="flex items-center justify-between pt-1 text-xs text-muted">
-            <span>
-              Showing {shown.length} of {matched.length}
-            </span>
-            {hasMore && (
-              <button
-                onClick={() => setPage((p) => p + 1)}
-                className="rounded-lg border border-line px-3 py-1.5 font-semibold text-ink transition hover:bg-white/5"
-              >
-                Load more
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// The next status in the pending → in_progress → fulfilled cycle.
-const STATUS_NEXT: Record<RedemptionStatus, RedemptionStatus> = {
-  pending: "in_progress",
-  in_progress: "fulfilled",
-  fulfilled: "pending",
-  cancelled: "pending",
-};
-
-const STATUS_CTA: Record<RedemptionStatus, string> = {
-  pending: "Start",
-  in_progress: "Mark fulfilled",
-  fulfilled: "Reopen",
-  cancelled: "Reopen",
-};
-
-const STATUS_PILL: Record<RedemptionStatus, string> = {
-  pending: "bg-white/10 text-muted",
-  in_progress: "bg-amber-500/15 text-amber-300",
-  fulfilled: "bg-emerald-500/15 text-emerald-300",
-  cancelled: "bg-white/10 text-muted",
-};
-
-const STATUS_LABEL: Record<RedemptionStatus, string> = {
-  pending: "Pending",
-  in_progress: "In progress",
-  fulfilled: "Fulfilled",
-  cancelled: "Cancelled",
-};
-
-function RedemptionRow({
-  r,
-  onSet,
-  onPatch,
-}: {
-  r: RedemptionItem;
-  onSet: (id: string, status: RedemptionStatus) => void;
-  onPatch: (
-    id: string,
-    patch: { status?: RedemptionStatus; notes?: string | null; dueAt?: string | null }
-  ) => void;
-}) {
-  const color = RARITY_COLORS[r.rarity];
-  const [notes, setNotes] = useState(r.notes ?? "");
-  // Keep the local draft in sync when the row is refreshed from the server.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync draft to refreshed prop
-    setNotes(r.notes ?? "");
-  }, [r.notes]);
-
-  const dueValue = r.dueAt ? r.dueAt.slice(0, 10) : "";
-  const overdue =
-    !!r.dueAt &&
-    r.status !== "fulfilled" &&
-    r.status !== "cancelled" &&
-    // eslint-disable-next-line react-hooks/purity -- comparing a due date to "now" is inherently time-dependent
-    new Date(r.dueAt).getTime() < Date.now();
-
-  function commitNotes() {
-    const next = notes.trim() ? notes : null;
-    if ((r.notes ?? "") !== (next ?? "")) onPatch(r.id, { notes: next });
-  }
-
-  return (
-    <div className="card flex flex-col gap-3 rounded-xl p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-xl"
-            style={{ backgroundColor: `color-mix(in oklab, ${color} 18%, transparent)` }}
-          >
-            {r.emoji ?? "🎁"}
-          </div>
-          <div className="min-w-0">
-            <p className="truncate font-semibold text-ink">{r.prizeLabel}</p>
-            <p className="truncate text-xs text-muted">
-              <span style={{ color }}>{RARITY_LABEL[r.rarity]}</span> · {r.fanName} ·{" "}
-              {new Date(r.at).toLocaleString()}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {overdue && (
-            <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-bold text-red-400">
-              Overdue
-            </span>
-          )}
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-bold ${STATUS_PILL[r.status]}`}
-          >
-            {STATUS_LABEL[r.status]}
-          </span>
-          <button
-            onClick={() => onSet(r.id, STATUS_NEXT[r.status])}
-            className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white transition ${
-              r.status === "in_progress"
-                ? "bg-emerald-500 hover:bg-emerald-400"
-                : "btn-brand"
-            }`}
-          >
-            {STATUS_CTA[r.status]}
-          </button>
-          {r.status !== "cancelled" && r.status !== "fulfilled" && (
-            <button
-              onClick={() => onSet(r.id, "cancelled")}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-            >
-              Cancel
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          className="ff-input min-w-0 flex-1 text-sm"
-          placeholder="Add a note (e.g. shipped via DHL #123)…"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          onBlur={commitNotes}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          }}
-        />
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          Due
-          <input
-            type="date"
-            className="ff-input tnum text-sm"
-            value={dueValue}
-            onChange={(e) =>
-              onPatch(r.id, { dueAt: e.target.value ? e.target.value : null })
-            }
-          />
-        </label>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Fans & links — now loaded from the server so they persist across refreshes.
-// ---------------------------------------------------------------------------
-function FansPanel() {
-  const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
-  const [name, setName] = useState("");
-  const [spins, setSpins] = useState(3);
-  // Price the creator types is PER SPIN; it's its own state so typing isn't
-  // fought by a derived value. The total is computed from perSpin × spins.
-  const [perSpin, setPerSpin] = useState<string>("");
-  const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
-  const [campaignId, setCampaignId] = useState<string>("");
-  // Until the creator picks a campaign themselves, new links default to the
-  // newest ACTIVE campaign rather than silently landing in "untracked".
-  const campaignTouched = useRef(false);
-  // The pack a preset filled in, if any. Sent to the server which resolves it
-  // authoritatively; cleared on any manual override so we don't mis-attribute.
-  const [packId, setPackId] = useState<string | null>(null);
-  const [campaigns, setCampaigns] = useState<
-    { id: string; name: string; isActive?: boolean }[]
-  >([]);
-  const [wheels, setWheels] = useState<{ id: string; title: string }[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [openFanId, setOpenFanId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [campaignFilter, setCampaignFilter] = useState<string>("");
-  const [tagFilter, setTagFilter] = useState<string>("");
-  const [templates, setTemplates] = useState<DmTemplate[]>([]);
-  const [managingMessages, setManagingMessages] = useState(false);
-  const toast = useToast();
-  const origin = useOrigin();
-
-  const load = useCallback(async () => {
-    const res = await fetch("/api/fans", { cache: "no-store" });
-    if (res.ok) setAccounts((await res.json()).fans ?? []);
-    else setAccounts([]);
-  }, []);
-  const loadCampaigns = useCallback(async () => {
-    const res = await fetch("/api/campaigns", { cache: "no-store" });
-    if (!res.ok) return;
-    const list = ((await res.json()).campaigns ?? []) as {
-      id: string;
-      name: string;
-      isActive?: boolean;
-    }[];
-    setCampaigns(list);
-    // Default the add-fan form to the newest active campaign so links are
-    // tracked by default — but never fight a choice the creator already made.
-    if (!campaignTouched.current) {
-      const def = list.find((c) => c.isActive !== false);
-      if (def) setCampaignId((cur) => (cur === "" ? def.id : cur));
-    }
-  }, []);
-  const loadTemplates = useCallback(async () => {
-    const res = await fetch("/api/dm-templates", { cache: "no-store" });
-    if (res.ok) setTemplates((await res.json()).templates ?? []);
-  }, []);
-  const loadWheels = useCallback(async () => {
-    const res = await fetch("/api/wheels", { cache: "no-store" });
-    if (res.ok) {
-      const d = (await res.json()) as { wheels?: { id: string; title: string }[] };
-      setWheels((d.wheels ?? []).map((w) => ({ id: w.id, title: w.title })));
-    }
-  }, []);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load();
-    loadCampaigns();
-    loadTemplates();
-    loadWheels();
-  }, [load, loadCampaigns, loadTemplates, loadWheels]);
-
-  // Every distinct tag across loaded accounts, for the tag filter dropdown.
-  const allTags = useMemo(() => {
-    const set = new Set<string>();
-    for (const a of accounts ?? []) for (const t of a.tags) set.add(t);
-    return [...set].sort((x, y) => x.localeCompare(y));
-  }, [accounts]);
-
-  async function call(body: object) {
-    const res = await fetch("/api/passes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.token) {
-      toast(
-        data.error === "no_wheel"
-          ? "Create and save a wheel first, then generate fan links."
-          : "Couldn't create link. Are you signed in?",
-        { tone: "error" }
-      );
-      return null;
-    }
-    return data as { token: string; fanId: string };
-  }
-
-  async function createAccount() {
-    setCreating(true);
-    try {
-      const amountDollars = amount ? Number(amount) : undefined;
-      const data = await call({
-        name: name.trim(),
-        spins,
-        campaignId: campaignId || undefined,
-        amountDollars: amountDollars || undefined,
-        ...(packId ? { packId } : {}),
-      });
-      if (data) {
-        setName("");
-        setPerSpin("");
-        setPackId(null);
-        await load();
-      }
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  // Top up an existing fan. The data layer tops up the balance without minting a
-  // new link, and can tag the grant to a (possibly different) campaign.
-  async function topUp(
-    fanId: string,
-    addSpins: number,
-    amountDollars?: number,
-    topUpCampaignId?: string,
-    packId?: string | null,
-    wheelId?: string
-  ) {
-    const data = await call({
-      fanId,
-      spins: addSpins,
-      amountDollars: amountDollars || undefined,
-      campaignId: topUpCampaignId || undefined,
-      wheelId: wheelId || undefined,
-      ...(packId ? { packId } : {}),
-    });
-    if (data) await load();
-  }
-
-  // Client-side filtering over the loaded accounts. NOTE: once accounts
-  // paginate, this must move server-side so search/filter cover all fans.
-  const filtered = (accounts ?? []).filter((a) => {
-    const q = search.trim().toLowerCase();
-    const matchesSearch = !q || a.name.toLowerCase().includes(q);
-    const matchesCampaign =
-      !campaignFilter || a.campaignNames.includes(campaignFilter);
-    const matchesTag = !tagFilter || a.tags.includes(tagFilter);
-    return matchesSearch && matchesCampaign && matchesTag;
-  });
-
-  return (
-    <div className="max-w-2xl">
-      <div className="card rounded-xl p-5">
-        <h3 className="font-bold text-ink">Create a fan account</h3>
-        <p className="mt-1 text-sm text-muted">
-          You create the account; the fan never signs up. Balance and win history
-          live on the account, so you can mint fresh links anytime.
-        </p>
-        <div className="mt-4 flex flex-wrap items-start gap-3">
-          <Field label="Fan name / handle">
-            <input
-              className="ff-input w-44"
-              placeholder="@bigfan"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
-          <Field label="Spins to grant">
-            <input
-              type="number"
-              min={1}
-              className="ff-input tnum w-24"
-              value={spins}
-              onChange={(e) => {
-                setSpins(Math.max(1, Number(e.target.value)));
-                setPackId(null);
-              }}
-            />
-          </Field>
-          <Field label="$ per spin (optional)">
-            <input
-              type="number"
-              min={0}
-              step={0.01}
-              className="ff-input tnum w-28"
-              placeholder="0.00"
-              value={perSpin}
-              onChange={(e) => {
-                setPerSpin(e.target.value);
-                setPackId(null);
-              }}
-            />
-            {amount && Number(amount) > 0 && spins > 0 && (
-              <p className="mt-1 text-[11px] text-muted">
-                {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
-                {formatCents(Math.round(Number(amount) * 100))} total
-              </p>
-            )}
-          </Field>
-          <Field label="Campaign (optional)">
-            <select
-              className="ff-input w-44 max-w-full truncate"
-              title={campaigns.find((c) => c.id === campaignId)?.name}
-              value={campaignId}
-              onChange={(e) => {
-                campaignTouched.current = true;
-                setCampaignId(e.target.value);
-                setPackId(null);
-              }}
-            >
-              <option value="">No campaign (untracked)</option>
-              {campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <button
-            onClick={createAccount}
-            disabled={creating}
-            className="btn-brand mt-5 rounded-lg px-5 py-2 text-sm font-bold"
-          >
-            {creating ? "Creating…" : "Create account"}
-          </button>
-        </div>
-        {campaignId && (
-          <div className="mt-3">
-            <PackPresets
-              campaignId={campaignId}
-              onPick={(p: CampaignPack) => {
-                setSpins(p.spins);
-                setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
-                setPackId(p.id);
-              }}
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
-        {accounts && accounts.length > 0 ? (
-          <div className="flex flex-wrap items-end gap-3">
-            <Field label="Search fans">
-              <input
-                className="ff-input w-56"
-                placeholder="Name or handle"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </Field>
-            <Field label="Campaign">
-              <select
-                className="ff-input w-44"
-                value={campaignFilter}
-                onChange={(e) => setCampaignFilter(e.target.value)}
-              >
-                <option value="">All campaigns</option>
-                {campaigns.map((c) => (
-                  <option key={c.id} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Tag">
-              <select
-                className="ff-input w-40"
-                value={tagFilter}
-                onChange={(e) => setTagFilter(e.target.value)}
-              >
-                <option value="">All tags</option>
-                {allTags.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        ) : (
-          <span />
-        )}
-        <button
-          type="button"
-          onClick={() => setManagingMessages(true)}
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-ink"
-        >
-          Manage messages
-        </button>
-      </div>
-
-      <div className="mt-4">
-        <ImportFans campaignId={campaignId || undefined} onImported={load} />
-      </div>
-
-      <div className="mt-6 space-y-4">
-        {accounts === null && (
-          <>
-            {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="skeleton h-24 rounded-xl" />
-            ))}
-          </>
-        )}
-        {accounts?.length === 0 && (
-          <EmptyState title="No fans yet" body="Create your first fan account above to mint a link." />
-        )}
-        {accounts && accounts.length > 0 && filtered.length === 0 && (
-          <EmptyState title="No matches" body="No fans match your search or campaign filter." />
-        )}
-        {filtered.map((acc) => (
-          <AccountCard
-            key={acc.fanId}
-            account={acc}
-            origin={origin}
-            campaigns={campaigns}
-            wheels={wheels}
-            templates={templates}
-            onTopUp={topUp}
-            onOpen={setOpenFanId}
-            onDeleted={load}
-            refresh={load}
-          />
-        ))}
-      </div>
-      <FanDetailDrawer
-        fanId={openFanId}
-        onClose={() => setOpenFanId(null)}
-        onSaved={load}
-      />
-      {managingMessages && (
-        <ManageMessages
-          templates={templates}
-          onClose={() => setManagingMessages(false)}
-          refresh={loadTemplates}
-        />
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Saved DM templates: list / add / delete. `{link}` is the placeholder swapped
-// for a fan's full spin URL when the "Copy DM" control on a card is used.
-// ---------------------------------------------------------------------------
-function ManageMessages({
-  templates,
-  onClose,
-  refresh,
-}: {
-  templates: DmTemplate[];
-  onClose: () => void;
-  refresh: () => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [saving, setSaving] = useState(false);
-  const toast = useToast();
-  // Focus-trap the dialog: focus in on open, cycle Tab, Escape to close, restore
-  // focus on close.
-  const dialogRef = useFocusTrap<HTMLDivElement>({ active: true, onEscape: onClose });
-
-  async function add() {
-    if (!title.trim() || !body.trim()) return;
-    setSaving(true);
-    try {
-      const res = await fetch("/api/dm-templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim(), body }),
-      });
-      if (res.ok) {
-        setTitle("");
-        setBody("");
-        toast("Template saved", { tone: "success" });
-        refresh();
-      } else {
-        toast("Couldn't save template.", { tone: "error" });
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function remove(id: string) {
-    const res = await fetch("/api/dm-templates/" + id, { method: "DELETE" });
-    if (res.ok) {
-      toast("Template deleted", { tone: "info" });
-      refresh();
-    } else {
-      toast("Couldn't delete template.", { tone: "error" });
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Manage DM templates"
-        className="absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col overflow-y-auto rounded-t-2xl border border-line bg-surface shadow-2xl sm:inset-x-auto sm:left-1/2 sm:top-1/2 sm:max-h-[80vh] sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl"
-      >
-        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-line bg-surface px-5 py-4">
-          <div>
-            <h2 className="text-lg font-bold text-ink">DM templates</h2>
-            <p className="mt-0.5 text-xs text-muted">
-              Use <code className="rounded bg-base px-1">{"{link}"}</code> where the
-              fan&rsquo;s spin link should go.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-lg border border-line px-2.5 py-1.5 text-sm font-semibold text-muted transition hover:text-ink"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="space-y-5 px-5 py-5">
-          <div className="space-y-2">
-            {templates.length === 0 && (
-              <p className="text-sm text-muted">No templates yet. Add one below.</p>
-            )}
-            {templates.map((t) => (
-              <div key={t.id} className="rounded-lg border border-line bg-base/40 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="min-w-0 truncate text-sm font-semibold text-ink">
-                    {t.title}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => remove(t.id)}
-                    aria-label={`Delete template ${t.title}`}
-                    className="shrink-0 rounded-lg px-2 py-0.5 text-xs font-semibold text-muted transition hover:text-red-500"
-                  >
-                    Delete
-                  </button>
-                </div>
-                <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted">
-                  {t.body}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-3 border-t border-line pt-4">
-            <Field label="Title">
-              <input
-                className="ff-input w-full"
-                placeholder="Spin invite"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-              />
-            </Field>
-            <Field label="Message">
-              <textarea
-                className="ff-input w-full"
-                rows={3}
-                placeholder="Hey! Here's your spin link: {link}"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-              />
-            </Field>
-            <button
-              type="button"
-              onClick={add}
-              disabled={saving || !title.trim() || !body.trim()}
-              className="btn-brand rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Add template"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AccountCard({
-  account,
-  origin,
-  campaigns,
-  wheels,
-  templates,
-  onTopUp,
-  onOpen,
-  onDeleted,
-  refresh,
-}: {
-  account: FanAccountSummary;
-  origin: string;
-  campaigns: { id: string; name: string }[];
-  wheels: { id: string; title: string }[];
-  templates: DmTemplate[];
-  onTopUp: (
-    fanId: string,
-    addSpins: number,
-    amountDollars?: number,
-    campaignId?: string,
-    packId?: string | null,
-    wheelId?: string
-  ) => void;
-  onOpen: (fanId: string) => void;
-  onDeleted: () => void;
-  refresh: () => void;
-}) {
-  // Which wheel the top-up targets (per-wheel spins). Default to the fan's
-  // first existing wheel-pass, else the first wheel.
-  const [topUpWheelId, setTopUpWheelId] = useState<string>(
-    account.passes[0]?.wheelId ?? wheels[0]?.id ?? ""
-  );
-  const [topUp, setTopUp] = useState(3);
-  const [toppingUp, setToppingUp] = useState(false);
-  // Per-spin price as its own state (see FansPanel) so typing two digits works.
-  const [perSpin, setPerSpin] = useState<string>("");
-  const amount = perSpin && topUp > 0 ? (Number(perSpin) * topUp).toFixed(2) : "";
-  // Default the top-up to a campaign this fan already belongs to, so revenue
-  // doesn't silently fall into "untracked" (a top-up = more spins on a wheel).
-  const [campaignId, setCampaignId] = useState<string>(() => {
-    const match = campaigns.find((c) => account.campaignNames.includes(c.name));
-    return match?.id ?? "";
-  });
-  // The pack a preset filled in, if any. Sent to the server which resolves it
-  // authoritatively; cleared on any manual override so we don't mis-attribute.
-  const [packId, setPackId] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [savingTags, setSavingTags] = useState(false);
-  const toast = useToast();
-
-  // Surface only the primary link by default; the rest are revealed on demand.
-  const primaryToken = account.primaryToken ?? account.links[0]?.token ?? null;
-  const primaryUrl = primaryToken ? `${origin}/spin/${primaryToken}` : null;
-
-  // Persist a new tag set, then refresh the list so chips/filters stay in sync.
-  async function saveTags(next: string[]) {
-    setSavingTags(true);
-    try {
-      const res = await fetch("/api/fans/" + account.fanId, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: next }),
-      });
-      if (res.ok) refresh();
-      else toast("Couldn't save tags.", { tone: "error" });
-    } catch {
-      toast("Couldn't save tags.", { tone: "error" });
-    } finally {
-      setSavingTags(false);
-    }
-  }
-
-  // Fill {link} with the fan's full spin URL and copy the message.
-  async function copyDm(template: DmTemplate) {
-    if (!primaryUrl) {
-      toast("No link to insert yet.", { tone: "error" });
-      return;
-    }
-    const text = template.body.split("{link}").join(primaryUrl);
-    if (await copyToClipboard(text)) {
-      toast("DM copied", { tone: "success" });
-    } else {
-      toast("Couldn't copy DM.", { tone: "error" });
-    }
-  }
-
-  async function handleDelete() {
-    setDeleting(true);
-    try {
-      const res = await fetch("/api/fans/" + account.fanId, { method: "DELETE" });
-      if (res.ok) {
-        toast("Fan deleted", { tone: "success" });
-        onDeleted();
-      } else {
-        toast("Couldn't delete fan. Are you signed in?", { tone: "error" });
-        setConfirmDelete(false);
-      }
-    } catch {
-      toast("Couldn't delete fan. Are you signed in?", { tone: "error" });
-      setConfirmDelete(false);
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-
-  return (
-    <div className="card rounded-xl p-4">
-      <div className="flex items-start justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => onOpen(account.fanId)}
-          aria-label={"View " + account.name}
-          className="min-w-0 flex-1 rounded-lg text-left transition hover:opacity-80"
-        >
-          <p className="truncate font-bold text-ink">{account.name}</p>
-          <p className="text-xs text-muted">
-            <span className="tnum font-semibold text-ink">{account.spinsRemaining}</span> spins left
-            · {account.grantedTotal} granted · {account.links.length} link
-            {account.links.length === 1 ? "" : "s"}
-            {account.lastWin && (
-              <>
-                {" "}
-                · last won{" "}
-                <span style={{ color: RARITY_COLORS[account.lastWin.rarity] }}>
-                  {account.lastWin.label}
-                </span>
-              </>
-            )}
-          </p>
-        </button>
-
-        {confirmDelete ? (
-          <div className="flex shrink-0 items-center gap-1.5 text-xs">
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={deleting}
-              aria-label={"Confirm delete " + account.name}
-              className="rounded-full border border-red-500/60 px-3 py-1 font-bold text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
-            >
-              {deleting ? "Deleting…" : "Delete?"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(false)}
-              disabled={deleting}
-              aria-label="Cancel delete"
-              className="rounded-full border border-line px-3 py-1 font-semibold text-muted transition hover:text-ink disabled:opacity-50"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            aria-label={"Delete " + account.name}
-            className="shrink-0 rounded-full border border-line px-3 py-1 text-xs font-semibold text-muted transition hover:border-red-500/60 hover:text-red-500"
-          >
-            Delete
-          </button>
-        )}
-      </div>
-
-      {/* Spend + campaign chips */}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-        <span className="text-muted">
-          <span className="tnum font-semibold text-ink">{formatCents(account.totalSpent)}</span> spent
-        </span>
-        {account.campaignNames.map((c) => (
-          <span
-            key={c}
-            className="rounded-full border border-line px-2 py-0.5 font-semibold text-muted"
-          >
-            {c}
-          </span>
-        ))}
-      </div>
-
-      {/* Tags: chips + quick editor (presets + free-text). */}
-      <div className="mt-3">
-        <TagEditor tags={account.tags} onChange={saveTags} disabled={savingTags} compact />
-      </div>
-
-      {/* Share actions: QR for the primary link + copy a DM from a template. */}
-      {primaryUrl && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <QrButton url={primaryUrl} label={`${account.name} spin link`} />
-          <CopyDmMenu templates={templates} onPick={copyDm} />
-        </div>
-      )}
-
-      {/* Top-up row: spins + optional $ + optional campaign tag. Align to the
-          top so the "$X total" helper under $/spin doesn't shove Spins down. */}
-      <div className="mt-3 flex flex-wrap items-start gap-2">
-        <Field label="Spins">
-          <input
-            type="number"
-            min={1}
-            className="ff-input tnum w-16 text-right"
-            value={topUp}
-            onChange={(e) => {
-              setTopUp(Math.max(1, Number(e.target.value)));
-              setPackId(null);
-            }}
-          />
-        </Field>
-        <Field label="$ per spin">
-          <input
-            type="number"
-            min={0}
-            step={0.01}
-            className="ff-input tnum w-24"
-            placeholder="0.00"
-            value={perSpin}
-            onChange={(e) => {
-              setPerSpin(e.target.value);
-              setPackId(null);
-            }}
-          />
-          {amount && Number(amount) > 0 && topUp > 0 && (
-            <p className="mt-1 text-[11px] text-muted">
-              {formatCents(Math.round(Number(amount) * 100))} total
-            </p>
-          )}
-        </Field>
-        <Field label="Wheel">
-          <select
-            className="ff-input w-40"
-            value={topUpWheelId}
-            onChange={(e) => setTopUpWheelId(e.target.value)}
-          >
-            {wheels.length === 0 && <option value="">Active wheel</option>}
-            {wheels.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Campaign">
-          <select
-            className="ff-input w-40"
-            value={campaignId}
-            onChange={(e) => {
-              setCampaignId(e.target.value);
-              setPackId(null);
-            }}
-          >
-            <option value="">No campaign (untracked)</option>
-            {campaigns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <button
-          disabled={toppingUp}
-          onClick={async () => {
-            if (toppingUp) return; // in-flight guard: a double-click must not double-grant spins/spend
-            setToppingUp(true);
-            try {
-              await onTopUp(
-                account.fanId,
-                topUp,
-                amount ? Number(amount) || undefined : undefined,
-                campaignId || undefined,
-                packId,
-                topUpWheelId || undefined
-              );
-              setPerSpin("");
-              setPackId(null);
-            } finally {
-              setToppingUp(false);
-            }
-          }}
-          className="mt-5 rounded-lg border border-[var(--brand)]/50 px-3 py-1.5 text-xs font-bold text-[var(--brand)] transition hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] disabled:opacity-50"
-        >
-          {toppingUp ? "Topping up…" : "Top up"}
-        </button>
-      </div>
-      {campaignId && (
-        <div className="mt-3">
-          <PackPresets
-            campaignId={campaignId}
-            onPick={(p: CampaignPack) => {
-              setTopUp(p.spins);
-              setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
-              setPackId(p.id);
-            }}
-          />
-        </div>
-      )}
-
-      {/* Per-wheel links: each wheel the fan plays has its OWN link + spin
-          balance, so a Spooky top-up and a Summer top-up are separate. */}
-      {account.passes.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          {account.passes.map((p) => (
-            <div key={p.token} className="rounded-lg border border-line bg-base/40 p-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold text-ink">
-                  🎡 {p.wheelTitle}
-                </span>
-                <span className="tnum shrink-0 text-xs font-bold text-[var(--brand)]">
-                  {p.spinsRemaining} spins
-                </span>
-              </div>
-              {p.campaignName && (
-                <span className="mt-0.5 inline-block rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-muted">
-                  {p.campaignName}
-                </span>
-              )}
-              <div className="mt-2">
-                <LinkRow url={`${origin}/spin/${p.token}`} latest={false} />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        primaryToken && (
-          <div className="mt-3">
-            <LinkRow url={`${origin}/spin/${primaryToken}`} latest />
-          </div>
-        )
-      )}
-    </div>
-  );
-}
-
-// A small dropdown of saved DM templates. Picking one fills {link} and copies.
-function CopyDmMenu({
-  templates,
-  onPick,
-}: {
-  templates: DmTemplate[];
-  onPick: (t: DmTemplate) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const menuId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  return (
-    <div ref={wrapRef} className="relative inline-block">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        aria-haspopup="menu"
-        className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
-      >
-        Copy DM
-      </button>
-      {open && (
-        <div
-          id={menuId}
-          role="menu"
-          className="absolute left-0 z-30 mt-2 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-2xl"
-        >
-          {templates.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted">
-              No templates yet. Add one in &ldquo;Manage messages&rdquo;.
-            </p>
-          ) : (
-            templates.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onPick(t);
-                  setOpen(false);
-                }}
-                className="block w-full px-3 py-2 text-left transition hover:bg-white/5"
-              >
-                <span className="block truncate text-sm font-semibold text-ink">
-                  {t.title}
-                </span>
-                <span className="block truncate text-xs text-muted">{t.body}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LinkRow({ url, latest }: { url: string; latest: boolean }) {
-  const { copy, copied } = useClipboard();
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-base/40 p-2.5">
-      <p className="min-w-0 flex-1 truncate text-xs text-muted">
-        {url}
-        {latest && (
-          <span className="ml-2 rounded bg-[color-mix(in_oklab,var(--brand)_20%,transparent)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--brand)]">
-            NEWEST
-          </span>
-        )}
-      </p>
-      <div className="flex shrink-0 items-center gap-2">
-        <button
-          onClick={() => void copy(url)}
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-white/5"
-        >
-          Open
-        </a>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Wheel editor
-// ---------------------------------------------------------------------------
-function WheelEditor({
-  wheel,
-  setWheel,
-  initialWheel,
-  editingWheelId,
-  setEditingWheelId,
-  onWheelMutated,
-}: {
-  wheel: WheelConfig;
-  setWheel: Dispatch<SetStateAction<WheelConfig>>;
-  initialWheel: WheelConfig;
-  editingWheelId: string | null;
-  setEditingWheelId: (id: string | null) => void;
-  /** Notify the parent (refreshes overview, incl. the wheelBuilt onboarding signal). */
-  onWheelMutated: () => void;
-}) {
-  const odds = useMemo(() => prizeOdds(wheel), [wheel]);
-  // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
-  const oddsPct = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const [id, f] of odds) m.set(id, f * 100);
-    return m;
-  }, [odds]);
-  const toast = useToast();
-  const [savedJson, setSavedJson] = useState(() => JSON.stringify(initialWheel));
-  const [saving, setSaving] = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
-  const [showLibrary, setShowLibrary] = useState(false);
-  // #9: bumped after a prize is saved to the library (★) so TemplateLibrary
-  // refetches and the favorite shows up immediately — no page refresh.
-  const [librarySignal, setLibrarySignal] = useState(0);
-  const dirty = JSON.stringify(wheel) !== savedJson;
-
-  async function save() {
-    setSaving(true);
-    setJustSaved(false);
-    try {
-      const res = await fetch("/api/wheel", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wheel }),
-      });
-      const data = await res.json();
-      if (res.ok && data.wheel) {
-        setWheel(data.wheel);
-        setSavedJson(JSON.stringify(data.wheel));
-        setEditingWheelId(data.wheel.id);
-        setJustSaved(true);
-        setTimeout(() => setJustSaved(false), 2000);
-        // Refresh the onboarding "wheelBuilt" signal now that this wheel saved.
-        onWheelMutated();
-      } else {
-        toast("Couldn't save. Are you signed in?", { tone: "error" });
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-  // #8: a prize card is only `draggable` once the drag is armed from its corner
-  // grip handle. This keeps the prize text inputs fully selectable/editable —
-  // clicking into a field never starts a reorder drag. Armed on the grip's
-  // pointer-down, disarmed when the drag ends.
-  const [dragArmedIdx, setDragArmedIdx] = useState<number | null>(null);
-
-  // While a prize card is being dragged, auto-scroll the page when the pointer
-  // nears the top/bottom of the viewport — without this, long prize lists could
-  // only be reordered a couple of rows at a time. Speed ramps with proximity.
-  useEffect(() => {
-    if (dragIdx === null) return;
-    let y = -1;
-    let raf = 0;
-    const onDragOver = (e: DragEvent) => {
-      y = e.clientY;
-    };
-    const step = () => {
-      const EDGE = 90;
-      if (y >= 0) {
-        if (y < EDGE) window.scrollBy(0, -Math.ceil(((EDGE - y) / EDGE) * 18));
-        else if (y > window.innerHeight - EDGE)
-          window.scrollBy(0, Math.ceil(((y - (window.innerHeight - EDGE)) / EDGE) * 18));
-      }
-      raf = requestAnimationFrame(step);
-    };
-    window.addEventListener("dragover", onDragOver);
-    raf = requestAnimationFrame(step);
-    return () => {
-      window.removeEventListener("dragover", onDragOver);
-      cancelAnimationFrame(raf);
-    };
-  }, [dragIdx]);
-
-  function updatePrize(id: string, patch: Partial<Prize>) {
-    setWheel({ ...wheel, prizes: wheel.prizes.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
-  }
-  function addPrize() {
-    setWheel({ ...wheel, prizes: [...wheel.prizes, newPrize()] });
-  }
-  // Load a wheel's full config into the editor and mark it as the one being
-  // edited. The config carries its own id, so the existing save (PUT /api/wheel
-  // with the full config) targets the right wheel.
-  async function loadWheel(id: string) {
-    const res = await fetch(`/api/wheels/${id}`, { cache: "no-store" });
-    if (!res.ok) {
-      toast("Couldn't open that wheel.", { tone: "error" });
-      return;
-    }
-    const data = (await res.json()) as { wheel?: WheelConfig };
-    if (!data.wheel) {
-      toast("Couldn't open that wheel.", { tone: "error" });
-      return;
-    }
-    setWheel(data.wheel);
-    setSavedJson(JSON.stringify(data.wheel));
-    setEditingWheelId(data.wheel.id);
-  }
-  // Apply a saved wheel template: it mints a fresh wheel from the template
-  // server-side, then opens that new wheel in the editor.
-  async function applyWheelTemplate(templateId: string) {
-    const res = await fetch("/api/wheels", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fromTemplateId: templateId }),
-    });
-    const data = (await res.json()) as { wheel?: WheelConfig };
-    if (!res.ok || !data.wheel) {
-      toast("Couldn't apply template.", { tone: "error" });
-      return;
-    }
-    await loadWheel(data.wheel.id);
-    toast("Template applied", { tone: "success" });
-  }
-  // Save the current editor wheel as a reusable template.
-  async function saveCurrentWheelAsTemplate(name: string) {
-    const res = await fetch("/api/templates/wheels", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, config: wheel }),
-    });
-    if (res.ok) toast("Saved as template", { tone: "success" });
-    else toast("Couldn't save template.", { tone: "error" });
-  }
-  // Save every prize on the current wheel into the reusable prize library.
-  async function saveCurrentPrizesToLibrary() {
-    const results = await Promise.all(
-      wheel.prizes.map((p) =>
-        fetch("/api/templates/prizes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            label: p.label,
-            description: p.description,
-            rarity: p.rarity,
-            weight: p.weight,
-            color: p.color,
-            emoji: p.emoji,
-          }),
-        }).then((r) => r.ok)
-      )
-    );
-    const saved = results.filter(Boolean).length;
-    if (saved > 0) {
-      // #9: surface the new prizes in the library immediately (no refresh).
-      setLibrarySignal((n) => n + 1);
-      toast(`Saved ${saved} ${saved === 1 ? "prize" : "prizes"} to library`, { tone: "success" });
-    } else toast("Couldn't save prizes.", { tone: "error" });
-  }
-  // Save a SINGLE prize to the reusable library (the ★ on each prize row).
-  async function savePrizeToLibrary(p: Prize) {
-    const res = await fetch("/api/templates/prizes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        label: p.label,
-        description: p.description,
-        rarity: p.rarity,
-        weight: p.weight,
-        color: p.color,
-        emoji: p.emoji,
-      }),
-    });
-    if (res.ok) {
-      // #9: favoriting must appear in the Prize Library immediately — bump the
-      // signal so TemplateLibrary refetches without a page refresh.
-      setLibrarySignal((n) => n + 1);
-    }
-    toast(
-      res.ok ? `Saved "${p.label}" to library` : "Couldn't save prize.",
-      { tone: res.ok ? "success" : "error" }
-    );
-  }
-  // Drop a library prize into the current wheel. Reuse the editor's newPrize()
-  // so ids/format match, then overlay the template's fields.
-  function applyPrizeTemplate(t: PrizeTemplate) {
-    const prize = {
-      ...newPrize(),
-      label: t.label,
-      description: t.description,
-      rarity: t.rarity,
-      weight: t.weight,
-      color: t.color,
-      emoji: t.emoji,
-    };
-    setWheel({ ...wheel, prizes: [...wheel.prizes, prize] });
-    toast("Prize added from library", { tone: "success" });
-  }
-  function movePrize(from: number, to: number) {
-    if (to < 0 || to >= wheel.prizes.length || from === to) return;
-    setWheel({ ...wheel, prizes: reorder(wheel.prizes, from, to) });
-  }
-  function duplicateAt(index: number) {
-    const next = wheel.prizes.slice();
-    next.splice(index + 1, 0, duplicatePrize(wheel.prizes[index]));
-    setWheel({ ...wheel, prizes: next });
-  }
-  /** Update rarity: refresh a default color and always re-fill the weight from
-   *  the new rarity's default tickets, so moving common → legendary visibly
-   *  moves the odds too (the Tickets box stays editable to re-tune after). */
-  function changeRarity(p: Prize, rarity: Rarity) {
-    const wasDefaultColor = p.color == null || p.color === RARITY_COLORS[p.rarity];
-    updatePrize(p.id, {
-      rarity,
-      color: wasDefaultColor ? RARITY_COLORS[rarity] : p.color,
-      weight: RARITY_DEFAULT_WEIGHT[rarity],
-    });
-  }
-  function removePrize(id: string) {
-    if (wheel.prizes.length <= 2) return;
-    const index = wheel.prizes.findIndex((p) => p.id === id);
-    if (index < 0) return;
-    const removed = wheel.prizes[index];
-    setWheel((current) => ({
-      ...current,
-      prizes: current.prizes.filter((p) => p.id !== id),
-    }));
-    toast("Prize removed", {
-      tone: "info",
-      action: {
-        label: "Undo",
-        // Functional update against the *current* wheel, not the snapshot at
-        // removal time, so re-inserting the prize doesn't clobber any edits the
-        // creator made during the undo window.
-        onClick: () => {
-          setWheel((current) => {
-            if (current.prizes.some((p) => p.id === removed.id)) return current;
-            const restored = current.prizes.slice();
-            restored.splice(Math.min(index, restored.length), 0, removed);
-            return { ...current, prizes: restored };
-          });
-        },
-      },
-    });
-  }
-
-  return (
-    <div>
-      <div className="mb-6">
-        <WheelSwitcher
-          currentWheelId={editingWheelId}
-          onEdit={loadWheel}
-          onChanged={onWheelMutated}
-        />
-      </div>
-
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-        <p className="text-sm">
-          {dirty ? (
-            <span className="text-amber-300">● Unsaved changes</span>
-          ) : justSaved ? (
-            <span className="text-emerald-300">✓ Saved</span>
-          ) : (
-            <span className="text-muted">All changes saved</span>
-          )}
-        </p>
-        <button
-          onClick={save}
-          disabled={saving || !dirty}
-          className="btn-brand rounded-lg px-5 py-2 text-sm font-bold"
-        >
-          {saving ? "Saving…" : "Save wheel"}
-        </button>
-      </div>
-
-      <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
-        <div className="min-w-0">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Title">
-              <input
-                className="ff-input w-full"
-                data-testid="wheel-title-input"
-                value={wheel.title}
-                onChange={(e) => setWheel({ ...wheel, title: e.target.value })}
-              />
-            </Field>
-            <Field label="Brand color">
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  className="h-9 w-12 rounded border border-line bg-transparent"
-                  value={wheel.brandColor ?? "#ec4899"}
-                  onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
-                />
-                <input
-                  className="ff-input w-full flex-1"
-                  value={wheel.brandColor ?? ""}
-                  onChange={(e) => setWheel({ ...wheel, brandColor: e.target.value })}
-                />
-              </div>
-            </Field>
-            {/* #11: per-wheel prize-label text color. Empty = Auto (Wheel.tsx
-                picks a readable color per segment). Persists with the wheel. */}
-            <Field label="Label text color" full>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  className="h-9 w-12 shrink-0 rounded border border-line bg-transparent"
-                  value={wheel.labelColor ?? "#ffffff"}
-                  onChange={(e) => setWheel({ ...wheel, labelColor: e.target.value })}
-                  aria-label="Prize label color"
-                />
-                <input
-                  className="ff-input min-w-0 flex-1"
-                  value={wheel.labelColor ?? ""}
-                  placeholder="Auto (readable per slice)"
-                  onChange={(e) =>
-                    setWheel({
-                      ...wheel,
-                      labelColor: e.target.value ? e.target.value : undefined,
-                    })
-                  }
-                  aria-label="Prize label color hex"
-                />
-                <button
-                  type="button"
-                  onClick={() => setWheel({ ...wheel, labelColor: undefined })}
-                  disabled={wheel.labelColor == null}
-                  className="shrink-0 text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline disabled:opacity-40"
-                >
-                  Auto
-                </button>
-              </div>
-            </Field>
-            {/* Per-wheel prize-label text size. Empty = Auto (fit to slices).
-                Larger sizes stay inside each slice (single line + ellipsis). */}
-            <Field label="Label text size" full>
-              <select
-                className="ff-input w-full"
-                value={wheel.labelSize ?? ""}
-                onChange={(e) =>
-                  setWheel({
-                    ...wheel,
-                    labelSize:
-                      (e.target.value || undefined) as WheelConfig["labelSize"],
-                  })
-                }
-                aria-label="Prize label text size"
-              >
-                <option value="">Auto (fit to slices)</option>
-                <option value="s">Small</option>
-                <option value="l">Large</option>
-                <option value="xl">Extra large</option>
-              </select>
-            </Field>
-            <Field label="Subtitle" full>
-              <input
-                className="ff-input w-full"
-                value={wheel.subtitle ?? ""}
-                onChange={(e) => setWheel({ ...wheel, subtitle: e.target.value })}
-              />
-            </Field>
-          </div>
-
-          <div className="card mt-6 rounded-xl p-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-              Odds
-            </span>
-            <div className="mt-2">
-              <OddsBar prizes={wheel.prizes} odds={oddsPct} />
-            </div>
-          </div>
-
-          {/* #7: brand-new wheels start with zero prizes — show a friendly
-              empty state + "Add your first prize" instead of a bare list. */}
-          {wheel.prizes.length === 0 && (
-            <div className="mt-4 rounded-xl border border-dashed border-line p-8 text-center">
-              <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-2xl">
-                🎁
-              </div>
-              <p className="mt-3 font-semibold text-ink">No prizes yet</p>
-              <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
-                Add your first prize to start building this wheel. You can set its
-                rarity, odds, and color — or pull one from your library below.
-              </p>
-              <button
-                type="button"
-                onClick={addPrize}
-                className="btn-brand mt-4 rounded-lg px-4 py-2 text-sm font-bold"
-              >
-                + Add your first prize
-              </button>
-            </div>
-          )}
-
-          <div className="mt-4 space-y-3">
-            {wheel.prizes.map((p, index) => {
-              const swatch = p.color ?? RARITY_COLORS[p.rarity];
-              return (
-                <div
-                  key={p.id}
-                  // #8: only draggable once armed via the grip handle below, so
-                  // the text fields stay selectable/editable the rest of the time.
-                  draggable={dragArmedIdx === index}
-                  onDragStart={() => setDragIdx(index)}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    if (dragIdx !== null && dragIdx !== index) setDragOverIdx(index);
-                  }}
-                  onDragLeave={() => setDragOverIdx((v) => (v === index ? null : v))}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (dragIdx !== null) movePrize(dragIdx, index);
-                    setDragIdx(null);
-                    setDragOverIdx(null);
-                    setDragArmedIdx(null);
-                  }}
-                  onDragEnd={() => {
-                    setDragIdx(null);
-                    setDragOverIdx(null);
-                    setDragArmedIdx(null);
-                  }}
-                  className={`card rounded-xl p-3 transition-[box-shadow,opacity,transform] duration-150 ${
-                    dragIdx === index ? "scale-[0.99] opacity-50" : ""
-                  } ${
-                    dragOverIdx === index
-                      ? "shadow-[0_0_0_2px_var(--brand)]"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      // The ONLY drag affordance: arming on pointer-down lets the
-                      // native drag start from here, while leaving the prize
-                      // inputs non-draggable (text stays selectable). Disarm if
-                      // the press is released without a drag.
-                      onPointerDown={() => setDragArmedIdx(index)}
-                      onPointerUp={() => setDragArmedIdx((v) => (v === index ? null : v))}
-                      aria-label="Drag to reorder prize"
-                      title="Drag to reorder (or use the ▲ ▼ buttons)"
-                      className="shrink-0 cursor-grab touch-none select-none rounded px-1 text-muted transition hover:text-ink active:cursor-grabbing"
-                    >
-                      ⠿
-                    </button>
-                    <div className="flex shrink-0 flex-col">
-                      <button
-                        type="button"
-                        onClick={() => movePrize(index, index - 1)}
-                        disabled={index === 0}
-                        className="grid h-6 min-w-6 place-items-center rounded text-xs leading-none text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
-                        aria-label="Move prize up"
-                        title="Move up"
-                      >
-                        ▲
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => movePrize(index, index + 1)}
-                        disabled={index === wheel.prizes.length - 1}
-                        className="grid h-6 min-w-6 place-items-center rounded text-xs leading-none text-muted transition hover:bg-white/5 hover:text-ink disabled:opacity-30"
-                        aria-label="Move prize down"
-                        title="Move down"
-                      >
-                        ▼
-                      </button>
-                    </div>
-                    <input
-                      aria-label="Emoji"
-                      className="ff-input w-11 shrink-0 text-center text-base"
-                      value={p.emoji ?? ""}
-                      onChange={(e) => updatePrize(p.id, { emoji: e.target.value })}
-                    />
-                    <input
-                      aria-label="Prize name"
-                      className="ff-input min-w-0 flex-1"
-                      value={p.label}
-                      onChange={(e) => updatePrize(p.id, { label: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => savePrizeToLibrary(p)}
-                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-[var(--brand)]"
-                      title="Save this prize to your library"
-                      aria-label="Save prize to library"
-                    >
-                      ★
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => duplicateAt(index)}
-                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-ink"
-                      title="Duplicate prize"
-                      aria-label="Duplicate prize"
-                    >
-                      ⧉
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removePrize(p.id)}
-                      className="shrink-0 rounded-lg px-2 py-2 text-muted transition hover:bg-white/5 hover:text-red-400"
-                      title="Remove prize"
-                      aria-label="Remove prize"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {EMOJI_SUGGESTIONS.map((emo) => (
-                      <button
-                        key={emo}
-                        type="button"
-                        onClick={() => updatePrize(p.id, { emoji: emo })}
-                        className="rounded-md border border-line px-1.5 py-0.5 text-sm transition hover:bg-white/5"
-                        aria-label={`Use emoji ${emo}`}
-                        title={`Use ${emo}`}
-                      >
-                        {emo}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-1 text-[11px] text-muted">Tip: type or paste any emoji.</p>
-
-                  <Field label="Cost (your cost)">
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      placeholder="0.00"
-                      className="ff-input tnum w-full text-right"
-                      value={p.cost == null ? "" : (p.cost ?? 0) / 100}
-                      onChange={(e) =>
-                        updatePrize(p.id, {
-                          cost:
-                            e.target.value === ""
-                              ? null
-                              : Math.round(Number(e.target.value) * 100),
-                        })
-                      }
-                    />
-                  </Field>
-
-                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <Field label="Rarity">
-                      <select
-                        className="ff-input w-full"
-                        value={p.rarity}
-                        onChange={(e) => changeRarity(p, e.target.value as Rarity)}
-                      >
-                        {RARITY_ORDER.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Tickets">
-                      <input
-                        type="number"
-                        min={0}
-                        className="ff-input tnum w-full text-right"
-                        value={p.weight}
-                        onChange={(e) => updatePrize(p.id, { weight: Number(e.target.value) })}
-                      />
-                    </Field>
-                    <Field label="Stock">
-                      <input
-                        type="number"
-                        min={0}
-                        placeholder="∞"
-                        className="ff-input tnum w-full text-right"
-                        value={p.stock ?? ""}
-                        onChange={(e) =>
-                          updatePrize(p.id, {
-                            stock: e.target.value === "" ? null : Number(e.target.value),
-                          })
-                        }
-                      />
-                    </Field>
-                    <div className="flex min-w-0 flex-col gap-1">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-                        Odds
-                      </span>
-                      {/* Match .ff-input's box (padding + border) so the % sits on
-                          the same baseline as the Rarity/Tickets/Stock inputs. */}
-                      <span className="tnum flex items-center justify-end border border-transparent px-[0.7rem] py-[0.5rem] text-[0.9rem] font-mono font-semibold text-[var(--brand)]">
-                        {((odds.get(p.id) ?? 0) * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-
-                  <Field label="Color">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        className="h-9 w-12 shrink-0 rounded border border-line bg-transparent"
-                        value={swatch}
-                        onChange={(e) => updatePrize(p.id, { color: e.target.value })}
-                        aria-label="Prize color"
-                      />
-                      <input
-                        className="ff-input min-w-0 flex-1"
-                        value={swatch}
-                        onChange={(e) => updatePrize(p.id, { color: e.target.value })}
-                        aria-label="Prize color hex"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => updatePrize(p.id, { color: RARITY_COLORS[p.rarity] })}
-                        className="shrink-0 text-xs font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
-                      >
-                        Reset to rarity color
-                      </button>
-                    </div>
-                  </Field>
-
-                  <Field label="Description (shown on win)">
-                    <textarea
-                      className="ff-input w-full"
-                      rows={2}
-                      value={p.description ?? ""}
-                      onChange={(e) => updatePrize(p.id, { description: e.target.value })}
-                    />
-                  </Field>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={addPrize}
-              className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
-            >
-              + Add prize
-            </button>
-            {wheel.prizes.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setWheel({ ...wheel, prizes: balanceOdds(wheel.prizes) })}
-                className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/5"
-              >
-                Balance odds
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-col items-center gap-4 self-start rounded-2xl border border-line bg-surface p-6">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted">Live preview</p>
-          <Wheel
-            prizes={wheel.prizes}
-            brandColor={wheel.brandColor ?? "#ec4899"}
-            labelColor={wheel.labelColor}
-            labelSize={wheel.labelSize}
-            result={null}
-            size={280}
-          />
-          <p className="text-center text-xs text-muted">
-            Think of <strong>tickets</strong> like a raffle: a prize&rsquo;s chance is its
-            tickets ÷ all tickets. The <span className="text-[var(--brand)]">%</span> next to
-            each prize is its real odds — it updates live as you add prizes or change tickets.
-            Pick a rarity and we fill sensible tickets for you.
-          </p>
-        </div>
-      </div>
-
-      {/* Library lives at the bottom: you build the wheel first, then optionally
-          save it as a template or pull reusable prizes/templates in. */}
-      <div className="mt-6 rounded-xl border border-line bg-surface">
-        <button
-          type="button"
-          onClick={() => setShowLibrary((v) => !v)}
-          aria-expanded={showLibrary}
-          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-        >
-          <span className="font-bold text-ink">📚 Prize &amp; wheel library</span>
-          <span className="text-sm font-semibold text-muted">
-            {showLibrary ? "Hide ▲" : "Save / reuse prizes & templates ▼"}
-          </span>
-        </button>
-        {showLibrary && (
-          <div className="border-t border-line px-4 py-4">
-            <TemplateLibrary
-              onApplyWheelTemplate={applyWheelTemplate}
-              onSaveCurrentWheelAsTemplate={saveCurrentWheelAsTemplate}
-              onApplyPrizeTemplate={applyPrizeTemplate}
-              onSaveCurrentPrizesToLibrary={saveCurrentPrizesToLibrary}
-              refreshSignal={librarySignal}
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-

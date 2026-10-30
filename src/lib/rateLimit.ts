@@ -39,16 +39,29 @@ export function rateLimit(
 }
 
 // --- Serverless-safe variant ------------------------------------------------
-// On Vercel/multi-instance, the in-memory limiter above is per-instance. When
-// UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN are set, counters live in
-// Upstash Redis (shared across every instance) instead. Unconfigured — or if the
-// store call fails — it transparently falls back to the in-memory limiter, so a
-// Redis blip can never take a route down.
+// On Vercel/multi-instance, the in-memory limiter above is per-instance. When an
+// Upstash REST URL + token are set, counters live in Upstash Redis (shared across
+// every instance) instead. Unconfigured — or if the store call fails — it
+// transparently falls back to the in-memory limiter, so a Redis blip can never
+// take a route down.
 
+// Upstash's own names, or the KV_REST_API_* names Vercel's Upstash integration
+// injects. Taken as a pair so a URL is never sent with the other store's token.
 function upstashEnv(): { url: string; token: string } | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? { url, token } : null;
+  const e = process.env;
+  if (e.UPSTASH_REDIS_REST_URL && e.UPSTASH_REDIS_REST_TOKEN) {
+    return { url: e.UPSTASH_REDIS_REST_URL, token: e.UPSTASH_REDIS_REST_TOKEN };
+  }
+  if (e.KV_REST_API_URL && e.KV_REST_API_TOKEN) {
+    return { url: e.KV_REST_API_URL, token: e.KV_REST_API_TOKEN };
+  }
+  return null;
+}
+
+// Preview and Production share one store, so namespace the counters: testing on
+// a Preview must never use up a visitor's limit on the live site.
+function storeKey(key: string): string {
+  return `rl:${process.env.VERCEL_ENV || "local"}:${key}`;
 }
 
 async function rateLimitUpstash(
@@ -93,7 +106,7 @@ export async function rateLimitShared(
   const env = upstashEnv();
   if (env) {
     try {
-      return await rateLimitUpstash(env, key, limit, windowMs);
+      return await rateLimitUpstash(env, storeKey(key), limit, windowMs);
     } catch {
       // fall through to the in-memory limiter below
     }

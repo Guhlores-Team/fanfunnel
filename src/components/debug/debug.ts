@@ -99,13 +99,35 @@ export function setDebugAdmin(value: boolean): void {
   emit();
 }
 
+/**
+ * Strip secrets from captured text before it is shown or copied: a fan's
+ * `/spin/<token>` link is a bearer credential, and query strings can carry
+ * tokens too. Applied once, here, so the panel and "Copy" agree.
+ */
+export function redact(text: string): string;
+export function redact(text: string | undefined): string | undefined;
+export function redact(text: string | undefined): string | undefined {
+  if (!text) return text;
+  return text
+    .replace(/\/spin\/[^/?#\s"'`)<>]+/g, "/spin/[redacted]")
+    .replace(/(https?:\/\/[^\s?#"'`)<>]*)\?[^\s#"'`)<>]*/g, "$1?[redacted]")
+    .replace(/\b(token|access_token|refresh_token|code)=[^&#\s"'`)<>]+/gi, "$1=[redacted]");
+}
+
 /** Record one captured error (newest is kept at the front of the list). */
 export function reportError(
   e: Omit<CapturedError, "id" | "timestamp">
 ): void {
   // Only retain anything while debug mode is active.
   if (!isDebugActive()) return;
-  errors.unshift({ ...e, id: nextId++, timestamp: Date.now() });
+  errors.unshift({
+    ...e,
+    message: redact(e.message),
+    source: redact(e.source),
+    stack: redact(e.stack),
+    id: nextId++,
+    timestamp: Date.now(),
+  });
   // Bound memory: keep the most recent 200.
   if (errors.length > 200) errors.length = 200;
   emit();

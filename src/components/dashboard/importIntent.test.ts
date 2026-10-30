@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import { submitFanImport } from "./importIntent";
+const records = new Map<string, string>();
+const storage = { getItem: (key: string) => records.get(key) ?? null, setItem: (key: string, value: string) => { records.set(key, value); }, removeItem: (key: string) => { records.delete(key); } };
+const rows = [{ name: "PRIVATE CSV NAME", spins: 3, amountCents: 500 }];
+let checks = 0;
+const check = (label: string, condition: unknown) => { assert.ok(condition, label); checks++; };
+async function main() {
+  let calls = 0, firstId = "";
+  const lost = await submitFanImport(storage, "current", rows, async body => { calls++; firstId = body.batchId; throw new Error("reply lost after commit"); });
+  check("lost responses retain a durable batch identity", lost.status === "pending" && calls === 1 && records.size === 1);
+  const stored = [...records.values()][0];
+  check("only UUID and digest are persisted, never CSV names or tokens", Object.keys(JSON.parse(stored)).sort().join() === "id,signature" && !stored.includes(rows[0].name) && !stored.includes("500"));
+  const changed = await submitFanImport(storage, "current", [{ ...rows[0], spins: 4 }], async () => { calls++; throw new Error("must not send"); });
+  check("unknown imports cannot be replaced by edited rows or a new batch blindly", changed.status === "pending" && calls === 1 && [...records.values()][0] === stored);
+  const denied = await submitFanImport(storage, "current", rows, async body => { calls++; assert.equal(body.batchId, firstId); return { ok: false, json: async () => ({ error: "forbidden" }) }; });
+  check("a later403 cannot erase evidence of an earlier possible commit", denied.status === "pending" && records.size === 1);
+  const malformed = await submitFanImport(storage, "current", rows, async () => ({ ok: true, json: async () => ({ batchId: "wrong", created: 1, failed: 0, replayed: true, results: [{ token: "PRIVATE TOKEN" }] }) }));
+  check("mismatched receipts never clear a pending batch", malformed.status === "pending" && records.size === 1);
+  const partial = await submitFanImport(storage, "current", rows, async () => ({ ok: true, json: async () => ({ batchId: firstId, created: 1, failed: 0, replayed: true, results: [] }) }));
+  check("partial or inconsistent result envelopes remain pending", partial.status === "pending" && records.size === 1);
+  const recovered = await submitFanImport(storage, "current", rows, async body => { assert.equal(body.batchId, firstId); return { ok: true, json: async () => ({ batchId: body.batchId, created: 1, failed: 0, replayed: true, results: [{ token: "PRIVATE TOKEN" }] }) }; });
+  check("an exact confirmed receipt recovers and clears only its operation", recovered.status === "confirmed" && recovered.replayed && records.size === 0);
+  let nextId = "";
+  await submitFanImport(storage, "current", [{ ...rows[0], spins: 4 }], async body => { nextId = body.batchId; return { ok: false, json: async () => ({}) }; });
+  check("a deliberate next action gets a fresh identity after confirmation", nextId !== firstId && records.size === 1);
+  const blocked = await submitFanImport({ ...storage, setItem: () => { throw new Error("storage denied"); } }, "blocked", rows, async () => { calls++; return { ok: false, json: async () => ({}) }; });
+  check("storage failure fails closed before sending", blocked.status === "pending" && calls === 2);
+  const before = [...records.values()][0];
+  const brokenRemoval = await submitFanImport({ ...storage, removeItem: () => {} }, "current", [{ ...rows[0], spins: 4 }], async body => ({ ok: true, json: async () => ({ batchId: body.batchId, created: 1, failed: 0, replayed: true, results: [{ token: "PRIVATE TOKEN" }] }) }));
+  check("silently ignored storage cleanup cannot enable a second import", brokenRemoval.status === "pending" && [...records.values()][0] === before && !JSON.stringify([...records]).includes("PRIVATE TOKEN"));
+  console.log(`import pending intent: ${checks} checks passed`);
+}
+main().catch(error => { console.error(error); process.exit(1); });

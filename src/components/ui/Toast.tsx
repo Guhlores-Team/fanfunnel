@@ -67,7 +67,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         aria-live="polite"
         className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 px-4"
         style={{
-          paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)",
+          // Above the phone dashboard tab bar when present (globals.css).
+          paddingBottom: "calc(max(env(safe-area-inset-bottom), var(--ff-bottom-offset, 0px)) + 1rem)",
         }}
       >
         {toasts.map((t) => (
@@ -75,7 +76,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             key={t.id}
             type="button"
             onClick={() => dismiss(t.id)}
-            className="card reveal pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-xl px-4 py-3 text-left text-sm text-ink"
+            className="card lift-in pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-xl px-4 py-3 text-left text-sm text-ink"
             style={{ boxShadow: `0 0 0 1px ${TONE_RING[t.tone]} inset` }}
           >
             <span className="min-w-0 flex-1 break-words">{t.message}</span>

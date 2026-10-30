@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isUuid } from "@/lib/data/shared";
 import { editGrant } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, int, str } from "@/lib/api/validate";
@@ -10,11 +11,14 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = await parseJsonBody<{
+    requestId?: unknown;
     spins?: unknown;
     amountCents?: unknown;
     campaignId?: unknown;
   }>(req);
-  if (body === BAD_REQUEST) return badRequest();
+  if (body === BAD_REQUEST || !body || typeof body !== "object" || Array.isArray(body)) return badRequest();
+  if (body.requestId === undefined) return badRequest("upgrade_required");
+  if (typeof body.requestId !== "string" || !isUuid(body.requestId) || body.requestId !== body.requestId.toLowerCase()) return badRequest();
 
   let patch: { spins?: number; amountCents?: number; campaignId?: string | null };
   try {
@@ -35,7 +39,7 @@ export async function PATCH(
     throw e;
   }
 
-  const result = await editGrant(id, patch);
-  if ("error" in result) return errorResponse(result.error);
-  return NextResponse.json(result);
+  const result = await editGrant(id, patch, body.requestId);
+  if ("error" in result) return result.error === "edit_pending" ? NextResponse.json({ error: "edit_pending", requestId: body.requestId }, { status: 503, headers: { "Cache-Control": "no-store" } }) : errorResponse(result.error);
+  return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
 }

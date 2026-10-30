@@ -22,6 +22,26 @@ export const BASE = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 // the broken `/C:/...` that .pathname yields, which breaks mkdir/writeFile.
 export const ARTIFACTS = fileURLToPath(new URL("./artifacts/", import.meta.url));
 
+/**
+ * Fixture setup only: respect the real age-acknowledgement IP limit when many
+ * independent accessibility states share one server. The application returns
+ * Retry-After as positive integer seconds. Never retry another status, guess a missing
+ * delay, change identity, or hide a refusal from the caller's existing checks.
+ */
+export async function acknowledgeFixtureFan(request, token, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const post = () => request.post(BASE + "/api/fans/ack", { data: { token } });
+  let response = await post();
+  for (let retry = 0; response.status() === 429 && retry < 2; retry++) {
+    const header = response.headers()["retry-after"];
+    if (typeof header !== "string" || !/^\d+$/.test(header.trim())) return response;
+    const seconds = Number(header.trim());
+    if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 60) return response;
+    await wait(seconds * 1000);
+    response = await post();
+  }
+  return response;
+}
+
 /** Start `next start` and resolve once it answers 200 (unless E2E_BASE_URL is
  *  provided, in which case we assume a server is already running). */
 export async function startServer() {
@@ -106,9 +126,9 @@ const benignConsole = (text) => {
 };
 
 /** Attach listeners to a page; returns a sink whose `.step` you set before each
- *  action so captured signals are attributed to it. */
-export function attachSink(page) {
-  const sink = { step: "boot", signals: [] };
+ *  action so captured signals are attributed to it. Pass an existing sink to
+ *  collect a second page (e.g. the phone-viewport journey) into the same report. */
+export function attachSink(page, sink = { step: "boot", signals: [] }) {
   const push = (kind, detail) =>
     sink.signals.push({ step: sink.step, kind, detail: String(detail).slice(0, 240) });
 
@@ -204,22 +224,50 @@ export async function goto(page, path, settle = 1400) {
   await page.waitForTimeout(settle);
 }
 
+// Dashboard section nav. Items are buttons inside the visible "Dashboard
+// sections" <nav> — the sidebar from `lg`, the bottom tab bar below it — and the
+// active one carries aria-current="page". The phone bar's "More" button (it
+// opens the More sheet, aria-haspopup) is not a section item.
+export const NAV_ITEMS = "nav[aria-label='Dashboard sections']:visible button:not([aria-haspopup])";
+export const MORE_BUTTON = "nav[aria-label='Dashboard sections']:visible button[aria-haspopup='dialog']";
+
 export async function clickTab(page, name) {
-  const tabs = await page.locator("[role='tab']").all();
-  for (const t of tabs) {
+  // Historical wheel scenarios now live in the semantic Games section.
+  name = /^(wheel|wheels)$/i.test(name) ? "Games" : name;
+  if (await clickNavItem(page, name)) return true;
+  // Phone layout: sections not on the bar live in the More sheet.
+  const more = page.locator(MORE_BUTTON);
+  if (!(await more.count())) return false;
+  await more.first().click();
+  const sheet = page.getByRole("dialog", { name: "More" });
+  await sheet.waitFor({ timeout: 4000 });
+  for (const t of await sheet.locator("nav button").all()) {
+    if ((await t.innerText()).trim().toLowerCase().includes(name.toLowerCase())) {
+      await t.click();
+      await sheet.waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
+      return true;
+    }
+  }
+  await page.keyboard.press("Escape");
+  return false;
+}
+
+async function clickNavItem(page, name) {
+  const items = await page.locator(NAV_ITEMS).all();
+  for (const t of items) {
     try {
       if ((await t.innerText()).trim().toLowerCase().includes(name.toLowerCase())) {
         await t.click();
-        // Web-first wait: the clicked tab reflects its selected state once the
+        // Web-first wait: the clicked item reflects its current state once the
         // panel has switched — wait for that instead of a fixed pause.
         await t
-          .and(page.locator("[aria-selected='true']"))
+          .and(page.locator("[aria-current='page']"))
           .waitFor({ timeout: 4000 })
           .catch(() => {});
         return true;
       }
     } catch {
-      /* tab detached — skip */
+      /* item detached — skip */
     }
   }
   return false;

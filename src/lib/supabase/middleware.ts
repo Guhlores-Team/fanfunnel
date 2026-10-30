@@ -1,10 +1,41 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseUrl } from "./url";
+import { sessionCookieOptions } from "./cookies";
+import { aalFromAccessToken, hasVerifiedFactor } from "@/lib/auth/assurance";
 
-// Refreshes the Supabase auth session on every request and guards the
-// dashboard. When Supabase isn't configured the app runs in demo mode, so this
-// is a pass-through and the dashboard stays open.
+/**
+ * Pages that need the Supabase session refreshed here, before they render.
+ * Server Components can read the session but can't write cookies, so a token
+ * refreshed during render would be lost (and the rotated refresh token
+ * burned): every server-rendered page that calls `auth.getUser()` belongs here.
+ * Route Handlers (`/api/*`, `/auth/*`) write their own refreshed cookies and
+ * client pages use the browser client, so neither needs the proxy.
+ *
+ * `config.matcher` in src/proxy.ts must cover exactly these paths;
+ * src/proxy.test.ts fails if the two drift apart.
+ */
+export function needsSessionRefresh(path: string): boolean {
+  return (
+    ["/dashboard", "/admin", "/agency"].some(
+      (p) => path === p || path.startsWith(p + "/")
+    ) ||
+    path === "/pending" ||
+    path === "/login" ||
+    path === "/signup" ||
+    path === "/mfa"
+  );
+}
+
+/** Pages a user with a verified two-factor factor may only open on an aal2
+ *  session (after entering a code); everything else about them is unchanged. */
+export function needsTwoFactorStep(path: string): boolean {
+  return ["/dashboard", "/admin", "/agency"].some((p) => path === p || path.startsWith(p + "/"));
+}
+
+// Refreshes the Supabase auth session and guards the dashboard. When Supabase
+// isn't configured the app runs in demo mode, so this is a pass-through and the
+// dashboard stays open.
 export async function updateSession(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -15,13 +46,16 @@ export async function updateSession(request: NextRequest) {
   // Only the auth-relevant routes need a Supabase round-trip. Landing, fan spin
   // links, share/verify, and API routes must NEVER depend on auth here — that
   // way a slow or paused Supabase can't 504 the whole site (esp. fans' spin
-  // pages). Everything else short-circuits before touching the network.
+  // pages). The proxy matcher already limits us to these routes; this check
+  // stays as a second guard.
   const path = request.nextUrl.pathname;
-  const needsAuth =
-    path.startsWith("/dashboard") || path === "/login" || path === "/signup";
-  if (!needsAuth) return response;
+  if (!needsSessionRefresh(path)) return response;
 
   const supabase = createServerClient(supabaseUrl(), anon, {
+    // Same attributes as server.ts/client.ts; see cookies.ts for why not httpOnly.
+    cookieOptions: sessionCookieOptions(
+      request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol
+    ),
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -42,7 +76,7 @@ export async function updateSession(request: NextRequest) {
   // Supabase is slow/unreachable we must NOT hang the middleware (that's what
   // 504 MIDDLEWARE_INVOCATION_TIMEOUT is). On timeout/error we treat the user
   // as unauthenticated and let the redirect logic below proceed normally.
-  let user: { id?: string } | null = null;
+  let user: { id?: string; factors?: { status?: unknown }[] | null } | null = null;
   try {
     const result = await Promise.race([
       supabase.auth.getUser(),
@@ -56,7 +90,7 @@ export async function updateSession(request: NextRequest) {
     user = null; // fail-fast, never hang the edge
   }
 
-  if (!user && path.startsWith("/dashboard")) {
+  if (!user && (path.startsWith("/dashboard") || path === "/mfa")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
     redirect.searchParams.set("next", path);
@@ -90,6 +124,23 @@ export async function updateSession(request: NextRequest) {
     redirect.search = "";
     redirect.searchParams.set("suspended", "1");
     return NextResponse.redirect(redirect);
+  }
+
+  // Two-factor: a user who turned it on must enter a code (aal2) before the
+  // dashboard, admin or agency pages. getUser() above verified the session and
+  // returned its factors; the aal claim is read from that same session's token
+  // (a local read, no extra round-trip). Fails closed: no readable aal = aal1.
+  if (user && active && needsTwoFactorStep(path) && hasVerifiedFactor(user)) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (aalFromAccessToken(session?.access_token) !== "aal2") {
+      const redirect = request.nextUrl.clone();
+      redirect.pathname = "/mfa";
+      redirect.search = "";
+      redirect.searchParams.set("next", path + request.nextUrl.search);
+      return NextResponse.redirect(redirect);
+    }
   }
 
   // Already signed in (and active)? Skip the auth pages.

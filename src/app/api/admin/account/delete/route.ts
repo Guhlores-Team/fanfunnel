@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
 import {
   isSupabaseConfigured,
-  createClient,
   createServiceClient,
 } from "@/lib/supabase/server";
+import { requireAdminRoute } from "@/lib/auth/admin";
+import { deleteAccountAndTombstoneLinks } from "@/lib/account/deleteAccount";
+import { recordAudit } from "@/lib/data";
 
 /**
  * Hard-delete a creator account and ALL of its tenant data — irreversible.
  *
  * This is deliberately separate from the reversible "suspend" action in
  * `../route.ts`. It is guarded several ways (defense in depth):
- *   1. Caller must be an ACTIVE admin (verified server-side against
- *      `profiles.role` AND `profiles.is_active` — a suspended admin is rejected).
+ *   1. Caller must be an ACTIVE admin (the shared `requireAdminRoute()` guard:
+ *      `is_admin()`, i.e. role AND is_active — a suspended admin is rejected).
  *   2. The target's email must be passed AND match the target exactly
  *      (case-insensitive) — a typed-confirmation echoed from the client.
  *   3. An admin may not delete themselves.
@@ -27,6 +29,9 @@ import {
  * service-role admin API and let the database cascade do the rest.
  */
 export async function POST(req: Request) {
+  const admin = await requireAdminRoute();
+  if (!admin.ok) return admin.response;
+
   let body: { id?: string; email?: string };
   try {
     body = await req.json();
@@ -45,31 +50,20 @@ export async function POST(req: Request) {
   // store has no delete primitive we may touch from here, so report success and
   // let the client's optimistic removal stand for the (ephemeral) session.
   if (!isSupabaseConfigured()) {
+    await recordAudit({ actorId: null, action: "account.delete", targetType: "profile", targetId: id });
     return NextResponse.json({ ok: true });
   }
 
-  // (1) Caller must be a signed-in admin.
-  const sb = await createClient();
-  const {
-    data: { user: caller },
-  } = await sb.auth.getUser();
-  if (!caller) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 403 });
-  }
-  const { data: callerProfile } = await sb
-    .from("profiles")
-    .select("role, is_active")
-    .eq("id", caller.id)
-    .maybeSingle();
-  // A suspended admin (is_active=false) loses destructive power, mirroring the
-  // DB is_admin() policy. This route uses the service role (bypasses RLS), so the
-  // active-state check must be enforced here in code, not just at the RLS layer.
-  if (callerProfile?.role !== "admin" || callerProfile?.is_active !== true) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 403 });
+  // (1) Caller is an ACTIVE admin — enforced by requireAdminRoute() above. This
+  // route uses the service role (bypasses RLS), so that guard is the only thing
+  // stopping a suspended admin; it must stay the first statement of the handler.
+  const callerId = admin.userId;
+  if (!callerId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   // (3) Refuse self-deletion.
-  if (id === caller.id) {
+  if (id === callerId) {
     return NextResponse.json({ error: "cannot_delete_self" }, { status: 400 });
   }
 
@@ -94,40 +88,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "email_mismatch" }, { status: 400 });
   }
 
-  // (4) Atomically guard the last-admin invariant + RESERVE the deletion. The
-  // plain JS count above is TOCTOU (two concurrent deletes of the final two
-  // admins could both pass and leave zero admins). This SECURITY DEFINER RPC
-  // locks the admin rows and, for an admin target, refuses if it is the last
-  // admin or demotes it as an atomic reservation so a concurrent call sees one
-  // fewer admin. Runs as the caller (auth client) — auth.uid() is the admin.
-  const { data: reserve, error: reserveErr } = await sb.rpc(
-    "admin_reserve_account_deletion",
-    { p_target: id }
-  );
-  if (reserveErr) {
-    return NextResponse.json({ error: "db_error" }, { status: 500 });
+  // Permanently remove the auth user; FK cascades wipe all tenant data. On a
+  // failed delete the shared helper restores an admin target's role (the
+  // reservation above demoted it); on success each fan link gets a "this
+  // creator has left" tombstone.
+  const deleted = await deleteAccountAndTombstoneLinks(svc, id, {
+    wasAdmin: target.role === "admin",
+    actorId: callerId,
+    action: "account.delete",
+  });
+  if ("error" in deleted) {
+    return NextResponse.json({ error: deleted.error }, { status: deleted.error === "last_admin" ? 400 : deleted.error === "forbidden" ? 403 : deleted.error === "not_found" ? 404 : 500 });
   }
-  if (reserve === "last_admin") {
-    return NextResponse.json({ error: "last_admin" }, { status: 400 });
-  }
-  if (reserve !== "ok") {
-    // forbidden / not_found / cannot_delete_self — already checked above; fail
-    // closed on any unexpected status rather than deleting.
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  if ("pending" in deleted) return NextResponse.json(deleted, { status: 202, headers: { "Cache-Control": "no-store" } });
 
-  // Permanently remove the auth user; FK cascades wipe all tenant data.
-  const { error: delErr } = await svc.auth.admin.deleteUser(id);
-  if (delErr) {
-    // The reservation above demoted an admin target (admin -> creator) to hold
-    // the last-admin invariant atomically. The delete failed, so compensate by
-    // restoring the role — otherwise the target is left permanently altered (and
-    // the admin count reduced) without ever being deleted.
-    if (target.role === "admin") {
-      await svc.from("profiles").update({ role: "admin" }).eq("id", id);
-    }
-    return NextResponse.json({ error: "delete_failed" }, { status: 500 });
-  }
-
+  if (!deleted.auditRecorded) await recordAudit({
+    actorId: callerId,
+    action: "account.delete",
+    targetType: "profile",
+    targetId: id,
+    details: { role: target.role === "admin" ? "admin" : "creator", fanLinks: deleted.links },
+  });
   return NextResponse.json({ ok: true });
 }

@@ -1,3 +1,4 @@
+import type { FocusPackTerms } from "@/lib/data/focusPacks";
 import { NextResponse } from "next/server";
 import { updateCampaignPack, deleteCampaignPack } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -9,7 +10,7 @@ export async function PATCH(
 ) {
   const { id } = await params;
 
-  const body = await parseJsonBody<Partial<{
+  const body = await parseJsonBody<Partial<FocusPackTerms & {
     campaignId: string | null;
     label: string;
     spins: number;
@@ -19,7 +20,7 @@ export async function PATCH(
   }>>(req);
   if (body === BAD_REQUEST) return badRequest();
 
-  const patch: Partial<{
+  const patch: Partial<FocusPackTerms & {
     campaignId: string | null;
     label: string;
     spins: number;
@@ -65,6 +66,9 @@ export async function PATCH(
     patch.sortOrder = sortOrder;
   }
 
+  for (const key of ["packKind", "focusMultiplier", "focusSpins", "chaseWithin"] as const) {
+    if (key in body) Object.assign(patch, { [key]: body[key] });
+  }
   const result = await updateCampaignPack(id, patch);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });

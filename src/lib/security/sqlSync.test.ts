@@ -95,10 +95,189 @@ for (const name of migTriggers) {
   }
 }
 
+// Constraint parity: a CHECK added by a migration but missing from a snapshot
+// means a fresh DB accepts writes the migrated DB rejects (or vice versa).
+function constraintNames(sql: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of sql.matchAll(/add\s+constraint\s+(\w+)/gi)) out.add(m[1].toLowerCase());
+  return out;
+}
+const migConstraints = constraintNames(migrationsSql);
+const schemaConstraints = constraintNames(schemaSql);
+const combinedConstraints = constraintNames(combinedSql);
+for (const name of migConstraints) {
+  if (!combinedConstraints.has(name)) {
+    fail(`constraint "${name}" is added in migrations/ but missing from migrations_combined.sql`);
+  }
+  if (!schemaConstraints.has(name)) {
+    fail(`constraint "${name}" is added in migrations/ but missing from schema.sql`);
+  }
+}
+
+// Ledger balances must never go negative. fans.spins_remaining carries an
+// inline CHECK in the base schema; the per-wheel fan_passes.spins_remaining
+// (the balance claim_spin actually spends) gets its CHECK from migration 0039,
+// so it must be added AND validated in a migration and in both snapshots.
+const normSchema = normalize(schemaSql);
+const passCheck =
+  /alter table public\.fan_passes add constraint fan_passes_spins_remaining_check check \(spins_remaining >= 0\)/;
+const passValidate =
+  /alter table public\.fan_passes validate constraint fan_passes_spins_remaining_check/;
+const ledgerSources: [string, string][] = [
+  ["migrations/", normalize(migrationsSql)],
+  ["schema.sql", normSchema],
+  ["migrations_combined.sql", normalize(combinedSql)],
+];
+for (const [label, src] of ledgerSources) {
+  if (!passCheck.test(src)) {
+    fail(`${label} does not add CHECK (spins_remaining >= 0) on public.fan_passes`);
+  }
+  if (!passValidate.test(src)) {
+    fail(`${label} never validates fan_passes_spins_remaining_check`);
+  }
+}
+if (!/create table if not exists public\.fans \([^;]*spins_remaining integer not null default 0 check \(spins_remaining >= 0\)/.test(normSchema)) {
+  fail("schema.sql: fans.spins_remaining lost its CHECK (spins_remaining >= 0)");
+}
+
+// ---------------------------------------------------------------------------
+// DEBT-7: functions were mirrored but the DDL around them was not. schema.sql
+// lacked 0028's fans.rl_* and 0025's profiles.notify_* columns that claim_spin /
+// set_notification_prefs read, 0032's re-shaped RLS policies and 0027/0030's
+// grant lock-down; migrations_combined.sql had an unguarded `create policy` that
+// made it fail (= not idempotent) on top of schema.sql. The static checks below
+// catch each of those classes; scripts/db/schema-drift-check.mjs is the full
+// catalog diff on a real Postgres.
+// ---------------------------------------------------------------------------
+
+/** Top-level statements with comments stripped, $$ bodies blanked, whitespace collapsed. */
+function statements(sql: string): string[] {
+  return sql
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\$\$[\s\S]*?\$\$/g, () => "$$body$$")
+    .split(";")
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+/** Lower-cased, whitespace-free, `public.`-free form for comparing DDL text. */
+function canon(st: string): string {
+  return st.toLowerCase().replace(/\bpublic\./g, "").replace(/\bint\b/g, "integer").replace(/\s+/g, "");
+}
+
+// Column parity: every `alter table … add column` in migrations/ must leave the
+// column present in BOTH snapshots (via add column or the create table body).
+function addedColumns(sql: string): Set<string> {
+  const out = new Set<string>();
+  for (const st of statements(sql)) {
+    const m = /^alter table (?:only )?(?:public\.)?(\w+) (add column .*)$/i.exec(st);
+    if (!m) continue;
+    for (const c of m[2].matchAll(/add column (?:if not exists )?(\w+)/gi)) {
+      out.add(`${m[1]}.${c[1]}`.toLowerCase());
+    }
+  }
+  return out;
+}
+function createdTables(sql: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /create table (?:if not exists )?(?:public\.)?(\w+)\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
+  for (const m of sql.replace(/--[^\n]*/g, " ").matchAll(re)) out.set(m[1].toLowerCase(), m[2]);
+  return out;
+}
+const CONSTRAINT_WORDS = new Set(["constraint", "primary", "unique", "check", "foreign", "exclude"]);
+function tableColumns(sql: string): Set<string> {
+  const out = new Set<string>();
+  for (const [table, body] of createdTables(sql)) {
+    for (const line of body.split("\n")) {
+      const word = line.trim().split(/[\s,(]/)[0]?.toLowerCase();
+      if (word && !CONSTRAINT_WORDS.has(word)) out.add(`${table}.${word}`);
+    }
+  }
+  return out;
+}
+const schemaCols = new Set([...addedColumns(schemaSql), ...tableColumns(schemaSql)]);
+const combinedCols = new Set([...addedColumns(combinedSql), ...tableColumns(combinedSql)]);
+const migCols = addedColumns(migrationsSql);
+for (const col of migCols) {
+  if (!schemaCols.has(col)) fail(`column "${col}" is added in migrations/ but missing from schema.sql`);
+  if (!combinedCols.has(col)) fail(`column "${col}" is added in migrations/ but missing from migrations_combined.sql`);
+}
+const migTables = createdTables(migrationsSql);
+for (const table of migTables.keys()) {
+  if (!createdTables(schemaSql).has(table)) fail(`table "${table}" is created in migrations/ but missing from schema.sql`);
+  if (!createdTables(combinedSql).has(table)) {
+    fail(`table "${table}" is created in migrations/ but missing from migrations_combined.sql`);
+  }
+}
+
+// Policy parity: the effective (last) definition of every policy in migrations/
+// must be the effective definition in both snapshots (0032 drift class).
+function policyBlocks(sql: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const st of statements(sql)) {
+    const m = /^create policy (\w+) on (?:\w+\.)?(\w+)\b/i.exec(st);
+    if (m) out.set(`${m[2]}.${m[1]}`.toLowerCase(), canon(st));
+  }
+  return out;
+}
+const migPolicies = policyBlocks(migrationsSql);
+const schemaPolicies = policyBlocks(schemaSql);
+const combinedPolicies = policyBlocks(combinedSql);
+for (const [key, def] of migPolicies) {
+  if (!schemaPolicies.has(key)) fail(`policy "${key}" is created in migrations/ but missing from schema.sql`);
+  else if (schemaPolicies.get(key) !== def) fail(`policy "${key}" differs between migrations/ and schema.sql (out of sync)`);
+  if (!combinedPolicies.has(key)) {
+    fail(`policy "${key}" is created in migrations/ but missing from migrations_combined.sql`);
+  } else if (combinedPolicies.get(key) !== def) {
+    fail(`policy "${key}" differs between migrations/ and migrations_combined.sql (out of sync)`);
+  }
+}
+
+// Grant parity: every grant/revoke in migrations/ must appear in both snapshots
+// (0027/0030 class: a fresh DB left server-only RPCs callable by anon).
+const migGrants = new Set(
+  statements(migrationsSql)
+    .filter((st) => /^(grant|revoke) /i.test(st))
+    .map(canon),
+);
+const schemaGrants = new Set(statements(schemaSql).filter((st) => /^(grant|revoke) /i.test(st)).map(canon));
+const combinedGrants = new Set(statements(combinedSql).filter((st) => /^(grant|revoke) /i.test(st)).map(canon));
+for (const g of migGrants) {
+  if (!schemaGrants.has(g)) fail(`grant/revoke "${g}" is in migrations/ but missing from schema.sql`);
+  if (!combinedGrants.has(g)) fail(`grant/revoke "${g}" is in migrations/ but missing from migrations_combined.sql`);
+}
+
+// Re-runnability: both snapshots are documented as safe to run repeatedly, so
+// every `create policy` / `create trigger` needs a `drop … if exists` guard
+// since the previous creation of that object (the unguarded `fans_select` that
+// broke migrations_combined.sql on top of schema.sql).
+function unguarded(sql: string): string[] {
+  const guarded = new Set<string>();
+  const bad: string[] = [];
+  for (const st of statements(sql)) {
+    const create =
+      /^create (policy) (\w+) on ([\w.]+)/i.exec(st) ?? /^create (trigger) (\w+) .*? on ([\w.]+)/i.exec(st);
+    if (create) {
+      const key = `${create[1]} ${create[2]} on ${create[3]}`.toLowerCase();
+      if (!guarded.has(key)) bad.push(key);
+      guarded.delete(key);
+      continue;
+    }
+    const drop = /^drop (policy|trigger) if exists (\w+) on ([\w.]+)/i.exec(st);
+    if (drop) guarded.add(`${drop[1]} ${drop[2]} on ${drop[3]}`.toLowerCase());
+  }
+  return bad;
+}
+for (const key of unguarded(combinedSql)) {
+  fail(`migrations_combined.sql: "create ${key}" has no "drop … if exists" guard, so re-running the file fails`);
+}
+for (const key of unguarded(schemaSql)) {
+  fail(`schema.sql: "create ${key}" has no "drop … if exists" guard, so re-running the file fails`);
+}
+
 if (failures > 0) {
   console.error(`\nSQL sync guard FAILED with ${failures} issue(s).`);
   process.exit(1);
 }
 console.log(
-  `sqlSync.test: ${mig.size} migration functions + ${migTriggers.size} trigger(s) match schema.sql + migrations_combined.sql`,
+  `sqlSync.test: ${mig.size} migration functions + ${migTriggers.size} trigger(s) + ${migConstraints.size} constraint(s) + ${migCols.size} added columns + ${migTables.size} tables + ${migPolicies.size} policies + ${migGrants.size} grants match schema.sql + migrations_combined.sql; ledger balance CHECKs present; both snapshots are re-runnable`,
 );

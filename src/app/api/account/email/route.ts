@@ -63,7 +63,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "wrong_password" }, { status: 403 });
   }
 
-  const { error } = await sb.auth.updateUser({ email });
+  // Send the confirm links back to THIS deployment; without it Supabase falls
+  // back to the project's Site URL (localhost:3000 on the test project).
+  const emailRedirectTo = `${new URL(req.url).origin}/auth/callback?next=/dashboard`;
+  const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo });
   if (error) {
     return NextResponse.json({ error: "update_failed" }, { status: 400 });
   }
