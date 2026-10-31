@@ -214,6 +214,39 @@ export async function stockJourney(page, { step, assert }, ctx) {
       const live = (await getWheel(ctx.request)).prizes.find((p) => p.id === epic.id).stock;
       assert(new RegExp(`\\b${live} left`).test(await chip(epic.label).innerText()), `the chip reads the live "${live} left"`);
     });
+
+    let oddsToken = null;
+    await step("stock: a low-stock win says 'You got 1 of the last 3!' from the pre-win count (A33)", async () => {
+      await clearForcedRarity(page);
+      const w = await getWheel(ctx.request);
+      await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, stock: 3 } : p)) });
+      oddsToken = await createRevealFan(ctx.request, "Odds Fan", 4);
+      await goto(page, `/spin/${oddsToken}`, 1600);
+      const body = await spinForCard(page);
+      assert(body.prize?.id === epic.id && body.stock?.[epic.id]?.stock === 2, `the epic was won with 2 left after it (${JSON.stringify(body.stock)})`);
+      const line = page.getByTestId("win-last-of");
+      await line.waitFor({ timeout: 4000 });
+      assert((await line.innerText()).trim() === "You got 1 of the last 3!", "the card counts the stock before the win");
+      assert((await page.getByTestId("odds-updated").count()) === 0, "unchanged odds: no 'Odds were updated'");
+      await closeCard(page);
+    });
+
+    await step("fairness: odds changed after the page opened → 'Odds were updated since you opened this page' (A32)", async () => {
+      await goto(page, `/spin/${oddsToken}`, 1600);
+      const w = await getWheel(ctx.request);
+      // The creator edits the odds while the fan's page is open.
+      await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, weight: 60 } : p)) });
+      const body = await spinForCard(page);
+      assert(typeof body.poolHash === "string", "the spin commits to a v3 pool hash");
+      const note = page.getByTestId("odds-updated");
+      await note.waitFor({ timeout: 4000 });
+      assert(/Odds were updated since you opened this page/.test(await note.innerText()), "the card says the odds changed");
+      await closeCard(page);
+      // Nothing changes before the next spin: the page now holds the new odds.
+      await spinForCard(page);
+      assert((await page.getByTestId("odds-updated").count()) === 0, "the next spin on unchanged odds shows no notice");
+      await closeCard(page);
+    });
   } finally {
     await clearForcedRarity(page);
     if (original) await putWheel(ctx.request, { ...original, showStock: true }).catch(() => {});

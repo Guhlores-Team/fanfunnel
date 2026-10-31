@@ -1,5 +1,6 @@
 import { isOnBreak } from "@/lib/play/playGuard";
-import { buildFocusPoolSnapshot, snapshotOdds } from "@/lib/games/wheel/fairnessV3";
+import { createHash } from "node:crypto";
+import { buildFocusPoolSnapshot, canonicalJson, snapshotOdds } from "@/lib/games/wheel/fairnessV3";
 import { hasLimitedPrize, showsStock, toPublicStockMap } from "@/lib/games/wheel/publicView";
 import type { PublicStock, WheelConfig } from "@/lib/games/wheel/types";
 import { toFanFocusView, type FanFocusView, type FanOddsView, type FocusRow } from "./focusView";
@@ -17,7 +18,12 @@ export function focusDisplay(row: FocusRow | null | undefined, wheel: WheelConfi
     const reason = isOnBreak(options.breakUntil) ? "on_break" as const : proof?.pauseReason ?? null;
     const projected = active ? { ...focus, status: reason ? "paused" as const : "active" as const, pauseReason: reason } : null;
     const odds = snapshotOdds(snapshot);
-    return { focus: projected, ...(hasLimitedPrize(wheel.prizes) ? { stock: toPublicStockMap(wheel.prizes, showsStock(wheel)) } : {}), odds: { pityForced: odds.pityForced, chaseForced: odds.chaseForced,
+    // Same snapshot and the same hash (hashPoolSnapshot, synchronously) a wheel
+    // spin commits to; scratch and bingo commit to their own game snapshot.
+    const poolHash = (wheel.gameKind ?? "wheel") === "wheel"
+      ? createHash("sha256").update(canonicalJson(snapshot), "utf8").digest("hex")
+      : undefined;
+    return { focus: projected, ...(hasLimitedPrize(wheel.prizes) ? { stock: toPublicStockMap(wheel.prizes, showsStock(wheel)) } : {}), odds: { pityForced: odds.pityForced, chaseForced: odds.chaseForced, ...(poolHash ? { poolHash } : {}),
       rows: wheel.prizes.map(prize => ({ prizeId: prize.id, chance: odds.rows.find(row => row.prize.id === prize.id)?.chance ?? 0 })) } };
   } catch {
     return { focus: active ? { ...focus, status: "paused", pauseReason: "unavailable" } : null };
