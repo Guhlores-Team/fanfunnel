@@ -34,7 +34,7 @@ export {
   setWheelSchedule,
 } from "./wheels";
 export { listWebhooks, createWebhook, deleteWebhook, fireWebhooks } from "./webhooks";
-export { getFanPass, spin, getSpinAttemptStatus, completeClaimedSpin, createPass } from "./spins";
+export { getFanPass, spin, getSpinAttemptStatus, createPass, FanPassUnavailableError } from "./spins";
 export { setPlayReminder, takeBreak } from "./playGuard";
 export {
   editGrant,

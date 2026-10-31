@@ -12,9 +12,9 @@ import type { Rarity } from "@/lib/games/wheel/types";
 // Fan side: the winner reopens their own reward with their link token (F5).
 // The token's fan must own the spin; anything else looks like "no such win".
 //
-// Spin side: helpers recordClaimedSpin (./spins.ts) uses to take a code or load
-// a link/text BEFORE the spin row exists, so a prize that can't be delivered
-// is never awarded.
+// Spin side: the attempt ledger (./spinAttempts.ts) reads the sealed candidate
+// itself and commit_spin_attempt binds it atomically with the spin row, so a
+// prize that can't be delivered is never awarded.
 import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
 import { openReward, rewardCryptoReady, rewardCodeFingerprint, rewardCodeFingerprintReady, sealReward } from "@/lib/rewards/crypto";
 import {
@@ -243,59 +243,6 @@ export async function getFanReward(
   const { data: views, error: viewError } = await sb.rpc("record_fan_reward_view", { p_spin: spin.id, p_token: token });
   if (viewError || typeof views !== "number" || views < 1) return { error: "db_error" };
   return { reward: { kind: row.kind, value }, views };
-}
-
-// ---------------------------------------------------------------------------
-// Spin path (service client only; called by recordClaimedSpin).
-// ---------------------------------------------------------------------------
-
-/** A link/text prize's reward, decrypted, or null when it can't be delivered. */
-export async function loadPrizeReward(
-  sb: ReturnType<typeof createServiceClient>,
-  prizeId: string,
-  creatorId: string,
-): Promise<DeliveredReward | null> {
-  const { data } = await sb.from("prize_rewards").select("kind, cipher, iv, key_version").eq("prize_id", prizeId).maybeSingle();
-  const r = data as { kind: "link" | "text"; cipher: string; iv: string; key_version: number } | null;
-  if (!r) return null;
-  try {
-    return { kind: r.kind, value: openReward({ cipher: r.cipher, iv: r.iv, keyVersion: r.key_version }, creatorId) };
-  } catch (e) {
-    console.error("rewards: prize reward could not be decrypted", e instanceof Error ? e.message : "error");
-    return null;
-  }
-}
-
-/**
- * Take one unused code for the spin about to be recorded as `spinId`.
- *   "taken"   the code is bound to spinId (release it if the spin fails);
- *   "none"    no code left: treat the prize as sold out;
- *   "unknown" the call errored: it may or may not have committed, so the
- *             spin fails (and the reservation, if any, is released).
- */
-export async function reserveRewardCode(
-  sb: ReturnType<typeof createServiceClient>,
-  prizeId: string,
-  spinId: string,
-  creatorId: string,
-): Promise<{ status: "taken"; reward: DeliveredReward | null } | { status: "none" | "unknown" }> {
-  const { data, error } = await sb.rpc("reserve_reward_code", { p_prize: prizeId, p_spin: spinId });
-  if (error) return { status: "unknown" };
-  const row = (data as { code_cipher: string; code_iv: string; code_key_version: number }[] | null)?.[0];
-  if (!row) return { status: "none" };
-  try {
-    const value = openReward({ cipher: row.code_cipher, iv: row.code_iv, keyVersion: row.code_key_version }, creatorId);
-    return { status: "taken", reward: { kind: "code", value } };
-  } catch (e) {
-    console.error("rewards: reward code could not be decrypted", e instanceof Error ? e.message : "error");
-    return { status: "taken", reward: null };
-  }
-}
-
-/** Give back the code reserved for a spin that was never recorded. */
-export async function releaseRewardCode(sb: ReturnType<typeof createServiceClient>, spinId: string): Promise<void> {
-  const { error } = await sb.rpc("release_reward_code", { p_spin: spinId });
-  if (error) console.error("rewards: release_reward_code failed", error.code);
 }
 
 /** All earned instant-win references. No reward values, keys or internal ids. */

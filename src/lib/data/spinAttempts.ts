@@ -55,7 +55,9 @@ type Receipt = {
 };
 export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" } | { status: "declined"; error: SpinError["error"] };
 const ERROR_CODES: ReadonlySet<string> = new Set(["not_found", "no_spins", "no_prizes", "rate_limited", "blocked", "on_break", "needs_ack", "db_error", "spin_pending"]);
-function spinError(error: unknown): SpinError { return { error: typeof error === "string" && ERROR_CODES.has(error) ? error as SpinError["error"] : "db_error" }; }
+// prepare_spin_attempt declines `no_wheel` when no playable game resolves for
+// the link: to the fan that is the same as a wheel with nothing left to win.
+function spinError(error: unknown): SpinError { if (error === "no_wheel") return { error: "no_prizes" }; return { error: typeof error === "string" && ERROR_CODES.has(error) ? error as SpinError["error"] : "db_error" }; }
 async function call(sb: Service, name: string, args: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   try {
     const { data, error } = await (sb as unknown as RpcClient).rpc(name, args);
