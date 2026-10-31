@@ -4,10 +4,12 @@ name: E2E (real Supabase)
 # tenant isolation + the SECURITY DEFINER self-update RPCs. These can't run in
 # mock mode, so they live in their own workflow gated on repo secrets.
 #
-# The test self-skips (exit 0) when the secrets are absent, so this workflow is
-# a harmless no-op until you add them. To enable, set these repo secrets to a
-# DEDICATED test/preview Supabase project (NOT production — the test creates and
-# deletes ephemeral users):
+# A25: missing secrets FAIL this job (scripts/ci/supabase-secrets-gate.mjs).
+# The only skip is a pull request from a fork, where GitHub withholds secrets by
+# design; it is announced with a warning annotation and a job-summary line, and
+# the gated steps show as skipped. Set these repo secrets to a DEDICATED
+# test/preview Supabase project (NOT production — the test creates and deletes
+# ephemeral users), and the same names as Dependabot secrets for Dependabot PRs:
 #   NEXT_PUBLIC_SUPABASE_URL
 #   NEXT_PUBLIC_SUPABASE_ANON_KEY
 #   SUPABASE_SERVICE_ROLE_KEY
@@ -48,14 +50,32 @@ jobs:
           node-version: 22
           cache: npm
 
+      # A25: fail when the TEST secrets are missing; skip (visibly) only on a
+      # fork PR. Only presence booleans reach the gate, never secret values.
+      - name: Require TEST Supabase secrets (fork PRs skip visibly)
+        id: supabase-secrets
+        env:
+          GATE_JOB: Real-Supabase + RLS runtime tests
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
+          BASE_REF: ${{ github.base_ref }}
+          ACTOR: ${{ github.actor }}
+          HAS_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL != '' }}
+          HAS_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY != '' }}
+          HAS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: node scripts/ci/supabase-secrets-gate.mjs
+
       - name: Install dependencies
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npm ci
 
       # The tests below must see this PR's schema. When the PR changes
       # migrations, supabase-migrations.yml applies them to the TEST project in
       # a separate run; wait for that run (same head SHA) to succeed first.
       - name: Wait for this PR's migrations to reach the TEST project
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.supabase-secrets.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -65,8 +85,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$HAS_SECRETS" != "true" ]; then
-            echo "Supabase secrets unset — the tests below skip, nothing to wait for."
-            exit 0
+            echo "::error title=TEST secrets missing::SUPABASE_SERVICE_ROLE_KEY is unset although the secrets gate passed."
+            exit 1
           fi
           files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
           if ! grep -qE '^supabase/(migrations/|config\.toml$)' <<<"$files"; then
@@ -91,7 +111,8 @@ jobs:
             sleep 20
           done
 
-      - name: Real-Supabase integration tests — RLS + RPCs (skips if secrets unset)
+      - name: Real-Supabase integration tests — RLS + RPCs
+        if: steps.supabase-secrets.outputs.run == 'true'
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -99,6 +120,7 @@ jobs:
         run: npm run e2e:supabase
 
       - name: Real-Supabase spin-integrity (double-spend) test
+        if: steps.supabase-secrets.outputs.run == 'true'
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -110,6 +132,7 @@ jobs:
       # run against anything but the TEST project (the script also hard-refuses
       # the prod ref).
       - name: RLS runtime test — tenant isolation + no self-promotion (TEST project)
+        if: steps.supabase-secrets.outputs.run == 'true'
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -117,8 +140,8 @@ jobs:
           RLS_TEST_REQUIRE_REF: snmcrmhgevfqggxdiomu
         run: |
           if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
-            echo "::warning title=RLS runtime test skipped::NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY unset — the RLS runtime test did NOT run."
-            exit 0
+            echo "::error title=RLS runtime test cannot run::NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY unset — a missing secret is a failure, not a pass."
+            exit 1
           fi
           case "$NEXT_PUBLIC_SUPABASE_URL" in
             *ttlogfmogcccwiraaoae*)

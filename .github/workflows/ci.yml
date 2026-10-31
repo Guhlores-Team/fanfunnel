@@ -37,6 +37,13 @@ jobs:
       - name: Test (unit + RLS security lint)
         run: npm test
 
+      # Workflow guards and pure script tests under scripts/ (npm test covers
+      # src/ only): A25 secrets gate, A39 DB-before-code check. No network, no
+      # secrets.
+      - name: Script and workflow-guard tests
+        run: |
+          node scripts/test/ci-secrets-gate.test.mjs
+
       - name: Build
         run: npm run build
 
