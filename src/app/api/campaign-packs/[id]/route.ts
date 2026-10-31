@@ -2,12 +2,15 @@ import type { FocusPackTerms } from "@/lib/data/focusPacks";
 import { NextResponse } from "next/server";
 import { updateCampaignPack, deleteCampaignPack } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Patch a spin pack's fields.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "campaign-packs/[id]:PATCH");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
 
   const body = await parseJsonBody<Partial<FocusPackTerms & {
@@ -76,9 +79,11 @@ export async function PATCH(
 
 // Delete a spin pack.
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "campaign-packs/[id]:DELETE");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const result = await deleteCampaignPack(id);
   if ("error" in result) return errorResponse(result.error);

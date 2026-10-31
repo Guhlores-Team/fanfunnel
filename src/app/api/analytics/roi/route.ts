@@ -1,9 +1,12 @@
 import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { getPrizeRoi } from "@/lib/data";
+import { limitRoute } from "@/lib/api/limit";
 
 // #18 Prize ROI: per-prize win counts joined to the creator's fulfilment cost.
 export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "analytics/roi:GET");
+  if (rateLimited) return rateLimited;
   return completeReadResponse(async () => {
     const raw = Number(new URL(req.url).searchParams.get("days"));
     const days =

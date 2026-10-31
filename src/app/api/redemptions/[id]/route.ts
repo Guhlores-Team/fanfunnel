@@ -3,6 +3,7 @@ import { setRedemptionStatus, setRedemptionMeta } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import type { RedemptionStatus } from "@/lib/data/types";
 import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 const VALID: RedemptionStatus[] = [
   "pending",
@@ -20,6 +21,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "redemptions/[id]:PATCH");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
 
   const body = await parseJsonBody<{

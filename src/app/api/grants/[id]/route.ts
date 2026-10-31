@@ -3,12 +3,15 @@ import { isUuid } from "@/lib/data/shared";
 import { editGrant } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, int, str } from "@/lib/api/validate";
+import { limitRoute } from "@/lib/api/limit";
 
 // Edit an existing grant (spins / $ / campaign) after the fact.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "grants/[id]:PATCH");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const body = await parseJsonBody<{
     requestId?: unknown;

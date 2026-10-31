@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { setActiveWheelBrandColor } from "@/lib/data";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
+import { limitRoute } from "@/lib/api/limit";
 
 // Set the brand color of the creator's active wheel — the public /c/[slug] page
 // derives its brand color from that wheel, so this drives the Settings → Public
@@ -8,6 +9,8 @@ import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 export async function PUT(req: Request) {
+  const rateLimited = await limitRoute(req, "account/brand-color:PUT");
+  if (rateLimited) return rateLimited;
   let body: { color?: unknown };
   try {
     body = await req.json();

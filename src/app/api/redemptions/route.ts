@@ -3,11 +3,14 @@ import { setRedemptionStatus } from "@/lib/data";
 import type { RedemptionStatus } from "@/lib/data/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { listRedemptionQueue } from "@/lib/data/redemptionQueue";
+import { limitRoute } from "@/lib/api/limit";
 
 const VALID: RedemptionStatus[] = ["pending", "in_progress", "fulfilled", "cancelled"];
 
 // Mark a won prize as fulfilled / cancelled / pending.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "redemptions:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ id?: string; status?: RedemptionStatus }>(req);
   if (body === BAD_REQUEST) return badRequest();
   if (!body.id || !body.status || !VALID.includes(body.status)) {
@@ -22,6 +25,8 @@ export async function POST(req: Request) {
 // A5: GET ?status=<status>&q=<fan or prize>&before=<cursor> — one page of the
 // creator's own prize queue, newest first, read on the caller's session (RLS).
 export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "redemptions:GET");
+  if (rateLimited) return rateLimited;
   const url = new URL(req.url);
   const status = url.searchParams.get("status") || undefined;
   const q = url.searchParams.get("q") ?? "";

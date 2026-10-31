@@ -1,9 +1,12 @@
 import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { getProfitSummary } from "@/lib/data";
+import { limitRoute } from "@/lib/api/limit";
 
 // Revenue − prize cost = profit, over a window. The honest bottom line.
 export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "analytics/profit:GET");
+  if (rateLimited) return rateLimited;
   return completeReadResponse(async () => {
     const raw = Number(new URL(req.url).searchParams.get("days"));
     const days =

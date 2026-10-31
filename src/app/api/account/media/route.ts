@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { addMyMedia, reorderMyMedia } from "@/lib/data";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
-import { rateLimitOr429 } from "@/lib/api/limit";
+import { rateLimitOr429, limitRoute } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { revalidateMyThemedPublicPage } from "@/lib/api/publicPage";
 import { MAX_UPLOAD_BYTES } from "@/lib/creatorTheme/config";
@@ -46,6 +46,8 @@ export async function POST(req: Request) {
 
 // Re-order the creator's own photos: { order: [id, …] }.
 export async function PATCH(req: Request) {
+  const rateLimited = await limitRoute(req, "account/media:PATCH");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ order?: unknown }>(req);
   if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
   const result = await reorderMyMedia(body.order);

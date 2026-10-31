@@ -3,9 +3,12 @@ import { NextResponse } from "next/server";
 import { getAutopilot, dismissAutopilotCard } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, str } from "@/lib/api/validate";
+import { limitRoute } from "@/lib/api/limit";
 
 // The creator's ranked action feed.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "autopilot:GET");
+  if (rateLimited) return rateLimited;
   return completeReadResponse(async () => {
     const cards = await getAutopilot();
     return NextResponse.json({ cards });
@@ -14,6 +17,8 @@ export async function GET() {
 
 // Dismiss or snooze a card. Body: { key, snoozeUntil? }.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "autopilot:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ key?: string; snoozeUntil?: string }>(req);
   if (body === BAD_REQUEST) return badRequest();
 

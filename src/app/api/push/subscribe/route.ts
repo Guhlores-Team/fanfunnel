@@ -9,7 +9,7 @@ import {
 } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { clientIp } from "@/lib/api/clientIp";
-import { rateLimitOr429 } from "@/lib/api/limit";
+import { rateLimitOr429, limitRoute } from "@/lib/api/limit";
 import { SUBSCRIBE_RATE_LIMIT } from "@/lib/push/config";
 
 // Web push devices for the SIGNED-IN creator (migration 0056).
@@ -23,7 +23,9 @@ import { SUBSCRIBE_RATE_LIMIT } from "@/lib/push/config";
 
 const NO_STORE = { "Cache-Control": "private, no-store" };
 
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "push/subscribe:GET");
+  if (rateLimited) return rateLimited;
   const result = await listMyPushDevices();
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result, { headers: NO_STORE });
@@ -48,6 +50,8 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+  const rateLimited = await limitRoute(req, "push/subscribe:PATCH");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ id?: unknown; showDetails?: unknown }>(req);
   if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
   const result = await setMyPushDeviceDetails(body.id, body.showDetails);
@@ -56,6 +60,8 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const rateLimited = await limitRoute(req, "push/subscribe:DELETE");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ id?: unknown }>(req);
   if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
   const result = await removeMyPushDevice(body.id);

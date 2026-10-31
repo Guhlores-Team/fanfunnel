@@ -82,11 +82,11 @@ async function main() {
   const mockLayer = await import("@/lib/data/mock");
 
   const get = async () => {
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/"));
     return { status: res.status, data: (await res.json()) as Record<string, unknown> };
   };
   const post = async () => {
-    const res = await POST();
+    const res = await POST(new Request("http://localhost/"));
     return { status: res.status, data: (await res.json()) as Record<string, unknown> };
   };
 

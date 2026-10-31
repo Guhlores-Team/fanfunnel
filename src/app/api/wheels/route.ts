@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { listWheels, createWheel } from "@/lib/data";
 import { errorResponse } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // The creator's wheels. `?archived=1` includes archived wheels.
 export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "wheels:GET");
+  if (rateLimited) return rateLimited;
   const { searchParams } = new URL(req.url);
   const includeArchived = searchParams.get("archived") === "1";
   const wheels = await listWheels(includeArchived);
@@ -12,6 +15,8 @@ export async function GET(req: Request) {
 
 // Create a new wheel, optionally seeded from a template and/or named.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "wheels:POST");
+  if (rateLimited) return rateLimited;
   let body: { fromTemplateId?: string; name?: string; gameKind?: unknown; gameConfig?: unknown };
   try {
     body = await req.json();

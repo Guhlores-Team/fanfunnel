@@ -185,7 +185,7 @@ mock.module("@/lib/data/audit", { namedExports: { recordAudit: async (entry: Rec
 mock.module("next/cache", { namedExports: { revalidatePath: () => {} } });
 // Quotas have their own suite; these cases exercise authorization/storage,
 // including more than ten uploads in one test process.
-mock.module("@/lib/api/limit", { namedExports: { rateLimitOr429: async () => null } });
+mock.module("@/lib/api/limit", { namedExports: { rateLimitOr429: async () => null, limitRoute: async () => null } });
 
 async function main() {
   const media = await import("./route");

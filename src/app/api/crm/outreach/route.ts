@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { recordOutreach } from "@/lib/data";
 import { isOutreachAction } from "@/lib/data/outreach";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Win-back (RM-5): log that the signed-in creator contacted (copied a filled
 // DM for) or snoozed one of their quiet fans. Body: { fanId, action, templateId? }.
@@ -9,6 +10,8 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 // or user id in the body is ignored, and the insert policy refuses a fan (or
 // template) that isn't that creator's. Nothing is sent to the fan.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "crm/outreach:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ fanId?: unknown; action?: unknown; templateId?: unknown }>(req);
   if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
 

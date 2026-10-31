@@ -145,7 +145,7 @@ async function main() {
   rows = [dev("bbbbbbbb-0000-4000-8000-000000000001", B)];
   {
     tableTouches = 0;
-    const g = await call(sub.GET());
+    const g = await call(sub.GET(new Request("http://localhost/")));
     check("anon GET → 401", g.status === 401 && g.data.error === "unauthorized" && !("devices" in g.data));
     const p = await call(sub.POST(req("POST", { subscription: browserSub("anon") })));
     check("anon subscribe → 401", p.status === 401);
@@ -164,7 +164,7 @@ async function main() {
   user = { id: A };
   const bId = rows[0].id as string;
   {
-    const g = await call(sub.GET());
+    const g = await call(sub.GET(new Request("http://localhost/")));
     check("A lists 0 devices (not B's)", g.status === 200 && (g.data.devices as unknown[]).length === 0);
     check("list never returns endpoints or keys", !JSON.stringify(g.data).includes("fcm.googleapis.com"));
     const d = await call(sub.DELETE(req("DELETE", { id: bId })));
@@ -198,7 +198,7 @@ async function main() {
     const taken = await call(sub.POST(req("POST", { subscription: { ...browserSub("x"), endpoint: rows.find((r) => r.id === bId)!.endpoint } })));
     check("B's browser endpoint → 409 conflict, never taken over", taken.status === 409 && rows.find((r) => r.id === bId)!.user_id === B);
 
-    const g = await call(sub.GET());
+    const g = await call(sub.GET(new Request("http://localhost/")));
     const mine = g.data.devices as { id: string; showDetails: boolean }[];
     check("A now lists exactly its own device", mine.length === 1);
     const pa = await call(sub.PATCH(req("PATCH", { id: mine[0].id, showDetails: true })));
@@ -231,7 +231,7 @@ async function main() {
   // --- 5. Keys unset: push is OFF, cleanly -------------------------------------------------
   {
     setKeys(false);
-    const c = await call(cfg.GET());
+    const c = await call(cfg.GET(new Request("http://localhost/")));
     check("config says unavailable, no key", c.data.available === false && c.data.publicKey === null);
     const before = rows.length;
     const p = await call(sub.POST(req("POST", { subscription: browserSub("off") })));
@@ -239,7 +239,7 @@ async function main() {
     const t = await call(test.POST(req("POST", {})));
     check("test with keys unset → 403 not_configured", t.status === 403 && t.data.error === "not_configured");
     setKeys(true);
-    const c2 = await call(cfg.GET());
+    const c2 = await call(cfg.GET(new Request("http://localhost/")));
     check("config with keys → public key only", c2.data.available === true && c2.data.publicKey === KEYS.VAPID_PUBLIC_KEY && !JSON.stringify(c2.data).includes(KEYS.VAPID_PRIVATE_KEY));
   }
 
@@ -262,10 +262,10 @@ async function main() {
   // --- 7. The demo-only outbox does not exist on a real deployment ------------------------
   {
     const outbox = await import("../outbox/route");
-    const real = await call(outbox.GET());
+    const real = await call(outbox.GET(new Request("http://localhost/")));
     check("outbox with Supabase configured → 404, nothing returned", real.status === 404 && !("deliveries" in real.data));
     configured = false;
-    const demo = await call(outbox.GET());
+    const demo = await call(outbox.GET(new Request("http://localhost/")));
     check("outbox in demo mode → the simulated deliveries", demo.status === 200 && Array.isArray(demo.data.deliveries));
     configured = true;
   }
