@@ -28,6 +28,8 @@ interface Invite {
 }
 interface Overview {
   org: { id: string; name: string } | null;
+  /** A36: demo mode, where agencies can't be created. */
+  demo?: boolean;
   isOwner: boolean;
   totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
   creators: CreatorStat[];
@@ -60,6 +62,7 @@ const errLabel = (e: string) =>
     not_found: "That item no longer exists — refresh and try again.",
     invalid_role: "Pick a valid staff role.",
     db_error: "Something went wrong on our end — please try again.",
+    demo_only: "Demo only: agencies need a connected database, so nothing was saved.",
   })[e] ?? "Couldn't complete that — please try again.";
 
 export default function AgencyClient() {
@@ -114,7 +117,7 @@ export default function AgencyClient() {
 
   // No org yet → let the user create one.
   if (!data || !data.org) {
-    return <CreateOrg onCreate={(name) => run({ action: "create_org", name })} />;
+    return <CreateOrg demo={!!data?.demo} msg={msg} onCreate={(name) => run({ action: "create_org", name })} />;
   }
 
   const { org, isOwner } = data;
@@ -297,7 +300,7 @@ export default function AgencyClient() {
   );
 }
 
-function CreateOrg({ onCreate }: { onCreate: (name: string) => Promise<boolean> }) {
+function CreateOrg({ onCreate, demo, msg }: { onCreate: (name: string) => Promise<boolean>; demo: boolean; msg: string | null }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   return (
@@ -308,6 +311,16 @@ function CreateOrg({ onCreate }: { onCreate: (name: string) => Promise<boolean> 
         Manage multiple creators and give staff scoped access — chatters, fulfillers,
         and managers each see only what they should.
       </p>
+      {demo && (
+        <p data-testid="agency-demo-only" className="mt-4 rounded-xl border border-white/15 px-4 py-3 text-sm text-white/70">
+          Demo only: agencies need a connected database. You can look around, but nothing here is saved.
+        </p>
+      )}
+      {msg && (
+        <p role="alert" className="mt-4 text-sm text-amber-200">
+          {msg}
+        </p>
+      )}
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}

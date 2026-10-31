@@ -728,7 +728,8 @@ export async function dismissAutopilotCard(
   key: string,
   snoozeUntil?: string
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  // A36: the demo has no Autopilot cards to dismiss; never answer ok-and-nothing.
+  if (!isSupabaseConfigured()) return { error: "demo_only" };
   const sb = await createClient();
   const {
     data: { user },

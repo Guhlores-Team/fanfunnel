@@ -11,6 +11,7 @@ import { WHEEL_SELECT, toWheelConfig } from "./shared";
 import { getCreatorThemeView, type CreatorThemeView } from "./creatorTheme";
 import type { DbWheelRow } from "./shared";
 import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
+import { mockGetPublicProfileFields, mockSetPublicProfileFields } from "./mockPublicProfile";
 
 // --- Public teaser ----------------------------------------------------------
 
@@ -89,10 +90,11 @@ export async function getPublicProfileBySlug(
   slug: string
 ): Promise<{ profile: PublicProfile; tipUrl: string | null } | null> {
   if (!isSupabaseConfigured()) {
+    const saved = mockGetPublicProfileFields();
     return {
       profile: {
         creatorTitle: "Demo Creator",
-        tagline: "Spin my wheel — every spin wins 🎡",
+        tagline: saved.tagline || "Spin my wheel — every spin wins 🎡",
         brandColor: "#ec4899",
         avatarUrl: null,
         // Parity with the Supabase path: the demo's live wheel, fan-safe.
@@ -100,7 +102,7 @@ export async function getPublicProfileBySlug(
         hasTipUrl: true,
         look: await getCreatorThemeView(null),
       },
-      tipUrl: "#",
+      tipUrl: saved.tipUrl || "#",
     };
   }
   const sb = createServiceClient();
@@ -156,8 +158,7 @@ export async function getMyPublicProfile(): Promise<{
   note: string | null;
   avatarUrl: string | null;
 }> {
-  if (!isSupabaseConfigured())
-    return { slug: "demo-creator", tipUrl: "", tagline: "", note: "", avatarUrl: "" };
+  if (!isSupabaseConfigured()) return mockGetPublicProfileFields();
   const sb = await createClient();
   const {
     data: { user },
@@ -200,7 +201,27 @@ export async function setMyPublicProfile(input: {
   note?: string;
   avatarUrl?: string;
 }): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  if (!isSupabaseConfigured()) {
+    // A36: keep what was saved, with the same normalization and avatar rule
+    // as the database path, so the demo never pretends to save.
+    const avatar = input.avatarUrl;
+    if (avatar !== undefined && avatar !== "") {
+      try {
+        const protocol = new URL(avatar).protocol;
+        if (avatar.length > MAX_AVATAR_URL_LEN || (protocol !== "http:" && protocol !== "https:")) return { error: "invalid_avatar_url" };
+      } catch {
+        return { error: "invalid_avatar_url" };
+      }
+    }
+    mockSetPublicProfileFields({
+      slug: input.slug !== undefined ? normalizePublicSlug(input.slug) : undefined,
+      tipUrl: input.tipUrl !== undefined ? (input.tipUrl ? externalUrl(input.tipUrl) : "") : undefined,
+      tagline: input.tagline,
+      note: input.note,
+      avatarUrl: input.avatarUrl,
+    });
+    return { ok: true };
+  }
   const sb = await createClient();
   const {
     data: { user },
