@@ -6,9 +6,11 @@ import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
 import { cronAuthorized, MIN_CRON_SECRET_LENGTH } from "@/lib/privacy/cron";
 import { runOperationalChecks } from "@/lib/operations/runtime";
 import { processPendingStorageWork } from "@/lib/storage/work";
-import { captureNow } from "@/lib/monitoring/capture";
+import { captureNow, flushAlertDigest } from "@/lib/monitoring/capture";
+import { retryPausedDeletions } from "@/lib/account/deletionRetry";
 
-// Authenticated maintenance entry point: retention, integrity and storage retry.
+// Authenticated maintenance entry point: retention, integrity, storage retry,
+// paused account deletions (A18, with backoff) and the pending error digest (A27).
 // A scheduler must be configured separately; this route does not prove it runs.
 // Vercel sends
 // `Authorization: Bearer $CRON_SECRET`; anything else is refused, and with no
@@ -54,6 +56,9 @@ export async function GET(req: Request) {
   }
 
   const health = await runOperationalChecks("maintenance", svc);
+  // Resume paused deletions first so a resumed job's storage work is processed
+  // in this same run.
+  const deletions = await retryPausedDeletions(svc);
   const storage = await processPendingStorageWork(svc);
   const deleted = (data ?? {}) as Record<string, number | null>;
   const total = Object.values(deleted).reduce<number>((s, n) => s + (Number(n) || 0), 0);
@@ -72,8 +77,11 @@ export async function GET(req: Request) {
     });
   }
   if (storage.failed > 0) await loud("Retention storage cleanup failed for some items; they stay queued for retry");
-  const pending = storage.pending > 0 || storage.accountsPending > 0;
-  return NextResponse.json({ ok: health.ok && !pending && storage.failed === 0, health, pending, storage, deleted, periods: RETENTION_DAYS }, {
-    status: !health.ok || storage.failed > 0 ? 503 : pending ? 202 : 200, headers: NO_STORE_HEADERS,
+  if (deletions.needsAdmin > 0) await loud("Account deletions are paused after repeated automatic retries; retry them in Admin");
+  // After every other alert above, so a digest sent now covers them too.
+  const digest = await flushAlertDigest();
+  const pending = storage.pending > 0 || storage.accountsPending > 0 || deletions.pending > 0 || deletions.waiting > 0 || deletions.needsAdmin > 0;
+  return NextResponse.json({ ok: health.ok && !pending && storage.failed === 0 && deletions.failed === 0, health, pending, storage, deletions, digest, deleted, periods: RETENTION_DAYS }, {
+    status: !health.ok || storage.failed > 0 || deletions.failed > 0 ? 503 : pending ? 202 : 200, headers: NO_STORE_HEADERS,
   });
 }
