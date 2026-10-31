@@ -26,6 +26,8 @@
 // And the completeness-gaps probe (0064, gapsProbe.mjs): report review is
 // aal2-admin only and database-stamped; webhooks capped with a server-only
 // secret; the queue/inbox RPCs refuse anon and stay tenant-isolated.
+// And the seat-scope probe (0066, seatScopeProbe.mjs): a chatter reads/writes
+// only the inbox, a fulfiller only the fulfilment queue, of creators in scope.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -55,6 +57,7 @@ import { probeTheme } from "./themeProbe.mjs";
 import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.mjs";
 import { probeCryptoNamespace } from "./cryptoNamespaceProbe.mjs";
 import { probeGaps } from "./gapsProbe.mjs";
+import { probeSeatScopes } from "./seatScopeProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -301,8 +304,9 @@ const SIGNED_IN_ONLY = [
   "org_add_member(uuid, text, public.org_role)",
   "org_remove_member(uuid)",
   "org_scope_creator(uuid, uuid, boolean)",
-  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer)",
-  "creator_inbox_threads(timestamp with time zone, uuid, integer)",
+  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid)",
+  "creator_inbox_threads(timestamp with time zone, uuid, integer, uuid)",
+  "my_seat_creators()",
 ];
 const RLS_HELPERS = [
   "is_admin()", "can_act_for(uuid, text)", "current_user_active()", "_owns_org(uuid)",
@@ -998,6 +1002,17 @@ function probeApproval(db) {
   }
 }
 
+function probeSeatScopeRpcs(db) {
+  const bad = probeSeatScopes(db, psql);
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: agency seat scopes (0066)`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: seat-scoped inbox/queue RPCs follow can_act_for (chatter: inbox only, fulfiller: queue only, manager/owner: both, outsiders: nothing); my_seat_creators lists exactly each seat's jobs`);
+  }
+}
+
 function probeCompletenessGaps(db) {
   const bad = probeGaps(db, psql);
   if (bad.length) {
@@ -1375,6 +1390,7 @@ try {
     await probeCreatorStorage(db);
     await probeCreatorActorContexts(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"actor context SQL failed");return r.stdout;});
     probeCompletenessGaps(db);
+    probeSeatScopeRpcs(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

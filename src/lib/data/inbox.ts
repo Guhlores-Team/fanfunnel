@@ -1,5 +1,6 @@
 // Data layer — inbox: DM templates, fan <-> creator chat threads and the
 // auto intro / outro messages.
+import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import type { DmTemplate, ChatMessage, ChatSettings, FanThread } from "./types";
 import {
@@ -265,12 +266,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function listThreads(
   before?: string | null,
   limit: number = THREAD_PAGE_SIZE,
-): Promise<ThreadPage | { error: "bad_request" }> {
+  creatorId?: unknown,
+): Promise<ThreadPage | { error: "bad_request" | "forbidden" }> {
   const size = Math.min(Math.max(1, limit), THREAD_PAGE_SIZE);
   const cursor = decodeThreadCursor(before);
   if (before && !cursor) return { error: "bad_request" };
 
   if (!isSupabaseConfigured()) {
+    const refused = demoActingCreator(creatorId);
+    if (refused) return refused;
     const all = mockListThreads().sort((a, b) => b.lastAt.localeCompare(a.lastAt) || b.fanId.localeCompare(a.fanId));
     const rows = cursor
       ? all.filter((t) => t.lastAt < cursor.at || (t.lastAt === cursor.at && t.fanId < cursor.fanId))
@@ -285,12 +289,16 @@ export async function listThreads(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { threads: [], next: null };
+  // A19: a seat reads another creator's inbox only with can_act_for 'chat'.
+  const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
+  if ("error" in acting) return acting;
 
   // One look-ahead row says whether an older page exists.
   const { data } = await sb.rpc("creator_inbox_threads", {
     p_before_at: cursor?.at,
     p_before_fan: cursor?.fanId,
     p_limit: size + 1,
+    ...(acting.creatorId !== user.id ? { p_creator: acting.creatorId } : {}),
   });
   const rows = ((data ?? []) as {
     fan_id: string;
@@ -326,14 +334,18 @@ export async function hasThreadWith(fanId: string): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
-export async function getThread(fanId: string): Promise<ChatMessage[]> {
-  if (!isSupabaseConfigured()) return mockGetThread(fanId);
+export async function getThread(fanId: string, creatorId?: unknown): Promise<ChatMessage[] | { error: "bad_request" | "forbidden" }> {
+  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockGetThread(fanId);
 
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return [];
+  // A19: reading (and marking read) another creator's thread needs 'chat'.
+  const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
+  if ("error" in acting) return acting;
+  const owner = acting.creatorId;
 
   // Bound the read: fetch the most recent messages (newest-first + limit), then
   // present oldest-first. An unbounded thread read grows without limit as a
@@ -341,7 +353,7 @@ export async function getThread(fanId: string): Promise<ChatMessage[]> {
   const { data } = await sb
     .from("messages")
     .select(MESSAGE_SELECT)
-    .eq("creator_id", user.id)
+    .eq("creator_id", owner)
     .eq("fan_id", fanId)
     .order("created_at", { ascending: false })
     .limit(500);
@@ -353,7 +365,7 @@ export async function getThread(fanId: string): Promise<ChatMessage[]> {
   await sb
     .from("messages")
     .update({ read_at: new Date().toISOString() })
-    .eq("creator_id", user.id)
+    .eq("creator_id", owner)
     .eq("fan_id", fanId)
     .eq("sender", "fan")
     .is("read_at", null);
@@ -363,15 +375,20 @@ export async function getThread(fanId: string): Promise<ChatMessage[]> {
 
 export async function sendCreatorMessage(
   fanId: string,
-  body: string
+  body: string,
+  creatorId?: unknown,
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockSendCreatorMessage(fanId, body);
+  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockSendCreatorMessage(fanId, body);
 
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+  // A19: replying for another creator needs can_act_for 'chat' (RLS checks it too).
+  const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
+  if ("error" in acting) return acting;
+  const owner = acting.creatorId;
 
   const trimmed = body.trim();
   if (trimmed.length < 1 || trimmed.length > 2000) return { error: "empty" };
@@ -383,12 +400,12 @@ export async function sendCreatorMessage(
     .from("fans")
     .select("id")
     .eq("id", fanId)
-    .eq("creator_id", user.id)
+    .eq("creator_id", owner)
     .maybeSingle();
   if (!ownFan) return { error: "not_found" };
 
   const { error } = await sb.from("messages").insert({
-    creator_id: user.id,
+    creator_id: owner,
     fan_id: fanId,
     sender: "creator",
     body: trimmed,

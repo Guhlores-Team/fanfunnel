@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AGENCY_INVITE_TTL_DAYS } from "@/lib/agency/config";
 import { formatCents } from "@/lib/format";
+import SeatWorkspace from "./SeatWorkspace";
 
 interface CreatorStat {
   id: string;
@@ -143,6 +144,8 @@ export default function AgencyClient() {
           ← My dashboard
         </Link>
       </header>
+
+      <SeatWorkspace />
 
       {msg && (
         <p className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">

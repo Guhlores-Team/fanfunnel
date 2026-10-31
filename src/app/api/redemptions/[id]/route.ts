@@ -4,6 +4,7 @@ import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import type { RedemptionStatus } from "@/lib/data/types";
 import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
+import { resolveActingCreator } from "@/lib/data/seatScope";
 
 const VALID: RedemptionStatus[] = [
   "pending",
@@ -13,7 +14,7 @@ const VALID: RedemptionStatus[] = [
 ];
 
 function mapError(error: string) {
-  return error === "unauthorized" ? 401 : error === "not_found" ? 404 : 400;
+  return error === "unauthorized" ? 401 : error === "forbidden" ? 403 : error === "not_found" ? 404 : 400;
 }
 
 // Patch a won prize: change its status and/or its notes / due date.
@@ -29,6 +30,8 @@ export async function PATCH(
     status?: RedemptionStatus;
     notes?: string | null;
     dueAt?: string | null;
+    /** A19: fulfil for a creator the caller's seat may fulfil for. */
+    creatorId?: unknown;
   }>(req);
   if (body === BAD_REQUEST) return badRequest();
 
@@ -62,7 +65,7 @@ export async function PATCH(
   // per-field data-layer calls unchanged.
   if (!isSupabaseConfigured()) {
     if (body.status !== undefined) {
-      const result = await setRedemptionStatus(id, body.status);
+      const result = await setRedemptionStatus(id, body.status, body.creatorId);
       if ("error" in result) {
         return NextResponse.json(result, { status: mapError(result.error) });
       }
@@ -72,7 +75,7 @@ export async function PATCH(
       const patch: { notes?: string | null; dueAt?: string | null } = {};
       if ("notes" in body) patch.notes = body.notes ?? null;
       if ("dueAt" in body) patch.dueAt = body.dueAt ?? null;
-      const result = await setRedemptionMeta(id, patch);
+      const result = await setRedemptionMeta(id, patch, body.creatorId);
       if ("error" in result) {
         return NextResponse.json(result, { status: mapError(result.error) });
       }
@@ -89,6 +92,8 @@ export async function PATCH(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const acting = await resolveActingCreator(sb, user.id, body.creatorId, "fulfil");
+  if ("error" in acting) return NextResponse.json({ error: acting.error }, { status: mapError(acting.error) });
 
   const update: {
     status?: RedemptionStatus;
@@ -113,7 +118,7 @@ export async function PATCH(
     .from("redemptions")
     .update(update)
     .eq("id", id)
-    .eq("creator_id", user.id)
+    .eq("creator_id", acting.creatorId)
     .select("id")
     .maybeSingle();
   if (error) {

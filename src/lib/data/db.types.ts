@@ -3235,7 +3235,12 @@ export type Database = {
             Returns: Json
           }
       creator_inbox_threads: {
-        Args: { p_before_at?: string; p_before_fan?: string; p_limit?: number }
+        Args: {
+          p_before_at?: string
+          p_before_fan?: string
+          p_creator?: string
+          p_limit?: number
+        }
         Returns: {
           fan_id: string
           fan_name: string
@@ -3249,6 +3254,7 @@ export type Database = {
         Args: {
           p_before_at?: string
           p_before_id?: string
+          p_creator?: string
           p_limit?: number
           p_query?: string
           p_status?: string
@@ -3491,6 +3497,15 @@ export type Database = {
       issue_creator_actor_context: {
         Args: { p_creator: string; p_permission: string }
         Returns: string
+      }
+      my_seat_creators: {
+        Args: never
+        Returns: {
+          can_chat: boolean
+          can_fulfil: boolean
+          creator_id: string
+          display_name: string
+        }[]
       }
       org_account_stats: {
         Args: { p_org: string }

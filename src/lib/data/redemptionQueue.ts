@@ -8,6 +8,7 @@ import type { RedemptionItem, RedemptionStatus } from "./types";
 import { focusTag } from "./focusTag";
 import { isUuid } from "./shared";
 import { mockListRedemptionQueue } from "./mock";
+import { demoActingCreator, resolveActingCreator } from "./seatScope";
 
 export { OVERVIEW_REDEMPTION_WINDOW } from "./queueWindow";
 export const QUEUE_PAGE_SIZE = 50;
@@ -82,7 +83,9 @@ export async function listRedemptionQueue(opts: {
   query?: string;
   before?: string | null;
   limit?: number;
-}): Promise<QueuePage | { error: "unauthorized" | "bad_request" | "db_error" }> {
+  /** A19: another creator's queue, for a seat with can_act_for 'fulfil'. */
+  creatorId?: unknown;
+}): Promise<QueuePage | { error: "unauthorized" | "bad_request" | "forbidden" | "db_error" }> {
   const limit = Math.min(Math.max(1, opts.limit ?? QUEUE_PAGE_SIZE), 100);
   const before = opts.before ? decodeQueueCursor(opts.before) : null;
   if (opts.before && !before) return { error: "bad_request" };
@@ -91,6 +94,8 @@ export async function listRedemptionQueue(opts: {
   // One extra row tells us whether another page exists.
   let rows: RedemptionItem[];
   if (!isSupabaseConfigured()) {
+    const refused = demoActingCreator(opts.creatorId);
+    if (refused) return refused;
     rows = mockListRedemptionQueue({ status: opts.status, query, before, limit: limit + 1 });
   } else {
     if (before && !isUuid(before.id)) return { error: "bad_request" };
@@ -99,12 +104,15 @@ export async function listRedemptionQueue(opts: {
       data: { user },
     } = await sb.auth.getUser();
     if (!user) return { error: "unauthorized" };
+    const acting = await resolveActingCreator(sb, user.id, opts.creatorId, "fulfil");
+    if ("error" in acting) return acting;
     const { data, error } = await sb.rpc("creator_redemption_queue", {
       p_status: opts.status,
       p_query: query || undefined,
       p_before_at: before?.at,
       p_before_id: before?.id,
       p_limit: limit + 1,
+      ...(acting.creatorId !== user.id ? { p_creator: acting.creatorId } : {}),
     });
     if (error) return { error: "db_error" };
     rows = ((data ?? []) as unknown as QueueRow[]).map(toItem);
