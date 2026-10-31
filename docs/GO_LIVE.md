@@ -36,7 +36,7 @@ References: [binding rules](../AGENTS.md), [current handoff](handoff/HANDOFF.md)
 
 - [ ] **OWNER**: Verify provider two-factor and recovery for everyone with access, using [GitHub security](https://github.com/settings/security), [Vercel account](https://vercel.com/account), [Supabase account security](https://supabase.com/dashboard/account/security) and the owning email account. Save recovery codes privately; do not share logins/factors.
 - [ ] **OWNER**: Review [branch rules](https://github.com/Guhlores-Team/fanfunnel/settings/branches) for `main`: require a PR, the exact required green jobs and an approval. Record any plan limitation rather than assuming protection is enabled.
-- [ ] **OWNER**: In [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments), require your review for `production` database operations. This gate does not delay Vercel's independent deployment; section5 must resolve that ordering separately.
+- [ ] **OWNER**: In [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments), require your review for `production` database operations. On its own this does not delay Vercel's deployment; the section 5 Deployment Check on `db-migrations-production` does.
 - [ ] **OWNER**: Review [repository security](https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis): secret scanning, push protection and dependency alerts where supported. Dependabot configuration alone does not prove these settings are enabled.
 - [ ] **OWNER + AGENT**: Confirm required Actions secret names and target identity without exposing values: migration access token, TEST/PROD project refs and database passwords, plus TEST URL/anon/service credentials for real tests. A working Git connection does not prove permission to manage [Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions).
 
@@ -88,13 +88,64 @@ Variable names by scope (see the checks below for how to verify each):
 **This section is future owner work, not current authorization.** A reviewed,
 backed-up LIVE schema must be ready before code that requires it can serve traffic.
 
+### The enforced gate (A39): Vercel Deployment Check on `db-migrations-production`
+
+Vercel deploys `main` from Git on its own, so ordering cannot come from GitHub
+alone. The gate that works with that setup is a **Vercel Deployment Check**:
+Vercel still builds each Production deployment, but does not assign it to the
+production domain until the named GitHub check on the same commit succeeds.
+
+- The [migration workflow](../.github/workflows/supabase-migrations.yml) job
+  `production` is named **`db-migrations-production`**. It runs on **every**
+  push to `main` (the old `paths:` filter is gone, so code-only pushes get the
+  check too), uses the `production` environment, runs `supabase db push`, then
+  re-reads `supabase migration list --linked` and fails unless the remote
+  history holds every migration file in that commit and nothing unknown
+  ([`scripts/ci/verify-migrations-applied.mjs`](../scripts/ci/verify-migrations-applied.mjs)).
+  The TEST job runs the same read-back on pull requests.
+- With the Deployment Check required, new code is promoted only after that
+  job passes; a failed, cancelled or never-approved job leaves the previous
+  Production deployment serving. A code-only push is a verified no-op run.
+- `node scripts/test/db-before-code.test.mjs` (CI `verify` job) pins the
+  trigger, the job name, the push-then-verify order and this section.
+
+Owner setup, once (nothing in the repo can turn it on):
+
+- [ ] **OWNER**: In [Vercel → Settings → Build and Deployment → Deployment Checks](https://vercel.com/easy-simple-sites/fanfunnel/settings/build-and-deployment#deployment-checks), select **Add Checks** → **GitHub** and require exactly `db-migrations-production`.
+- [ ] **OWNER**: In [Vercel → Settings → Environments → Production](https://vercel.com/easy-simple-sites/fanfunnel/settings/environments/production), confirm automatic aliasing for Production is ON (Deployment Checks only promote with it on).
+- [ ] **OWNER + AGENT**: Prove it on the first merge after setup: the new Production deployment shows the check as pending and stays un-aliased until `db-migrations-production` is green, then is promoted. Record the deployment and run links.
+- [ ] **OWNER**: The `production` environment's required reviewer now applies to every `main` push. Approving a code-only run is approving a verified no-op; rejecting it keeps the old deployment live.
+
+Residual gaps, stated plainly:
+
+- **Owner setting.** Until the Deployment Check is configured in Vercel, this
+  is not enforced; the repo cannot verify the setting. **Force Promote**,
+  Instant Rollback, `vercel --prod` and a manual redeploy bypass it.
+- **Old code meets the new schema.** The previous deployment keeps serving
+  while migrations apply, so every migration must stay compatible with the
+  code already live (expand, then contract in a later release). The check
+  does not prove that; review it per migration.
+- **Build time.** The new build runs before the check. It must not need the
+  new schema at build time; keep build-time data reads out of the app.
+- **Superseded commits.** The workflow's concurrency group replaces a pending
+  run with a newer one, so an intermediate `main` commit can end cancelled and
+  never be promoted; the newer commit carries its migrations.
+- **No runtime fail-closed check yet.** A `schema_version()` read at startup,
+  serving a maintenance page when the database is behind, was considered.
+  `supabase_migrations.schema_migrations` is not exposed through the Data API
+  (only `public`/`graphql_public` are), so the service role cannot read it
+  without SQL. Follow-up for migration **0066**: a `security definer`
+  `public.schema_version()` returning `max(version)` from that table, granted
+  to `service_role` only (revoked from `anon`/`authenticated`), plus an app
+  constant of the required migration that fails closed when the read is lower
+  or errors. No migration is added here.
+
+### Release plan before any merge
+
 The current [migration workflow](../.github/workflows/supabase-migrations.yml)
-runs TEST on pull requests. Its Production job runs only on a push to `main`
-that changes migration/config paths, uses the `production` environment, links the
-configured project and runs `supabase db push`. Vercel can independently deploy
-`main` at the same time. Workflow concurrency and an approval gate do **not**
-establish database-before-code ordering. Code-only pushes do not trigger that
-Production migration job, and it does not itself list history or compare types.
+runs TEST on pull requests and the gated Production job on every push to
+`main`. Workflow concurrency and the environment approval alone do **not**
+establish ordering; the Deployment Check above does, once configured.
 
 - [ ] **OWNER + AGENT**: Prepare and approve a concrete release plan before any main merge. One option is owner-run pre-application of the exact reviewed migrations while the old code remains safely served, but only after proving old-code/new-schema compatibility. If that cannot be proved, prepare a separately reviewed traffic/deployment hold and restoration plan. Do not assume additive numbering makes an old deployment compatible; later auth/RPC contracts can deliberately retire old calls.
 - [ ] **OWNER**: Verify a recoverable LIVE backup and the original-key backup, intended project identity and actual migration history. Keep LIVE credentials in approved private controls; the agent does not obtain or use them. Never run `supabase/reset.sql` on LIVE.
@@ -127,7 +178,7 @@ Production operation is authorized by this checklist.
 - [ ] **AGENT**: Report the full checked SHA, both verification rounds, actual exact-SHA CI/TEST results, final audit status, hosted/manual evidence and outstanding limits. Confirm the branch has not advanced since the accepted Preview.
 - [ ] **OWNER**: Explicitly approve that exact release only after sections1–7 and the DB-before-code plan are complete. Any new code/schema change invalidates the affected sign-off and requires its checks again.
 - [ ] **OWNER**: Perform the reviewed merge to `main`; the coding agent does not merge or push main. Confirm which Production deployment serves traffic and its exact source.
-- [ ] **OWNER**: Inspect any triggered Production migration job and approve it only under the reviewed plan. If migrations were safely pre-applied it should be a verified no-op, not a race relied on for ordering. A code-only merge may not trigger this job. Confirm genuine history/types and deployment readiness before admitting new traffic.
+- [ ] **OWNER**: Inspect the Production migration job (`db-migrations-production`, which runs on every `main` push) and approve it only under the reviewed plan. If migrations were safely pre-applied it is a verified no-op. Confirm the Vercel deployment stayed un-aliased until the check passed, then confirm genuine history/types before admitting new traffic.
 
 ## 9. Owner-operated LIVE smoke checks after separate release approval
 

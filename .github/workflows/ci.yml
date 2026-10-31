@@ -43,6 +43,7 @@ jobs:
       - name: Script and workflow-guard tests
         run: |
           node scripts/test/ci-secrets-gate.test.mjs
+          node scripts/test/db-before-code.test.mjs
 
       - name: Build
         run: npm run build
