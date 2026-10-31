@@ -230,6 +230,12 @@ export async function instantJourney(page, { step, assert }, ctx) {
     await step("instant: creator saves a safe external link", async () => {
       const link = await openInstantEditor(page, fixture, fixture.link);
       await link.getByTestId("delivery-kind").selectOption("link");
+      // A34 (#26 §8): the editor says a link is shared, not per winner.
+      const shared = link.getByTestId("delivery-link-shared");
+      await shared.waitFor({ timeout: 3000 });
+      assert(/same link/.test(await shared.innerText()) && /forward/.test(await shared.innerText()), "the editor warns every winner gets the same, forwardable link");
+      const help = await link.getByTestId("delivery-value").getAttribute("aria-describedby");
+      assert(help && (await link.locator(`[id="${help.split(" ")[0]}"]`).innerText()).includes("same link"), "the warning is the link field's description");
       await link.getByTestId("delivery-value").fill("javascript:alert(1)");
       await link.getByTestId("delivery-save").click();
       await link.getByTestId("delivery-error").waitFor({ timeout: 3000 });
