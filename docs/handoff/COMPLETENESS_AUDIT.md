@@ -1,5 +1,11 @@
 # Completeness audit (orch/fixes @ 8a9a7c6)
 
+> **Superseded** by [COMPLETENESS_AUDIT_2.md](./COMPLETENESS_AUDIT_2.md) (2026-10-29, at fd71482);
+> open work is tracked in [MASTER_TRACKER.md](./MASTER_TRACKER.md). Kept for history only. Several
+> items below are closed: versioned Terms/Privacy shipped (0055), in-house error monitoring with email
+> alerts shipped (0053), `.github/dependabot.yml` exists, the org-isolation runtime probe runs in
+> `scripts/db/schema-drift-check.mjs`, and `docs/GO_LIVE.md` §3 covers the Supabase URL settings.
+
 ## A. Open work NOT covered by the 11 roadmap items
 1. Terms/Privacy are placeholders (LegalPage.tsx:5,15) — OWNER (final text).
 2. Agency/org isolation has no automated runtime test (e2e/supabase.mjs only mentions org at :186; docs/archive/ROADMAP.md:133-141; SECURITY.md:48-49 says 0014 RLS must be runtime-verified before staff seats are relied on).

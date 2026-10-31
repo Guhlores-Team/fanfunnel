@@ -170,20 +170,25 @@ Specs: `docs/handoff/PROPOSALS.md` (#25 §, RM-7 §, §8 "riskiest three"). Rule
 Never change odds outside the committed seed derivation (Fairness v3, 0047); keep `fans == SUM(passes)`.
 Every "come back / keep going" surface must call F6 `fanEngagementAllowed`.
 
-### 3d. Small fixes still open
-- Malformed percent-encoded URLs return 500 (and aren't captured by monitoring).
-- Server-side refusal of creator top-ups to a fan on a break (UI already disables it; owner call).
-- Debug-build "PREVIEW · DEMO DATA" banner covers the top of the win-back queue buttons at 390px.
-- Creator 2FA is enforced at login/proxy only, not in RLS (owner call; see privacy report below).
-- Pending agency invites never expire (0062 preparation uses a seven-day default).
-- Protect the last active admin against direct suspension/demotion/deletion and
-  both deletion reservations; inactive admins must not satisfy that invariant.
-- Hash fan bearer tokens/IPs before external rate-limit storage and bound the
-  fallback map; isolated preparation exists, not yet integrated.
+### 3d. Small fixes (all closed on `orch/fixes` as of 2026-10-31)
+- ~~Malformed percent-encoded URLs return 500~~ — closed by final hardening: `src/proxy.ts`
+  answers a generic 400 and reports a static occurrence to monitoring (`src/proxyEncoding.test.ts`).
+- ~~Server-side refusal of creator top-ups to a fan on a break~~ — closed: the grant path
+  returns `on_break` (`src/lib/data/fans.ts`, `isOnBreak(fan.break_until)` check).
+- ~~Debug banner covers the win-back queue buttons at 390px~~ — closed by final hardening:
+  `EnvBadge` paints below dashboard content (`z-30`); `e2e/winback.mjs` checks the overlap.
+- ~~Creator 2FA enforced at login/proxy only~~ — closed by 0062 (enrolled creators need `aal2`
+  in the database; 00e9bdb proves it gates the 0064 queue, inbox and webhooks).
+- ~~Pending agency invites never expire~~ — closed by 0062 (`org_invites.expires_at`, 7-day default).
+- ~~Protect the last active admin~~ — closed by 0062 (`profiles_preserve_active_admin` and the
+  admin serialization trigger).
+- ~~Hash fan tokens/IPs before rate-limit storage; bound the fallback map~~ — closed by final
+  hardening (`src/lib/rateLimit.ts`, `src/lib/rateLimitPrivacy.test.ts`).
 
 ### 3e. Security audit, then go-live
 - Run the audit per `docs/handoff/SEC_AUDIT_BRIEF.md` (two independent auditors + privacy-promise
-  verification + outside-attacker pass) → `docs/security/AUDIT-2026-10.md`; fix Critical/High.
+  verification + outside-attacker pass) → `docs/security/AUDIT-2026-10.md` (to be written by that
+  audit; it does not exist yet); fix Critical/High.
 - Then the owner tests on Preview (`e2e/MANUAL-CHECKLIST.md`) and works through
   `docs/handoff/OWNER_STEPS.md`. Go-live steps: `docs/GO_LIVE.md`.
 

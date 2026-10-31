@@ -1,5 +1,9 @@
 # FanFunnel agent brief (shared rules for every implementation agent)
 
+> Refreshed 2026-10-31 (A40). The rules still bind. Current state and verification
+> commands live in `HANDOFF.md` §5 and `MASTER_TRACKER.md`; prefer them where this
+> brief is older. Integration work happens on `orch/fixes`, not through per-agent PRs.
+
 Repo: GitHub `Guhlores-Team/fanfunnel` (Next.js 16 + React 19 + Tailwind 4 + Supabase). You work in your own git worktree.
 The owner approved parallel work on new branches with their own PRs. Your prompt names YOUR item, YOUR branch, YOUR base and YOUR port.
 
@@ -14,7 +18,7 @@ The owner approved parallel work on new branches with their own PRs. Your prompt
 - `verify-first` items: first prove the problem still exists on your base, with file:line. If it's already fixed, make the PR a short docs-free note with evidence (an empty-diff PR isn't possible, so instead add or strengthen a regression test that locks the fix in), and say so.
 - DB changes: new numbered migration in `supabase/migrations/`, mirrored into `supabase/schema.sql` + `supabase/migrations_combined.sql` (the sqlSync test enforces it). RLS on any new table. Before you pick a number, run `git fetch origin '+refs/heads/*:refs/remotes/origin/*'` and use one higher than the highest number on ANY remote branch. Don't apply migrations yourself (CI's `supabase` job applies them to the TEST project on PRs). Say in the PR that the migration must reach prod before or at merge.
 - `src/lib/data/index.ts` contains a NUL byte: use `grep -a` / `awk`, not plain grep.
-- Planning docs live only on `origin/claude/eager-volta-l8juq7` (`git show origin/claude/eager-volta-l8juq7:<path>`): `docs/autopilot/BACKLOG.md`, `docs/autopilot/AUTOPILOT_PROMPT.md`, `docs/RELEASE_CHECKLIST.md`, `docs/design/command-center/{README.md,PORTING_CHECKLIST.md,PARITY_MAP.md,FanFunnel Command Center.dc.html,FanFunnel Mobile.dc.html,screenshots/*.png}`. **Never commit those docs on your branch.** Extract PNGs to /tmp to view them.
+- Planning docs are **not in this tree**: they exist only on the branch `origin/claude/eager-volta-l8juq7` (last updated 2026-10-23); read them with `git show origin/claude/eager-volta-l8juq7:<path>`: `docs/autopilot/BACKLOG.md`, `docs/autopilot/AUTOPILOT_PROMPT.md`, `docs/autopilot/SECURITY_AUDIT_PROMPT.md`, `docs/RELEASE_CHECKLIST.md` (an older copy; the tracked release checklist is the repo-root `RELEASE_CHECKLIST.md`), `docs/design/command-center/{README.md,PORTING_CHECKLIST.md,PARITY_MAP.md,FanFunnel Command Center.dc.html,FanFunnel Mobile.dc.html,screenshots/*.png}`. **Never commit those docs on your branch.** Extract PNGs to /tmp to view them. Current open work is tracked in `docs/handoff/MASTER_TRACKER.md` and `COMPLETENESS_AUDIT_2.md`, not BACKLOG.md.
 
 ## Setup
 1. `git fetch origin '+refs/heads/*:refs/remotes/origin/*'`, then `git checkout -b <your-branch> origin/<your-base>`.
@@ -27,7 +31,8 @@ The owner approved parallel work on new branches with their own PRs. Your prompt
 ## Verify before every push (all must pass, report real output)
 `npm run lint` · `npm run typecheck` · `npm test` · `NEXT_PUBLIC_ENABLE_DEBUG=1 npm run build` · then
 `NEXT_PUBLIC_ENABLE_DEBUG=1 nohup npx next start -p $PORT > /tmp/next-$PORT.log 2>&1 &` and
-`E2E_BASE_URL=http://localhost:$PORT npm run e2e` (must be 23/23, 0 browser signals) and `E2E_BASE_URL=http://localhost:$PORT npm run e2e:a11y` (0 blocking).
+`E2E_BASE_URL=http://localhost:$PORT npm run e2e` (every journey passes, 0 browser signals; the journey count grows, so compare with the base) and `E2E_BASE_URL=http://localhost:$PORT npm run e2e:a11y` (0 blocking).
+DB/script checks (no hosted DB): `PG_BIN=/usr/lib/postgresql/16/bin node scripts/db/schema-drift-check.mjs` (default and `--crypto-schema public`), `INTERPLAY_STRICT=1 node scripts/db/interplay-check.mjs`, `node --check` on every `.mjs`, and the script tests CI runs (`scripts/test/*.test.mjs`, `scripts/golive/carry-over*.test.mjs`).
 Use ONLY your assigned port. Other agents run servers on other ports at the same time. **Stop only your own server**: find its PID with
 `for p in $(ps -eo pid=,args= | awk '$2 ~ /^next-server/ {print $1}'); do [ "$(readlink /proc/$p/cwd)" = "$PWD" ] && kill $p; done`.
 Never `pkill -f next` (it kills other agents' servers and your own shell). The machine has 4 CPUs shared by several agents, so builds are slower. Be patient and don't start duplicate builds.

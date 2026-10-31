@@ -8,23 +8,39 @@ on TEST/Preview where applicable, and its test exists. Audit IDs (A#) refer to
 Owner confirmations: Look & feel card seen on Preview (2026-10-29). Admin 2FA enrolled.
 
 ## 1. Roadmap stages (prepared source → integrate)
+State as of 2026-10-31. `orch/fixes` head is 301ec76 (migrations 0001–0064 + final hardening).
+"On `dashboard-redesign`" means contained in the local `origin/dashboard-redesign` ref (head 8bf5c4c);
+CI-green-on-that-SHA and Preview checks are not recorded here, so no row below is closed.
+
 | Item | Migration | State |
 |---|---|---|
-| RM-7a scratch tickets | 0060 | integrating (branch `stage/0060-scratch`) |
-| RM-7b personal bingo | 0061 | staged (branch `stage/0061-bingo`, merged on `orch/fixes` with the interplay suite); migration 0061 not yet on any hosted DB |
-| Game/campaign switching UX (owner report 2026-10-29) | — | done-pending-Preview (branch `ux/game-switching`, merged on `orch/fixes`; one TS ranking in `src/lib/games/liveGame.ts` mirrors `_creator_default_wheel`; e2e `game-switching*.mjs`) |
-| Account-security follow-up | 0062 | queued |
-| Ledger operations + 7-path safety overlay | 0063 | queued (overlay mandatory before first verify) |
-| Final hardening (36 paths) | — | queued |
+| RM-7a scratch tickets | 0060 | integrated (7c0b39e on `dashboard-redesign`, 79c923d into the gap fixes) |
+| RM-7b personal bingo | 0061 | integrated with its review fixes and the interplay suite (e2dd3e3, on `dashboard-redesign`): one shared game ranking (f76e6a5, TS mirror 3d6bc6b), stock compare-and-set sent with wheel saves (244a919), bingo archive with active cards (7603125), readiness messages (2258a3a), card copy gated on engagement (101b704), blocked fan's card readable (9c5201a), focus-pack lock order (79239e7); migration 0061 not yet verified on any hosted DB |
+| Interplay stress suite | — | landed with 0061 (5b7992e, merged d835723): `scripts/db/interplay-check.mjs`, `INTERPLAY_STRICT=1` clean; see `INTERPLAY_STRESS.md` |
+| Game/campaign switching UX (owner report 2026-10-29) | — | integrated (87d1899, on `dashboard-redesign`); done-pending-Preview. One TS ranking in `src/lib/games/liveGame.ts` mirrors `_creator_default_wheel`; e2e `game-switching*.mjs`; ignored campaign games explained on fan links (cd69dda) |
+| Account-security follow-up | 0062 | integrated on `orch/fixes` (4c5d52b, merged baa19d0): enrolled creator MFA (aal2 in the DB), invite expiry, active-admin safety; not yet on `dashboard-redesign` |
+| Ledger operations + 7-path safety overlay | 0063 | integrated on `orch/fixes` (c91fad1 + review bc520e9, merged 751852e); not yet on `dashboard-redesign` |
+| Audit batch 1 | 0064 | integrated on `orch/fixes` (merged 53319d5, adapted to 0060–0063 in 3e978f6; 0062 MFA proven on the 0064 queue/inbox/webhooks in 00e9bdb); not yet on `dashboard-redesign` |
+| Final hardening (36 paths) | — | integrated on `orch/fixes` (ea36ac5, merged 301ec76): encoding guard, private rate-limit keys, Preview tooling, TEST maintenance |
+| Flake fixes | — | done: bonus read fixture in today's UTC day (8bf5c4c), game_ready in test wheel rows (283356d), bingo archive assertion (13af234), wait for game list (a385f45), bingo lock race off the pity sequence (e22117c); the four final-hardening intermittents (e4c8309: streamed fan-page `<title>` gap, scratch withdraw/reopen lock, chase action under the Preview badge at 360px, 0058 storage security race probe) and the 0063 probe report (65232cc) are on `orch/fixes` only |
 
 ## 2. Audit gaps
 | Batch | IDs | State |
 |---|---|---|
-| 1 | A1 (blocker: fan-report review), A3, A4, A5, A6, A7, A8, A13, A16, A23, A24 | building (branch `gaps/batch-1`, migration 0064 if needed) |
+| 1 | A1 (blocker: fan-report review), A3, A4, A5, A6, A7, A8, A13, A16, A23, A24 | integrated on `orch/fixes` as 0064 (see §1); closes when on `dashboard-redesign` with green CI and Preview checks |
 | 2 (after 0061, same code) | A42 cancelled-prize stock | queued; A2 wheel-save stock overwrite **closed** inside 0061 (`expected_stock` compare-and-set in `save_wheel_prizes`, `stock_changed` 409 surfaced by WheelEditor; interplay concurrency 3c proves it) |
-| 3 | A9, A10, A11, A12, A14, A15, A17, A18, A19, A20, A21, A22, A25, A27, A28, A29, A30, A31, A32, A33, A34, A35, A36, A37, A40, A41, A43, A44 | queued |
-| Go-live tooling | A38 TEST→LIVE carry-over script (dry-run first), A39 enforce DB-before-code ordering | queued |
+| 3 | A9, A10, A11, A12, A14, A15, A17, A18, A19, A20, A21, A22, A25, A27, A28, A29, A30, A31, A32, A33, A34, A35, A36, A37, A40, A41, A43, A44 | building, split across four branches off 301ec76: `gaps/b3-ui`, `gaps/b3-db`, `gaps/b3-app`, `gaps/b3-ops` (below) |
+| Go-live tooling | A38 TEST→LIVE carry-over script (dry-run first), A39 enforce DB-before-code ordering | built on `gaps/b3-ops` (below) |
 | Stress | A26 load/abuse harness + the 10 scenarios in the audit's stress-test plan | interplay suite landed with 0061 (`scripts/db/interplay-check.mjs`, `INTERPLAY_STRICT=1` clean; see `INTERPLAY_STRESS.md`); load/abuse harness after build-out |
+
+Batch 3 branches (local commits; none pushed or merged yet):
+- `gaps/b3-ui`: A14, A15, A28, A31, A32, A33, A34, A41 committed so far; in progress.
+- `gaps/b3-db`, `gaps/b3-app`: in progress (no commits at the time of this update).
+- `gaps/b3-ops` (CI, scripts, docs only; no migration):
+  - **A25** done-pending-CI: missing TEST secrets fail the `supabase` and `login-ui` jobs; only fork PRs skip, with a warning and a NOT RUN summary (`scripts/ci/supabase-secrets-gate.mjs`, guard `scripts/test/ci-secrets-gate.test.mjs`). Owner: add the TEST trio as Dependabot secrets (OWNER_STEPS 14a).
+  - **A39** done-pending-owner-setting: `db-migrations-production` runs on every `main` push and verifies the remote history; Vercel Deployment Checks hold Production until it passes (`docs/GO_LIVE.md` §5, guard `scripts/test/db-before-code.test.mjs`). Not enforced until the owner adds the check in Vercel (OWNER_STEPS 14b). Runtime `schema_version()` check deferred to 0066.
+  - **A38** done (never run against a hosted DB): `scripts/golive/carry-over.mjs`, dry run by default, tested on disposable Postgres (`carry-over.test.mjs`, `carry-over.db.test.mjs`); `docs/GO_LIVE.md` §6.
+  - **A40** done: stale references fixed in OWNER_DECISIONS, AGENT_BRIEF, SEC_AUDIT_BRIEF, HANDOFF (§3d closed items, pending audit file), COMPLETENESS_AUDIT (superseded) and this tracker. Left: `README.md` roadmap (outside the docs/ scope of this branch).
 
 New batch-3 items (2026-10-29):
 - A43: remove the dead legacy spin path in `src/lib/data/spins.ts` (below the `commitSpinAttempt` return, ~L270) plus `finalizeInstantSpin` / `reserveRewardCode` / `releaseRewardCode`, which call 0057 RPCs revoked from every role in 0059.
@@ -32,7 +48,7 @@ New batch-3 items (2026-10-29):
 
 Closed early inside 0061: A2 (`expected_stock` compare-and-set), CROSS_TENANT_HAPPY_HOUR, ISSUANCE_IGNORES_SCHEDULE, ACTIVE_ORDER_MISMATCH and the bingo review fixes; the focus-pack grant lock order was fixed in 79239e7.
 
-Follow-up: per-fan game assignment (a link chooses its own game, not only via its campaign) needs migration 0065, after 0064.
+Follow-up: per-fan game assignment (a link chooses its own game, not only via its campaign) needs migration 0065, after 0064. Runtime schema-version check (A39 residual) needs migration 0066.
 
 ## 3. Verification & acceptance (from TAKEOVER_CHECKPOINT open gaps)
 - Two fresh independent security audits + privacy-promise check + outside-attacker pass; fix Critical/High.
