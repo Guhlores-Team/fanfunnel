@@ -4,7 +4,7 @@ import { LEGAL } from "@/lib/legal";
 
 export const metadata: Metadata = {
   title: "Terms of Service · FanFunnel",
-  description: "The rules for creators and fans using FanFunnel prize wheels.",
+  description: "The rules for creators and fans using FanFunnel prize games: wheels, scratch tickets and bingo.",
 };
 
 const OP = LEGAL.operator;
@@ -12,8 +12,8 @@ const AGE = LEGAL.minimumAge;
 
 const SUMMARY = [
   <>
-    {OP} is software that lets creators run prize wheels for their fans. You must be {AGE} or older to
-    use it.
+    {OP} is software that lets creators run prize games for their fans: a prize wheel, a scratch ticket
+    or a personal bingo card. You must be {AGE} or older to use it.
   </>,
   <>
     {OP} does not take payments. Tips and purchases happen on the creator’s own platforms and links, and
@@ -82,9 +82,9 @@ const SECTIONS: LegalSection[] = [
     body: (
       <>
         <p>
-          {OP} is a tool. A creator builds a wheel of prizes, sets how likely each prize is, and sends fans
-          personal spin links. A fan spins with the spins the creator has given them, lands on a prize, and
-          the creator then delivers that prize.
+          {OP} is a tool. A creator builds a prize game (a wheel, a scratch ticket or a personal bingo card),
+          sets how likely each prize is, and sends fans personal spin links. A fan plays with the spins the
+          creator has given them, lands on a prize, and the creator then delivers that prize.
         </p>
         <ul>
           <li>
@@ -163,6 +163,14 @@ const SECTIONS: LegalSection[] = [
           <li>
             <strong>Every spin lands on a prize</strong> from the creator’s wheel. Prizes are labelled with
             a rarity (common to legendary).
+          </li>
+          <li>
+            <strong>Scratch tickets and bingo are other ways to use a spin.</strong> On a scratch ticket,
+            each spin plays one ticket: the prize is decided on our server when you play, and scratching or
+            “Reveal all” only shows it. With personal bingo, each spin wins its drawn prize and marks that
+            prize’s square on your own 3×3 card. Completing a new row, column or diagonal adds the creator’s
+            line bonus prize, and a full card starts a new one. Every play is recorded and can be checked on
+            its verify page, like a wheel spin.
           </li>
           <li>
             <strong>Odds are set by the creator</strong>, by giving each prize a weight. The odds can also
@@ -513,10 +521,10 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We may update these Terms. When we do, we will post the new version here and change the “Last
-        updated” date. If a change is material, we will give at least {LEGAL.changeNoticeDays} days’ notice
-        before it takes effect: by email to creators, and with a notice in the app or on this page for fans.
-        A change required by law, or needed to keep the Service secure, may take effect sooner. We may ask
-        you to agree to the new version before you continue. If you keep using the Service after a change
+        updated” date. If a change is material, we will post it here, marked as upcoming, at least{" "}
+        {LEGAL.changeNoticeDays} days before it takes effect. When it takes effect, the app asks creators (in
+        the dashboard) and fans (on their spin page) to agree to the new version before they continue. A
+        change required by law, or needed to keep the Service secure, may take effect sooner. If you keep using the Service after a change
         takes effect, the updated Terms apply. If you do not agree, stop using the Service.
       </p>
     ),

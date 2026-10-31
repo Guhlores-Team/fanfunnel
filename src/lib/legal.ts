@@ -14,7 +14,7 @@ export const LEGAL = {
   /** Where disputes are heard, unless mandatory consumer law says otherwise. */
   venue: "the state and federal courts located in Massachusetts",
   /** ISO date (YYYY-MM-DD) both documents took effect. */
-  effectiveDate: "2026-10-29",
+  effectiveDate: "2026-10-31",
   /**
    * The Terms/Privacy version people agree to (YYYY-MM-DD). Recorded with every
    * acceptance (profiles.terms_version, fans.acked_terms_version); bumping it

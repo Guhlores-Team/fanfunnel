@@ -35,6 +35,12 @@ for (const [label, pattern] of [
   ["report review outcome", /resolved or dismissed/],
   ["urgent report alerts carry no fan data", /email alert that names only the reason and the time, never the fan/],
   ["reward values are erased on fan deletion", /encrypted value is erased when the fan deletes their data/],
+  // A7 follow-up: games shipped in 0060/0061.
+  ["bingo cards and scratch tickets", /Game cards and tickets:.*bingo.*scratch ticket/],
+  ["bingo card retention", /Check-ins, bingo cards,/],
+  // A9: every browser-storage record a fan page writes.
+  ["the durable spin-intent record", /Saved spin request.*fingerprint of your link.*removed once you close the result/],
+  ["the play-reminder acknowledgement", /Keep playing” on a play reminder.*24 hours/],
 ] as const) {
   assert.match(text, pattern, `the policy discloses ${label}`);
 }
@@ -47,4 +53,13 @@ assert.match(terms, /store the link, text or one-time codes.*encrypted/, "stored
 assert.match(terms, /Focus.*Chase/, "Focus and Chase odds changes are disclosed");
 assert.match(terms, /public photos are safe for work/i, "the SFW-only photo rule is stated");
 assert.match(terms, /blocked fan’s link no longer spins.*chat.*wishlist.*leaderboard/, "what blocking stops is stated");
+// A7 follow-up: the Terms describe the games a spin can play.
+assert.match(terms, /scratch ticket.*decided on our server.*Reveal all/, "scratch tickets are described");
+assert.match(terms, /personal bingo.*3×3 card.*row, column or diagonal.*line bonus/, "personal bingo is described");
+// A10: no promise the app cannot keep. There is no creator email broadcast;
+// the in-app re-agreement (LEGAL.version) is what actually reaches people.
+for (const [name, doc] of [["Privacy", text], ["Terms", terms]] as const) {
+  assert.ok(!/by email to creators/.test(doc), `${name} must not promise change notices by email`);
+  assert.match(doc, /asks creators \(in the dashboard\) and fans \(on their spin page\) to agree/, `${name} describes the in-app re-agreement`);
+}
 console.log("privacy policy: rendered self-service, retention, de-identification and MFA promises passed");

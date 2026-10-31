@@ -24,8 +24,8 @@ function HowToRequest() {
 
 const SUMMARY = [
   <>
-    We collect what it takes to run prize wheels: creators’ account and wheel details, the fan records
-    creators keep, and the spins, wins and messages on each spin link.
+    We collect what it takes to run prize games (wheels, scratch tickets and bingo): creators’ account and
+    game details, the fan records creators keep, and the spins, wins and messages on each spin link.
   </>,
   <>
     Fans do not need an account. A fan is known to us by the name or handle the creator entered, plus
@@ -176,6 +176,12 @@ const SECTIONS: LegalSection[] = [
             <strong>Spin attempts:</strong> a short record of each spin request (a hash of the spin link and of
             the request, whether it went through or was declined, the outcome and the times) so a retried or
             doubled tap never spends a spin twice.
+          </li>
+          <li>
+            <strong>Game cards and tickets:</strong> if a creator runs personal bingo, your card: the prizes
+            on it, which squares are marked, which lines have paid a bonus and when it was completed. For a
+            scratch ticket or a bingo play, the symbols or card it showed are kept with that spin’s fairness
+            record.
           </li>
           <li>
             <strong>Visit check-ins:</strong> the days (in UTC) you opened your spin link, used to show the
@@ -353,6 +359,24 @@ const SECTIONS: LegalSection[] = [
             last, so unread messages are marked correctly.
           </li>
           <li>
+            <strong>Saved spin request</strong> (fans): from the moment you tap spin until you have seen the
+            result, your browser keeps a small record of that request (a random request ID, the random value
+            your browser adds to the spin and the commitment shown before it). It is filed under a one-way
+            fingerprint of your link, never the link itself, and holds no prize. It lets a dropped connection
+            or a reload finish the same spin instead of spending another, and is removed once you close the
+            result or the spin is declined.
+          </li>
+          <li>
+            <strong>“Keep playing” on a play reminder</strong> (fans): remembers for 24 hours that you chose
+            to keep playing at your reminder number, so the reminder does not repeat. Nothing about your link
+            is stored.
+          </li>
+          <li>
+            <strong>Changes being sent</strong> (creators): while a spin-grant edit or a fan import is on its
+            way, the browser tab keeps its request ID and a fingerprint of the request, so a retry can never
+            apply it twice. It is cleared once the result is confirmed, or when the tab closes.
+          </li>
+          <li>
             <strong>Reveal counter</strong> (fans): counts spins in the current browser tab to pace the win
             animations, and is cleared when the tab closes.
           </li>
@@ -393,7 +417,7 @@ const SECTIONS: LegalSection[] = [
           account or personal spin links, so past prizes can still be fulfilled and counted.
         </li>
         <li>
-          <strong>Check-ins, breaks and play reminders, Focus and Chase boosts and win-back records:</strong>{" "}
+          <strong>Check-ins, bingo cards, breaks and play reminders, Focus and Chase boosts and win-back records:</strong>{" "}
           kept with the fan record they belong to, and deleted with it (when the fan deletes their data, the
           creator deletes the fan or the account is closed).
         </li>
@@ -560,9 +584,10 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We will post any update here and change the “Last updated” date. If a change is material, we will
-        give at least {LEGAL.changeNoticeDays} days’ notice before it takes effect: by email to creators, and
-        with a notice in the app or on this page for fans. A change required by law, or needed to keep the
-        Service secure, may take effect sooner.
+        post it here, marked as upcoming, at least {LEGAL.changeNoticeDays} days before it takes effect. When
+        it takes effect, the app asks creators (in the dashboard) and fans (on their spin page) to agree to
+        the new version before they continue. A change required by law, or needed to keep the Service
+        secure, may take effect sooner.
       </p>
     ),
   },
