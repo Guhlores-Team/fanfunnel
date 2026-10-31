@@ -56,6 +56,10 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v7
+      # Node runs the migration-history read-back (scripts/ci/).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - uses: supabase/setup-cli@v3
         with:
           # Pinned (not `latest`) so CI is reproducible; bump it deliberately.
@@ -102,6 +106,10 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v7
+      # Node runs the migration-history read-back (scripts/ci/).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - uses: supabase/setup-cli@v3
         with:
           # Pinned (not `latest`) so CI is reproducible; bump it deliberately.

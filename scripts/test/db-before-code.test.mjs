@@ -106,6 +106,8 @@ export function auditProductionGate(text) {
     if (!list[verifyIdx].includes("set -euo pipefail") || !list[verifyIdx].includes("supabase migration list --linked")) problems.push("read-back can pass on a failed listing");
   }
   if (/continue-on-error/.test(job)) problems.push("production job may continue on error");
+  const node = list.findIndex((s) => s.includes("uses: actions/setup-node@"));
+  if (node < 0 || (verifyIdx >= 0 && node > verifyIdx)) problems.push("read-back runs without a pinned Node");
   return problems;
 }
 assert.deepEqual(auditProductionGate(wf), []);
@@ -115,6 +117,7 @@ const mutations = [
   ["check renamed", wf.replace(`    name: ${CHECK_NAME}\n`, "    name: production\n")],
   ["read-back removed", wf.replace("node scripts/ci/verify-migrations-applied.mjs --label PRODUCTION", "echo skipped")],
   ["pipefail removed", wf.replace(/(Verify PRODUCTION[\s\S]*?)set -euo pipefail\n/, "$1")],
+  ["setup-node removed", wf.replace(/(\n  production:[\s\S]*?)      # Node runs the migration-history read-back \(scripts\/ci\/\)\.\n      - uses: actions\/setup-node@v7\n        with:\n          node-version: 22\n/, "$1")],
   ["continue-on-error", wf.replace("    environment: production\n", "    environment: production\n    continue-on-error: true\n")],
 ];
 for (const [label, mutated] of mutations) check(`checker rejects mutation: ${label}`, mutated !== wf && auditProductionGate(mutated).length > 0);
