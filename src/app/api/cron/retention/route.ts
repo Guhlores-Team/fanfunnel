@@ -77,7 +77,7 @@ export async function GET(req: Request) {
     });
   }
   if (storage.failed > 0) await loud("Retention storage cleanup failed for some items; they stay queued for retry");
-  if (deletions.needsAdmin > 0) await loud("Account deletions are paused after repeated automatic retries; retry them in Admin");
+  if (deletions.needsAdmin > 0) await loud("Account deletions are paused and need an admin; retry them in Admin");
   // After every other alert above, so a digest sent now covers them too.
   const digest = await flushAlertDigest();
   const pending = storage.pending > 0 || storage.accountsPending > 0 || deletions.pending > 0 || deletions.waiting > 0 || deletions.needsAdmin > 0;

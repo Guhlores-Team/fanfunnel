@@ -68,7 +68,7 @@ export function ageLabel(from: string, now: number = Date.now()): string {
 
 export function nextRetryLabel(d: Pick<StuckDeletionView, "state" | "nextRetryAt">, now: number = Date.now()): string {
   if (d.state !== "paused") return "Retried by the daily maintenance run";
-  if (!d.nextRetryAt) return "Automatic retries used up: retry it here";
+  if (!d.nextRetryAt) return "No automatic retry left: retry it here";
   return Date.parse(d.nextRetryAt) <= now ? "Automatic retry due on the next maintenance run" : `Automatic retry after ${new Date(d.nextRetryAt).toLocaleString()}`;
 }
 

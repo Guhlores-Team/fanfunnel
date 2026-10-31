@@ -32,16 +32,30 @@ mock.module("@/lib/auth/admin", {
 let configured = true;
 let rows: Record<string, unknown>[] = [];
 const filters: { name: string; args: unknown[] }[][] = [];
+const ADMIN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const activeAdminIds = new Set([ADMIN]);
+let adminsError = false;
+const adminReads: { name: string; args: unknown[] }[][] = [];
 function svc() {
-  const ops: { name: string; args: unknown[] }[] = [];
-  const chain: Record<string, unknown> = {};
-  for (const name of ["select", "eq", "or", "order", "limit"]) chain[name] = (...args: unknown[]) => { ops.push({ name, args }); return chain; };
-  chain.then = (res: (v: unknown) => unknown) => {
-    filters.push(ops);
-    const state = ops.find((o) => o.name === "eq" && o.args[0] === "state")?.args[1];
-    return Promise.resolve({ data: state ? rows.filter((r) => r.state === state) : rows, error: null }).then(res);
+  const from = (table: string) => {
+    assert.ok(table === "creator_storage_deletions" || table === "profiles", table);
+    const ops: { name: string; args: unknown[] }[] = [];
+    const chain: Record<string, unknown> = {};
+    for (const name of ["select", "eq", "in", "or", "order", "limit"]) chain[name] = (...args: unknown[]) => { ops.push({ name, args }); return chain; };
+    chain.then = (res: (v: unknown) => unknown) => {
+      if (table === "profiles") {
+        adminReads.push(ops);
+        const ids = (ops.find((o) => o.name === "in")?.args[1] ?? []) as string[];
+        const scoped = ops.some((o) => o.name === "eq" && o.args[0] === "role" && o.args[1] === "admin") && ops.some((o) => o.name === "eq" && o.args[0] === "is_active" && o.args[1] === true);
+        return Promise.resolve(adminsError ? { data: null, error: { code: "57014" } } : { data: scoped ? ids.filter((id) => activeAdminIds.has(id)).map((id) => ({ id })) : [], error: null }).then(res);
+      }
+      filters.push(ops);
+      const state = ops.find((o) => o.name === "eq" && o.args[0] === "state")?.args[1];
+      return Promise.resolve({ data: state ? rows.filter((r) => r.state === state) : rows, error: null }).then(res);
+    };
+    return chain;
   };
-  return { from: (table: string) => { assert.equal(table, "creator_storage_deletions"); return chain; } };
+  return { from };
 }
 mock.module("@/lib/supabase/server", { namedExports: { isSupabaseConfigured: () => configured, createServiceClient: svc, createClient: async () => svc() } });
 
@@ -71,7 +85,7 @@ async function main() {
     job("11111111-1111-4111-8111-111111111111", { attempts: 1, updated_at: ago(20 * MIN) }), // due (15 min)
     job("22222222-2222-4222-8222-222222222222", { attempts: 3, updated_at: ago(30 * MIN) }), // waiting (60 min)
     job("33333333-3333-4333-8333-333333333333", { attempts: m.DELETION_AUTO_RETRIES, updated_at: ago(48 * 60 * MIN) }), // needs admin
-    job("44444444-4444-4444-8444-444444444444", { was_role: "admin", actor_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", action: "account.delete", attempts: 2, updated_at: ago(31 * MIN) }), // due (30 min)
+    job("44444444-4444-4444-8444-444444444444", { was_role: "admin", actor_id: ADMIN, action: "account.delete", attempts: 2, updated_at: ago(31 * MIN) }), // due (30 min)
     job("55555555-5555-4555-8555-555555555555", { state: "pending", updated_at: ago(5 * 60 * MIN) }), // not paused: never resumed here
   ];
   let stats = await m.retryPausedDeletions(service, NOW);
@@ -82,11 +96,39 @@ async function main() {
     resumed[1].opts.action === "account.delete" && resumed[1].opts.actorId === "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" && resumed[1].opts.wasAdmin === true);
   check("stats: 2 due, 2 completed, 1 waiting, 1 needs an admin", stats.due === 2 && stats.completed === 2 && stats.waiting === 1 && stats.needsAdmin === 1 && stats.failed === 0);
 
+  check("the admin is checked against profiles (role admin, active), never metadata", adminReads.at(-1)!.some((o) => o.name === "in" && (o.args[1] as string[]).join() === ADMIN));
+
+  // --- refusals no backoff can fix wait for an admin, not a daily 503 ---------------
+  const DEMOTED = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const adminJob = (owner: string, actor: string | null) => job(owner, { was_role: "admin", actor_id: actor, action: "account.delete", attempts: 1, updated_at: ago(20 * MIN) });
   resumed.length = 0;
-  outcome = { error: "forbidden" };
-  rows = [job("11111111-1111-4111-8111-111111111111", { attempts: 1, updated_at: ago(20 * MIN) })];
+  rows = [adminJob("66666666-6666-4666-8666-666666666666", DEMOTED), adminJob("77777777-7777-4777-8777-777777777777", null),
+    adminJob("88888888-8888-4888-8888-888888888888", "88888888-8888-4888-8888-888888888888"), adminJob("99999999-9999-4999-8999-999999999999", ADMIN)];
   stats = await m.retryPausedDeletions(service, NOW);
-  check("a refused resume (e.g. the admin was demoted) is counted failed and stays paused", stats.failed === 1 && stats.completed === 0);
+  check("an admin delete whose admin is no longer an active admin is not resumed", !resumed.some((r) => r.owner.startsWith("6666")));
+  check("…nor one with no actor, or with the owner as its own admin actor", !resumed.some((r) => r.owner.startsWith("7777") || r.owner.startsWith("8888")));
+  check("…each waits for an admin instead of failing every run", stats.needsAdmin === 3 && stats.failed === 0);
+  check("a job whose admin is still active resumes alongside them", resumed.map((r) => r.owner).join() === "99999999-9999-4999-8999-999999999999" && stats.completed === 1);
+
+  resumed.length = 0;
+  adminsError = true;
+  rows = [adminJob("99999999-9999-4999-8999-999999999999", ADMIN), job("11111111-1111-4111-8111-111111111111", { attempts: 1, updated_at: ago(20 * MIN) })];
+  stats = await m.retryPausedDeletions(service, NOW);
+  check("an unreadable admin list resumes nothing on an admin's authority and is counted failed", !resumed.some((r) => r.owner.startsWith("9999")) && stats.failed === 1);
+  check("…while a self-close still resumes", resumed.map((r) => r.owner).join() === "11111111-1111-4111-8111-111111111111");
+  adminsError = false;
+
+  for (const refusal of ["forbidden", "last_admin", "not_found"]) {
+    outcome = { error: refusal };
+    rows = [job("11111111-1111-4111-8111-111111111111", { attempts: 1, updated_at: ago(20 * MIN) })];
+    stats = await m.retryPausedDeletions(service, NOW);
+    check(`a resume the SQL refuses (${refusal}) stays paused and waits for an admin, not counted failed`, stats.needsAdmin === 1 && stats.failed === 0 && stats.completed === 0);
+  }
+  for (const failure of ["db_error", "delete_failed", "storage_cleanup_failed"]) {
+    outcome = { error: failure };
+    stats = await m.retryPausedDeletions(service, NOW);
+    check(`a resume that fails (${failure}) is counted failed and stays paused`, stats.failed === 1 && stats.completed === 0 && stats.needsAdmin === 0);
+  }
   outcome = { pending: true, reason: "batch_remaining", reviewRequired: false };
   stats = await m.retryPausedDeletions(service, NOW);
   check("a resume that needs more runs is counted pending", stats.pending === 1);
@@ -105,8 +147,16 @@ async function main() {
   check("each item carries state, last error, attempts, age and next retry", !!list && list[0].id === "11111111-1111-4111-8111-111111111111" && list[0].state === "paused" &&
     list[0].lastError === "storage_cleanup_failed" && list[0].attempts === 2 && list[0].nextRetryAt === new Date(NOW - 10 * MIN + 30 * MIN).toISOString());
   check("the list carries no account contents (ids and job state only)", Object.keys(list![0]).sort().join() === "attempts,id,lastError,nextRetryAt,startedAt,state,updatedAt");
+  rows = [
+    job("66666666-6666-4666-8666-666666666666", { was_role: "admin", actor_id: DEMOTED, action: "account.delete", attempts: 1, updated_at: ago(10 * MIN) }),
+    job("99999999-9999-4999-8999-999999999999", { was_role: "admin", actor_id: ADMIN, action: "account.delete", attempts: 1, updated_at: ago(10 * MIN) }),
+  ];
+  const listed = await m.listStuckDeletions(service, NOW);
+  check("Admin shows no automatic retry for a deletion whose admin was demoted", listed![0].nextRetryAt === null);
+  check("…but keeps the retry time for one whose admin is still active", listed![1].nextRetryAt === new Date(NOW - 10 * MIN + 15 * MIN).toISOString());
 
   // --- the Admin route ----------------------------------------------------------
+  rows = [job("11111111-1111-4111-8111-111111111111", { attempts: 2, updated_at: ago(10 * MIN) })];
   const { GET } = await import("@/app/api/admin/account/deletions/route");
   adminOk = false;
   let res = await GET();
