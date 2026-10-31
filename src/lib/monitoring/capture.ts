@@ -120,6 +120,27 @@ export async function alertFor(e: CleanError, outcome: RecordOutcome): Promise<v
   }
 }
 
+/**
+ * A27: send a waiting digest of throttled errors even when no new error comes
+ * along to trigger the check in alertFor. Run by the maintenance cron, so a
+ * burst that stops still reaches ALERT_EMAIL_TO within a day. Never throws.
+ */
+export async function flushAlertDigest(environment: ErrorEnvironment = currentEnvironment()): Promise<"sent" | "none" | "off" | "failed"> {
+  try {
+    const cfg = alertConfig();
+    if (!cfg.enabled) {
+      noteAlertsOff(cfg);
+      return "off";
+    }
+    if (!cfg.environments.includes(environment)) return "off";
+    const digest = await claimAppErrorAlert(cfg.maxPerHour);
+    if (!digest.send || digest.pending <= 0) return "none";
+    return (await sendAlertEmail(cfg, buildDigestEmail(digest.pending, environment, adminErrorsUrl()))) ? "sent" : "failed";
+  } catch {
+    return "failed";
+  }
+}
+
 /** Store now, alert after the response. For callers that can await. */
 export async function captureNow(input: CaptureInput): Promise<void> {
   const e = cleanError(input);
