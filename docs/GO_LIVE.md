@@ -158,13 +158,56 @@ establish ordering; the Deployment Check above does, once configured.
 
 ## 6. Optional chosen TEST data transfer — separate approval
 
-The owner wants to keep selected TEST work at go-live. No transfer script or
-Production operation is authorized by this checklist.
+The owner wants to keep selected TEST work at go-live. The tool is
+[`scripts/golive/carry-over.mjs`](../scripts/golive/carry-over.mjs) (A38). It
+exists and is tested; **running it against LIVE is not authorized by this
+checklist** and the agent never runs it against a hosted project.
 
-- [ ] **OWNER**: Identify the exact accounts/data to keep; unselected TEST records must not move.
-- [ ] **AGENT**: Prepare a schema-complete, privacy-conscious transfer and rollback plan against the final migrations. A one-off script does not yet exist. Specify Auth recreation, fresh-password delivery, media bytes/metadata, original versus new IDs, fairness/economic history, Focus/Bingo state and secret re-encryption/creator associated-data implications. Do not blindly copy encrypted rows or assume changing IDs preserves historical proofs.
-- [ ] **OWNER + AGENT**: Dry-run with no LIVE writes and review per-account counts, balances (`fans` equals sum of passes), included/excluded data, key handling and failure/rollback behavior. Keep identifiers and exports private.
-- [ ] **OWNER**: Approve the exact transfer only after the dry run and prerequisites, then perform the reviewed LIVE operation using private credentials. A password reset or invitation email needs separate explicit send authorization. Verify one carried account and reconcile all recorded counts.
+What it does: copies chosen creators' **configuration** from TEST to LIVE,
+matched by Auth email. The LIVE account must already exist (the creator signs
+up or is invited; the tool never creates Auth users or sends email) and be an
+active, approved creator with the game features their games need.
+
+| Carried | Never carried |
+| --- | --- |
+| Profile look and copy: theme, display name, public page address/tagline/tip link, chat intro/outro, creator note, notification and leaderboard preferences | Fans, fan passes, spins, attempts, grants, redemptions, wishlists, referrals, messages, check-ins, outreach |
+| Unarchived games (wheel, scratch, bingo) with prizes and game config | Reward secrets (`prize_rewards`) and reward codes; archived games |
+| Campaigns and their packs | Media bytes and rows, avatar and prize image URLs |
+| Prize, wheel and DM templates; Focus setting | Webhooks, happy hours, role/approval/features/org/terms, Auth |
+
+Changes on the way, each listed in the plan: every row gets a new
+deterministic id; games arrive **paused**; link/text prizes become **manual**
+(re-enter the link/text in LIVE); code prizes arrive with **0 stock** (add
+codes in LIVE); a photo background falls back to `glow`; an avatar app icon
+falls back to `neutral`; **Chase is off**. A plan still pointing at the TEST
+project or at a TEST row id is blocked.
+
+Safety rails: `--from-ref` must be TEST `snmcrmhgevfqggxdiomu` and `--to-ref`
+must be LIVE `ttlogfmogcccwiraaoae` (equal refs are refused); each database
+URL comes only from `CARRY_FROM_DB_URL` / `CARRY_TO_DB_URL` (a URL on the
+command line is refused) and must name its own project; dry run is the
+default and reads both sides in read-only transactions; `--apply` refuses any
+blocked creator and then requires the exact typed line
+`CARRY snmcrmhgevfqggxdiomu -> ttlogfmogcccwiraaoae: <sorted emails>`. Each
+creator is one transaction that re-checks the LIVE account; the run stops at
+the first failure and the JSONL resume log (`--resume-log`, default
+`golive-carry-over-ttlogfmogcccwiraaoae.log.jsonl`) lets a re-run skip finished
+creators. Without the log a re-run still inserts nothing twice (same ids), but
+it re-applies profile fields, so keep the log.
+
+Proof: `node scripts/golive/carry-over.test.mjs` (pure refusals, binding,
+planner, SQL) and `node scripts/golive/carry-over.db.test.mjs` (two disposable
+Postgres 16 databases built from `supabase/schema.sql`: dry run writes
+nothing, blocked/unconfirmed applies write nothing, real triggers accept the
+writes, re-runs change nothing, a mid-run failure rolls back and resumes). CI
+runs both.
+
+- [ ] **OWNER**: Identify the exact creator emails to keep; unselected TEST records do not move.
+- [ ] **OWNER**: Make sure each chosen creator has a LIVE account that is approved and active, with the Scratch/Bingo features their games use (Admin in LIVE).
+- [ ] **OWNER + AGENT**: Dry run (no `--apply`) from a private machine with `psql`, the two URLs in the environment only, and review the printed plan per creator: carried counts, "not carried" counts, notes and blockers. Keep emails, URLs and output private.
+- [ ] **OWNER**: Approve the exact list only after the dry run and the section 4/5 prerequisites (LIVE backup first), then run with `--apply` and type the confirmation line yourself. Agents do not hold LIVE credentials.
+- [ ] **OWNER + AGENT**: Verify one carried account in LIVE (games paused, prizes, campaigns, templates), then have the creator re-enter link/text rewards, add codes, re-upload photos and turn games on. Keep the resume log with the release evidence.
+- Residual gaps: the hosted `postgres` role's privileges on LIVE and pooler behaviour are not exercised by the local test; carried rows keep their TEST `created_at`; the tool has never run against a hosted database.
 
 ## 7. Preview protection and old deployment retirement
 

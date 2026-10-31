@@ -38,12 +38,13 @@ jobs:
         run: npm test
 
       # Workflow guards and pure script tests under scripts/ (npm test covers
-      # src/ only): A25 secrets gate, A39 DB-before-code check. No network, no
-      # secrets.
+      # src/ only): A25 secrets gate, A39 DB-before-code check, A38 carry-over
+      # refusals and planner. No network, no secrets.
       - name: Script and workflow-guard tests
         run: |
           node scripts/test/ci-secrets-gate.test.mjs
           node scripts/test/db-before-code.test.mjs
+          node scripts/golive/carry-over.test.mjs
 
       - name: Build
         run: npm run build
@@ -99,3 +100,8 @@ jobs:
 
       - name: schema.sql / migrations_combined.sql / migrations build the same DB
         run: node scripts/db/schema-drift-check.mjs
+
+      # A38: the go-live carry-over tool against two disposable local databases
+      # built from supabase/schema.sql. Never touches a hosted project.
+      - name: Go-live carry-over against disposable Postgres
+        run: node scripts/golive/carry-over.db.test.mjs
