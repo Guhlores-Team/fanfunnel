@@ -114,12 +114,13 @@ export async function loadNotificationSources(sb: AnyClient, uid: string): Promi
       .gte("last_spin_at", since)
       .order("last_spin_at", { ascending: false })
       .limit(200),
-    // 0054: "a fan deleted their data" notices the server left for this account.
+    // 0054: "a fan deleted their data" and (0066, A30) "you're approved"
+    // notices the server left for this account.
     sb
       .from("creator_notices")
-      .select("id, details, created_at")
+      .select("id, kind, details, created_at")
       .eq("creator_id", uid)
-      .eq("kind", "fan_deleted_data")
+      .in("kind", ["fan_deleted_data", "creator_approved"])
       .order("created_at", { ascending: false })
       .limit(FEED_LIMIT),
   ]);
@@ -153,18 +154,22 @@ export async function loadNotificationSources(sb: AnyClient, uid: string): Promi
     lowStock: [],
     outOfSpins: [],
     fanDeletions: [],
+    approvals: [],
   };
 
   if (!failed("notices", noticesRes.error)) {
-    sources.fanDeletions = ((noticesRes.data ?? []) as {
+    const notices = (noticesRes.data ?? []) as {
       id: string;
+      kind: string;
       details: { spins_kept?: unknown } | null;
       created_at: string;
-    }[]).map((n) => ({
+    }[];
+    sources.fanDeletions = notices.filter((n) => n.kind === "fan_deleted_data").map((n) => ({
       id: n.id,
       spinsKept: Number(n.details?.spins_kept) || 0,
       at: n.created_at,
     }));
+    sources.approvals = notices.filter((n) => n.kind === "creator_approved").map((n) => ({ id: n.id, at: n.created_at }));
   }
 
   if (!failed("wins", winsRes.error)) {

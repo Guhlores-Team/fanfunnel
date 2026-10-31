@@ -25,6 +25,7 @@ const KIND_ICON: Record<NotificationKind, string> = {
   low_stock: "M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8",
   out_of_spins: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 8v4M12 16h.01",
   fan_deleted: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM17 8l5 5M22 8l-5 5",
+  approved: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10ZM9.5 12l2 2 3.5-4",
 };
 const KIND_LABEL: Record<NotificationKind, string> = {
   win: "Win to fulfil",
@@ -32,6 +33,7 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   low_stock: "Prize stock",
   out_of_spins: "Fan balance",
   fan_deleted: "Fan privacy",
+  approved: "Account",
 };
 
 function Glyph({ d, size = 18 }: { d: string; size?: number }) {

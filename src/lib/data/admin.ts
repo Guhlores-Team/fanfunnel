@@ -6,6 +6,8 @@ import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import type { AdminAccount, AdminOverview, AppRole } from "./types";
 import { provisionCreatorUser } from "./creatorAccount";
 import { recordAudit } from "./audit";
+import { leaveApprovalNotice, sendApprovalEmail } from "@/lib/account/approvalNotice";
+import { runAfterResponse } from "@/lib/afterResponse";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
 
 // ---------------------------------------------------------------------------
@@ -460,6 +462,11 @@ export async function decideCreatorApplication(
   const sb = await createClient();
   if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 
+  // A30: only a real transition to approved leaves a notice and an e-mail, so
+  // re-approving (or approving an admin's own row) never notifies twice.
+  const { data: before } = await sb.from("profiles").select("approval_status").eq("id", profileId).maybeSingle();
+  const wasApproved = (before as { approval_status?: string } | null)?.approval_status === "approved";
+
   const now = new Date().toISOString();
   const { error: aErr } = await sb
     .from("creator_applications")
@@ -467,9 +474,17 @@ export async function decideCreatorApplication(
     .eq("profile_id", profileId);
   if (aErr) return { error: "db_error" };
 
-  const { error: pErr } = await sb
+  const { data: updated, error: pErr } = await sb
     .from("profiles")
     .update({ approval_status: decision })
-    .eq("id", profileId);
-  return pErr ? { error: "db_error" } : { ok: true };
+    .eq("id", profileId)
+    .select("id")
+    .maybeSingle();
+  if (pErr) return { error: "db_error" };
+  if (decision === "approved" && updated && !wasApproved) {
+    const svc = createServiceClient();
+    await leaveApprovalNotice(svc, profileId);
+    runAfterResponse(() => sendApprovalEmail(svc, profileId));
+  }
+  return { ok: true };
 }
