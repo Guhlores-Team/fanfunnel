@@ -158,6 +158,16 @@ check("existing integration commands remain", supabaseWf.includes("run: npm run 
 check("RLS runtime step stays pinned to the TEST ref and refuses prod", supabaseJob.includes("RLS_TEST_REQUIRE_REF: snmcrmhgevfqggxdiomu") && supabaseJob.includes("*ttlogfmogcccwiraaoae*)"));
 const ci = readWorkflow("ci.yml");
 check("CI runs this guard on every push and PR", jobBlock(ci, "verify").includes("node scripts/test/ci-secrets-gate.test.mjs"));
+// Disposable-Postgres script tests run in the job that has local Postgres 16
+// (no hosted DB, no secrets), unconditionally.
+const drift = jobBlock(ci, "schema-drift");
+for (const cmd of ["node scripts/db/schema-drift-check.mjs", "node scripts/golive/carry-over.db.test.mjs", "node scripts/ops/test-maintenance-db.test.mjs"]) {
+  const step = steps(drift).find((s) => s.includes(cmd));
+  check(`schema-drift job runs ${cmd} unconditionally`, Boolean(step) && !stepIf(step) && !/continue-on-error/.test(step));
+}
+check("the maintenance contract test gets an explicit PG_BIN and fails on any error", /PG_BIN="\$\(ls -d \/usr\/lib\/postgresql\/\*\/bin \| sort -V \| tail -1\)"/.test(drift) && /set -euo pipefail[\s\S]*node scripts\/ops\/test-maintenance-db\.test\.mjs/.test(drift));
+check("schema-drift job keeps a runner with preinstalled Postgres and no secrets", drift.includes("runs-on: ubuntu-24.04") && !/\$\{\{ secrets\./.test(drift));
+check("the e2e-supabase job still runs the pure maintenance guard", supabaseWf.includes("run: node scripts/ops/test-maintenance.test.mjs"));
 check("the gate never reads secret values from its environment", !/process\.env\.(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY)\b/.test(readFileSync(GATE, "utf8")));
 
 console.log(`ci-secrets-gate.test: ${passed} checks passed`);

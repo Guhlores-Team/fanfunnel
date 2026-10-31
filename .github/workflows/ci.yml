@@ -105,3 +105,14 @@ jobs:
       # built from supabase/schema.sql. Never touches a hosted project.
       - name: Go-live carry-over against disposable Postgres
         run: node scripts/golive/carry-over.db.test.mjs
+
+      # TEST maintenance scheduler SQL contract (scripts/ops) on disposable
+      # Postgres; e2e-supabase.yml only runs its pure guard test.
+      - name: TEST maintenance SQL contract against disposable Postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          export PG_BIN
+          "$PG_BIN/postgres" --version
+          node scripts/ops/test-maintenance-db.test.mjs
