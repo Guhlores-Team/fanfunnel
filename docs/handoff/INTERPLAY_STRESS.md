@@ -15,8 +15,8 @@ npm test                                                                        
 ```
 
 `scripts/db/schema-drift-check.mjs` (CI `schema-drift` job) runs the probe on every
-built database, like its siblings. The matrix (`scripts/db/interplayCases.mjs`, 50
-cases incl. 8 personal-Bingo cases) is data-driven: `expected` records the agreed
+built database, like its siblings. The matrix (`scripts/db/interplayCases.mjs`, 62
+cases incl. 8 personal-Bingo cases and 12 per-link pin cases from 0065) is data-driven: `expected` records the agreed
 behaviour, `bug` would mark a documented disagreement (the map is empty since 0061),
 `surprise` marks agreed behaviour that needs clear UI.
 
@@ -50,11 +50,35 @@ gates on `blocked_at` or creator approval), and archiving a Bingo game with acti
 cards is allowed (cards persist, the link stops serving the game, unarchive restores
 play) while delete / un-publish / destructive prize edits stay refused.
 
+## Per-link game pin (0065)
+
+`fan_passes.pinned_wheel_id` ("Change game for this fan only" in the fan drawer)
+comes first in the shared ranking: link pin → campaign pin → open schedule →
+is_active → oldest → the link's stored game. `_resolved_spin_wheel` passes it to
+`_creator_default_wheel(creator, campaign, pinned)`, and `_create_pass_grant_core`
+sends an automatic top-up to the fan's oldest link with a playable pin, so
+issuance and play agree. It is written only by the service RPC
+`set_fan_pass_game` (0062 actor context, `grant` scope, authority rechecked
+after the fan → pass row locks; the game must be the creator's own and playable,
+like `campaignPinError`), and `guard_atomic_pass_economy` refuses another
+creator's game for every role. Matrix cases `pass-pin-*` cover: pin over the
+active game, over a campaign pin, over a schedule, a future window, Bingo, the
+pinned game archived later (falls through to the campaign pin or the live game),
+clearing the pin, and refusals for an archived game, a Bingo draft and another
+creator's game (RPC `not_found` plus the guard). Each pinned case also tops the
+fan up again and checks the credited link plays the expected game. Section 6
+covers the RPC's authority (wrong scope, foreign or guessed context, suspension
+after mint, inactive link, anon/authenticated refused) and the A35 award-cost
+snapshot. The fixture replay also runs the dashboard's `resolvePlayingGame`
+(liveGame.ts) on every case.
+
 ## Surprising but intended (needs clear UI)
 
 S1 pass.wheel_id is a label, not routing · S2 an open schedule beats the active flag,
 even for unpinned links · S3 a future/expired-only schedule still serves as the
-oldest-game fallback · S4 a cross-tenant pin id is accepted by RLS and silently ignored ·
+oldest-game fallback · S4 a cross-tenant campaign pin id is accepted by RLS and silently ignored (a per-link pin is refused) ·
 S5 a pinned game ignores its own window · S6 disabling scratch/bingo leaves an existing
 game live (grandfathered; archive it to fall back) · S7 archiving the only live game
-yields a clean `no_wheel` with credits intact.
+yields a clean `no_wheel` with credits intact · S8 a link's own game overrides the
+game it was minted for, its campaign's game and the schedule; automatic top-ups land
+on that link.

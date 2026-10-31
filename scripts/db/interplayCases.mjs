@@ -15,7 +15,12 @@
 // Letters sort A<B<C<D by id; `age` controls created_at independently.
 // pin: letter | "cross" (another creator's wheel) | null. issue: "auto" (wheel
 // chosen by the grant RPC) or a letter (explicit p_wheel). after: mutations
-// applied after issuance (archive, schedule).
+// applied after issuance (archive, schedule, feature, passPin). passPin (0065)
+// sets the link's own game through set_fan_pass_game: a letter, null (follow
+// again) or "cross" (another creator's game); `pinStatus` is the RPC answer
+// when it is not "ok". A case with a passPin also tops the fan up again
+// (automatic game) and checks the credited link plays `spin`; `topUp: "same"`
+// means the credit lands on the pinned link itself.
 export const SURPRISES = {
   S1: "pass.wheel_id is a label, not routing: an open schedule, the active flag or a pin serves a different game than the one the link was minted for",
   S2: "a schedule window overrides the creator's active flag at play time, even for an unpinned link",
@@ -24,6 +29,7 @@ export const SURPRISES = {
   S5: "a pinned game is served regardless of its own schedule window (future or expired)",
   S6: "disabling the scratch or bingo feature leaves an existing game pinned/scheduled/active and fans keep playing it (grandfathered)",
   S7: "archiving the only live game turns the fan link into 'no_wheel' with credits intact",
+  S8: "a link's own game (per-fan pin, 0065) overrides the game it was minted for, its campaign's game and the schedule; an automatic top-up lands on that link",
 };
 // Fixed in 0061 (now asserted as correct behaviour, see docs/handoff/INTERPLAY_STRESS.md):
 // ISSUANCE_IGNORES_SCHEDULE and ACTIVE_ORDER_MISMATCH (one shared ranking,
@@ -90,5 +96,18 @@ export const CASES = [
   { id: "pin-bingo-draft", wheels: { A: W("wheel", { active: true }), B: W("bingo", { ready: false }) }, pin: "B", issue: "auto", expected: { issuance: "A", spin: "A" } },
   { id: "flag-off-active-bingo", wheels: { A: W("wheel"), B: W("bingo", { active: true }) }, pin: null, issue: "auto", after: [{ feature: "bingo", enabled: false }], expected: { issuance: "B", spin: "B", surprise: "S6" } },
   { id: "bingo-archived-after", wheels: { A: W("wheel", { age: 90 }), B: W("bingo", { active: true, age: 10 }) }, pin: null, issue: "auto", after: [{ archive: "B" }], expected: { issuance: "B", spin: "A", surprise: "S1" } },
+  // --- per-link game pin (0065): link pin -> campaign pin -> schedule -> active -> oldest
+  { id: "pass-pin-valid", wheels: { A: W("wheel", { active: true }), B: W("wheel") }, pin: null, issue: "auto", after: [{ passPin: "B" }], expected: { issuance: "A", spin: "B", surprise: "S8", topUp: "same" } },
+  { id: "pass-pin-over-campaign-pin", wheels: { A: W("wheel", { active: true }), B: W("wheel"), C: W("scratch") }, pin: "B", issue: "auto", after: [{ passPin: "C" }], expected: { issuance: "B", spin: "C", surprise: "S8", topUp: "same" } },
+  { id: "pass-pin-over-schedule", wheels: { A: W("wheel", { from: -24 }), B: W("wheel") }, pin: null, issue: "auto", after: [{ passPin: "B" }], expected: { issuance: "A", spin: "B", surprise: "S8", topUp: "same" } },
+  { id: "pass-pin-future-window", wheels: { A: W("wheel", { active: true }), B: W("wheel", { from: 24 }) }, pin: null, issue: "auto", after: [{ passPin: "B" }], expected: { issuance: "A", spin: "B", surprise: "S8", topUp: "same" } },
+  { id: "pass-pin-bingo", wheels: { A: W("wheel", { active: true }), B: W("bingo") }, pin: null, issue: "auto", after: [{ passPin: "B" }], expected: { issuance: "A", spin: "B", surprise: "S8", topUp: "same" } },
+  { id: "pass-pin-archived-after", wheels: { A: W("wheel", { active: true }), B: W("wheel") }, pin: null, issue: "auto", after: [{ passPin: "B" }, { archive: "B" }], expected: { issuance: "A", spin: "A", surprise: "S8" } },
+  { id: "pass-pin-archived-falls-to-campaign", wheels: { A: W("wheel", { active: true }), B: W("wheel"), C: W("wheel") }, pin: "B", issue: "auto", after: [{ passPin: "C" }, { archive: "C" }], expected: { issuance: "B", spin: "B", surprise: "S8" } },
+  { id: "pass-pin-cleared", wheels: { A: W("wheel", { active: true }), B: W("wheel") }, pin: null, issue: "auto", after: [{ passPin: "B" }, { passPin: null }], expected: { issuance: "A", spin: "A", surprise: "S8" } },
+  { id: "pass-pin-archived-refused", wheels: { A: W("wheel", { active: true }), B: W("wheel", { archived: true }) }, pin: null, issue: "auto", after: [{ passPin: "B", pinStatus: "game_not_playable" }], expected: { issuance: "A", spin: "A" } },
+  { id: "pass-pin-bingo-draft-refused", wheels: { A: W("wheel", { active: true }), B: W("bingo", { ready: false }) }, pin: null, issue: "auto", after: [{ passPin: "B", pinStatus: "game_not_playable" }], expected: { issuance: "A", spin: "A" } },
+  { id: "pass-pin-cross-tenant-refused", wheels: { A: W("wheel", { active: true }), B: W("wheel") }, pin: null, issue: "auto", after: [{ passPin: "cross", pinStatus: "not_found" }], expected: { issuance: "A", spin: "A" } },
+  { id: "pass-pin-flag-off-scratch", wheels: { A: W("wheel", { active: true }), B: W("scratch") }, pin: null, issue: "auto", after: [{ passPin: "B" }, { feature: "scratch", enabled: false }], expected: { issuance: "A", spin: "B", surprise: "S6", topUp: "same" } },
 ];
 export const CASE_COUNT = CASES.length;
