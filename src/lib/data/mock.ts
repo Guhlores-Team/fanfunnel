@@ -3060,7 +3060,7 @@ export function mockReportCreator(
 }
 
 // Every demo fan belongs to the signed-in demo account.
-const MOCK_REPORTED_CREATOR = "acc-you";
+export const MOCK_REPORTED_CREATOR = "acc-you";
 
 /** Admin › Reports context for a demo report (null when the row is gone). */
 export function mockReportParties(creatorId: string, fanId: string | null): {

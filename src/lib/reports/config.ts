@@ -37,6 +37,9 @@ export const REPORT_ALERTS_PER_HOUR = 10;
 /** Longest admin resolution note (the 0064 CHECK matches). */
 export const REPORT_NOTE_MAX = 1000;
 
+/** Longest visitor note on a public-page photo report (A31). */
+export const PUBLIC_PHOTO_NOTE_MAX = 500;
+
 /** Reports per page in Admin › Reports. */
 export const REPORTS_PAGE_SIZE = 50;
 

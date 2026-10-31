@@ -65,6 +65,7 @@ export {
   deleteCampaign,
 } from "./campaigns";
 export type { UncategorizedStats } from "./campaigns";
+export { reportPublicPhoto } from "./publicReports";
 export {
   listDmTemplates,
   createDmTemplate,

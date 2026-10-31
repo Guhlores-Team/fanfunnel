@@ -276,6 +276,27 @@ export async function themingJourney(page, { step, assert }, ctx) {
       }
     });
 
+    await step("public page: a visitor without a link reports a photo; Admin sees no reporter (A31)", async () => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      const slug = `${fixture.slug}-report`;
+      await goto(page, `/c/${slug}`, 300);
+      const report = page.getByTestId("report-photo");
+      await report.getByRole("button", { name: "Report a photo" }).click();
+      const form = report.getByRole("form", { name: "Report a photo" });
+      assert(/not to the creator/.test(await form.innerText()) && /don.t record who sent/.test(await form.innerText()), "the form says who sees a report and that the sender isn't recorded");
+      await form.getByLabel("Which photo?").selectOption(photos[1].id);
+      await form.getByLabel(/What.s wrong with it/).fill("E2E public photo report");
+      const sent = page.waitForResponse((r) => r.url().endsWith("/api/report/photo") && r.request().method() === "POST");
+      await form.getByRole("button", { name: "Send report" }).click();
+      assert((await sent).ok(), "the token-less report is accepted");
+      await form.getByRole("status").filter({ hasText: /safety team/ }).waitFor({ timeout: 5000 });
+      const list = await themeJson(await ctx.request.get(BASE + "/api/admin/reports?status=open"), "read admin reports");
+      const row = list.reports.find((r) => (r.detail ?? "").includes(photos[1].id) && (r.detail ?? "").includes(`/c/${slug}`));
+      assert(row && row.reason === "Inappropriate photo" && row.urgent, "Admin › Reports lists it as an urgent photo report");
+      assert(row.fan === null && row.linkHint === null, "the report carries no fan and no link");
+      await themeJson(await ctx.request.post(BASE + "/api/admin/reports", { data: { id: row.id, status: "dismissed" } }), "dismiss the e2e photo report");
+    });
+
     await step("theming: phone descriptions and keyboard reorder persist", async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       const card = await openLookSettings(page);
