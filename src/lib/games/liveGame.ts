@@ -2,16 +2,17 @@
 // server resolver (resolveActiveWheelId in src/lib/data/wheels.ts and the demo
 // store) runs this same code, so what the dashboard explains is what fans get.
 // SQL twin: _creator_default_wheel + _resolved_spin_wheel in
-// supabase/migrations/0061_personal_bingo.sql, which issuance
+// supabase/migrations/0061_personal_bingo.sql (link pin: 0065), which issuance
 // (_create_pass_grant_core) and spin time share. The interplay fixture
 // (src/lib/data/wheelResolutionInterplay.test.ts) replays SQL's answers
 // against this code.
 //
-// Order: campaign's chosen game → a game whose schedule window is open
-// (latest active_from, then newest created_at, then id) → the game flagged
-// active (oldest created_at, then id) → the oldest game (created_at, id) →
-// the link's stored game. Only non-archived, finished (game_ready = true)
-// wheel, scratch or bingo games can be played from a link.
+// Order: the link's own chosen game (per-fan pin, 0065) → campaign's chosen
+// game → a game whose schedule window is open (latest active_from, then
+// newest created_at, then id) → the game flagged active (oldest created_at,
+// then id) → the oldest game (created_at, id) → the link's stored game. Only
+// non-archived, finished (game_ready = true) wheel, scratch or bingo games can
+// be played from a link.
 import type { GameKind } from "./core/gameProof";
 
 const PLAYABLE_KINDS: ReadonlySet<string> = new Set<GameKind>(["wheel", "scratch", "bingo"]);
@@ -34,7 +35,7 @@ export type LiveReason =
   | { kind: "oldest" };
 
 /** Why a particular link plays the game it does. */
-export type PlayReason = LiveReason | { kind: "pinned" } | { kind: "stored" };
+export type PlayReason = LiveReason | { kind: "link_pinned" } | { kind: "pinned" } | { kind: "stored" };
 
 /**
  * A game a link can serve: not archived, saved and complete, of a known kind.
@@ -92,17 +93,27 @@ export interface PlayingGame<T> {
   reason: PlayReason;
   /** The campaign named a game that cannot be played (archived or a draft). */
   ignoredPin?: T | "missing";
+  /** The link itself was pinned to a game that cannot be played. */
+  ignoredLinkPin?: T | "missing";
 }
 
 /**
  * The game one link plays now. `games` must be the owner's own games only
- * (the server never lets a campaign point at another creator's game).
+ * (the server never lets a campaign point at another creator's game, and the
+ * database refuses a link pinned to one). The link's own pin (0065) comes
+ * before the campaign's; an unplayable pin is skipped, never an error.
  */
 export function resolvePlayingGame<T extends LiveGameCandidate>(
   games: readonly T[],
-  link: { pinnedWheelId?: string | null; storedWheelId?: string | null },
+  link: { linkPinnedWheelId?: string | null; pinnedWheelId?: string | null; storedWheelId?: string | null },
   now: Date,
 ): PlayingGame<T> | null {
+  if (link.linkPinnedWheelId) {
+    const pinned = games.find((game) => game.id === link.linkPinnedWheelId);
+    if (pinned && isPlayableGame(pinned)) return { game: pinned, reason: { kind: "link_pinned" } };
+    const rest = resolvePlayingGame(games, { pinnedWheelId: link.pinnedWheelId, storedWheelId: link.storedWheelId }, now);
+    return rest ? { ...rest, ignoredLinkPin: pinned ?? "missing" } : null;
+  }
   let ignoredPin: T | "missing" | undefined;
   if (link.pinnedWheelId) {
     const pinned = games.find((game) => game.id === link.pinnedWheelId);
@@ -151,6 +162,8 @@ export function formatWhen(iso: string | Date): string {
 /** Plain-language "because …" for a creator. */
 export function playReasonText(reason: PlayReason, campaignName?: string): string {
   switch (reason.kind) {
+    case "link_pinned":
+      return "this fan's link is set to play it";
     case "pinned":
       return campaignName ? `the campaign “${campaignName}” is set to play it` : "its campaign is set to play it";
     case "scheduled":

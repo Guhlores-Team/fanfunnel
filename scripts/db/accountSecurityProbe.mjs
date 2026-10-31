@@ -3,6 +3,12 @@
 import { randomUUID } from 'node:crypto';
 const id=n=>`00000000-0000-4000-8000-0000000062${n}`;
 const A=id('a0'),B=id('b0'),C=id('c0'),ADM=id('d0'),ADM2=id('d1'),OFF=id('d2'),ORG=id('e0'),ORG2=id('e1'),W=id('f0');
+// Observed-wait barriers (storageWorkProbe.mjs pattern): a holder renames itself
+// once its row is held and keeps it until it sees the other session blocked on a
+// lock. pg_stat_activity is frozen per transaction: clear the snapshot each poll.
+// The only timers left are hang guards and poll intervals.
+const seen=(name,condition='')=>`do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'${condition}); perform pg_sleep(0.01); end loop; end $$;`;
+const blocked=name=>seen(name," and wait_event_type='Lock'");
 const jwt=(uid,body,aal='aal1')=>`set local role authenticated; select set_config('request.jwt.claim.sub','${uid}',true); select set_config('request.jwt.claims','{"sub":"${uid}","role":"authenticated","aal":"${aal}"}',true); ${body} reset role;`;
 const seed=`grant usage on schema public,auth to authenticated,anon,service_role; grant select,insert,update,delete on public.profiles,public.wheels to authenticated; grant select on public.org_invites to authenticated; grant select on public.wheels to service_role;
 insert into auth.users(id,email) values('${A}','security-a@example.test'),('${B}','security-b@example.test'),('${C}','security-c@example.test'),('${ADM}','security-admin@example.test'),('${ADM2}','security-admin2@example.test'),('${OFF}','security-inactive@example.test');
@@ -71,11 +77,10 @@ export async function probeAccountSecurity(db,psql,psqlAsync) {
    // newer admin demotion, even though its outer RLS snapshot began earlier.
    sql(`update public.profiles set role='admin',is_active=true where id in('${ADM}','${ADM2}','${C}');`);
    const revokedTag=`security-revoke-${randomUUID().slice(0,8)}`;
-   const revoke=psqlAsync(raceDb,`begin;set local application_name='${revokedTag}';update public.profiles set role='creator' where id='${ADM}';select pg_sleep(0.35);commit;`);
-   let revokedReady=false;
-   for(let n=0;n<30;n++){const q=await psqlAsync(raceDb,`select count(*) from pg_stat_activity where application_name='${revokedTag}' and wait_event='PgSleep';`);if(q.stdout.trim()==='1'){revokedReady=true;break;}await psqlAsync(raceDb,'select pg_sleep(0.01);');}
-   if(!revokedReady)throw Error('admin revocation barrier not reached');
-   const stale=await psqlAsync(raceDb,`begin;set local statement_timeout='5s';${jwt(ADM,`update public.profiles set is_active=false where id='${C}';`,'aal2')}commit;`);
+   const revoke=psqlAsync(raceDb,`begin;set local statement_timeout='20s';update public.profiles set role='creator' where id='${ADM}';set local application_name='${revokedTag}';${blocked(`${revokedTag}-stale`)}commit;`);
+   const revokedReady=await psqlAsync(raceDb,`${seen(revokedTag)}select count(*) from pg_stat_activity where application_name='${revokedTag}';`);
+   if(revokedReady.stdout.trim()!=='1'){await revoke;throw Error('admin revocation barrier not reached');}
+   const stale=await psqlAsync(raceDb,`begin;set local statement_timeout='5s';set local application_name='${revokedTag}-stale';${jwt(ADM,`update public.profiles set is_active=false where id='${C}';`,'aal2')}commit;`);
    await revoke;checks++;
    const retained=sql(`select is_active from public.profiles where id='${C}';`);
    if((stale.status!==0&&!/admin authorization changed|permission denied/.test(stale.stderr))||retained.stdout.trim()!=='t')bad.push(`revoked admin regained profile authority: ${stale.stderr||stale.stdout}`);
@@ -83,11 +88,13 @@ export async function probeAccountSecurity(db,psql,psqlAsync) {
    const setup=sql(`${jwt(B,`select public.org_invite_creator('${ORG}','security-c@example.test');`)} update public.org_invites set expires_at=clock_timestamp()+interval '250 milliseconds' where org_id='${ORG}' and status='pending';`);
    if(setup.status!==0)throw Error(setup.stderr);
    const barrier=`security-expiry-${randomUUID().slice(0,8)}`;
-   const hold=psqlAsync(raceDb,`begin;set local application_name='${barrier}';select id from public.profiles where id='${C}' for update;select pg_sleep(0.4);commit;`);
-   let ready=false;
-   for(let n=0;n<30;n++){const q=await psqlAsync(raceDb,`select count(*) from pg_stat_activity where application_name='${barrier}' and wait_event='PgSleep';`);if(q.stdout.trim()==='1'){ready=true;break;}await psqlAsync(raceDb,'select pg_sleep(0.01);');}
-   if(!ready)throw Error('expiry barrier not reached');
-   const response=await psqlAsync(raceDb,`begin;set local statement_timeout='5s';${jwt(C,`select 'late:'||public.org_invite_respond((select id from public.org_invites where org_id='${ORG}' and status='pending'),true);`)}commit;`);
+   // The holder keeps the invitee's row until the response is seen waiting for
+   // it AND the invitation's deadline has passed, so the deadline is crossed
+   // during the wait whatever the machine load.
+   const hold=psqlAsync(raceDb,`begin;set local statement_timeout='20s';select id from public.profiles where id='${C}' for update;set local application_name='${barrier}';${blocked(`${barrier}-response`)}do $$ begin for i in 1..1500 loop exit when clock_timestamp()>(select max(expires_at) from public.org_invites where org_id='${ORG}' and status='pending'); perform pg_sleep(0.01); end loop; end $$;commit;`);
+   const ready=await psqlAsync(raceDb,`${seen(barrier)}select count(*) from pg_stat_activity where application_name='${barrier}';`);
+   if(ready.stdout.trim()!=='1'){await hold;throw Error('expiry barrier not reached');}
+   const response=await psqlAsync(raceDb,`begin;set local statement_timeout='5s';set local application_name='${barrier}-response';${jwt(C,`select 'late:'||public.org_invite_respond((select id from public.org_invites where org_id='${ORG}' and status='pending'),true);`)}commit;`);
    await hold;checks++;if(response.status!==0||!response.stdout.includes('late:expired'))bad.push(`deadline crossed while waiting: ${response.stderr||response.stdout}`);
    // A legitimate invitee can lose activity/approval/assurance while waiting
    // for its profile row. Both acceptance and decline must remain side-effect
@@ -99,10 +106,10 @@ export async function probeAccountSecurity(db,psql,psqlAsync) {
      if(!/^[a-f0-9-]{36}$/.test(pending))throw Error('security-race pending invite missing');
      const tag=`invite-${change}-${accept}-${randomUUID().slice(0,8)}`;
      const mutation=change==='inactive'?`update public.profiles set is_active=false where id='${C}';`:change==='approval'?`update public.profiles set approval_status='rejected' where id='${C}';`:`insert into auth.mfa_factors(user_id,status) values('${C}','verified');`;
-     const changed=psqlAsync(raceDb,`begin;set local application_name='${tag}';select id from public.profiles where id='${C}' for update;${mutation}select pg_sleep(0.4);commit;`);
-     let waiting=false;for(let n=0;n<30;n++){const q=await psqlAsync(raceDb,`select count(*) from pg_stat_activity where application_name='${tag}' and wait_event='PgSleep';`);if(q.stdout.trim()==='1'){waiting=true;break;}await psqlAsync(raceDb,'select pg_sleep(0.01);');}
-     if(!waiting){await changed;throw Error('invite security-change barrier not reached');}
-     const answered=await psqlAsync(raceDb,`begin;set local statement_timeout='5s';${jwt(C,`select 'answer:'||public.org_invite_respond('${pending}',${accept});`)}commit;`);
+     const changed=psqlAsync(raceDb,`begin;set local statement_timeout='20s';select id from public.profiles where id='${C}' for update;${mutation}set local application_name='${tag}';${blocked(`${tag}-answer`)}commit;`);
+     const waiting=await psqlAsync(raceDb,`${seen(tag)}select count(*) from pg_stat_activity where application_name='${tag}';`);
+     if(waiting.stdout.trim()!=='1'){await changed;throw Error('invite security-change barrier not reached');}
+     const answered=await psqlAsync(raceDb,`begin;set local statement_timeout='5s';set local application_name='${tag}-answer';${jwt(C,`select 'answer:'||public.org_invite_respond('${pending}',${accept});`)}commit;`);
      await changed;const state=sql(`select (org_id is null)||','||(select status from public.org_invites where id='${pending}') from public.profiles where id='${C}';`);checks++;
      if(answered.status!==0||!answered.stdout.includes('answer:inactive')||state.stdout.trim()!=='true,pending')bad.push(`invite ${change} while profile lock awaited (${accept?'accept':'decline'}): ${answered.stderr||answered.stdout.trim()} state=${state.stdout.trim()}`);
    }
@@ -117,12 +124,12 @@ export async function probeAccountSecurity(db,psql,psqlAsync) {
      const reset=sql(`update public.profiles set role='creator',is_active=true,approval_status='approved',org_id=null where id in('${B}','${C}');delete from auth.mfa_factors where user_id in('${B}','${C}');update public.org_invites set status='expired' where org_id='${ORG}' and status='pending';`);
      if(reset.status!==0)throw Error(reset.stderr);
      const gate=randomUUID(),heldTag='invite-owner-held-'+randomUUID().slice(0,8),sendTag='invite-owner-send-'+randomUUID().slice(0,8);
-     const holder=psqlAsync(raceDb,`begin;set local statement_timeout='5s';set local application_name='${heldTag}';select id from public.profiles where id='${C}' for update;do $$begin while not exists(select 1 from ff_invite_security_probe.gate where id='${gate}')loop perform pg_sleep(0.01);end loop;end$$;commit;`);
-     let held=false;for(let n=0;n<100;n++){const q=await psqlAsync(raceDb,`select count(*) from pg_stat_activity where application_name='${heldTag}' and wait_event='PgSleep';`);if(q.stdout.trim()==='1'){held=true;break;}}
-     if(!held){await holder;throw Error('sender recipient-row barrier missing');}
+     const holder=psqlAsync(raceDb,`begin;set local statement_timeout='20s';select id from public.profiles where id='${C}' for update;set local application_name='${heldTag}';do $$begin for i in 1..1500 loop exit when exists(select 1 from ff_invite_security_probe.gate where id='${gate}');perform pg_sleep(0.01);end loop;end$$;commit;`);
+     const held=await psqlAsync(raceDb,`${seen(heldTag)}select count(*) from pg_stat_activity where application_name='${heldTag}';`);
+     if(held.stdout.trim()!=='1'){sql(`insert into ff_invite_security_probe.gate(id)values('${gate}');`);await holder;throw Error('sender recipient-row barrier missing');}
      const sender=psqlAsync(raceDb,`begin;set local statement_timeout='5s';set local application_name='${sendTag}';${jwt(B,`select 'sent:'||public.org_invite_creator('${ORG}','security-c@example.test');`)}commit;`);
-     let blocked=false;for(let n=0;n<100;n++){const q=await psqlAsync(raceDb,`select count(*) from pg_stat_activity where application_name='${sendTag}' and wait_event_type='Lock';`);if(q.stdout.trim()==='1'){blocked=true;break;}}
-     if(!blocked){sql(`insert into ff_invite_security_probe.gate(id)values('${gate}');`);await Promise.all([holder,sender]);throw Error('sender was not waiting after owner admission');}
+     const senderWaiting=await psqlAsync(raceDb,`${blocked(sendTag)}select count(*) from pg_stat_activity where application_name='${sendTag}' and wait_event_type='Lock';`);
+     if(senderWaiting.stdout.trim()!=='1'){sql(`insert into ff_invite_security_probe.gate(id)values('${gate}');`);await Promise.all([holder,sender]);throw Error('sender was not waiting after owner admission');}
      const mutation=change==='inactive'?`update public.profiles set is_active=false where id='${B}';`:change==='approval'?`update public.profiles set approval_status='rejected' where id='${B}';`:`insert into auth.mfa_factors(user_id,status)values('${B}','verified');`;
      const revoke=sql(`begin;${mutation}insert into ff_invite_security_probe.gate(id)values('${gate}');commit;`);
      const [heldResult,sent]=await Promise.all([holder,sender]);const pending=sql(`select count(*) from public.org_invites where org_id='${ORG}' and status='pending';`);checks++;

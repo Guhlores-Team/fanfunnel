@@ -62,11 +62,13 @@ export function campaignGame<T extends ChoiceGame>(campaign: { pinnedWheelId?: s
 
 export interface LinkGame<T extends ChoiceGame = ChoiceGame> {
   game: T;
-  via: "campaign" | "live" | "stored";
+  via: "link" | "campaign" | "live" | "stored";
   campaign: ChoiceCampaign | null;
   because: string;
   /** The campaign chose a game that can't be played, so the link falls through to the live game. */
   ignored: { title: string | null; why: string } | null;
+  /** The link's own chosen game can't be played, so it falls through (0065). */
+  ignoredLinkPin: { title: string | null; why: string } | null;
 }
 
 /** Why a chosen game is being skipped, in the words the campaign card uses. */
@@ -77,14 +79,15 @@ function ignoredPinText<T extends ChoiceGame>(ignoredPin: T | "missing" | undefi
 
 /**
  * The game one fan link plays now. `pass.wheelId` is only the last fallback
- * (and the top-up target); the campaign's game and the live game come first.
+ * (and the top-up target); the link's own chosen game (0065), the campaign's
+ * game and the live game come first, in that order.
  */
-export function linkGame<T extends ChoiceGame>(pass: { wheelId: string; campaignId?: string | null }, campaigns: readonly ChoiceCampaign[], games: readonly T[], now: Date): LinkGame<T> | null {
+export function linkGame<T extends ChoiceGame>(pass: { wheelId: string; campaignId?: string | null; pinnedWheelId?: string | null }, campaigns: readonly ChoiceCampaign[], games: readonly T[], now: Date): LinkGame<T> | null {
   const campaign = pass.campaignId ? campaigns.find((c) => c.id === pass.campaignId) ?? null : null;
-  const playing = resolvePlayingGame(games, { pinnedWheelId: campaign?.pinnedWheelId ?? null, storedWheelId: pass.wheelId }, now);
+  const playing = resolvePlayingGame(games, { linkPinnedWheelId: pass.pinnedWheelId ?? null, pinnedWheelId: campaign?.pinnedWheelId ?? null, storedWheelId: pass.wheelId }, now);
   if (!playing) return null;
-  const via = playing.reason.kind === "pinned" ? "campaign" : playing.reason.kind === "stored" ? "stored" : "live";
-  return { game: playing.game, via, campaign, because: playReasonText(playing.reason, campaign?.name), ignored: ignoredPinText(playing.ignoredPin) };
+  const via = playing.reason.kind === "link_pinned" ? "link" : playing.reason.kind === "pinned" ? "campaign" : playing.reason.kind === "stored" ? "stored" : "live";
+  return { game: playing.game, via, campaign, because: playReasonText(playing.reason, campaign?.name), ignored: ignoredPinText(playing.ignoredPin), ignoredLinkPin: ignoredPinText(playing.ignoredLinkPin) };
 }
 
 /** Campaigns set to play this game. */

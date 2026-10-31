@@ -179,6 +179,8 @@ interface MockPass {
   token: string;
   wheelId: string;
   campaignId: string | null;
+  /** The game this one link is set to play (0065), before its campaign's. */
+  pinnedWheelId?: string | null;
   // Commit-reveal v2: pre-committed seed for the NEXT spin on this link.
   nextServerSeed?: string;
   nextServerSeedHash?: string;
@@ -744,8 +746,10 @@ export function mockResolveWheelId(
   return mockResolveActiveWheelId(now);
 }
 
-/** Model C play resolution: campaign pin, live creator wheel, stored fallback. */
-export function mockResolvedSpinWheelId(pass: { campaignId: string | null; wheelId: string }, now = new Date()): string {
+/** Model C play resolution: link pin (0065), campaign pin, live creator wheel, stored fallback. */
+export function mockResolvedSpinWheelId(pass: { campaignId: string | null; wheelId: string; pinnedWheelId?: string | null }, now = new Date()): string {
+  const linkPinned = pass.pinnedWheelId ? store.wheels.get(pass.pinnedWheelId) : null;
+  if (linkPinned && mockPlayable(linkPinned)) return linkPinned.id;
   const pinnedId = pass.campaignId ? store.campaigns.find(campaign => campaign.id === pass.campaignId)?.pinnedWheelId : null;
   const pinned = pinnedId ? store.wheels.get(pinnedId) : null;
   if (pinned && mockPlayable(pinned)) return pinned.id;
@@ -1920,6 +1924,7 @@ export function mockListFans(): FanAccountSummary[] {
       wheelId: p.wheelId,
       wheelTitle: store.wheels.get(p.wheelId)?.title ?? "Wheel",
       campaignId: p.campaignId ?? null,
+      pinnedWheelId: p.pinnedWheelId ?? null,
       campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
       spinsRemaining: p.spinsRemaining,
     }));
@@ -2986,6 +2991,19 @@ export function mockSetFanBlocked(fanId: string, blocked: boolean): { ok: true }
   if (!fan) return { error: "not_found" };
   fan.blockedAt = blocked ? new Date().toISOString() : null;
   if (blocked) mockCancelFanFocus(fanId);
+  return { ok: true };
+}
+
+/** Demo twin of setFanLinkGame (0065): pin one link to one playable game, or null to follow again. */
+export function mockSetFanLinkGame(fanId: string, token: string, wheelId: string | null): { ok: true } | { error: string } {
+  const fan = store.fans.get(fanId);
+  if (!fan) return { error: "not_found" };
+  ensurePasses(fan);
+  const pass = fan.passes.find((p) => p.token === token);
+  if (!pass) return { error: "not_found" };
+  const pinError = mockCampaignPinError(wheelId);
+  if (pinError) return { error: pinError };
+  pass.pinnedWheelId = wheelId;
   return { ok: true };
 }
 

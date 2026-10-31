@@ -44,6 +44,7 @@ export {
   getFanDetail,
   deleteFan,
   setFanBlocked,
+  setFanLinkGame,
   reportCreator,
   selfExclude,
   updateFanMeta,

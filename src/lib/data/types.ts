@@ -315,6 +315,8 @@ export interface FanPassInfo {
    *  necessarily what it plays (see resolvePlayingGame). */
   wheelId: string;
   campaignId?: string | null;
+  /** The game this one link is set to play (0065), before its campaign's. */
+  pinnedWheelId?: string | null;
   wheelTitle: string;
   campaignName: string | null;
   spinsRemaining: number;
@@ -409,16 +411,21 @@ export interface EngagementHeatmap {
   max: number;
 }
 
+/** Which prize costs a report used (A35): each award's cost recorded when it
+ *  was won (0065), the prize's current cost (awards from before 0065), or both. */
+export type CostBasis = "award_cost" | "mixed" | "current_prize_cost";
+
 /** #18 Prize ROI: a creator's per-prize win count and your cost to fulfil it. */
 export interface PrizeRoiRow {
   prizeId?: string | null;
-  costBasis?: "current_prize_cost";
-  historicalCostsKnown?: false;
+  costBasis?: CostBasis;
+  /** Every award in the row recorded its cost when it was won. */
+  historicalCostsKnown?: boolean;
   label: string;
   rarity: Rarity;
   timesWon: number;
-  costCents: number | null;
-  totalCostCents: number; // Known current estimate only; display unknown when costCents is null
+  costCents: number | null; // the prize's current unit cost (null: unknown)
+  totalCostCents: number; // recorded award-time costs plus current-cost estimates for older awards
 }
 
 /** #19 Cohort retention: fans cohorted by their first grant's campaign. */

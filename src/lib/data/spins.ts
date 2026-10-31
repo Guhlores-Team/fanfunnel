@@ -59,7 +59,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // page still works (using the fan-level aggregate balance) instead of 500ing.
   const primary = await sb
     .from("fan_passes")
-    .select(`id, creator_id, campaign_id, wheel_id, fan_id, is_active, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
+    .select(`id, creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, is_active, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -97,6 +97,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     creator_id: string;
     campaign_id: string | null;
     wheel_id: string;
+    pinned_wheel_id?: string | null; // per-fan game pin (migration 0065)
     fan_id: string;
     spins_remaining?: number; // present post-0020; falls back to fan aggregate
     next_server_seed_hash?: string | null; // commit-reveal (migration 0022)

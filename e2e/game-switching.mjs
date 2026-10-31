@@ -129,6 +129,22 @@ export async function gameSwitchingJourney(browser, { step, assert }, sink, ctx)
       await goto(wheelPage, `/spin/${fan.token}`, 300);
       await wheelPage.locator("[data-testid='fan-game'][data-game-kind='wheel']").waitFor({ timeout: 10000 });
       await wheelPage.close();
+      // 0065: "Change game for this fan only" beats the campaign's game for this one link.
+      const fanOnly = drawer.getByLabel("Change game for this fan only").first();
+      const pinnedLink = page.waitForResponse((r) => r.url().includes(`/api/fans/${fan.fanId}/link-game`) && r.request().method() === "POST");
+      await fanOnly.selectOption(state.scratch.id);
+      assert((await pinnedLink).ok(), "the per-fan game change is accepted");
+      await drawer.locator(`[data-testid='link-plays'][data-plays-game-id='${state.scratch.id}']`).first().waitFor({ timeout: 8000 });
+      assert(/chosen for this fan only/.test(await drawer.getByTestId("link-plays").first().innerText()), "the link says it plays this fan's own game");
+      const ownPage = await ctx.newPage(); attachSink(ownPage, sink);
+      await goto(ownPage, `/spin/${fan.token}`, 300);
+      await ownPage.locator("[data-testid='fan-game'][data-game-kind='scratch']").waitFor({ timeout: 10000 });
+      await ownPage.close();
+      const followAgain = page.waitForResponse((r) => r.url().includes(`/api/fans/${fan.fanId}/link-game`) && r.request().method() === "POST");
+      await fanOnly.selectOption("");
+      assert((await followAgain).ok(), "following the campaign again is accepted");
+      await drawer.locator(`[data-testid='link-plays'][data-plays-game-id='${state.wheelId}']`).first().waitFor({ timeout: 8000 });
+      assert(/via campaign/.test(await drawer.getByTestId("link-plays").first().innerText()), "the link follows its campaign's game again");
     });
   } finally {
     await goto(page, "/dashboard", 100).catch(() => {});

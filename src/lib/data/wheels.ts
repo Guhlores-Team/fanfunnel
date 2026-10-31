@@ -75,16 +75,27 @@ export async function resolveActiveWheelId(
 }
 
 /**
- * The wheel a specific pass should use right now: the campaign's pinned game
- * (if set and playable) wins; otherwise the creator's live game; otherwise
- * the pass's own stored wheel_id (if playable). Mirrors SQL
- * _resolved_spin_wheel (0061); "playable" is isPlayableGame in liveGame.ts.
+ * The wheel a specific pass should use right now: the link's own pinned game
+ * (0065, if set and playable) wins; then the campaign's pinned game (if set
+ * and playable); otherwise the creator's live game; otherwise the pass's own
+ * stored wheel_id (if playable). Mirrors SQL _resolved_spin_wheel (0061,
+ * 0065); "playable" is isPlayableGame in liveGame.ts.
  */
 export async function resolveWheelId(
   sb: AnyClient,
-  pass: { creator_id: string; campaign_id: string | null; wheel_id: string },
+  pass: { creator_id: string; campaign_id: string | null; wheel_id: string; pinned_wheel_id?: string | null },
   now: Date
 ): Promise<string | null> {
+  if (pass.pinned_wheel_id) {
+    const { data: pinned } = await sb
+      .from("wheels")
+      .select("id, archived_at, game_kind, game_ready")
+      .eq("id", pass.pinned_wheel_id)
+      .eq("creator_id", pass.creator_id)
+      .maybeSingle();
+    const row = pinned as { id: string; archived_at: string | null; game_kind?: string; game_ready?: boolean } | null;
+    if (row && isPlayableGame({ archivedAt: row.archived_at, gameReady: row.game_ready, gameKind: row.game_kind })) return row.id;
+  }
   if (pass.campaign_id) {
     const { data: campaign } = await sb
       .from("campaigns")
@@ -636,12 +647,11 @@ export async function archiveWheel(
   const row = target as { id: string; is_active: boolean } | null;
   if (!row) return { error: "not_found" };
 
-  const { error } = await sb
-    .from("wheels")
-    .update({ archived_at: new Date().toISOString(), is_active: false })
-    .eq("id", id)
-    .eq("creator_id", user.id);
+  // archive_wheel (0065) takes the game's Focus/Chase fans before the wheel
+  // row, the order a credited play uses; a plain UPDATE could deadlock with it.
+  const { data: archived, error } = await sb.rpc("archive_wheel", { p_wheel: id });
   if (error) return { error: gameWriteError(error) };
+  if (archived !== "ok") return { error: "not_found" };
 
   // If we just archived the active wheel, promote the oldest survivor.
   if (row.is_active) {
@@ -708,19 +718,12 @@ export async function deleteWheel(
   const row = target as { id: string; is_active: boolean } | null;
   if (!row) return { error: "not_found" };
 
-  // Block deleting a wheel that has spin history — protects revenue/analytics.
-  const { count } = await sb
-    .from("spins")
-    .select("id", { count: "exact", head: true })
-    .eq("wheel_id", id);
-  if ((count ?? 0) > 0) return { error: "has_history" };
-
-  const { error } = await sb
-    .from("wheels")
-    .delete()
-    .eq("id", id)
-    .eq("creator_id", user.id);
+  // delete_wheel (0065) refuses a game with spin history (revenue/analytics
+  // records) under the wheel lock, taken after its Focus/Chase fans like a play.
+  const { data: deleted, error } = await sb.rpc("delete_wheel", { p_wheel: id });
   if (error) return { error: gameWriteError(error) };
+  if (deleted === "has_history") return { error: "has_history" };
+  if (deleted !== "ok") return { error: "not_found" };
 
   // If the deleted wheel was active, promote the oldest survivor.
   if (row.is_active) {

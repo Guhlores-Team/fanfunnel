@@ -15,9 +15,10 @@ import {
   mockAckFan,
   mockSelfExclude,
   mockSetFanBlocked,
+  mockSetFanLinkGame,
   mockReportCreator,
 } from "./mock";
-import { isUuid } from "./shared";
+import { campaignPinError, isUuid } from "./shared";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
 import { isOnBreak } from "@/lib/play/playGuard";
@@ -145,7 +146,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   const cutoff = new Date().toISOString();
   const [fanRows, passRows, spinRows, grantRows, visits] = await Promise.all([
     readScopedRows<Record<string, unknown>>(sb, "fans", "display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at, break_until", q => q.eq("creator_id", user.id), cutoff),
-    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, token, created_at, spins_remaining, wheel_id, campaign_id, is_active, self_excluded_at, wheel:wheels(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, token, created_at, spins_remaining, wheel_id, campaign_id, pinned_wheel_id, is_active, self_excluded_at, wheel:wheels!fan_passes_wheel_id_fkey(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
     readScopedRows<Record<string, unknown>>(sb, "spins", "fan_id, prize_label, prize_rarity, created_at", q => q.eq("creator_id", user.id).not("fan_id", "is", null), cutoff),
     readScopedRows<Record<string, unknown>>(sb, "grants", "fan_id, amount_cents, campaign_id, campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
     visitsByFan(sb, user.id),
@@ -165,7 +166,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
     id: string; display_name: string | null; handle: string | null;
     spins_remaining: number; spins_granted_total: number; tags: string[] | null;
     blocked_at: string | null; break_until: string | null;
-    fan_passes: { token: string; created_at: string; spins_remaining: number; wheel_id: string; campaign_id: string | null; is_active: boolean; self_excluded_at: string | null; wheel: { title: string } | null; campaign: { name: string } | null }[];
+    fan_passes: { token: string; created_at: string; spins_remaining: number; wheel_id: string; campaign_id: string | null; pinned_wheel_id?: string | null; is_active: boolean; self_excluded_at: string | null; wheel: { title: string } | null; campaign: { name: string } | null }[];
     spins: { prize_label: string; prize_rarity: Rarity; created_at: string }[];
     grants: { amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[];
   }[];
@@ -194,6 +195,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
         wheelId: p.wheel_id,
         wheelTitle: p.wheel?.title ?? "Wheel",
         campaignId: p.campaign_id ?? null,
+        pinnedWheelId: p.pinned_wheel_id ?? null,
         campaignName: p.campaign?.name ?? null,
         spinsRemaining: p.spins_remaining ?? 0,
       }));
@@ -366,7 +368,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   // Every pass, oldest first in editGrant's order: the links list (newest
   // first) and each grant's preview balance come from this one read.
-  const passRows = await readScopedRows<{ token: string; created_at: string; is_active: boolean; spins_remaining: number; wheel: { title: string } | null }>(sb, "fan_passes", "token, created_at, is_active, spins_remaining, wheel:wheels(title)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
+  const passRows = await readScopedRows<{ token: string; created_at: string; is_active: boolean; spins_remaining: number; wheel: { title: string } | null }>(sb, "fan_passes", "token, created_at, is_active, spins_remaining, wheel:wheels!fan_passes_wheel_id_fkey(title)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
   passRows.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
 
   const passesOldestFirst = ((passRows ?? []) as unknown as {
@@ -536,6 +538,40 @@ export async function setFanBlocked(
   return error ? { error: "db_error" } : { ok: true };
 }
 
+/**
+ * Choose the game one fan link plays (0065): null follows the link's campaign
+ * and the creator's live game again. The game must be the creator's own and
+ * playable (campaignPinError, the campaign pin's test). The write is the
+ * service RPC set_fan_pass_game behind an actor context minted from this
+ * session ('grant', the fan_passes_write permission, 0062 MFA step-up), which
+ * rechecks authority after its row locks and refuses another creator's game.
+ */
+export async function setFanLinkGame(
+  fanId: string,
+  token: string,
+  wheelId: string | null
+): Promise<{ ok: true } | { error: string }> {
+  if (wheelId !== null && !isUuid(wheelId)) return { error: "not_found" };
+  if (!isSupabaseConfigured()) return mockSetFanLinkGame(fanId, token, wheelId);
+  if (!isUuid(fanId) || typeof token !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(token)) return { error: "not_found" };
+  const sb = await createClient();
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  const { data: pass, error: readError } = await sb.from("fan_passes")
+    .select("id, creator_id").eq("token", token).eq("fan_id", fanId).eq("is_active", true).maybeSingle();
+  if (readError) return { error: "db_error" };
+  if (!pass) return { error: "not_found" };
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: pass.creator_id, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "forbidden" };
+  const pinError = await campaignPinError(sb, pass.creator_id, wheelId);
+  if (pinError) return { error: pinError };
+  const context = await issueCreatorActorContext(sb, pass.creator_id, "grant");
+  if (!context) return { error: "db_error" };
+  const result = await economicRpc("set_fan_pass_game", { p_context: context, p_creator: pass.creator_id, p_pass: pass.id, p_wheel: wheelId, p_actor: user.id });
+  if (result?.status === "ok") return { ok: true };
+  return { error: ["forbidden", "not_found", "game_not_playable"].includes(String(result?.status)) ? String(result?.status) : "db_error" };
+}
+
 /** A fan reports the creator behind their token (service-role; fans aren't authed). */
 export async function reportCreator(
   token: string,
@@ -646,7 +682,7 @@ export async function resolveFanByToken(
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select("creator_id, campaign_id, wheel_id, fan_id, fan:fans(blocked_at)")
+    .select("creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, fan:fans(blocked_at)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -654,6 +690,7 @@ export async function resolveFanByToken(
     creator_id: string;
     campaign_id: string | null;
     wheel_id: string;
+    pinned_wheel_id?: string | null;
     fan_id: string;
     fan?: { blocked_at: string | null } | null;
   } | null;

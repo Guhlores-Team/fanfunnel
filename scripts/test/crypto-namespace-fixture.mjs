@@ -1,7 +1,7 @@
 // Real disposable PostgreSQL16. Never connects to a hosted database.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chownSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const PG = process.env.PG_BIN;
 assert.ok(PG, "PG_BIN must select PostgreSQL16");
 const WORK = mkdtempSync(join(tmpdir(), "ffcrypto-proof-"));
+// Postgres refuses to run as root; like scripts/db/schema-drift-check.mjs, start
+// the server as the `postgres` OS user in that case (clients stay as-is).
+let runAs = {};
+if (typeof process.getuid === "function" && process.getuid() === 0) {
+  const uid = spawnSync("id", ["-u", "postgres"], { encoding: "utf8" }), gid = spawnSync("id", ["-g", "postgres"], { encoding: "utf8" });
+  assert.ok(uid.status === 0 && gid.status === 0, "running as root and no `postgres` OS user exists to start the server as");
+  runAs = { uid: Number(uid.stdout.trim()), gid: Number(gid.stdout.trim()) };
+  chownSync(WORK, runAs.uid, runAs.gid);
+}
 const DATA = join(WORK, "data"), PORT = "54312";
 const ENV = { ...process.env, PGOPTIONS: "-c search_path=public,extensions,pg_temp" };
 const manifest = JSON.parse(readFileSync(join(ROOT, "scripts/db/crypto-namespace-0059-manifest.json"), "utf8"));
@@ -24,8 +33,12 @@ const target = signatures.at(-1);
 let checks = 0, started = false;
 const check = (condition, label) => { assert.ok(condition, label); checks++; };
 function command(binary, args) {
-  return spawnSync(join(PG, binary), args, { encoding: "utf8", env: ENV, timeout: 60_000 });
+  const server = binary === "initdb" || binary === "pg_ctl";
+  return spawnSync(join(PG, binary), args, { encoding: "utf8", env: ENV, timeout: 60_000, ...(server ? { cwd: WORK, ...runAs } : {}) });
 }
+// Observed waits (scripts/db/storageWorkProbe.mjs pattern); pg_stat_activity is
+// frozen per transaction, so each poll clears the snapshot. Only hang guards are timers.
+const seenSQL = name => `do $seen$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'); perform pg_sleep(0.01); end loop; end $seen$;`;
 function sql(db, query, allowedFailure = false) {
   const result = command("psql", ["-h", WORK, "-p", PORT, "-U", "postgres", "-d", db, "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", query]);
   if (!allowedFailure) assert.equal(result.status, 0, result.stderr);
@@ -49,7 +62,7 @@ function asyncSQL(db, query) {
   });
 }
 try {
-  const init = command("initdb", ["-D", DATA, "-A", "trust", "-U", "fixture_bootstrap", "--no-sync"]);
+  const init = command("initdb", ["-D", DATA, "-A", "trust", "-U", "fixture_bootstrap", "--no-sync", "-E", "UTF8", "--locale=C"]);
   assert.equal(init.status, 0, init.stderr);
   const start = command("pg_ctl", ["-D", DATA, "-w", "-l", join(WORK, "pg.log"), "-o", `-p ${PORT} -k ${WORK} -c listen_addresses= -c fsync=off`, "start"]);
   assert.equal(start.status, 0, start.stderr); started = true;
@@ -117,18 +130,27 @@ try {
     refusal(db, changed, definition, "CRYPTO_REPAIR_DEFINITION_REFUSED");
     sql(db, resetPaths);
     // The only injected command is a local test barrier; production has no pause.
+    // It is an observed wait, not a sleep window: at the real second-loop
+    // boundary the correction renames itself, then continues only once the
+    // concurrent body change has committed or is seen blocked behind it.
     const marker = "  for item in select value from jsonb_array_elements(expected) order by value->>'signature' loop";
     const original = correctionSQL(), first = original.indexOf(marker), second = original.indexOf(marker, first + marker.length);
     check(first >= 0 && second > first, "real second-loop boundary located");
-    const racedQuery = original.slice(0, second) + "  perform pg_sleep(0.7);\n" + original.slice(second);
+    const barrierSQL = `  perform set_config('application_name','crypto_namespace_race_held',false);
+  for fixture_poll in 1..1500 loop
+    perform pg_stat_clear_snapshot();
+    exit when exists(select 1 from pg_proc where oid='${target}'::regprocedure and position('benign concurrency fixture' in prosrc)>0)
+      or exists(select 1 from pg_stat_activity where application_name='crypto_namespace_ddl' and wait_event_type='Lock');
+    perform pg_sleep(0.01);
+  end loop;
+`;
+    const racedQuery = original.slice(0, second) + barrierSQL + original.slice(second);
     const racing = asyncSQL(db, `set application_name='crypto_namespace_race';${racedQuery}`);
-    let barrier = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (sql(db, "select count(*) from pg_stat_activity where application_name='crypto_namespace_race' and wait_event='PgSleep';").stdout.trim() === "1") { barrier = true; break; }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 10));
-    }
+    const barrier = sql(db, `${seenSQL("crypto_namespace_race_held")}select count(*) from pg_stat_activity where application_name='crypto_namespace_race_held';`).stdout.trim() === "1";
     check(barrier, "real inter-session DDL barrier observed");
-    sql(db, changed); const raced = await racing;
+    const ddl = asyncSQL(db, `set application_name='crypto_namespace_ddl';${changed}`);
+    const raced = await racing; const ddlDone = await ddl;
+    check(ddlDone.status === 0, `the concurrent body change commits (${ddlDone.stderr.trim()})`);
     const observed = readback(db);
     check(raced.status !== 0 || observed.definitions !== 15, "concurrent changed body never receives verified readback");
     check(sql(db, `select position('benign concurrency fixture' in prosrc)>0 from pg_proc where oid='${target}'::regprocedure;`).stdout.trim() === "t", "correction never overwrites concurrent body");

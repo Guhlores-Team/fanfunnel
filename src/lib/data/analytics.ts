@@ -5,8 +5,10 @@ import { focusTag } from "./focusTag";
 // ROI, profit, cohorts) and the Autopilot feed.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import type { Rarity } from "@/lib/games/wheel/types";
+import type { AnyClient } from "./shared";
 import type {
   CohortRow,
+  CostBasis,
   CreatorMetricsExtra,
   CreatorOverview,
   EngagementHeatmap,
@@ -318,7 +320,29 @@ function currentPrizeCost(value: number | null | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-// #18 Current-cost estimate: stable prize identity, never a label join.
+/** A35: the prize cost each award recorded when it was won
+ * (redemptions.cost_cents_at_award, 0065), by spin id. Older awards have none
+ * and fall back to the prize's current cost. Same window and cutoff as the
+ * spins they belong to (one transaction writes both). */
+async function awardCostSnapshots(sb: AnyClient, creatorId: string, since: string, cutoff: string): Promise<Map<string, number>> {
+  const snapshots = new Map<string, number>();
+  await visitScopedRows<{ spin_id: string | null; cost_cents_at_award: number | null }>(sb, "redemptions", "spin_id, cost_cents_at_award", q => q.eq("creator_id", creatorId).gte("created_at", since), cutoff, page => {
+    for (const row of page) {
+      const cost = currentPrizeCost(row.cost_cents_at_award);
+      if (cost !== null && typeof row.spin_id === "string" && row.spin_id) snapshots.set(row.spin_id, cost);
+    }
+  });
+  return snapshots;
+}
+
+/** Which costs a report used: every award's own snapshot, none, or both. */
+function costBasisOf(snapshotted: number, estimated: number): { costBasis: CostBasis; historicalCostsKnown: boolean } {
+  if (snapshotted > 0 && estimated === 0) return { costBasis: "award_cost", historicalCostsKnown: true };
+  return { costBasis: snapshotted > 0 ? "mixed" : "current_prize_cost", historicalCostsKnown: false };
+}
+
+// #18 Award-time cost (A35) with a current-cost fallback for older awards:
+// stable prize identity, never a label join.
 export async function getPrizeRoi(days: number = 90): Promise<PrizeRoiRow[]> {
   const cutoff = new Date().toISOString();
   const n = clampDays(days);
@@ -331,42 +355,47 @@ export async function getPrizeRoi(days: number = 90): Promise<PrizeRoiRow[]> {
   const meta = new Map(prizeRows.map(prize => [prize.id, prize]));
   const since = new Date(Date.parse(cutoff) - n * 24 * 60 * 60 * 1000).toISOString();
   const spinRows = await readScopedRows<{ prize_id: string | null; prize_label: string; prize_rarity: Rarity }>(sb, "spins", "prize_id, prize_label, prize_rarity", q => q.eq("creator_id", user.id).gte("created_at", since), cutoff);
-  const counts = new Map<string, { prizeId: string | null; label: string; rarity: Rarity; timesWon: number }>();
+  const snapshots = await awardCostSnapshots(sb, user.id, since, cutoff);
+  const counts = new Map<string, { prizeId: string | null; label: string; rarity: Rarity; timesWon: number; snapshotCents: number; snapshotted: number }>();
   for (const spin of spinRows) {
     const prizeId = typeof spin.prize_id === "string" && spin.prize_id ? spin.prize_id : null;
     // Deleted references become NULL. Their display groups remain unknown;
     // matching a surviving label is never authority for assigning its cost.
     const key = prizeId === null ? JSON.stringify(["unresolved", spin.prize_label, spin.prize_rarity]) : `prize:${prizeId}`;
-    const current = counts.get(key);
-    if (current) current.timesWon++;
-    else counts.set(key, { prizeId, label: spin.prize_label, rarity: spin.prize_rarity, timesWon: 1 });
+    const snapshot = snapshots.get(spin.id);
+    const current = counts.get(key) ?? { prizeId, label: spin.prize_label, rarity: spin.prize_rarity, timesWon: 0, snapshotCents: 0, snapshotted: 0 };
+    current.timesWon++;
+    if (snapshot !== undefined) { current.snapshotCents += snapshot; current.snapshotted++; }
+    counts.set(key, current);
   }
   const rows: PrizeRoiRow[] = [];
   for (const group of counts.values()) {
     const prize = group.prizeId === null ? undefined : meta.get(group.prizeId);
     const costCents = currentPrizeCost(prize?.cost_cents);
+    const estimated = group.timesWon - group.snapshotted;
     rows.push({ prizeId: group.prizeId, label: prize?.label ?? group.label, rarity: prize?.rarity ?? group.rarity,
-      timesWon: group.timesWon, costCents, totalCostCents: (costCents ?? 0) * group.timesWon,
-      costBasis: "current_prize_cost", historicalCostsKnown: false });
+      timesWon: group.timesWon, costCents, totalCostCents: group.snapshotCents + (costCents ?? 0) * estimated,
+      ...costBasisOf(group.snapshotted, estimated) });
   }
   rows.sort((a, b) => b.totalCostCents - a.totalCostCents || (a.prizeId ?? a.label).localeCompare(b.prizeId ?? b.label));
   return rows;
 }
 
 export interface ProfitSummary {
-  costBasis: "current_prize_cost";
-  historicalCostsKnown: false;
+  costBasis: CostBasis;
+  historicalCostsKnown: boolean;
   dataStatus?: "complete" | "partial" | "unavailable";
   revenueCents: number; // what fans paid (grants) in the window
-  costCents: number; // known current-cost estimate; not a cost-at-award snapshot
+  costCents: number; // award-time cost where recorded (0065), else the current cost
   profitCents: number; // revenue − cost
   marginPct: number; // profit ÷ revenue (0 if no revenue)
-  costsComplete: boolean; // every included award resolves to a known CURRENT cost
+  costsComplete: boolean; // every included award has a recorded or known current cost
 }
 
 /**
- * Revenue minus a current-prize-cost estimate. No immutable cost-at-award
- * snapshot exists; expose that basis rather than claiming historical profit.
+ * Revenue minus prize costs: each award's recorded cost at award time (A35,
+ * redemptions.cost_cents_at_award) and, for awards from before 0065, the
+ * prize's current cost as an estimate. costBasis says which were used.
  */
 export async function getProfitSummary(days: number = 90): Promise<ProfitSummary> {
   const cutoff = new Date().toISOString();
@@ -397,10 +426,14 @@ export async function getProfitSummary(days: number = 90): Promise<ProfitSummary
   await visitScopedRows<{ cost_cents: number | null }>(sb, "prizes", "cost_cents, wheel:wheels!inner(creator_id)", q => q.eq("wheel.creator_id", user.id), cutoff, page => {
     for (const prize of page) costByPrizeId.set(prize.id, currentPrizeCost(prize.cost_cents));
   });
-  let costCents = 0, costsComplete = true;
+  const snapshots = await awardCostSnapshots(sb, user.id, since, cutoff);
+  let costCents = 0, costsComplete = true, snapshotted = 0, estimated = 0;
   await visitScopedRows<{ prize_id: string | null }>(sb, "spins", "prize_id", q => q.eq("creator_id", user.id).gte("created_at", since), cutoff, page => {
     for (const spin of page) {
+      const snapshot = snapshots.get(spin.id);
+      if (snapshot !== undefined) { costCents += snapshot; snapshotted++; continue; }
       const cost = spin.prize_id === null ? undefined : costByPrizeId.get(spin.prize_id);
+      estimated++;
       if (cost == null) costsComplete = false; else costCents += cost;
     }
   });
@@ -408,7 +441,7 @@ export async function getProfitSummary(days: number = 90): Promise<ProfitSummary
   const profitCents = revenueCents - costCents;
   return {
     dataStatus: "complete",
-    costBasis: "current_prize_cost", historicalCostsKnown: false,
+    ...costBasisOf(snapshotted, estimated),
     revenueCents,
     costCents,
     profitCents,

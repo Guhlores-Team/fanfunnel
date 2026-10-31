@@ -268,6 +268,29 @@ async function main() {
   db.spins.push({ id: "identity-renamed-history", creator_id: OWNER, fan_id: FAN, wheel_id: "identity-game", kind: "play", game_kind: "bingo", prize_id: cheapId, prize_label: "Older historical title", prize_rarity: "common", created_at: recent });
   identityRoi = await analytics.getPrizeRoi(1);
   check("multiple historical labels for one ID aggregate once under that ID", identityRoi.length === 2 && identityRoi.find(row => row.prizeId === cheapId)?.timesWon === 2 && identityRoi.find(row => row.prizeId === cheapId)?.totalCostCents === 2000);
+  // A35 (0065): the cost recorded when a prize was won beats its current cost;
+  // awards from before 0065 (no snapshot) keep the current-cost estimate.
+  const originalRedemptions = db.redemptions;
+  db.redemptions = [
+    { id: "identity-r-primary", creator_id: OWNER, spin_id: "identity-primary", status: "pending", cost_cents_at_award: 700, created_at: recent },
+    { id: "identity-r-foreign", creator_id: OTHER, spin_id: "identity-bonus", status: "pending", cost_cents_at_award: 1, created_at: recent },
+  ];
+  identityProfit = await analytics.getProfitSummary(1); identityRoi = await analytics.getPrizeRoi(1);
+  check("a recorded award cost replaces the current cost for that award only", identityProfit.costCents === 700 + 5000 + 1000 && identityProfit.costsComplete && identityProfit.costBasis === "mixed" && identityProfit.historicalCostsKnown === false);
+  check("another creator's redemption row never supplies a cost", identityRoi.find(row => row.prizeId === costlyId)?.totalCostCents === 5000);
+  check("ROI totals mix recorded and current costs per award, keeping the current unit cost", identityRoi.find(row => row.prizeId === cheapId)?.totalCostCents === 1700 && identityRoi.find(row => row.prizeId === cheapId)?.costCents === 1000 && identityRoi.find(row => row.prizeId === cheapId)?.costBasis === "mixed");
+  db.redemptions.push(
+    { id: "identity-r-bonus", creator_id: OWNER, spin_id: "identity-bonus", status: "pending", cost_cents_at_award: 4000, created_at: recent },
+    { id: "identity-r-history", creator_id: OWNER, spin_id: "identity-renamed-history", status: "pending", cost_cents_at_award: 900, created_at: recent },
+  );
+  db.prizes.find(row => row.id === cheapId)!.cost_cents = 9999;
+  identityProfit = await analytics.getProfitSummary(1); identityRoi = await analytics.getPrizeRoi(1);
+  check("once every award recorded its cost, editing a current cost no longer rewrites history", identityProfit.costCents === 700 + 4000 + 900 && identityProfit.costBasis === "award_cost" && identityProfit.historicalCostsKnown === true && identityRoi.every(row => row.costBasis === "award_cost" && row.historicalCostsKnown === true));
+  db.prizes = db.prizes.filter(row => row.id !== cheapId);
+  db.spins.find(row => row.id === "identity-primary")!.prize_id = null;
+  identityProfit = await analytics.getProfitSummary(1); identityRoi = await analytics.getPrizeRoi(1);
+  check("a recorded cost survives the prize's deletion and keeps the report complete", identityProfit.costCents === 5600 && identityProfit.costsComplete && identityRoi.find(row => row.prizeId === null)?.totalCostCents === 700 && identityRoi.find(row => row.prizeId === null)?.historicalCostsKnown === true);
+  db.redemptions = originalRedemptions;
   Object.assign(db, originalFinancialTables);
   signedIn = false; const noAuth = await analytics.getOverview();
   check("signed-out creator overview never leaks aggregate or reward rows", noAuth.metrics.spinsPlayed === 0 && noAuth.redemptions.length === 0);

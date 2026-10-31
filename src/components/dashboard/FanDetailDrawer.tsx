@@ -21,7 +21,7 @@ import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import GrantRow from "./GrantEditRow";
 import { CampaignGameSelect, FOLLOW_LIVE, GameName } from "./GameChoice";
-import { KIND_SHORT, kindOf, linkGame, liveExplanation, type ChoiceGame } from "./gameAssignment";
+import { KIND_SHORT, gameOptionLabel, kindOf, linkGame, liveExplanation, pinUnavailableReason, type ChoiceGame } from "./gameAssignment";
 import { isPlayableGame } from "@/lib/games/liveGame";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
@@ -692,6 +692,7 @@ export default function FanDetailDrawer({
                           </span>
                         </div>
                         <LinkPlays
+                          fanId={fanId}
                           pass={p}
                           campaigns={campaigns}
                           wheels={wheels}
@@ -699,6 +700,7 @@ export default function FanDetailDrawer({
                           onOpenGame={onOpenGame}
                           onOpenCampaigns={onOpenCampaigns}
                           onCampaignsChanged={onCampaignsChanged}
+                          onLinkGameChanged={onSaved}
                         />
                         <LinkRow url={`${origin}/spin/${p.token}`} newest={false} bare />
                       </li>
@@ -1133,11 +1135,11 @@ function LinkRow({ url, newest, bare }: { url: string; newest: boolean; bare?: b
 
 /**
  * What one fan link plays now and why, computed with the server's resolver
- * (never the link's stored game alone), plus the shortcuts to change it.
- * Per-fan game choice doesn't exist yet: a link's game comes from its campaign
- * or from the creator's live game.
+ * (never the link's stored game alone), plus the shortcuts to change it: the
+ * game for this fan only (the link's own choice, 0065), or its campaign's game.
  */
 function LinkPlays({
+  fanId,
   pass,
   campaigns,
   wheels,
@@ -1145,22 +1147,31 @@ function LinkPlays({
   onOpenGame,
   onOpenCampaigns,
   onCampaignsChanged,
+  onLinkGameChanged,
 }: {
-  pass: { token: string; wheelId: string; campaignId?: string | null; campaignName: string | null };
+  fanId: string | null;
+  pass: { token: string; wheelId: string; campaignId?: string | null; pinnedWheelId?: string | null; campaignName: string | null };
   campaigns: Campaign[];
   wheels: Wheel[];
   now: Date;
   onOpenGame?: (wheelId: string) => void;
   onOpenCampaigns?: () => void;
   onCampaignsChanged?: () => void | Promise<void>;
+  /** This link's own game was changed: reload the fan list. */
+  onLinkGameChanged?: () => void | Promise<void>;
 }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The saved choice wins until the reloaded list carries it (undefined: use the list's).
+  const [savedPin, setSavedPin] = useState<string | null | undefined>(undefined);
   const panelId = useId();
   const selectId = useId();
   const helpId = useId();
-  const plays = linkGame(pass, campaigns, wheels, now);
+  const linkSelectId = useId();
+  const linkHelpId = useId();
+  const pinnedWheelId = savedPin !== undefined ? savedPin : pass.pinnedWheelId ?? null;
+  const plays = linkGame({ ...pass, pinnedWheelId }, campaigns, wheels, now);
   const campaign = plays?.campaign ?? (pass.campaignId ? campaigns.find((c) => c.id === pass.campaignId) ?? null : null);
   const live = liveExplanation(wheels, now);
   const liveTitle = live ? `${live.game.title} · ${KIND_SHORT[kindOf(live.game)]}` : null;
@@ -1189,8 +1200,38 @@ function LinkPlays({
     }
   }
 
+  async function setLinkGame(value: string) {
+    if (!fanId) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/fans/${fanId}/link-game`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: pass.token, wheelId: value || null }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        toast(data?.error === "game_not_playable" ? "That game can't be chosen: it's archived or still a draft." : "Couldn't change this fan's game. Nothing changed; try again.", { tone: "error" });
+        return;
+      }
+      setSavedPin(value || null);
+      const picked = wheels.find((w) => w.id === value);
+      toast(picked ? `This fan's link now plays ${picked.title}.` : "This fan's link follows its campaign and your live game again.", { tone: "success" });
+      await onLinkGameChanged?.();
+    } catch {
+      toast("The change couldn't be confirmed. Check this fan before trying again.", { tone: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div data-testid="link-plays" data-plays-game-id={plays?.game.id ?? ""} className="mt-1.5 text-[12.5px] text-muted">
+      {plays?.ignoredLinkPin && (
+        <p className="text-pretty text-amber-200">
+          This fan&apos;s link is set to play {plays.ignoredLinkPin.title ?? "a game"}, but {plays.ignoredLinkPin.why}, so it plays the game below.
+        </p>
+      )}
       {plays?.ignored && (
         <p className="text-pretty text-amber-200">
           &ldquo;{campaign?.name ?? "Its campaign"}&rdquo; is set to play {plays.ignored.title ?? "a game"}, but {plays.ignored.why}, so this link gets your live game.
@@ -1201,7 +1242,9 @@ function LinkPlays({
           <span className="font-semibold text-ink">This link plays:</span>
           <GameName game={plays.game} />
           <span>
-            {plays.via === "campaign" && plays.campaign
+            {plays.via === "link"
+              ? "(chosen for this fan only)"
+              : plays.via === "campaign" && plays.campaign
               ? `(via campaign “${plays.campaign.name}”)`
               : plays.via === "live"
                 ? `(your live game: ${plays.because})`
@@ -1223,6 +1266,28 @@ function LinkPlays({
       </div>
       {open && (
         <div id={panelId} className="mt-2 rounded-[8px] border border-[var(--hair)] p-2.5">
+          <label htmlFor={linkSelectId} className="block text-[11.5px] font-semibold text-ink">
+            Change game for this fan only
+          </label>
+          <select
+            id={linkSelectId}
+            data-testid="link-game-select"
+            className="ff-input mt-1 w-full min-w-0 max-w-full text-[13px]"
+            value={pinnedWheelId ?? FOLLOW_LIVE}
+            disabled={saving || !fanId}
+            aria-describedby={linkHelpId}
+            onChange={(e) => void setLinkGame(e.target.value)}
+          >
+            <option value={FOLLOW_LIVE}>{campaign ? `Follow campaign “${campaign.name}”` : "Follow my live game"}</option>
+            {wheels.filter((game) => !game.archivedAt || game.id === pinnedWheelId).map((game) => (
+              <option key={game.id} value={game.id} disabled={!!pinUnavailableReason(game) && game.id !== pinnedWheelId}>
+                {gameOptionLabel(game)}
+              </option>
+            ))}
+          </select>
+          <p id={linkHelpId} className="mt-1.5 mb-2.5 text-[11.5px] text-pretty">
+            Only this link changes. Its campaign and your other fans keep their game.
+          </p>
           {campaign ? (
             <>
               <label htmlFor={selectId} className="block text-[11.5px] font-semibold text-ink">
