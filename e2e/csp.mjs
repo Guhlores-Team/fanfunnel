@@ -2,7 +2,8 @@ import { BASE, goto } from "./harness.mjs";
 
 // L3: Content-Security-Policy on the running server. The headers carry the
 // right policy per route, the signed-in pages' scripts all carry this
-// request's nonce, and the browser really refuses injected script and eval.
+// request's nonce, and the browser really refuses injected handlers, javascript: links and
+// scripts from other origins.
 // The probes run in their own page (no error sink): a refused injection is a
 // console error by design. Every other journey runs with the sink attached,
 // so any CSP violation the app itself causes fails the run as a browser signal.
@@ -46,19 +47,23 @@ export async function cspJourney(_page, { step, assert }, ctx) {
     }
   });
 
-  await step("csp: the browser refuses injected script, inline handlers and eval", async () => {
+  await step("csp: the browser refuses injected handlers, javascript: links and foreign scripts", async () => {
     const probe = await ctx.newPage();
     try {
+      // Injected markup (the XSS this policy is for) is parser-inserted: its
+      // inline handlers and javascript: URLs need 'unsafe-inline'. A <script>
+      // element created by already-running script is trusted on purpose
+      // ('strict-dynamic'), so it is not probed here. Neither is eval: code
+      // run through DevTools (page.evaluate) is exempt from the page's policy,
+      // so "no 'unsafe-eval'" is asserted on the headers above instead.
       const run = (external) => probe.evaluate(async (externalUrl) => {
         const seen = [];
         document.addEventListener("securitypolicyviolation", (e) => seen.push(e.effectiveDirective));
-        window.__cspProbe = 0;
-        const s = document.createElement("script");
-        s.textContent = "window.__cspProbe = 1";
-        document.body.appendChild(s);
-        document.body.insertAdjacentHTML("beforeend", '<img alt="" src="data:," onerror="window.__cspProbe = 2">');
-        let evalBlocked = false;
-        try { (0, eval)("1"); } catch (e) { evalBlocked = e instanceof EvalError; }
+        window.__cspHandler = 0;
+        window.__cspJsUrl = 0;
+        document.body.insertAdjacentHTML("beforeend", '<img alt="" src="data:," onerror="window.__cspHandler = 1">');
+        document.body.insertAdjacentHTML("beforeend", '<a id="csp-probe-link" href="javascript:void(window.__cspJsUrl = 1)">x</a>');
+        document.getElementById("csp-probe-link").click();
         let externalBlocked = null;
         if (externalUrl) {
           externalBlocked = await new Promise((resolve) => {
@@ -70,32 +75,33 @@ export async function cspJourney(_page, { step, assert }, ctx) {
           });
         }
         await new Promise((r) => setTimeout(r, 300));
-        return { ran: window.__cspProbe, evalBlocked, externalBlocked, seen };
+        document.getElementById("csp-probe-link")?.remove();
+        return { handler: window.__cspHandler, jsUrl: window.__cspJsUrl, externalBlocked, seen };
       }, external);
 
       await goto(probe, "/dashboard", 800);
       const signedIn = await run(null);
-      assert(signedIn.ran === 0, `/dashboard: injected inline script and handler did not run (${signedIn.ran})`);
-      assert(signedIn.evalBlocked, "/dashboard: eval is refused");
-      assert(signedIn.seen.includes("script-src-elem") && signedIn.seen.includes("script-src-attr"), `/dashboard: violations reported (${signedIn.seen.join(",")})`);
+      assert(signedIn.handler === 0, "/dashboard: an injected inline event handler did not run");
+      assert(signedIn.jsUrl === 0, "/dashboard: an injected javascript: link did not run");
+      assert(signedIn.seen.includes("script-src-attr"), `/dashboard: violations reported (${signedIn.seen.join(",")})`);
 
       await goto(probe, "/", 800);
       const pub = await run("http://127.0.0.1:9/csp-probe.js");
-      assert(pub.evalBlocked, "/: eval is refused");
       assert(pub.externalBlocked === true && pub.seen.includes("script-src-elem"), `/: a script from another origin is refused (${pub.seen.join(",")})`);
 
-      // The browser's violation reports reach monitoring, origin only.
+      // The browser's violation reports reach monitoring, origin only (and
+      // monitoring's own scrubbing masks the IP).
       let rows = [];
       const deadline = Date.now() + 5000;
       do {
         const res = await ctx.request.get(BASE + "/api/admin/errors?status=open");
         assert(res.ok(), "demo admin can read recorded errors");
         rows = (await res.json()).errors.filter((row) => String(row.message).startsWith("CSP blocked "));
-        if (rows.some((r) => r.message === "CSP blocked script-src-attr: inline") && rows.some((r) => r.message === "CSP blocked script-src-elem: http://127.0.0.1:9")) break;
+        if (rows.some((r) => r.message === "CSP blocked script-src-attr: inline") && rows.some((r) => r.message === "CSP blocked script-src-elem: http://[ip]:9")) break;
         await new Promise((r) => setTimeout(r, 100));
       } while (Date.now() < deadline);
       const messages = rows.map((r) => r.message);
-      assert(messages.includes("CSP blocked script-src-attr: inline") && messages.includes("CSP blocked script-src-elem: http://127.0.0.1:9"), `violations are reported to monitoring (${messages.join(" | ")})`);
+      assert(messages.includes("CSP blocked script-src-attr: inline") && messages.includes("CSP blocked script-src-elem: http://[ip]:9"), `violations are reported to monitoring (${messages.join(" | ")})`);
       assert(!JSON.stringify(rows).includes("csp-probe.js"), "a blocked URL is reported by origin only");
     } finally {
       await probe.close();
