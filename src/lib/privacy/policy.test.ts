@@ -35,6 +35,11 @@ for (const [label, pattern] of [
   ["report review outcome", /resolved or dismissed/],
   ["urgent report alerts carry no fan data", /email alert that names only the reason and the time, never the fan/],
   ["reward values are erased on fan deletion", /encrypted value is erased when the fan deletes their data/],
+  // A11 (0065): the operational-history periods run_retention_cleanup enforces.
+  ["check-in retention", new RegExp(`check-ins are also deleted after ${RETENTION_DAYS.fanCheckins} days`, "i")],
+  ["finished spin-attempt retention", new RegExp(`${RETENTION_DAYS.finishedSpinAttempts} days after an attempt finishes.*declined attempt.*deleted`)],
+  ["request record retention", new RegExp(`request records.*deleted ${RETENTION_DAYS.settledRequestJournal} days after the request settles`)],
+  ["import batch retention", new RegExp(`import batches.*deleted after ${RETENTION_DAYS.fanImportBatches} days`)],
 ] as const) {
   assert.match(text, pattern, `the policy discloses ${label}`);
 }

@@ -1038,7 +1038,11 @@ export function mockDeleteWheel(id: string): { ok: true } | { error: string } {
   if (!wheel) return { error: "not_found" };
   const progress=mockBingoEditError(id,null);if(progress)return {error:progress};
   const hasHistory=[...store.fans.values()].some(fan=>fan.wins.some(win=>win.wheelId===id))||[...(mockFocusState().anonymousWins?.values()??[])].some(win=>win.wheelId===id);
-  if(hasHistory)return {error:"has_history"};
+  // delete_wheel (0065): a game a fan link is stored on is archived instead;
+  // deleting it would erase that link and its balance.
+  const storedLink=[...store.fans.values()].some(fan=>fan.passes.some(pass=>pass.wheelId===id));
+  if(hasHistory||storedLink)return {error:"has_history"};
+  for (const fan of store.fans.values()) for (const pass of fan.passes) if (pass.pinnedWheelId === id) pass.pinnedWheelId = null;
   const wasActive = wheel.isActive;
   for (const focus of mockFocusState().focuses.values()) if (focus.wheel_id === id) mockCancelFanFocus(focus.fan_id);
   store.wheels.delete(id);
@@ -1796,7 +1800,13 @@ function mockCreatePassOnce(
   // and top it up, or mint a NEW per-wheel link if they don't have one yet.
   ensurePasses(fan);
   const targetWheel = mockResolveWheelId({ campaignId: campaignId ?? null, wheelId });
-  let pass = fan.passes.find((p) => p.wheelId === targetWheel);
+  // 0065 (_create_pass_grant_core): an automatic top-up lands on the oldest
+  // link set to its own playable game, the game this fan actually plays.
+  const pinnedLink = wheelId ? undefined : fan.passes.find((p) => {
+    const pinned = p.pinnedWheelId ? store.wheels.get(p.pinnedWheelId) : undefined;
+    return !!pinned && mockPlayable(pinned);
+  });
+  let pass = pinnedLink ?? fan.passes.find((p) => p.wheelId === targetWheel);
   let tokenOut: string;
   if (pass) {
     pass.spinsRemaining += add;
@@ -2099,7 +2109,10 @@ export function mockUpdateFanMeta(
 }
 
 export function mockGetOverview(): CreatorOverview {
-  const redemptions = store.redemptions;
+  // The queue's (at, id) keyset order (mockListRedemptionQueue): wins in the
+  // same millisecond must not depend on insertion order, or paging on from
+  // the window's last row skips or repeats them.
+  const redemptions = [...store.redemptions].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
   const revenue = store.grants.reduce((s, g) => s + g.amountCents, 0);
   // Map internal redemptions back to plain RedemptionItem (drop fanId/campaignId).
   const items: RedemptionItem[] = redemptions.slice(0, 200).map((r) => ({

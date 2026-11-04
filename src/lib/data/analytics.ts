@@ -67,7 +67,11 @@ export async function getOverview(): Promise<CreatorOverview> {
        spin:spins(pool_snapshot, fair_trace, prize_label, prize_rarity, fan:fans(display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
       )
       .eq("creator_id", user.id)
+      // Same (created_at, id) order as creator_redemption_queue's keyset, so
+      // "continue after the window's last row" never skips or repeats a tie
+      // (a bingo line bonus shares its play's created_at).
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(200),
     sb.from("fans").select("id", head).eq("creator_id", user.id).lte("created_at", cutoff),
     sb.from("spins").select("id", head).eq("creator_id", user.id).eq("kind", "play").lte("created_at", cutoff),
