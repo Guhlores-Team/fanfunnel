@@ -144,6 +144,33 @@ async function runtime() {
   check("another client is not affected", (await limitRoute(from("198.51.100.8"), "test:costly", "costly")) === null);
   check("another route scope is not affected", (await limitRoute(from("198.51.100.7"), "test:other", "costly")) === null);
   check("tiers are ordered: costly < public < account", ROUTE_TIERS.costly.limit < ROUTE_TIERS.public.limit && ROUTE_TIERS.public.limit < ROUTE_TIERS.account.limit);
+
+  // Negative: a caller cannot mint a fresh bucket by spoofing headers. Behind
+  // the edge (x-real-ip pinned) every client-sent forwarding header is ignored;
+  // without it, only the right-most x-forwarded-for hop (the one the nearest
+  // proxy appended) counts, so rotating the left-most entries changes nothing.
+  const spoof = (h: Record<string, string>) => new Request("http://localhost/api/x", { headers: h });
+  for (let i = 0; i < n; i++) assert.equal(await limitRoute(spoof({ "x-real-ip": "203.0.113.9" }), "test:spoof-edge", "costly"), null);
+  let rotated = 0;
+  for (let i = 0; i < 5; i++) {
+    const r = await limitRoute(spoof({
+      "x-real-ip": "203.0.113.9",
+      "x-forwarded-for": `10.9.${i}.1, 198.18.0.${i}`,
+      "x-vercel-forwarded-for": `198.18.1.${i}`,
+      "cf-connecting-ip": `198.18.2.${i}`,
+      "true-client-ip": `198.18.3.${i}`,
+      forwarded: `for=198.18.4.${i}`,
+    }), "test:spoof-edge", "costly");
+    if (r?.status === 429) rotated++;
+  }
+  check("behind the edge, rotating XFF / x-vercel-forwarded-for / cf-connecting-ip / true-client-ip / forwarded never escapes the limit", rotated === 5);
+  for (let i = 0; i < n; i++) assert.equal(await limitRoute(spoof({ "x-forwarded-for": `10.0.0.${i}, 192.0.2.44` }), "test:spoof-xff", "costly"), null);
+  let leftRotated = 0;
+  for (let i = 0; i < 5; i++) {
+    const r = await limitRoute(spoof({ "x-forwarded-for": `172.16.${i}.${i}, 10.1.1.${i}, 192.0.2.44`, "cf-connecting-ip": `198.18.5.${i}` }), "test:spoof-xff", "costly");
+    if (r?.status === 429) leftRotated++;
+  }
+  check("without x-real-ip, prepending spoofed XFF hops or cf-connecting-ip never escapes the limit", leftRotated === 5);
 }
 
 runtime().then(() => console.log(`routeLimits.test: ${passed} checks passed`), (err) => {
