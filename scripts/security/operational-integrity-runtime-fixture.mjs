@@ -4,8 +4,10 @@
 export async function testOperationalIntegrityRuntime({a, anonymous, check}) {
   for (const [label, client] of [["creator",a],["anonymous",anonymous]]) {
     for (const table of ["reward_crypto_canary","chase_stock_evidence"]) {
-      const result = await client.from(table).select("*",{head:true,count:"exact"}).limit(1);
-      check(result.error?.code === "42501", `${label} cannot read private ${table}`);
+      // A GET, not HEAD: a HEAD refusal has no body, so PostgREST's SQLSTATE
+      // never reaches the client and a real 42501 would read as a leak.
+      const result = await client.from(table).select("*").limit(1);
+      check(result.error?.code === "42501", `${label} cannot read private ${table} (${result.error?.code ?? `rows=${result.data?.length}`})`);
     }
     const status = await client.from("system_health_checks").select("singleton").limit(1);
     check(status.error?.code === "42501" || (!status.error && status.data?.length === 0), `${label} cannot read admin system health`);
