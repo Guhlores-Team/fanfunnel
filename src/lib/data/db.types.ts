@@ -3791,8 +3791,8 @@ export type Database = {
         Args: { p_creator: string; p_patch: Json; p_redemption: string }
         Returns: Json
       }
-    }
       wipe_my_spin_attempts: { Args: never; Returns: number }
+    }
     Enums: {
       app_role: "admin" | "creator"
       creator_approval: "pending" | "approved" | "rejected"
