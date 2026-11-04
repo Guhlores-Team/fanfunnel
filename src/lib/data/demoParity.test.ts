@@ -40,7 +40,7 @@ async function main() {
   const dismissed = await data.dismissAutopilotCard("fulfil");
   check("dismissing in the demo is demo_only, not a silent ok", "error" in dismissed && dismissed.error === "demo_only");
   const { GET: autopilotGet } = await import("@/app/api/autopilot/route");
-  const feed = await (await autopilotGet()).json();
+  const feed = await (await autopilotGet(new Request("http://localhost/api/autopilot"))).json();
   check("the Autopilot read says demo instead of 'all caught up'", Array.isArray(feed.cards) && feed.demo === true);
 
   // Not available in the demo: said, not faked.
@@ -51,7 +51,7 @@ async function main() {
   const decide = await data.decideCreatorApplication("profile", "approved");
   check("deciding an access request in the demo is demo_only", "error" in decide && decide.error === "demo_only");
   const { GET: agencyGet } = await import("@/app/api/agency/route");
-  const agency = await (await agencyGet()).json();
+  const agency = await (await agencyGet(new Request("http://localhost/api/agency"))).json();
   check("the agency read says demo instead of 'no agency yet'", agency.org === null && agency.demo === true);
 
   console.log(`demo parity: ${passed} checks passed`);
