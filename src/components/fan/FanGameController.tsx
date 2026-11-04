@@ -444,6 +444,20 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [skipAvailable, skipReveal]);
+  // The play button is disabled while a play runs, so focus was on <body> when
+  // the win card opened and closing it left keyboard users nowhere. Hand focus
+  // back to the play button once it is usable again, unless they moved on.
+  const playDisabled = !canSpin || recovery.locked || !canPresentGame;
+  const playRef = useRef<HTMLButtonElement>(null);
+  const refocusPlay = useRef(false);
+  const tryRefocusPlay = useCallback(() => {
+    if (!refocusPlay.current) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) { refocusPlay.current = false; return; }
+    const button = playRef.current;
+    if (button && !button.disabled) { button.focus(); refocusPlay.current = false; }
+  }, []);
+  useEffect(() => { tryRefocusPlay(); }, [playDisabled, tryRefocusPlay]);
   const theaterOn = activeGameKind === "wheel" && theaterVisible(rv);
   const spotlight =
     rv.tier && result && (rv.phase === "landed" || rv.phase === "revealed")
@@ -562,9 +576,10 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         <FocusChip focus={focus} onBreak={onBreak} />
 
         <button
+          ref={playRef}
           data-testid="fan-spin"
           onClick={handleSpin}
-          disabled={!canSpin || recovery.locked || !canPresentGame}
+          disabled={playDisabled}
           className="btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
         >
           {activeGameKind === "wheel" ? spinLabel : spinLabel === "SPIN" ? "PLAY" : spinLabel === "Spinning…" ? activeGameKind === "scratch" && gameOutcome?.presentation ? "Reveal your ticket" : "Playing…" : spinLabel}
@@ -729,6 +744,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             setReceiptKey(null);
             void recovery.acknowledge();
             router.refresh();
+            refocusPlay.current = true;
+            requestAnimationFrame(tryRefocusPlay);
           }}
         />
       )}
