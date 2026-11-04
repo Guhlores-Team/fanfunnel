@@ -31,6 +31,7 @@
 // the retention cleanup trims only settled history, spin_attempts FKs indexed.
 // And the seat-scope probe (0066, seatScopeProbe.mjs): a chatter reads/writes
 // only the inbox, a fulfiller only the fulfilment queue, of creators in scope.
+// Campaign writes for another creator need 'manage' (A28 residual).
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -1030,7 +1031,7 @@ function probeSeatScopeRpcs(db) {
     console.log(`FAIL  ${db}: agency seat scopes (0066)`);
     for (const message of bad) console.log(`  - ${message}`);
   } else {
-    console.log(`PASS  ${db}: seat-scoped inbox/queue RPCs follow can_act_for (chatter: inbox only, fulfiller: queue only, manager/owner: both, outsiders: nothing); my_seat_creators lists exactly each seat's jobs`);
+    console.log(`PASS  ${db}: seat-scoped inbox/queue RPCs follow can_act_for (chatter: inbox only, fulfiller: queue only, manager/owner: both, outsiders: nothing); my_seat_creators lists exactly each seat's jobs; campaign writes need 'manage' (owner/manager write, chatter/fulfiller/outsider/suspended/removed seats refused)`);
   }
 }
 

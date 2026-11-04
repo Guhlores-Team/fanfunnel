@@ -166,11 +166,18 @@ export async function accountExtrasJourney(page, { step, assert }, ctx) {
     const pub = page.locator("section[aria-labelledby='settings-public']");
     const tagline = pub.getByPlaceholder(/Spin my wheel/);
     await tagline.waitFor({ timeout: 8000 });
+    // The card fills itself from GET /api/public-profile after it renders; typing
+    // before that lands lets the load overwrite the new tagline. The demo slug is
+    // never empty, so a filled slug means the saved fields are in.
+    const slug = pub.getByPlaceholder("your-name");
+    await page.waitForFunction((el) => el && el.value !== "", await slug.elementHandle(), { timeout: 8000 });
     const value = `Spin with me ${randomUUID().slice(0, 4)}`;
     await tagline.fill(value);
     const saved = page.waitForResponse((r) => r.url().endsWith("/api/public-profile") && r.request().method() === "PUT");
     await pub.getByRole("button", { name: /^Save$/ }).click();
-    assert((await saved).ok(), "the save is accepted");
+    const put = await saved;
+    assert(put.ok(), "the save is accepted");
+    assert(put.request().postDataJSON()?.tagline === value, "the save sent the typed tagline");
     const after = await json(await ctx.request.get(BASE + "/api/public-profile"), "read public profile again");
     assert(after.tagline === value, "the demo really kept the tagline");
     // The save revalidates /c/<slug> (ISR); the next visits render the new tagline.
