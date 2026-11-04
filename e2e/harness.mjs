@@ -14,6 +14,21 @@ import { fileURLToPath } from "node:url";
 /** localStorage key of a fan link's saved spin request (src/components/fan/spinIntent.ts). */
 export const spinIntentKey = (token) => "ff-spin-intent-v1:" + createHash("sha256").update(token).digest("hex");
 
+/**
+ * After the win card closes on a /spin/<token> page, resolve once the page has
+ * acknowledged that spin: closing clears the saved spin request under a Web
+ * Lock while router.refresh() runs (measured 50-100ms after the click, well
+ * after the card is hidden). A navigation that beats that write finds the
+ * request still saved, re-presents the same spin as recovered and keeps SPIN
+ * locked (the product's durable-recovery contract), so a following step's
+ * SPIN click waits out its whole timeout.
+ */
+export async function waitForSpinAcknowledged(page, timeout = 4000) {
+  const token = /^\/spin\/([^/?#]+)/.exec(new URL(page.url()).pathname)?.[1];
+  if (!token) throw new Error(`not on a fan page (${page.url()})`);
+  await page.waitForFunction((key) => localStorage.getItem(key) === null, spinIntentKey(decodeURIComponent(token)), { timeout });
+}
+
 /** Synchronous stdout write — survives process.exit() even when stdout is a
  *  pipe (CI), unlike the async console.log buffer. */
 export function log(s = "") {

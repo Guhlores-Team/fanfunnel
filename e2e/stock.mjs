@@ -5,7 +5,7 @@
 // limited epic that every spin wins, a sold-out legendary) and the `finally`
 // puts the creator's wheel back, so later journeys see what they expect.
 
-import { goto, clickTab, BASE } from "./harness.mjs";
+import { goto, clickTab, BASE, waitForSpinAcknowledged } from "./harness.mjs";
 import { createRevealFan, spinAndTime, clearForcedRarity } from "./reveal.mjs";
 
 const SOLD_OUT = "Claimed ✨";
@@ -25,7 +25,7 @@ async function putWheel(request, wheel) {
 
 /** Spin once, wait for the card, return the /api/spin JSON the page received. */
 async function spinForCard(page) {
-  const resp = page.waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST");
+  const resp = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/spin" && r.request().method() === "POST");
   // If the SPIN click throws, `resp` must not reject unhandled and kill the run.
   resp.catch(() => {});
   await spinAndTime(page);
@@ -37,6 +37,8 @@ async function closeCard(page) {
   const card = page.getByTestId("reward-reveal");
   await page.getByRole("button", { name: "Awesome!" }).click();
   await card.waitFor({ state: "hidden", timeout: 4000 });
+  // The next step may reload this link straight away; see waitForSpinAcknowledged.
+  await waitForSpinAcknowledged(page);
 }
 
 async function setSwitchInEditor(page, on, { assert }) {
@@ -89,8 +91,7 @@ export async function stockJourney(page, { step, assert }, ctx) {
     });
 
     await step("stock: the fan page shows the real count and 'Claimed' when gone", async () => {
-      // 6 spins for the steps below, 3 for the last-of-N and odds-changed steps.
-      token = await createRevealFan(ctx.request, "Stock Fan", 11);
+      token = await createRevealFan(ctx.request, "Stock Fan", 8);
       await goto(page, `/spin/${token}`, 1600);
       const row = page.getByTestId("limited-stock");
       await row.waitFor({ timeout: 8000 });
@@ -104,7 +105,7 @@ export async function stockJourney(page, { step, assert }, ctx) {
     });
 
     await step("stock: winning it drops the count without a reload, never before the wheel stops", async () => {
-      const resp = page.waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST");
+      const resp = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/spin" && r.request().method() === "POST");
       // If the spin click throws, `resp` must not reject unhandled and kill the run.
       resp.catch(() => {});
       await spinAndTime(page);
@@ -218,12 +219,13 @@ export async function stockJourney(page, { step, assert }, ctx) {
       assert(new RegExp(`\\b${live} left`).test(await chip(epic.label).innerText()), `the chip reads the live "${live} left"`);
     });
 
+    let oddsToken = null;
     await step("stock: a low-stock win says 'You got 1 of the last 3!' from the pre-win count (A33)", async () => {
       await clearForcedRarity(page);
       const w = await getWheel(ctx.request);
       await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, stock: 3 } : p)) });
-      assert(token, "the journey's own fan exists");
-      await goto(page, `/spin/${token}`, 1600);
+      oddsToken = await createRevealFan(ctx.request, "Odds Fan", 4);
+      await goto(page, `/spin/${oddsToken}`, 1600);
       const body = await spinForCard(page);
       assert(body.prize?.id === epic.id && body.stock?.[epic.id]?.stock === 2, `the epic was won with 2 left after it (${JSON.stringify(body.stock)})`);
       const line = page.getByTestId("win-last-of");
@@ -234,8 +236,8 @@ export async function stockJourney(page, { step, assert }, ctx) {
     });
 
     await step("fairness: odds changed after the page opened → 'Odds were updated since you opened this page' (A32)", async () => {
-      assert(token, "the journey's own fan exists");
-      await goto(page, `/spin/${token}`, 1600);
+      assert(oddsToken, "the previous step created the fan");
+      await goto(page, `/spin/${oddsToken}`, 1600);
       const w = await getWheel(ctx.request);
       // The creator edits the odds while the fan's page is open.
       await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, weight: 60 } : p)) });

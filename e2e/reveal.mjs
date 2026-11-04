@@ -75,7 +75,7 @@ export async function createRevealFan(request, name = "Reveal Fan", spins = 4) {
 
 /** Click SPIN and resolve with the time the server's result reached the page. */
 export async function spinAndTime(page) {
-  const resp = page.waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST");
+  const resp = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/spin" && r.request().method() === "POST");
   // If the click throws, `resp` later rejects un-awaited and the unhandled
   // rejection kills the whole e2e run instead of failing this one step.
   resp.catch(() => {});
