@@ -20,7 +20,11 @@ import { privateError, privateJson } from "@/lib/privacy/respond";
  *      POST /api/account/email), so an open or stolen session alone can't do it;
  *   5. the last-admin guard: reserve_self_account_deletion refuses the last
  *      admin and otherwise demotes an admin first (atomic, like the admin
- *      delete's admin_reserve_account_deletion).
+ *      delete's admin_reserve_account_deletion);
+ *   6. (0068) the database refuses a suspended account ('suspended') and one
+ *      with an open safety report ('reports_open'): closing would otherwise
+ *      cascade the evidence away. An admin delete is unaffected, and reports
+ *      survive any deletion with a non-PII snapshot of the account.
  * Then the shared account deletion (src/lib/account/deleteAccount.ts) removes
  * the auth user (FK cascades wipe every tenant row) and tombstones each fan
  * link so it shows "this creator has left", and an admin activity entry is
@@ -55,7 +59,7 @@ export async function POST(req: Request) {
   const wasAdmin = (profile as { role?: string } | null)?.role === "admin";
 
   const deleted = await deleteAccountAndTombstoneLinks(svc, userId, { wasAdmin });
-  if ("error" in deleted) return privateError(deleted.error, deleted.error === "last_admin" ? 409 : deleted.error === "forbidden" ? 403 : deleted.error === "not_found" ? 404 : 500);
+  if ("error" in deleted) return privateError(deleted.error, deleted.error === "last_admin" || deleted.error === "reports_open" ? 409 : deleted.error === "forbidden" || deleted.error === "suspended" ? 403 : deleted.error === "not_found" ? 404 : 500);
   if ("pending" in deleted) return privateJson(deleted, 202);
 
   if (!deleted.auditRecorded) await recordAudit({

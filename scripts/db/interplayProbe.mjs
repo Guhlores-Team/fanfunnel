@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUGS, CASES, SURPRISES } from "./interplayCases.mjs";
 import { mintActorContext, withActorContext } from "./actorContextFixture.mjs";
@@ -528,7 +528,8 @@ export async function probeInterplay(sqlInput, options = {}) {
     check(kEdited === kSeen + 1 && await stockOf(RL) === kSeen + 3, `a +2 edit over a unit returned meanwhile lands ${kSeen + 3}, never the stale ${kSeen + 2}`);
     check((await scalar(`select public.run_reward_ledger_invariants(100000)->>'status';`)) === "healthy", "the reward ledger invariants stay healthy");
     // A39: the migration level is readable by the service role only.
-    check(await scalar(`begin;set local role service_role;select public.schema_version();commit;`) === "67", "schema_version() reports 67 to the service role");
+    const latestMigration = Math.max(...readdirSync(new URL("../../supabase/migrations/", import.meta.url)).map((f) => /^(\d{4})_.*\.sql$/.exec(f)?.[1]).filter(Boolean).map(Number));
+    check(await scalar(`begin;set local role service_role;select public.schema_version();commit;`) === String(latestMigration), `schema_version() reports the newest migration (${latestMigration}) to the service role`);
     for (const role of ["anon", "authenticated"]) check(await refused(`begin;set local role ${role};select public.schema_version();commit;`, /permission denied/), `${role} cannot read schema_version()`);
     await invariants(rc, "cancelled-prize stock"); await invariants(rx, "cancelled-prize stock (other creator)");
 

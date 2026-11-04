@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mock } from "node:test";
-import { CANARY_CREATOR, CANARY_PRIZE, CANARY_TEXT, INVARIANT_KEYS } from "./config";
+import { CANARY_CREATOR, CANARY_PRIZE, CANARY_TEXT, EXPECTED_SCHEMA_VERSION, INVARIANT_KEYS } from "./config";
 import { rewardCodeFingerprint, sealReward } from "../rewards/crypto";
 let latched: string | null = null;
 let clients = 0, rpcCalls = 0, cleanedAlerts = 0;
@@ -9,7 +9,7 @@ let anchor: unknown = null;
 const svc = { rpc(name: string, params?: Record<string, unknown>) {
   rpcCalls++;
   const result = name === "read_reward_crypto_canary" ? { data: anchor, error: null }
-    : name === "schema_version" ? { data: 67, error: null }
+    : name === "schema_version" ? { data: EXPECTED_SCHEMA_VERSION, error: null }
     : name === "run_reward_ledger_invariants" ? { data: { status: "healthy", counts: Object.fromEntries(INVARIANT_KEYS.map(key => [key, 0])), rowLimit: 100_000 }, error: null }
     : name === "record_system_health_check" ? (() => {
       const source = String(params?.p_source), status = String(params?.p_canary_status);

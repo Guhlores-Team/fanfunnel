@@ -82,6 +82,26 @@ check("stable fingerprint key preserves consumed identities across encryption ro
 const v2 = sealReward("rotated", "creator-1");
 check("a rotated key writes its version", v2.keyVersion === 2 && openReward(v2, "creator-1") === "rotated");
 check("an old-version value is refused, not mis-decrypted", throws(() => openReward(sealed, "creator-1"), /reward_key_version/));
+
+// --- keyring: the previous key keeps old values readable during a rotation ---
+process.env.REWARD_ENCRYPTION_KEY_PREVIOUS = KEY_A;
+check("the previous key opens a version-1 value while version 2 is current", openReward(sealed, "creator-1") === "VIP-7F2K-0042");
+check("new values are still sealed with the current key", sealReward("fresh", "creator-1").keyVersion === 2 && openReward(sealReward("fresh", "creator-1"), "creator-1") === "fresh");
+check("the previous key is bound to the creator too", throws(() => openReward(sealed, "creator-2"), /./));
+check("a version the keyring does not hold is refused", throws(() => openReward({ ...sealed, keyVersion: 3 }, "creator-1"), /reward_key_version/));
+process.env.REWARD_ENCRYPTION_KEY_PREVIOUS = KEY_B;
+check("the wrong previous key fails closed", throws(() => openReward(sealed, "creator-1"), /./));
+process.env.REWARD_ENCRYPTION_KEY_PREVIOUS = KEY_A;
+process.env.REWARD_ENCRYPTION_KEY_VERSION = "5";
+check("the previous version defaults to current - 1", throws(() => openReward(sealed, "creator-1"), /reward_key_version/));
+process.env.REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION = "1";
+check("an explicit previous version names the key a value was sealed with", openReward(sealed, "creator-1") === "VIP-7F2K-0042");
+process.env.REWARD_ENCRYPTION_KEY_PREVIOUS = "short";
+check("a malformed previous key is refused, not used", throws(() => openReward(sealed, "creator-1"), /reward_key_version/));
+delete process.env.REWARD_ENCRYPTION_KEY_PREVIOUS;
+delete process.env.REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION;
+process.env.REWARD_ENCRYPTION_KEY_VERSION = "2";
+check("without a previous key the old value is refused again", throws(() => openReward(sealed, "creator-1"), /reward_key_version/));
 delete process.env.REWARD_ENCRYPTION_KEY_VERSION;
 delete process.env.REWARD_CODE_FINGERPRINT_KEY;
 delete process.env.REWARD_ENCRYPTION_KEY;

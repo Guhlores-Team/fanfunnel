@@ -47,3 +47,13 @@ create function storage.foldername(name text) returns text[] language sql immuta
 $$;
 
 create table auth.sessions(id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade, not_after timestamptz);
+
+-- Supabase's default privileges (its `00-schema.sql`): every table, sequence
+-- and function created in public is granted to the three API roles unless the
+-- schema revokes it, and RLS alone separates tenants. Without this the probes
+-- saw grants the hosted project does not have, and a missing REVOKE or a
+-- policy that lets a seat reach another tenant's row went unnoticed.
+grant usage on schema public to postgres, anon, authenticated, service_role;
+alter default privileges in schema public grant all on tables to postgres, anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to postgres, anon, authenticated, service_role;
+alter default privileges in schema public grant all on functions to postgres, anon, authenticated, service_role;

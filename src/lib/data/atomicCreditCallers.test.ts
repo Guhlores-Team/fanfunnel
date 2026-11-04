@@ -123,7 +123,8 @@ async function main() {
   const otherFan = db.seed("fans", { creator_id: OTHER });
   const otherPass = db.seed("fan_passes", { token: "other-token", creator_id: OTHER, wheel_id: otherWheel.id, fan_id: otherFan.id, spins_remaining: 2, spins_granted_total: 2 });
   beforeServices = serviceClients;
-  check("foreign fan and token cannot invoke service grants", isError(await grantSpins("other-token", 1), "unauthorized") && isError(await createPass({ name: "No", spins: 1, fanId: String(otherFan.id), wheelId: String(otherWheel.id) }), "unauthorized") && serviceClients === beforeServices && otherPass.spins_remaining === 2);
+  // 0068: a token the caller may not even view resolves to nothing (not_found), never to a permission answer.
+  check("foreign fan and token cannot invoke service grants", isError(await grantSpins("other-token", 1), "not_found") && isError(await createPass({ name: "No", spins: 1, fanId: String(otherFan.id), wheelId: String(otherWheel.id) }), "unauthorized") && serviceClients === beforeServices && otherPass.spins_remaining === 2);
   db.permissions[OTHER] = true;
   check("an explicitly authorized agency seat can grant the target's pass", !("error" in await grantSpins("other-token", 1)) && otherPass.spins_remaining === 3);
   const agency = await createPass({ name: "Agency top-up", spins: 2, fanId: String(otherFan.id), wheelId: String(otherWheel.id) });

@@ -4,7 +4,7 @@ import { scanCreatorStorage } from "@/lib/storage/creatorObjects";
 import { checkStorageFence, cleanupStorageObject, dispatchStorageEffect, storageRpc, STORAGE_REVIEW_AFTER_MS, type StorageObjectWork, type StorageWorkClient } from "@/lib/storage/work";
 
 export type AccountDeletionClient = StorageWorkClient;
-type Failure = "delete_failed" | "storage_cleanup_failed" | "db_error" | "last_admin" | "forbidden" | "not_found";
+type Failure = "delete_failed" | "storage_cleanup_failed" | "db_error" | "last_admin" | "forbidden" | "not_found" | "suspended" | "reports_open";
 export type AccountDeletionResult =
   | { ok: true; links: number; auditRecorded: boolean }
   | { pending: true; reason: string; reviewRequired: boolean }
@@ -100,7 +100,9 @@ export async function deleteAccountAndTombstoneLinks(svc: AccountDeletionClient,
   if (begun.error) return begun.definite ? { error: "db_error" } : { pending: true, reason: "db_error", reviewRequired: false };
   if (begun.data?.error) {
     const code = begun.data.error;
-    return { error: code === "last_admin" ? code : code === "not_found" ? code : "forbidden" };
+    // 0068: a suspended account, or one with an open safety report, cannot
+    // close itself (the database refuses; an admin delete is unaffected).
+    return { error: code === "last_admin" || code === "not_found" || code === "suspended" || code === "reports_open" ? code : "forbidden" };
   }
   if (!begun.data) return { error: "db_error" };
   return processAccountStorageDeletion(svc, userId);

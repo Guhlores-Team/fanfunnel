@@ -95,6 +95,40 @@ export async function editGrant(
   return { error: "edit_pending" };
 }
 
+/**
+ * The link tokens of one creator (or of one fan), keyed by pass id, through
+ * creator_link_tokens (0068): the column is not selectable by a session, and
+ * the RPC answers only the owner, an admin or a seat that may 'grant' for the
+ * creator. Anyone else gets an empty map, never an error.
+ */
+async function servedLinkTokens(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  creatorId: string,
+  fanId?: string,
+): Promise<Map<string, string>> {
+  const { data, error } = await sb.rpc("creator_link_tokens", { p_creator: creatorId, ...(fanId ? { p_fan: fanId } : {}) });
+  if (error) throw new Error("fan links unavailable");
+  const map = new Map<string, string>();
+  for (const row of (data ?? []) as { pass_id: string; token: string }[]) map.set(row.pass_id, row.token);
+  return map;
+}
+
+/**
+ * The pass behind a token the dashboard was served (creator_link_pass, 0068):
+ * answered for a caller that may view the creator, never for anyone else, so a
+ * foreign token is not found. Acting on it still needs can_act_for 'grant'.
+ */
+async function resolveServedLink(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  token: string,
+): Promise<{ id: string; creator_id: string; fan_id: string; campaign_id: string | null; is_active: boolean } | null | "db_error"> {
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(token)) return null;
+  const { data, error } = await sb.rpc("creator_link_pass", { p_token: token });
+  if (error) return "db_error";
+  const row = ((data ?? []) as { id: string; creator_id: string; fan_id: string; campaign_id: string | null; is_active: boolean }[])[0];
+  return row ?? null;
+}
+
 /** Top up this token's pass through an atomic, replay-safe grant transaction. */
 export async function grantSpins(
   token: string,
@@ -112,9 +146,11 @@ export async function grantSpins(
   const sb = await createClient();
   const { data: { user }, error: authError } = await sb.auth.getUser();
   if (authError || !user) return { error: "unauthorized" };
-  const { data: pass, error: readError } = await sb.from("fan_passes")
-    .select("id, creator_id, fan_id, campaign_id").eq("token", token).maybeSingle();
-  if (readError) return { error: "db_error" };
+  // 0068: a session never selects fan_passes.token; the pass behind a served
+  // token comes from creator_link_pass, which answers only a caller that may
+  // grant for its creator (the same check is repeated below for the ledger).
+  const pass = await resolveServedLink(sb, token);
+  if (pass === "db_error") return { error: "db_error" };
   if (!pass) return { error: "not_found" };
   const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: pass.creator_id, perm: "grant" });
   if (permissionError || allowed !== true) return { error: "unauthorized" };
@@ -144,13 +180,20 @@ export async function listFans(): Promise<FanAccountSummary[]> {
   if (!user) return [];
 
   const cutoff = new Date().toISOString();
-  const [fanRows, passRows, spinRows, grantRows, visits] = await Promise.all([
+  const [fanRows, passRowsWithoutTokens, spinRows, grantRows, visits, tokens] = await Promise.all([
     readScopedRows<Record<string, unknown>>(sb, "fans", "display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at, break_until", q => q.eq("creator_id", user.id), cutoff),
-    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, token, created_at, spins_remaining, wheel_id, campaign_id, pinned_wheel_id, is_active, self_excluded_at, wheel:wheels!fan_passes_wheel_id_fkey(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
+    readScopedRows<Record<string, unknown>>(sb, "fan_passes", "fan_id, created_at, spins_remaining, wheel_id, campaign_id, pinned_wheel_id, is_active, self_excluded_at, wheel:wheels!fan_passes_wheel_id_fkey(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
     readScopedRows<Record<string, unknown>>(sb, "spins", "fan_id, prize_label, prize_rarity, created_at", q => q.eq("creator_id", user.id).not("fan_id", "is", null), cutoff),
     readScopedRows<Record<string, unknown>>(sb, "grants", "fan_id, amount_cents, campaign_id, campaign:campaigns(name)", q => q.eq("creator_id", user.id), cutoff),
     visitsByFan(sb, user.id),
+    servedLinkTokens(sb, user.id),
   ]);
+  // 0068: tokens are served by creator_link_tokens (owner / 'grant' seats
+  // only). A link this session may not hand out is left out of the list.
+  const passRows = passRowsWithoutTokens.flatMap(row => {
+    const token = tokens.get(row.id);
+    return token ? [{ ...row, token }] : [];
+  });
   const groupByFan = (items: Record<string, unknown>[]) => {
     const groups = new Map<string, Record<string, unknown>[]>();
     for (const row of items) {
@@ -368,7 +411,16 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 
   // Every pass, oldest first in editGrant's order: the links list (newest
   // first) and each grant's preview balance come from this one read.
-  const passRows = await readScopedRows<{ token: string; created_at: string; is_active: boolean; spins_remaining: number; wheel: { title: string } | null }>(sb, "fan_passes", "token, created_at, is_active, spins_remaining, wheel:wheels!fan_passes_wheel_id_fkey(title)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
+  const [passRowsWithoutTokens, tokens] = await Promise.all([
+    readScopedRows<{ created_at: string; is_active: boolean; spins_remaining: number; wheel: { title: string } | null }>(sb, "fan_passes", "created_at, is_active, spins_remaining, wheel:wheels!fan_passes_wheel_id_fkey(title)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff),
+    servedLinkTokens(sb, user.id, fanId),
+  ]);
+  // 0068: the link itself comes from creator_link_tokens; a pass this session
+  // may not hand out is not listed.
+  const passRows = passRowsWithoutTokens.flatMap(row => {
+    const token = tokens.get(row.id);
+    return token ? [{ ...row, token }] : [];
+  });
   passRows.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
 
   const passesOldestFirst = ((passRows ?? []) as unknown as {
@@ -494,9 +546,11 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
 }
 
 /**
- * Permanently delete a fan account. Schema FKs cascade the fan's links + grants
- * and anonymize their spins, so a plain delete is safe. RLS keeps a creator
- * scoped to their own fans.
+ * Permanently delete a fan account. Schema FKs cascade the fan's links, grants,
+ * messages, wishlists and referrals; spins and redemptions are KEPT with their
+ * fan reference cleared (fan_id / fan_pass_id ON DELETE SET NULL), and the
+ * fans BEFORE DELETE trigger (0068) scrubs the link token from safety reports
+ * and the fan's spin attempts. RLS keeps a creator scoped to their own fans.
  */
 export async function deleteFan(
   fanId: string
@@ -558,9 +612,9 @@ export async function setFanLinkGame(
   const sb = await createClient();
   const { data: { user }, error: authError } = await sb.auth.getUser();
   if (authError || !user) return { error: "unauthorized" };
-  const { data: pass, error: readError } = await sb.from("fan_passes")
-    .select("id, creator_id").eq("token", token).eq("fan_id", fanId).eq("is_active", true).maybeSingle();
-  if (readError) return { error: "db_error" };
+  const served = await resolveServedLink(sb, token);
+  if (served === "db_error") return { error: "db_error" };
+  const pass = served && served.fan_id === fanId && served.is_active ? served : null;
   if (!pass) return { error: "not_found" };
   const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: pass.creator_id, perm: "grant" });
   if (permissionError || allowed !== true) return { error: "forbidden" };

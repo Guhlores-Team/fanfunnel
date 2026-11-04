@@ -163,6 +163,17 @@ export class FakeSupabase {
   private economicRpc(name: string, args: Row): unknown {
     if (name === "issue_creator_actor_context") return crypto.randomUUID();
     if (name === "can_act_for") return this.permissions[String(args.target_creator)] ?? args.target_creator === this.userId;
+    // 0068: link tokens are served only to a caller that may grant for the creator.
+    const mayGrant = (creator: unknown) => this.permissions[String(creator)] ?? creator === this.userId;
+    if (name === "creator_link_tokens") {
+      return this.rows("fan_passes").filter(p => p.creator_id === args.p_creator && mayGrant(p.creator_id) && (!args.p_fan || p.fan_id === args.p_fan))
+        .map(p => ({ pass_id: p.id, fan_id: p.fan_id, token: p.token }));
+    }
+    if (name === "creator_link_pass") {
+      // Resolves for a 'view' caller (own account, or a seat with any scope); acting still needs 'grant'.
+      return this.rows("fan_passes").filter(p => p.token === args.p_token && (p.creator_id === this.userId || this.permissions[String(p.creator_id)] === true))
+        .map(p => ({ id: p.id, creator_id: p.creator_id, fan_id: p.fan_id, campaign_id: p.campaign_id ?? null, is_active: p.is_active !== false }));
+    }
     if (!["grant_pass_spins", "create_pass_grant", "edit_pass_grant", "award_fan_referral"].includes(name)) throw new Error(`fakeSupabase: rpc ${name} is not modelled`);
     const creator = args.p_creator;
     if (name === "award_fan_referral") {

@@ -27,6 +27,13 @@ import { fixtureCreatorRpc, fixtureActorContext } from "./actor-context-fixture.
  *   • an agency seat sees only its org's (scoped) creators, and a non-member
  *     cannot read the org or give itself a seat or org membership (0052)
  *   • anon and A cannot read, write or resolve app_errors (0053)
+ *   • 0068: a creator cannot pause, un-pause or re-token its fan's link (nor
+ *     can the service role un-pause one), cannot attach another creator's spin
+ *     or fan to a redemption/message, cannot forge a fan's consent or insert a
+ *     fan-sent message, cannot select link tokens (creator_link_tokens serves
+ *     them to the owner only); a suspended account or one with an open report
+ *     cannot close itself; invitations answer ok for any address and seat
+ *     nobody until accepted; a confirmed e-mail change reaches profiles.email
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -982,6 +989,72 @@ async function main() {
     check(!highRetry.error&&highRetry.data?.status==="granted"&&highRetry.data?.replayed===true,"0062 fresh context retains economic UUID and cannot award twice");
     const publicFanState=await admin.rpc("get_fan_focus_state",{p_token:A.token});
     check(!publicFanState.error&&publicFanState.data?.status==="ok","0062 token-bound fan state remains independent of creator login assurance");
+
+    // 0068: tenant boundaries, fan consent and deletion traces, on the hosted
+    // project's real grants. Every negative is a direct PostgREST write that
+    // the route layer never makes; the database alone must refuse it.
+    console.log("\n0068 tenant boundaries, consent and link tokens:");
+    const code = (r) => r.error?.code ?? (r.data?.length ? "accepted" : "no-op");
+    const creatorPause = await a.from("fan_passes").update({ self_excluded_at: new Date().toISOString(), is_active: false }).eq("id", A.passId).select("id");
+    check(creatorPause.error?.code === "42501", `0068 a creator cannot pause its fan's link (${code(creatorPause)})`);
+    const creatorToken = await a.from("fan_passes").update({ token: `abcd-${RUN}` }).eq("id", A.passId).select("id");
+    check(creatorToken.error?.code === "42501", `0068 a creator cannot rewrite a link token (${code(creatorToken)})`);
+    const tokenRead = await a.from("fan_passes").select("token").eq("id", A.passId);
+    check(tokenRead.error?.code === "42501", `0068 a session cannot select link tokens (${code(tokenRead)})`);
+    const servedOwn = await a.rpc("creator_link_tokens", { p_creator: A.id });
+    check(!servedOwn.error && (servedOwn.data ?? []).some((r) => r.token === A.token), "0068 creator_link_tokens serves the owner its own links");
+    const servedOther = await b.rpc("creator_link_tokens", { p_creator: A.id });
+    check(!servedOther.error && (servedOther.data ?? []).length === 0, "0068 creator_link_tokens serves another creator none of A's links");
+    const resolvedOther = await b.rpc("creator_link_pass", { p_token: A.token });
+    check(!resolvedOther.error && (resolvedOther.data ?? []).length === 0, "0068 another creator cannot resolve A's token to its pass");
+    const bSpin = must(await admin.from("spins").select("id").eq("creator_id", B.id).limit(1).single(), "0068 B's spin");
+    const forgedRedemption = await a.from("redemptions").insert({ spin_id: bSpin.id, creator_id: A.id }).select("id");
+    check(forgedRedemption.error?.code === "42501", `0068 a creator cannot attach another creator's spin to a redemption (${code(forgedRedemption)})`);
+    const forgedMessage = await a.from("messages").insert({ creator_id: A.id, fan_id: B.fanId, sender: "creator", body: "hi" }).select("id");
+    check(forgedMessage.error?.code === "42501", `0068 a creator cannot message another creator's fan (${code(forgedMessage)})`);
+    const fanSent = await a.from("messages").insert({ creator_id: A.id, fan_id: A.fanId, sender: "fan", body: "forged" }).select("id");
+    check(fanSent.error?.code === "42501", `0068 a creator cannot insert a fan-sent message (${code(fanSent)})`);
+    const forgedConsent = await a.from("fans").update({ leaderboard_opt_in: true, handle: `forged-${RUN}` }).eq("id", A.fanId).select("id");
+    check(forgedConsent.error?.code === "42501", `0068 a creator cannot forge a fan's consent (${code(forgedConsent)})`);
+    const ownNotes = await a.from("fans").update({ notes: "vip" }).eq("id", A.fanId).select("id");
+    check(!ownNotes.error && ownNotes.data?.length === 1, `0068 a creator still edits its fan's notes (${ownNotes.error?.message ?? "ok"})`);
+    const servicePause = await admin.from("fan_passes").update({ self_excluded_at: new Date().toISOString(), is_active: false }).eq("id", A.passId).select("id");
+    check(!servicePause.error && servicePause.data?.length === 1, `0068 the fan path (service role) pauses the link (${servicePause.error?.message ?? "ok"})`);
+    const creatorUnpause = await a.from("fan_passes").update({ self_excluded_at: null, is_active: true }).eq("id", A.passId).select("id");
+    check(creatorUnpause.error?.code === "42501", `0068 a creator cannot un-pause a link (${code(creatorUnpause)})`);
+    const serviceUnpause = await admin.from("fan_passes").update({ self_excluded_at: null }).eq("id", A.passId).select("id");
+    check(serviceUnpause.error?.code === "42501", `0068 not even the service role un-pauses a link (${code(serviceUnpause)})`);
+    // Self-close refusals answer without starting a deletion (no side effects).
+    must(await admin.from("profiles").update({ is_active: false }).eq("id", A.id).select("id").single(), "0068 suspend A");
+    const suspendedClose = await admin.rpc("creator_storage_account", { p_operation: "begin", p_owner: A.id, p_actor: A.id, p_action: "account.self_close" });
+    check(!suspendedClose.error && suspendedClose.data?.error === "suspended", `0068 a suspended account cannot close itself (${JSON.stringify(suspendedClose.data ?? suspendedClose.error?.message)})`);
+    must(await admin.from("profiles").update({ is_active: true }).eq("id", A.id).select("id").single(), "0068 restore A");
+    const openReport = must(await admin.from("creator_reports").insert({ creator_id: A.id, fan_id: A.fanId, reason: "Other", detail: `runtime 0068 ${RUN}` }).select("id, creator_snapshot").single(), "0068 seed a report about A");
+    check(openReport.creator_snapshot?.display_name !== undefined && !("email" in (openReport.creator_snapshot ?? {})), "0068 a report carries a non-PII snapshot of the account from the start");
+    const reportedClose = await admin.rpc("creator_storage_account", { p_operation: "begin", p_owner: A.id, p_actor: A.id, p_action: "account.self_close" });
+    check(!reportedClose.error && reportedClose.data?.error === "reports_open", `0068 an account with an open report cannot close itself (${JSON.stringify(reportedClose.data ?? reportedClose.error?.message)})`);
+    check(((await admin.from("creator_storage_deletions").select("owner_id").eq("owner_id", A.id)).data?.length ?? 0) === 0, "0068 a refused self-close starts no deletion job");
+    must(await admin.from("creator_reports").delete().eq("id", openReport.id).select("id").single(), "0068 remove the seeded report");
+    // Invitations: uniform answers, consent before a seat, e-mail sync.
+    const unknownInvite = await ownerClient.rpc("org_invite_creator", { p_org: org.id, p_email: `nobody-${RUN}@fanfunnel.test` });
+    check(!unknownInvite.error && unknownInvite.data === "ok", `0068 an invitation to an unknown address answers ok (${unknownInvite.data ?? unknownInvite.error?.message})`);
+    const badInvite = await ownerClient.rpc("org_invite_creator", { p_org: org.id, p_email: "not an address" });
+    check(badInvite.data === "invalid_email", `0068 a malformed address is refused (${badInvite.data ?? badInvite.error?.message})`);
+    const seatInvite = await ownerClient.rpc("org_add_member", { p_org: org.id, p_email: B.email, p_role: "chatter" });
+    check(!seatInvite.error && seatInvite.data === "ok", `0068 org_add_member sends a seat invitation (${seatInvite.data ?? seatInvite.error?.message})`);
+    check(((await admin.from("org_members").select("id").eq("org_id", org.id).eq("profile_id", B.id)).data?.length ?? 0) === 0, "0068 org_add_member seats nobody without acceptance");
+    const seatInviteRow = must(await admin.from("org_invites").select("id, role").eq("org_id", org.id).eq("email", B.email).eq("status", "pending").single(), "0068 the pending seat invitation");
+    check(seatInviteRow.role === "chatter", "0068 the invitation carries the seat role");
+    const seatAccepted = await b.rpc("org_invite_respond", { p_invite: seatInviteRow.id, p_accept: true });
+    check(!seatAccepted.error && seatAccepted.data === "ok", `0068 the invitee accepts the seat (${seatAccepted.data ?? seatAccepted.error?.message})`);
+    const bSeat = await admin.from("org_members").select("role").eq("org_id", org.id).eq("profile_id", B.id);
+    check(bSeat.data?.[0]?.role === "chatter", "0068 acceptance creates exactly the invited seat");
+    check(((await admin.from("profiles").select("org_id").eq("id", B.id).single()).data?.org_id ?? null) === null, "0068 a seat invitation never moves the account into the org");
+    const renamed = `rlstest+${RUN}-b-renamed@fanfunnel.test`;
+    const renamedUser = await admin.auth.admin.updateUserById(B.id, { email: renamed, email_confirm: true });
+    check(!renamedUser.error, `0068 rename B's auth e-mail (${renamedUser.error?.message ?? "ok"})`);
+    const renamedProfile = must(await admin.from("profiles").select("email").eq("id", B.id).single(), "0068 B's profile after the rename");
+    check(renamedProfile.email === renamed, `0068 a confirmed e-mail change reaches profiles.email (${renamedProfile.email})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

@@ -115,7 +115,15 @@ function from(table: string) {
   };
   return query;
 }
-const client = { from, auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER } : null }, error: null }) }, rpc: () => { throw new Error("Read queries must not issue economic RPCs"); } };
+// 0068: creator_link_tokens / creator_link_pass are read RPCs (the token column
+// is no longer selectable); anything else from a read path is still a failure.
+const LINK_RPCS = new Set(["creator_link_tokens", "creator_link_pass"]);
+const client = { from, auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER } : null }, error: null }) }, rpc: async (name: string, args: Record<string, unknown>) => {
+  if (!LINK_RPCS.has(name)) throw new Error("Read queries must not issue economic RPCs");
+  const passes = (db.fan_passes ?? []) as Record<string, unknown>[];
+  if (name === "creator_link_tokens") return { data: passes.filter(p => p.creator_id === args.p_creator && (!args.p_fan || p.fan_id === args.p_fan)).map(p => ({ pass_id: p.id, fan_id: p.fan_id, token: p.token })), error: null };
+  return { data: passes.filter(p => p.token === args.p_token).map(p => ({ id: p.id, creator_id: p.creator_id, fan_id: p.fan_id, campaign_id: null, is_active: p.is_active })), error: null };
+} };
 mock.module("@/lib/supabase/server", { namedExports: { isSupabaseConfigured: () => true, createClient: async () => client, createServiceClient: () => client } });
 let checks = 0;
 const check = (label: string, condition: unknown) => { assert.ok(condition, label); checks++; };

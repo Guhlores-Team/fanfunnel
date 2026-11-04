@@ -72,6 +72,11 @@ const SIGNED_IN_ONLY = [
   // on cancel/reopen), gated by the redemptions_write RLS rule
   // can_act_for(creator, 'fulfil') / is_admin() on auth.uid().
   "set_redemption_state",
+  // 0068: fan_passes.token is served only through these (can_act_for-gated),
+  // and a creator may wipe its own finished spin attempts.
+  "creator_link_tokens",
+  "creator_link_pass",
+  "wipe_my_spin_attempts",
 ];
 // RLS policies call these, so anon must keep EXECUTE (an anon read that
 // evaluates a policy would otherwise error instead of returning no rows).

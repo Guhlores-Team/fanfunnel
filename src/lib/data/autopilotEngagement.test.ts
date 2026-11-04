@@ -36,7 +36,13 @@ function fakeClient() {
   };
   return {
     from: (table: string) => builder(table),
-    rpc: async () => ({ data: null, error: null }),
+    // 0068: link tokens come from creator_link_tokens, not the fan_passes select.
+    rpc: async (name: string, args?: Record<string, unknown>) => ({
+      data: name === "creator_link_tokens"
+        ? ((TABLES.fan_passes ?? []) as Record<string, unknown>[]).filter((p) => !args?.p_fan || p.fan_id === args.p_fan).map((p) => ({ pass_id: p.id, fan_id: p.fan_id, token: p.token }))
+        : null,
+      error: null,
+    }),
     auth: { getUser: async () => ({ data: { user: { id: "creator-1" } }, error: null }) },
   };
 }

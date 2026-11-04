@@ -71,6 +71,8 @@ function builder(table: string) {
 const client = {
   auth: { getUser: async () => ({ data: { user }, error: null }) },
   from: (table: string) => builder(table),
+  // 0068: listFans joins link tokens from creator_link_tokens; none here.
+  rpc: async () => ({ data: [], error: null }),
 };
 
 mock.module("@/lib/supabase/server", {

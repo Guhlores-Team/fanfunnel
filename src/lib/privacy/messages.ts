@@ -9,6 +9,10 @@ export function closeAccountErrorMessage(code: unknown): string {
       return `Type ${CLOSE_ACCOUNT_PHRASE} exactly to confirm.`;
     case "last_admin":
       return "You're the last admin. Make someone else an admin first.";
+    case "suspended":
+      return "This account is suspended, so it can't be closed from here. Contact us to close it.";
+    case "reports_open":
+      return "A safety report about this account is still under review. It can be closed once the review is done.";
     case "mfa_required":
       return "Sign in with your two-factor code first, then try again.";
     case "rate_limited":

@@ -87,19 +87,24 @@ export async function loadNotificationSources(sb: AnyClient, uid: string): Promi
       .select("notify_new_spin, notify_low_balance, notify_messages")
       .eq("id", uid)
       .maybeSingle(),
+    // The embedded spin and fan are pinned to this creator as well (0068): a
+    // redemption or message row that pointed at another tenant's row would
+    // otherwise pull that tenant's prize or fan name into the feed and push.
     sb
       .from("redemptions")
-      .select("id, created_at, spin:spins(prize_label, fan:fans(display_name, handle))")
+      .select("id, created_at, spin:spins!inner(prize_label, fan:fans(display_name, handle))")
       .eq("creator_id", uid)
       .eq("status", "pending")
+      .eq("spin.creator_id", uid)
       .order("created_at", { ascending: false })
       .limit(FEED_LIMIT),
     sb
       .from("messages")
-      .select("fan_id, body, created_at, fan:fans(display_name, handle)")
+      .select("fan_id, body, created_at, fan:fans!inner(display_name, handle)")
       .eq("creator_id", uid)
       .eq("sender", "fan")
       .is("read_at", null)
+      .eq("fan.creator_id", uid)
       .order("created_at", { ascending: false })
       .limit(200),
     sb

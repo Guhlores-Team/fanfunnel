@@ -18,8 +18,9 @@ const TOKEN = "a".repeat(48), OTHER_TOKEN = "b".repeat(48);
 let signedIn = true, allowed = true;
 let wheel: Record<string, unknown> | null = { id: GAME, creator_id: CREATOR, archived_at: null, game_kind: "wheel", game_ready: true };
 const otherWheel = { id: OTHER_GAME, creator_id: OTHER, archived_at: null, game_kind: "wheel", game_ready: true };
-// Passes the session can read (RLS: its own, plus a creator it views for as a
-// team member). Reading a pass is not authority to change it.
+// Passes in the database. creator_link_pass (0068) resolves a token only for a
+// caller that may at least view its creator: another creator's link is not
+// even found, and acting on an own link still needs 'grant'.
 const passes = [
   { id: PASS, token: TOKEN, fan_id: FAN, creator_id: CREATOR, is_active: true },
   { id: OTHER_PASS, token: OTHER_TOKEN, fan_id: OTHER_FAN, creator_id: OTHER, is_active: true },
@@ -49,6 +50,10 @@ const session = {
   rpc: async (name: string, args: Record<string, unknown>) => {
     if (name === "can_act_for") { permissionAsks.push(args); return { data: allowed && args.target_creator === CREATOR && args.perm === "grant", error: null }; }
     if (name === "issue_creator_actor_context") return { data: "60000000-0000-4000-8000-000000000006", error: null };
+    if (name === "creator_link_pass") {
+      // Resolves for a 'view' caller (own creator); 'grant' is asked separately.
+      return { data: passes.filter((p) => p.token === args.p_token && p.creator_id === CREATOR).map((p) => ({ id: p.id, creator_id: p.creator_id, fan_id: p.fan_id, campaign_id: null, is_active: p.is_active })), error: null };
+    }
     return { data: null, error: { message: "unexpected" } };
   },
 };
@@ -69,12 +74,15 @@ async function main() {
   check("ok" in await setFanLinkGame(FAN, TOKEN, null) && service.at(-1)?.args.p_wheel === null, "null follows the campaign and live game again");
   const before = service.length;
 
-  // Negative: another creator's fan link (readable, but not this creator's to change).
+  // Negative: another creator's fan link. creator_link_pass answers nothing for
+  // a link the caller may not grant for, so it is not found (never forbidden,
+  // which would confirm the token exists) and no permission is even asked.
+  const asksBefore = permissionAsks.length;
   const foreignLink = await setFanLinkGame(OTHER_FAN, OTHER_TOKEN, GAME);
-  check("error" in foreignLink && foreignLink.error === "forbidden" && service.length === before, "a creator cannot set a game on another creator's fan link");
-  check(permissionAsks.at(-1)?.target_creator === OTHER, "the permission asked is for the link's real owner, never the caller");
+  check("error" in foreignLink && foreignLink.error === "not_found" && service.length === before, "a creator cannot set a game on another creator's fan link");
+  check(permissionAsks.length === asksBefore, "another creator's link is not resolved, so no permission is asked for it");
   const foreignLinkOwnGame = await setFanLinkGame(OTHER_FAN, OTHER_TOKEN, OTHER_GAME);
-  check("error" in foreignLinkOwnGame && foreignLinkOwnGame.error === "forbidden" && service.length === before, "nor with that creator's own game");
+  check("error" in foreignLinkOwnGame && foreignLinkOwnGame.error === "not_found" && service.length === before, "nor with that creator's own game");
   // Negative: this creator's link, another creator's game.
   const foreignGame = await setFanLinkGame(FAN, TOKEN, OTHER_GAME);
   check("error" in foreignGame && foreignGame.error === "not_found" && service.length === before, "a creator cannot point their fan's link at another creator's game");
@@ -116,7 +124,7 @@ async function main() {
   const routeOk = await call(FAN, { token: TOKEN, wheelId: GAME });
   check(routeOk.status === 200 && (await routeOk.json()).ok === true && routeOk.headers.get("Cache-Control") === "no-store" && service.length === served + 1, "the route sets this creator's own link");
   const routeForeign = await call(OTHER_FAN, { token: OTHER_TOKEN, wheelId: OTHER_GAME });
-  check(routeForeign.status === 403 && (await routeForeign.json()).error === "forbidden" && service.length === served + 1, "the route answers 403 for another creator's fan link");
+  check(routeForeign.status === 404 && (await routeForeign.json()).error === "not_found" && service.length === served + 1, "the route answers 404 for another creator's fan link (0068: never resolved)");
   const routeForeignGame = await call(FAN, { token: TOKEN, wheelId: OTHER_GAME });
   check(routeForeignGame.status === 404 && service.length === served + 1, "the route answers 404 for another creator's game");
   for (const body of ["{not json", { token: TOKEN }, { token: 5, wheelId: GAME }, { token: TOKEN, wheelId: 7 }]) {

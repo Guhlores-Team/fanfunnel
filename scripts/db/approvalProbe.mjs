@@ -92,8 +92,10 @@ lines.push(as('pendingowner', [
   value('pendingowner.add', `select public.org_add_member('${PENDING_ORG}','${email('outside')}','manager')`, 'not_owner'),
 ]));
 lines.push(as('owner', [
-  value('owner.add.pending', `select public.org_add_member('${ORG}','${email('pending')}','manager')`, 'no_such_user'),
-  value('owner.invite.pending', `select public.org_invite_creator('${ORG}','${email('pending')}')`, 'no_such_user'),
+  // 0068: an invitation answers 'ok' for any address (no account enumeration);
+  // an unapproved invitee still cannot accept (org_invite_respond: 'inactive').
+  value('owner.add.pending', `select public.org_add_member('${ORG}','${email('pending')}','manager')`, 'ok'),
+  value('owner.invite.pending', `select public.org_invite_creator('${ORG}','${email('pending')}')`, 'ok'),
 ]));
 lines.push(as('invitee', [value('approved.invite.accept', `select public.org_invite_respond('${uid(302)}',true)`, 'ok')]));
 for (const state of ['pending', 'rejected', 'inactive']) {
