@@ -18,7 +18,6 @@
 //   ./publicProfile.ts
 //   ./playGuard.ts
 
-export type { FanPassView, SpinError } from "./shared";
 export {
   getWheel,
   saveWheel,
@@ -33,8 +32,8 @@ export {
   setActiveWheel,
   setWheelSchedule,
 } from "./wheels";
-export { listWebhooks, createWebhook, deleteWebhook, fireWebhooks } from "./webhooks";
-export { getFanPass, spin, getSpinAttemptStatus, createPass, FanPassUnavailableError } from "./spins";
+export { listWebhooks, createWebhook, deleteWebhook } from "./webhooks";
+export { getFanPass, spin, getSpinAttemptStatus, createPass } from "./spins";
 export { setPlayReminder, takeBreak } from "./playGuard";
 export {
   editGrant,
@@ -50,7 +49,6 @@ export {
   updateFanMeta,
   ackFan,
 } from "./fans";
-export type { CrmFan, CreatorCrm } from "./fans";
 export {
   createCampaign,
   listCampaigns,
@@ -65,7 +63,6 @@ export {
   setCampaignActive,
   deleteCampaign,
 } from "./campaigns";
-export type { UncategorizedStats } from "./campaigns";
 export { reportPublicPhoto } from "./publicReports";
 export {
   listDmTemplates,
@@ -100,7 +97,6 @@ export {
   getAutopilot,
   dismissAutopilotCard,
 } from "./analytics";
-export type { ProfitSummary, AutopilotAction, AutopilotCard } from "./analytics";
 export { setRedemptionStatus, setRedemptionMeta } from "./fulfilment";
 export {
   listHappyHours,
@@ -116,7 +112,6 @@ export {
   getLeaderboard,
   getRecentWins,
 } from "./boosts";
-export type { RecentWin } from "./boosts";
 export { getReferralStats } from "./referrals";
 export {
   isCurrentUserAdmin,
@@ -139,16 +134,7 @@ export {
   listCreatorApplications,
   decideCreatorApplication,
 } from "./admin";
-export type {
-  OrgRole,
-  OrgCreatorStat,
-  OrgMember,
-  PendingInvite,
-  AgencyOverview,
-  MyInvite,
-  ApprovalStatus,
-  CreatorApplication,
-} from "./admin";
+export type { OrgRole } from "./admin";
 export {
   clearMyData,
   getOnboardingDismissed,
@@ -158,7 +144,6 @@ export {
   setMyNotificationPrefs,
   setActiveWheelBrandColor,
 } from "./account";
-export type { NotificationPrefs, MyAccount } from "./account";
 export {
   getPublicWheelTeaser,
   getPublicProfileBySlug,
@@ -166,18 +151,14 @@ export {
   normalizePublicSlug,
   setMyPublicProfile,
 } from "./publicProfile";
-export type { PublicProfile } from "./publicProfile";
 export { getNotifications, markNotificationsSeen } from "./notifications";
-export type { NotificationFeed, NotificationItem, NotificationKind, NotificationTarget } from "./notifications";
 export { getFanAppInfo, getMyPwaIconMode, setMyPwaIconMode } from "./pwa";
 export { recordCheckin } from "./checkins";
 export { recordOutreach, ageFanActivityForDemo } from "./outreach";
 export { recordAudit, listAuditLog } from "./audit";
-export type { AuditAction, AuditEntry, AuditInput } from "./audit";
 export { exportFanData, deleteFanData, getFanLinkStatus, exportCreatorData, isPlausibleToken } from "./privacy";
 export type { FanLinkStatus } from "./privacy";
 export { getMyTermsStatus, acceptMyTerms } from "./terms";
-export type { TermsStatus } from "./terms";
 
 export {
   getPushConfig,
@@ -188,12 +169,8 @@ export {
   setMyPushDeviceDetails,
   sendMyTestPush,
 } from "./push";
-export type { PushDevice, PushError } from "./push";
 
 export { getPrizeDelivery, setPrizeDelivery, addPrizeCodes, getFanReward, getFanRewardHistory, isShareIdShape } from "./rewards";
 export { getCreatorThemeView, getMyTheme, setMyTheme, addMyMedia, setMyMediaCaption, reorderMyMedia, deleteMyMedia, adminRemoveCreatorMedia } from "./creatorTheme";
-export type { CreatorThemeView, MyThemeView, ThemeMedia } from "./creatorTheme";
 
-export { getFanFocusState, getFanFocus, getCreatorFocus, grantFocusPack, cancelFanFocus } from "./focus";
-export type { FanFocusView, CreatorFocusView } from "./focusView";
-export type { SpinIntent, SpinAttemptStatus } from "./spinAttempts";
+export { getFanFocusState, getCreatorFocus, grantFocusPack, cancelFanFocus } from "./focus";

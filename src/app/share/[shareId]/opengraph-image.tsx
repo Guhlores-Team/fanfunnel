@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 import { getShareCard } from "@/lib/data";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -74,7 +75,7 @@ export default async function Image({
           {label}
         </div>
         <div style={{ display: "flex", marginTop: 36, fontSize: 30, opacity: 0.6 }}>
-          🎉 I just won this — every spin wins
+          {publicGameCopy(card?.gameKind).ogFooter}
         </div>
       </div>
     ),

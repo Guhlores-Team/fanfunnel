@@ -6,6 +6,7 @@ import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/s
 import { sha256Hex } from "@/lib/games/wheel/fairness";
 import type { Rarity } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { publicGameKind } from "@/lib/games/publicCopy";
 import type {
   ShareCardData,
   WishlistDemand,
@@ -154,7 +155,7 @@ export async function getShareCard(
   const { data } = await sb
     .from("spins")
     .select(
-      "prize_label, prize_rarity, prize_image_url, created_at, creator:profiles(display_name)"
+      "prize_label, prize_rarity, prize_image_url, created_at, game_kind, creator:profiles(display_name)"
     )
     .eq("share_id", shareId)
     .maybeSingle();
@@ -164,6 +165,7 @@ export async function getShareCard(
     prize_rarity: Rarity;
     prize_image_url: string | null;
     created_at: string;
+    game_kind: string | null;
     creator: { display_name: string | null } | null;
   } | null;
   if (!row) return null;
@@ -175,6 +177,7 @@ export async function getShareCard(
     color: RARITY_COLORS[row.prize_rarity],
     imageUrl: row.prize_image_url ?? null,
     at: row.created_at,
+    gameKind: publicGameKind(row.game_kind),
   };
 }
 

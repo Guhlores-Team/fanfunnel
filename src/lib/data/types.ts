@@ -22,7 +22,7 @@ export interface WonPrize {
 }
 
 /** Phase 3: a render-ready shareable win card. */
-export interface ShareCardData { creatorTitle: string; prizeLabel: string; rarity: Rarity; emoji?: string; color: string; imageUrl?: string | null; at: string }
+export interface ShareCardData { creatorTitle: string; prizeLabel: string; rarity: Rarity; emoji?: string; color: string; imageUrl?: string | null; at: string; /** The game the win came from (bingo line bonuses read as bingo). */ gameKind: "wheel" | "scratch" | "bingo" }
 /** Phase 3: a prize a fan has flagged they want. */
 export interface WishlistItem { id: string; prizeLabel: string; rarity: Rarity; at: string }
 /** Phase 3: aggregated wishlist demand for a prize, for the creator. */

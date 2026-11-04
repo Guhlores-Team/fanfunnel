@@ -788,6 +788,7 @@ function PublicPageSection({
   // Brand color drives the live preview (and the dashboard re-tint). Seeded from
   // the active wheel; saved to that wheel since /c/[slug] reads it from there.
   const [brandColor, setBrandColor] = useState("#ec4899");
+  const [gameKind, setGameKind] = useState<string | undefined>(undefined);
   const [look, setLook] = useState<ThemePreviewValue | null>(null);
   const [savedBrand, setSavedBrand] = useState("#ec4899");
   const [busy, setBusy] = useState(false);
@@ -809,6 +810,7 @@ function PublicPageSection({
       .then((r) => (r.ok ? r.json() : null))
       .then((w) => {
         const wb = w?.wheel?.brandColor;
+        if (live && typeof w?.wheel?.gameKind === "string") setGameKind(w.wheel.gameKind);
         if (live && wb) {
           setBrandColor(wb);
           setSavedBrand(wb);
@@ -991,6 +993,7 @@ function PublicPageSection({
           displayName={displayName || "Creator"}
           tagline={tagline}
           hasTipUrl={!!tipUrl.trim()}
+          gameKind={gameKind}
         />
       </div>
     </div>

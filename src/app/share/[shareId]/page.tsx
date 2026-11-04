@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getShareCard } from "@/lib/data";
 import { brandVars, readableInk } from "@/lib/theme";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function generateMetadata({
   const card = await getShareCard(shareId);
   if (!card) return { title: "Win · FanFunnel" };
   const title = `I won ${card.prizeLabel}! 🎉`;
-  const description = `A ${RARITY_LABEL[card.rarity] ?? card.rarity} drop on ${card.creatorTitle}'s wheel.`;
+  const description = publicGameCopy(card.gameKind).dropOn(RARITY_LABEL[card.rarity] ?? card.rarity, card.creatorTitle);
   return {
     title,
     description,
@@ -39,6 +40,7 @@ export default async function SharePage({
   const { shareId } = await params;
   const card = await getShareCard(shareId);
   if (!card) notFound();
+  const copy = publicGameCopy(card.gameKind);
 
   return (
     <main
@@ -77,7 +79,7 @@ export default async function SharePage({
             {card.prizeLabel}
           </h1>
           <p className="mt-3 text-sm text-muted text-pretty">
-            Won on {card.creatorTitle}&rsquo;s prize wheel — every spin wins.
+            {copy.wonOn(card.creatorTitle)}
           </p>
           <a
             href={`/verify/${shareId}`}
@@ -88,7 +90,7 @@ export default async function SharePage({
         </div>
       </div>
       <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
-        Powered by FanFunnel · every spin wins
+        {copy.shareFooter}
       </footer>
     </main>
   );
