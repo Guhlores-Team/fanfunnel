@@ -1,5 +1,8 @@
 # Interplay stress suite (A26)
 
+The load/abuse half of A26 (hundreds of concurrent sessions, HTTP floods, abuse
+inputs, latency ceilings) is `npm run stress`; see `STRESS_RESULTS.md`.
+
 Proof that features work in tandem: game resolution, scheduling, pins, archiving,
 prize edits, concurrency, tenancy and the scratch/bingo feature flags, exercised as
 real SQL on a throwaway local Postgres 16 (same harness as the other
