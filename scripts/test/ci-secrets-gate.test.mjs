@@ -168,6 +168,7 @@ for (const cmd of ["node scripts/db/schema-drift-check.mjs", "node scripts/goliv
 check("the maintenance contract test gets an explicit PG_BIN and fails on any error", /PG_BIN="\$\(ls -d \/usr\/lib\/postgresql\/\*\/bin \| sort -V \| tail -1\)"/.test(drift) && /set -euo pipefail[\s\S]*node scripts\/ops\/test-maintenance-db\.test\.mjs/.test(drift));
 check("schema-drift job keeps a runner with preinstalled Postgres and no secrets", drift.includes("runs-on: ubuntu-24.04") && !/\$\{\{ secrets\./.test(drift));
 check("the e2e-supabase job still runs the pure maintenance guard", supabaseWf.includes("run: node scripts/ops/test-maintenance.test.mjs"));
+check("CI runs the pure maintenance guard on every push and PR (the dispatch-only job is not enough)", jobBlock(ci, "verify").includes("node scripts/ops/test-maintenance.test.mjs"));
 check("the gate never reads secret values from its environment", !/process\.env\.(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY)\b/.test(readFileSync(GATE, "utf8")));
 
 console.log(`ci-secrets-gate.test: ${passed} checks passed`);
