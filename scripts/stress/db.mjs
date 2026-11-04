@@ -163,7 +163,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const t0 = Date.now();
       const results = await parallel(fans, pool.size * 4, who => play(who, { pick: (ctx, ex) => ex.includes(w.prizes.Limited) ? w.prizes.Other : w.prizes.Limited, series, prepSeries }));
       report.number("wall_ms", Date.now() - t0); report.number("outcomes", outcomes(results)); report.number("pool", pool.stats());
-      noErrors(results, "oversell race");
+      await noErrors(results, "oversell race");
       const [units, distinct] = await awarded(w.prizes.Limited);
       report.check(units === stock && distinct === stock, `exactly ${stock} units awarded to ${stock} distinct fans (no oversell)`, `${units} units / ${distinct} fans`);
       report.check(await stockOf(w.prizes.Limited) === 0, "stock lands on exactly 0");
@@ -179,7 +179,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const c = await addCreator(), w = await addWheel(c, { prizes: [{ label: "A", weight: 1 }, { label: "B", weight: 1 }] });
       const solo = await grantFan(c, w.id, 5), series = [];
       const distinct = await parallel(Array.from({ length: n }), pool.size * 4, () => play(solo, { series }));
-      noErrors(distinct, "same-fan flood");
+      await noErrors(distinct, "same-fan flood");
       const t = outcomes(distinct); report.number("outcomes", t);
       report.check(t.committed === 5 && (t.declined ?? 0) === n - 5, `exactly 5 of ${n} distinct attempts commit, the rest decline cleanly`, t);
       report.check((await scalar(`select spins_remaining||','||spins_granted_total||','||(select count(*) from public.spins where fan_pass_id=${quote(solo.pass)}) from public.fan_passes where id=${quote(solo.pass)};`)) === "0,5,5", "credits conserved: 5 granted, 5 spent, 5 spins");
@@ -187,7 +187,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       // Replays: one attempt id, one body, many concurrent commits.
       const twin = await grantFan(c, w.id, 3), a = await prep(twin), body = await wheelBody(a, w.prizes.A, [], []);
       const replayed = await parallel(Array.from({ length: replays }), pool.size * 4, () => commit(twin, a, body));
-      noErrors(replayed, "replay flood");
+      await noErrors(replayed, "replay flood");
       const ids = new Set(replayed.map(r => r.value?.spin?.id ?? r.value?.status));
       report.check(replayed.every(r => st(r) === "committed") && ids.size === 1, `${replays} concurrent commits of one attempt all answer the same committed spin`, [...ids].slice(0, 3));
       report.check((await scalar(`select spins_remaining||','||(select count(*) from public.spins where fan_pass_id=${quote(twin.pass)}) from public.fan_passes where id=${quote(twin.pass)};`)) === "2,1", "one debit, one spin row for the replayed attempt");
@@ -195,8 +195,8 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const other = await rpc("prepare_spin_attempt", [quote(a.id), quote(twin.token), quote(hash("other-seed"))]);
       const stale = await rpc("commit_spin_attempt", [quote(a.id), quote(twin.token), quote(hash("other-seed")), json(body.ctx), json(body.spin), json(body.expected), json(body.next)]);
       report.check(other.status === "conflict" && stale.status === "conflict", "a reused attempt id with another binding is a conflict at prepare and commit", `${other.status}/${stale.status}`);
-      const st = await status(twin, a);
-      report.check(st.status === "committed" && st.spin?.id === [...ids][0], "get_spin_attempt_status recovers the same receipt");
+      const recovered = await status(twin, a);
+      report.check(recovered.status === "committed" && recovered.spin?.id === [...ids][0], "get_spin_attempt_status recovers the same receipt");
       await invariants(c, "idempotency"); report.finish();
     }
     // ============================================================ D3 editor race, switching, archive
@@ -221,7 +221,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const pick = (ctx, ex) => { const open = ctx.prizes.filter(p => !ex.includes(p.id) && (p.stock == null || p.stock > 0)); return (open.find(p => p.stock != null) ?? open[0])?.id ?? null; };
       const [results] = await Promise.all([parallel(fans.flatMap(f => [f, f]), pool.size * 2, who => play(who, { pick, series })), editor()]);
       report.number("outcomes", outcomes(results)); report.number("editor", edits);
-      noErrors(results, "edits during play");
+      await noErrors(results, "edits during play");
       const allowed = new Set(["committed", "declined", "unavailable"]);
       report.check(results.every(r => allowed.has(st(r))), "every play ends committed or cleanly declined (no_wheel while archived)", outcomes(results));
       report.number("declined_reasons", tally(results.filter(r => st(r) !== "committed"), v => v.error ?? v.status));
@@ -288,7 +288,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
         parallel(Array.from({ length: 20 }), 20, () => timed(grants, () => rpc("grant_pass_spins", [quote(same), quote(c), quote(target.fan), quote(target.pass), "3", "0", "0", "null"]))),
         parallel(Array.from({ length: 20 }), 20, () => timed(grants, () => rpc("grant_pass_spins", [quote(randomUUID()), quote(c), quote(target.fan), quote(target.pass), "1", "0", "0", "null"]))),
       ]);
-      noErrors(plays, "plays during import"); noErrors(imported, "parallel import replays"); noErrors([...sameGrants, ...distinctGrants], "grant floods");
+      await noErrors(plays, "plays during import"); await noErrors(imported, "parallel import replays"); await noErrors([...sameGrants, ...distinctGrants], "grant floods");
       const fresh = imported.filter(r => r.value?.status === "imported" && r.value.replayed === false).length, replayedCount = imported.filter(r => r.value?.status === "imported" && r.value.replayed === true).length;
       report.check(fresh === 1 && replayedCount === par - 1, `one batch imported once, ${par - 1} replays`, tally(imported, v => `${v.status}:${v.replayed}`));
       report.check((await scalar(`select count(*) from public.fans where creator_id=${quote(c)} and display_name like 'Imported %';`)) === String(rows), `${rows} imported fans exist exactly once`);
@@ -301,7 +301,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const grantId = target.grant, edit = (req, patch) => rpc("edit_pass_grant", [quote(req), quote(c), quote(grantId), json(patch), quote(c)]);
       const req = randomUUID();
       const sameEdits = await parallel(Array.from({ length: 10 }), 10, () => edit(req, { spins: 5 }));
-      noErrors(sameEdits, "concurrent edits of one grant");
+      await noErrors(sameEdits, "concurrent edits of one grant");
       report.number("edit_outcomes", tally(sameEdits, v => `${v.status}:${v.replayed ?? ""}`));
       report.check(sameEdits.every(r => ["granted", "edited", "ok"].includes(st(r))) && sameEdits.filter(r => r.value.replayed === false).length <= 1, "an edit replayed under one requestId applies at most once");
       report.check(Number(await scalar(`select spins from public.grants where id=${quote(grantId)};`)) === 5, "the grant's spins read the edited value exactly");
@@ -318,7 +318,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const S = await addWheel(c, { kind: "scratch", title: "S", prizes: [{ label: "Limited", weight: 1000, stock, rarity: "rare" }, { label: "Other", weight: 1 }, { label: "Third", weight: 1 }] });
       const fans = await grantFans(c, S.id, n), series = [];
       const results = await parallel(fans, pool.size * 2, who => play(who, { series }));
-      noErrors(results, "scratch race");
+      await noErrors(results, "scratch race");
       report.number("outcomes", outcomes(results));
       const [units, distinct] = await awarded(S.prizes.Limited), targeted = results.filter(r => r.value?.prizeId === S.prizes.Limited || r.value?.redraws > 0).length;
       report.check(results.every(r => st(r) === "committed"), "every scratch play commits (sold-out fans redraw)");
@@ -327,12 +327,12 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.latency("scratch commit", series, DB_THRESHOLDS.commit);
       const bingo = await addBingo(c), bfans = await grantFans(c, bingo.id, nb, 2), bseries = [];
       const b1 = await parallel(bfans, nb, who => play(who, { series: bseries }));
-      noErrors(b1, "bingo race");
+      await noErrors(b1, "bingo race");
       report.number("bingo_outcomes", outcomes(b1));
       report.check(b1.every(r => st(r) === "committed"), "every bingo play commits concurrently");
       report.check((await scalar(`select count(*)||','||count(distinct fan_id) from public.bingo_cards where wheel_id=${quote(bingo.id)};`)) === `${nb},${nb}`, "one card per fan");
       const b2 = await parallel(bfans, nb, who => play(who, { series: bseries }));
-      noErrors(b2, "bingo second round");
+      await noErrors(b2, "bingo second round");
       report.check(b2.every(r => st(r) === "committed") && (await scalar(`select count(*) from public.bingo_cards where wheel_id=${quote(bingo.id)} and version<2;`)) === "0", "a second concurrent round advances every card version");
       report.latency("bingo commit", bseries, DB_THRESHOLDS.commit * 2);
       await invariants(c, "scratch+bingo"); await ledger("scratch+bingo"); report.finish();
@@ -351,7 +351,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
         parallel(fans, pool.size * 2, who => play(who, { pick, series })),
         (async () => { await sleep(30); return timed(pastes, () => rpc("add_reward_codes", [quote(w.prizes.More), quote(c), json(Array.from({ length: paste }, (_, i) => codeRow("b", i)))])); })(),
       ]);
-      noErrors(results, "code race");
+      await noErrors(results, "code race");
       report.number("outcomes", outcomes(results)); report.number("retries_changed", results.reduce((t, r) => t + (r.value?.retries ?? 0), 0)); report.number("redraws_sold_out", results.reduce((t, r) => t + (r.value?.redraws ?? 0), 0));
       report.check(results.every(r => st(r) === "committed"), "every fan ends committed");
       report.check((await scalar(`select count(*)||','||count(distinct spin_id) from public.prize_reward_codes where prize_id=${quote(w.prizes.Codes)} and spin_id is not null;`)) === `${codes},${codes}`, `exactly ${codes} distinct codes assigned`);
@@ -368,7 +368,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const seedSeries = []; const t0 = Date.now();
       const seeded = await grantFans(big, bw.id, fansN, rounds);
       const seedPlays = await parallel(seeded.flatMap(f => Array.from({ length: rounds }, () => f)), pool.size * 2, who => play(who, { series: seedSeries }));
-      noErrors(seedPlays, "scale seed");
+      await noErrors(seedPlays, "scale seed");
       report.number("seed", { fans: fansN, spins: Number(await scalar(`select count(*) from public.spins where creator_id=${quote(big)};`)), wall_ms: Date.now() - t0 });
       report.latency("commit at scale", seedSeries, DB_THRESHOLDS.commit);
       const inv = []; await timed(inv, () => ledger("at scale")); report.latency("run_reward_ledger_invariants", inv, DB_THRESHOLDS.invariants);
@@ -387,7 +387,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       };
       const [results] = await Promise.all([parallel(lfans.flatMap(f => [f, f, f]), pool.size, who => play(who, { series })), maintenance()]);
       const mine = results.filter((_, i) => lfans[Math.floor(i / 3)] !== victim), victims = results.filter((_, i) => lfans[Math.floor(i / 3)] === victim);
-      noErrors(mine, "plays during maintenance");
+      await noErrors(mine, "plays during maintenance");
       report.check(mine.every(r => st(r) === "committed"), "other fans' plays all commit while maintenance runs", outcomes(mine));
       report.number("deleted_fan_outcomes", tally(victims, v => `${v.status}:${v.error ?? ""}`));
       report.check(victims.every(r => !r.ok ? /fan|pass|not found|violat/i.test(r.error) : ["committed", "unavailable", "declined", "conflict"].includes(r.value.status)), "the deleted fan's in-flight plays end committed-before or cleanly unavailable", victims.filter(r => !r.ok).map(r => r.error).slice(0, 2));

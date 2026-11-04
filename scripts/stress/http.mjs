@@ -22,8 +22,8 @@ export const HTTP_THRESHOLDS = { spin: 400, spinContended: 1500, status: 300, pu
 export async function startDemoServer(port) {
   const env = { ...process.env, NEXT_PUBLIC_ENABLE_DEBUG: "1", PORT: String(port), CRON_SECRET: "stress-cron-secret-0123456789abcdef", VAPID_SUBJECT: "mailto:stress@example.test" };
   for (const key of Object.keys(env)) if (/SUPABASE|UPSTASH|KV_REST|VERCEL|RESEND|ALERT_EMAIL/i.test(key)) delete env[key];
-  const { generateVAPIDKeys } = await import("web-push");
-  const keys = generateVAPIDKeys(); env.VAPID_PUBLIC_KEY = keys.publicKey; env.VAPID_PRIVATE_KEY = keys.privateKey;
+  const webPush = await import("web-push");
+  const keys = (webPush.default ?? webPush).generateVAPIDKeys(); env.VAPID_PUBLIC_KEY = keys.publicKey; env.VAPID_PRIVATE_KEY = keys.privateKey;
   const child = spawn("npx", ["next", "start", "-p", String(port)], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
   let output = ""; child.stdout.on("data", b => { output += b; if (output.length > 64_000) output = output.slice(-32_000); }); child.stderr.on("data", b => { output += b; if (output.length > 64_000) output = output.slice(-32_000); });
   const base = `http://127.0.0.1:${port}`, deadline = Date.now() + 90_000;
