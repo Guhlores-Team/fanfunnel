@@ -98,6 +98,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+
+      # The 0062 creator-route probe and the Bingo proof fixture run app modules
+      # through tsx (scripts/test-preload.mjs mocks `server-only`), so the drift
+      # check needs the project's dependencies, not just Node.
+      - name: Install dependencies
+        run: npm ci
 
       - name: schema.sql / migrations_combined.sql / migrations build the same DB
         run: node scripts/db/schema-drift-check.mjs

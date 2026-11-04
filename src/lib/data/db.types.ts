@@ -507,7 +507,6 @@ export type Database = {
           units_taken: number
           witnessed_at: string | null
         }
-        ComputedFields: never
         Insert: {
           created_at?: string
           creator_id: string
@@ -2388,7 +2387,6 @@ export type Database = {
           key_version: number
           singleton: boolean
         }
-        ComputedFields: never
         Insert: {
           cipher: string
           created_at?: string
@@ -2693,19 +2691,18 @@ export type Database = {
           canary_checked_at: string | null
           canary_failure_at: string | null
           canary_status: string
-          invariant_counts: NonNullable<Json>
+          invariant_counts: Json
           invariants_checked_at: string | null
           invariants_status: string
           last_maintenance_at: string | null
           last_source: string
           singleton: boolean
         }
-        ComputedFields: never
         Insert: {
           canary_checked_at?: string | null
           canary_failure_at?: string | null
           canary_status?: string
-          invariant_counts?: NonNullable<Json>
+          invariant_counts?: Json
           invariants_checked_at?: string | null
           invariants_status?: string
           last_maintenance_at?: string | null
@@ -2716,7 +2713,7 @@ export type Database = {
           canary_checked_at?: string | null
           canary_failure_at?: string | null
           canary_status?: string
-          invariant_counts?: NonNullable<Json>
+          invariant_counts?: Json
           invariants_checked_at?: string | null
           invariants_status?: string
           last_maintenance_at?: string | null
@@ -3100,12 +3097,14 @@ export type Database = {
       }
       _is_org_member: { Args: { p_org: string }; Returns: boolean }
       _lock_wheel_lifecycle: { Args: { p_wheel: string }; Returns: undefined }
+      _org_invite_email: { Args: { p_email: string }; Returns: string }
+      _org_invite_throttled: { Args: { p_org: string }; Returns: boolean }
       _owns_org: { Args: { p_org: string }; Returns: boolean }
       _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
       _release_fan_focus: { Args: { p_fan: string }; Returns: Json }
       _resolved_spin_wheel: { Args: { p_pass: string }; Returns: string }
       _reward_crypto_inventory: {
-        Args: Record<PropertyKey, never>
+        Args: never
         Returns: {
           cipher: string
           creator_id: string
@@ -3118,10 +3117,7 @@ export type Database = {
         }[]
       }
       _scratch_visible: { Args: { p_value: string }; Returns: string }
-      _session_mfa_satisfied: {
-        Args: Record<PropertyKey, never>
-        Returns: boolean
-      }
+      _session_mfa_satisfied: { Args: never; Returns: boolean }
       _spin_attempt_context: { Args: { p_pass: string }; Returns: Json }
       _spin_attempt_receipt: {
         Args: { p_attempt: string; p_replayed: boolean }
@@ -3611,10 +3607,7 @@ export type Database = {
         Args: { p_attempt: string; p_request_hash: string; p_token: string }
         Returns: Json
       }
-      read_reward_crypto_canary: {
-        Args: Record<PropertyKey, never>
-        Returns: Json
-      }
+      read_reward_crypto_canary: { Args: never; Returns: Json }
       reconcile_creator_request:
         | {
             Args: {
