@@ -1,5 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "git": { "deploymentEnabled": { "dashboard-redesign": false, "orch/fixes": false, "gaps/b3-ui": false, "gaps/b3-db": false, "gaps/b3-app": false, "gaps/b3-ops": false, "gaps/b4-db": false, "gaps/b4-seats": false, "gaps/b4-stress": false, "gaps/b4-qa": false } },
+  "git": { "deploymentEnabled": { "dashboard-redesign": false, "orch/fixes": false, "gaps/b3-ui": false, "gaps/b3-db": false, "gaps/b3-app": false, "gaps/b3-ops": false, "gaps/b4-db": false, "gaps/b4-seats": false, "gaps/b4-stress": false, "gaps/b4-qa": false, "gaps/b4-dbsec": false, "gaps/b4-hard": false } },
   "crons": [{ "path": "/api/cron/retention", "schedule": "17 4 * * *" }]
 }
