@@ -366,9 +366,19 @@ async function main() {
   check("demo fan takes a break", "ok" in tookBreak);
   const beforeBreak = store.mockPushOutbox().length;
   const breakWin = await notifyCreator("demo", { type: "spin", ...breakEvent! });
-  check("demo: on-break win refused without a delivery", breakWin.sent === 0 && store.mockPushOutbox().length === beforeBreak && breakWin.skipped.some((s) => s.reason === "fan_not_engageable"));
+  // The random spin can leave a prize at exactly the low-stock line (about 1 in
+  // 30). That push is about the prize, not the fan, so it may go out; every item
+  // about the fan must be refused and, without a stock item, nothing at all.
+  const fanTags = [`win:${breakEvent!.redemptionId}`, `spins:${breakEvent!.fanId}`, `msg:${breakEvent!.fanId}`];
+  const nothingAboutFan = (r: typeof breakWin) =>
+    r.skipped.some((s) => s.reason === "fan_not_engageable") && r.pushed.every((k) => k.startsWith("stock:")) && !store.mockPushOutbox().some((o) => fanTags.includes(o.payload.tag));
+  check(
+    "demo: on-break win refused without a delivery",
+    nothingAboutFan(breakWin) && (breakWin.pushed.length > 0 ? breakWin.sent > 0 : breakWin.sent === 0 && store.mockPushOutbox().length === beforeBreak)
+  );
+  const afterBreakWin = store.mockPushOutbox().length;
   const breakMessage = await notifyCreator("demo", { type: "message", fanId: breakEvent!.fanId });
-  check("demo: on-break message refused without a delivery", breakMessage.sent === 0 && store.mockPushOutbox().length === beforeBreak && breakMessage.skipped.some((s) => s.reason === "fan_not_engageable"));
+  check("demo: on-break message refused without a delivery", nothingAboutFan(breakMessage) && breakMessage.sent === 0 && store.mockPushOutbox().length === afterBreakWin);
 
   console.log(`push notify: ${passed} checks passed`);
 }
