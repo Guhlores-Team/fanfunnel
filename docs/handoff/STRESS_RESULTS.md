@@ -153,8 +153,10 @@ publish fault).
   page (SSR, no limiter) and `/api/spin` (per IP+token) are unaffected.
 - **Dashboard reads at 5 000 fans in the demo store.** One user: `/api/fans`
   223 ms and `/api/crm` 197 ms p50, every other route under 15 ms. Twenty
-  users polling all eight routes at once: 18 requests/s, p50 1.9 s, p95 42 s,
-  because the mock store is CPU-bound on one Node process; the number is a
+  users polling all eight routes at once: 18 requests/s, p50 1.9 s, p95 42 s
+  (on a busier box a batch can exceed the two-minute request timeout; the
+  harness counts it as `batches_timed_out`), because the mock store is
+  CPU-bound on one Node process; the number is a
   property of the demo, not of the Supabase-backed routes (the audit's
   scenario 8 against TEST remains the real read-path test).
 - **Oversized bodies.** A 6 MB JSON body is parsed and then refused by
