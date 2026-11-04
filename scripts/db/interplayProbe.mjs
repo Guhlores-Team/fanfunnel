@@ -435,13 +435,110 @@ export async function probeInterplay(sqlInput, options = {}) {
     check((await commit(pinFan, cb, wheelBody(cb, free))).status === "committed" && await snapshot(cb.id) === "null", "a prize with no cost records none (reports fall back to the current cost)");
     await invariants(pc, "per-link pin and award cost");
 
+    // ------------------------------- 7. cancelled-prize stock (A42, 0067)
+    // A won limited unit goes back to stock exactly once when its prize is
+    // cancelled, and is taken again on reopen; plays, wheel saves and repeat
+    // cancels race it without losing or minting a unit.
+    const rc = await addCreator(uid(1400, "10")), rx = await addCreator(uid(1400, "11")), RW = uid(1400, "a"), XW = uid(1400, "b");
+    await addWheel(RW, rc, { k: "wheel", active: true }, "R"); await addWheel(XW, rx, { k: "wheel", active: true }, "X");
+    await sql(`update public.prizes set stock=3,label='Limited' where wheel_id in(${quote(RW)},${quote(XW)}) and label='Common';
+      grant select,insert,update on public.redemptions to authenticated;`);
+    const RL = await prizeId(RW, "Limited"), RO = await prizeId(RW, "Other"), XL = await prizeId(XW, "Limited");
+    const winOn = async (creator, wheel, prize) => { const who = await grantFan(creator, wheel, null, 1), a = await prep(who), r = await commit(who, a, wheelBody(a, prize)); check(r.status === "committed", `a ${prize === RO ? "unlimited" : "limited"} win commits (${r.status})`); return a.id; };
+    const redOf = spin => scalar(`select id from public.redemptions where spin_id=${quote(spin)};`);
+    const rowOf = spin => scalar(`select status||','||coalesce(stock_unit,'none') from public.redemptions where spin_id=${quote(spin)};`);
+    const setState = async (user, spin, creator, patch) => JSON.parse(await asUser(user, `select public.set_redemption_state(${quote(await redOf(spin))},${quote(creator)},${json(patch)})`));
+    const k1 = await winOn(rc, RW, RL);
+    check(await stockOf(RL) === 2 && await rowOf(k1) === "pending,held", "the award takes a unit and records that it holds it");
+    let kOut = await setState(rc, k1, rc, { status: "cancelled" });
+    check(kOut.status === "ok" && kOut.stock === "returned" && await stockOf(RL) === 3 && await rowOf(k1) === "cancelled,returned", `cancelling the won prize returns its unit (3) (${JSON.stringify(kOut)})`);
+    kOut = await setState(rc, k1, rc, { status: "cancelled", notes: "again" });
+    check(kOut.stock === "none" && await stockOf(RL) === 3, "a repeat cancel moves nothing (idempotent)");
+    kOut = await setState(rc, k1, rc, { status: "pending" });
+    check(kOut.stock === "taken" && await stockOf(RL) === 2 && await rowOf(k1) === "pending,held", "reopening takes the unit again");
+    kOut = await setState(rc, k1, rc, { status: "in_progress" });
+    check(kOut.stock === "none" && await stockOf(RL) === 2, "a status change that is not a cancel or reopen moves nothing");
+    await setState(rc, k1, rc, { status: "fulfilled" });
+    kOut = await setState(rc, k1, rc, { status: "cancelled" });
+    check(kOut.stock === "returned" && await stockOf(RL) === 3, "a fulfilled prize the creator cancels returns its unit too");
+    await sql(`update public.prizes set stock=0 where id=${quote(RL)};`);
+    kOut = await setState(rc, k1, rc, { status: "pending", notes: "lost" });
+    check(kOut.status === "sold_out" && await stockOf(RL) === 0 && await rowOf(k1) === "cancelled,returned" && await scalar(`select coalesce(notes,'null') from public.redemptions where spin_id=${quote(k1)};`) === "again", "reopening with no unit left is sold_out and changes nothing, not even the note");
+    await sql(`update public.prizes set stock=3 where id=${quote(RL)};`);
+    // Unlimited prizes, and prizes made unlimited after the award, move nothing.
+    const ku = await winOn(rc, RW, RO);
+    check(await rowOf(ku) === "pending,none" && (await setState(rc, ku, rc, { status: "cancelled" })).stock === "none" && await stockOf(RO) === null, "an unlimited prize holds no unit and its cancel moves nothing");
+    const k2 = await winOn(rc, RW, RL);
+    await sql(`update public.prizes set stock=null where id=${quote(RL)};`);
+    check((await setState(rc, k2, rc, { status: "cancelled" })).stock === "none" && await stockOf(RL) === null && await rowOf(k2) === "cancelled,none", "a prize made unlimited since the award is left alone and the unit stops being tracked");
+    await sql(`update public.prizes set stock=1 where id=${quote(RL)};`);
+    check((await setState(rc, k2, rc, { status: "pending" })).stock === "none" && await stockOf(RL) === 1, "reopening an untracked prize takes nothing");
+    await sql(`update public.prizes set stock=3 where id=${quote(RL)};`);
+    // The bookkeeping cannot be bypassed or forged.
+    const k3 = await winOn(rc, RW, RL);
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(rc)},true);update public.redemptions set status='cancelled' where spin_id=${quote(k3)};commit;`, /set_redemption_state/), "a plain session UPDATE cannot cancel a unit-holding prize around the RPC");
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(rc)},true);update public.redemptions set stock_unit='returned' where spin_id=${quote(k3)};commit;`, /set_redemption_state/), "a session cannot rewrite stock_unit");
+    check(await refused(`update public.redemptions set spin_id=${quote(k1)} where spin_id=${quote(k3)};`, /immutable/), "not even the service can move a redemption to another spin");
+    check(await asUser(rc, `with u as(update public.redemptions set notes='plain' where spin_id=${quote(k3)} returning 1) select count(*) from u`) === "1", "plain note edits still work on the session");
+    const kxw = await winOn(rx, XW, XL);
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(rx)},true);insert into public.redemptions(spin_id,creator_id,stock_unit) values(${quote(kxw)},${quote(rx)},'held');commit;`, /recorded only by the award/), "a creator cannot insert a redemption that claims a unit");
+    check(await refused(`insert into public.redemptions(spin_id,creator_id) values(${quote(k3)},${quote(rx)});`, /its spin's creator/), "no redemption can name another creator's spin");
+    check(await asUser(rx, `with i as(insert into public.redemptions(spin_id,creator_id) values(${quote(kxw)},${quote(rx)}) returning stock_unit) select coalesce(stock_unit,'none') from i`) === "none", "a duplicate redemption a creator inserts holds no unit");
+    const kDup = await scalar(`select id from public.redemptions where spin_id=${quote(kxw)} and stock_unit is null;`);
+    check(JSON.parse(await asUser(rx, `select public.set_redemption_state(${quote(kDup)},${quote(rx)},'{"status":"cancelled"}'::jsonb)`)).stock === "none" && await stockOf(XL) === 2, "cancelling that duplicate mints no stock");
+    await sql(`delete from public.redemptions where id=${quote(kDup)};`);
+    // NEGATIVE: another creator cannot cancel this creator's prize or move its stock.
+    check((await setState(rx, k3, rc, { status: "cancelled" })).status === "forbidden", "another creator naming this creator is forbidden");
+    check((await setState(rx, k3, rx, { status: "cancelled" })).status === "not_found", "another creator naming themselves cannot reach this redemption");
+    check(await stockOf(RL) === 2 && await rowOf(k3) === "pending,held", "the refused cross-tenant cancels moved no stock and no status");
+    check(await refused(`begin;set local role anon;select public.set_redemption_state(${quote(await redOf(k3))},${quote(rc)},'{"status":"cancelled"}'::jsonb);commit;`, /permission denied/), "anon cannot call set_redemption_state");
+    check(await refused(`begin;set local role service_role;select public.set_redemption_state(${quote(await redOf(k3))},${quote(rc)},'{"status":"cancelled"}'::jsonb);commit;`, /permission denied/), "the service role has no grant: the write is always the signed-in caller's");
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub','',true);select public.set_redemption_state(${quote(await redOf(k3))},${quote(rc)},'{"status":"cancelled"}'::jsonb);commit;`, /authenticated session required/), "a call without a signed-in caller is refused");
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(rc)},true);select public.set_redemption_state(${quote(await redOf(k3))},${quote(rc)},'{"status":"cancelled","stock_unit":"returned"}'::jsonb);commit;`, /invalid redemption patch/), "the patch takes only status, notes and due_at");
+    await sql(`update public.profiles set is_active=false where id=${quote(rc)};`);
+    check((await setState(rc, k3, rc, { status: "cancelled" })).status === "forbidden" && await stockOf(RL) === 2, "a suspended creator cannot cancel (can_act_for needs an active account)");
+    await sql(`update public.profiles set is_active=true where id=${quote(rc)};`);
+    // 7b. Twelve parallel cancels of one prize return exactly one unit.
+    const kBurst = await settled(Array.from({ length: 12 }, () => setState(rc, k3, rc, { status: "cancelled" })));
+    check(kBurst.every(x => x.ok && x.value.status === "ok") && kBurst.filter(x => x.value.stock === "returned").length === 1 && await stockOf(RL) === 3, `twelve racing cancels return exactly one unit (${JSON.stringify(kBurst.map(x => x.value?.stock ?? x.error))})`);
+    const kFlip = await settled(Array.from({ length: 12 }, (_, i) => setState(rc, k3, rc, { status: i % 2 ? "cancelled" : "pending" })));
+    const kFlipRow = await rowOf(k3);
+    check(kFlip.every(x => x.ok) && await stockOf(RL) === (kFlipRow === "cancelled,returned" ? 3 : 2), `racing cancels and reopens leave stock matching the final state (${kFlipRow}, stock ${await stockOf(RL)})`);
+    if (kFlipRow !== "cancelled,returned") await setState(rc, k3, rc, { status: "cancelled" });
+    // 7c. Cancels race plays and stale-but-CAS wheel saves: no error, no deadlock, every unit accounted.
+    await sql(`update public.prizes set stock=4 where id=${quote(RL)};`);
+    const kHeld = []; for (let i = 0; i < 4; i++) kHeld.push(await winOn(rc, RW, RL));
+    await sql(`update public.prizes set stock=1 where id=${quote(RL)};`);
+    const kSave = (stock, expected) => json([{ id: RL, label: "Limited", rarity: "common", weight: 1, stock, emoji: "🟦", expected_stock: expected }, { id: RO, label: "Other", rarity: "common", weight: 1, emoji: "🟥", expected_stock: null }]);
+    const kPlayers = []; for (let i = 0; i < 6; i++) { const who = await grantFan(rc, RW, null, 1); kPlayers.push({ who, a: await prep(who) }); }
+    const kBefore = await stockOf(RL), kLoaded = kBefore;
+    const kRace = await settled([...kHeld.map(spin => setState(rc, spin, rc, { status: "cancelled" })), setState(rc, kHeld[0], rc, { status: "cancelled" }), ...kPlayers.map(f => commit(f.who, f.a, wheelBody(f.a, RL))), ...Array.from({ length: 3 }, () => rpc("save_wheel_prizes", [quote(RW), quote(rc), kSave(kLoaded, kLoaded)]))]);
+    check(kRace.every(x => x.ok), `cancels, plays and wheel saves interleave without an error or deadlock (${kRace.find(x => !x.ok)?.error})`);
+    const kReturned = kRace.slice(0, 5).filter(x => x.value.stock === "returned").length;
+    const kWon = kRace.slice(5, 11).filter(x => x.value.status === "committed").length;
+    check(kReturned === 4 && await stockOf(RL) === kBefore + kReturned - kWon && kWon <= kBefore + kReturned, `every unit is accounted: ${kBefore} + ${kReturned} returned - ${kWon} won = ${await stockOf(RL)}`);
+    check((await scalar(`select count(*) from public.redemptions where spin_id in(${kHeld.map(quote).join(",")}) and status='cancelled' and stock_unit='returned';`)) === "4", "each racing cancel recorded its unit returned exactly once");
+    const kLost = await settled(kPlayers.filter((_, i) => kRace[5 + i].value.status !== "committed").map(async f => { const a = await prep(f.who, f.a.id); return commit(f.who, a, wheelBody(a, RO)); }));
+    check(kLost.every(x => x.ok && x.value.status === "committed"), "players refused during the race settle on another prize");
+    // 7d. A unit returned while the creator edits is kept by the compare-and-set save.
+    await sql(`update public.prizes set stock=2 where id=${quote(RL)};`);
+    const kEdited = await stockOf(RL), k4 = await winOn(rc, RW, RL), kSeen = await stockOf(RL);
+    await setState(rc, k4, rc, { status: "cancelled" });
+    await rpc("save_wheel_prizes", [quote(RW), quote(rc), kSave(kSeen + 2, kSeen)]);
+    check(kEdited === kSeen + 1 && await stockOf(RL) === kSeen + 3, `a +2 edit over a unit returned meanwhile lands ${kSeen + 3}, never the stale ${kSeen + 2}`);
+    check((await scalar(`select public.run_reward_ledger_invariants(100000)->>'status';`)) === "healthy", "the reward ledger invariants stay healthy");
+    // A39: the migration level is readable by the service role only.
+    check(await scalar(`begin;set local role service_role;select public.schema_version();commit;`) === "67", "schema_version() reports 67 to the service role");
+    for (const role of ["anon", "authenticated"]) check(await refused(`begin;set local role ${role};select public.schema_version();commit;`, /permission denied/), `${role} cannot read schema_version()`);
+    await invariants(rc, "cancelled-prize stock"); await invariants(rx, "cancelled-prize stock (other creator)");
+
     const notes = [...surprises].sort().map(s => `  ${s}: ${SURPRISES[s]}`).join("\n");
     for (const bug of knownBugs) console.log(`KNOWN-BUG ${bug}`);
     const distinctBugs = new Set(knownBugs.map(b => b.split(":")[0]));
     for (const id of distinctBugs) console.log(`KNOWN-BUG ${id} = ${BUGS[id] ?? "see line above"}`);
     console.log(`Surprising-but-intended (needs clear UI):\n${notes}`);
     if (strict && knownBugs.length) throw Error(`interplay strict: ${knownBugs.length} known-bug case(s) still reproduce: ${[...distinctBugs].join(", ")}`);
-    console.log(`PASS interplay ${checks} checks: ${CASES.length} resolution cases, switching, concurrency, cross-tenant, feature flag, per-link pins and award cost (${knownBugs.length} known-bug lines${strict ? ", strict" : ""})`);
+    console.log(`PASS interplay ${checks} checks: ${CASES.length} resolution cases, switching, concurrency, cross-tenant, feature flag, per-link pins, award cost and cancelled-prize stock (${knownBugs.length} known-bug lines${strict ? ", strict" : ""})`);
   } finally {
     fixture.stdin.end(); await Promise.allSettled([...pending]);
     if (creators.length) await sql(`delete from auth.users where id in(${creators.map(quote).join(",")});`);
