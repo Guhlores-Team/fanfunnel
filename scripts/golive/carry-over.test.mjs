@@ -79,6 +79,7 @@ for (const [label, url, ref] of [
 }
 refused(() => connectionFromUrl("https://db.x.supabase.co", LIVE_REF, "to"), "DB_URL_MALFORMED");
 refused(() => connectionFromUrl("not a url", LIVE_REF, "to"), "DB_URL_MALFORMED");
+refused(() => connectionFromUrl(`postgresql://postgres:%E0%A4%A@db.${LIVE_REF}.supabase.co:5432/postgres`, LIVE_REF, "to"), "DB_URL_MALFORMED");
 refused(() => connectionFromUrl(undefined, LIVE_REF, "to"), "DB_URL_MISSING");
 
 // -------------------------------------------------------------------- ids ---

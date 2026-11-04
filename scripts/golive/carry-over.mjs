@@ -109,17 +109,25 @@ export function connectionFromUrl(url, ref, label) {
     throw new CarryError("DB_URL_MALFORMED", label);
   }
   if (u.protocol !== "postgres:" && u.protocol !== "postgresql:") throw new CarryError("DB_URL_MALFORMED", label);
+  /** A bad percent-escape must not surface as a URIError. @param {string} s */
+  const decode = (s) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      throw new CarryError("DB_URL_MALFORMED", `${label}: invalid percent-encoding`);
+    }
+  };
   const host = u.hostname.toLowerCase();
-  const user = decodeURIComponent(u.username);
+  const user = decode(u.username);
   const direct = host === `db.${ref}.supabase.co` && user === "postgres";
   const pooler = /^[a-z0-9-]+\.pooler\.supabase\.com$/.test(host) && user === `postgres.${ref}`;
   if (!direct && !pooler) throw new CarryError("DB_URL_NOT_BOUND_TO_REF", `${label} URL does not belong to ${ref}`);
-  const db = decodeURIComponent(u.pathname.replace(/^\//, "")) || "postgres";
+  const db = decode(u.pathname.replace(/^\//, "")) || "postgres";
   return {
     PGHOST: host,
     PGPORT: u.port || "5432",
     PGUSER: user,
-    PGPASSWORD: decodeURIComponent(u.password),
+    PGPASSWORD: decode(u.password),
     PGDATABASE: db,
     PGSSLMODE: "require",
     PGCONNECT_TIMEOUT: "15",
