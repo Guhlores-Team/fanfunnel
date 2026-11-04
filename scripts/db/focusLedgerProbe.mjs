@@ -117,6 +117,15 @@ export async function probeFocusLedger(sqlInput) {
     const chaseAttempt=await prep(chaseFan), chaseWin=await commit(chaseFan,chaseAttempt,await build(chaseAttempt,target));
     check(chaseWin.status==="committed"&&chaseWin.chaseCompleted&&chaseWin.focus===null,"natural chase target consumes held unit and finishes promise");
     await rpc("cancel_fan_focus",[quote(owner),quote(chaseFan.fan),quote(reservation.focus.id)]);check((await sql(`select stock from public.prizes where id=${quote(target)};`)).trim()==="0","cancel after consumed unit never restocks");
+    // 0067: the consumed Chase-held unit is the award's; cancelling that won prize returns it once, reopening takes it again.
+    const asOwner=stmt=>sql(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(owner)},true);${stmt};commit;`).then(out=>out.trim().split("\n").at(-1));
+    const setState=async(spin,patch)=>{const id=(await sql(`select id from public.redemptions where spin_id=${quote(spin)};`)).trim();return JSON.parse(await asOwner(`select public.set_redemption_state(${quote(id)},${quote(owner)},${json(patch)})`));};
+    const chaseRow=async()=>(await sql(`select (select stock from public.prizes where id=${quote(target)})||','||coalesce(stock_unit,'none')||','||(select state from public.chase_reservations where focus_id=${quote(reservation.focus.id)}) from public.redemptions where spin_id=${quote(chaseAttempt.id)};`)).trim();
+    check(await chaseRow()==="0,held,consumed","0067 a Chase win on its held unit records that the award holds it");
+    check((await setState(chaseAttempt.id,{status:"cancelled"})).stock==="returned"&&await chaseRow()==="1,returned,consumed","0067 cancelling the Chase win returns the held unit to free stock, the reservation stays consumed");
+    await rpc("cancel_fan_focus",[quote(owner),quote(chaseFan.fan),quote(reservation.focus.id)]);
+    check((await setState(chaseAttempt.id,{status:"cancelled"})).stock==="none"&&await chaseRow()==="1,returned,consumed","0067 a repeat prize cancel and a repeat focus cancel return nothing more");
+    check((await setState(chaseAttempt.id,{status:"pending"})).stock==="taken"&&await chaseRow()==="0,held,consumed","0067 reopening the Chase win takes the unit again");
     // Code promises hold an actual encrypted row, not just a scalar decrement.
     const codes=Array.from({length:3},(_,i)=>({cipher:`cipher-${i}`,iv:`iv-${i}`,key_version:1,hint:`c${i}`,fingerprint:hash(`focus-${owner}-${i}`)}));
     await rpc("add_reward_codes",[quote(target),quote(owner),json(codes)]);
@@ -126,6 +135,7 @@ export async function probeFocusLedger(sqlInput) {
     check(codeWin.status==="committed"&&codeWin.reward.kind==="code"&&codeWin.stockAfter===2,"held concrete code becomes immutable receipt without extra free-stock debit");
     check((await status(codeFan,codeAttempt)).shareId===codeWin.shareId,"status recovers code receipt after lost HTTP response");
     denied=false;try{await sql(`update public.redemptions set status='pending' where spin_id=${quote(codeAttempt.id)};`)}catch{denied=true}check(denied,"Auto delivery cannot reopen");
+    denied=false;try{await setState(codeAttempt.id,{status:"cancelled"})}catch(e){denied=/already delivered/.test(e.message)}check(denied&&(await sql(`select status||','||coalesce(stock_unit,'none') from public.redemptions where spin_id=${quote(codeAttempt.id)};`)).trim()==="fulfilled,none","0067 an instant reward holds no unit and cannot be cancelled through set_redemption_state");
     await sql(`delete from public.fans where id=${quote(codeFan.fan)};`);
     check((await sql(`select count(*) from public.prize_reward_codes where spin_id=${quote(codeAttempt.id)} and cipher is null and iv is null and erased_at is not null;`)).trim()==="1","fan erasure retains consumed fingerprint tombstone without secret");
     check((await rpc("add_reward_codes",[quote(target),quote(owner),json(codes)])).toString()==="0","erased delivered code cannot be pasted into stock again");

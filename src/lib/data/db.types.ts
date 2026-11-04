@@ -2278,6 +2278,7 @@ export type Database = {
           notes: string | null
           spin_id: string
           status: Database["public"]["Enums"]["redemption_status"]
+          stock_unit: string | null
         }
         Insert: {
           cost_cents_at_award?: number | null
@@ -2289,6 +2290,7 @@ export type Database = {
           notes?: string | null
           spin_id: string
           status?: Database["public"]["Enums"]["redemption_status"]
+          stock_unit?: string | null
         }
         Update: {
           cost_cents_at_award?: number | null
@@ -2300,6 +2302,7 @@ export type Database = {
           notes?: string | null
           spin_id?: string
           status?: Database["public"]["Enums"]["redemption_status"]
+          stock_unit?: string | null
         }
         Relationships: [
           {
@@ -3704,6 +3707,7 @@ export type Database = {
         Args: { p_creator: string; p_prizes: Json; p_wheel: string }
         Returns: undefined
       }
+      schema_version: { Args: never; Returns: number }
       scrub_fan_reward_values: { Args: { p_fan: string }; Returns: undefined }
       set_chat_settings: {
         Args: { p_intro: string; p_outro: string }
@@ -3758,6 +3762,10 @@ export type Database = {
         Returns: undefined
       }
       set_pwa_icon_mode: { Args: { p_mode: string }; Returns: undefined }
+      set_redemption_state: {
+        Args: { p_creator: string; p_patch: Json; p_redemption: string }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "creator"

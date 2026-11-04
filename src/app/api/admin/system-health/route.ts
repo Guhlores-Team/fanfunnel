@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { createClient, createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { initializeCanaryForAdmin, readCanary } from "@/lib/operations/canary";
-import { readHealthSummary, reportOperationalFailure, runOperationalChecks } from "@/lib/operations/runtime";
+import { readHealthSummary, readSchemaVersion, reportOperationalFailure, runOperationalChecks } from "@/lib/operations/runtime";
 import { readCappedText } from "@/lib/monitoring/report";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { recordAudit } from "@/lib/data/audit";
@@ -21,8 +21,8 @@ export async function GET() {
   let svc: ReturnType<typeof createServiceClient>;
   try { svc = createServiceClient(); }
   catch { return json({ demo: false, canary: { status: "unavailable" }, summary: null }, 503); }
-  const [canary, summary] = await Promise.all([readCanary(svc), readHealthSummary(svc)]);
-  return json({ demo: false, canary, summary, rateLimitStore: hasSharedRateLimitStore() ? "shared" : "per_instance" });
+  const [canary, summary, schema] = await Promise.all([readCanary(svc), readHealthSummary(svc), readSchemaVersion(svc)]);
+  return json({ demo: false, canary, summary, schema, rateLimitStore: hasSharedRateLimitStore() ? "shared" : "per_instance" });
 }
 export async function POST(req: Request) {
   const admin = await requireAdminRoute();

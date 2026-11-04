@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
-import { setRedemptionStatus, setRedemptionMeta } from "@/lib/data";
-import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { patchRedemption, type RedemptionPatch } from "@/lib/data/fulfilment";
 import type { RedemptionStatus } from "@/lib/data/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
-import { resolveActingCreator } from "@/lib/data/seatScope";
 
 const VALID: RedemptionStatus[] = [
   "pending",
@@ -57,76 +55,15 @@ export async function PATCH(
     }
   }
 
-  // Mock/in-memory path: no DB transactions exist here, so keep the original
-  // per-field data-layer calls unchanged.
-  if (!isSupabaseConfigured()) {
-    if (body.status !== undefined) {
-      const result = await setRedemptionStatus(id, body.status, body.creatorId);
-      if ("error" in result) {
-        return errorResponse(result.error);
-      }
-    }
-
-    if (hasMeta) {
-      const patch: { notes?: string | null; dueAt?: string | null } = {};
-      if ("notes" in body) patch.notes = body.notes ?? null;
-      if ("dueAt" in body) patch.dueAt = body.dueAt ?? null;
-      const result = await setRedemptionMeta(id, patch, body.creatorId);
-      if ("error" in result) {
-        return errorResponse(result.error);
-      }
-    }
-
-    return NextResponse.json({ ok: true });
-  }
-
-  // Configured path: apply the status change and the notes/due-date change
-  // together in a single atomic UPDATE so a failure cannot leave the redemption
-  // half-updated (e.g. status changed but notes/due date stale, or vice versa).
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const acting = await resolveActingCreator(sb, user.id, body.creatorId, "fulfil");
-  if ("error" in acting) return errorResponse(acting.error);
-
-  const update: {
-    status?: RedemptionStatus;
-    fulfilled_at?: string | null;
-    notes?: string | null;
-    due_at?: string | null;
-  } = {};
-  if (body.status !== undefined) {
-    update.status = body.status;
-    update.fulfilled_at =
-      body.status === "fulfilled" ? new Date().toISOString() : null;
-  }
-  if ("notes" in body) update.notes = body.notes ?? null;
-  if ("dueAt" in body) update.due_at = body.dueAt ?? null;
-
-  // Nothing to change — preserve the original no-op success response.
-  if (Object.keys(update).length === 0) {
-    return NextResponse.json({ ok: true });
-  }
-
-  const { data: updated, error } = await sb
-    .from("redemptions")
-    .update(update)
-    .eq("id", id)
-    .eq("creator_id", acting.creatorId)
-    .select("id")
-    .maybeSingle();
-  if (error) {
-    // The instant-reward trigger refuses reopening or re-dating a win that was
-    // already delivered; say so (409) so the queue can explain the rollback.
-    if (error.code === "23514" && /already delivered/.test(error.message ?? "")) {
-      return errorResponse("already_delivered");
-    }
-    return NextResponse.json({ error: "db_error" }, { status: 400 });
-  }
-  if (!updated) {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
-  return NextResponse.json({ ok: true });
+  // One write for the status and the notes/due-date change, so a failure
+  // cannot leave the redemption half-updated. Connected, it is the atomic
+  // set_redemption_state on the caller's session (0067), which also returns a cancelled prize's limited unit to
+  // stock exactly once (and takes it again on reopen).
+  const patch: RedemptionPatch = {};
+  if (body.status !== undefined) patch.status = body.status;
+  if ("notes" in body) patch.notes = body.notes ?? null;
+  if ("dueAt" in body) patch.dueAt = body.dueAt ?? null;
+  const result = await patchRedemption(id, patch, body.creatorId);
+  if ("error" in result) return errorResponse(result.error);
+  return NextResponse.json(result);
 }

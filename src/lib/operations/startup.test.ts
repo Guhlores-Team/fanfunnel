@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { mock } from "node:test";
-let calls = 0, persisted = 0, alerts = 0;
+let calls = 0, persisted = 0, alerts = 0, schemaReads = 0;
+let reportedSchema: unknown = null;
 mock.module("@/lib/supabase/server", { namedExports: { createServiceClient: () => ({}), isSupabaseConfigured: () => true } });
 mock.module("./canary", { namedExports: { bootstrapEmptyCanary: async () => { calls++; return { status: "mismatch" }; } } });
-mock.module("./runtime", { namedExports: { persistHealth: async () => { persisted++; }, reportOperationalFailure: async () => { alerts++; } } });
+mock.module("./runtime", { namedExports: { persistHealth: async () => { persisted++; }, readSchemaVersion: async () => { schemaReads++; return { status: "behind", applied: 66, expected: 67 }; }, reportOperationalFailure: async (_canary: unknown, _invariants: unknown, schema: unknown) => { alerts++; reportedSchema = schema; } } });
 async function main() {
   const { startupChecksEnabled, registerOperationalChecks } = await import("./startup");
   assert.equal(startupChecksEnabled({ NEXT_RUNTIME: "edge" }), false);
@@ -30,6 +31,8 @@ async function main() {
   await registerOperationalChecks();
   assert.equal(calls, 1, "concurrent startup registrations run once, never per request");
   assert.equal(persisted, 1); assert.equal(alerts, 1);
+  assert.equal(schemaReads, 1, "A39: startup reads the schema version once");
+  assert.deepEqual(reportedSchema, { status: "behind", applied: 66, expected: 67 }, "A39: a database behind the code is reported at startup");
   console.log("operational startup: original7 +17 CI-isolation checks passed; no build-time remote effects or real alerts");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

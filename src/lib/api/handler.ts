@@ -46,7 +46,8 @@ export function badRequest(code = "bad_request"): NextResponse {
  *    `not_allowed`, `on_break`,
  *    `not_configured`          → 403 (allowed-in-principle but gated)
  *  - `not_found`               → 404
- *  - `has_history`, `conflict` → 409
+ *  - `has_history`, `conflict`,
+ *    `sold_out`                → 409
  *  - `rate_limited`            → 429
  *  - anything else             → 400
  */
@@ -71,6 +72,7 @@ export function statusForError(code: string): number {
     case "game_not_ready":
     case "bingo_active_card":
     case "stock_changed":
+    case "sold_out":
     case "already_delivered":
     case "has_history":
     case "game_busy":

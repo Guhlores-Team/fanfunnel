@@ -7,6 +7,11 @@ export const INVENTORY_MAX_ROWS = 25_000;
 export const DIAGNOSTIC_MAX_ROWS = 100_000;
 export const DIAGNOSTIC_TIMEOUT_MS = 3_000;
 export const STARTUP_DEADLINE_MS = 5_000;
+/** A39: the migration this code needs (public.schema_version(), 0067). Bump it with every migration. */
+export const EXPECTED_SCHEMA_VERSION = 67;
+export type SchemaStatus = "current" | "ahead" | "behind" | "unavailable";
+/** `applied` is null when the database could not say (unavailable, or older than 0067 so it has no schema_version()). */
+export type SchemaCheck = { status: SchemaStatus; applied: number | null; expected: number };
 export const CANARY_STATUSES = ["healthy", "missing", "configuration_missing", "configuration_invalid", "mismatch", "unavailable"] as const;
 export type CanaryStatus = typeof CANARY_STATUSES[number];
 export type CanaryResult = { status: CanaryStatus; initialized?: boolean };
@@ -27,5 +32,6 @@ export interface OperationalResult {
   ok: boolean;
   canary: CanaryResult | { status: "demo" };
   invariants: InvariantResult | { status: "demo"; counts: Record<string, never>; rowLimit: number };
+  schema?: SchemaCheck;
   summary: HealthSummary | null;
 }

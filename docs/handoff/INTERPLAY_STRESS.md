@@ -72,6 +72,25 @@ after mint, inactive link, anon/authenticated refused) and the A35 award-cost
 snapshot. The fixture replay also runs the dashboard's `resolvePlayingGame`
 (liveGame.ts) on every case.
 
+## Cancelled-prize stock (0067, A42)
+
+Section 7 first reproduced the defect (cancelling a won limited prize left
+stock at 2 of 3) and now asserts the fix: the award records the unit it took
+(`redemptions.stock_unit = 'held'`, written only inside the award
+transaction); `set_redemption_state` returns it on cancel and takes it again
+on reopen (`sold_out` and no change when none is left), exactly once. Covered:
+repeat cancels, a status change that is not a cancel/reopen, unlimited prizes
+and prizes made unlimited after the win, plain session UPDATEs that try to
+bypass the RPC or rewrite `stock_unit`, a redemption moved to another spin,
+forged and cross-creator inserts, another creator naming either creator,
+anon/service-role/no-session callers, a suspended creator, 12 racing cancels
+of one prize (one unit), racing cancels and reopens (stock matches the final
+state), cancels racing plays and `expected_stock` wheel saves (no error or
+deadlock, every unit accounted), a unit returned while the creator edits
+(kept by the compare-and-set save), the reward-ledger invariants, and
+`schema_version()` (service role only). No resolution case changed, so the TS
+fixture is unchanged.
+
 ## Surprising but intended (needs clear UI)
 
 S1 pass.wheel_id is a label, not routing · S2 an open schedule beats the active flag,

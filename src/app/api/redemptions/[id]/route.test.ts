@@ -14,25 +14,22 @@ function check(label: string, cond: boolean) {
 
 let useSupabase = true;
 let signedIn = true;
-let nextResult: { data: unknown; error: { code: string; message: string } | null } = { data: { id: "r1" }, error: null };
-const updates: Record<string, unknown>[] = [];
+const R1 = "11111111-2222-4333-8444-555555555555";
+let nextResult: { data: unknown; error: { code: string; message: string } | null } = { data: { status: "ok", stock: "none" }, error: null };
+// 0067: every connected write is ONE set_redemption_state call on the caller's session.
+const writes: { name: string; args: Record<string, unknown> }[] = [];
 
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => useSupabase,
     createClient: async () => ({
       auth: { getUser: async () => ({ data: { user: signedIn ? { id: "creator-1" } : null }, error: null }) },
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        writes.push({ name, args });
+        return nextResult;
+      },
       from: () => {
-        const chain = {
-          update: (u: Record<string, unknown>) => {
-            updates.push(u);
-            return chain;
-          },
-          eq: () => chain,
-          select: () => chain,
-          maybeSingle: async () => nextResult,
-        };
-        return chain;
+        throw new Error("the fulfilment route must not write the redemptions table directly (0067)");
       },
     }),
     createServiceClient: () => {
@@ -43,7 +40,7 @@ mock.module("@/lib/supabase/server", {
 
 async function main() {
   const { PATCH } = await import("./route");
-  const call = (body: unknown, id = "r1") =>
+  const call = (body: unknown, id = R1) =>
     PATCH(new Request("http://x/api/redemptions/" + id, { method: "PATCH", body: JSON.stringify(body) }), {
       params: Promise.resolve({ id }),
     });
@@ -60,23 +57,43 @@ async function main() {
   res = await call({ status: "pending" });
   check("an unrelated constraint stays a generic db_error", res.status === 400 && (await res.json()).error === "db_error");
 
-  nextResult = { data: null, error: null };
+  nextResult = { data: { status: "not_found" }, error: null };
   res = await call({ status: "fulfilled" });
   check("another creator's / missing row is 404", res.status === 404 && (await res.json()).error === "not_found");
+
+  nextResult = { data: { status: "forbidden" }, error: null };
+  res = await call({ status: "cancelled" });
+  check("a caller the RPC refuses is 403 forbidden", res.status === 403 && (await res.json()).error === "forbidden");
+
+  nextResult = { data: { status: "sold_out" }, error: null };
+  res = await call({ status: "pending" });
+  check("reopening a prize with no unit left is 409 sold_out", res.status === 409 && (await res.json()).error === "sold_out");
+
+  nextResult = { data: { status: "ok", stock: "returned" }, error: null };
+  res = await call({ status: "cancelled" });
+  check("a cancel that returned a limited unit says so", res.status === 200 && (await res.json()).stock === "returned");
+
+  const beforeBad = writes.length;
+  res = await call({ status: "cancelled" }, "not-a-uuid");
+  check("a malformed id is 404 before any write", res.status === 404 && writes.length === beforeBad);
 
   signedIn = false;
   res = await call({ status: "fulfilled" });
   check("signed out is 401", res.status === 401);
   signedIn = true;
 
-  nextResult = { data: { id: "r1" }, error: null };
-  const before = updates.length;
+  nextResult = { data: { status: "ok", stock: "none" }, error: null };
+  const before = writes.length;
   res = await call({ status: "bogus" });
-  check("an invalid status is 400 before any write", res.status === 400 && updates.length === before);
+  check("an invalid status is 400 before any write", res.status === 400 && writes.length === before);
   res = await call({ status: "fulfilled", notes: "shipped" });
   check("a valid patch is 200", res.status === 200);
-  const last = updates[updates.length - 1];
-  check("status + notes go in one atomic update", last.status === "fulfilled" && last.notes === "shipped" && typeof last.fulfilled_at === "string");
+  const last = writes[writes.length - 1];
+  const sent = last.args.p_patch as Record<string, unknown>;
+  check("status + notes go in one atomic write", writes.length === before + 1 && last.name === "set_redemption_state" && sent.status === "fulfilled" && sent.notes === "shipped" && Object.keys(sent).length === 2);
+  check("the write names the redemption and the acting creator", last.args.p_redemption === R1 && last.args.p_creator === "creator-1");
+  res = await call({ dueAt: null });
+  check("a due-date clear is sent as due_at null", res.status === 200 && (writes.at(-1)!.args.p_patch as Record<string, unknown>).due_at === null);
 
   // Demo path: data-layer errors use the shared status mapping.
   useSupabase = false;
