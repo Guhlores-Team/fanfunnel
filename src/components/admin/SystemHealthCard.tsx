@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
-import { canaryMessage, initializationMessage, ledgerMessage, parseSystemHealthStatus, type SystemHealthStatus } from "./systemHealthCopy";
+import { canaryMessage, initializationMessage, ledgerMessage, parseSystemHealthStatus, rateLimitStoreMessage, type SystemHealthStatus } from "./systemHealthCopy";
 import { btnGhost, raised, SectionTitle } from "./adminUi";
 
 const date = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Not recorded";
@@ -43,6 +43,7 @@ export default function SystemHealthCard() {
         <p>{health ? canaryMessage(health.canary.status) : "Loading system health…"}</p>
         {health && !health.demo && <>
           <p>{ledgerMessage(health.summary)}</p>
+          {rateLimitStoreMessage(health.rateLimitStore) && <p>{rateLimitStoreMessage(health.rateLimitStore)}</p>}
           {health.summary?.canaryFailureAt && <p>A previous key protection failure still needs acknowledgement. Restore the original configuration, then run checks successfully to clear it.</p>}
           <dl className="grid gap-1 text-xs text-muted">
             <div><dt className="inline font-semibold">Inventory checks: </dt><dd className="inline">{date(health.summary?.invariantsCheckedAt)}</dd></div>

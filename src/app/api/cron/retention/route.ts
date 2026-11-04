@@ -8,6 +8,7 @@ import { runOperationalChecks } from "@/lib/operations/runtime";
 import { processPendingStorageWork } from "@/lib/storage/work";
 import { captureNow, flushAlertDigest } from "@/lib/monitoring/capture";
 import { retryPausedDeletions } from "@/lib/account/deletionRetry";
+import { sharedRateLimitStoreMissing } from "@/lib/rateLimit";
 
 // Authenticated maintenance entry point: retention, integrity, storage retry,
 // paused account deletions (A18, with backoff) and the pending error digest (A27).
@@ -78,10 +79,14 @@ export async function GET(req: Request) {
   }
   if (storage.failed > 0) await loud("Retention storage cleanup failed for some items; they stay queued for retry");
   if (deletions.needsAdmin > 0) await loud("Account deletions are paused and need an admin; retry them in Admin");
+  // A22: without a shared store every rate limit is per serverless instance.
+  // Visible, not fatal: the run's status is unchanged.
+  const rateLimitStore = sharedRateLimitStoreMissing() ? "per_instance" : "ok";
+  if (rateLimitStore === "per_instance") await loud("Rate limits are per instance in production: configure a shared store (UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN)");
   // After every other alert above, so a digest sent now covers them too.
   const digest = await flushAlertDigest();
   const pending = storage.pending > 0 || storage.accountsPending > 0 || deletions.pending > 0 || deletions.waiting > 0 || deletions.needsAdmin > 0;
-  return NextResponse.json({ ok: health.ok && !pending && storage.failed === 0 && deletions.failed === 0, health, pending, storage, deletions, digest, deleted, periods: RETENTION_DAYS }, {
+  return NextResponse.json({ ok: health.ok && !pending && storage.failed === 0 && deletions.failed === 0, health, pending, storage, deletions, digest, rateLimitStore, deleted, periods: RETENTION_DAYS }, {
     status: !health.ok || storage.failed > 0 || deletions.failed > 0 ? 503 : pending ? 202 : 200, headers: NO_STORE_HEADERS,
   });
 }

@@ -85,6 +85,22 @@ async function main() {
   check("…is alerted with a fixed message", captured.length === 1 && /Account deletions are paused/.test(captured[0].message));
   needsAdmin = 0;
 
+  // A22: production without a shared rate-limit store is reported (fixed
+  // message, no env values), without changing the run's status.
+  captured.length = 0;
+  process.env.VERCEL_ENV = "production";
+  delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN;
+  let res = await call({ authorization: `Bearer ${SECRET}` });
+  check("production without a shared rate-limit store still completes (200)", res.status === 200 && (await res.json()).rateLimitStore === "per_instance");
+  check("…and is alerted with a fixed message", captured.length === 1 && /Rate limits are per instance in production/.test(captured[0].message));
+  process.env.KV_REST_API_URL = "https://kv.example.invalid"; process.env.KV_REST_API_TOKEN = "fixture-token";
+  captured.length = 0;
+  res = await call({ authorization: `Bearer ${SECRET}` });
+  check("with a shared store nothing is alerted", res.status === 200 && (await res.json()).rateLimitStore === "ok" && captured.length === 0);
+  delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN;
+  delete process.env.VERCEL_ENV;
+
   // A27: every authorized run flushes the digest, after the run's own alerts;
   // refused runs never do.
   digestRuns = 0; digestOrder = [];

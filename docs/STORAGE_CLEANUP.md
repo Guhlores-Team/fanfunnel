@@ -58,6 +58,7 @@ active-admin/aal2 guard; it cannot start arbitrary deletion. The secret-protecte
 retention route also processes existing jobs. Media removal is durably queued
 before storage removal; its row and exactly-once moderation audit are finalized
 only after storage acknowledgement.
+Note: the public `/api/public/wheel/[creatorId]` teaser can still be served from the edge cache for up to 120 s after a deletion (`s-maxage=60` + `stale-while-revalidate=60`).
 
 ## Uncertain transfers and operational limits
 
