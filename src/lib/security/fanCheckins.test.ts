@@ -56,7 +56,13 @@ check("nothing grants a write on fan_checkins back", !/grant [^;]*(insert|update
 // --- 2. no path from a visit to spins or odds ------------------------------------
 const fnBodies = [...everywhere.matchAll(/create or replace function public\.(\w+)[\s\S]*?\$\$([\s\S]*?)\$\$/g)];
 check("SQL functions were found to scan", fnBodies.length > 20);
-check("no SQL function reads fan_checkins (claim_spin can't see visits)", fnBodies.every((m) => !m[2].includes("fan_checkins")));
+// The one exception is retention (0065, A11): run_retention_cleanup may only
+// delete check-ins past their retention day, which reads no visit into a spin.
+const touching = fnBodies.filter((m) => m[2].includes("fan_checkins"));
+check("no SQL function reads fan_checkins (claim_spin can't see visits)", touching.every((m) => m[1] === "run_retention_cleanup"));
+check("retention only deletes expired check-ins, never reads them",
+  touching.every((m) => [...m[2].replaceAll("'fan_checkins', v_checkins", "").matchAll(/[^;]*fan_checkins[^;]*/g)].every((s) => /^\s*delete from public\.fan_checkins\s+where day < current_date - v_checkin_days\s*$/.test(s[0]))));
+check("no SQL function calls the retention cleanup", fnBodies.every((m) => !m[2].includes("run_retention_cleanup")));
 
 function walk(dir: string): string[] {
   const out: string[] = [];

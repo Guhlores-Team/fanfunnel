@@ -62,6 +62,10 @@ const SIGNED_IN_ONLY = [
   // 0064: SECURITY INVOKER queue/inbox reads, pinned to auth.uid().
   "creator_redemption_queue",
   "creator_inbox_threads",
+  // 0065: SECURITY DEFINER archive/delete in the play lock order, gated by the
+  // same can_act_for('edit_wheel') / is_admin() rule as the wheels_write policy.
+  "archive_wheel",
+  "delete_wheel",
 ];
 // RLS policies call these, so anon must keep EXECUTE (an anon read that
 // evaluates a policy would otherwise error instead of returning no rows).
