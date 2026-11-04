@@ -2,7 +2,7 @@ import { CompleteReadError, readScopedRows } from "./readPages";
 import { focusPackTerms, type FocusPackTerms } from "./focusPacks";
 // Data layer — campaigns and campaign packs.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
-import type { Campaign, CampaignPack, CampaignStats } from "./types";
+import type { Campaign, CampaignPack, CampaignStats, WheelSummary } from "./types";
 import { campaignStatsFor, listCampaignsFor } from "./campaignStats";
 import {
   mockCreateCampaign,
@@ -18,37 +18,64 @@ import {
   mockSetCampaignActive,
   mockDeleteCampaign,
   mockGetUncategorizedStats,
+  mockListWheels,
 } from "./mock";
 import { campaignPinError, creatorOwnsCampaign, isUuid } from "./shared";
+import { demoActingCreator, resolveActingCreator } from "./seatScope";
+import { wheelSummariesFor } from "./wheels";
 
 // ---------------------------------------------------------------------------
 // Campaigns: named groupings of links a creator can compare against each other.
+//
+// A28 (agency seats): every campaign reader/writer below takes an optional
+// `creatorId` (untrusted input). Without it, or with the caller's own id, it
+// acts on the caller's own campaigns exactly as before. With another creator's
+// id it needs can_act_for(creatorId, 'manage') on the caller's own session
+// (agency owners and managers), checked here before any read or write; the
+// campaigns_write RLS checks the same permission again on the row.
 // ---------------------------------------------------------------------------
 
-export async function createCampaign(
-  name: string,
-  pinnedWheelId?: string | null
-): Promise<{ campaign: Campaign } | { error: string }> {
-  if (!isSupabaseConfigured()) {
-    const pinError = mockCampaignPinError(pinnedWheelId);
-    return pinError ? { error: pinError } : { campaign: mockCreateCampaign(name, pinnedWheelId) };
-  }
+type ActingSession =
+  | { sb: Awaited<ReturnType<typeof createClient>>; creatorId: string }
+  | { error: "unauthorized" | "bad_request" | "forbidden" };
 
+/** The signed-in session and the creator whose campaigns it acts on. */
+export async function campaignActingSession(creatorId: unknown): Promise<ActingSession> {
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+  const acting = await resolveActingCreator(sb, user.id, creatorId, "manage");
+  if ("error" in acting) return acting;
+  return { sb, creatorId: acting.creatorId };
+}
+
+export async function createCampaign(
+  name: string,
+  pinnedWheelId?: string | null,
+  creatorId?: unknown
+): Promise<{ campaign: Campaign } | { error: string }> {
+  if (!isSupabaseConfigured()) {
+    const refused = demoActingCreator(creatorId);
+    if (refused) return refused;
+    const pinError = mockCampaignPinError(pinnedWheelId);
+    return pinError ? { error: pinError } : { campaign: mockCreateCampaign(name, pinnedWheelId) };
+  }
+
+  const acting = await campaignActingSession(creatorId);
+  if ("error" in acting) return acting;
+  const { sb } = acting;
 
   // The chosen game must be this creator's own playable game, so a campaign
   // can't be created pointing at another creator's wheel id (same check as
   // setCampaignPinnedWheel and the PATCH route).
-  const pinError = await campaignPinError(sb, user.id, pinnedWheelId);
+  const pinError = await campaignPinError(sb, acting.creatorId, pinnedWheelId);
   if (pinError) return { error: pinError };
 
   const { data, error } = await sb
     .from("campaigns")
-    .insert({ creator_id: user.id, name, pinned_wheel_id: pinnedWheelId ?? null })
+    .insert({ creator_id: acting.creatorId, name, pinned_wheel_id: pinnedWheelId ?? null })
     .select("id, name, is_active, created_at, pinned_wheel_id")
     .single();
   if (error || !data) return { error: "db_error" };
@@ -74,6 +101,24 @@ export async function listCampaigns(): Promise<Campaign[]> {
   if (!user) return [];
 
   return listCampaignsFor(sb, user.id);
+}
+
+/**
+ * A28: the campaigns of the creator a seat works for (or the caller's own),
+ * with that creator's games (archived included) for the game picker. Refused
+ * before any read unless the caller may 'manage' that creator.
+ */
+export async function listActingCampaigns(
+  creatorId: unknown
+): Promise<{ campaigns: Campaign[]; games: WheelSummary[] } | { error: "unauthorized" | "bad_request" | "forbidden" }> {
+  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? { campaigns: mockListCampaigns(), games: mockListWheels(true) };
+  const acting = await campaignActingSession(creatorId);
+  if ("error" in acting) return acting;
+  const [campaigns, games] = await Promise.all([
+    listCampaignsFor(acting.sb, acting.creatorId),
+    wheelSummariesFor(acting.sb, acting.creatorId, true),
+  ]);
+  return { campaigns, games };
 }
 
 export async function getCampaignStats(): Promise<CampaignStats[]> {
@@ -302,26 +347,25 @@ export async function deleteCampaignPack(
 /** Choose the game a campaign plays (null: follow the creator's live game). */
 export async function setCampaignPinnedWheel(
   campaignId: string,
-  wheelId: string | null
+  wheelId: string | null,
+  creatorId?: unknown
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured())
-    return mockSetCampaignPinnedWheel(campaignId, wheelId);
+    return demoActingCreator(creatorId) ?? mockSetCampaignPinnedWheel(campaignId, wheelId);
 
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return { error: "unauthorized" };
+  const acting = await campaignActingSession(creatorId);
+  if ("error" in acting) return acting;
+  const { sb } = acting;
 
   // The chosen game must be this creator's own playable game.
-  const pinError = await campaignPinError(sb, user.id, wheelId);
+  const pinError = await campaignPinError(sb, acting.creatorId, wheelId);
   if (pinError) return { error: pinError };
 
   const { data: updated, error } = await sb
     .from("campaigns")
     .update({ pinned_wheel_id: wheelId })
     .eq("id", campaignId)
-    .eq("creator_id", user.id)
+    .eq("creator_id", acting.creatorId)
     .select("id")
     .maybeSingle();
   if (error) return { error: "db_error" };
@@ -332,22 +376,20 @@ export async function setCampaignPinnedWheel(
 /** Rename a campaign. */
 export async function renameCampaign(
   campaignId: string,
-  name: string
+  name: string,
+  creatorId?: unknown
 ): Promise<{ ok: true } | { error: string }> {
   const trimmed = name.trim();
   if (!trimmed) return { error: "bad_request" };
-  if (!isSupabaseConfigured()) return mockRenameCampaign(campaignId, trimmed);
+  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockRenameCampaign(campaignId, trimmed);
 
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return { error: "unauthorized" };
-  const { data: updated, error } = await sb
+  const acting = await campaignActingSession(creatorId);
+  if ("error" in acting) return acting;
+  const { data: updated, error } = await acting.sb
     .from("campaigns")
     .update({ name: trimmed })
     .eq("id", campaignId)
-    .eq("creator_id", user.id)
+    .eq("creator_id", acting.creatorId)
     .select("id")
     .maybeSingle();
   if (error) return { error: "db_error" };
@@ -362,20 +404,18 @@ export async function renameCampaign(
  */
 export async function setCampaignActive(
   campaignId: string,
-  isActive: boolean
+  isActive: boolean,
+  creatorId?: unknown
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockSetCampaignActive(campaignId, isActive);
+  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockSetCampaignActive(campaignId, isActive);
 
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return { error: "unauthorized" };
-  const { data: updated, error } = await sb
+  const acting = await campaignActingSession(creatorId);
+  if ("error" in acting) return acting;
+  const { data: updated, error } = await acting.sb
     .from("campaigns")
     .update({ is_active: isActive })
     .eq("id", campaignId)
-    .eq("creator_id", user.id)
+    .eq("creator_id", acting.creatorId)
     .select("id")
     .maybeSingle();
   if (error) return { error: "db_error" };
@@ -385,19 +425,17 @@ export async function setCampaignActive(
 
 /** Delete a campaign. Grants keep their history (campaign_id → null on delete). */
 export async function deleteCampaign(
-  campaignId: string
+  campaignId: string,
+  creatorId?: unknown
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockDeleteCampaign(campaignId);
+  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockDeleteCampaign(campaignId);
 
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return { error: "unauthorized" };
-  const { error } = await sb
+  const acting = await campaignActingSession(creatorId);
+  if ("error" in acting) return acting;
+  const { error } = await acting.sb
     .from("campaigns")
     .delete()
     .eq("id", campaignId)
-    .eq("creator_id", user.id);
+    .eq("creator_id", acting.creatorId);
   return error ? { error: "db_error" } : { ok: true };
 }

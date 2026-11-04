@@ -429,13 +429,26 @@ export async function listWheels(
   } = await sb.auth.getUser();
   if (!user) return [];
 
+  return wheelSummariesFor(sb, user.id, includeArchived);
+}
+
+/**
+ * One creator's wheels (newest first), read on the caller's session, so the
+ * wheels/prizes RLS applies. Callers resolve `creatorId` first: the caller's
+ * own id, or a creator their seat may act for (A28 campaigns).
+ */
+export async function wheelSummariesFor(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  creatorId: string,
+  includeArchived = false
+): Promise<WheelSummary[]> {
   let query = sb
     .from("wheels")
     .select(
       `id, title, subtitle, brand_color, is_active, archived_at,
        active_from, active_until, created_at, updated_at, game_kind, game_ready, prizes(id)`
     )
-    .eq("creator_id", user.id)
+    .eq("creator_id", creatorId)
     .order("created_at", { ascending: false });
   if (!includeArchived) query = query.is("archived_at", null);
 

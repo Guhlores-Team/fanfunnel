@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { setCampaignPinnedWheel, renameCampaign, setCampaignActive, deleteCampaign } from "@/lib/data";
-import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
-import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { isSupabaseConfigured } from "@/lib/supabase/server";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody, statusForError as statusFor } from "@/lib/api/handler";
 import { campaignPinError } from "@/lib/data/shared";
+import { campaignActingSession } from "@/lib/data/campaigns";
+import { demoActingCreator } from "@/lib/data/seatScope";
 import { limitRoute } from "@/lib/api/limit";
 
-const statusFor = (e: string) =>
-  e === "unauthorized" ? 401 : e === "not_found" ? 404 : 400;
-
 // Rename a campaign, pin (or unpin) its default wheel, and/or archive or
-// reactivate it (isActive). Every write is scoped to the signed-in creator.
+// reactivate it (isActive). Every write is scoped to the signed-in creator,
+// or (A28) to `creatorId`, a creator the caller's agency seat may manage:
+// can_act_for(creatorId, 'manage') is checked before any read or write.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -18,7 +19,7 @@ export async function PATCH(
   if (rateLimited) return rateLimited;
   const { id } = await params;
 
-  const body = await parseJsonBody<{ pinnedWheelId?: string | null; name?: string; isActive?: boolean }>(req);
+  const body = await parseJsonBody<{ pinnedWheelId?: string | null; name?: string; isActive?: boolean; creatorId?: unknown }>(req);
   if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
   const hasActive = "isActive" in body;
   if (hasActive && typeof body.isActive !== "boolean") return badRequest();
@@ -39,20 +40,23 @@ export async function PATCH(
   // Mock/in-memory path: no DB transactions exist here, so keep the original
   // per-field data-layer calls unchanged.
   if (!isSupabaseConfigured()) {
+    // Demo mode has no agencies: naming a creator is refused even as a no-op.
+    const refused = demoActingCreator(body.creatorId);
+    if (refused) return errorResponse(refused.error);
     if (name !== undefined) {
-      const result = await renameCampaign(id, name);
+      const result = await renameCampaign(id, name, body.creatorId);
       if ("error" in result) {
         return NextResponse.json(result, { status: statusFor(result.error) });
       }
     }
     if (hasPin) {
-      const result = await setCampaignPinnedWheel(id, pinnedWheelId);
+      const result = await setCampaignPinnedWheel(id, pinnedWheelId, body.creatorId);
       if ("error" in result) {
         return NextResponse.json(result, { status: statusFor(result.error) });
       }
     }
     if (hasActive) {
-      const result = await setCampaignActive(id, body.isActive as boolean);
+      const result = await setCampaignActive(id, body.isActive as boolean, body.creatorId);
       if ("error" in result) {
         return NextResponse.json(result, { status: statusFor(result.error) });
       }
@@ -63,17 +67,15 @@ export async function PATCH(
   // Configured path: apply the rename and the pin together in a single atomic
   // UPDATE so a failure cannot leave the campaign half-updated (e.g. renamed
   // but with a stale pinned wheel, or vice versa).
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const acting = await campaignActingSession(body.creatorId);
+  if ("error" in acting) return errorResponse(acting.error);
+  const { sb } = acting;
 
   // The chosen game must be this creator's own playable game, so a campaign
   // can't be pointed at another creator's wheel id (or an archived/draft game
   // the resolver would silently skip).
   if (hasPin) {
-    const pinError = await campaignPinError(sb, user.id, pinnedWheelId);
+    const pinError = await campaignPinError(sb, acting.creatorId, pinnedWheelId);
     if (pinError) return NextResponse.json({ error: pinError }, { status: statusFor(pinError) });
   }
 
@@ -91,7 +93,7 @@ export async function PATCH(
     .from("campaigns")
     .update(patch)
     .eq("id", id)
-    .eq("creator_id", user.id)
+    .eq("creator_id", acting.creatorId)
     .select("id")
     .maybeSingle();
   if (error) {
@@ -104,6 +106,7 @@ export async function PATCH(
 }
 
 // Delete a campaign (grants keep their history; their campaign link is cleared).
+// A28: `?creatorId=<id>` deletes one of a creator the caller's seat may manage.
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -111,7 +114,9 @@ export async function DELETE(
   const rateLimited = await limitRoute(req, "campaigns/[id]:DELETE");
   if (rateLimited) return rateLimited;
   const { id } = await params;
-  const result = await deleteCampaign(id);
+  const creatorId = new URL(req.url).searchParams.get("creatorId");
+  if (creatorId !== null && creatorId.length > 64) return badRequest();
+  const result = await deleteCampaign(id, creatorId ?? undefined);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
 }

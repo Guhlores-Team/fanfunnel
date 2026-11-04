@@ -10,12 +10,17 @@ import PackEditor from "./PackEditor";
 import { useCreatorLeave } from "./CreatorDrafts";
 import { CampaignGameSelect, GameName, FOLLOW_LIVE } from "./GameChoice";
 import { KIND_SHORT, campaignGame, defaultCampaignGameId, kindOf, liveExplanation, type CampaignGame } from "./gameAssignment";
+import { manageableSeats, seatPath, type SeatCreatorView } from "@/components/agency/seatWorkspace";
+
+/** A28: the creator an agency seat is running campaigns for (absent: the caller's own). */
+type Seat = Pick<SeatCreatorView, "creatorId" | "displayName">;
 
 /** Plain-language refusal for choosing a campaign's game. */
-function pinRefusal(error: string | undefined): string {
+function pinRefusal(error: string | undefined, seat?: Seat): string {
   if (error === "game_not_playable") return "That game can't be chosen: it's archived or still a draft. Pick a finished, saved game.";
-  if (error === "not_found") return "That game wasn't found in your games. Refresh and pick again.";
+  if (error === "not_found") return `That game wasn't found in ${seat ? `${seat.displayName}'s` : "your"} games. Refresh and pick again.`;
   if (error === "unauthorized") return "You're signed out. Sign in and try again.";
+  if (error === "forbidden") return "Your agency seat can't manage this creator's campaigns. Nothing changed.";
   return "Couldn't change this campaign's game. Nothing changed; try again.";
 }
 
@@ -79,9 +84,67 @@ function StatGrid({ cells }: { cells: { label: string; value: string | number }[
 // links they mint, then compare performance (spins, fans, fulfilment, top
 // prize) across promotions. Owns its own fetch + refresh so it can live behind
 // a lazily-mounted tab. Command Center styling; mobile-first, no horizontal overflow.
+//
+// A28: an agency owner or manager also gets a "Working for" picker listing the
+// creators the server says it may manage (can_act_for 'manage'). Picking one
+// runs that creator's campaigns (create, rename, game, archive, delete); every
+// request names the creator and the server re-checks 'manage' on each one.
+// Stats, spin packs and game editing stay with the creator.
 export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: string) => void } = {}) {
+  const [seats, setSeats] = useState<SeatCreatorView[]>([]);
+  const [actingFor, setActingFor] = useState("");
+  const pickerId = useId();
+  const pickerHelpId = useId();
+
+  useEffect(() => {
+    let live = true;
+    void fetch("/api/agency/seats?job=manage", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { seats: [] }))
+      .then((d: { seats?: unknown }) => { if (live) setSeats(manageableSeats(d.seats)); })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const seat = seats.find((s) => s.creatorId === actingFor);
+  return (
+    <div className="flex max-w-[820px] flex-col gap-[18px]">
+      {seats.length > 0 && (
+        <section aria-label="Agency seat" className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
+          <label htmlFor={pickerId} className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">
+            Working for
+          </label>
+          <select
+            id={pickerId}
+            data-testid="campaigns-seat-picker"
+            value={seat ? seat.creatorId : ""}
+            onChange={(e) => setActingFor(e.target.value)}
+            aria-describedby={pickerHelpId}
+            className="ff-input mt-1.5 block w-full min-w-0 max-w-80 text-[13px]"
+          >
+            <option value="">My campaigns</option>
+            {seats.map((s) => (
+              <option key={s.creatorId} value={s.creatorId}>{s.displayName}</option>
+            ))}
+          </select>
+          <p id={pickerHelpId} className="mt-2 text-xs text-muted text-pretty">
+            {seat
+              ? `You're running ${seat.displayName}'s campaigns for your agency: create, rename, change the game, archive or delete. Their stats, spin packs and games stay with them.`
+              : "Your agency lets you run campaigns for the creators listed here."}
+          </p>
+        </section>
+      )}
+      <CampaignsWorkspace key={seat?.creatorId ?? ""} seat={seat} onOpenGame={seat ? undefined : onOpenGame} />
+    </div>
+  );
+}
+
+function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (wheelId: string) => void }) {
   const toast = useToast();
   const [stats, setStats] = useState<CampaignStats[] | null>(null);
+  // A28: a seat's list is the bare campaigns of the creator it works for.
+  const [seatList, setSeatList] = useState<Campaign[] | null>(null);
   const [uncat, setUncat] = useState<{ revenue: number; spinsBought: number; spinsPlayed: number; fans: number } | null>(null);
   const [wheels, setWheels] = useState<WheelSummary[]>([]);
   // The game choice defaults to the live game, so wait for the list before
@@ -96,6 +159,24 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
   const newGameHelpId = useId();
 
   const load = useCallback(async () => {
+    if (seat) {
+      // One request: that creator's campaigns plus their games for the picker.
+      try {
+        const res = await fetch(seatPath("/api/campaigns", seat.creatorId), { cache: "no-store" });
+        if (!res.ok) {
+          setSeatList([]);
+          toast(res.status === 403 ? `Your agency seat can't manage ${seat.displayName}'s campaigns.` : "Couldn't load campaigns. Try again.", { tone: "error" });
+          return;
+        }
+        const d = (await res.json()) as { campaigns?: Campaign[]; games?: WheelSummary[] };
+        setSeatList(d.campaigns ?? []);
+        setWheels(d.games ?? []);
+        setNow(new Date());
+      } finally {
+        setWheelsLoaded(true);
+      }
+      return;
+    }
     // Stats already carry the campaign rows (newest first), so one fetch covers
     // the whole comparison list. /api/campaigns stays available for callers that
     // only need the bare list.
@@ -105,10 +186,11 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
       setStats((d.stats ?? []) as CampaignStats[]);
       setUncat(d.uncategorized ?? null);
     } else setStats([]);
-  }, []);
+  }, [seat, toast]);
 
   // Fetch the creator's wheels once so each campaign can offer a pin selector.
   const loadWheels = useCallback(async () => {
+    if (seat) return; // a seat's games come with its campaign list
     // Archived games too, so a campaign still set to one can say so.
     try {
       const res = await fetch("/api/wheels?archived=1", { cache: "no-store" });
@@ -120,7 +202,7 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
     } finally {
       setWheelsLoaded(true);
     }
-  }, []);
+  }, [seat]);
   const live = useMemo(() => liveExplanation(wheels, now), [wheels, now]);
   const liveTitle = live ? `${live.game.title} · ${KIND_SHORT[kindOf(live.game)]}` : null;
   const chosenNewGame = newGameId ?? defaultCampaignGameId(wheels, now);
@@ -139,15 +221,15 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed, pinnedWheelId: chosenNewGame || null }),
+        body: JSON.stringify({ name: trimmed, pinnedWheelId: chosenNewGame || null, ...(seat ? { creatorId: seat.creatorId } : {}) }),
       });
-      const data = (await res.json()) as { campaign?: Campaign; error?: string };
+      const data = (await res.json().catch(() => ({}))) as { campaign?: Campaign; error?: string };
       if (!res.ok || !data.campaign) {
         toast(
           data.error === "unauthorized"
             ? "Couldn't create campaign. Are you signed in?"
-            : data.error === "game_not_playable" || data.error === "not_found"
-              ? `Couldn't create campaign. ${pinRefusal(data.error)}`
+            : data.error === "game_not_playable" || data.error === "not_found" || data.error === "forbidden"
+              ? `Couldn't create campaign. ${pinRefusal(data.error, seat)}`
               : "Couldn't create campaign. Try again.",
           { tone: "error" }
         );
@@ -161,14 +243,20 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
     }
   }
 
+  const rows: { campaign: Campaign; stats?: CampaignStats }[] | null = seat
+    ? seatList && seatList.map((campaign) => ({ campaign }))
+    : stats && stats.map((s) => ({ campaign: s.campaign, stats: s }));
+  const followLabel = seat ? `Follow ${seat.displayName}'s live game` : undefined;
+
   return (
-    <div className="flex max-w-[820px] flex-col gap-[18px]">
+    <>
       {/* Create */}
       <section className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
-        <SectionTitle>Create a campaign</SectionTitle>
+        <SectionTitle>{seat ? `Create a campaign for ${seat.displayName}` : "Create a campaign"}</SectionTitle>
         <p className="mt-1 text-[13px] text-muted">
-          Name a promotion, pick the game its fans play, then attach it to the
-          links you mint to compare how each one performs.
+          {seat
+            ? `Name a promotion and pick which of ${seat.displayName}'s games its fans play.`
+            : "Name a promotion, pick the game its fans play, then attach it to the links you mint to compare how each one performs."}
         </p>
         <div className="mt-3.5 flex flex-wrap items-end gap-3">
           <div className="min-w-0 flex-1 basis-56 sm:max-w-60 sm:flex-none">
@@ -198,6 +286,7 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
               describedBy={newGameHelpId}
               onChange={setNewGameId}
               className="w-full"
+              followLabel={followLabel}
             />
           </div>
           <button
@@ -209,9 +298,13 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
           </button>
         </div>
         <p id={newGameHelpId} className="mt-2 text-xs text-muted text-pretty">
-          {chosenNewGame === FOLLOW_LIVE
-            ? "Follow my live game: this campaign's links play whatever is live on your Games screen, so scheduling or activating another game changes it."
-            : "This campaign's links always play the game you pick here, even if you schedule or activate another game. You can change it later on the campaign card."}
+          {seat
+            ? chosenNewGame === FOLLOW_LIVE
+              ? `${followLabel}: this campaign's links play whatever is live on ${seat.displayName}'s Games screen.`
+              : "This campaign's links always play the game you pick here. You can change it later on the campaign card."
+            : chosenNewGame === FOLLOW_LIVE
+              ? "Follow my live game: this campaign's links play whatever is live on your Games screen, so scheduling or activating another game changes it."
+              : "This campaign's links always play the game you pick here, even if you schedule or activate another game. You can change it later on the campaign card."}
         </p>
       </section>
 
@@ -241,43 +334,49 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
       )}
 
       {/* Comparison list */}
-      {stats === null ? (
+      {rows === null ? (
         <div className="flex flex-col gap-[18px]" aria-busy="true" aria-label="Loading campaigns">
           {Array.from({ length: 2 }).map((_, i) => (
             <div key={i} className="skeleton h-52 rounded-2xl" />
           ))}
         </div>
-      ) : stats.length === 0 ? (
+      ) : rows.length === 0 ? (
         <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-6 py-12 text-center sm:px-8">
           <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
             <Glyph d={ICON.megaphone} size={22} />
           </span>
-          <p className="text-[15px] font-bold text-ink">No campaigns yet</p>
+          <p className="text-[15px] font-bold text-ink">{seat ? `${seat.displayName} has no campaigns yet` : "No campaigns yet"}</p>
           <p className="max-w-sm text-[13px] text-muted text-pretty">
-            Create a campaign above, then attach it to the fan links you mint to compare their
-            performance side by side.
+            {seat
+              ? "Create one above. It shows up on their Campaigns tab straight away."
+              : "Create a campaign above, then attach it to the fan links you mint to compare their performance side by side."}
           </p>
         </div>
       ) : (
         <div className="flex flex-col gap-[18px]">
-          {stats.map((s) => (
-            <CampaignCard key={s.campaign.id} stats={s} wheels={wheels} now={now} liveTitle={liveTitle} onRefresh={load} onOpenGame={onOpenGame} />
+          {rows.map((r) => (
+            <CampaignCard key={r.campaign.id} campaign={r.campaign} stats={r.stats} seat={seat} wheels={wheels} now={now} liveTitle={liveTitle} onRefresh={load} onOpenGame={onOpenGame} />
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
 function CampaignCard({
+  campaign,
   stats,
+  seat,
   wheels,
   now,
   liveTitle,
   onRefresh,
   onOpenGame,
 }: {
-  stats: CampaignStats;
+  campaign: Campaign;
+  /** Absent for an agency seat: the creator's stats stay with the creator. */
+  stats?: CampaignStats;
+  seat?: Seat;
   wheels: WheelSummary[];
   now: Date;
   liveTitle: string | null;
@@ -289,8 +388,8 @@ function CampaignCard({
   const lifecycleHelpId = useId();
   const toast = useToast();
   const leave = useCreatorLeave();
-  const { campaign, revenue, arpu, spinsBought, spinsPlayed, uniqueFans, fulfilled, topPrize } =
-    stats;
+  // A28: a seat names the creator on every write; the server re-checks 'manage'.
+  const acting = seat ? { creatorId: seat.creatorId } : {};
   const [showPacks, setShowPacks] = useState(false);
   const [pinning, setPinning] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -309,7 +408,7 @@ function CampaignCard({
       const res = await fetch(`/api/campaigns/${campaign.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+        body: JSON.stringify({ name: trimmed, ...acting }),
       });
       if (!res.ok) {
         toast("Couldn't rename campaign.", { tone: "error" });
@@ -332,7 +431,7 @@ function CampaignCard({
       const res = await fetch(`/api/campaigns/${campaign.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive }),
+        body: JSON.stringify({ isActive, ...acting }),
       });
       if (!res.ok) {
         toast(isActive ? "Couldn't reactivate campaign. Nothing changed." : "Couldn't archive campaign. Nothing changed.", { tone: "error" });
@@ -356,7 +455,8 @@ function CampaignCard({
   async function removeConfirmed() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/campaigns/${campaign.id}`, { method: "DELETE" });
+      const url = `/api/campaigns/${campaign.id}`;
+      const res = await fetch(seat ? seatPath(url, seat.creatorId) : url, { method: "DELETE" });
       if (!res.ok) {
         toast("Couldn't delete campaign.", { tone: "error" });
         return;
@@ -374,15 +474,15 @@ function CampaignCard({
       const res = await fetch(`/api/campaigns/${campaign.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pinnedWheelId: value || null }),
+        body: JSON.stringify({ pinnedWheelId: value || null, ...acting }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        toast(pinRefusal(data?.error), { tone: "error" });
+        toast(pinRefusal(data?.error, seat), { tone: "error" });
         return;
       }
       const picked = wheels.find((w) => w.id === value);
-      toast(picked ? `${campaign.name} now plays ${picked.title}.` : `${campaign.name} now follows your live game.`, { tone: "success" });
+      toast(picked ? `${campaign.name} now plays ${picked.title}.` : `${campaign.name} now follows ${seat ? `${seat.displayName}'s` : "your"} live game.`, { tone: "success" });
       await onRefresh();
     } finally {
       setPinning(false);
@@ -390,16 +490,17 @@ function CampaignCard({
   }
 
   const plays = campaignGame(campaign, wheels, now);
-  const cells = [
-    { label: "Revenue", value: formatCents(revenue) },
-    { label: "ARPU", value: formatCents(arpu) },
-    { label: "Spins bought", value: spinsBought },
-    { label: "Spins played", value: spinsPlayed },
+  const cells = stats && [
+    { label: "Revenue", value: formatCents(stats.revenue) },
+    { label: "ARPU", value: formatCents(stats.arpu) },
+    { label: "Spins bought", value: stats.spinsBought },
+    { label: "Spins played", value: stats.spinsPlayed },
     { label: "Play-through", value: `${Math.round(stats.playThroughPct * 100)}%` },
-    { label: "Unique fans", value: uniqueFans },
-    { label: "Fulfilled", value: fulfilled },
+    { label: "Unique fans", value: stats.uniqueFans },
+    { label: "Fulfilled", value: stats.fulfilled },
     { label: "Pending", value: stats.pending },
   ];
+  const topPrize = stats?.topPrize;
 
   return (
     <section className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
@@ -449,7 +550,7 @@ function CampaignCard({
                 </span>
               )}
             </div>
-            <div className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted">
+            {stats && <div className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted">
               <span>Top prize</span>
               {topPrize ? (
                 <span className="flex min-w-0 items-center gap-1.5 font-semibold text-ink">
@@ -464,16 +565,18 @@ function CampaignCard({
               ) : (
                 <span>—</span>
               )}
-            </div>
+            </div>}
           </>
         )}
       </div>
 
-      <PlaysLine plays={plays} onOpenGame={onOpenGame} />
+      <PlaysLine plays={plays} onOpenGame={onOpenGame} whose={seat ? `${seat.displayName}'s` : "your"} />
 
-      <div className="mt-4">
-        <StatGrid cells={cells} />
-      </div>
+      {cells && (
+        <div className="mt-4">
+          <StatGrid cells={cells} />
+        </div>
+      )}
 
       <div className="mt-3.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-3 border-t border-[var(--hair)] pt-3.5">
         {/* Which game this campaign's links play. */}
@@ -487,11 +590,12 @@ function CampaignCard({
             disabled={pinning}
             describedBy={gameHelpId}
             onChange={(value) => void pinWheel(value)}
+            followLabel={seat ? `Follow ${seat.displayName}'s live game` : undefined}
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Spin packs (collapsible to keep the panel tidy). */}
-          <button
+          {/* Spin packs (collapsible to keep the panel tidy). The creator's own: not for a seat. */}
+          {!seat && <button
             type="button"
             onClick={() => showPacks ? leave(() => setShowPacks(false), { scope: `packs:${campaign.id}`, consequence: "Closing spin packs discards unsaved pack edits. It does not undo a request already sent." }) : setShowPacks(true)}
             aria-expanded={showPacks}
@@ -503,7 +607,7 @@ function CampaignCard({
               size={13}
               className={`transition-transform ${showPacks ? "rotate-180" : ""}`}
             />
-          </button>
+          </button>}
           {!editingName && (
             <>
               <button
@@ -553,7 +657,9 @@ function CampaignCard({
         </div>
       </div>
       <p id={gameHelpId} className="mt-2 text-xs text-muted text-pretty">
-        Applies to every link in this campaign, new and existing. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.
+        {seat
+          ? `Applies to every link in this campaign, new and existing. “Follow ${seat.displayName}'s live game” uses whatever is live on their Games screen.`
+          : <>Applies to every link in this campaign, new and existing. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.</>}
       </p>
       <p id={lifecycleHelpId} className="mt-1 text-xs text-muted text-pretty">
         {campaign.isActive
@@ -561,7 +667,7 @@ function CampaignCard({
           : "Archived: new fan links don't default to it. Links already in it keep working and still count here. Reactivate to make it a default again."}
       </p>
 
-      {showPacks && (
+      {showPacks && !seat && (
         <div className="mt-4">
           <PackEditor campaignId={campaign.id} />
         </div>
@@ -570,7 +676,7 @@ function CampaignCard({
   );
 }
 
-function PlaysLine({ plays, onOpenGame }: { plays: CampaignGame<WheelSummary>; onOpenGame?: (wheelId: string) => void }) {
+function PlaysLine({ plays, onOpenGame, whose }: { plays: CampaignGame<WheelSummary>; onOpenGame?: (wheelId: string) => void; whose: string }) {
   const target = plays.mode === "pinned" ? plays.game : plays.live;
   return (
     <div data-testid="campaign-plays" data-plays-game-id={target?.id ?? ""} className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-[10px] border border-[var(--hair)] px-3 py-2 text-[13px] text-muted [background:var(--s2)]">
@@ -583,10 +689,10 @@ function PlaysLine({ plays, onOpenGame }: { plays: CampaignGame<WheelSummary>; o
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-pretty">
           {plays.ignored && (
             <span className="w-full text-amber-200">
-              Set to play {plays.ignored.title ?? "a game"}, but {plays.ignored.why}, so fans get your live game. Pick another game below.
+              Set to play {plays.ignored.title ?? "a game"}, but {plays.ignored.why}, so fans get {whose} live game. Pick another game below.
             </span>
           )}
-          <span className="font-semibold text-ink">Follows your live game</span>
+          <span className="font-semibold text-ink">Follows {whose} live game</span>
           {plays.live ? (
             <>
               <span>(currently</span>
