@@ -8,10 +8,16 @@
 //        mismatched email and API roles are refused.
 //   A11  run_retention_cleanup trims only settled operational history.
 //   A12  the spin_attempts foreign keys are served by an index (EXPLAIN).
+//   Pin  a link's own game is written only by set_fan_pass_game: a direct
+//        UPDATE/INSERT (a seat's PostgREST PATCH) is refused, even with
+//        Supabase's default table grants.
+//   A35  sessions cannot delete a redemption (and its recorded award cost).
 // Barriers are observed lock waits, never sleep windows: a session renames
 // itself once it holds its row, then waits until it sees the other session
 // blocked on a lock (the only timers left are hang guards).
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+const MIGRATION_0065 = join(import.meta.dirname, '../../supabase/migrations/0065_fan_game_pins_and_hardening.sql');
 const q = value => `'${String(value).replaceAll("'", "''")}'`;
 const seen = (name, condition) => `do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'${condition}); perform pg_sleep(0.01); end loop; end $$;`;
 const asUser = (id, body) => `set local role authenticated;select set_config('request.jwt.claim.sub','${id}',true);select set_config('request.jwt.claim.role','authenticated',true);${body}`;
@@ -35,6 +41,7 @@ export async function probeHardening(db, psql, psqlAsync) {
       run(`insert into public.wheels(id,creator_id,title,is_active) values(${q(w)},${q(creator)},'A44 game',true)${elsewhere ? `,(${q(v)},${q(creator)},'A44 stored game',false)` : ''};
            insert into public.prizes(id,wheel_id,label,weight,emoji,sort_order,boostable) values(${q(p)},${q(w)},'A44 prize',1,'🎯',0,true);
            insert into public.fans(id,creator_id,display_name) values(${q(f)},${q(creator)},'A44 fan');
+           select set_config('fanfunnel.pass_game_write',${q(s)},true);
            insert into public.fan_passes(id,creator_id,fan_id,wheel_id,pinned_wheel_id,token) values(${q(s)},${q(creator)},${q(f)},${q(elsewhere ? v : w)},${elsewhere ? q(w) : 'null'},'a44-${s}');
            ${focus ? `insert into public.fan_focus(creator_id,fan_id,fan_pass_id,wheel_id,prize_id,prize_label,kind,multiplier,total_spins,spins_left) values(${q(creator)},${q(f)},${q(s)},${q(w)},${q(p)},'A44 prize','focus',2,5,5);` : ''}`);
       return { w, f, s };
@@ -93,7 +100,7 @@ export async function probeHardening(db, psql, psqlAsync) {
     // ---------------------------------------------------------------- A11
     {
       const fan = randomUUID(), hex = 'a'.repeat(64);
-      const id = Object.fromEntries(['committed', 'declined', 'recentDeclined', 'pending', 'jSettled', 'jPending', 'jRecent', 'bOld', 'bInUse', 'bRecent'].map(k => [k, randomUUID()]));
+      const id = Object.fromEntries(['committed', 'declined', 'recentDeclined', 'pending', 'jSettled', 'jPending', 'jRecent', 'bOld', 'bInUse', 'bRecent', 'cOld', 'cRecent'].map(k => [k, randomUUID()]));
       const out = run(`begin;
         insert into public.fans(id,creator_id,display_name) values(${q(fan)},${q(creator)},'A11 fan');
         insert into public.fan_checkins(fan_id,creator_id,day) values(${q(fan)},${q(creator)},current_date-100),(${q(fan)},${q(creator)},current_date-60),(${q(fan)},${q(creator)},current_date-1);
@@ -108,6 +115,7 @@ export async function probeHardening(db, psql, psqlAsync) {
           (${q(id.jSettled)},${q(creator)},${q(creator)},'grant','${hex}','committed',now()-interval '100 days',now()-interval '100 days',null),
           (${q(id.jPending)},${q(creator)},${q(creator)},'import','${hex}','pending',now()-interval '100 days',null,${q(id.bInUse)}),
           (${q(id.jRecent)},${q(creator)},${q(creator)},'grant','${hex}','committed',now()-interval '10 days',now()-interval '10 days',null);
+        insert into public.actor_request_cancellations(actor_id,id,kind,created_at) values(${q(creator)},${q(id.cOld)},'grant',now()-interval '100 days'),(${q(creator)},${q(id.cRecent)},'grant',now()-interval '10 days');
         set local role service_role;
         select public.run_retention_cleanup(365,90,180,90,90)::text;
         reset role;
@@ -116,10 +124,12 @@ export async function probeHardening(db, psql, psqlAsync) {
         select 'journal:'||string_agg(case id when ${q(id.jPending)} then 'pending' when ${q(id.jRecent)} then 'recent' else 'settled' end,',' order by created_at,state) from public.creator_request_journal where creator_id=${q(creator)};
         select 'batches:'||string_agg(case id when ${q(id.bInUse)} then 'inuse' when ${q(id.bRecent)} then 'recent' else 'old' end,',' order by created_at,id) from public.fan_import_batches where creator_id=${q(creator)};
         select 'items:'||count(*) from public.fan_import_items where batch_id=${q(id.bOld)};
+        select 'cancellations:'||string_agg(case id when ${q(id.cRecent)} then 'recent' else 'old' end,',') from public.actor_request_cancellations where actor_id=${q(creator)};
         rollback;`).split('\n');
       const result = JSON.parse(out.find(l => l.startsWith('{')) ?? '{}');
       const line = prefix => out.find(l => l.startsWith(prefix)) ?? '';
-      check(['fan_checkins', 'spin_attempt_contexts', 'declined_spin_attempts', 'creator_request_journal', 'fan_import_batches'].every(k => Number.isInteger(result[k]) && result[k] >= 1), `A11: the cleanup reports every new count (${JSON.stringify(result)})`);
+      check(line('cancellations:') === 'cancellations:recent', `A11: request cancellation fences go after the journal period (${line('cancellations:')})`);
+      check(['fan_checkins', 'spin_attempt_contexts', 'declined_spin_attempts', 'creator_request_journal', 'actor_request_cancellations', 'fan_import_batches'].every(k => Number.isInteger(result[k]) && result[k] >= 1), `A11: the cleanup reports every new count (${JSON.stringify(result)})`);
       check(line('checkins:') === 'checkins:60,1', `A11: check-ins older than 90 days go, the glow's 59-day window stays (${line('checkins:')})`);
       check(line('attempts:').split(':')[1]?.split(',').sort().join(',') === 'committed=false,pending=true,recent=true', `A11: old declined attempts go, old committed attempts lose only their context, pending and recent ones are untouched (${line('attempts:')})`);
       check(line('journal:').split(':')[1]?.split(',').sort().join(',') === 'pending,recent', `A11: only settled request journals past 90 days go (${line('journal:')})`);
@@ -127,6 +137,44 @@ export async function probeHardening(db, psql, psqlAsync) {
     }
   } catch (error) { bad.push(`hardening probe: ${error instanceof Error ? error.message : error}`); }
   finally { psql(db, ['-c', `delete from auth.users where id in(${q(creator)},${q(stranger)});`], { allowFail: true }); }
+
+  // ----------------------------------------- pin writer and redemption delete
+  // In a clone given Supabase's default table grants to authenticated, then
+  // 0065 re-applied (idempotent), as a hosted project would have it.
+  const grantsDb = `g65_${randomUUID().replaceAll('-', '').slice(0, 16)}`; let grantsMade = false;
+  try {
+    let r = psql(db, ['-c', `create database "${grantsDb}" template "${db}";`], { allowFail: true }); if (r.status !== 0) throw Error(`clone failed ${(r.stderr || '').trim()}`); grantsMade = true;
+    psql(grantsDb, ['-c', 'grant select,insert,update,delete on table public.redemptions,public.fan_passes to authenticated;']);
+    const granted = psql(grantsDb, ['-c', `select has_table_privilege('authenticated','public.redemptions','delete');`]).stdout.trim();
+    check(granted === 't', `A35 control: the simulated Supabase default grant lets a session delete before 0065 is re-applied (${granted})`);
+    r = psql(grantsDb, ['-f', MIGRATION_0065], { allowFail: true }); if (r.status !== 0) throw Error(`0065 re-apply failed ${(r.stderr || '').trim().split('\n').find(l => l.includes('ERROR')) ?? ''}`);
+    const runIn = sql => { const res = psql(grantsDb, ['-c', sql], { allowFail: true }); return { ok: res.status === 0, out: (res.stdout || '').trim(), err: (res.stderr || '').trim() }; };
+    const owner = randomUUID(), w = randomUUID(), w2 = randomUUID(), f = randomUUID(), s = randomUUID();
+    const seeded = runIn(`insert into auth.users(id,email) values(${q(owner)},'pin-${owner}@example.test');
+      update public.profiles set is_active=true,approval_status='approved' where id=${q(owner)};
+      insert into public.wheels(id,creator_id,title,is_active) values(${q(w)},${q(owner)},'Pin game',true),(${q(w2)},${q(owner)},'Other game',false);
+      insert into public.fans(id,creator_id,display_name) values(${q(f)},${q(owner)},'Pin fan');
+      insert into public.fan_passes(id,creator_id,fan_id,wheel_id,token) values(${q(s)},${q(owner)},${q(f)},${q(w)},'pin-${s}');`);
+    if (!seeded.ok) throw Error(`pin seed failed ${seeded.err}`);
+    const patch = runIn(`begin;${asUser(owner, `update public.fan_passes set pinned_wheel_id=${q(w2)} where id=${q(s)} returning id;`)}commit;`);
+    check(!patch.ok && /use set_fan_pass_game/.test(patch.err), `Pin: the creator's own session cannot PATCH a link's game past set_fan_pass_game (${patch.ok ? 'accepted' : patch.err.split('\n')[0]})`);
+    const direct = runIn(`update public.fan_passes set pinned_wheel_id=${q(w2)} where id=${q(s)};`);
+    check(!direct.ok && /use set_fan_pass_game/.test(direct.err), 'Pin: no role writes a link\'s game directly');
+    const forged = runIn(`select set_config('fanfunnel.pass_game_write',${q(randomUUID())},true);update public.fan_passes set pinned_wheel_id=${q(w2)} where id=${q(s)};`);
+    check(!forged.ok && /use set_fan_pass_game/.test(forged.err), "Pin: the writer mark covers only the pass set_fan_pass_game is writing");
+    const minted = runIn(`insert into public.fan_passes(creator_id,fan_id,wheel_id,pinned_wheel_id,token) values(${q(owner)},${q(f)},${q(w)},${q(w2)},'pin-new-${s}');`);
+    check(!minted.ok && /use set_fan_pass_game/.test(minted.err), 'Pin: a new link cannot be inserted already set to a game');
+    const other = runIn(`begin;${asUser(owner, `update public.fan_passes set last_spin_at=now() where id=${q(s)} returning id;`)}commit;`);
+    check(other.ok, `Pin: other link updates are unaffected (${other.err.split('\n')[0] || 'ok'})`);
+    check(runIn(`select coalesce(pinned_wheel_id::text,'null') from public.fan_passes where id=${q(s)};`).out === 'null', 'Pin: every refused write left the link following its campaign and the live game');
+    const del = runIn(`begin;${asUser(owner, `delete from public.redemptions where creator_id=${q(owner)};`)}commit;`);
+    check(!del.ok && /permission denied for table redemptions/.test(del.err), `A35: a session cannot delete a redemption and its recorded cost (${del.ok ? 'accepted' : del.err.split('\n')[0]})`);
+    const read = runIn(`begin;${asUser(owner, 'select count(*) from public.redemptions;')}commit;`);
+    check(read.ok, `A35: the creator still reads their redemptions (${read.err.split('\n')[0] || 'ok'})`);
+    const upd = runIn(`begin;${asUser(owner, "update public.redemptions set notes='x' where false;")}commit;`);
+    check(upd.ok, `A35: fulfilment updates keep their grant (${upd.err.split('\n')[0] || 'ok'})`);
+  } catch (error) { bad.push(`pin/redemption probe: ${error instanceof Error ? error.message : error}`); }
+  finally { if (grantsMade) psql(db, ['-c', `drop database "${grantsDb}" with (force);`], { allowFail: true }); }
 
   // ------------------------------------------------------------------ A17
   const clone = `a17_${randomUUID().replaceAll('-', '').slice(0, 16)}`; let made = false;

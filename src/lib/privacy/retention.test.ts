@@ -68,6 +68,7 @@ for (const file of ["supabase/migrations/0065_fan_game_pins_and_hardening.sql", 
   check(`${file}: only settled journals are pruned`, /delete from public\.creator_request_journal\s+where state <> 'pending'/.test(fn));
   check(`${file}: only declined attempts with no spin are deleted`, /delete from public\.spin_attempts\s+where state = 'declined' and spin_id is null/.test(fn));
   check(`${file}: a batch a pending request uses is kept`, /j\.state = 'pending'/.test(fn));
+  check(`${file}: cancellation fences last the journal's period`, /delete from public\.actor_request_cancellations\s+where created_at < now\(\) - make_interval\(days => v_journal_days\)/.test(fn));
 }
 check("check-ins outlive the visit glow read window", RETENTION_DAYS.fanCheckins > CHECKIN_READ_DAYS + CHECKIN_DATE_SKEW_DAYS);
 

@@ -406,7 +406,7 @@ const SECTIONS: LegalSection[] = [
         </li>
         <li>
           <strong>Grant and import request records</strong> (which keep a retried grant or fan import from
-          applying twice): deleted {RETENTION_DAYS.settledRequestJournal} days after the request settles. Fan
+          applying twice, or a cancelled one from running later): deleted {RETENTION_DAYS.settledRequestJournal} days after the request settles or is cancelled. Fan
           import batches and their per-row results are deleted after {RETENTION_DAYS.fanImportBatches} days. The
           grants and fans a request created are kept like other account data.
         </li>

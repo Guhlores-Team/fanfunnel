@@ -10,12 +10,12 @@
 --        refuses another creator's game. Mirrored in src/lib/games/liveGame.ts.
 --  A12   indexes on the spin_attempts foreign keys.
 --  A11   run_retention_cleanup also trims visit check-ins, finished attempt
---        contexts, declined attempts, settled request journals and old import
---        batches.
+--        contexts, declined attempts, settled request journals, request
+--        cancellation fences and old import batches.
 --  A17   bootstrap_first_admin: the first-admin claim is one transaction under
 --        the 0062 active-admin fence and needs the account's confirmed email.
 --  A35   redemptions.cost_cents_at_award, captured in the commit transaction
---        and immutable afterwards.
+--        and immutable afterwards; sessions can no longer delete a redemption.
 --  A44   archive_wheel / delete_wheel take the game's Focus/Chase fans (and
 --        the fans whose links are set to it) before the wheel row, the order a
 --        credited play uses (fan -> pass -> ... -> wheel -> prize). delete_wheel
@@ -33,7 +33,12 @@ grant select(pinned_wheel_id) on public.fan_passes to authenticated;
 comment on column public.fan_passes.pinned_wheel_id is 'The game this one fan link plays, before its campaign''s game and the live game (0065). Set via set_fan_pass_game.';
 
 -- A link may only be set to its own creator's game. The resolver also ignores
--- a foreign or unplayable pin, but this refuses it for every role.
+-- a foreign or unplayable pin, but this refuses it for every role. The link's
+-- own game is written only by set_fan_pass_game (which marks the pass it may
+-- write in a transaction-local setting, like fanfunnel.economic_write): a
+-- direct UPDATE (a team seat's PostgREST PATCH under fan_passes_write) would
+-- skip the actor context, the MFA step-up and the playable check. The one
+-- other writer is the pinned_wheel_id ON DELETE SET NULL of a deleted game.
 create or replace function public.guard_atomic_pass_economy()
 returns trigger language plpgsql security definer set search_path=public as $$
 begin
@@ -42,6 +47,11 @@ begin
    or (new.campaign_id is not null and not exists(select 1 from public.campaigns where id=new.campaign_id and creator_id=new.creator_id))
    or (new.pinned_wheel_id is not null and not exists(select 1 from public.wheels where id=new.pinned_wheel_id and creator_id=new.creator_id)) then
    raise exception 'pass references another creator' using errcode='42501';
+ end if;
+ if ((tg_op='INSERT' and new.pinned_wheel_id is not null) or (tg_op='UPDATE' and new.pinned_wheel_id is distinct from old.pinned_wheel_id))
+   and current_setting('fanfunnel.pass_game_write',true) is distinct from new.id::text
+   and not (tg_op='UPDATE' and new.pinned_wheel_id is null and not exists(select 1 from public.wheels where id=old.pinned_wheel_id)) then
+   raise exception 'use set_fan_pass_game' using errcode='42501';
  end if;
  if tg_op='UPDATE' and (new.fan_id is distinct from old.fan_id or new.creator_id is distinct from old.creator_id) then
    raise exception 'pass identity is immutable' using errcode='42501';
@@ -164,7 +174,11 @@ begin
      return jsonb_build_object('status','game_not_playable');
    end if;
  end if;
- if p.pinned_wheel_id is distinct from p_wheel then update public.fan_passes set pinned_wheel_id=p_wheel where id=p.id; end if;
+ if p.pinned_wheel_id is distinct from p_wheel then
+   perform set_config('fanfunnel.pass_game_write',p.id::text,true);
+   update public.fan_passes set pinned_wheel_id=p_wheel where id=p.id;
+   perform set_config('fanfunnel.pass_game_write','',true);
+ end if;
  return jsonb_build_object('status','ok','passId',p.id,'pinnedWheelId',p_wheel,'playsWheelId',public._resolved_spin_wheel(p.id));
 end $$;
 revoke execute on function public.set_fan_pass_game(uuid,uuid,uuid,uuid,uuid) from public,anon,authenticated;
@@ -193,6 +207,11 @@ begin
  return new;
 end $$;
 revoke execute on function public._guard_award_cost_snapshot() from public,anon,authenticated;
+-- Nor can the award (and its recorded cost) be erased from a session: no app
+-- path deletes a redemption (they go with their spin, fan or account, through
+-- service-role work and foreign-key cascades, which this does not affect), but
+-- redemptions_write is FOR ALL and Supabase grants DELETE to authenticated.
+revoke delete on table public.redemptions from public,anon,authenticated;
 drop trigger if exists redemptions_award_cost_snapshot on public.redemptions;
 create trigger redemptions_award_cost_snapshot before insert or update of cost_cents_at_award on public.redemptions
  for each row execute function public._guard_award_cost_snapshot();
@@ -494,6 +513,7 @@ declare
   v_declined_attempts integer := 0;
   v_journal integer := 0;
   v_import_batches integer := 0;
+  v_cancellations integer := 0;
 begin
   if p_audit_days is null or p_notice_days is null or p_tombstone_days is null
      or p_app_error_days is null or p_closed_invite_days is null
@@ -550,6 +570,16 @@ begin
      and finished_at < now() - make_interval(days => v_journal_days);
   get diagnostics v_journal = row_count;
 
+  -- A cancelled request's fence (actor_request_cancellations) keeps a late
+  -- retry of that request id from running; it lives as long as the journal
+  -- (a creator's pending request only survives in that browser tab's session
+  -- storage, so a retry this old is not a retry either).
+  delete from public.actor_request_cancellations
+   where created_at < now() - make_interval(days => v_journal_days);
+  get diagnostics v_cancellations = row_count;
+
+  -- An import batch is also the import's idempotency record: after this a
+  -- re-sent import with the same request id is a new import.
   delete from public.fan_import_batches b
    where b.created_at < now() - make_interval(days => v_import_batch_days)
      and not exists(select 1 from public.creator_request_journal j where j.batch_id = b.id and j.state = 'pending');
@@ -573,6 +603,7 @@ begin
     'spin_attempt_contexts', v_attempt_contexts,
     'declined_spin_attempts', v_declined_attempts,
     'creator_request_journal', v_journal,
+    'actor_request_cancellations', v_cancellations,
     'fan_import_batches', v_import_batches,
     'app_errors', case when v_has_app_errors then v_app_errors else null end
   );

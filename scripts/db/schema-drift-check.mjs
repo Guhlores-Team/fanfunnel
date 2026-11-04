@@ -910,7 +910,7 @@ function probePrivacy(db) {
     "self-last:last_admin", "self-two:ok", "self-creator:ok", "adm-role:creator",
     "spin-kept:null,null", "redemption-kept:1",
     // 0065 (A11) adds the operational-history counts; this fixture has none to trim.
-    `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "fan_checkins": 0, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1, "fan_import_batches": 0, "spin_attempt_contexts": 0, "declined_spin_attempts": 0, "creator_request_journal": 0}`,
+    `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "fan_checkins": 0, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1, "fan_import_batches": 0, "spin_attempt_contexts": 0, "declined_spin_attempts": 0, "creator_request_journal": 0, "actor_request_cancellations": 0}`,
     "left:1,2,1",
     "invites-left:new-declined@example.test,old-pending@example.test",
     `errors-left:${"d".repeat(32)},${"e".repeat(32)}`,

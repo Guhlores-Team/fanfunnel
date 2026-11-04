@@ -271,6 +271,12 @@ async function main() {
     // 0065: the lifecycle RPCs answer not_found for another creator's game.
     check((await a.rpc("archive_wheel", { p_wheel: B.wheelId })).data === "not_found", "A cannot archive B's wheel through archive_wheel");
     check((await a.rpc("delete_wheel", { p_wheel: B.wheelId })).data === "not_found", "A cannot delete B's wheel through delete_wheel");
+    // 0065: a link's own game is written only through set_fan_pass_game, even on
+    // A's own link, and no session can delete a redemption (its award cost).
+    const pinPatch = await a.from("fan_passes").update({ pinned_wheel_id: A.wheelId }).eq("id", A.passId).select("id");
+    check(pinPatch.error?.code === "42501", `A cannot PATCH its own link's game past set_fan_pass_game (${pinPatch.error?.code ?? "accepted"})`);
+    const redemptionDelete = await a.from("redemptions").delete().eq("creator_id", A.id).select("id");
+    check(redemptionDelete.error?.code === "42501", `A cannot delete its own redemptions (${redemptionDelete.error?.code ?? "accepted"})`);
     // Confirm with the service role that B's rows really are untouched.
     const { data: bFanAfter } = await admin.from("fans").select("display_name").eq("id", B.fanId).maybeSingle();
     check(bFanAfter?.display_name === B.fanName, `B's fan is unchanged (got ${bFanAfter?.display_name})`);
