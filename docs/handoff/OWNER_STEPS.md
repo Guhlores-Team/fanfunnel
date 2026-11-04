@@ -85,3 +85,17 @@ Never paste passwords or API keys into chat — put keys straight into the servi
 - [ ] 29. You + me: live smoke test (MANUAL-CHECKLIST §4).
 - [ ] 30. Me: turn the Vercel Preview login back ON. You: confirm you can still reach the Preview while logged in.
 - [ ] 31. Uptime alert (free): https://uptimerobot.com → New monitor → your domain → alert to your email.
+
+## Note — agency staff seats (how onboarding works)
+
+- A staff member (manager, chatter, fulfiller, analyst) needs their **own approved creator
+  account** before their seat does anything. They sign up at `/signup`, request access on
+  `/pending` (which says so), and an admin approves them in Admin. Approval sends the
+  "you're approved" notice and e-mail.
+- The agency owner then adds them on **Agency › Staff seats** by the email on that account;
+  they get an invite to accept. While their account is waiting for approval, or is
+  suspended, the seat does nothing — this is deliberate and stays that way.
+- Managers act for every creator in the agency (inbox, fulfilment, campaigns); chatters,
+  fulfillers and analysts only for the creators ticked under their seat.
+- Everyone with an agency tie (owner, staff, or a creator who accepted an invite) finds it
+  under **Agency** in the dashboard's Account menu. Walkthrough: `e2e/MANUAL-CHECKLIST.md` §20.

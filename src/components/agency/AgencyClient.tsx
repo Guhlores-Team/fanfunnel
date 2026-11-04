@@ -58,7 +58,7 @@ async function manage(body: Record<string, unknown>): Promise<string | null> {
 // back to one generic line.
 const errLabel = (e: string) =>
   ({
-    no_such_user: "No account with that email. They need to sign up first; a staff seat works once an admin approves their account.",
+    no_such_user: "No account with that email.",
     already_in_org: "That creator is already in another agency.",
     expired: "That invitation has expired. Send a new invitation.",
     not_owner: "Only the agency owner can do that.",
@@ -260,8 +260,8 @@ export default function AgencyClient() {
       </div>
       {isOwner && (
         <p id="seat-onboarding-help" data-testid="seat-onboarding-help" className="mt-2 max-w-2xl text-sm text-muted text-pretty">
-          Each staff member needs their own FanFunnel account first: they sign up as a creator and an admin approves it.
-          Then add them here by that email. Until their account is approved the seat does nothing.
+          Staff need an approved creator account first: they sign up, and an admin approves it. Add them by the email
+          on that account; they&apos;ll get an invite to accept. A seat does nothing while their account is waiting for approval.
           Managers act for every creator in the agency; chatters, fulfillers and analysts only for the creators you tick below.
         </p>
       )}

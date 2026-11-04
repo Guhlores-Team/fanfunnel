@@ -140,6 +140,24 @@ export async function accountExtrasJourney(page, { step, assert }, ctx) {
     }
   });
 
+  await step("agency link: the Account group links to /agency, which restyled says 'Demo only' (A45/A53)", async () => {
+    const other = await ctx.newPage();
+    try {
+      await goto(other, "/dashboard", 1500);
+      const nav = other.getByRole("navigation", { name: "Dashboard sections" }).getByTestId("nav-agency");
+      await nav.waitFor({ timeout: 8000 });
+      assert((await nav.getAttribute("href")) === "/agency", "the Agency item links to /agency");
+      assert((await nav.textContent())?.trim() === "Agency", "the item reads Agency");
+      await Promise.all([other.waitForURL((u) => u.pathname === "/agency", { timeout: 15000 }), nav.click()]);
+      await other.getByTestId("agency-demo-only").waitFor({ timeout: 8000 });
+      const bg = await other.evaluate(() => getComputedStyle(document.querySelector("main")).backgroundColor);
+      assert(bg === "rgb(12, 10, 14)", `the page uses the redesign base colour (got ${bg})`);
+      await other.getByRole("link", { name: /Back to dashboard/ }).waitFor({ timeout: 4000 });
+    } finally {
+      await other.close().catch(() => {});
+    }
+  });
+
   await step("public page: a demo link-in-bio save is kept and shows on /c/ (A36)", async () => {
     const before = await json(await ctx.request.get(BASE + "/api/public-profile"), "read public profile");
     originalTagline = before.tagline ?? "";

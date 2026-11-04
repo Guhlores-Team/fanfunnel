@@ -408,6 +408,9 @@ const PAGES = [
   { path: "/dashboard", name: "dashboard phone (Settings: Close my account)", viewport: PHONE, prep: openCloseAccount, advisory: DASH_ADVISORY },
   // A1/A4: Admin › Reports and a blocked fan.
   ...safetyA11yStates(DASH_ADVISORY),
+  // A45/A53: the Agency console in the demo's "Demo only" create-agency state.
+  { path: "/agency", name: "agency (demo only: start an agency)", prep: async page => { await page.getByTestId("agency-demo-only").waitFor({ timeout: 8000 }); } },
+  { path: "/agency", name: "agency phone (demo only: start an agency)", viewport: PHONE, prep: async page => { await page.getByTestId("agency-demo-only").waitFor({ timeout: 8000 }); } },
 ];
 
 // Impacts that fail the build vs. advisory-only.
