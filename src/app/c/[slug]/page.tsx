@@ -5,6 +5,7 @@ import { themeStyle } from "@/lib/creatorTheme/tokens";
 import { themeFontFamily } from "@/lib/creatorTheme/fonts";
 import ThemeBackdrop from "@/components/theme/ThemeBackdrop";
 import PhotoGallery from "@/components/theme/PhotoGallery";
+import ReportPhoto from "@/components/theme/ReportPhoto";
 import { externalUrl } from "@/lib/format";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
@@ -144,6 +145,7 @@ export default async function PublicProfilePage({
         {look.media.length > 0 && (
           <div className="mt-8">
             <PhotoGallery media={look.media} creatorTitle={profile.creatorTitle} />
+            <ReportPhoto slug={slug} media={look.media} />
           </div>
         )}
       </div>

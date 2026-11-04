@@ -12,6 +12,16 @@ import { useToast } from "@/components/ui/Toast";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { demandPct, formatWindow, happyHourStatus, type HappyHourStatus } from "./boostsHelpers";
+import { LoadError } from "./analyticsUi";
+
+/** A list read: loading, loaded, or failed (never shown as an empty list). */
+type ListLoad = "loading" | "ok" | "failed";
+
+async function getJson<T>(url: string): Promise<T> {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(String(r.status));
+  return (await r.json()) as T;
+}
 
 interface ReferralStats {
   referredCount: number;
@@ -63,7 +73,7 @@ function Glyph({ d, size = 18, className = "" }: { d: string; size?: number; cla
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const recessed = "border border-[var(--hair)] [background:var(--s2)]";
 const primaryBtn =
-  "btn-brand inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] px-[15px] text-[13px] font-bold disabled:opacity-50";
+  "btn-brand inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] px-[15px] text-[13px] font-bold disabled:opacity-50 aria-disabled:opacity-50";
 const secondaryBtn =
   "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 const fieldLabel = "flex min-w-0 flex-col gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-muted";
@@ -502,17 +512,29 @@ function HappyHourScheduler() {
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [state, setState] = useState<ListLoad>("loading");
+  // Whether the lists have ever loaded: a failed refresh keeps the last good
+  // lists (and Schedule) and only says the refresh failed.
+  const [loaded, setLoaded] = useState(false);
   const toast = useToast();
 
+  // A15: a failed read is an error with a retry, never "no happy hours yet"
+  // (which would invite a duplicate). The last good lists stay on screen.
   const load = useCallback(async () => {
-    const [w, h] = await Promise.all([
-      fetch("/api/wheels", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { wheels: [] })),
-      fetch("/api/happy-hours", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { happyHours: [] })),
-    ]);
-    setWheels(w.wheels ?? []);
-    setWindows(h.happyHours ?? []);
-    if (!wheelId && w.wheels?.[0]) setWheelId(w.wheels[0].id);
-  }, [wheelId]);
+    try {
+      const [w, h] = await Promise.all([
+        getJson<{ wheels?: WheelSummary[] }>("/api/wheels"),
+        getJson<{ happyHours?: HappyHour[] }>("/api/happy-hours"),
+      ]);
+      setWheels(w.wheels ?? []);
+      setWindows(h.happyHours ?? []);
+      setWheelId((current) => current || w.wheels?.[0]?.id || "");
+      setLoaded(true);
+      setState("ok");
+    } catch {
+      setState("failed");
+    }
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
@@ -520,6 +542,7 @@ function HappyHourScheduler() {
   }, [load]);
 
   const create = async () => {
+    if (busy || !loaded) return;
     if (!wheelId || !startsAt || !endsAt) {
       toast("Pick a wheel and a start/end time");
       return;
@@ -625,12 +648,21 @@ function HappyHourScheduler() {
             className="ff-input w-full min-w-0 normal-case tracking-normal"
           />
         </label>
-        <button type="submit" disabled={busy} className={`${primaryBtn} col-span-2 sm:col-span-1 lg:col-span-1`}>
+        {/* Off (disabled) until the lists first load; while a save is in
+            flight it is only aria-disabled, so a keyboard user keeps focus. */}
+        <button type="submit" disabled={!loaded} aria-disabled={busy || undefined} className={`${primaryBtn} col-span-2 sm:col-span-1 lg:col-span-1`}>
           Schedule
         </button>
       </form>
 
-      {windows.length === 0 ? (
+      {state === "failed" && (
+        <div data-testid="happy-hours-load-error" className="mt-3">
+          <LoadError what={loaded ? "the latest happy hours" : "your happy hours and wheels"} onRetry={() => void load()} />
+        </div>
+      )}
+      {!loaded ? (
+        state === "loading" ? <p className="mt-3 text-xs text-muted" aria-busy="true">Loading happy hours…</p> : null
+      ) : windows.length === 0 ? (
         <p className="mt-3 text-xs text-[#8b8494]">No happy hours yet. Pick a window above to boost rare odds.</p>
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
@@ -677,23 +709,38 @@ function HappyHourScheduler() {
 
 function WishlistDemandCard() {
   const [demand, setDemand] = useState<WishlistDemand[]>([]);
+  const [state, setState] = useState<ListLoad>("loading");
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
-    fetch("/api/wishlist-demand", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { demand: [] }))
-      .then((d) => live && setDemand(d.demand ?? []))
-      .catch(() => {});
+    getJson<{ demand?: WishlistDemand[] }>("/api/wishlist-demand")
+      .then((d) => {
+        if (!live) return;
+        setDemand(d.demand ?? []);
+        setState("ok");
+      })
+      .catch(() => live && setState("failed"));
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
 
   const counts = demand.map((d) => d.count);
 
   return (
     <Card id="boosts-wishlist" icon={P.heart} title="Wishlist demand" hint="What fans are chasing most.">
-      {demand.length === 0 ? (
+      {state === "failed" ? (
+        <LoadError
+          what="wishlist demand"
+          onRetry={() => {
+            setState("loading");
+            setAttempt((n) => n + 1);
+          }}
+        />
+      ) : state === "loading" ? (
+        <p className="text-xs text-muted" aria-busy="true">Loading wishlist demand…</p>
+      ) : demand.length === 0 ? (
         <p className="text-xs text-[#8b8494]">No wishlist activity yet.</p>
       ) : (
         <ul className="flex flex-col gap-2.5">
@@ -778,20 +825,28 @@ function WebhooksCard() {
   const [url, setUrl] = useState("");
   const [event, setEvent] = useState("all");
   const [busy, setBusy] = useState(false);
+  const [state, setState] = useState<ListLoad>("loading");
+  const [attempt, setAttempt] = useState(0);
   const toast = useToast();
 
+  // A15: until the list has loaded, Add stays off: a creator who can't see
+  // their hooks must not be invited to add the same one again.
   useEffect(() => {
     let live = true;
-    fetch("/api/webhooks", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { webhooks: [] }))
-      .then((d) => live && setHooks(d.webhooks ?? []))
-      .catch(() => {});
+    getJson<{ webhooks?: Webhook[] }>("/api/webhooks")
+      .then((d) => {
+        if (!live) return;
+        setHooks(d.webhooks ?? []);
+        setState("ok");
+      })
+      .catch(() => live && setState("failed"));
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
 
   const add = async () => {
+    if (busy || state !== "ok" || hooks.length >= WEBHOOK_MAX) return;
     const value = url.trim();
     if (!/^https?:\/\//i.test(value)) {
       toast("Enter a URL starting with http(s)://");
@@ -879,10 +934,22 @@ function WebhooksCard() {
             ))}
           </select>
         </label>
-        <button type="submit" disabled={busy || hooks.length >= WEBHOOK_MAX} className={primaryBtn}>
+        <button type="submit" disabled={state !== "ok"} aria-disabled={busy || hooks.length >= WEBHOOK_MAX || undefined} className={primaryBtn}>
           Add
         </button>
       </form>
+      {state === "failed" && (
+        <div data-testid="webhooks-load-error" className="mt-3">
+          <LoadError
+            what="your webhooks"
+            onRetry={() => {
+              setState("loading");
+              setAttempt((n) => n + 1);
+            }}
+          />
+        </div>
+      )}
+      {state === "loading" && <p className="mt-3 text-xs text-muted" aria-busy="true">Loading webhooks…</p>}
       {hooks.length >= WEBHOOK_MAX && (
         <p className="mt-2 text-xs text-muted">You have the maximum of {WEBHOOK_MAX} webhooks.</p>
       )}

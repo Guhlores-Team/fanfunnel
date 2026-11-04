@@ -11,6 +11,7 @@ import { applyStockMap } from "@/lib/games/wheel/publicView";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { playWin, playBuildUp, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./nearMiss";
+import { lastOfLine, oddsChangedSinceShown } from "./stockDisplay";
 import { spinErrorInfo, ackErrorMessage } from "../spinErrors";
 import RewardReveal from "../reveal/RewardReveal";
 import {
@@ -101,6 +102,18 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const [wonInstant, setWonInstant] = useState(false);
   const [focus, setFocus] = useState<FanFocusView | null>(pass.focus ?? null);
   const [odds, setOdds] = useState<FanOddsView | undefined>(pass.odds);
+  // A32 (F2 honest limit): the pool hash of the odds this page is showing,
+  // read synchronously when a spin commits (before the response replaces it).
+  const shownPoolHash = useRef<string | undefined>(pass.odds?.poolHash);
+  useEffect(() => {
+    shownPoolHash.current = odds?.poolHash;
+  }, [odds]);
+  // The hash on screen when SPIN was tapped: a focus poll that lands while the
+  // spin is in flight must not become the baseline (null: no tap pending).
+  const tapPoolHash = useRef<string | undefined | null>(null);
+  const [oddsChanged, setOddsChanged] = useState(false);
+  // A33 (RM-2): "You got 1 of the last N!" for a low-stock win.
+  const [wonScarcity, setWonScarcity] = useState<string | null>(null);
   const [chaseComplete, setChaseComplete] = useState(false);
   const recoveredWin = useRef(false);
   const [recoveredPresentation, setRecoveredPresentation] = useState(false);
@@ -246,6 +259,10 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     const game = readCommittedGame(data, passGameKind ?? "wheel");
     if (!game) throw new Error("Unconfirmed game outcome");
     focusRevision.current++;
+    const baseline = tapPoolHash.current !== null ? tapPoolHash.current : shownPoolHash.current;
+    tapPoolHash.current = null;
+    const changed = options.present && !options.recovered && oddsChangedSinceShown(baseline, data.poolHash);
+    shownPoolHash.current = data.odds?.poolHash;
     setSpinsRemaining(data.spinsRemaining);
     setFocus(data.focus ?? null);
     setOdds(data.odds);
@@ -276,6 +293,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
     setWonReward(parseDeliveredReward(data.reward));
     setWonInstant(data.reward !== undefined && data.reward !== null);
+    setOddsChanged(changed);
+    setWonScarcity(options.recovered ? null : lastOfLine(data.stock?.[data.prize.id]));
     pendingStock.current = data.stock ?? null;
     if (spinWatchdog.current) clearTimeout(spinWatchdog.current);
     spinWatchdog.current = game.gameKind === "wheel" ? setTimeout(() => {
@@ -285,6 +304,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     }, SPIN_WATCHDOG_MS) : null;
   }, [sessionSpins, router, passGameKind, cardSource]);
   const onRefusal = useCallback((code: unknown) => {
+    tapPoolHash.current = null;
     const info = spinErrorInfo(code);
     if (info.reopenAgeGate) setNeedsAck(true);
     if (info.refreshPlay) router.refresh();
@@ -302,6 +322,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     if (!muted) { unlockAudio(); haptic(12); }
     setError(null);
     setWonReward(null);
+    tapPoolHash.current = shownPoolHash.current;
+    // Drop any focus poll already in flight: the spin response brings the odds.
+    focusRevision.current++;
     await recovery.begin(clientSeed, nextSpinHash);
   }, [canSpin, recovery, muted, clientSeed, nextSpinHash, canPresentGame]);
 
@@ -669,6 +692,12 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           shareId={wonShareId}
           instant={wonInstant}
           extra={<>
+            {wonScarcity && <p data-testid="win-last-of" className="mt-2 text-sm font-bold text-ink">{wonScarcity}</p>}
+            {oddsChanged && (
+              <p data-testid="odds-updated" className="mt-3 rounded-xl border border-line px-3 py-2 text-xs text-muted text-pretty">
+                Odds were updated since you opened this page. This spin used the new odds{wonShareId ? <>; <a className="underline" href={`/verify/${wonShareId}`}>see them on the verify page</a></> : null}.
+              </p>
+            )}
             {wonReward ? <InstantReward reward={wonReward} /> : wonInstant ? <RewardUnavailable /> : null}
             {gameOutcome?.bonusWins.length ? <BonusWins wins={gameOutcome.bonusWins} token={pass.token} /> : null}
           </>}
@@ -693,6 +722,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             setNearMiss(null);
             setBeatRow(false);
             setWonReward(null);
+            setOddsChanged(false);
+            setWonScarcity(null);
             setChaseComplete(false);
             setGameOutcome(null);
             setReceiptKey(null);

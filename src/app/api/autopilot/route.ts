@@ -4,6 +4,7 @@ import { getAutopilot, dismissAutopilotCard } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, str } from "@/lib/api/validate";
 import { limitRoute } from "@/lib/api/limit";
+import { isSupabaseConfigured } from "@/lib/supabase/server";
 
 // The creator's ranked action feed.
 export async function GET(req: Request) {
@@ -11,7 +12,9 @@ export async function GET(req: Request) {
   if (rateLimited) return rateLimited;
   return completeReadResponse(async () => {
     const cards = await getAutopilot();
-    return NextResponse.json({ cards });
+    // A36: Autopilot ranks cards from the connected database only; the demo
+    // says so instead of looking like "all caught up".
+    return NextResponse.json({ cards, ...(isSupabaseConfigured() ? {} : { demo: true }) });
   });
 }
 

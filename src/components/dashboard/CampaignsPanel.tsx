@@ -21,7 +21,7 @@ function pinRefusal(error: string | undefined): string {
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
-  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--color-line))] hover:text-ink disabled:opacity-50";
+  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--color-line))] hover:text-ink disabled:opacity-50 aria-disabled:opacity-50";
 
 // 24x24 line icons (Command Center set); the megaphone is the sidebar's
 // Campaigns glyph so the empty state matches the nav item.
@@ -286,6 +286,7 @@ function CampaignCard({
 }) {
   const gameSelectId = useId();
   const gameHelpId = useId();
+  const lifecycleHelpId = useId();
   const toast = useToast();
   const leave = useCreatorLeave();
   const { campaign, revenue, arpu, spinsBought, spinsPlayed, uniqueFans, fulfilled, topPrize } =
@@ -316,6 +317,33 @@ function CampaignCard({
       }
       toast("Campaign renamed.", { tone: "success" });
       setEditingName(false);
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // A28: archive / reactivate. Reversible, so no confirm; the copy says
+  // exactly what changes (and that existing links keep working).
+  async function setActive(isActive: boolean) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive }),
+      });
+      if (!res.ok) {
+        toast(isActive ? "Couldn't reactivate campaign. Nothing changed." : "Couldn't archive campaign. Nothing changed.", { tone: "error" });
+        return;
+      }
+      toast(
+        isActive
+          ? `${campaign.name} is active again.`
+          : `${campaign.name} archived. Its fan links keep working.`,
+        { tone: "success" }
+      );
       await onRefresh();
     } finally {
       setBusy(false);
@@ -416,8 +444,8 @@ function CampaignCard({
                 {campaign.name}
               </h2>
               {!campaign.isActive && (
-                <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] font-semibold text-muted">
-                  Inactive
+                <span data-testid="campaign-archived" className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] font-semibold text-muted">
+                  Archived
                 </span>
               )}
             </div>
@@ -487,6 +515,18 @@ function CampaignCard({
               >
                 Rename
               </button>
+              <button
+                type="button"
+                onClick={() => void setActive(!campaign.isActive)}
+                // aria-disabled, not disabled: the button keeps keyboard focus
+                // while its label flips between Archive and Reactivate.
+                aria-disabled={busy || undefined}
+                aria-label={`${campaign.isActive ? "Archive" : "Reactivate"} campaign ${campaign.name}`}
+                aria-describedby={lifecycleHelpId}
+                className={ghostBtn}
+              >
+                {campaign.isActive ? "Archive" : "Reactivate"}
+              </button>
               {confirmDelete ? (
                 <>
                   <button
@@ -514,6 +554,11 @@ function CampaignCard({
       </div>
       <p id={gameHelpId} className="mt-2 text-xs text-muted text-pretty">
         Applies to every link in this campaign, new and existing. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.
+      </p>
+      <p id={lifecycleHelpId} className="mt-1 text-xs text-muted text-pretty">
+        {campaign.isActive
+          ? "Archive hides this campaign from the default for new fan links. Links already in it keep working; pause a fan's link to stop it."
+          : "Archived: new fan links don't default to it. Links already in it keep working and still count here. Reactivate to make it a default again."}
       </p>
 
       {showPacks && (

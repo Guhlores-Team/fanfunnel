@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 // #26: private instant rewards, real creator routes and the real mock spin
 // path. Each fixture owns a wheel and fan; odds are set through creator APIs,
 // never by replacing a spin response. Run before firstRunJourney's reset.
-import { acknowledgeFixtureFan, BASE, NAV_ITEMS, clickTab, goto, spinIntentKey } from "./harness.mjs";
+import { acknowledgeFixtureFan, BASE, NAV_ITEMS, clickTab, goto, waitForSpinAcknowledged } from "./harness.mjs";
 
 let fixtureNumber = 0;
 const json = async (response, operation) => {
@@ -93,14 +93,7 @@ export async function spinInstantForCard(page, fixture) {
 export async function closeInstantCard(page) {
   await page.getByRole("button", { name: "Awesome!" }).click();
   await page.getByTestId("reward-reveal").waitFor({ state: "hidden", timeout: 4000 });
-  // Closing acknowledges the saved spin request under a Web Lock while
-  // router.refresh() runs. A navigation that beats that write finds the request
-  // still saved, re-presents the same spin as recovered and keeps the play
-  // button locked (the product's durable-recovery contract), which a following
-  // step then waits on for its full click timeout. Return only once the saved
-  // identity of this link is gone.
-  const token = /^\/spin\/([^/?#]+)/.exec(new URL(page.url()).pathname)?.[1];
-  if (token) await page.waitForFunction((key) => localStorage.getItem(key) === null, spinIntentKey(decodeURIComponent(token)), { timeout: 4000 });
+  await waitForSpinAcknowledged(page);
 }
 
 async function saveEditor(page, editor, route) {
@@ -230,6 +223,12 @@ export async function instantJourney(page, { step, assert }, ctx) {
     await step("instant: creator saves a safe external link", async () => {
       const link = await openInstantEditor(page, fixture, fixture.link);
       await link.getByTestId("delivery-kind").selectOption("link");
+      // A34 (#26 §8): the editor says a link is shared, not per winner.
+      const shared = link.getByTestId("delivery-link-shared");
+      await shared.waitFor({ timeout: 3000 });
+      assert(/same link/.test(await shared.innerText()) && /forward/.test(await shared.innerText()), "the editor warns every winner gets the same, forwardable link");
+      const help = await link.getByTestId("delivery-value").getAttribute("aria-describedby");
+      assert(help && (await link.locator(`[id="${help.split(" ")[0]}"]`).innerText()).includes("same link"), "the warning is the link field's description");
       await link.getByTestId("delivery-value").fill("javascript:alert(1)");
       await link.getByTestId("delivery-save").click();
       await link.getByTestId("delivery-error").waitFor({ timeout: 3000 });

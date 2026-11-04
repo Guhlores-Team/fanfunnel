@@ -1,7 +1,17 @@
 import type { CampaignPack } from "./types";
 import type { Rarity } from "@/lib/games/wheel/types";
 
-export interface FanOddsView { rows: { prizeId: string; chance: number }[]; pityForced: boolean; chaseForced: boolean }
+export interface FanOddsView {
+  rows: { prizeId: string; chance: number }[];
+  pityForced: boolean;
+  chaseForced: boolean;
+  /**
+   * F2 honest limit (A32): the v3 poolHash the fan's next wheel spin would
+   * commit to if nothing changes. The page compares it with the spin's own
+   * poolHash and says so when the odds changed in between. Wheel games only.
+   */
+  poolHash?: string;
+}
 
 export type FocusKind = "focus" | "chase";
 export type FocusPauseReason = "sold_out" | "other_wheel" | "no_increase" | "pity" | "unavailable" | "on_break";

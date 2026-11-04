@@ -362,7 +362,7 @@ export default function FansPanel({
               <option value="">No campaign (untracked)</option>
               {campaigns.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name}
+                  {c.isActive === false ? `${c.name} (archived)` : c.name}
                 </option>
               ))}
             </select>

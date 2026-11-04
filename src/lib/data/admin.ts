@@ -236,7 +236,8 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
 
 /** Create the caller's agency org (or return their existing one). */
 export async function createOrg(name: string): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  // A36: the demo has no agencies; say so instead of answering ok and keeping nothing.
+  if (!isSupabaseConfigured()) return { error: "demo_only" };
   const sb = await createClient();
   const { error } = await sb.rpc("org_create", { p_name: name });
   return error ? { error: "db_error" } : { ok: true };
@@ -253,7 +254,7 @@ type OrgRpc =
 
 /** Run an owner-guarded agency RPC; the RPC returns a status string. */
 async function agencyRpc(call: OrgRpc): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  if (!isSupabaseConfigured()) return { error: "demo_only" };
   const sb = await createClient();
   const { data, error } = await sb.rpc(call.fn, call.args);
   if (error) return { error: "db_error" };
@@ -451,7 +452,7 @@ export async function decideCreatorApplication(
   profileId: string,
   decision: "approved" | "rejected"
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { ok: true };
+  if (!isSupabaseConfigured()) return { error: "demo_only" };
   const sb = await createClient();
   if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 

@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import type { CreatorOverview, RedemptionItem, RedemptionStatus } from "@/lib/data/types";
 import { OVERVIEW_REDEMPTION_WINDOW } from "@/lib/data/queueWindow";
+import { useToast } from "@/components/ui/Toast";
 
 // 24×24 stroke paths (Command Center prototype line icons).
 const P = {
@@ -37,6 +38,26 @@ const ghostBtn =
 
 type Patch = { status?: RedemptionStatus; notes?: string | null; dueAt?: string | null };
 
+/** What a refused fulfilment change tells the creator (the row is rolled back). */
+function patchErrorMessage(error: string): string {
+  switch (error) {
+    case "already_delivered":
+      return "Not saved: this prize was delivered to the fan instantly, so its status and due date can't change.";
+    case "unauthorized":
+      return "Not saved: you're signed out. Sign in again, then retry.";
+    case "not_found":
+      return "Not saved: this prize no longer exists. The queue has been refreshed.";
+    case "notes_too_long":
+      return "Not saved: notes can be at most 2000 characters.";
+    case "bad_due_date":
+      return "Not saved: that due date isn't a valid date.";
+    case "network":
+      return "Not saved: couldn't reach FanFunnel. Check your connection and try again.";
+    default:
+      return "Not saved: something went wrong. Try again.";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fulfilment queue (Command Center "Run › Fulfilment")
 // ---------------------------------------------------------------------------
@@ -63,25 +84,44 @@ export default function PrizesPanel({
   const [olderBusy, setOlderBusy] = useState(false);
   const [olderError, setOlderError] = useState(false);
 
+  const toast = useToast();
   // PATCH a redemption: status and/or notes/dueAt. Optimistically patch the
-  // shared overview so the row updates instantly, then refresh authoritatively.
+  // shared overview so the row updates instantly; if the server refuses, put
+  // the row back the way it was and say why, then refresh authoritatively.
   async function patchRow(id: string, patch: Patch) {
-    setOlder((o) => (o ? { ...o, items: o.items.map((r) => (r.id === id ? { ...r, ...patch } : r)) } : o));
-    setData((d) =>
-      d
-        ? {
-            ...d,
-            redemptions: d.redemptions.map((r) =>
-              r.id === id ? { ...r, ...patch } : r
-            ),
-          }
-        : d
-    );
-    await fetch(`/api/redemptions/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
+    const before =
+      data?.redemptions.find((r) => r.id === id) ?? older?.items.find((r) => r.id === id);
+    const apply = (fields: Partial<RedemptionItem>) => {
+      setOlder((o) => (o ? { ...o, items: o.items.map((r) => (r.id === id ? { ...r, ...fields } : r)) } : o));
+      setData((d) =>
+        d ? { ...d, redemptions: d.redemptions.map((r) => (r.id === id ? { ...r, ...fields } : r)) } : d
+      );
+    };
+    apply(patch);
+    let error: string | null = null;
+    try {
+      const res = await fetch(`/api/redemptions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        error = typeof body?.error === "string" ? body.error : "unknown";
+      }
+    } catch {
+      error = "network";
+    }
+    if (error !== null) {
+      if (before) {
+        const restore: Partial<RedemptionItem> = {};
+        if ("status" in patch) restore.status = before.status;
+        if ("notes" in patch) restore.notes = before.notes;
+        if ("dueAt" in patch) restore.dueAt = before.dueAt;
+        apply(restore);
+      }
+      toast(patchErrorMessage(error), { tone: "error", duration: 6000 });
+    }
     refresh();
   }
 

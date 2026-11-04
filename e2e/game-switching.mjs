@@ -145,6 +145,33 @@ export async function gameSwitchingJourney(browser, { step, assert }, sink, ctx)
       assert((await followAgain).ok(), "following the campaign again is accepted");
       await drawer.locator(`[data-testid='link-plays'][data-plays-game-id='${state.wheelId}']`).first().waitFor({ timeout: 8000 });
       assert(/via campaign/.test(await drawer.getByTestId("link-plays").first().innerText()), "the link follows its campaign's game again");
+      state.followToken = fan.token;
+    });
+
+    await step("campaign lifecycle: archive says links keep working, they do, and Reactivate undoes it (A28)", async () => {
+      await goto(page, "/dashboard", 600);
+      await clickTab(page, "Campaigns");
+      const card = page.locator("section").filter({ has: page.getByRole("heading", { name: `Follow ${suffix}` }) });
+      const archive = card.getByRole("button", { name: `Archive campaign Follow ${suffix}` });
+      await archive.waitFor({ timeout: 8000 });
+      assert(/Links already in it keep working/.test(await card.innerText()), "Archive explains that existing links keep working");
+      const saved = page.waitForResponse((r) => r.url().endsWith(`/api/campaigns/${state.follow.id}`) && r.request().method() === "PATCH");
+      await archive.click();
+      const res = await saved;
+      assert(res.ok() && JSON.parse(res.request().postData() ?? "{}").isActive === false, "archive goes through the campaign PATCH");
+      await card.getByTestId("campaign-archived").waitFor({ timeout: 8000 });
+      assert(await card.getByRole("button", { name: `Reactivate campaign Follow ${suffix}` }).evaluate((el) => el === document.activeElement),
+        "focus stays on the button while it saves and flips to Reactivate (WCAG 2.4.3)");
+      const listed = (await json(await ctx.request.get(BASE + "/api/campaigns"), "read campaigns")).campaigns.find((c) => c.id === state.follow.id);
+      assert(listed?.isActive === false, "the server lists the campaign as archived");
+      const fanPage = await ctx.newPage(); attachSink(fanPage, sink);
+      await goto(fanPage, `/spin/${state.followToken}`, 300);
+      await fanPage.locator("[data-testid='fan-game']").first().waitFor({ timeout: 10000 });
+      await fanPage.close();
+      await card.getByRole("button", { name: `Reactivate campaign Follow ${suffix}` }).click();
+      await card.getByTestId("campaign-archived").waitFor({ state: "hidden", timeout: 8000 });
+      const again = (await json(await ctx.request.get(BASE + "/api/campaigns"), "read campaigns again")).campaigns.find((c) => c.id === state.follow.id);
+      assert(again?.isActive === true, "Reactivate restores the campaign");
     });
   } finally {
     await goto(page, "/dashboard", 100).catch(() => {});

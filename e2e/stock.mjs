@@ -5,7 +5,7 @@
 // limited epic that every spin wins, a sold-out legendary) and the `finally`
 // puts the creator's wheel back, so later journeys see what they expect.
 
-import { goto, clickTab, BASE } from "./harness.mjs";
+import { goto, clickTab, BASE, waitForSpinAcknowledged } from "./harness.mjs";
 import { createRevealFan, spinAndTime, clearForcedRarity } from "./reveal.mjs";
 
 const SOLD_OUT = "Claimed ✨";
@@ -25,7 +25,9 @@ async function putWheel(request, wheel) {
 
 /** Spin once, wait for the card, return the /api/spin JSON the page received. */
 async function spinForCard(page) {
-  const resp = page.waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST");
+  const resp = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/spin" && r.request().method() === "POST");
+  // If the SPIN click throws, `resp` must not reject unhandled and kill the run.
+  resp.catch(() => {});
   await spinAndTime(page);
   const body = await (await resp).json();
   await page.getByTestId("reward-reveal").waitFor({ timeout: 12000 });
@@ -35,6 +37,8 @@ async function closeCard(page) {
   const card = page.getByTestId("reward-reveal");
   await page.getByRole("button", { name: "Awesome!" }).click();
   await card.waitFor({ state: "hidden", timeout: 4000 });
+  // The next step may reload this link straight away; see waitForSpinAcknowledged.
+  await waitForSpinAcknowledged(page);
 }
 
 async function setSwitchInEditor(page, on, { assert }) {
@@ -101,7 +105,7 @@ export async function stockJourney(page, { step, assert }, ctx) {
     });
 
     await step("stock: winning it drops the count without a reload, never before the wheel stops", async () => {
-      const resp = page.waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST");
+      const resp = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/spin" && r.request().method() === "POST");
       // If the spin click throws, `resp` must not reject unhandled and kill the run.
       resp.catch(() => {});
       await spinAndTime(page);
@@ -213,6 +217,69 @@ export async function stockJourney(page, { step, assert }, ctx) {
       await page.getByTestId("limited-stock").waitFor({ timeout: 8000 });
       const live = (await getWheel(ctx.request)).prizes.find((p) => p.id === epic.id).stock;
       assert(new RegExp(`\\b${live} left`).test(await chip(epic.label).innerText()), `the chip reads the live "${live} left"`);
+    });
+
+    let oddsToken = null;
+    await step("stock: a low-stock win says 'You got 1 of the last 3!' from the pre-win count (A33)", async () => {
+      await clearForcedRarity(page);
+      const w = await getWheel(ctx.request);
+      await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, stock: 3 } : p)) });
+      oddsToken = await createRevealFan(ctx.request, "Odds Fan", 4); // 1 (A33) + 2 + 1 (A32)
+      await goto(page, `/spin/${oddsToken}`, 1600);
+      const body = await spinForCard(page);
+      assert(body.prize?.id === epic.id && body.stock?.[epic.id]?.stock === 2, `the epic was won with 2 left after it (${JSON.stringify(body.stock)})`);
+      const line = page.getByTestId("win-last-of");
+      await line.waitFor({ timeout: 4000 });
+      assert((await line.innerText()).trim() === "You got 1 of the last 3!", "the card counts the stock before the win");
+      assert((await page.getByTestId("odds-updated").count()) === 0, "unchanged odds: no 'Odds were updated'");
+      await closeCard(page);
+    });
+
+    await step("fairness: odds changed after the page opened → 'Odds were updated since you opened this page' (A32)", async () => {
+      assert(oddsToken, "the previous step created the fan");
+      await goto(page, `/spin/${oddsToken}`, 1600);
+      const w = await getWheel(ctx.request);
+      // The creator edits the odds while the fan's page is open.
+      await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, weight: 60 } : p)) });
+      const body = await spinForCard(page);
+      assert(typeof body.poolHash === "string", "the spin commits to a v3 pool hash");
+      const note = page.getByTestId("odds-updated");
+      await note.waitFor({ timeout: 4000 });
+      assert(/Odds were updated since you opened this page/.test(await note.innerText()), "the card says the odds changed");
+      await closeCard(page);
+      // Nothing changes before the next spin: the page now holds the new odds.
+      await spinForCard(page);
+      assert((await page.getByTestId("odds-updated").count()) === 0, "the next spin on unchanged odds shows no notice");
+      await closeCard(page);
+    });
+
+    await step("fairness: a focus poll that lands mid-spin doesn't hide 'Odds were updated' (A32)", async () => {
+      assert(oddsToken, "the A33 step created the fan");
+      await goto(page, `/spin/${oddsToken}`, 1600);
+      const w = await getWheel(ctx.request);
+      // The creator restocks and re-weights the epic while the page is open.
+      await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, stock: 5, weight: 40 } : p)) });
+      // Hold the spin response until the page's own focus poll (visibility
+      // change) has fetched the new odds, so the poll lands mid-spin.
+      let polled = false;
+      await page.route("**/api/spin", async (route) => {
+        const res = await route.fetch();
+        const focus = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/fan/focus", { timeout: 5000 });
+        await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+        polled = (await focus.catch(() => null))?.ok() === true;
+        await new Promise((r) => setTimeout(r, 200));
+        await route.fulfill({ response: res });
+      });
+      try {
+        await spinForCard(page);
+      } finally {
+        await page.unroute("**/api/spin").catch(() => {});
+      }
+      assert(polled, "the focus poll ran while the spin was in flight");
+      const note = page.getByTestId("odds-updated");
+      await note.waitFor({ timeout: 4000 });
+      assert(/Odds were updated since you opened this page/.test(await note.innerText()), "the notice compares with the odds on screen at the tap");
+      await closeCard(page);
     });
   } finally {
     await clearForcedRarity(page);

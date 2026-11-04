@@ -56,6 +56,7 @@ export default function AdminClient() {
   const [forbidden, setForbidden] = useState<false | "mfa" | "other">(false);
   const [showInvite, setShowInvite] = useState(false);
   const [apps, setApps] = useState<PendingApp[]>([]);
+  const [appsDemo, setAppsDemo] = useState(false);
   // In-flight ids so action buttons disable while their request is pending
   // (no double-submits / racing optimistic updates).
   const [busyApps, setBusyApps] = useState<Set<string>>(new Set());
@@ -73,7 +74,11 @@ export default function AdminClient() {
       }
       if (res.ok) setData(await res.json());
       const ar = await fetch("/api/admin/applications", { cache: "no-store" });
-      if (ar.ok) setApps((await ar.json()).applications ?? []);
+      if (ar.ok) {
+        const body = (await ar.json()) as { applications?: PendingApp[]; demo?: boolean };
+        setApps(body.applications ?? []);
+        setAppsDemo(body.demo === true);
+      }
     } finally {
       setLoading(false);
     }
@@ -268,6 +273,12 @@ export default function AdminClient() {
             </div>
           ))}
         </dl>
+
+        {appsDemo && (
+          <p data-testid="admin-requests-demo" className="text-[13px] text-muted">
+            Demo only: access requests come from real sign-ups on a connected database, so the demo has none to review.
+          </p>
+        )}
 
         {pending.length > 0 && (
           <section aria-labelledby="admin-requests" className={`lift-in overflow-hidden rounded-2xl ${raised}`}>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listCreatorApplications, decideCreatorApplication, recordAudit } from "@/lib/data";
 import { requireAdminRoute } from "@/lib/auth/admin";
+import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // Admin: list creator applications.
@@ -8,7 +9,8 @@ export async function GET() {
   const admin = await requireAdminRoute();
   if (!admin.ok) return admin.response;
   const applications = await listCreatorApplications();
-  return NextResponse.json({ applications });
+  // A36: demo sign-ups are always approved, so the demo never has requests.
+  return NextResponse.json({ applications, ...(isSupabaseConfigured() ? {} : { demo: true }) });
 }
 
 // Admin: approve/reject one application by profileId.

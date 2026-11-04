@@ -20,6 +20,7 @@ import { demoCodeFingerprint } from "@/lib/rewards/demoFingerprint";
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
 import { mockGetTheme, mockListMedia } from "./mockTheme";
 import { addMockReport, mockReportStore } from "./mockReports";
+import { mockCreatorNote, mockGetPublicProfileFields } from "./mockPublicProfile";
 import { toDbTheme } from "@/lib/creatorTheme/config";
 import { makeFairRng, makeFairRngV3, normalizeClientSeed, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import {
@@ -1153,8 +1154,9 @@ export async function mockGetFanPass(
     creatorId: "demo-creator",
     leaderboardEnabled: store.leaderboardEnabled,
     leaderboardOptIn: fan.leaderboardOptIn === true,
-    creatorNote: "Hey you 😘 spin away — every spin wins!",
-    creatorAvatarUrl: null,
+    // A36: the note the demo creator saved in Settings, else the sample one.
+    creatorNote: mockCreatorNote(),
+    creatorAvatarUrl: mockGetPublicProfileFields().avatarUrl || null,
     nextSpinHash: pass?.nextServerSeedHash ?? null,
     play: mockPlayState(fan),
     glow: mockFanGlow(fan),
@@ -2516,6 +2518,17 @@ export function mockRenameCampaign(
   return { ok: true };
 }
 
+/** Archive (false) or reactivate (true) a campaign. Fan links keep working. */
+export function mockSetCampaignActive(
+  campaignId: string,
+  isActive: boolean
+): { ok: true } | { error: string } {
+  const campaign = store.campaigns.find((c) => c.id === campaignId);
+  if (!campaign) return { error: "not_found" };
+  campaign.isActive = isActive;
+  return { ok: true };
+}
+
 export function mockDeleteCampaign(campaignId: string): { ok: true } | { error: string } {
   const before = store.campaigns.length;
   store.campaigns = store.campaigns.filter((c) => c.id !== campaignId);
@@ -3080,7 +3093,7 @@ export function mockReportCreator(
 }
 
 // Every demo fan belongs to the signed-in demo account.
-const MOCK_REPORTED_CREATOR = "acc-you";
+export const MOCK_REPORTED_CREATOR = "acc-you";
 
 /** Admin › Reports context for a demo report (null when the row is gone). */
 export function mockReportParties(creatorId: string, fanId: string | null): {

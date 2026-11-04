@@ -98,33 +98,43 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
 
   if (!pass || !pass.fan) return null;
 
+  // A41: everything below depends only on the pass, so the reads run
+  // together instead of one after another (this is every fan page load).
+  // The focus/odds read is started now and awaited at the end, exactly as
+  // before (a failed read still fails the page); the catch only stops an
+  // early `return null` from leaving an unhandled rejection behind.
+  const focusRead = getFanFocusDisplay(token);
+  focusRead.catch(() => {});
+
   // Commit-reveal: make sure this pass holds a pre-committed seed for the
   // fan's NEXT spin, and publish its hash on the page. Generating it here
   // (page load) rather than at spin time is the entire point: the commitment
   // observably predates the spin request.
-  let nextSpinHash = pass.next_server_seed_hash ?? null;
-  if (!nextSpinHash) {
-    const { data: committed, error } = await sb.rpc("ensure_pass_commitment", { p_token: token });
-    if (error) throw new FanPassUnavailableError("ensure_pass_commitment failed");
-    nextSpinHash = (committed as { hash?: string } | null)?.hash ?? null;
-  }
+  const commitRead: Promise<{ hash: string | null }> = pass.next_server_seed_hash
+    ? Promise.resolve({ hash: pass.next_server_seed_hash })
+    : Promise.resolve(sb.rpc("ensure_pass_commitment", { p_token: token })).then(({ data: committed, error }) => {
+        if (error) throw new FanPassUnavailableError("ensure_pass_commitment failed");
+        return { hash: (committed as { hash?: string } | null)?.hash ?? null };
+      });
 
   // Resolve WHICH wheel this link points at right now, then load its config.
-  const wheelId = await resolveWheelId(sb, pass, new Date());
-  if (!wheelId) return null;
-  const { data: wheelData } = await sb
-    .from("wheels")
-    .select(WHEEL_SELECT)
-    .eq("id", wheelId)
-    .maybeSingle();
-  if (!wheelData) return null;
-  const wheel = wheelData as unknown as DbWheelRow;
+  const wheelRead = (async () => {
+    const id = await resolveWheelId(sb, pass, new Date());
+    if (!id) return null;
+    const { data } = await sb.from("wheels").select(WHEEL_SELECT).eq("id", id).maybeSingle();
+    return data ? { id, wheel: data as unknown as DbWheelRow } : null;
+  })();
+
+  const [commitment, resolved] = await Promise.all([commitRead, wheelRead]);
+  if (!resolved) return null;
+  const nextSpinHash = commitment.hash;
+  const { id: wheelId, wheel } = resolved;
   if (wheel.game_ready === false) return null;
 
   // The fan's win history, wishlist, and the active happy-hour are all
   // independent reads keyed off the now-known fan/wheel — fetch concurrently
   // instead of one after another (this is on every fan page load).
-  const [{ data: wins }, { data: wishRows }, happyHour, play, glow] = await Promise.all([
+  const [{ data: wins }, { data: wishRows }, happyHour, play, glow, bingo] = await Promise.all([
     // Win history is scoped to the fan ACCOUNT, so it persists across every
     // link the creator has ever minted for them.
     sb
@@ -143,7 +153,11 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     // RM-6: the fan's own counts, reminder and break (best-effort).
     readPlayState(sb, pass.fan.id),
     readFanGlow(sb, pass.fan.id),
+    wheel.game_kind === "bingo"
+      ? readBingoCard(token, sb).then((card) => ({ ok: true as const, card }), () => ({ ok: false as const }))
+      : Promise.resolve(null),
   ]);
+  if (bingo && !bingo.ok) return null;
 
   const winRows = (wins ?? []) as unknown as {
     prize_label: string;
@@ -169,9 +183,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     at: w.created_at,
   }));
 
-  let bingoCard;
-  if(wheel.game_kind === "bingo"){try{bingoCard=await readBingoCard(token,sb);}catch{return null;}}
-  const focusDisplay = await getFanFocusDisplay(token);
+  const bingoCard = bingo?.ok ? bingo.card : undefined;
+  const focusDisplay = await focusRead;
   return {
     ...(wheel.game_kind === "bingo"?{bingoCard}:{}),
     token,

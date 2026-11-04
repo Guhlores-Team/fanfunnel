@@ -25,6 +25,27 @@ export function hasStockToShow(p: PublicStock): boolean {
   return typeof p.stock === "number" || p.soldOut === true;
 }
 
+/** The win card says "You got 1 of the last N!" when N (stock before the win) is this or fewer. */
+export const LAST_OF_AT = TOPUP_SCARCITY_AT;
+
+/**
+ * RM-2 win card: the scarcity line for a limited prize, from the count the
+ * spin response sent for right after the win (so before the win it was one
+ * more). Null when the wheel hides its stock (no count reaches the fan) or
+ * when stock wasn't low.
+ */
+export function lastOfLine(after: PublicStock | undefined): string | null {
+  if (typeof after?.stock !== "number" || !Number.isFinite(after.stock) || after.stock < 0) return null;
+  const before = Math.trunc(after.stock) + 1;
+  if (before > LAST_OF_AT) return null;
+  return before === 1 ? "You got the last one!" : `You got 1 of the last ${before}!`;
+}
+
+/** F2 honest limit: the spin committed to different odds than the page held. */
+export function oddsChangedSinceShown(shownPoolHash: string | undefined, spinPoolHash: unknown): boolean {
+  return typeof shownPoolHash === "string" && typeof spinPoolHash === "string" && shownPoolHash !== spinPoolHash;
+}
+
 export function isLowStock(p: PublicStock): boolean {
   return typeof p.stock === "number" && p.stock > 0 && p.stock <= LOW_STOCK_EMPHASIS_AT;
 }

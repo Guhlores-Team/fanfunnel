@@ -28,6 +28,41 @@ export async function clearForcedRarity(page) {
   await page.unroute("**/api/spin").catch(() => {});
 }
 
+/**
+ * The reveal budget is a property of the page's own timeline: from the spin
+ * response reaching the page to the card mounting. Timing it from Node with
+ * `locator.waitFor` adds Playwright's polling interval (it backs off to 500ms
+ * between checks) plus IPC, measured at 94-429ms on a loaded runner, which
+ * once pushed a 5.9s reveal past the 6.4s budget. So the page records both
+ * moments itself (performance.now) and the test compares those.
+ */
+export async function armRevealClock(page) {
+  await page.evaluate(() => {
+    const clock = (window.__revealClock = { response: null, theater: null, card: null });
+    const original = window.__revealFetch ?? window.fetch;
+    window.__revealFetch = original;
+    window.fetch = async (...args) => {
+      const res = await original(...args);
+      const url = typeof args[0] === "string" ? args[0] : args[0]?.url ?? "";
+      if (/\/api\/spin$/.test(url) && clock.response === null) clock.response = performance.now();
+      return res;
+    };
+    window.__revealObserver?.disconnect();
+    window.__revealObserver = new MutationObserver(() => {
+      if (clock.theater === null && document.querySelector("[data-testid='reveal-theater']")) clock.theater = performance.now();
+      if (clock.card === null && document.querySelector("[data-testid='reward-reveal']")) clock.card = performance.now();
+    });
+    window.__revealObserver.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
+/** Page-clock ms from the spin response to the build-up and to the card. */
+export async function readRevealClock(page) {
+  const c = await page.evaluate(() => window.__revealClock);
+  if (!c || c.response === null) throw new Error("the page never saw the spin response");
+  return { theater: c.theater === null ? null : Math.round(c.theater - c.response), card: c.card === null ? null : Math.round(c.card - c.response) };
+}
+
 /** A fresh fan (own spins, gate already acknowledged) so no other journey's data is needed. */
 export async function createRevealFan(request, name = "Reveal Fan", spins = 4) {
   const created = await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins } });
@@ -40,7 +75,7 @@ export async function createRevealFan(request, name = "Reveal Fan", spins = 4) {
 
 /** Click SPIN and resolve with the time the server's result reached the page. */
 export async function spinAndTime(page) {
-  const resp = page.waitForResponse((r) => r.url().includes("/api/spin") && r.request().method() === "POST");
+  const resp = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/spin" && r.request().method() === "POST");
   // If the click throws, `resp` later rejects un-awaited and the unhandled
   // rejection kills the whole e2e run instead of failing this one step.
   resp.catch(() => {});
@@ -70,17 +105,19 @@ export async function revealJourney(page, { step, assert }, ctx) {
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.getByRole("button", { name: /^SPIN/ }).first().waitFor({ timeout: 10000 });
       await forceRarity(page, "legendary");
+      await armRevealClock(page);
 
-      const t0 = await spinAndTime(page);
+      await spinAndTime(page);
       await theater.waitFor({ state: "visible", timeout: SPIN_MS + 1500 });
       assert((await theater.getAttribute("data-tier")) === "legendary", "the build-up is the legendary one");
       assert((await skip.count()) === 0, "no Skip on the first spin of a session");
-      const built = Date.now() - t0;
-      assert(built >= SPIN_MS - 1500, `the build-up starts near the stop, not at once (${built}ms)`);
+      const built = (await readRevealClock(page)).theater;
+      assert(built !== null && built >= SPIN_MS - 1500, `the build-up starts near the stop, not at once (${built}ms)`);
 
       await card.waitFor({ state: "visible", timeout: REVEAL_BUDGET_MS + 2000 });
-      const took = Date.now() - t0;
-      assert(took <= REVEAL_BUDGET_MS, `the reveal is up within ${REVEAL_BUDGET_MS}ms of the result (took ${took}ms)`);
+      const took = (await readRevealClock(page)).card;
+      assert(took !== null, "the page saw the card mount");
+      assert(took <= REVEAL_BUDGET_MS, `the reveal is up within ${REVEAL_BUDGET_MS}ms of the result (took ${took}ms on the page's clock)`);
       assert(took >= SPIN_MS, `the legendary reveal waits for the wheel to stop (took ${took}ms)`);
       assert((await card.getAttribute("data-tier")) === "legendary", "the card is the legendary tier");
       assert((await card.getAttribute("data-entrance")) === "animated", "a normal win gets the animated entrance");

@@ -213,6 +213,7 @@ export default function TodayPanel({
   firstRun?: boolean;
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
+  const [autopilotDemo, setAutopilotDemo] = useState(false);
   const toast = useToast();
   const origin = useOrigin();
   // Daily series are UTC buckets ending today; the last point is "today".
@@ -221,8 +222,11 @@ export default function TodayPanel({
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/autopilot", { cache: "no-store" });
-      if (res.ok) setCards((await res.json()).cards ?? []);
-      else setCards([]);
+      if (res.ok) {
+        const body = (await res.json()) as { cards?: Card[]; demo?: boolean };
+        setAutopilotDemo(body.demo === true);
+        setCards(body.cards ?? []);
+      } else setCards([]);
     } catch {
       setCards([]);
     }
@@ -378,6 +382,14 @@ export default function TodayPanel({
             {[0, 1, 2].map((i) => (
               <div key={i} className="skeleton h-[76px] rounded-2xl" />
             ))}
+          </div>
+        ) : cards.length === 0 && autopilotDemo ? (
+          <div data-testid="autopilot-demo-only" className={`rounded-2xl px-[18px] py-5 ${raised}`}>
+            <h3 className="text-[14.5px] font-bold text-ink">Demo only</h3>
+            <p className="mt-0.5 text-[13.5px] text-muted text-pretty">
+              Autopilot ranks actions from your real fans and wins on a connected database, so the demo shows none here.
+              Your pulse tiles above and the Fulfilment queue still work.
+            </p>
           </div>
         ) : cards.length === 0 ? (
           <div className={`flex items-center gap-3.5 rounded-2xl px-[18px] py-5 ${raised}`}>

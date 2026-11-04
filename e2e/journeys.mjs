@@ -571,6 +571,31 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     assert(before !== after, "the fulfilment queue changed after advancing a status");
   });
 
+  await step("redemptions: a refused status change rolls back and says why (A14)", async () => {
+    // A separate page (no error sink): the forced 409 is the point of the step.
+    const other = await ctx.newPage();
+    try {
+      await other.route("**/api/redemptions/*", (route) =>
+        route.request().method() === "PATCH"
+          ? route.fulfill({ status: 409, contentType: "application/json", body: '{"error":"already_delivered"}' })
+          : route.continue(),
+      );
+      await goto(other, "/dashboard", 1800);
+      await clickTab(other, "Fulfilment");
+      await other.getByRole("group", { name: "Filter by status" }).getByRole("button", { name: /^In progress/ }).click();
+      const action = other.getByRole("button", { name: /^Mark fulfilled: / }).first();
+      await action.waitFor({ timeout: 8000 });
+      const label = await action.getAttribute("aria-label");
+      await action.click();
+      await other.getByText(/delivered to the fan instantly/).first().waitFor({ timeout: 8000 });
+      // The optimistic "Fulfilled" is undone: the same row still offers Mark fulfilled.
+      await other.getByRole("button", { name: label, exact: true }).waitFor({ timeout: 8000 });
+      assert(await other.getByRole("button", { name: label, exact: true }).count(), "the row rolled back to In progress");
+    } finally {
+      await other.close().catch(() => {});
+    }
+  });
+
   await step("redemptions: note, due date and Cancel prize sit on the row; cancel asks first", async () => {
     // The row just moved to In progress; show that filter.
     await page.getByRole("group", { name: "Filter by status" }).getByRole("button", { name: /^In progress/ }).click();
@@ -820,6 +845,37 @@ export async function creatorExtras(page, { step, assert }, ctx) {
         /happy hour|boost|×/i.test(await page.locator("body").innerText()),
       "a happy-hour window with the multiplier appears"
     );
+  });
+
+  await step("boosts: a failed list read is an error with Try again, never an empty list (A15)", async () => {
+    // A separate page (no error sink): the forced 500s are the point of the step.
+    const other = await ctx.newPage();
+    let fail = true;
+    const maybeFail = (route) =>
+      fail && route.request().method() === "GET"
+        ? route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"db_error"}' })
+        : route.continue();
+    try {
+      await other.route("**/api/webhooks", maybeFail);
+      await other.route("**/api/happy-hours", maybeFail);
+      await goto(other, "/dashboard", 1500);
+      await clickTab(other, "Boosts");
+      const hooks = other.getByRole("region", { name: /webhooks/i });
+      const hh = other.getByRole("region", { name: /happy hours/i });
+      await hooks.getByTestId("webhooks-load-error").waitFor({ timeout: 8000 });
+      await hh.getByTestId("happy-hours-load-error").waitFor({ timeout: 8000 });
+      assert((await hh.getByText(/No happy hours yet/).count()) === 0, "a failed happy-hour read never says 'No happy hours yet'");
+      assert(await hooks.getByRole("button", { name: "Add", exact: true }).isDisabled(), "Add webhook is off while the list is unknown");
+      assert(await hh.getByRole("button", { name: "Schedule", exact: true }).isDisabled(), "Schedule is off while the list is unknown");
+      fail = false;
+      await hooks.getByRole("button", { name: "Try again" }).click();
+      await hh.getByRole("button", { name: "Try again" }).click();
+      await hooks.getByTestId("webhooks-load-error").waitFor({ state: "hidden", timeout: 8000 });
+      await hh.getByTestId("happy-hours-load-error").waitFor({ state: "hidden", timeout: 8000 });
+      assert(!(await hh.getByRole("button", { name: "Schedule", exact: true }).isDisabled()), "Try again recovers the happy-hour list");
+    } finally {
+      await other.close().catch(() => {});
+    }
   });
 
   await step("boosts: read-only link-in-bio card (link, Copy, jump to Settings)", async () => {
