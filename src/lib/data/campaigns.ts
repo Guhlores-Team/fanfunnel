@@ -40,6 +40,12 @@ type ActingSession =
   | { error: "unauthorized" | "bad_request" | "forbidden" };
 
 /** The signed-in session and the creator whose campaigns it acts on. */
+// 0069: the database refuses a campaign game that is archived, a draft, has
+// fewer than 2 prizes or belongs to another creator (aa_campaign_game), after
+// the campaignPinError pre-check; the answer is the same either way.
+const pinWriteError = (error: { message?: string } | null | undefined): string =>
+  /^(game_needs_prizes|game_not_playable)/.test(error?.message ?? "") || /campaign game belongs to another creator/.test(error?.message ?? "") ? "game_not_playable" : "db_error";
+
 export async function campaignActingSession(creatorId: unknown): Promise<ActingSession> {
   const sb = await createClient();
   const {
@@ -78,7 +84,7 @@ export async function createCampaign(
     .insert({ creator_id: acting.creatorId, name, pinned_wheel_id: pinnedWheelId ?? null })
     .select("id, name, is_active, created_at, pinned_wheel_id")
     .single();
-  if (error || !data) return { error: "db_error" };
+  if (error || !data) return { error: pinWriteError(error) };
 
   return {
     campaign: {
@@ -368,7 +374,7 @@ export async function setCampaignPinnedWheel(
     .eq("creator_id", acting.creatorId)
     .select("id")
     .maybeSingle();
-  if (error) return { error: "db_error" };
+  if (error) return { error: pinWriteError(error) };
   if (!updated) return { error: "not_found" };
   return { ok: true };
 }

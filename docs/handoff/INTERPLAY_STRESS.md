@@ -95,7 +95,7 @@ fixture is unchanged.
 
 S1 pass.wheel_id is a label, not routing · S2 an open schedule beats the active flag,
 even for unpinned links · S3 a future/expired-only schedule still serves as the
-oldest-game fallback · S4 a cross-tenant campaign pin id is accepted by RLS and silently ignored (a per-link pin is refused) ·
+oldest-game fallback · S4 a cross-tenant campaign pin id is refused by the database since 0069, and one from before the guard is silently ignored (a per-link pin is refused) ·
 S5 a pinned game ignores its own window · S6 disabling scratch/bingo leaves an existing
 game live (grandfathered; archive it to fall back) · S7 archiving the only live game
 yields a clean `no_wheel` with credits intact · S8 a link's own game overrides the

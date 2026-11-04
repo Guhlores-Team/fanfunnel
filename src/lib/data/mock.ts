@@ -34,6 +34,7 @@ import {
 } from "@/lib/games/wheel/fairnessV3";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import { isPlayableGame, pickLiveGame } from "@/lib/games/liveGame";
+import { MIN_WHEEL_PRIZES } from "@/lib/games/wheel/validate";
 import { RARITY_COLORS, RARITY_ORDER, type Prize, type PublicPrize, type PublicWheelConfig, type Rarity, type WheelConfig } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
 import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
@@ -1081,6 +1082,8 @@ export function mockSetWheelSchedule(
   if (!wheel) return { error: "not_found" };
   if(wheel.gameReady===false)return {error:"game_not_ready"};
   const { activeFrom, activeUntil } = schedule;
+  // 0069: a schedule can only be set on a game with at least 2 prizes (clearing is always allowed).
+  if ((activeFrom != null || activeUntil != null) && (activeFrom !== wheel.activeFrom || activeUntil !== wheel.activeUntil) && wheel.prizes.length < MIN_WHEEL_PRIZES) return { error: "game_needs_prizes" };
   if (activeFrom != null && activeUntil != null && activeUntil <= activeFrom) {
     return { error: "invalid_window" };
   }
@@ -2520,7 +2523,8 @@ export function mockCampaignPinError(wheelId: string | null | undefined): "not_f
   if (wheelId == null) return null;
   const wheel = store.wheels.get(wheelId);
   if (!wheel) return "not_found";
-  return mockPlayable(wheel) ? null : "game_not_playable";
+  // 0069: a game with fewer than 2 prizes refuses every play, so it cannot be chosen.
+  return mockPlayable(wheel) && wheel.prizes.length >= MIN_WHEEL_PRIZES ? null : "game_not_playable";
 }
 
 /** Pin (or unpin) a campaign's default wheel. */

@@ -17,7 +17,7 @@ type Seat = Pick<SeatCreatorView, "creatorId" | "displayName">;
 
 /** Plain-language refusal for choosing a campaign's game. */
 function pinRefusal(error: string | undefined, seat?: Seat): string {
-  if (error === "game_not_playable") return "That game can't be chosen: it's archived or still a draft. Pick a finished, saved game.";
+  if (error === "game_not_playable") return "That game can't be chosen: it's archived, still a draft or has fewer than 2 prizes. Pick a finished, saved game with prizes.";
   if (error === "not_found") return `That game wasn't found in ${seat ? `${seat.displayName}'s` : "your"} games. Refresh and pick again.`;
   if (error === "unauthorized") return "You're signed out. Sign in and try again.";
   if (error === "forbidden") return "Your agency seat can't manage this creator's campaigns. Nothing changed.";

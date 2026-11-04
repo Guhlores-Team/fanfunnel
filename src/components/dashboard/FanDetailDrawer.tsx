@@ -1193,7 +1193,7 @@ function LinkPlays({
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        toast(data?.error === "game_not_playable" ? "That game can't be chosen: it's archived or still a draft." : "Couldn't change the campaign's game. Nothing changed; try again.", { tone: "error" });
+        toast(data?.error === "game_not_playable" ? "That game can't be chosen: it's archived, still a draft or has fewer than 2 prizes." : "Couldn't change the campaign's game. Nothing changed; try again.", { tone: "error" });
         return;
       }
       const picked = wheels.find((w) => w.id === value);
@@ -1217,7 +1217,7 @@ function LinkPlays({
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        toast(data?.error === "game_not_playable" ? "That game can't be chosen: it's archived or still a draft." : "Couldn't change this fan's game. Nothing changed; try again.", { tone: "error" });
+        toast(data?.error === "game_not_playable" ? "That game can't be chosen: it's archived, still a draft or has fewer than 2 prizes." : "Couldn't change this fan's game. Nothing changed; try again.", { tone: "error" });
         return;
       }
       setSavedPin(value || null);

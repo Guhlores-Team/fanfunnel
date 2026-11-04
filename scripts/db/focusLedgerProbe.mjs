@@ -321,7 +321,8 @@ export async function probeFocusLedger(sqlInput) {
     // An unscheduled newer wheel cannot override the explicit active wheel.
     const blankWheel=randomUUID();await sql(`insert into public.wheels(id,creator_id,title,is_active) values(${quote(blankWheel)},${quote(owner)},'New blank',false);`);
     check((await sql(`select public._resolved_spin_wheel(${quote(one.pass)});`)).trim()===newDefault,"new blank wheel never preempts flagged live wheel");
-    await sql(`update public.wheels set active_until=now()+interval '1 hour' where id=${quote(blankWheel)};`);
+    // 0069: a schedule needs at least 2 prizes behind it.
+    await sql(`insert into public.prizes(wheel_id,label,weight) values(${quote(blankWheel)},'Blank one',1),(${quote(blankWheel)},'Blank two',1);update public.wheels set active_until=now()+interval '1 hour' where id=${quote(blankWheel)};`);
     check((await sql(`select public._resolved_spin_wheel(${quote(one.pass)});`)).trim()===blankWheel,"open-start scheduled wheel takes precedence when its one bound is live");
     // Release BEFORE archive/delete cascades or delivery changes erase bindings.
     const archivePrize=randomUUID();await sql(`insert into public.prizes(id,wheel_id,label,weight,stock,boostable) values(${quote(archivePrize)},${quote(blankWheel)},'archive target',1,1,true);`);

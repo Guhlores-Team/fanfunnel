@@ -72,6 +72,8 @@ Variable names by scope (see the checks below for how to verify each):
       `openssl rand -base64 32`, Sensitive, backed up securely, never rotated), the web-push
       VAPID trio, and `RESEND_API_KEY` + `ALERT_EMAIL_TO` for alerts. Names, scopes and warnings:
       the table in [`DEPLOY.md` section 3](../DEPLOY.md#3-vercel-project-and-environment-variables).
+      **Optional**, only during a reward-key rotation (procedure below): `REWARD_ENCRYPTION_KEY_PREVIOUS`
+      and, when needed, `REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION`; unset otherwise.
       **Known gap (env listing of 2026-10-31):** Production has neither `REWARD_ENCRYPTION_KEY`
       nor `REWARD_CODE_FINGERPRINT_KEY` (Preview has them), and `CRON_SECRET` is set on neither
       scope. Until they exist the 0063 startup canary reports the crypto configuration as missing
@@ -155,7 +157,7 @@ Residual gaps, stated plainly:
   never be promoted; the newer commit carries its migrations.
 - **Runtime schema-version check (0067): flags, does not fail closed.**
   `public.schema_version()` returns the migration level the database was
-  built to (67 after 0067). It is a constant every migration redefines with
+  built to (69 after 0069). It is a constant every migration redefines with
   its own number, not a read of `supabase_migrations.schema_migrations`: that
   table is not exposed through the Data API and is empty when SQL was pasted
   by hand, while the constant travels with the schema itself.
@@ -182,7 +184,7 @@ establish ordering; the Deployment Check above does, once configured.
 
 - [ ] **OWNER + AGENT**: Prepare and approve a concrete release plan before any main merge. One option is owner-run pre-application of the exact reviewed migrations while the old code remains safely served, but only after proving old-code/new-schema compatibility. If that cannot be proved, prepare a separately reviewed traffic/deployment hold and restoration plan. Do not assume additive numbering makes an old deployment compatible; later auth/RPC contracts can deliberately retire old calls.
 - [ ] **OWNER**: Verify a recoverable LIVE backup and the original-key backup, intended project identity and actual migration history. Keep LIVE credentials in approved private controls; the agent does not obtain or use them. Never run `supabase/reset.sql` on LIVE.
-- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations 0001–0067 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes 0059 Focus, 0060 Scratch, 0061 Bingo, 0062 account security, 0063 operational integrity, 0064 completeness gaps, 0065 per-fan game pins and batch-3 hardening, 0066 agency seat scopes, the approval notice and alert release, and 0067 cancelled-prize stock and `schema_version()`.
+- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations 0001–0069 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes 0059 Focus, 0060 Scratch, 0061 Bingo, 0062 account security, 0063 operational integrity, 0064 completeness gaps, 0065 per-fan game pins and batch-3 hardening, 0066 agency seat scopes, the approval notice and alert release, and 0067 cancelled-prize stock and `schema_version()`.
 - [ ] **OWNER + AGENT**: If historical SQL was pasted manually, investigate history/schema divergence with a separate reviewed reconciliation plan and backup. Do not mark a migration applied merely to make CI green, infer execution from a history row, or assume a rerun is harmless.
 - [ ] **OWNER + AGENT**: Review the existing ledger prechecks and migration-specific constraints on actual data, including negative balances/grants, stock and costs. A warning or skipped constraint is not proof of the intended invariant. Resolve unexpected counts before proceeding; do not repair financial records automatically.
 - [ ] **OWNER**: Only after explicit approval for that exact Production operation, use the pinned supported Supabase CLI from the final checked source, verify the selected project is LIVE, inspect `supabase migration list --linked` and the pending migration plan, then perform the reviewed `supabase db push --linked` in strict numeric order. Credentials go through secure operator controls, not chat, saved scripts or command logs. Review configured Vault/seed/role behavior and supported CLI flags rather than adding broad include/reset flags. This runbook is not an instruction to execute those commands now.

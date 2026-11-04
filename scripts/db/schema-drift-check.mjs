@@ -72,6 +72,7 @@ import { probeGaps } from "./gapsProbe.mjs";
 import { probeHardening } from "./hardeningProbe.mjs";
 import { probeSeatScopes } from "./seatScopeProbe.mjs";
 import { probeDbSecurity } from "./dbSecurityProbe.mjs";
+import { probeIntegration } from "./integrationProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -1069,6 +1070,19 @@ function probeTenantBoundaries(db) {
   }
 }
 
+// 0069: a game with fewer than 2 prizes cannot be pinned (link, campaign) or
+// scheduled, by any role; redemptions are inserted by the award only.
+function probeBatch4Integration(db) {
+  const bad = probeIntegration(db, psql);
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: batch-4 integration guards (0069)`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: 0069 a game with fewer than 2 prizes cannot be chosen for a link, a campaign or a schedule (any role); a campaign's game is its creator's own playable game; redemptions are inserted by the award only`);
+  }
+}
+
 function probeCompletenessGaps(db) {
   const bad = probeGaps(db, psql);
   if (bad.length) {
@@ -1449,6 +1463,7 @@ try {
     probeSeatScopeRpcs(db);
     probeSchemaVersion(db);
     probeTenantBoundaries(db);
+    probeBatch4Integration(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

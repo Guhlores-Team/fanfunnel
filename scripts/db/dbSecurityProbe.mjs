@@ -133,7 +133,7 @@ export function probeDbSecurity(db, psql) {
   // refuses the same forged reference with its own message; either guard is
   // the tenant boundary, so both messages are accepted.
   const FORGED_REDEMPTION = /redemption references another creator|redemption belongs to its spin's creator/;
-  refused("a creator attaches another creator's spin to a redemption", as(U.A, `insert into public.redemptions (spin_id, creator_id) values ('${S.B}', '${U.A}');`), FORGED_REDEMPTION);
+  refused("a creator cannot insert a redemption at all (0069), forged or not", as(U.A, `insert into public.redemptions (spin_id, creator_id) values ('${S.B}', '${U.A}');`), /permission denied for table redemptions/);
   refused("the service role attaches another creator's spin to a redemption", asService(`insert into public.redemptions (spin_id, creator_id) values ('${S.B}', '${U.A}');`), FORGED_REDEMPTION);
   refused("a creator grants to another creator's fan", `set local fanfunnel.economic_write = 'on'; ${as(U.A, `insert into public.grants (creator_id, fan_id, spins) values ('${U.A}', '${F.B}', 1);`)}`, /grant references another creator/);
   refused("a creator grants under another creator's campaign", `set local fanfunnel.economic_write = 'on'; ${as(U.A, `insert into public.grants (creator_id, fan_id, campaign_id, spins) values ('${U.A}', '${F.A}', '${CAMP_B}', 1);`)}`, /grant references another creator/);
@@ -143,7 +143,7 @@ export function probeDbSecurity(db, psql) {
   refused("a creator refers across creators", as(U.A, `insert into public.referrals (creator_id, referrer_fan_id, referred_fan_id) values ('${U.A}', '${F.A}', '${F.B}');`), /referral references another creator/);
   refused("a creator sets a foreign referrer on a fan", as(U.A, `update public.fans set referred_by_fan_id = '${F.B}' where id = '${F.A}';`), /referrer belongs to another creator/);
   expect("own references still work, and the queue ignores a forged row from before the guard", `
-    ${as(U.A, `with i as (insert into public.redemptions (spin_id, creator_id) values ('${S.A}', '${U.A}') returning 1) select 'own-redemption:' || count(*) from i;`)}
+    ${asService(`with i as (insert into public.redemptions (spin_id, creator_id) values ('${S.A}', '${U.A}') returning 1) select 'own-redemption:' || count(*) from i;`)}
     ${as(U.A, `with i as (insert into public.messages (creator_id, fan_id, sender, body) values ('${U.A}', '${F.A}', 'creator', 'ok') returning 1) select 'own-message:' || count(*) from i;`)}
     alter table public.redemptions disable trigger trg_redemption_tenant;
     alter table public.redemptions disable trigger redemptions_stock_unit_guard;

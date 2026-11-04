@@ -5,7 +5,7 @@
   "S1": "pass.wheel_id is a label, not routing: an open schedule, the active flag or a pin serves a different game than the one the link was minted for",
   "S2": "a schedule window overrides the creator's active flag at play time, even for an unpinned link",
   "S3": "a game whose only schedule is in the future or already expired still serves as the oldest-game fallback when nothing else is live",
-  "S4": "no DB guard stops a creator pinning another creator's wheel id; the resolver silently ignores such a pin and falls through",
+  "S4": "a cross-tenant campaign pin id is refused at write time since 0069 (aa_campaign_game); one that pre-dates the guard is silently ignored by the resolver, which falls through",
   "S5": "a pinned game is served regardless of its own schedule window (future or expired)",
   "S6": "disabling the scratch or bingo feature leaves an existing game pinned/scheduled/active and fans keep playing it (grandfathered)",
   "S7": "archiving the only live game turns the fan link into 'no_wheel' with credits intact",

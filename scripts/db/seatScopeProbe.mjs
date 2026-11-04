@@ -49,6 +49,7 @@ const SEED = `
   insert into public.org_member_creators (member_id, creator_id) values ('${SEAT.CH}', '${U.C}'), ('${SEAT.FU}', '${U.C}');
   update public.profiles set org_id = '${ORG}' where id in ('${U.C}', '${U.D}');
   insert into public.wheels (id, creator_id, title) values ('${W.C}', '${U.C}', 'wc'), ('${W.D}', '${U.D}', 'wd'), ('${W.X}', '${U.X}', 'wx');
+  insert into public.prizes (wheel_id, label, rarity, weight) select w.id, p.label, 'common', 10 from public.wheels w cross join (values ('one'), ('two')) as p(label) where w.id in ('${W.C}', '${W.D}', '${W.X}');
   insert into public.fans (id, creator_id, display_name) values ('${F.C}', '${U.C}', 'Fan C'), ('${F.D}', '${U.D}', 'Fan D'), ('${F.X}', '${U.X}', 'Fan X');
   insert into public.fan_passes (id, token, creator_id, wheel_id, fan_id) values
     ('${P.C}', 'probe-0066-pc', '${U.C}', '${W.C}', '${F.C}'), ('${P.D}', 'probe-0066-pd', '${U.D}', '${W.D}', '${F.D}'),
@@ -62,7 +63,7 @@ const SEED = `
   insert into public.messages (creator_id, fan_id, sender, body) values
     ('${U.C}', '${F.C}', 'fan', 'hello c'), ('${U.D}', '${F.D}', 'fan', 'hello d'), ('${U.X}', '${F.X}', 'fan', 'hello x');
   insert into public.campaigns (id, creator_id, name) values ('${K.C}', '${U.C}', 'camp c'), ('${K.D}', '${U.D}', 'camp d'), ('${K.X}', '${U.X}', 'camp x');
-  grant all on table public.redemptions, public.spins, public.fans, public.messages, public.campaigns, public.wheels to anon, authenticated;`;
+  grant all on table public.spins, public.fans, public.messages, public.campaigns, public.wheels to anon, authenticated;`;
 
 const as = (uid, stmt) =>
   `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true);` +

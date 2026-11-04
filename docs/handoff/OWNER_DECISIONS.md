@@ -21,6 +21,28 @@ committed. The decisions below are self-contained; the P# numbers are labels onl
 - P9: build the mobile bottom tab bar + "More" (RD-6). P12: restore drawer "Message" → opens that fan's Inbox thread.
 - Carry-overs (no decision needed): P16 (#65), P35 (#64/#54 grant preview into redesigned drawer), P36 → exact per-wheel preview (h), P42 (#66), P47 (#68 copy), P55 (#73/#74), P27/P30 keep, P28 server rules (a).
 
+## Open owner decisions (collected 2026-11-05, batch 4 on `orch/fixes`)
+Each of these is either an agent-made choice the owner should confirm or a product call nobody
+but the owner can make. Nothing below blocks the TEST push; the "go" can come with answers.
+1. **Safety reports are kept when a creator closes its account** (0068): a suspended account or one with an
+   open report cannot self-close; reports outlive the account with a non-PII snapshot. Confirm or reverse
+   (`docs/DATA_RETENTION.md`, `docs/LEGAL_NOTES.md`).
+2. **The fan data export excludes the creator's private notes and tags** about the fan (0068). Confirm;
+   including them is a small change.
+3. **Seats and creators join an agency only by accepting an invitation** (0068): no silent seating, uniform
+   "ok" answers, 20 invitations per org per hour. Confirm the consent model and the limit.
+4. **A "Start an agency" entry in Settings**: today the Agency page is linked only for creators who own, hold
+   a seat in or belong to an agency; others reach `/agency` by URL. Add an entry, keep it hidden, or gate it
+   on a feature flag?
+5. **"To fulfil" count semantics** (QA pass 2026-11-04): the Today tile, the Fulfilment badge and "all clear"
+   count only `pending` wins, so a win drops out as soon as it is started. Keep, or count in-progress wins as
+   waiting too (touches the overview query, the demo store and alert semantics)?
+6. **"Spin" as the credit word on scratch and bingo fan pages** ("Spins left", the footer, the welcome note):
+   kept because "spin" is the credit unit across the product and the Terms. Keep, or rename per game kind?
+7. **The Vercel Toolbar under the enforced CSP**: `script-src` allows only the app's own (nonced) scripts and
+   `frame-src` is `'none'`, so the Toolbar's `vercel.live` script and iframe are blocked on every page.
+   Keep it blocked (recommended for Production), or allow `https://vercel.live` on Preview only?
+
 ## Backlog decisions
 - a: server enforces wheel rules (≥2 prizes, non-empty names, ≥1 prize with tickets > 0).
 - b: trigger Codex reviews on the ~11 older PRs that never had one.

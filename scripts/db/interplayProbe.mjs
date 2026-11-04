@@ -130,7 +130,10 @@ export async function probeInterplay(sqlInput, options = {}) {
         campaign = uid(n, "e");
         let pinned = ids[c.pin];
         if (c.pin === "cross") { other = await addCreator(uid(n, "11")); pinned = uid(n, "f"); letters[pinned] = "X"; await addWheel(pinned, other, { k: "wheel", active: true }, "X"); }
-        await sql(`insert into public.campaigns(id,creator_id,name,pinned_wheel_id) values(${quote(campaign)},${quote(creator)},${quote(c.id)},${quote(pinned)});`);
+        // The fixture plants pins the 0069 campaign guard refuses at write time
+        // (an archived or draft game, another creator's game): states a pin can
+        // reach later, or by forgery, whose resolution these cases pin down.
+        await sql(`alter table public.campaigns disable trigger aa_campaign_game;insert into public.campaigns(id,creator_id,name,pinned_wheel_id) values(${quote(campaign)},${quote(creator)},${quote(c.id)},${quote(pinned)});alter table public.campaigns enable trigger aa_campaign_game;`);
       }
       const issued = await grantFan(creator, c.issue === "auto" ? null : ids[c.issue], campaign);
       check(issued.status === "granted", `${c.id}: issuance grants a link (${issued.status}/${issued.error})`);
@@ -353,8 +356,11 @@ export async function probeInterplay(sqlInput, options = {}) {
     check((await rpc("create_pass_grant", [quote(randomUUID()), quote(ta), "null", "null", "'x'", "1", "0", "0", "null", "null", "null", "1", quote(tb)])).status === "unavailable", "B acting as actor cannot mint A's links through the service RPC");
     check((await rpc("grant_pass_spins", [quote(randomUUID()), quote(tb), quote(fanA.fan), quote(fanA.pass), "1", "0", "0", "null"])).status === "unavailable", "B cannot top up A's fan");
     check(await refused(`update public.fan_passes set campaign_id=${quote(CB)} where id=${quote(fanA.pass)};`, /another creator/), "even the service cannot attach A's link to B's campaign");
-    // RLS lets B point B's own campaign at A's wheel id (FK only); resolution ignores it.
-    check(await asUser(tb, `with u as(update public.campaigns set pinned_wheel_id=${quote(WA)} where id=${quote(CB)} returning 1) select count(*) from u`) === "1", "no DB guard on a cross-tenant pin id (S4)");
+    // 0069: the campaign guard refuses a cross-tenant pin id for every role. The
+    // row is then planted with the guard off (a pin from before 0069, or a
+    // forged one) to pin down that resolution ignores it (S4).
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(tb)},true);select set_config('request.jwt.claim.role','authenticated',true);update public.campaigns set pinned_wheel_id=${quote(WA)} where id=${quote(CB)};commit;`, /campaign game belongs to another creator/), "a cross-tenant pin id is refused by the database (0069)");
+    await sql(`alter table public.campaigns disable trigger aa_campaign_game;update public.campaigns set pinned_wheel_id=${quote(WA)} where id=${quote(CB)};alter table public.campaigns enable trigger aa_campaign_game;`);
     check(await scalar(`select public._resolved_spin_wheel(${quote(fanB.pass)});`) === WB && await scalar(`select public._resolved_spin_wheel(${quote(fanA.pass)});`) === WA, "a cross-tenant pin is ignored: B's fans stay on B, A's on A");
     const pa = await prep(fanA); check(pa.status === "ready" && pa.context.wheelId === WA && (await commit(fanA, pa, wheelBody(pa, await prizeId(WA, "Other")))).status === "committed", "A's fan spins A's game untouched by B's attempts");
     surprises.add("S4");
@@ -442,7 +448,7 @@ export async function probeInterplay(sqlInput, options = {}) {
     const rc = await addCreator(uid(1400, "10")), rx = await addCreator(uid(1400, "11")), RW = uid(1400, "a"), XW = uid(1400, "b");
     await addWheel(RW, rc, { k: "wheel", active: true }, "R"); await addWheel(XW, rx, { k: "wheel", active: true }, "X");
     await sql(`update public.prizes set stock=3,label='Limited' where wheel_id in(${quote(RW)},${quote(XW)}) and label='Common';
-      grant select,insert,update on public.redemptions to authenticated;`);
+      grant select,update on public.redemptions to authenticated;`);
     const RL = await prizeId(RW, "Limited"), RO = await prizeId(RW, "Other"), XL = await prizeId(XW, "Limited");
     const winOn = async (creator, wheel, prize) => { const who = await grantFan(creator, wheel, null, 1), a = await prep(who), r = await commit(who, a, wheelBody(a, prize)); check(r.status === "committed", `a ${prize === RO ? "unlimited" : "limited"} win commits (${r.status})`); return a.id; };
     const redOf = spin => scalar(`select id from public.redemptions where spin_id=${quote(spin)};`);
@@ -481,9 +487,10 @@ export async function probeInterplay(sqlInput, options = {}) {
     check(await refused(`update public.redemptions set spin_id=${quote(k1)} where spin_id=${quote(k3)};`, /immutable/), "not even the service can move a redemption to another spin");
     check(await asUser(rc, `with u as(update public.redemptions set notes='plain' where spin_id=${quote(k3)} returning 1) select count(*) from u`) === "1", "plain note edits still work on the session");
     const kxw = await winOn(rx, XW, XL);
-    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(rx)},true);insert into public.redemptions(spin_id,creator_id,stock_unit) values(${quote(kxw)},${quote(rx)},'held');commit;`, /recorded only by the award/), "a creator cannot insert a redemption that claims a unit");
+    check(await refused(`begin;set local role service_role;insert into public.redemptions(spin_id,creator_id,stock_unit) values(${quote(kxw)},${quote(rx)},'held');commit;`, /recorded only by the award/), "no write outside the award can insert a redemption that claims a unit");
+    check(await refused(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(rx)},true);insert into public.redemptions(spin_id,creator_id) values(${quote(kxw)},${quote(rx)});commit;`, /permission denied for table redemptions/), "a creator session cannot insert a redemption at all (0069)");
     check(await refused(`insert into public.redemptions(spin_id,creator_id) values(${quote(k3)},${quote(rx)});`, /its spin's creator/), "no redemption can name another creator's spin");
-    check(await asUser(rx, `with i as(insert into public.redemptions(spin_id,creator_id) values(${quote(kxw)},${quote(rx)}) returning stock_unit) select coalesce(stock_unit,'none') from i`) === "none", "a duplicate redemption a creator inserts holds no unit");
+    check(lastLine(await sql(`begin;set local role service_role;with i as(insert into public.redemptions(spin_id,creator_id) values(${quote(kxw)},${quote(rx)}) returning stock_unit) select coalesce(stock_unit,'none') from i;commit;`)) === "none", "a duplicate redemption the service inserts holds no unit");
     const kDup = await scalar(`select id from public.redemptions where spin_id=${quote(kxw)} and stock_unit is null;`);
     check(JSON.parse(await asUser(rx, `select public.set_redemption_state(${quote(kDup)},${quote(rx)},'{"status":"cancelled"}'::jsonb)`)).stock === "none" && await stockOf(XL) === 2, "cancelling that duplicate mints no stock");
     await sql(`delete from public.redemptions where id=${quote(kDup)};`);
