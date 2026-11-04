@@ -168,6 +168,22 @@ export function attachSink(page, sink = { step: "boot", signals: [] }) {
   return sink;
 }
 
+/** Load axe-core into the page. Not addScriptTag: an inline <script> without
+ *  the response's nonce is (correctly) refused by the signed-in pages' CSP.
+ *  DevTools evaluation is outside the page's policy. */
+export async function injectAxe(page, axeSrc) {
+  await page.evaluate(axeSrc);
+}
+
+/** Collect the browser's CSP violation reports for a page (they are console
+ *  errors). Suites without the error sink use this to fail on any violation. */
+export function watchCsp(page, list) {
+  page.on("console", (m) => {
+    if (/content security policy/i.test(m.text())) list.push(`${page.url().replace(BASE, "")}: ${m.text().slice(0, 240)}`);
+  });
+  return list;
+}
+
 // ---- step + assertion plumbing --------------------------------------------
 
 export function createRunner(sink) {

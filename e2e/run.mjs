@@ -34,6 +34,7 @@ import { glowJourney } from "./glow.mjs";
 import { winbackJourney } from "./winback.mjs";
 import { privacyJourney } from "./privacy.mjs";
 import { urlSafetyJourney } from "./urlSafety.mjs";
+import { cspJourney } from "./csp.mjs";
 
 import { pushJourney } from "./push.mjs";
 import { instantJourney } from "./instant.mjs";
@@ -90,6 +91,7 @@ try {
     await systemHealthJourney(page, runner);
     await safetyJourney(page, runner, ctx); // A1 report → Admin › Reports → resolve; A4 blocked fan (own fans)
     await urlSafetyJourney(page, runner, ctx); // malformed URL privacy/security-header regression
+    await cspJourney(page, runner, ctx); // L3: per-route CSP, nonces on every script, injected script/eval refused
     await accountExtrasJourney(page, runner, ctx); // A37/A36: DM templates, referrals, autopilot, close guard, demo-only states
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;

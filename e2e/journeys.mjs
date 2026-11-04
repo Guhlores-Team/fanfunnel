@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 // Runs against MOCK mode, so data is deterministic per fresh server.
 
 import { readFileSync } from "node:fs";
-import { acknowledgeFixtureFan, goto, clickTab, passAgeGate, BASE, NAV_ITEMS } from "./harness.mjs";
+import { acknowledgeFixtureFan, goto, clickTab, passAgeGate, BASE, NAV_ITEMS, injectAxe } from "./harness.mjs";
 
 // The legal/privacy contact lives only in src/lib/legal.ts (a one-line swap), so
 // read it from there rather than repeating the address here.
@@ -1219,7 +1219,7 @@ export async function firstRunJourney(page, { step, assert }, ctx) {
       await page.setViewportSize(vp);
       await goto(page, "/dashboard", 1600);
       await list().waitFor({ timeout: 12000 }).catch(() => {});
-      await page.addScriptTag({ content: axeSrc });
+      await injectAxe(page, axeSrc);
       const { violations } = await page.evaluate(() =>
         window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] } })
       );
