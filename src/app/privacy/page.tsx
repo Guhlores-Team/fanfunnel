@@ -395,12 +395,20 @@ const SECTIONS: LegalSection[] = [
         <li>
           <strong>Check-ins, breaks and play reminders, Focus and Chase boosts and win-back records:</strong>{" "}
           kept with the fan record they belong to, and deleted with it (when the fan deletes their data, the
-          creator deletes the fan or the account is closed).
+          creator deletes the fan or the account is closed). Visit check-ins are also deleted after{" "}
+          {RETENTION_DAYS.fanCheckins} days.
         </li>
         <li>
-          <strong>Spin attempts:</strong> kept with the creator account like the spins they protect. When a
-          fan is deleted, their attempts stay without a link to the fan, and they are removed when the account
-          is closed.
+          <strong>Spin attempts:</strong> kept with the creator account like the spins they protect. {RETENTION_DAYS.finishedSpinAttempts}{" "}
+          days after an attempt finishes, the prepared play details it held are cleared, and a declined attempt
+          (no spin used) is deleted. When a fan is deleted, their attempts stay without a link to the fan, and
+          they are removed when the account is closed.
+        </li>
+        <li>
+          <strong>Grant and import request records</strong> (which keep a retried grant or fan import from
+          applying twice, or a cancelled one from running later): deleted {RETENTION_DAYS.settledRequestJournal} days after the request settles or is cancelled. Fan
+          import batches and their per-row results are deleted after {RETENTION_DAYS.fanImportBatches} days. The
+          grants and fans a request created are kept like other account data.
         </li>
         <li>
           <strong>Instant rewards:</strong> the encrypted value is erased when the fan deletes their data or the

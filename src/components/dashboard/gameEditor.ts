@@ -57,5 +57,7 @@ const REFUSALS: Record<string, string> = {
   bingo_active_card: "An active bingo card still needs one of these prizes. Keep its prize, unlimited stock, non-code delivery and positive tickets so paid progress remains markable. Your draft is still here.",
   game_in_use: "This game still has active bingo progress. It cannot be removed or reset while those promises are owed.",
   stock_changed: "Stock changed while you were editing (fans kept playing). Reload this game to see the current stock, then save again. Your draft is still here.",
+  game_busy: "Fans are playing this game right now, so nothing changed. Try again in a moment.",
+  has_history: "This game has plays or fan links made for it, so it can't be deleted. Archive it instead: its history and every fan's link and balance are kept.",
 };
 export const gameRefusalMessage = (code: unknown): string | null => typeof code === "string" && Object.hasOwn(REFUSALS, code) ? REFUSALS[code] : null;

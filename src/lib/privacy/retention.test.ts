@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RETENTION_CRON_SCHEDULE, RETENTION_DAYS } from "./retention";
+import { CHECKIN_DATE_SKEW_DAYS, CHECKIN_READ_DAYS } from "@/lib/glow/config";
 
 // The retention periods are set in ONE file; the public doc and the cron
 // schedule must agree with it, and every period must be a sane whole number of
@@ -24,6 +25,10 @@ const TABLE: Record<keyof typeof RETENTION_DAYS, string> = {
   linkTombstones: "link_tombstones",
   resolvedAppErrors: "app_errors",
   closedAgencyInvites: "org_invites",
+  fanCheckins: "fan_checkins",
+  finishedSpinAttempts: "spin_attempts",
+  settledRequestJournal: "creator_request_journal",
+  fanImportBatches: "fan_import_batches",
 };
 
 for (const [key, days] of Object.entries(RETENTION_DAYS) as [keyof typeof RETENTION_DAYS, number][]) {
@@ -44,6 +49,28 @@ for (const file of ["supabase/migrations/0056_push_subscriptions.sql", "supabase
   check(`${file}: cleanup counts deleted push logs`, /'push_log', v_push_log/.test(fn));
   check(`${file}: cleanup remains a server-only five-argument RPC`, /revoke execute on function public\.run_retention_cleanup\(integer, integer, integer, integer, integer\) from public, anon, authenticated/.test(sql));
 }
+
+// 0065 (A11): the operational-history periods live in the SQL as named
+// constants; every build path must match the shared config, and check-ins must
+// outlive the visit glow's read window.
+const SQL_CONSTANTS: [string, keyof typeof RETENTION_DAYS][] = [
+  ["v_checkin_days", "fanCheckins"],
+  ["v_attempt_days", "finishedSpinAttempts"],
+  ["v_journal_days", "settledRequestJournal"],
+  ["v_import_batch_days", "fanImportBatches"],
+];
+for (const file of ["supabase/migrations/0065_fan_game_pins_and_hardening.sql", "supabase/schema.sql", "supabase/migrations_combined.sql"]) {
+  const sql = readFileSync(join(REPO, file), "utf8").replace(/--[^\n]*/g, " ");
+  const fn = [...sql.matchAll(/create or replace function public\.run_retention_cleanup\([\s\S]*?\$\$;/g)].at(-1)?.[0] ?? "";
+  for (const [name, key] of SQL_CONSTANTS) {
+    check(`${file}: ${name} matches RETENTION_DAYS.${key}`, Number(fn.match(new RegExp(`${name} constant integer := (\\d+);`))?.[1]) === RETENTION_DAYS[key]);
+  }
+  check(`${file}: only settled journals are pruned`, /delete from public\.creator_request_journal\s+where state <> 'pending'/.test(fn));
+  check(`${file}: only declined attempts with no spin are deleted`, /delete from public\.spin_attempts\s+where state = 'declined' and spin_id is null/.test(fn));
+  check(`${file}: a batch a pending request uses is kept`, /j\.state = 'pending'/.test(fn));
+  check(`${file}: cancellation fences last the journal's period`, /delete from public\.actor_request_cancellations\s+where created_at < now\(\) - make_interval\(days => v_journal_days\)/.test(fn));
+}
+check("check-ins outlive the visit glow read window", RETENTION_DAYS.fanCheckins > CHECKIN_READ_DAYS + CHECKIN_DATE_SKEW_DAYS);
 
 const cron = vercel.crons?.find((c) => c.path === "/api/cron/retention");
 check("vercel.json schedules the retention route", !!cron);

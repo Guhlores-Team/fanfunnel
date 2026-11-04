@@ -6,6 +6,11 @@ import {createHash,randomUUID} from "node:crypto";
 import {join} from "node:path";
 import {isDeepStrictEqual} from "node:util";
 const q=s=>`'${String(s).replaceAll("'","''")}'`,j=v=>`${q(JSON.stringify(v))}::jsonb`,hash=s=>createHash("sha256").update(s).digest("hex");
+// Observed waits: `seen` polls until a named session exists; `waitedOn` runs in
+// a lock holder and returns once another session is blocked behind it.
+// pg_stat_activity is frozen per transaction, so each poll clears the snapshot.
+const seen=name=>`do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'); perform pg_sleep(0.01); end loop; end $$;`;
+const waitedOn=`do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity a where a.pid<>pg_backend_pid() and a.wait_event_type='Lock' and pg_backend_pid()=any(pg_blocking_pids(a.pid))); perform pg_sleep(0.01); end loop; end $$;`;
 export async function probeBingoGames(sqlInput){
  let checks=0;const check=(v,msg)=>{checks++;if(!v)throw Error(`0061 ${msg}`);};
  const pending=new Set(),sql=s=>{const p=sqlInput(s);pending.add(p);p.then(()=>pending.delete(p),()=>pending.delete(p));return p;};
@@ -111,10 +116,13 @@ export async function probeBingoGames(sqlInput){
   check((await card(blockedFan)).status==="ok","the card read does not depend on creator approval");
   await sql(`update public.profiles set approval_status='approved' where id=${q(owner)};update public.fans set blocked_at=null where id=${q(blockedFan.fan)};`);
   // Two sessions in commit's lock order (wheel -> prize) against a prize-first creator edit: never 40P01.
+  // Observed-wait barrier (storageWorkProbe.mjs pattern): the play renames itself
+  // once it holds the game row and keeps it until it sees another session
+  // blocked behind it, then takes the prize. Only hang guards are timers.
   const lockRace=async(label,wheelId,prizeId,editor)=>{
-   const holder=sql(`begin;select 1 from public.wheels where id=${q(wheelId)} for update;select pg_sleep(0.5);update public.prizes set label=label where id=${q(prizeId)};commit;`);
-   let sleeping=false;for(let i=0;i<200;i++){if((await sql(`select count(*) from pg_stat_activity where pid<>pg_backend_pid() and wait_event='PgSleep' and query like '%${wheelId}%';`)).trim()==="1"){sleeping=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}
-   check(sleeping,`${label}: the play holds the game lock before the creator edit starts`);
+   const tag=`ff-bingo-race-${randomUUID().slice(0,8)}`;
+   const holder=sql(`begin;set local statement_timeout='20s';select 1 from public.wheels where id=${q(wheelId)} for update;set local application_name='${tag}';${waitedOn}update public.prizes set label=label where id=${q(prizeId)};commit;`);
+   check((await sql(`${seen(tag)}select count(*) from pg_stat_activity where application_name='${tag}';`)).trim()==="1",`${label}: the play holds the game lock before the creator edit starts`);
    const settled=await Promise.allSettled([holder,editor()]);
    check(settled.every(r=>r.status==="fulfilled"),`${label}: a creator edit racing a credited play never deadlocks (${settled.find(r=>r.status==="rejected")?.reason?.message?.trim()??""})`);
    return settled[1].value;
@@ -245,9 +253,9 @@ export async function probeBingoGames(sqlInput){
   const org=randomUUID();await sql(`insert into public.orgs(id,name,owner_id) values(${q(org)},'Bingo agency',${q(owner)});update public.profiles set org_id=${q(org)} where id=${q(owner)};insert into public.org_members(org_id,profile_id,role) values(${q(org)},${q(other)},'manager');`);
   check((await sql(`begin;set local role authenticated;do $$begin perform set_config('request.jwt.claim.sub',${q(other)},true);end$$;select public.can_act_for(${q(owner)},'edit_wheel');rollback;`)).trim()==="t","agency save actor had permission at route admission");
   const admitted=await mintActorContext(sql,other,owner,'edit_wheel');
-  const revoker=sql(`begin;select 1 from public.wheels where id=${q(codeWheel)} for update;delete from public.org_members where org_id=${q(org)} and profile_id=${q(other)};select pg_sleep(0.4);commit;`);
-  let sleeping=false;for(let i=0;i<100;i++){if((await sql(`select count(*) from pg_stat_activity where pid<>pg_backend_pid() and wait_event='PgSleep' and query like '%${codeWheel}%';`)).trim()==="1"){sleeping=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}
-  check(sleeping,"Bingo save barrier observes uncommitted agency revocation under game lock");
+  const revokeTag=`ff-bingo-revoke-${randomUUID().slice(0,8)}`;
+  const revoker=sql(`begin;set local statement_timeout='20s';select 1 from public.wheels where id=${q(codeWheel)} for update;delete from public.org_members where org_id=${q(org)} and profile_id=${q(other)};set local application_name='${revokeTag}';${waitedOn}commit;`);
+  check((await sql(`${seen(revokeTag)}select count(*) from pg_stat_activity where application_name='${revokeTag}';`)).trim()==="1","Bingo save barrier observes uncommitted agency revocation under game lock");
   check(await refused(`begin;set local role service_role;select public.save_game_wheel(${[q(admitted.context),q(codeWheel),q(owner),j(codeRows),j({game_kind:"bingo",game_config:{size:3,linePrizeId:codeLine},title:"Forbidden overwrite"}),q(other)].join(",")});commit;`,/forbidden/),"already-dispatched save rechecks and refuses the now-revoked actor");await revoker;
   check((await sql(`select title from public.wheels where id=${q(codeWheel)};`)).trim()==="Published Bingo","revoked save leaves metadata and inventory unchanged");
   check(await refused(`set role service_role;select public.save_wheel_prizes(${q(codeWheel)},${q(owner)},${j(codeRows)});`,/use actor-bound game saver/),"old generic saver cannot bypass actor-bound Bingo publication");

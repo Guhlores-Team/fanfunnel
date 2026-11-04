@@ -92,6 +92,29 @@ async function main() {
   check("demo: malformed cursor → 400", (await get(`?before=not-a-cursor`)).status === 400);
   check("demo: over-long search → 400", (await get(`?q=${"x".repeat(101)}`)).status === 400);
 
+  // Wins in the same millisecond (a fast loop, or a bingo line bonus sharing its
+  // play's time) straddling the window's edge: the window and the queue must
+  // order ties the same way (at, then id), or paging on skips or repeats them.
+  // A frozen clock makes every one of these wins a tie, deterministically.
+  mock.timers.enable({ apis: ["Date"], now: Date.now() + 86_400_000 });
+  const tieFan = m.mockCreatePass("Tie Fan", 230);
+  m.mockAckFan(tieFan.token);
+  for (let i = 0; i < 230; i++) assert.ok(!("error" in await m.mockSpin(tieFan.token)), `tie spin ${i} failed`);
+  const tied = await data.getOverview();
+  const tiedEnd = tied.redemptions[tied.redemptions.length - 1];
+  check("demo ties: the window ends inside one millisecond of wins", tied.redemptions.filter((r) => r.at === tiedEnd.at).length === OVERVIEW_REDEMPTION_WINDOW);
+  let tieCursor: string | null = `${tiedEnd.at}|${tiedEnd.id}`;
+  const tiedOlder: { id: string; status: string }[] = [];
+  for (let page = 0; tieCursor && page < 20; page++) {
+    const next = await get(`?status=pending&before=${encodeURIComponent(tieCursor)}`);
+    tiedOlder.push(...(next.body.items ?? []));
+    tieCursor = next.body.next ?? null;
+  }
+  const tiedWindowPending = tied.redemptions.filter((r) => r.status === "pending").length;
+  check("demo ties: every pending win past a tied window edge is reachable", tiedWindowPending + tiedOlder.length === tied.metrics.pending);
+  check("demo ties: no row past the edge repeats a window row", !tiedOlder.some((r) => tied.redemptions.some((w) => w.id === r.id)));
+  mock.timers.reset();
+
   // --- Supabase path ------------------------------------------------------------
   useSupabase = true;
   rpcRows = [

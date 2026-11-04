@@ -54,7 +54,7 @@ export async function getCreatorFocus(fanId: string): Promise<CreatorFocusView |
   const [focus, wheels, passes, packs, config, wishes] = await Promise.all([
     sb.from("fan_focus").select("*").eq("creator_id", creatorId).eq("fan_id", fanId).in("status", ["active", "paused"]).maybeSingle(),
     sb.from("wheels").select("id,title,archived_at,prizes(id,label,emoji,rarity,stock,weight,boostable,delivery)").eq("creator_id", creatorId).is("archived_at", null),
-    sb.from("fan_passes").select("id,creator_id,campaign_id,wheel_id,token,spins_remaining").eq("creator_id", creatorId).eq("fan_id", fanId).eq("is_active", true).is("self_excluded_at", null),
+    sb.from("fan_passes").select("id,creator_id,campaign_id,wheel_id,pinned_wheel_id,token,spins_remaining").eq("creator_id", creatorId).eq("fan_id", fanId).eq("is_active", true).is("self_excluded_at", null),
     sb.from("campaign_packs").select("*").eq("creator_id", creatorId).in("pack_kind", ["focus", "chase"]).order("sort_order"),
     sb.from("focus_creator_config").select("focus_enabled,chase_enabled").eq("creator_id", creatorId).maybeSingle(),
     sb.from("wishlists").select("prize_id").eq("creator_id", creatorId).eq("fan_id", fanId),

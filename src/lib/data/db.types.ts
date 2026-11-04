@@ -1340,6 +1340,7 @@ export type Database = {
           next_server_seed: string | null
           next_server_seed_hash: string | null
           next_spin_nonce: number
+          pinned_wheel_id: string | null
           self_excluded_at: string | null
           spins_granted_total: number
           spins_remaining: number
@@ -1357,6 +1358,7 @@ export type Database = {
           next_server_seed?: string | null
           next_server_seed_hash?: string | null
           next_spin_nonce?: number
+          pinned_wheel_id?: string | null
           self_excluded_at?: string | null
           spins_granted_total?: number
           spins_remaining?: number
@@ -1374,6 +1376,7 @@ export type Database = {
           next_server_seed?: string | null
           next_server_seed_hash?: string | null
           next_spin_nonce?: number
+          pinned_wheel_id?: string | null
           self_excluded_at?: string | null
           spins_granted_total?: number
           spins_remaining?: number
@@ -1400,6 +1403,13 @@ export type Database = {
             columns: ["fan_id"]
             isOneToOne: false
             referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fan_passes_pinned_wheel_id_fkey"
+            columns: ["pinned_wheel_id"]
+            isOneToOne: false
+            referencedRelation: "wheels"
             referencedColumns: ["id"]
           },
           {
@@ -2256,6 +2266,7 @@ export type Database = {
       }
       redemptions: {
         Row: {
+          cost_cents_at_award: number | null
           created_at: string
           creator_id: string
           due_at: string | null
@@ -2266,6 +2277,7 @@ export type Database = {
           status: Database["public"]["Enums"]["redemption_status"]
         }
         Insert: {
+          cost_cents_at_award?: number | null
           created_at?: string
           creator_id: string
           due_at?: string | null
@@ -2276,6 +2288,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["redemption_status"]
         }
         Update: {
+          cost_cents_at_award?: number | null
           created_at?: string
           creator_id?: string
           due_at?: string | null
@@ -2992,10 +3005,12 @@ export type Database = {
             }
             Returns: boolean
           }
-      _creator_default_wheel: {
-        Args: { p_campaign: string; p_creator: string }
-        Returns: string
-      }
+      _creator_default_wheel:
+        | { Args: { p_campaign: string; p_creator: string }; Returns: string }
+        | {
+            Args: { p_campaign: string; p_creator: string; p_pinned: string }
+            Returns: string
+          }
       _creator_request_finish: {
         Args: { p_creator: string; p_outcome: Json; p_request: string }
         Returns: Json
@@ -3071,6 +3086,7 @@ export type Database = {
         Returns: Json
       }
       _is_org_member: { Args: { p_org: string }; Returns: boolean }
+      _lock_wheel_lifecycle: { Args: { p_wheel: string }; Returns: undefined }
       _owns_org: { Args: { p_org: string }; Returns: boolean }
       _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
       _release_fan_focus: { Args: { p_fan: string }; Returns: Json }
@@ -3138,9 +3154,14 @@ export type Database = {
         Args: { p_target: string }
         Returns: string
       }
+      archive_wheel: { Args: { p_wheel: string }; Returns: string }
       award_fan_referral: {
         Args: { p_creator: string; p_fan: string }
         Returns: Json
+      }
+      bootstrap_first_admin: {
+        Args: { p_email: string; p_user: string }
+        Returns: string
       }
       can_act_for: {
         Args: { perm: string; target_creator: string }
@@ -3348,6 +3369,7 @@ export type Database = {
         Returns: undefined
       }
       current_user_active: { Args: never; Returns: boolean }
+      delete_wheel: { Args: { p_wheel: string }; Returns: string }
       edit_pass_grant:
         | {
             Args: {
@@ -3674,6 +3696,16 @@ export type Database = {
       }
       set_creator_theme: { Args: { p_theme: Json }; Returns: Json }
       set_display_name: { Args: { p_name: string }; Returns: undefined }
+      set_fan_pass_game: {
+        Args: {
+          p_actor?: string
+          p_context: string
+          p_creator: string
+          p_pass: string
+          p_wheel: string
+        }
+        Returns: Json
+      }
       set_leaderboard_enabled: {
         Args: { p_enabled: boolean }
         Returns: undefined

@@ -22,6 +22,7 @@ type PassRow = {
   creator_id: string;
   campaign_id: string | null;
   wheel_id: string;
+  pinned_wheel_id?: string | null;
   fan: { id: string } | null;
   creator: {
     display_name: string | null;
@@ -43,7 +44,7 @@ export async function getFanAppInfo(token: string): Promise<FanAppInfo | null> {
   const select = (creatorCols: string) =>
     sb
       .from("fan_passes")
-      .select(`creator_id, campaign_id, wheel_id, fan:fans(id), creator:profiles(${creatorCols})`)
+      .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan:fans(id), creator:profiles(${creatorCols})`)
       .eq("token", token)
       .eq("is_active", true)
       .maybeSingle();

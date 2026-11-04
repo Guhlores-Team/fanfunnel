@@ -60,6 +60,10 @@ export function claimErrorMessage(err: unknown): string {
       return "Admin allowlist (ADMIN_EMAILS) isn't set on the server yet.";
     case "already_bootstrapped":
       return "An admin already exists — ask them to grant you access.";
+    case "email_unconfirmed":
+      return "Confirm your email address first, then claim admin again.";
+    case "mfa_required":
+      return "Sign in with your two-factor code first.";
     default:
       return "Couldn't claim admin. Try again.";
   }

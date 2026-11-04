@@ -12,7 +12,7 @@ import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUGS, CASES, SURPRISES } from "./interplayCases.mjs";
-import { withActorContext } from "./actorContextFixture.mjs";
+import { mintActorContext, withActorContext } from "./actorContextFixture.mjs";
 const quote = s => `'${String(s).replaceAll("'", "''")}'`;
 const json = v => `${quote(JSON.stringify(v))}::jsonb`;
 const hash = s => createHash("sha256").update(s).digest("hex");
@@ -75,6 +75,12 @@ export async function probeInterplay(sqlInput, options = {}) {
     const p = c.prizes.find(x => x.id === prizeId), seed = randomUUID().replaceAll("-", "").repeat(2);
     return { ctx: { contextHash: c.contextHash }, spin: { id: a.id, fan_id: c.fanId, fan_pass_id: c.passId, creator_id: c.creatorId, wheel_id: c.wheelId, campaign_id: c.campaignId, prize_id: p.id, prize_label: p.label, prize_rarity: p.rarity, prize_image_url: p.image_url, server_seed: c.serverSeed, server_seed_hash: c.serverSeedHash, nonce: c.nonce, client_seed: "interplay", fair_version: 3, pool_snapshot: snapshot, pool_hash: hash(canonical(snapshot)), fair_trace: { excluded, won: p.id }, next_pity_counter: c.pityCounter + 1, focus_consumed: false, chase_consumed: false, chase_completed: false, next_focus_spins_left: null, next_chase_counter: null, response_prize: { id: p.id, label: p.label, rarity: p.rarity, weight: p.weight }, response_prize_index: c.prizes.findIndex(x => x.id === p.id), response_show_stock: c.wheel.show_stock }, expected: { delivery: "manual" }, next: { seed, hash: hash(seed) } };
   };
+  // 0065: a link's own game, set through the service RPC with a real actor context.
+  const setPassGame = async (creator, pass, wheel) => {
+    const { context } = await mintActorContext(sql, creator, creator, "grant");
+    try { return JSON.parse(lastLine(await sql(`begin;set local role service_role;select public.set_fan_pass_game(${quote(context)},${quote(creator)},${quote(pass)},${wheel ? quote(wheel) : "null"},${quote(creator)});commit;`))); }
+    finally { await sql(`delete from public.creator_actor_contexts where id=${quote(context)};`); }
+  };
   const commit = (who, a, b) => rpc("commit_spin_attempt", [quote(a.id), quote(who.token), quote(a.binding), json(b.ctx), json(b.spin), json(b.expected), json(b.next)]);
   const prizeId = (wheel, label) => scalar(`select id from public.prizes where wheel_id=${quote(wheel)} and label=${quote(label)};`);
   const stockOf = async prize => { const v = await scalar(`select coalesce(stock::text,'null') from public.prizes where id=${quote(prize)};`); return v === "null" ? null : Number(v); };
@@ -112,7 +118,8 @@ export async function probeInterplay(sqlInput, options = {}) {
 
   try {
     // ------------------------------------------------------------ 1. matrix
-    check((await scalar(`select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in('_resolved_spin_wheel','_create_pass_grant_core','_spin_attempt_context','_creator_default_wheel');`)) === "4", "all three SQL resolution paths and the shared ranking exist");
+    check((await scalar(`select count(distinct p.proname) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in('_resolved_spin_wheel','_create_pass_grant_core','_spin_attempt_context','_creator_default_wheel');`)) === "4", "all three SQL resolution paths and the shared ranking exist");
+    check((await scalar(`select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='_resolved_spin_wheel' and pg_get_functiondef(p.oid) like '%_creator_default_wheel(fp.creator_id,fp.campaign_id,fp.pinned_wheel_id)%';`)) === "1", "spin time ranks the link's own game first through the shared ranking (0065)");
     check((await scalar(`select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in('_resolved_spin_wheel','_create_pass_grant_core') and pg_get_functiondef(p.oid) like '%_creator_default_wheel(%';`)) === "2", "issuance and spin time both call the one shared ranking (cannot drift)");
     const recorded = [];
     for (const [index, c] of CASES.entries()) {
@@ -127,13 +134,26 @@ export async function probeInterplay(sqlInput, options = {}) {
       }
       const issued = await grantFan(creator, c.issue === "auto" ? null : ids[c.issue], campaign);
       check(issued.status === "granted", `${c.id}: issuance grants a link (${issued.status}/${issued.error})`);
+      let storedPin = null;
       for (const step of c.after ?? []) {
+        if ("passPin" in step) {
+          let target = step.passPin === null ? null : ids[step.passPin];
+          if (step.passPin === "cross") {
+            if (!other) { other = await addCreator(uid(n, "11")); await addWheel(uid(n, "f"), other, { k: "wheel", active: true }, "X"); }
+            target = uid(n, "f"); letters[target] = "X";
+          }
+          const pinned = await setPassGame(creator, issued.pass, target);
+          check(pinned.status === (step.pinStatus ?? "ok"), `${c.id}: set_fan_pass_game answers ${step.pinStatus ?? "ok"} (got ${pinned.status})`);
+          if (step.passPin === "cross") check(await refused(`update public.fan_passes set pinned_wheel_id=${quote(target)} where id=${quote(issued.pass)};`, /another creator/), `${c.id}: the pass guard refuses another creator's game for every role`);
+          if (!step.pinStatus) storedPin = target;
+          check((await scalar(`select coalesce(pinned_wheel_id::text,'null') from public.fan_passes where id=${quote(issued.pass)};`)) === (storedPin ?? "null"), `${c.id}: the link's own game changes only when the RPC accepts it`);
+        }
         if (step.archive) await sql(`update public.wheels set archived_at=now() where id=${quote(ids[step.archive])};`);
         if (step.schedule) await sql(`update public.wheels set active_from=now()+interval '${step.from} hours' where id=${quote(ids[step.schedule])};`);
         if (step.feature) await sql(`update public.profiles set features=features||${json({ [step.feature]: step.enabled })} where id=${quote(creator)};`);
       }
       const r = JSON.parse(await scalar(`select jsonb_build_object('now',now(),'spin',public._resolved_spin_wheel(${quote(issued.pass)}),'context',public._spin_attempt_context(${quote(issued.pass)})->>'wheelId',
-        'pass',(select jsonb_build_object('creator_id',creator_id,'campaign_id',campaign_id,'wheel_id',wheel_id) from public.fan_passes where id=${quote(issued.pass)}),
+        'pass',(select jsonb_build_object('creator_id',creator_id,'campaign_id',campaign_id,'wheel_id',wheel_id,'pinned_wheel_id',pinned_wheel_id) from public.fan_passes where id=${quote(issued.pass)}),
         'wheels',(select coalesce(jsonb_agg(jsonb_build_object('id',id,'creator_id',creator_id,'is_active',is_active,'active_from',active_from,'active_until',active_until,'archived_at',archived_at,'created_at',created_at,'game_kind',game_kind,'game_ready',game_ready) order by id),'[]'::jsonb) from public.wheels where creator_id in(${quote(creator)},${quote(other ?? creator)})),
         'campaigns',(select coalesce(jsonb_agg(jsonb_build_object('id',id,'creator_id',creator_id,'pinned_wheel_id',pinned_wheel_id)),'[]'::jsonb) from public.campaigns where creator_id=${quote(creator)}),
         'features',(select features from public.profiles where id=${quote(creator)}));`));
@@ -150,7 +170,16 @@ export async function probeInterplay(sqlInput, options = {}) {
       if (c.expected.surprise) surprises.add(c.expected.surprise);
       // A disagreement is a bug only when both paths saw the same state: an
       // explicit p_wheel or a post-issuance mutation is a documented surprise.
-      const mutated = (c.after ?? []).some(s => s.archive || s.schedule) || c.issue !== "auto";
+      const mutated = (c.after ?? []).some(s => s.archive || s.schedule || "passPin" in s) || c.issue !== "auto";
+      // 0065: issuance agrees with play for a pinned link too. An automatic
+      // top-up for this fan credits a link that plays the expected game.
+      if ((c.after ?? []).some(s => "passPin" in s)) {
+        const topUp = await rpc("create_pass_grant", [quote(randomUUID()), quote(creator), quote(issued.fan), "null", "'Fan'", "1", "0", "0", campaign ? quote(campaign) : "null"]);
+        check(topUp.status === "granted", `${c.id}: the automatic top-up is granted (${topUp.status})`);
+        const plays = await scalar(`select public._resolved_spin_wheel(${quote(topUp.passId)});`);
+        check((plays ? letters[plays] ?? "?" : null) === c.expected.spin, `${c.id}: the topped-up link plays ${c.expected.spin} (got ${plays ? letters[plays] : null})`);
+        if (c.expected.topUp === "same") check(topUp.passId === issued.pass, `${c.id}: the top-up lands on the link set to its own game`);
+      }
       if (result.issuance !== result.spin && !mutated) {
         if (c.expected.bug) known(c.expected.bug, `${c.id}: link minted for ${result.issuance}, fan plays ${result.spin}`);
         else throw Error(`interplay ${c.id}: undocumented issuance/spin disagreement ${result.issuance}/${result.spin}`);
@@ -359,13 +388,60 @@ export async function probeInterplay(sqlInput, options = {}) {
     surprises.add("S6");
     await invariants(fc, "feature flag");
 
+    // -------------------------- 6. per-link game authority and award cost (0065)
+    const pc = await addCreator(uid(1300, "10")), PA = uid(1300, "a"), PB = uid(1300, "b"), stranger = await addCreator(uid(1300, "11"));
+    await addWheel(PA, pc, { k: "wheel", active: true }, "A"); await addWheel(PB, pc, { k: "wheel" }, "B");
+    const pinFan = await grantFan(pc, null, null, 5);
+    const pinCall = async (context, creator, pass, wheel, actor) => JSON.parse(lastLine(await sql(`begin;set local role service_role;select public.set_fan_pass_game(${quote(context)},${quote(creator)},${quote(pass)},${wheel ? quote(wheel) : "null"},${quote(actor)});commit;`)));
+    const storedPin = () => scalar(`select coalesce(pinned_wheel_id::text,'null') from public.fan_passes where id=${quote(pinFan.pass)};`);
+    for (const role of ["anon", "authenticated"]) check(await refused(`begin;set local role ${role};select public.set_fan_pass_game(null,${quote(pc)},${quote(pinFan.pass)},${quote(PB)},${quote(pc)});commit;`, /permission denied/), `${role} cannot call set_fan_pass_game`);
+    const wrongScope = await mintActorContext(sql, pc, pc, "edit_wheel");
+    check((await pinCall(wrongScope.context, pc, pinFan.pass, PB, pc)).status === "forbidden", "an edit_wheel context cannot set a link's game");
+    const foreign = await mintActorContext(sql, stranger, stranger, "grant");
+    check((await pinCall(foreign.context, stranger, pinFan.pass, PB, stranger)).status === "not_found", "another creator cannot reach this creator's link");
+    check((await pinCall(foreign.context, pc, pinFan.pass, PB, stranger)).status === "forbidden", "another creator's context cannot act for this creator");
+    check((await pinCall(randomUUID(), pc, pinFan.pass, PB, pc)).status === "forbidden", "a guessed context id cannot set a link's game");
+    const suspended = await mintActorContext(sql, pc, pc, "grant");
+    await sql(`update public.profiles set is_active=false where id=${quote(pc)};`);
+    check((await pinCall(suspended.context, pc, pinFan.pass, PB, pc)).status === "forbidden", "a context minted before suspension is refused after the row locks");
+    await sql(`update public.profiles set is_active=true where id=${quote(pc)};`);
+    check(await storedPin() === "null", "every refusal leaves the link's game unchanged");
+    const good = await mintActorContext(sql, pc, pc, "grant");
+    const set = await pinCall(good.context, pc, pinFan.pass, PB, pc);
+    check(set.status === "ok" && set.playsWheelId === PB && await storedPin() === PB, "the creator's own grant context sets the link's game and reports what it now plays");
+    const pinned = await prep(pinFan);
+    check(pinned.status === "ready" && pinned.context.wheelId === PB, "prepare serves the link's own game");
+    check((await cancel(pinFan, pinned)).status === "declined", "the unused pinned attempt is cancelled");
+    check((await pinCall(good.context, pc, pinFan.pass, null, pc)).status === "ok" && await storedPin() === "null", "null follows the campaign and live game again");
+    await sql(`update public.fan_passes set is_active=false where id=${quote(pinFan.pass)};`);
+    check((await pinCall(good.context, pc, pinFan.pass, PB, pc)).status === "not_found" && await storedPin() === "null", "an inactive link cannot be given a game");
+    await sql(`update public.fan_passes set is_active=true where id=${quote(pinFan.pass)};`);
+    for (const ctx of [wrongScope, foreign, suspended, good]) await sql(`delete from public.creator_actor_contexts where id=${quote(ctx.context)};`);
+    // A35: the award records the prize's cost in the commit transaction; later
+    // cost edits never rewrite it, and nothing else can write it.
+    const costly = await prizeId(PA, "Common"), free = await prizeId(PA, "Other");
+    await sql(`update public.prizes set cost_cents=250 where id=${quote(costly)};`);
+    const ca = await prep(pinFan);
+    const cr = await commit(pinFan, ca, wheelBody(ca, costly));
+    check(cr.status === "committed", "a credited play commits");
+    const snapshot = id => scalar(`select coalesce(cost_cents_at_award::text,'null') from public.redemptions where spin_id=${quote(id)};`);
+    check(await snapshot(ca.id) === "250", "the redemption records the prize cost at award time");
+    await sql(`update public.prizes set cost_cents=900 where id=${quote(costly)};`);
+    check(await snapshot(ca.id) === "250", "a later cost edit leaves the recorded award cost unchanged");
+    check(await refused(`update public.redemptions set cost_cents_at_award=1 where spin_id=${quote(ca.id)};`, /award cost is immutable/), "the recorded award cost is immutable for every role");
+    check(await refused(`begin;delete from public.redemptions where spin_id=${quote(ca.id)};insert into public.redemptions(spin_id,creator_id,status,cost_cents_at_award) values(${quote(ca.id)},${quote(pc)},'pending',5);commit;`, /recorded only by the award/), "no write outside the award can record a cost");
+    check(await snapshot(ca.id) === "250", "the refused rewrite changed nothing");
+    const cb = await prep(pinFan);
+    check((await commit(pinFan, cb, wheelBody(cb, free))).status === "committed" && await snapshot(cb.id) === "null", "a prize with no cost records none (reports fall back to the current cost)");
+    await invariants(pc, "per-link pin and award cost");
+
     const notes = [...surprises].sort().map(s => `  ${s}: ${SURPRISES[s]}`).join("\n");
     for (const bug of knownBugs) console.log(`KNOWN-BUG ${bug}`);
     const distinctBugs = new Set(knownBugs.map(b => b.split(":")[0]));
     for (const id of distinctBugs) console.log(`KNOWN-BUG ${id} = ${BUGS[id] ?? "see line above"}`);
     console.log(`Surprising-but-intended (needs clear UI):\n${notes}`);
     if (strict && knownBugs.length) throw Error(`interplay strict: ${knownBugs.length} known-bug case(s) still reproduce: ${[...distinctBugs].join(", ")}`);
-    console.log(`PASS interplay ${checks} checks: ${CASES.length} resolution cases, switching, concurrency, cross-tenant, feature flag (${knownBugs.length} known-bug lines${strict ? ", strict" : ""})`);
+    console.log(`PASS interplay ${checks} checks: ${CASES.length} resolution cases, switching, concurrency, cross-tenant, feature flag, per-link pins and award cost (${knownBugs.length} known-bug lines${strict ? ", strict" : ""})`);
   } finally {
     fixture.stdin.end(); await Promise.allSettled([...pending]);
     if (creators.length) await sql(`delete from auth.users where id in(${creators.map(quote).join(",")});`);

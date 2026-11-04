@@ -179,6 +179,8 @@ interface MockPass {
   token: string;
   wheelId: string;
   campaignId: string | null;
+  /** The game this one link is set to play (0065), before its campaign's. */
+  pinnedWheelId?: string | null;
   // Commit-reveal v2: pre-committed seed for the NEXT spin on this link.
   nextServerSeed?: string;
   nextServerSeedHash?: string;
@@ -744,8 +746,10 @@ export function mockResolveWheelId(
   return mockResolveActiveWheelId(now);
 }
 
-/** Model C play resolution: campaign pin, live creator wheel, stored fallback. */
-export function mockResolvedSpinWheelId(pass: { campaignId: string | null; wheelId: string }, now = new Date()): string {
+/** Model C play resolution: link pin (0065), campaign pin, live creator wheel, stored fallback. */
+export function mockResolvedSpinWheelId(pass: { campaignId: string | null; wheelId: string; pinnedWheelId?: string | null }, now = new Date()): string {
+  const linkPinned = pass.pinnedWheelId ? store.wheels.get(pass.pinnedWheelId) : null;
+  if (linkPinned && mockPlayable(linkPinned)) return linkPinned.id;
   const pinnedId = pass.campaignId ? store.campaigns.find(campaign => campaign.id === pass.campaignId)?.pinnedWheelId : null;
   const pinned = pinnedId ? store.wheels.get(pinnedId) : null;
   if (pinned && mockPlayable(pinned)) return pinned.id;
@@ -1034,7 +1038,11 @@ export function mockDeleteWheel(id: string): { ok: true } | { error: string } {
   if (!wheel) return { error: "not_found" };
   const progress=mockBingoEditError(id,null);if(progress)return {error:progress};
   const hasHistory=[...store.fans.values()].some(fan=>fan.wins.some(win=>win.wheelId===id))||[...(mockFocusState().anonymousWins?.values()??[])].some(win=>win.wheelId===id);
-  if(hasHistory)return {error:"has_history"};
+  // delete_wheel (0065): a game a fan link is stored on is archived instead;
+  // deleting it would erase that link and its balance.
+  const storedLink=[...store.fans.values()].some(fan=>fan.passes.some(pass=>pass.wheelId===id));
+  if(hasHistory||storedLink)return {error:"has_history"};
+  for (const fan of store.fans.values()) for (const pass of fan.passes) if (pass.pinnedWheelId === id) pass.pinnedWheelId = null;
   const wasActive = wheel.isActive;
   for (const focus of mockFocusState().focuses.values()) if (focus.wheel_id === id) mockCancelFanFocus(focus.fan_id);
   store.wheels.delete(id);
@@ -1792,7 +1800,13 @@ function mockCreatePassOnce(
   // and top it up, or mint a NEW per-wheel link if they don't have one yet.
   ensurePasses(fan);
   const targetWheel = mockResolveWheelId({ campaignId: campaignId ?? null, wheelId });
-  let pass = fan.passes.find((p) => p.wheelId === targetWheel);
+  // 0065 (_create_pass_grant_core): an automatic top-up lands on the oldest
+  // link set to its own playable game, the game this fan actually plays.
+  const pinnedLink = wheelId ? undefined : fan.passes.find((p) => {
+    const pinned = p.pinnedWheelId ? store.wheels.get(p.pinnedWheelId) : undefined;
+    return !!pinned && mockPlayable(pinned);
+  });
+  let pass = pinnedLink ?? fan.passes.find((p) => p.wheelId === targetWheel);
   let tokenOut: string;
   if (pass) {
     pass.spinsRemaining += add;
@@ -1920,6 +1934,7 @@ export function mockListFans(): FanAccountSummary[] {
       wheelId: p.wheelId,
       wheelTitle: store.wheels.get(p.wheelId)?.title ?? "Wheel",
       campaignId: p.campaignId ?? null,
+      pinnedWheelId: p.pinnedWheelId ?? null,
       campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
       spinsRemaining: p.spinsRemaining,
     }));
@@ -2094,7 +2109,10 @@ export function mockUpdateFanMeta(
 }
 
 export function mockGetOverview(): CreatorOverview {
-  const redemptions = store.redemptions;
+  // The queue's (at, id) keyset order (mockListRedemptionQueue): wins in the
+  // same millisecond must not depend on insertion order, or paging on from
+  // the window's last row skips or repeats them.
+  const redemptions = [...store.redemptions].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
   const revenue = store.grants.reduce((s, g) => s + g.amountCents, 0);
   // Map internal redemptions back to plain RedemptionItem (drop fanId/campaignId).
   const items: RedemptionItem[] = redemptions.slice(0, 200).map((r) => ({
@@ -2986,6 +3004,19 @@ export function mockSetFanBlocked(fanId: string, blocked: boolean): { ok: true }
   if (!fan) return { error: "not_found" };
   fan.blockedAt = blocked ? new Date().toISOString() : null;
   if (blocked) mockCancelFanFocus(fanId);
+  return { ok: true };
+}
+
+/** Demo twin of setFanLinkGame (0065): pin one link to one playable game, or null to follow again. */
+export function mockSetFanLinkGame(fanId: string, token: string, wheelId: string | null): { ok: true } | { error: string } {
+  const fan = store.fans.get(fanId);
+  if (!fan) return { error: "not_found" };
+  ensurePasses(fan);
+  const pass = fan.passes.find((p) => p.token === token);
+  if (!pass) return { error: "not_found" };
+  const pinError = mockCampaignPinError(wheelId);
+  if (pinError) return { error: pinError };
+  pass.pinnedWheelId = wheelId;
   return { ok: true };
 }
 

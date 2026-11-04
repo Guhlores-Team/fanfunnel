@@ -8,11 +8,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolveWheelId } from "./wheels";
+import { resolvePlayingGame, type LiveGameCandidate } from "@/lib/games/liveGame";
 import type { AnyClient } from "./shared";
 interface Row extends Record<string, unknown> { id: string; creator_id: string }
 interface Case {
   id: string; now: string; wheels: Row[]; campaigns: Row[];
-  pass: { creator_id: string; campaign_id: string | null; wheel_id: string };
+  pass: { creator_id: string; campaign_id: string | null; wheel_id: string; pinned_wheel_id?: string | null };
   letters: Record<string, string>;
   result: { issuance: string | null; context: string | null; spin: string | null };
   expected: { issuance: string | null; spin: string | null; bug?: string; surprise?: string };
@@ -36,6 +37,11 @@ async function main() {
     const ts = await resolveWheelId(client(c), c.pass, new Date(c.now));
     const tsLetter = ts ? c.letters[ts] ?? "?" : null;
     assert.equal(tsLetter, c.result.spin, `${c.id}: TS resolveWheelId (${tsLetter}) disagrees with SQL _resolved_spin_wheel (${c.result.spin})`); checks++;
+    // The dashboard's explanation (liveGame.ts, the owner's games only) picks the same game.
+    const games: LiveGameCandidate[] = c.wheels.filter(w => w.creator_id === c.pass.creator_id).map(w => ({ id: w.id, gameKind: w.game_kind as LiveGameCandidate["gameKind"], gameReady: w.game_ready as boolean, isActive: w.is_active as boolean, archivedAt: w.archived_at as string | null, activeFrom: w.active_from as string | null, activeUntil: w.active_until as string | null, createdAt: w.created_at as string }));
+    const campaignPin = (c.campaigns.find(x => x.id === c.pass.campaign_id)?.pinned_wheel_id as string | null | undefined) ?? null;
+    const shown = resolvePlayingGame(games, { linkPinnedWheelId: c.pass.pinned_wheel_id ?? null, pinnedWheelId: campaignPin, storedWheelId: c.pass.wheel_id }, new Date(c.now))?.game.id;
+    assert.equal(shown ? c.letters[shown] ?? "?" : null, c.result.spin, `${c.id}: the dashboard's resolvePlayingGame disagrees with SQL`); checks++;
     assert.equal(c.result.spin, c.expected.spin, `${c.id}: documented spin-time expectation`); checks++;
     assert.equal(c.result.context, c.result.spin, `${c.id}: SQL prepare context agrees with spin-time`); checks++;
     if (c.expected.surprise) surprises.add(c.expected.surprise);

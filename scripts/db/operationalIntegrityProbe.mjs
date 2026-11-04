@@ -96,6 +96,19 @@ export async function probeOperationalIntegrity(db, psql, psqlAsync) {
    const results=await Promise.all([psqlAsync(raceDb,`select 'init:'||(${init()}->>'status');`),psqlAsync(raceDb,`select 'init:'||(${init()}->>'status');`)]);
    checks++;if(results.some(r=>r.status!==0)||results.map(r=>r.stdout.trim()).sort().join('|')!=='init:existing|init:initialized')bad.push(`concurrent first initialization did not serialize (${results.map(r=>`exit ${r.status} ${r.stdout.trim()||'-'} ${(r.stderr||'').split('\n').find(s=>s.includes('ERROR'))||''}`).join(' / ')})`);
    checks++;r=psql(raceDb,['-c',`select count(*) from public.reward_crypto_canary;`],{allowFail:true});if(r.stdout.trim()!=='1')bad.push('first initialization created more than one anchor');
+   // 0065: a queued initializer waits for a slow first one instead of timing
+   // out. The first holds the initializer lock past the 3s lock timeout (set,
+   // before 0065, ahead of that wait), starting the hold only once it has seen
+   // the second queued on the lock; the second must still answer 'existing'.
+   psql(db,['-c',`drop database "${raceDb}" with(force);`],{allowFail:true});made=false;
+   r=psql(db,['-c',`create database "${raceDb}" template "${db}";`],{allowFail:true});if(r.status!==0)throw Error('slow-initializer clone failed');made=true;
+   r=psql(raceDb,['-c',seed],{allowFail:true});if(r.status!==0)throw Error('slow-initializer seed failed');
+   const slowTag=`ops-slow-${randomUUID().slice(0,8)}`;
+   const slow=psqlAsync(raceDb,`begin;set local statement_timeout='20s';select 'init:'||(${init()}->>'status');set local application_name='${slowTag}-held';do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${slowTag}-second' and wait_event_type='Lock'); perform pg_sleep(0.01); end loop; end $$;select pg_sleep(3.2);commit;`);
+   const held=await psqlAsync(raceDb,`do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${slowTag}-held'); perform pg_sleep(0.01); end loop; end $$;select count(*) from pg_stat_activity where application_name='${slowTag}-held';`);
+   if(held.stdout.trim()!=='1')throw Error('slow initializer never held the initializer lock');
+   const queued=await psqlAsync(raceDb,`set application_name='${slowTag}-second';select 'init:'||(${init()}->>'status');`);const slowDone=await slow;
+   checks++;if(slowDone.status!==0||!slowDone.stdout.includes('init:initialized')||queued.status!==0||queued.stdout.trim()!=='init:existing')bad.push(`queued initializer did not wait for a slow first initialization (${[slowDone,queued].map(x=>`exit ${x.status} ${x.stdout.trim().replace(/\n/g,' ')||'-'} ${(x.stderr||'').split('\n').find(t=>t.includes('ERROR'))||''}`).join(' / ')})`);
    // A stock debit in another transaction cannot witness an earlier promise.
    r=psql(raceDb,['-c',`${focus}${reservation}`],{allowFail:true});if(r.status!==0)throw Error('witness seed failed');
    r=psql(raceDb,['-c',`update public.prizes set stock=stock-1 where id='${Z}';select units_taken from public.chase_stock_evidence;`],{allowFail:true});checks++;if(r.status!==0||r.stdout.trim()!=='0')bad.push('cross-transaction debit incorrectly witnessed reservation');

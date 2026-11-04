@@ -37,7 +37,10 @@ and both deletion reservations share serialization before profile row locking;
 no operation locks other admin rows after its target. The 0058 durable account
 gateway acquires the same ordering, retaining restore_allowed, manifests and
 uncertain-dispatch fences. Trusted bootstrap from zero administrators remains
-possible. Refusal leaves all rows unchanged and tells the owner to add/reactivate
+possible: since 0065 it is the single service RPC `bootstrap_first_admin`, which
+takes this same active-admin fence before any profile row, refuses once any admin
+exists, requires the account's own confirmed email and fails closed, so racing
+claims yield exactly one admin (after the route's allow-list and MFA step-up). Refusal leaves all rows unchanged and tells the owner to add/reactivate
 another admin first.
 
 Local tests exercise authenticated RLS, seven-day expiry/reissue, expiry after a

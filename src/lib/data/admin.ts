@@ -47,24 +47,17 @@ export async function claimAdmin(): Promise<{ ok: true } | { error: string }> {
   const email = (user.email ?? "").toLowerCase();
   if (!allow.includes(email)) return { error: "not_allowed" };
 
-  // Service-role write: promote + approve this profile (RLS profiles_update is
-  // admin-only, and the user isn't admin yet — that's the bootstrap chicken/egg).
+  // Service-role call: the bootstrap_first_admin RPC (0065) takes the 0062
+  // active-admin fence, refuses once ANY admin exists ("already_bootstrapped"),
+  // requires this account's own confirmed email, and promotes + approves in
+  // the same transaction, so two racing claims can never both become admin.
+  // RLS profiles_update is admin-only (the bootstrap chicken/egg). Any RPC
+  // error or unknown answer fails closed.
   const svc = createServiceClient();
-
-  // Lock: this bootstrap can ONLY ever create the FIRST admin. Once any admin
-  // exists, it's permanently inert (further admin management goes through the
-  // proper roles system / an existing admin).
-  const { count: adminCount } = await svc
-    .from("profiles")
-    .select("id", { count: "exact", head: true })
-    .eq("role", "admin");
-  if ((adminCount ?? 0) > 0) return { error: "already_bootstrapped" };
-
-  const { error } = await svc
-    .from("profiles")
-    .update({ role: "admin", approval_status: "approved", is_active: true })
-    .eq("id", user.id);
+  const { data: outcome, error } = await svc.rpc("bootstrap_first_admin", { p_user: user.id, p_email: email });
   if (error) return { error: "db_error" };
+  if (outcome === "already_bootstrapped" || outcome === "email_unconfirmed") return { error: outcome };
+  if (outcome !== "ok") return { error: "db_error" };
   await recordAudit({ actorId: user.id, action: "admin.bootstrap", targetType: "profile", targetId: user.id });
   return { ok: true };
 }

@@ -177,7 +177,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
   const [fanRes, creatorRes, linksRead, grantsRead, wishesRead, messagesRead, spinsRead, checkinsRead, outreachRead, reportsRead, reminderRes, refRes, focusRead, attemptsRead, cardsRead, awardsRead] = await Promise.all([
     svc.from("fans").select("display_name, handle, created_at, spins_remaining, spins_granted_total, last_spin_at, referral_code, referred_by_fan_id, acked_at, acked_terms_version, leaderboard_opt_in, break_until").eq("id", fanId).eq("creator_id", creatorId).maybeSingle(),
     svc.from("profiles").select("display_name").eq("id", creatorId).maybeSingle(),
-    readRows(svc, "fan_passes", "id, token, created_at, is_active, self_excluded_at, spins_remaining, spins_granted_total, last_spin_at, wheel:wheels(title)", own),
+    readRows(svc, "fan_passes", "id, token, created_at, is_active, self_excluded_at, spins_remaining, spins_granted_total, last_spin_at, wheel:wheels!fan_passes_wheel_id_fkey(title)", own),
     readRows(svc, "grants", "id, created_at, spins, bonus_spins", own),
     readRows(svc, "wishlists", "id, prize_label, prize_rarity, created_at", own),
     readRows(svc, "messages", "id, body, created_at", [...own, ["sender", "fan"]]),

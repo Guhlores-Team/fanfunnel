@@ -26,6 +26,9 @@
 // And the completeness-gaps probe (0064, gapsProbe.mjs): report review is
 // aal2-admin only and database-stamped; webhooks capped with a server-only
 // secret; the queue/inbox RPCs refuse anon and stay tenant-isolated.
+// And the 0065 hardening probe (hardeningProbe.mjs): archiving/deleting a game
+// never deadlocks a credited play, racing first-admin claims give one admin,
+// the retention cleanup trims only settled history, spin_attempts FKs indexed.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -55,6 +58,7 @@ import { probeTheme } from "./themeProbe.mjs";
 import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.mjs";
 import { probeCryptoNamespace } from "./cryptoNamespaceProbe.mjs";
 import { probeGaps } from "./gapsProbe.mjs";
+import { probeHardening } from "./hardeningProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -905,7 +909,8 @@ function probePrivacy(db) {
   `, [
     "self-last:last_admin", "self-two:ok", "self-creator:ok", "adm-role:creator",
     "spin-kept:null,null", "redemption-kept:1",
-    `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1}`,
+    // 0065 (A11) adds the operational-history counts; this fixture has none to trim.
+    `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "fan_checkins": 0, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1, "fan_import_batches": 0, "spin_attempt_contexts": 0, "declined_spin_attempts": 0, "creator_request_journal": 0, "actor_request_cancellations": 0}`,
     "left:1,2,1",
     "invites-left:new-declined@example.test,old-pending@example.test",
     `errors-left:${"d".repeat(32)},${"e".repeat(32)}`,
@@ -1387,6 +1392,9 @@ try {
     const integrity = await probeOperationalIntegrity(db, psql, psqlAsync);
     if (integrity.bad.length) { failures++; for (const message of integrity.bad) console.log(`FAIL  ${db}: operational integrity: ${message}`); }
     else console.log(`PASS  ${db}: operational integrity: ${integrity.checks} checks`);
+    const hardening = await probeHardening(db, psql, psqlAsync);
+    if (hardening.bad.length) { failures++; for (const message of hardening.bad) console.log(`FAIL  ${db}: 0065 hardening: ${message}`); }
+    else console.log(`PASS  ${db}: 0065 hardening: ${hardening.checks} checks (A44 archive/delete lock order, A17 first-admin race, A11 retention, A12 indexes)`);
     const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
     if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }

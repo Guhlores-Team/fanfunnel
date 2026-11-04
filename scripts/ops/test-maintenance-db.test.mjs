@@ -29,12 +29,20 @@ function asyncSQL(query){return new Promise(resolve=>{const p=spawn(join(bin,'ps
 const setup=`prepare fixture_setup(text) as ${SETUP_SQL}execute fixture_setup(${quote(SECRET)});`;
 const config=`prepare fixture_config(text) as ${CONFIGURATION_SQL}execute fixture_config(${quote(SECRET)});`;
 const parse=p=>JSON.parse(p.stdout.trim().split('\n').at(-1));
+// Observed-wait barriers (scripts/db/storageWorkProbe.mjs pattern): a holder
+// renames itself once its row is held and keeps it until it sees another
+// session blocked behind it (or a gate row appears); only hang guards are timers.
+// pg_stat_activity is frozen per transaction: clear the snapshot each poll.
+const seen=name=>`do $seen$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'); perform pg_sleep(0.01); end loop; end $seen$;`;
+const waitedOn=`do $waited$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity a where a.pid<>pg_backend_pid() and a.wait_event_type='Lock' and pg_backend_pid()=any(pg_blocking_pids(a.pid))); perform pg_sleep(0.01); end loop; end $waited$;`;
+const observedWait="select 'observed-wait:'||exists(select 1 from pg_stat_activity a where a.pid<>pg_backend_pid() and a.wait_event_type='Lock' and pg_backend_pid()=any(pg_blocking_pids(a.pid)));";
+const ready=name=>sql(`${seen(name)}select count(*) from pg_stat_activity where application_name='${name}';`).stdout.trim()==='1';
 const seedRun=`insert into cron.job_run_details(jobid,status,start_time) select jobid,'running',clock_timestamp()-interval '1 second' from cron.job where jobname=${quote(JOB_NAME)};`;
 const transaction=body=>sql(`begin;${body}rollback;`);
 const expect=(label,body,lines)=>{const p=transaction(body);const out=p.stdout.split('\n');check(label,lines.every(line=>out.includes(line)));};
 const denySetup=`do $fixture$begin begin execute ${quote(SETUP_SQL)} using ${quote(SECRET)};raise exception 'unexpected setup acceptance';exception when division_by_zero then null;end;end $fixture$;`;
 try{
- pg('initdb',['-D',data,'-A','trust','-U','postgres','--no-sync']);pg('pg_ctl',['-D',data,'-w','-l',join(root,'pg.log'),'-o',`-p ${port} -k ${root} -c listen_addresses= -c fsync=off`,'start']);
+ pg('initdb',['-D',data,'-A','trust','-U','postgres','--no-sync','-E','UTF8','--locale=C']);pg('pg_ctl',['-D',data,'-w','-l',join(root,'pg.log'),'-o',`-p ${port} -k ${root} -c listen_addresses= -c fsync=off`,'start']);
  sql(`create extension pgcrypto;create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;
  create schema cron;create schema net;create schema vault;
  create table cron.job(jobid bigserial primary key,schedule text not null,command text not null,nodename text not null default 'localhost',nodeport integer not null default 5432,database text not null default current_database(),username text not null default current_user,active boolean not null default true,jobname name, constraint jobname_username_uniq unique(jobname,username));
@@ -74,23 +82,27 @@ try{
  expect('history bounded at eight and ciphertext never changes',`${setup}${seedRun}create temp table baseline as select secret,nonce from vault.secrets where name=${quote(VAULT_NAME)};${Array.from({length:10},()=>CRON_COMMAND).join('\n')}select 'history:'||jsonb_array_length(description::jsonb->'requests') from vault.secrets where name=${quote(VAULT_NAME)};select 'same:'||(s.secret=b.secret and s.nonce=b.nonce) from vault.secrets s cross join baseline b where s.name=${quote(VAULT_NAME)};`,['history:8','same:true']);
  // A noncooperating concurrent writer must never be overwritten, and a
  // newly created Vault record must roll back if the job CAS loses.
- const foreign=asyncSQL(`begin;set local application_name='maintenance_foreign';insert into cron.job(jobname,schedule,command,nodeport)values(${quote(JOB_NAME)},'0 0 * * *','select 99',${port});select pg_sleep(0.5);commit;`);
- let foreignReady=false;for(let n=0;n<40;n++){if(sql("select count(*) from pg_stat_activity where application_name='maintenance_foreign' and wait_event='PgSleep';").stdout.trim()==='1'){foreignReady=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}check('foreign job race barrier is real',foreignReady);
- const lost=await asyncSQL(setup);const wrote=await foreign;check('racing foreign job wins without overwrite',wrote.status===0&&lost.status!==0&&sql(`select command from cron.job where jobname=${quote(JOB_NAME)};`).stdout.trim()==='select 99');
+ const foreign=asyncSQL(`begin;set local statement_timeout='20s';insert into cron.job(jobname,schedule,command,nodeport)values(${quote(JOB_NAME)},'0 0 * * *','select 99',${port});set local application_name='maintenance_foreign';${waitedOn}${observedWait}commit;`);
+ check('foreign job race barrier is real',ready('maintenance_foreign'));
+ const lost=await asyncSQL(setup);const wrote=await foreign;check('the setup really waited on the uncommitted foreign job',wrote.stdout.includes('observed-wait:true'));
+ check('racing foreign job wins without overwrite',wrote.status===0&&lost.status!==0&&sql(`select command from cron.job where jobname=${quote(JOB_NAME)};`).stdout.trim()==='select 99');
  check('losing setup rolls back its new Vault record',sql(`select count(*) from vault.secrets where name=${quote(VAULT_NAME)};`).stdout.trim()==='0');
  sql(`delete from cron.job where jobname=${quote(JOB_NAME)};`);
  // Real concurrent sessions contend on the view's underlying owned Vault row.
  sql(`${setup}${seedRun}`);const fingerprint=sql(`select encode(sha256(convert_to(secret,'UTF8')),'hex')||encode(nonce,'hex') from vault.secrets where name=${quote(VAULT_NAME)};`).stdout.trim();
- const first=asyncSQL(`begin;set local application_name='maintenance_first';${CRON_COMMAND}select pg_sleep(0.6);commit;`);
- let barrier=false;for(let n=0;n<40;n++){if(sql("select count(*) from pg_stat_activity where application_name='maintenance_first' and wait_event='PgSleep';").stdout.trim()==='1'){barrier=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}check('first enqueue holds a real uncommitted Vault row lock',barrier);
+ const first=asyncSQL(`begin;set local statement_timeout='20s';${CRON_COMMAND}set local application_name='maintenance_first';${waitedOn}${observedWait}commit;`);
+ check('first enqueue holds a real uncommitted Vault row lock',ready('maintenance_first'));
  const second=asyncSQL(`begin;set local application_name='maintenance_second';${CRON_COMMAND}commit;`);
- let blocked=false;for(let n=0;n<40;n++){if(sql("select count(*) from pg_stat_activity where application_name='maintenance_second' and wait_event_type='Lock';").stdout.trim()==='1'){blocked=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}check('second enqueue really waits for the same owned Vault row',blocked);
- const results=await Promise.all([first,second]);check('concurrent enqueues both commit without lost witnesses',results.every(result=>result.status===0));
+ const results=await Promise.all([first,second]);check('second enqueue really waits for the same owned Vault row',results[0].stdout.includes('observed-wait:true'));
+ check('concurrent enqueues both commit without lost witnesses',results.every(result=>result.status===0));
  check('two concurrent witnesses persisted',sql(`select jsonb_array_length(description::jsonb->'requests') from vault.secrets where name=${quote(VAULT_NAME)};`).stdout.trim()==='2');
  check('concurrent metadata writes preserve cipher and nonce',sql(`select encode(sha256(convert_to(secret,'UTF8')),'hex')||encode(nonce,'hex') from vault.secrets where name=${quote(VAULT_NAME)};`).stdout.trim()===fingerprint);
- const hold=asyncSQL(`begin;set local application_name='maintenance_status_hold';${CRON_COMMAND}select pg_sleep(0.4);commit;`);
- barrier=false;for(let n=0;n<40;n++){if(sql("select count(*) from pg_stat_activity where application_name='maintenance_status_hold' and wait_event='PgSleep';").stdout.trim()==='1'){barrier=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}check('status barrier reached after an uncommitted enqueue',barrier);
- const during=parse(sql(STATUS_SQL));const done=await hold;check('status sees committed metadata while enqueue is in flight',done.status===0&&during.requests.length===2&&parse(sql(STATUS_SQL)).requests.length===3);
+ // The status read happens while the enqueue is uncommitted; a gate row (not a
+ // sleep window) releases the holder once that read has returned.
+ sql('create schema if not exists fixture_gate;create table if not exists fixture_gate.open(id text primary key);');
+ const hold=asyncSQL(`begin;set local statement_timeout='20s';${CRON_COMMAND}set local application_name='maintenance_status_hold';do $gate$ begin for i in 1..1500 loop exit when exists(select 1 from fixture_gate.open where id='status'); perform pg_sleep(0.01); end loop; end $gate$;commit;`);
+ check('status barrier reached after an uncommitted enqueue',ready('maintenance_status_hold'));
+ const during=parse(sql(STATUS_SQL));sql("insert into fixture_gate.open(id) values('status');");const done=await hold;check('status sees committed metadata while enqueue is in flight',done.status===0&&during.requests.length===2&&parse(sql(STATUS_SQL)).requests.length===3);
  sql(`update cron.job_run_details set status='succeeded',end_time=clock_timestamp() where status='running';insert into net._http_response(id,status_code,content,timed_out,error_msg) select id,401,'{"private":"must_never_appear"}',false,'redacted_transport_detail' from net.http_request_queue;`);
  const failedRaw=parse(sql(STATUS_SQL));const preview={deploymentCreatedAt:0,aliasAssignedAt:0};const failed=summarizeStatus(failedRaw,preview);check('HTTP failures do not become successful scheduled execution',!failed.scheduledExecutionVerified&&!failed.requests[0].applicationCompletionVerified);
  check('status SQL never returns private HTTP bodies or errors',!JSON.stringify(failedRaw).includes('must_never_appear')&&!JSON.stringify(failedRaw).includes('redacted_transport_detail'));

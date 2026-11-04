@@ -23,14 +23,20 @@ prizes sharing a name remain separate ROI rows, and renaming a prize does not
 reassign its wins. Deleted/NULL, unresolved or out-of-scope prize references
 remain unknown rather than borrowing a surviving same-name prize's cost.
 
-No immutable cost-at-award snapshot is stored. These reports explicitly expose
-`costBasis:"current_prize_cost"` and `historicalCostsKnown:false`; changing a
-current prize cost changes the estimate. `costsComplete` means every included
-award has a known current-cost estimate, not that historical realized profit is
-known. With unknown costs, the returned known-cost arithmetic gives a lower-bound
-cost and upper-bound profit; the UI hides complete cost/profit/margin estimates.
-A future historical-cost feature needs a private,
-transactionally captured record; creator costs must not enter public fairness
+Since migration 0065 (A35) each award records its prize's cost in the commit
+transaction (`redemptions.cost_cents_at_award`, primary plays and Bingo line
+bonuses alike). A trigger makes it immutable and refuses any write outside the
+award, so editing a prize's Cost later never rewrites past wins. ROI and profit
+use the recorded cost for an award that has one and fall back to the prize's
+current cost for awards from before 0065 (or with no cost set when won). The
+reports expose which was used: `costBasis:"award_cost"` with
+`historicalCostsKnown:true` when every included award recorded its cost,
+`"current_prize_cost"` when none did, and `"mixed"` otherwise; the dashboard
+words its hint to match. `costsComplete` means every included award has a
+recorded or known current cost. With unknown costs, the returned known-cost
+arithmetic gives a lower-bound cost and upper-bound profit; the UI hides
+complete cost/profit/margin estimates. The recorded cost is creator-private
+(creator RLS, never in fan exports) and never enters public fairness
 snapshots.
 
 The cutoff prevents later inserts shifting the history read. It is not a

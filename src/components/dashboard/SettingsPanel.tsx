@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useToast } from "@/components/ui/Toast";
 import { useClipboard } from "@/lib/hooks/useClipboard";
@@ -764,6 +764,10 @@ function NotificationsCard({
 // Public page (SFW link-in-bio) — slug / tagline / tip / note + brand color,
 // with a live preview of the public /c/[slug] page.
 // ---------------------------------------------------------------------------
+const noSubscribe = () => () => {};
+const browserOrigin = () => window.location.origin;
+const serverOrigin = () => "";
+
 function PublicPageSection({
   profile,
   savedProfile,
@@ -788,7 +792,10 @@ function PublicPageSection({
   const [savedBrand, setSavedBrand] = useState("#ec4899");
   const [busy, setBusy] = useState(false);
   const [savingBrand, setSavingBrand] = useState(false);
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  // The server snapshot ("") is used while hydrating, then the real origin:
+  // reading window during render made the server and client text differ, so
+  // React discarded the server-rendered Settings panel and re-created it.
+  const origin = useSyncExternalStore(noSubscribe, browserOrigin, serverOrigin);
   const { slug, tipUrl, tagline, note, avatarUrl } = profile;
   const linkDirty =
     slug !== savedProfile.slug ||

@@ -98,7 +98,8 @@ export async function PATCH(
 }
 
 // Archive a wheel — or permanently delete it with `?hard=1` (only allowed when
-// the wheel has no spin history; otherwise returns 409 has_history).
+// the wheel has no spin history and no fan link stored on it; otherwise
+// returns 409 has_history).
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }

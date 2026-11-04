@@ -268,6 +268,15 @@ async function main() {
     check((upd.data?.length ?? 0) === 0, "A cannot UPDATE B's fan");
     const del = await a.from("wheels").delete().eq("id", B.wheelId).select("id");
     check((del.data?.length ?? 0) === 0, "A cannot DELETE B's wheel");
+    // 0065: the lifecycle RPCs answer not_found for another creator's game.
+    check((await a.rpc("archive_wheel", { p_wheel: B.wheelId })).data === "not_found", "A cannot archive B's wheel through archive_wheel");
+    check((await a.rpc("delete_wheel", { p_wheel: B.wheelId })).data === "not_found", "A cannot delete B's wheel through delete_wheel");
+    // 0065: a link's own game is written only through set_fan_pass_game, even on
+    // A's own link, and no session can delete a redemption (its award cost).
+    const pinPatch = await a.from("fan_passes").update({ pinned_wheel_id: A.wheelId }).eq("id", A.passId).select("id");
+    check(pinPatch.error?.code === "42501", `A cannot PATCH its own link's game past set_fan_pass_game (${pinPatch.error?.code ?? "accepted"})`);
+    const redemptionDelete = await a.from("redemptions").delete().eq("creator_id", A.id).select("id");
+    check(redemptionDelete.error?.code === "42501", `A cannot delete its own redemptions (${redemptionDelete.error?.code ?? "accepted"})`);
     // Confirm with the service role that B's rows really are untouched.
     const { data: bFanAfter } = await admin.from("fans").select("display_name").eq("id", B.fanId).maybeSingle();
     check(bFanAfter?.display_name === B.fanName, `B's fan is unchanged (got ${bFanAfter?.display_name})`);
@@ -381,6 +390,9 @@ async function main() {
       ["award_fan_referral",{p_creator:B.id,p_fan:B.fanId}],["ensure_pass_commitment",{p_token:B.token}],
       ["import_fans_durable",{p_batch:randomUUID(),p_creator:B.id,p_request_hash:sha("denial"),p_rows:[]}],
       ["reconcile_creator_request",{p_request:B.requestId,p_creator:B.id,p_actor:B.id,p_kind:"pass",p_cancel:false,p_authorized:true}],
+      // 0065: the atomic first-admin bootstrap and the per-link game pin are service-only.
+      ["bootstrap_first_admin",{p_user:A.id,p_email:"a@example.test"}],
+      ["set_fan_pass_game",{p_context:randomUUID(),p_creator:B.id,p_pass:B.passId,p_wheel:B.wheelId,p_actor:A.id}],
     ]) {
       check((await a.rpc(fn,args)).error?.code==="42501",`authenticated cannot execute ${fn}`);
       check((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc(fn,args)).error?.code==="42501",`anon cannot execute ${fn}`);

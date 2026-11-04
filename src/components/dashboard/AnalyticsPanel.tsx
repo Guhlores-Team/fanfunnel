@@ -1,6 +1,6 @@
 "use client";
 
-import type { CohortRow, EngagementHeatmap, PrizeRoiRow } from "@/lib/data/types";
+import type { CohortRow, CostBasis, EngagementHeatmap, PrizeRoiRow } from "@/lib/data/types";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { formatCents } from "@/lib/format";
 import { useFetch } from "@/lib/hooks/useFetch";
@@ -155,8 +155,15 @@ interface ProfitSummary {
   profitCents: number;
   marginPct: number;
   costsComplete: boolean;
-  costBasis?: "current_prize_cost";
-  historicalCostsKnown?: false;
+  costBasis?: CostBasis;
+  historicalCostsKnown?: boolean;
+}
+
+/** How the costs were worked out, in the creator's words (A35, 0065). */
+function costBasisText(basis: CostBasis | undefined): { title: string; hint: string } {
+  if (basis === "award_cost") return { title: "cost when won", hint: "Costs and profit use each prize's Cost as it was when the fan won it, so editing a Cost later doesn't change past wins." };
+  if (basis === "mixed") return { title: "estimates", hint: "Costs and profit use each prize's Cost as it was when the fan won it. Wins from before costs were recorded use the prize's current Cost setting instead, so changing that setting updates those estimates." };
+  return { title: "current estimates", hint: "Costs and profit are estimates using each awarded prize's current Cost setting. Changing that setting updates these estimates for past wins; historical costs at the time of each win were not recorded." };
 }
 
 function ProfitSection() {
@@ -164,18 +171,19 @@ function ProfitSection() {
   const prof = useFetch<{ summary: ProfitSummary | null }>("/api/analytics/profit?days=90", ONCE);
   const rows = roi.data?.rows ?? [];
   const profit = prof.data?.summary ?? null;
+  const basis = costBasisText(profit?.costBasis);
+  // A total is known when the prize has a current Cost or every win in the row recorded its own.
+  const totalKnown = (r: PrizeRoiRow) => r.costCents !== null || r.historicalCostsKnown === true;
 
   return (
     <section aria-labelledby="an-profit">
       <TickHeader
         id="an-profit"
-        title="Profit & prize costs · current estimates · 90 days"
+        title={`Profit & prize costs · ${basis.title} · 90 days`}
         hint={
           <>
-            Revenue is what fans paid. Costs and profit are estimates using each awarded
-            prize&apos;s current Cost setting. Changing that setting updates these estimates for
-            past wins; historical costs at the time of each win were not recorded. Line bonuses
-            are included. The table shows estimated prize costs as a share of revenue.
+            Revenue is what fans paid. {basis.hint} Line bonuses are included. The table shows
+            prize costs as a share of revenue.
           </>
         }
       />
@@ -206,9 +214,9 @@ function ProfitSection() {
               <p className="mt-2.5 flex items-start gap-2 rounded-xl border border-[#f59e0b]/25 bg-[#f59e0b]/10 px-3.5 py-2.5 text-xs text-[#fcd34d]">
                 <Glyph d={ICON.alert} size={15} className="mt-px" />
                 <span>
-                  Some awards no longer resolve to a current prize or have no Cost set, so a complete
-                  cost and profit estimate is unavailable. Setting current costs improves the estimate;
-                  it does not reconstruct historical costs.
+                  Some awards recorded no cost and no longer resolve to a current prize or have no Cost
+                  set, so a complete cost and profit estimate is unavailable. Setting current costs
+                  improves the estimate; it does not reconstruct historical costs.
                 </span>
               </p>
             )}
@@ -218,7 +226,7 @@ function ProfitSection() {
 
       <section className={`mt-[18px] rounded-2xl ${raised}`}>
         <div className="p-5 pb-4">
-          <CardHeader icon={ICON.gift} title="Prize cost estimates" hint="Current unit costs applied to awarded primary and line-bonus prizes; historical costs are unknown." />
+          <CardHeader icon={ICON.gift} title="Prize cost estimates" hint={rows.some((r) => r.costBasis === "award_cost" || r.costBasis === "mixed") ? "Totals use each win's Cost as it was when won where recorded, and the current unit cost for older wins; primary and line-bonus prizes." : "Current unit costs applied to awarded primary and line-bonus prizes; historical costs are unknown."} />
         </div>
         {roi.error && !roi.data ? (
           <div className="px-5 pb-5">
@@ -264,10 +272,10 @@ function ProfitSection() {
                       {r.costCents === null ? "—" : formatCents(r.costCents)}
                     </td>
                     <td className={`tnum ${td} text-right font-semibold text-ink`}>
-                      {r.costCents === null ? "—" : formatCents(r.totalCostCents)}
+                      {totalKnown(r) ? formatCents(r.totalCostCents) : "—"}
                     </td>
                     <td className={`tnum ${td} text-right text-muted`}>
-                      {r.costCents === null ? "—" : shareOfRevenue(r.totalCostCents, profit?.revenueCents)}
+                      {totalKnown(r) ? shareOfRevenue(r.totalCostCents, profit?.revenueCents) : "—"}
                     </td>
                   </tr>
                 ))}
