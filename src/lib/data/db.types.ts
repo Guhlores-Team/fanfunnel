@@ -3064,6 +3064,7 @@ export type Database = {
         Args: { p_creator: string; p_kind: string }
         Returns: boolean
       }
+      _game_has_min_prizes: { Args: { p_wheel: string }; Returns: boolean }
       _grant_focus_pack_core: {
         Args: {
           p_creator: string
@@ -3267,6 +3268,22 @@ export type Database = {
             }
             Returns: Json
           }
+      creator_inbox_threads: {
+        Args: {
+          p_before_at?: string
+          p_before_fan?: string
+          p_creator?: string
+          p_limit?: number
+        }
+        Returns: {
+          fan_id: string
+          fan_name: string
+          last_at: string
+          last_body: string
+          last_sender: Database["public"]["Enums"]["message_sender"]
+          unread: number
+        }[]
+      }
       creator_link_pass: {
         Args: { p_token: string }
         Returns: {
@@ -3283,22 +3300,6 @@ export type Database = {
           fan_id: string
           pass_id: string
           token: string
-        }[]
-      }
-      creator_inbox_threads: {
-        Args: {
-          p_before_at?: string
-          p_before_fan?: string
-          p_creator?: string
-          p_limit?: number
-        }
-        Returns: {
-          fan_id: string
-          fan_name: string
-          last_at: string
-          last_body: string
-          last_sender: Database["public"]["Enums"]["message_sender"]
-          unread: number
         }[]
       }
       creator_redemption_queue: {
@@ -3743,7 +3744,6 @@ export type Database = {
       }
       set_creator_theme: { Args: { p_theme: Json }; Returns: Json }
       set_display_name: { Args: { p_name: string }; Returns: undefined }
-      wipe_my_spin_attempts: { Args: never; Returns: number }
       set_fan_pass_game: {
         Args: {
           p_actor?: string
@@ -3792,6 +3792,7 @@ export type Database = {
         Returns: Json
       }
     }
+      wipe_my_spin_attempts: { Args: never; Returns: number }
     Enums: {
       app_role: "admin" | "creator"
       creator_approval: "pending" | "approved" | "rejected"
