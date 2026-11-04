@@ -108,6 +108,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   useEffect(() => {
     shownPoolHash.current = odds?.poolHash;
   }, [odds]);
+  // The hash on screen when SPIN was tapped: a focus poll that lands while the
+  // spin is in flight must not become the baseline (null: no tap pending).
+  const tapPoolHash = useRef<string | undefined | null>(null);
   const [oddsChanged, setOddsChanged] = useState(false);
   // A33 (RM-2): "You got 1 of the last N!" for a low-stock win.
   const [wonScarcity, setWonScarcity] = useState<string | null>(null);
@@ -256,7 +259,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     const game = readCommittedGame(data, passGameKind ?? "wheel");
     if (!game) throw new Error("Unconfirmed game outcome");
     focusRevision.current++;
-    const changed = options.present && !options.recovered && oddsChangedSinceShown(shownPoolHash.current, data.poolHash);
+    const baseline = tapPoolHash.current !== null ? tapPoolHash.current : shownPoolHash.current;
+    tapPoolHash.current = null;
+    const changed = options.present && !options.recovered && oddsChangedSinceShown(baseline, data.poolHash);
     shownPoolHash.current = data.odds?.poolHash;
     setSpinsRemaining(data.spinsRemaining);
     setFocus(data.focus ?? null);
@@ -299,6 +304,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     }, SPIN_WATCHDOG_MS) : null;
   }, [sessionSpins, router, passGameKind, cardSource]);
   const onRefusal = useCallback((code: unknown) => {
+    tapPoolHash.current = null;
     const info = spinErrorInfo(code);
     if (info.reopenAgeGate) setNeedsAck(true);
     if (info.refreshPlay) router.refresh();
@@ -316,6 +322,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     if (!muted) { unlockAudio(); haptic(12); }
     setError(null);
     setWonReward(null);
+    tapPoolHash.current = shownPoolHash.current;
+    // Drop any focus poll already in flight: the spin response brings the odds.
+    focusRevision.current++;
     await recovery.begin(clientSeed, nextSpinHash);
   }, [canSpin, recovery, muted, clientSeed, nextSpinHash, canPresentGame]);
 

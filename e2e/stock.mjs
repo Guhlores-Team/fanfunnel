@@ -224,7 +224,7 @@ export async function stockJourney(page, { step, assert }, ctx) {
       await clearForcedRarity(page);
       const w = await getWheel(ctx.request);
       await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, stock: 3 } : p)) });
-      oddsToken = await createRevealFan(ctx.request, "Odds Fan", 4);
+      oddsToken = await createRevealFan(ctx.request, "Odds Fan", 4); // 1 (A33) + 2 + 1 (A32)
       await goto(page, `/spin/${oddsToken}`, 1600);
       const body = await spinForCard(page);
       assert(body.prize?.id === epic.id && body.stock?.[epic.id]?.stock === 2, `the epic was won with 2 left after it (${JSON.stringify(body.stock)})`);
@@ -250,6 +250,35 @@ export async function stockJourney(page, { step, assert }, ctx) {
       // Nothing changes before the next spin: the page now holds the new odds.
       await spinForCard(page);
       assert((await page.getByTestId("odds-updated").count()) === 0, "the next spin on unchanged odds shows no notice");
+      await closeCard(page);
+    });
+
+    await step("fairness: a focus poll that lands mid-spin doesn't hide 'Odds were updated' (A32)", async () => {
+      assert(oddsToken, "the A33 step created the fan");
+      await goto(page, `/spin/${oddsToken}`, 1600);
+      const w = await getWheel(ctx.request);
+      // The creator restocks and re-weights the epic while the page is open.
+      await putWheel(ctx.request, { ...w, prizes: w.prizes.map((p) => (p.id === epic.id ? { ...p, stock: 5, weight: 40 } : p)) });
+      // Hold the spin response until the page's own focus poll (visibility
+      // change) has fetched the new odds, so the poll lands mid-spin.
+      let polled = false;
+      await page.route("**/api/spin", async (route) => {
+        const res = await route.fetch();
+        const focus = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/fan/focus", { timeout: 5000 });
+        await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+        polled = (await focus.catch(() => null))?.ok() === true;
+        await new Promise((r) => setTimeout(r, 200));
+        await route.fulfill({ response: res });
+      });
+      try {
+        await spinForCard(page);
+      } finally {
+        await page.unroute("**/api/spin").catch(() => {});
+      }
+      assert(polled, "the focus poll ran while the spin was in flight");
+      const note = page.getByTestId("odds-updated");
+      await note.waitFor({ timeout: 4000 });
+      assert(/Odds were updated since you opened this page/.test(await note.innerText()), "the notice compares with the odds on screen at the tap");
       await closeCard(page);
     });
   } finally {
