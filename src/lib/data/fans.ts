@@ -551,8 +551,9 @@ export async function setFanLinkGame(
   token: string,
   wheelId: string | null
 ): Promise<{ ok: true } | { error: string }> {
-  if (wheelId !== null && !isUuid(wheelId)) return { error: "not_found" };
+  // The demo store checks its own ids (they are not UUIDs).
   if (!isSupabaseConfigured()) return mockSetFanLinkGame(fanId, token, wheelId);
+  if (wheelId !== null && !isUuid(wheelId)) return { error: "not_found" };
   if (!isUuid(fanId) || typeof token !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(token)) return { error: "not_found" };
   const sb = await createClient();
   const { data: { user }, error: authError } = await sb.auth.getUser();
