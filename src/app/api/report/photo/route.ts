@@ -28,11 +28,15 @@ export async function POST(req: Request) {
     return badRequest();
   }
 
-  // Many visitors can't flood one creator's queue (or the urgent alert).
-  const pageLimited = await rateLimitOr429("report-photo-page:" + slug.toLowerCase(), PHOTO_REPORTS_PER_PAGE, 60 * 60_000);
-  if (pageLimited) return pageLimited;
-
-  const result = await reportPublicPhoto(slug, mediaId, typeof note === "string" ? note : null);
+  // Many visitors can't flood one creator's queue (or the urgent alert). Only
+  // a report on a real photo of a real page counts, keyed by its creator, so
+  // junk requests can't use up the budget and block genuine reports.
+  const page: { limited: NextResponse | null } = { limited: null };
+  const result = await reportPublicPhoto(slug, mediaId, typeof note === "string" ? note : null, async (creatorId) => {
+    page.limited = await rateLimitOr429("report-photo-page:" + creatorId, PHOTO_REPORTS_PER_PAGE, 60 * 60_000);
+    return page.limited === null;
+  });
+  if (page.limited) return page.limited;
   if ("error" in result) return errorResponse(result.error);
   runAfterResponse(() => alertUrgentReport({ reason: PHOTO_REPORT_REASON, at: new Date().toISOString() }));
   return NextResponse.json({ ok: true });

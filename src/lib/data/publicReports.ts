@@ -20,10 +20,16 @@ function reportDetail(slug: string, mediaId: string, note: string | null): strin
   return note ? `${where}\n\nVisitor note: ${note}` : where;
 }
 
+/**
+ * `admit` runs once the page and photo are known to be real, with the page's
+ * creator id, and returns false to refuse (rate limit) before anything is
+ * stored: so refused or junk requests never use up a page's report budget.
+ */
 export async function reportPublicPhoto(
   slug: string,
   mediaId: string,
   note?: string | null,
+  admit: (creatorId: string) => Promise<boolean> = async () => true,
 ): Promise<{ ok: true } | { error: string }> {
   const cleanNote = note?.trim() ? note.trim().slice(0, PUBLIC_PHOTO_NOTE_MAX) : null;
   if (!PHOTO_HUB_ENABLED) return { error: "not_found" };
@@ -31,6 +37,7 @@ export async function reportPublicPhoto(
   if (!isSupabaseConfigured()) {
     // The demo has one creator; any slug renders it, as getPublicProfileBySlug does.
     if (!mockGetMedia(mediaId)) return { error: "not_found" };
+    if (!(await admit(MOCK_REPORTED_CREATOR))) return { error: "rate_limited" };
     addMockReport({
       creatorId: MOCK_REPORTED_CREATOR,
       fanId: null,
@@ -60,6 +67,7 @@ export async function reportPublicPhoto(
     .maybeSingle();
   if (mediaError) return { error: "db_error" };
   if (!media) return { error: "not_found" };
+  if (!(await admit(creatorId))) return { error: "rate_limited" };
 
   const { error } = await sb.from("creator_reports").insert({
     creator_id: creatorId,

@@ -77,6 +77,18 @@ async function main() {
   for (let i = 0; i < PHOTO_REPORTS_PER_IP + 1; i++) last = (await post({ slug: "bella", mediaId: PHOTO }, "192.0.2.50")).status;
   check(`report ${PHOTO_REPORTS_PER_IP + 1} from one visitor in 10 minutes is 429`, last === 429);
 
+  // Junk can't use up a page's budget: refused requests from many visitors
+  // (an unknown photo, another creator's photo) leave genuine reports working.
+  db.seed("profiles", { id: "e1000000-0000-4000-8000-000000000007", public_slug: "junked" });
+  db.seed("creator_media", { id: "f1000000-0000-4000-8000-000000000008", creator_id: "e1000000-0000-4000-8000-000000000007" });
+  const junk: number[] = [];
+  for (let i = 0; i < PHOTO_REPORTS_PER_PAGE + 5; i++) {
+    junk.push((await post({ slug: "junked", mediaId: i % 2 ? FOREIGN_PHOTO : "f1000000-0000-4000-8000-0000000000ff" }, `10.8.${i}.1`)).status);
+  }
+  check("junk reports on a page are refused (404)", junk.every((s) => s === 404));
+  res = await post({ slug: "junked", mediaId: "f1000000-0000-4000-8000-000000000008" }, "10.8.250.1");
+  check("after a flood of junk, a genuine report on that page still goes through", res.status === 200);
+
   // Per-page limit: many visitors cannot flood one creator's queue.
   db.seed("profiles", { id: "e0000000-0000-4000-8000-000000000005", public_slug: "flooded" });
   db.seed("creator_media", { id: "f0000000-0000-4000-8000-000000000006", creator_id: "e0000000-0000-4000-8000-000000000005" });
