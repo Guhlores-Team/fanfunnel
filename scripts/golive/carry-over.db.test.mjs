@@ -93,10 +93,9 @@ insert into public.wheels (id, creator_id, title, brand_color, is_active, game_k
   ('${WX}', '${SA}', 'Old', '#444444', false, 'wheel', '{}', true),
   ('${WBOB}', '${SB}', 'Bob scratch', '#555555', true, 'scratch', '{"style":"classic"}', true),
   ('${WDAN}', '${SD}', 'Dan wheel', '#666666', true, 'wheel', '{}', true);
-update public.wheels set archived_at = now() where id = '${WX}';
 insert into public.prizes (id, wheel_id, label, rarity, weight, stock, delivery) values
   ${prize(0, W)}, ${prize(1, W, "'rare', 1, null, 'link'")}, ${prize(2, W, "'epic', 1, null, 'codes'")}, ${prize(3, W, "'common', 2, 5, 'text'")},
-  ${prize(4, WS)}, ${prize(5, WX)}, ${prize(6, WBOB)}, ${prize(7, WDAN)},
+  ${prize(4, WS)}, ${prize(5, WX)}, ${prize(8, WX)}, ${prize(6, WBOB)}, ${prize(7, WDAN)},
   ${Array.from({ length: 9 }, (_, i) => prize(20 + i, WB, i === 0 ? "'rare', 1, null, 'manual'" : "'common', 1, null, 'manual'")).join(", ")};
 update public.prizes set image_url = '${TEST_HOST}/prizes/p0.webp', cost_cents = 250, boostable = true where id = '${u(100)}';
 update public.wheels set game_config = '{"size":3,"linePrizeId":"${u(120)}"}', game_ready = true where id = '${WB}';
@@ -106,6 +105,8 @@ update public.prizes set label = label where id = '${u(102)}';
 insert into public.fans (id, creator_id, handle) values ('${u(70)}', '${SA}', 'fan1'), ('${u(71)}', '${SA}', 'fan2');
 insert into public.fan_passes (token, creator_id, wheel_id, fan_id) values ('tok-carry-1', '${SA}', '${W}', '${u(70)}');
 insert into public.campaigns (id, creator_id, name, pinned_wheel_id) values ('${u(30)}', '${SA}', 'Launch', '${W}'), ('${u(31)}', '${SA}', 'Pinned old', '${WX}');
+-- Pinned while playable (two prizes), archived afterwards: 0069 refuses a pin to an archived game at write time.
+update public.wheels set archived_at = now() where id = '${WX}';
 insert into public.campaign_packs (id, creator_id, campaign_id, label, spins, amount_cents, bonus_spins, sort_order, pack_kind) values
   ('${u(40)}', '${SA}', '${u(30)}', '5 plays', 5, 500, 1, 0, 'spins'), ('${u(41)}', '${SA}', null, 'Focus', 0, 900, 0, 1, 'focus');
 insert into public.prize_templates (id, creator_id, label, rarity, weight) values ('${u(50)}', '${SA}', 'Tpl prize', 'rare', 3);
