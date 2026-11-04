@@ -33,10 +33,27 @@ export function localVersions(files) {
   return versions.sort();
 }
 
+// The CLI builds a markdown table (`|Local|Remote|Time (UTC)|`, cells wrapped in
+// backticks, an absent cell as "` `") and renders it with glamour's ASCII style:
+// no outer border, cells joined by `|` and a dash separator line (CLI 2.122.0,
+// apps/cli/src/output/glamour-table.ts). Older glamour builds draw the same
+// table with box characters (`│`, `─`, `┼`) and some upper-case the header, so
+// both are accepted; anything else with a column separator fails closed.
+const COLUMN = /[|│]/;
+const SEPARATOR_CELL = /^[-+:─┼]*$/;
+
+/** One cell: trimmed, with one pair of surrounding backticks removed. @param {string} c */
+const cell = (c) => {
+  const s = c.trim();
+  const m = /^`(.*)`$/s.exec(s);
+  return (m ? m[1] : s).trim();
+};
+
 /**
  * Parse `supabase migration list` table output into {local, remote} rows.
  * Header and separator lines are recognised and skipped; any other line with a
- * `|` must have at least two cells, each empty or a bare version number.
+ * column separator must have at least two cells, each empty or a bare version
+ * number, and at least one of them non-empty.
  * @param {string} text
  */
 export function parseMigrationList(text) {
@@ -44,13 +61,17 @@ export function parseMigrationList(text) {
   const rows = [];
   let sawHeader = false;
   for (const raw of String(text).split(/\r?\n/)) {
-    if (!raw.includes("|")) continue;
-    const cells = raw.split("|").map((c) => c.trim());
+    if (!COLUMN.test(raw)) continue;
+    let cells = raw.split(COLUMN).map(cell);
+    // A bordered table (`| a | b |`) yields empty outer cells; drop them.
+    if (COLUMN.test(raw.trim()[0] ?? "") && cells.length > 2 && cells[0] === "" && cells.at(-1) === "") {
+      cells = cells.slice(1, -1);
+    }
     if (/^local$/i.test(cells[0] ?? "") && /^remote$/i.test(cells[1] ?? "")) {
       sawHeader = true;
       continue;
     }
-    if (cells.every((c) => /^-*$/.test(c))) continue;
+    if (cells.every((c) => SEPARATOR_CELL.test(c))) continue;
     if (!sawHeader) throw new Error("MIGRATION_LIST_UNPARSEABLE: table row before the Local | Remote header");
     const [local, remote] = cells;
     if (!/^\d*$/.test(local ?? "x") || !/^\d*$/.test(remote ?? "x") || (!local && !remote)) {

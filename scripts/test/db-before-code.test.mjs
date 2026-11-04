@@ -30,17 +30,33 @@ const FILES = readdirSync(new URL("../../supabase/migrations/", import.meta.url)
 const VERSIONS = localVersions(FILES);
 const CHECK_NAME = "db-migrations-production";
 
-// The table layout `supabase migration list` prints, with its progress line.
-const listing = (rows) =>
-  [
+// What `supabase migration list` prints. The CLI (2.122.0, the version the
+// workflow pins) builds a markdown table with every cell in backticks and an
+// absent cell as "` `", then renders it with glamour's ASCII style: a blank
+// line, a two-space line, the header, a dash separator and the rows, joined by
+// `|` with no outer border (apps/cli/src/output/glamour-table.ts). The progress
+// line is on stderr in real runs; it is kept here to prove it is ignored.
+const HEADERS = ["Local", "Remote", "Time (UTC)"];
+const tick = (v) => (v ? `\`${v}\`` : "` `");
+const listing = (rows, { col = "|", dash = "-", cross = "|", header = HEADERS } = {}) => {
+  const data = rows.map(([l, r]) => [tick(l), tick(r), tick(l || r)]);
+  const widths = header.map((h, i) => Math.max(h.length, ...data.map((d) => d[i].length)));
+  const line = (cells) => "  " + cells.map((c, i) => ` ${c.padEnd(widths[i])} `).join(col);
+  return [
     "Connecting to remote database...",
     "",
     "  ",
-    "   Local | Remote | Time (UTC) ",
-    "  -------|--------|------------",
-    ...rows.map(([l, r]) => `   ${l.padEnd(4)} | ${r.padEnd(4)} | ${l || r} `),
+    line(header),
+    "  " + widths.map((w) => dash.repeat(w + 2)).join(cross),
+    ...data.map(line),
     "",
-  ].join("\n");
+  ].join("\n") + "\n";
+};
+// Older glamour builds draw the same table with box characters, some with an
+// upper-cased header; the raw markdown has outer borders.
+const boxListing = (rows) => listing(rows, { col: "│", dash: "─", cross: "┼" });
+const upperBoxListing = (rows) => listing(rows, { col: "│", dash: "─", cross: "┼", header: HEADERS.map((h) => h.toUpperCase()) });
+const markdownListing = (rows) => ["|Local|Remote|Time (UTC)|", "|-|-|-|", ...rows.map(([l, r]) => `|${tick(l)}|${tick(r)}|${tick(l || r)}|`), ""].join("\n");
 const full = VERSIONS.map((v) => [v, v]);
 
 // ------------------------------------------------------------ the verifier ---
@@ -49,7 +65,14 @@ check("versions are ordered and the newest is last", VERSIONS.join() === [...VER
 refused(() => localVersions(["0001_a.sql", "0001_b.sql"]), "MIGRATION_VERSION_DUPLICATED");
 refused(() => localVersions(["init.sql"]), "MIGRATION_NAME_UNPARSEABLE");
 check("fully applied history passes", verify(listing(full), FILES, "PRODUCTION").ok);
+check("the real rendering keeps backticks and blank cells as \"` `\"", listing([[VERSIONS[0], ""]]).includes(`\`${VERSIONS[0]}\` | \` \``));
 check("pass message names the newest migration", verify(listing(full), FILES, "PRODUCTION").lines[0].includes(`through ${VERSIONS.at(-1)}`));
+for (const [label, render] of [["box-drawing", boxListing], ["upper-case box-drawing", upperBoxListing], ["raw markdown with borders", markdownListing]]) {
+  check(`a fully applied ${label} listing passes`, verify(render(full), FILES, "PRODUCTION").ok);
+  check(`a ${label} listing missing the newest migration fails`, !verify(render(full.map(([l, r], i) => [l, i === full.length - 1 ? "" : r])), FILES, "PRODUCTION").ok);
+}
+const parsedBlank = parseMigrationList(listing([[VERSIONS[0], ""], ["", "9999"]]));
+check("a \"` `\" cell parses as absent on either side", parsedBlank.length === 2 && parsedBlank[0].remote === "" && parsedBlank[1].local === "" && parsedBlank[1].remote === "9999");
 const missingLatest = verify(listing(full.map(([l, r], i) => [l, i === full.length - 1 ? "" : r])), FILES, "PRODUCTION");
 check("the newest migration missing remotely fails", !missingLatest.ok && missingLatest.lines.some((l) => l.startsWith("::error title=PRODUCTION migrations not verified::") && l.includes(VERSIONS.at(-1))));
 const missingMiddle = compareHistory(VERSIONS, parseMigrationList(listing(full.map(([l, r]) => [l, l === "0042" ? "" : r]))));
@@ -65,7 +88,9 @@ for (const [label, text] of [
   ["CLI error text", "Error: failed to connect to postgres"],
   ["rows without a header", "  0001 | 0001 | 0001\n"],
   ["non-numeric cell", listing([["0001", "abcd"]])],
+  ["a cell that is only backticks", listing([["0001", "``"]])],
   ["row with neither side", listing([["", ""]])],
+  ["a separator-only table", listing([]).replace(/Local/, "Nope")],
 ]) {
   check(`fails closed on ${label}`, !verify(text, FILES, "PRODUCTION").ok);
 }
