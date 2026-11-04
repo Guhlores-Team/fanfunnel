@@ -47,6 +47,8 @@ function patchErrorMessage(error: string): string {
       return "Not saved: you're signed out. Sign in again, then retry.";
     case "not_found":
       return "Not saved: this prize no longer exists. The queue has been refreshed.";
+    case "sold_out":
+      return "Not reopened: this prize has no limited stock left. Add stock in the game editor, then reopen it.";
     case "notes_too_long":
       return "Not saved: notes can be at most 2000 characters.";
     case "bad_due_date":
@@ -105,9 +107,13 @@ export default function PrizesPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
+      const body = (await res.json().catch(() => null)) as { error?: unknown; stock?: unknown } | null;
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
         error = typeof body?.error === "string" ? body.error : "unknown";
+      } else if (body?.stock === "returned") {
+        toast("Prize cancelled. Its limited unit is back in stock.", { tone: "success" });
+      } else if (body?.stock === "taken") {
+        toast("Prize reopened. One limited unit is set aside for this fan again.", { tone: "success" });
       }
     } catch {
       error = "network";
@@ -528,7 +534,7 @@ function CancelConfirm({
       className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[11px] border border-[#ef4444]/25 bg-[#ef4444]/[0.06] px-3 py-2.5"
     >
       <p id={questionId} className="min-w-0 flex-1 basis-48 text-[12.5px] text-ink text-pretty">
-        Cancel {subject}? It leaves the queue; you can reopen it from the Cancelled filter.
+        Cancel {subject}? It leaves the queue and a limited prize&apos;s unit goes back to stock; you can reopen it from the Cancelled filter.
       </p>
       <div className="flex shrink-0 gap-2">
         <button

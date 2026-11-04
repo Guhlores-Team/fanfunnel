@@ -31,6 +31,9 @@
 // the retention cleanup trims only settled history, spin_attempts FKs indexed.
 // And the seat-scope probe (0066, seatScopeProbe.mjs): a chatter reads/writes
 // only the inbox, a fulfiller only the fulfilment queue, of creators in scope.
+// And 0067: schema_version() equals the highest migration, service role only;
+// the cancelled-prize stock checks run inside the interplay, focus, Bingo and
+// seat-scope probes (a cancel returns a won unit once; nothing forges one).
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -1034,6 +1037,20 @@ function probeSeatScopeRpcs(db) {
   }
 }
 
+// 0067 (A39): schema_version() reports the highest migration file on every
+// build path, and only the service role can read it.
+function probeSchemaVersion(db) {
+  const latest = Math.max(...readdirSync(join(SUPABASE, "migrations")).map((f) => /^(\d{4})_.*\.sql$/.exec(f)?.[1]).filter(Boolean).map(Number));
+  const reported = sql(db, "begin; set local role service_role; select public.schema_version(); commit;").split("\n").filter(Boolean).at(-1);
+  const browser = ["anon", "authenticated"].filter((role) => psql(db, ["-c", `begin; set local role ${role}; select public.schema_version(); commit;`], { allowFail: true }).status === 0);
+  if (reported !== String(latest) || browser.length) {
+    failures++;
+    console.log(`FAIL  ${db}: schema_version() reported ${reported} for migration ${latest}${browser.length ? `; callable by ${browser.join(", ")}` : ""}`);
+  } else {
+    console.log(`PASS  ${db}: schema_version() = ${latest} (the highest migration), service role only`);
+  }
+}
+
 function probeCompletenessGaps(db) {
   const bad = probeGaps(db, psql);
   if (bad.length) {
@@ -1412,6 +1429,7 @@ try {
     await probeCreatorActorContexts(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"actor context SQL failed");return r.stdout;});
     probeCompletenessGaps(db);
     probeSeatScopeRpcs(db);
+    probeSchemaVersion(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

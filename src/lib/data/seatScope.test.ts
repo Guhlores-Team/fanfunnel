@@ -20,6 +20,7 @@ const USER = "aaaaaaaa-0000-4000-8000-000000000001";
 const C = "cccccccc-0000-4000-8000-000000000001"; // in scope
 const D = "dddddddd-0000-4000-8000-000000000001"; // same agency, not in scope
 const FAN = "ffffffff-0000-4000-8000-000000000001";
+const RID = "eeeeeeee-0000-4000-8000-000000000001"; // a won prize (redemption)
 type Op = { name: string; args: unknown[] };
 let perms = new Set<string>(); // "creator:perm" the caller holds
 const rpcs: { name: string; args: Record<string, unknown> }[] = [];
@@ -49,6 +50,7 @@ function session() {
     rpc: async (name: string, args: Record<string, unknown> = {}) => {
       rpcs.push({ name, args });
       if (name === "can_act_for") return { data: perms.has(`${args.target_creator}:${args.perm}`), error: null };
+      if (name === "set_redemption_state") return { data: { status: "ok", stock: "none" }, error: null };
       if (name === "my_seat_creators") return { data: [{ creator_id: C, display_name: "Creator C", can_chat: true, can_fulfil: false }], error: null };
       return { data: [], error: null };
     },
@@ -63,6 +65,8 @@ const writes = (table: string) => reads.filter((r) => r.table === table && r.ops
 const eqCreator = (r: { ops: Op[] }) => r.ops.find((o) => o.name === "eq" && o.args[0] === "creator_id")?.args[1];
 const reset = () => { rpcs.length = 0; reads.length = 0; };
 const dataRpcs = () => rpcs.filter((r) => r.name !== "can_act_for");
+// 0067: a prize is written through set_redemption_state, never the table.
+const prizeWrites = () => rpcs.filter((r) => r.name === "set_redemption_state");
 
 async function main() {
   const { resolveActingCreator, listMySeatCreators } = await import("./seatScope");
@@ -108,11 +112,11 @@ async function main() {
   check("chatter: the reply is written as C's message to C's fan", "ok" in sent && writes("messages").length === 1 && (writes("messages")[0].ops.find((o) => o.name === "insert")?.args[0] as { creator_id: string }).creator_id === C);
   check("chatter: the fan is checked to belong to C first", reads.some((x) => x.table === "fans" && eqCreator(x) === C));
   reset();
-  let denied = await fulfil.setRedemptionStatus("r1", "fulfilled", C);
+  let denied = await fulfil.setRedemptionStatus(RID, "fulfilled", C);
   check("chatter: marking C's prize fulfilled is refused (403)", "error" in denied && denied.error === "forbidden");
-  check("…before any write", writes("redemptions").length === 0);
-  denied = await fulfil.setRedemptionMeta("r1", { notes: "x" }, C);
-  check("chatter: editing C's prize notes is refused before any write", "error" in denied && denied.error === "forbidden" && writes("redemptions").length === 0);
+  check("…before any write", writes("redemptions").length === 0 && prizeWrites().length === 0);
+  denied = await fulfil.setRedemptionMeta(RID, { notes: "x" }, C);
+  check("chatter: editing C's prize notes is refused before any write", "error" in denied && denied.error === "forbidden" && writes("redemptions").length === 0 && prizeWrites().length === 0);
   reset();
   const queue = await listRedemptionQueue({ creatorId: C });
   check("chatter: C's prize queue is refused and the queue RPC is never called", "error" in queue && queue.error === "forbidden" && dataRpcs().length === 0);
@@ -123,8 +127,8 @@ async function main() {
   const q2 = await listRedemptionQueue({ creatorId: C, status: "pending" });
   check("fulfiller: C's queue is read through the RPC with p_creator = C", !("error" in q2) && dataRpcs().length === 1 && dataRpcs()[0].name === "creator_redemption_queue" && dataRpcs()[0].args.p_creator === C);
   reset();
-  const done = await fulfil.setRedemptionStatus("r1", "fulfilled", C);
-  check("fulfiller: C's prize is updated, scoped to C", "ok" in done && writes("redemptions").length === 1 && eqCreator(writes("redemptions")[0]) === C);
+  const done = await fulfil.setRedemptionStatus(RID, "fulfilled", C);
+  check("fulfiller: C's prize is updated, scoped to C", "ok" in done && prizeWrites().length === 1 && prizeWrites()[0].args.p_creator === C && prizeWrites()[0].args.p_redemption === RID && writes("redemptions").length === 0);
   reset();
   const t2 = await inbox.listThreads(undefined, undefined, C);
   check("fulfiller: C's inbox is refused, no inbox RPC", "error" in t2 && t2.error === "forbidden" && dataRpcs().length === 0);
@@ -138,7 +142,7 @@ async function main() {
   reset();
   check("manager: inbox and queue for C both work", !("error" in (await inbox.listThreads(undefined, undefined, C))) && !("error" in (await listRedemptionQueue({ creatorId: C }))));
   reset();
-  const outside = [await inbox.listThreads(undefined, undefined, D), await listRedemptionQueue({ creatorId: D }), await fulfil.setRedemptionStatus("r1", "fulfilled", D), await inbox.sendCreatorMessage(FAN, "x", D)];
+  const outside = [await inbox.listThreads(undefined, undefined, D), await listRedemptionQueue({ creatorId: D }), await fulfil.setRedemptionStatus(RID, "fulfilled", D), await inbox.sendCreatorMessage(FAN, "x", D)];
   check("nobody acts for a creator outside their scope (inbox, queue, fulfil, reply)", outside.every((x) => "error" in x && x.error === "forbidden") && dataRpcs().length === 0 && writes("redemptions").length === 0 && writes("messages").length === 0);
 
   // --- own account is unchanged ---------------------------------------------------
@@ -147,8 +151,8 @@ async function main() {
   const own = await inbox.listThreads();
   check("own inbox: no permission call and no p_creator (0064 behaviour)", !("error" in own) && !rpcs.some((x) => x.name === "can_act_for") && dataRpcs()[0].args.p_creator === undefined);
   reset();
-  await fulfil.setRedemptionStatus("r1", "fulfilled");
-  check("own prize: scoped to the caller", eqCreator(writes("redemptions")[0]) === USER);
+  await fulfil.setRedemptionStatus(RID, "fulfilled");
+  check("own prize: scoped to the caller", prizeWrites().length === 1 && prizeWrites()[0].args.p_creator === USER);
 
   // --- the seat list --------------------------------------------------------------
   reset();
@@ -168,15 +172,15 @@ async function main() {
   check("route: a chatter reading D's inbox → 403", (await inboxGET(req(`/api/messages/inbox?creatorId=${D}`))).status === 403);
   check("route: a chatter reading C's prize queue → 403", (await queueGET(req(`/api/redemptions?creatorId=${C}`))).status === 403);
   reset();
-  const post = await queuePOST(req("/api/redemptions", { method: "POST", body: JSON.stringify({ id: "r1", status: "fulfilled", creatorId: C }) }));
-  check("route: a chatter fulfilling C's prize → 403 with no write", post.status === 403 && writes("redemptions").length === 0);
+  const post = await queuePOST(req("/api/redemptions", { method: "POST", body: JSON.stringify({ id: RID, status: "fulfilled", creatorId: C }) }));
+  check("route: a chatter fulfilling C's prize → 403 with no write", post.status === 403 && writes("redemptions").length === 0 && prizeWrites().length === 0);
   reset();
-  const patch = await PATCH(req("/api/redemptions/r1", { method: "PATCH", body: JSON.stringify({ status: "fulfilled", notes: "n", creatorId: C }) }), { params: Promise.resolve({ id: "r1" }) });
-  check("route: a chatter patching C's prize → 403 with no write", patch.status === 403 && writes("redemptions").length === 0);
+  const patch = await PATCH(req(`/api/redemptions/${RID}`, { method: "PATCH", body: JSON.stringify({ status: "fulfilled", notes: "n", creatorId: C }) }), { params: Promise.resolve({ id: RID }) });
+  check("route: a chatter patching C's prize → 403 with no write", patch.status === 403 && writes("redemptions").length === 0 && prizeWrites().length === 0);
   perms = new Set([`${C}:fulfil`]);
   reset();
-  const ok = await PATCH(req("/api/redemptions/r1", { method: "PATCH", body: JSON.stringify({ status: "fulfilled", creatorId: C }) }), { params: Promise.resolve({ id: "r1" }) });
-  check("route: a fulfiller patching C's prize → 200, scoped to C", ok.status === 200 && eqCreator(writes("redemptions")[0]) === C);
+  const ok = await PATCH(req(`/api/redemptions/${RID}`, { method: "PATCH", body: JSON.stringify({ status: "fulfilled", creatorId: C }) }), { params: Promise.resolve({ id: RID }) });
+  check("route: a fulfiller patching C's prize → 200, scoped to C", ok.status === 200 && prizeWrites().length === 1 && prizeWrites()[0].args.p_creator === C && writes("redemptions").length === 0);
 
   // --- wiring ---------------------------------------------------------------------
   const root = join(import.meta.dirname, "../../..");

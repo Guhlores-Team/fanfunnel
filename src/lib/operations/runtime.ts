@@ -2,7 +2,7 @@ import "server-only";
 import { createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { alertFor, cleanError, storeError } from "@/lib/monitoring/capture";
 import { bootstrapEmptyCanary } from "./canary";
-import { CANARY_STATUSES, DIAGNOSTIC_MAX_ROWS, DIAGNOSTIC_TIMEOUT_MS, INVARIANT_KEYS, type CanaryResult, type CanaryStatus, type HealthSummary, type InvariantResult, type OperationalResult } from "./config";
+import { CANARY_STATUSES, DIAGNOSTIC_MAX_ROWS, DIAGNOSTIC_TIMEOUT_MS, EXPECTED_SCHEMA_VERSION, INVARIANT_KEYS, type CanaryResult, type CanaryStatus, type HealthSummary, type InvariantResult, type OperationalResult, type SchemaCheck } from "./config";
 
 const asRecord = (raw: unknown): Record<string, unknown> | null => raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
 export function parseInvariants(raw: unknown): InvariantResult {
@@ -20,6 +20,22 @@ export async function readLedgerInvariants(svc: ReturnType<typeof createServiceC
     return parseInvariants(error ? null : data);
   } catch { return parseInvariants(null); }
 }
+/** A39: compare the database's migration level with the one this code needs. Only "behind" or "unavailable" need action. */
+export function compareSchemaVersion(raw: unknown, expected: number = EXPECTED_SCHEMA_VERSION): SchemaCheck {
+  if (!Number.isSafeInteger(raw) || Number(raw) < 1) return { status: "unavailable", applied: null, expected };
+  const applied = Number(raw);
+  return { status: applied === expected ? "current" : applied > expected ? "ahead" : "behind", applied, expected };
+}
+// PostgREST answers PGRST202 (Postgres 42883) when the function does not exist: a database from before 0067.
+const MISSING_FUNCTION = new Set(["PGRST202", "42883"]);
+export async function readSchemaVersion(svc: ReturnType<typeof createServiceClient>): Promise<SchemaCheck> {
+  try {
+    const { data, error } = await svc.rpc("schema_version").abortSignal(AbortSignal.timeout(DIAGNOSTIC_TIMEOUT_MS));
+    if (error) return MISSING_FUNCTION.has(String(error.code)) ? { status: "behind", applied: null, expected: EXPECTED_SCHEMA_VERSION } : compareSchemaVersion(null);
+    return compareSchemaVersion(data);
+  } catch { return compareSchemaVersion(null); }
+}
+export const schemaHealthy = (schema: SchemaCheck) => schema.status === "current" || schema.status === "ahead";
 function parseCounts(raw: unknown): HealthSummary["invariantCounts"] | null {
   const value = asRecord(raw);
   return value && Object.keys(value).every(key => INVARIANT_KEYS.includes(key as typeof INVARIANT_KEYS[number]) && Number.isSafeInteger(value[key]) && Number(value[key])>=0) ? value as HealthSummary["invariantCounts"] : null;
@@ -53,10 +69,12 @@ const CANARY_MESSAGES: Record<Exclude<CanaryStatus, "healthy">, string> = {
 };
 /** Fixed messages only. The existing fingerprint upsert and hourly alert budget
  * deduplicate repeats; no crypto exception, inventory row or secret is logged. */
-export async function reportOperationalFailure(canary: CanaryResult, invariants?: InvariantResult): Promise<void> {
+export async function reportOperationalFailure(canary: CanaryResult, invariants?: InvariantResult, schema?: SchemaCheck): Promise<void> {
   const messages: string[] = [];
   if (canary.status !== "healthy") messages.push(CANARY_MESSAGES[canary.status]);
   if (invariants && invariants.status !== "healthy") messages.push(invariants.status === "violations" ? "Reward ledger integrity check found stock, reservation or credit mismatches" : "Reward ledger integrity check was incomplete or unavailable");
+  if (schema?.status === "behind") messages.push(`Database schema is behind the deployed code: migration ${schema.applied ?? "none (before 0067)"} applied, ${schema.expected} required`);
+  if (schema?.status === "unavailable") messages.push("Database schema version could not be checked");
   for (const message of messages) {
     const clean = cleanError({ source: "server", route: "/api/admin/system-health", message });
     if (!clean) continue;
@@ -69,8 +87,8 @@ export async function runOperationalChecks(source: "manual" | "maintenance", svc
   let client: ReturnType<typeof createServiceClient>;
   try { client = svc ?? createServiceClient(); }
   catch { return { demo: false, ok: false, canary: { status: "unavailable" }, invariants: { status: "unavailable", counts: {}, rowLimit: DIAGNOSTIC_MAX_ROWS }, summary: null }; }
-  const [canary, invariants] = await Promise.all([bootstrapEmptyCanary(client), readLedgerInvariants(client)]);
+  const [canary, invariants, schema] = await Promise.all([bootstrapEmptyCanary(client), readLedgerInvariants(client), readSchemaVersion(client)]);
   const summary = await persistHealth(client, source, canary, invariants);
-  await reportOperationalFailure(canary, invariants);
-  return { demo: false, ok: canary.status === "healthy" && invariants.status === "healthy" && summary !== null && summary.canaryFailureAt === null, canary, invariants, summary };
+  await reportOperationalFailure(canary, invariants, schema);
+  return { demo: false, ok: canary.status === "healthy" && invariants.status === "healthy" && schemaHealthy(schema) && summary !== null && summary.canaryFailureAt === null, canary, invariants, schema, summary };
 }

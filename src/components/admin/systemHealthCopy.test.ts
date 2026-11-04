@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { canaryMessage, initializationMessage, ledgerMessage, parseSystemHealthStatus, rateLimitStoreMessage } from "./systemHealthCopy";
+import { canaryMessage, initializationMessage, ledgerMessage, parseSystemHealthStatus, rateLimitStoreMessage, schemaMessage } from "./systemHealthCopy";
 assert.match(canaryMessage("mismatch"), /restore the original keys and version/i);
 assert.match(canaryMessage("mismatch"), /do not replace/i);
 assert.match(canaryMessage("demo"), /no connected database/i);
@@ -17,4 +17,14 @@ assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"healthy"},summa
 assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"healthy"},summary:null,rateLimitStore:"bogus"})?.rateLimitStore, undefined);
 assert.match(rateLimitStoreMessage("per_instance") ?? "", /per server instance/i);
 assert.equal(rateLimitStoreMessage("shared"), null);
-console.log("system health owner copy: 16 checks passed");
+// A39: the schema line flags a database behind the code, and the parser keeps only a well-formed check.
+assert.match(schemaMessage({status:"behind",applied:66,expected:67}) ?? "", /0066 is applied but 0067 is required.*apply the pending migrations/i);
+assert.match(schemaMessage({status:"behind",applied:null,expected:67}) ?? "", /predates migration 0067/i);
+assert.match(schemaMessage({status:"current",applied:67,expected:67}) ?? "", /0067, as this release expects/);
+assert.match(schemaMessage({status:"ahead",applied:68,expected:67}) ?? "", /newer than this release expects/);
+assert.match(schemaMessage({status:"unavailable",applied:null,expected:67}) ?? "", /could not be read/);
+assert.equal(schemaMessage(undefined), null);
+assert.deepEqual(parseSystemHealthStatus({demo:false,canary:{status:"healthy"},summary:null,schema:{status:"behind",applied:66,expected:67}})?.schema, {status:"behind",applied:66,expected:67});
+assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"healthy"},summary:null,schema:{status:"bogus",applied:66,expected:67}})?.schema, undefined);
+assert.equal(parseSystemHealthStatus({demo:false,canary:{status:"healthy"},summary:null,schema:{status:"current",applied:"67",expected:67}})?.schema, undefined);
+console.log("system health owner copy: 25 checks passed");

@@ -1,4 +1,4 @@
-import { CANARY_STATUSES, INVARIANT_KEYS, type CanaryStatus, type HealthSummary } from "@/lib/operations/config";
+import { CANARY_STATUSES, INVARIANT_KEYS, type CanaryStatus, type HealthSummary, type SchemaCheck } from "@/lib/operations/config";
 
 export function canaryMessage(status: CanaryStatus | "demo"): string {
   switch (status) {
@@ -31,9 +31,27 @@ export function ledgerMessage(summary: HealthSummary | null): string {
   return "Inventory and credit checks were incomplete or unavailable. Ask your operator to review the check limits and database access.";
 }
 
+const migration = (n: number) => String(n).padStart(4, "0");
+/** A39: the database's migration level against the one this release needs. */
+export function schemaMessage(schema: SchemaCheck | undefined): string | null {
+  if (!schema) return null;
+  switch (schema.status) {
+    case "current": return `Database schema is at migration ${migration(schema.applied ?? schema.expected)}, as this release expects.`;
+    case "ahead": return `Database schema is at migration ${migration(schema.applied ?? schema.expected)}, newer than this release expects (${migration(schema.expected)}). That is normal while a release rolls out.`;
+    case "behind": return `Database schema is behind this release: ${schema.applied === null ? "it predates migration 0067" : `migration ${migration(schema.applied)} is applied`} but ${migration(schema.expected)} is required. Ask your operator to apply the pending migrations; features that need them will fail until then.`;
+    case "unavailable": return "The database schema version could not be read. Ask your operator to check database access.";
+  }
+}
+
 /** A22: whether rate limits are shared across instances (Upstash/KV) or per instance. */
 export type RateLimitStore = "shared" | "per_instance";
-export type SystemHealthStatus = { demo: boolean; canary: { status: CanaryStatus | "demo" }; summary: HealthSummary | null; rateLimitStore?: RateLimitStore };
+export type SystemHealthStatus = { demo: boolean; canary: { status: CanaryStatus | "demo" }; summary: HealthSummary | null; rateLimitStore?: RateLimitStore; schema?: SchemaCheck };
+function parseSchema(raw: unknown): SchemaCheck | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  if (!["current", "ahead", "behind", "unavailable"].includes(String(row.status)) || !Number.isSafeInteger(row.expected) || !(row.applied === null || Number.isSafeInteger(row.applied))) return undefined;
+  return { status: row.status as SchemaCheck["status"], applied: row.applied as number | null, expected: row.expected as number };
+}
 export function rateLimitStoreMessage(store: RateLimitStore | undefined): string | null {
   return store === "per_instance"
     ? "Rate limits are counted per server instance: no shared store is configured. In production, ask your operator to connect Upstash or Vercel KV (see DEPLOY.md)."
@@ -51,5 +69,6 @@ export function parseSystemHealthStatus(raw: unknown): SystemHealthStatus | null
     for (const key of ["canaryCheckedAt","canaryFailureAt","invariantsCheckedAt","lastMaintenanceAt"]) if (summary[key] !== null && (typeof summary[key] !== "string" || !Number.isFinite(Date.parse(summary[key] as string)))) return null;
   }
   const rateLimitStore = row.rateLimitStore === "shared" || row.rateLimitStore === "per_instance" ? row.rateLimitStore : undefined;
-  return { demo: row.demo, canary: {status:canary.status as CanaryStatus | "demo"}, summary: summary as unknown as HealthSummary | null, ...(rateLimitStore ? { rateLimitStore } : {}) };
+  const schema = parseSchema(row.schema);
+  return { demo: row.demo, canary: {status:canary.status as CanaryStatus | "demo"}, summary: summary as unknown as HealthSummary | null, ...(rateLimitStore ? { rateLimitStore } : {}), ...(schema ? { schema } : {}) };
 }

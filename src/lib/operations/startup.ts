@@ -1,7 +1,7 @@
 import "server-only";
 import { createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { bootstrapEmptyCanary } from "./canary";
-import { persistHealth, reportOperationalFailure } from "./runtime";
+import { persistHealth, readSchemaVersion, reportOperationalFailure } from "./runtime";
 import { STARTUP_DEADLINE_MS } from "./config";
 
 export function startupChecksEnabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -23,9 +23,10 @@ export async function registerOperationalChecks(): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const work = (async () => {
       const svc = createServiceClient();
-      const canary = await bootstrapEmptyCanary(svc);
+      const [canary, schema] = await Promise.all([bootstrapEmptyCanary(svc), readSchemaVersion(svc)]);
       await persistHealth(svc, "startup", canary);
-      await reportOperationalFailure(canary);
+      // A39: a database behind this code's migration is reported (alerted), not fatal.
+      await reportOperationalFailure(canary, undefined, schema);
     })().catch(() => undefined);
     try {
       await Promise.race([work, new Promise<void>(resolve => { timer = setTimeout(resolve, STARTUP_DEADLINE_MS); timer.unref?.(); })]);

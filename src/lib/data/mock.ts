@@ -282,7 +282,13 @@ interface MockRedemption extends RedemptionItem {
   campaignId: string | null;
   /** #26: the winning spin, so Fulfilment can show the "Auto" tag. */
   shareId?: string;
+  /** 0067 parity: the finite unit this win took ("held") or gave back on cancel ("returned"). */
+  stockUnit?: { prizeId: string; state: "held" | "returned" };
 }
+
+/** 0067 parity: a manual prize with a finite count holds the unit its win took. */
+const mockStockUnit = (prize: Prize): MockRedemption["stockUnit"] =>
+  typeof prize.stock === "number" && (prize.delivery ?? "manual") === "manual" ? { prizeId: prize.id, state: "held" } : undefined;
 
 interface Store {
   wheels: Map<string, WheelConfig>; // wheelId -> wheel config (multiple wheels)
@@ -1328,7 +1334,7 @@ async function mockSpinBingoLocked(token:string,clientSeed:string,requestId:stri
       const bonusWins:MockWin[]=bonusAllocations.map((allocation,index)=>({label:allocation.prize.label,rarity:allocation.prize.rarity,emoji:allocation.prize.emoji,color:allocation.prize.color??RARITY_COLORS[allocation.prize.rarity],at,campaignId:pass.campaignId,shareId:bonusShares[index].shareId,
         imageUrl:allocation.prize.imageUrl??null,serverSeed:null,serverSeedHash:null,nonce:null,prizeId:allocation.prize.id,wheelId:wheel.id,gameKind:"bingo",kind:"bonus",parentShareId:parentShare,bingoLine:allocation.line,...(allocation.reward?{instant:true}:{})}));
       fan.wins=[...bonusWins,primaryWin,...fan.wins];
-      for(let i=0;i<allocations.length;i++){const allocation=allocations[i];store.redemptions.unshift({id:genId("r"),fanId:fan.id,fanName:fan.name,prizeLabel:allocation.prize.label,rarity:allocation.prize.rarity,emoji:allocation.prize.emoji,status:allocation.reward?"fulfilled":"pending",at,campaignId:pass.campaignId,shareId:shares[i],gameKind:"bingo",kind:i===0?"play":"bonus"});}
+      for(let i=0;i<allocations.length;i++){const allocation=allocations[i];store.redemptions.unshift({id:genId("r"),fanId:fan.id,fanName:fan.name,prizeLabel:allocation.prize.label,rarity:allocation.prize.rarity,emoji:allocation.prize.emoji,status:allocation.reward?"fulfilled":"pending",at,campaignId:pass.campaignId,shareId:shares[i],gameKind:"bingo",kind:i===0?"play":"bonus",...(mockStockUnit(allocation.prize)?{stockUnit:mockStockUnit(allocation.prize)}:{})});}
       const card=commitMockBingo(fan.id,wheel.id,proposal.presentation,parentShare,bonusShares,at),play=countPlay(fan.spinTimes);
       const draw=proposal.primary as typeof proposal.primary&{focusConsumed?:boolean;chaseConsumed?:boolean;chaseCompleted?:boolean;chaseAwarded?:boolean};
       return {attemptId:requestId,awardedAt:at,gameKind:"bingo",presentation:proposal.presentation,bingoCard:structuredClone(card.state),bonusWins:bonusAllocations.map((allocation,index)=>({line:allocation.line!,shareId:bonusShares[index].shareId,prize:allocation.shown,awardedAt:at,...(allocation.reward?{instant:true,reward:{kind:allocation.reward.kind,value:allocation.reward.value}}:{})})),
@@ -1576,6 +1582,7 @@ async function mockSpinLocked(token: string, clientSeed: string, requestId: stri
     fanId: fan.id,
     campaignId,
     shareId,
+    ...(mockStockUnit(prize) ? { stockUnit: mockStockUnit(prize) } : {}),
     ...(chosen.focusConsumed ? { focusKind: "focus" as const } : chosen.chaseConsumed ? { focusKind: "chase" as const, chaseAwarded: chosen.chaseAwarded === true } : {}),
   });
 
@@ -2333,11 +2340,32 @@ export function mockGetCohortRetention(): CohortRow[] {
   return rows;
 }
 
-export function mockSetRedemptionStatus(id: string, status: RedemptionStatus) {
+/**
+ * Mirrors set_redemption_state (0067): cancelling a win that holds a finite
+ * unit returns it to the prize once; reopening takes it again, or is
+ * sold_out and changes nothing. A prize made unlimited (or a code list) since
+ * the win stops tracking the unit.
+ */
+export function mockSetRedemptionStatus(id: string, status: RedemptionStatus): { ok: true; stock?: "returned" | "taken" } | { error: "not_found" | "already_delivered" | "sold_out" } {
   const r = store.redemptions.find((x) => x.id === id);
-  if (!r || (status !== "fulfilled" && mockIsInstantRedemption(id))) return null;
+  if (!r) return { error: "not_found" };
+  if (status !== "fulfilled" && mockIsInstantRedemption(id)) return { error: "already_delivered" };
+  let stock: "returned" | "taken" | undefined;
+  if ((status === "cancelled") !== (r.status === "cancelled") && r.stockUnit) {
+    const prize = findMockPrize(r.stockUnit.prizeId);
+    const tracked = !!prize && typeof prize.stock === "number" && prize.delivery !== "codes";
+    if (status === "cancelled" && r.stockUnit.state === "held") {
+      if (tracked) { prize!.stock = (prize!.stock as number) + 1; r.stockUnit = { ...r.stockUnit, state: "returned" }; stock = "returned"; }
+      else r.stockUnit = undefined;
+    } else if (status !== "cancelled" && r.stockUnit.state === "returned") {
+      if (tracked) {
+        if ((prize!.stock as number) <= 0) return { error: "sold_out" };
+        prize!.stock = (prize!.stock as number) - 1; r.stockUnit = { ...r.stockUnit, state: "held" }; stock = "taken";
+      } else r.stockUnit = undefined;
+    }
+  }
   r.status = status;
-  return r;
+  return stock ? { ok: true, stock } : { ok: true };
 }
 
 export function mockSetRedemptionMeta(

@@ -17,6 +17,7 @@
 //    fan but cannot update C's redemption; the fulfiller the reverse.
 //  - my_seat_creators(): each seat lists exactly the creators and jobs it has;
 //    a non-member lists nothing; anon cannot call it.
+//  - set_redemption_state (0067) splits the same way as the redemptions RLS.
 //  - a suspended chatter reads nothing for C.
 
 const id = (n) => `00000000-0000-4000-8000-0000000066${n}`;
@@ -106,6 +107,17 @@ export function probeSeatScopes(db, psql) {
     ${as(U.CH, `select 'CH-grant:' || public.can_act_for('${U.C}', 'grant')::text || ',' || public.can_act_for('${U.C}', 'manage')::text || ',' || public.can_act_for('${U.C}', 'edit_wheel')::text;`)}
     ${as(U.FU, `select 'FU-grant:' || public.can_act_for('${U.C}', 'grant')::text || ',' || public.can_act_for('${U.C}', 'manage')::text || ',' || public.can_act_for('${U.C}', 'edit_wheel')::text;`)}`), [
     "CH-reply:1", "CH-fulfil:0", "FU-fulfil:1", "FU-reply:false", "CH-grant:false,false,false", "FU-grant:false,false,false",
+  ]);
+  // 0067: the cancel/reopen RPC applies the same split (can_act_for 'fulfil' on the caller).
+  expect("set_redemption_state follows the seat split: the fulfiller and manager cancel in scope, the chatter and outsiders cannot", run(`
+    ${as(U.CH, `select 'CH-cancel-C:' || (public.set_redemption_state('${R.C}', '${U.C}', '{"status":"cancelled"}'::jsonb)->>'status');`)}
+    ${as(U.FU, `select 'FU-cancel-C:' || (public.set_redemption_state('${R.C}', '${U.C}', '{"status":"cancelled"}'::jsonb)->>'status');`)}
+    ${as(U.FU, `select 'FU-cancel-D:' || (public.set_redemption_state('${R.D}', '${U.D}', '{"status":"cancelled"}'::jsonb)->>'status');`)}
+    ${as(U.M, `select 'M-cancel-D:' || (public.set_redemption_state('${R.D}', '${U.D}', '{"status":"cancelled"}'::jsonb)->>'status');`)}
+    ${as(U.X, `select 'X-cancel-C:' || (public.set_redemption_state('${R.C}', '${U.C}', '{"status":"cancelled"}'::jsonb)->>'status');`)}
+    ${as(U.X, `select 'X-cancel-C-as-X:' || (public.set_redemption_state('${R.C}', '${U.X}', '{"status":"cancelled"}'::jsonb)->>'status');`)}
+    ${as(U.OUT, `select 'OUT-cancel-X:' || (public.set_redemption_state('${R.X}', '${U.X}', '{"status":"cancelled"}'::jsonb)->>'status');`)}`), [
+    "CH-cancel-C:forbidden", "FU-cancel-C:ok", "FU-cancel-D:forbidden", "M-cancel-D:ok", "X-cancel-C:forbidden", "X-cancel-C-as-X:not_found", "OUT-cancel-X:forbidden",
   ]);
   const fuReply = run(as(U.FU, `insert into public.messages (creator_id, fan_id, sender, body) values ('${U.C}', '${F.C}', 'creator', 'nope');`));
   if (!/row-level security|permission denied/.test(fuReply.stderr || "")) bad.push(`the fulfiller's reply to C's fan was not refused (${err(fuReply)})`);

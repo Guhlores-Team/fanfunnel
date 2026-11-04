@@ -68,6 +68,10 @@ const SIGNED_IN_ONLY = [
   "delete_wheel",
   // 0066 (A19): the caller's own agency seats, gated by can_act_for.
   "my_seat_creators",
+  // 0067 (A42): the redemptions write (status/notes/due date + the stock unit
+  // on cancel/reopen), gated by the redemptions_write RLS rule
+  // can_act_for(creator, 'fulfil') / is_admin() on auth.uid().
+  "set_redemption_state",
 ];
 // RLS policies call these, so anon must keep EXECUTE (an anon read that
 // evaluates a policy would otherwise error instead of returning no rows).
