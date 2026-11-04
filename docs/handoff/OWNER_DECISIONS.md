@@ -34,3 +34,17 @@ committed. The decisions below are self-contained; the P# numbers are labels onl
 - DEBT-2 before testing; backlog must be EMPTY before the owner tests.
 - Branch cleanup: delete the 21 archived branches + each PR branch once merged.
 - NEXT_PUBLIC_ENABLE_DEBUG=1 set for Preview only (error console via ?debug=1, admin).
+- 0068 (made by the agent, owner to confirm): safety reports about a creator are kept when the
+  law requires it — they survive the deletion of the reported account with a non-PII snapshot
+  (display name, public slug, deletion time; no e-mail, no link token), and a suspended account
+  or one with an open report cannot close itself (an admin delete still works). Reports are
+  never deleted by age; the owner decides per report. `docs/DATA_RETENTION.md`, `docs/LEGAL_NOTES.md`.
+- 0068 (made by the agent, owner to confirm): the fan export keeps excluding the creator's
+  private notes and tags about the fan (the creator is the controller of those; the fan asks
+  the creator). Reasoning in `docs/LEGAL_NOTES.md`; adding them is a small change if reversed.
+- 0068 (open): fan consent (leaderboard opt-in, board name, terms acknowledgement) is now
+  fan-only in the database, but the creator holds the link token and could act as the fan;
+  binding consent to a device needs fan accounts or e-mail confirmation. Lawyer / owner call.
+- 0068 (made by the agent): agency seats and creators join only by accepting an invitation
+  (`org_add_member` now sends a seat invitation; the owner may still seat itself directly), the
+  senders answer "ok" for any address (no account enumeration), 20 invitations per org per hour.

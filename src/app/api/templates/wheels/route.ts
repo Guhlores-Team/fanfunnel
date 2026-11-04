@@ -22,7 +22,7 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
       p.weight >= 0 &&
       p.weight <= 1e6 &&
       (p.imageUrl == null ||
-        (typeof p.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl))),
+        (typeof p.imageUrl === "string" && p.imageUrl.length <= 2048 && /^https:\/\//i.test(p.imageUrl))),
   );
 }
 

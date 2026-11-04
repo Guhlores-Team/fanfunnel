@@ -28,13 +28,15 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
   );
 }
 
-// Validate that a string is a well-formed http(s) URL. A weak regex can be
+// Validate that a string is a well-formed https URL. A weak regex can be
 // bypassed or admit malformed URLs, so parse with the URL constructor and
-// require an explicit http:/https: protocol.
+// require an explicit https: protocol (the database guard, 0068, requires the
+// same and caps the length at 2048; the fan page is https, so a plain-http
+// image would be blocked as mixed content anyway).
 function isValidHttpUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    return parsed.protocol === "https:" && value.length <= 2048;
   } catch {
     return false;
   }

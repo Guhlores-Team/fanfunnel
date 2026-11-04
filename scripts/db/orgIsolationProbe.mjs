@@ -207,7 +207,8 @@ export const ORG_PROBE_EXPECT = {
   "m1.update.fan.cx": "ok:0",
   "ch.fans": "fan-c1",
   "ch.seats": "chatter",
-  "ch.stats": email("C1"),
+  // 0068: a scoped seat sees the creator's row but no e-mail (nor revenue).
+  "ch.stats": "",
   "ch.act.c2.view": "false",
   "ch.self.promote": "ok:0",
   "ch.self.scope": RLS_REFUSED,
@@ -232,7 +233,9 @@ export const ORG_PROBE_EXPECT = {
   "out.invite.steal": "not_invitee",
   "out.own.org": "true",
   "out.own.seat": "ok",
-  "out.own.scope": "ok",
+  // 0068 (L4): a seat is scoped only to a creator of the owner's own org;
+  // C1 belongs to ORG1, so OUT's own-org seat cannot be scoped to it.
+  "out.own.scope": "not_found",
   "out.act.c1.view": "false",
   "out.act.c1.manage": "false",
   "out.fans.after": "",

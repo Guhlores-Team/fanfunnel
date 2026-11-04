@@ -19,7 +19,7 @@ storage work uses `COMPLETED_STORAGE_WORK_DAYS` in `src/lib/storage/work.ts`.
 | Creator service authorization contexts | `creator_actor_contexts` | **60 seconds maximum** | expired rows are removed on the next mint or retention cleanup; at most32 live contexts per actor; Auth session/account deletion cascades |
 | Declined, revoked and expired agency invitations | `org_invites` | **90 days** after sending (declined/revoked), or after deadline (expired) | expired pending rows are also pruned; accepted consent records follow account lifecycle |
 | Fan visit check-ins (the days a fan opened their link, for the visit glow) | `fan_checkins` | **90 days** | older than the period; the glow reads back at most 59 days |
-| Finished spin attempts | `spin_attempts` | **90 days** after the attempt finished | the prepared play context (seed, prize pool, reward hints) is cleared from committed and declined attempts; declined attempts (no spin, no credit used) are deleted. Committed attempts keep their short record; pending attempts are never touched |
+| Finished spin attempts | `spin_attempts` | **90 days** after the attempt finished | the prepared play context (seed, prize pool, reward hints) and the link's hash are cleared from committed and declined attempts; declined attempts (no spin, no credit used) are deleted. Committed attempts keep their short record; pending attempts are never touched |
 | Settled grant/import request records (retry protection) | `creator_request_journal` | **90 days** after the request settled | settled only; pending requests are kept. The grants and fans a request created are business records and stay |
 | Cancelled-request fences (a cancelled grant/import request id can't run later) | `actor_request_cancellations` | **90 days** after the cancellation (the journal's period) | a creator's pending request lives only in that browser tab's session storage, so a retry this old is not a retry; after this the same request id would be treated as new |
 | Fan import batches and their per-row results | `fan_import_batches` | **90 days** | older than the period, unless a pending request still uses the batch; per-row results (`fan_import_items`) go with their batch. The batch is also the import's idempotency record: re-sending the same import request after this creates a new import |
@@ -85,7 +85,9 @@ They go only when one of these happens:
 
 - **A creator deletes a fan.** The fan and their links, grants, messages,
   wishlists and referrals are deleted. Their spins and redemptions are kept
-  without any link to the fan.
+  without any link to the fan. The link token is also removed from any safety
+  report the fan sent and from the fan's spin attempts (declined attempts are
+  deleted, the rest keep only their state and outcome) — migration 0068.
 - **A fan deletes their own data** from the Safety menu on their link. The
   effect is the same as above, and the creator gets an in-app notice that
   holds no personal data.
@@ -93,7 +95,19 @@ They go only when one of these happens:
   Deletion first pauses new uploads and records durable cleanup work. Only
   completed storage/Auth/database cleanup is reported deleted, at which point
   fans' links show "this creator has left". An unresolved upload or transport
-  failure returns pending/failure and preserves retry state.
+  failure returns pending/failure and preserves retry state. A suspended
+  account, or one with an open safety report, cannot close itself (the
+  database refuses, migration 0068); an admin can still delete it.
+- **Safety reports about a creator are kept when the law requires it.** A
+  report (reason, details, review outcome) survives the deletion of the
+  reported account: the report loses its link to the account and keeps only a
+  minimal snapshot (display name, public page name, when the account was
+  deleted — never an e-mail address) and no link token. Reports are never
+  deleted by age; the owner decides, per report, when one can go (policy
+  decision recorded in `docs/handoff/OWNER_DECISIONS.md`).
+- **The account wipe** (Settings → Your data → wipe) deletes every fan as above
+  and then removes the orphaned spin-attempt records that are left (fan and
+  link gone, state settled).
 
 ## Exports
 

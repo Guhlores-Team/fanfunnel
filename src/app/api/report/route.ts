@@ -5,6 +5,7 @@ import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { alertUrgentReport } from "@/lib/reports/alert";
+import { isValidFanToken } from "@/lib/pwa/manifest";
 
 // A fan reports the creator behind their token (predatory / rule-breaking).
 // Reviewed in Admin › Reports (/api/admin/reports).
@@ -14,10 +15,11 @@ export async function POST(req: Request) {
 
   const body = await parseJsonBody<{ token?: string; reason?: string; detail?: string }>(req);
   if (body === BAD_REQUEST) return badRequest();
+  // The token is stored on the report: only a well-formed link token (the
+  // minted shape, at most 128 characters), never an arbitrary string.
   if (
-    typeof body.token !== "string" ||
+    !isValidFanToken(body.token) ||
     typeof body.reason !== "string" ||
-    !body.token ||
     !body.reason ||
     body.reason.length > 200 ||
     (body.detail !== undefined &&

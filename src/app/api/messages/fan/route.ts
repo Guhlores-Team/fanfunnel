@@ -1,23 +1,12 @@
 import { NextResponse } from "next/server";
-import { getFanMessages, sendFanMessage } from "@/lib/data";
-import { clientIp } from "@/lib/api/clientIp";
+import { sendFanMessage } from "@/lib/data";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, str } from "@/lib/api/validate";
 
-// A fan's chat thread with the creator. Token-gated; sending requires ≥1 spin
-// (the data layer enforces the "locked" gate).
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const token = searchParams.get("token");
-  if (!token) return badRequest();
-  // Throttle thread reads (enumeration / polling) on client IP.
-  const limited = await rateLimitOr429("msgread:" + clientIp(req), 60, 60_000);
-  if (limited) return limited;
-  const messages = await getFanMessages(token);
-  return NextResponse.json({ messages });
-}
-
+// A fan sends a message to the creator. Token-gated; sending requires ≥1 spin
+// (the data layer enforces the "locked" gate). Reading the thread is
+// POST /api/messages/fan/thread (0068: the token never travels in a URL).
 export async function POST(req: Request) {
   const body = await parseJsonBody<{ token?: string; body?: string }>(req);
   if (body === BAD_REQUEST) return badRequest();

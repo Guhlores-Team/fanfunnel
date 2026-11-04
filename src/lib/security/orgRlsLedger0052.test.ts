@@ -199,7 +199,9 @@ const probe = readFileSync(join(ROOT, "scripts", "db", "orgIsolationProbe.mjs"),
 for (const key of [
   '"m1.fans": "fan-c1,fan-c2"',
   '"ch.fans": "fan-c1"',
-  '"ch.stats": email("C1")',
+  // 0068: a seat still sees its creators' rows, but the e-mail (and revenue)
+  // only with 'manage'; a chatter gets the row with both masked.
+  '"ch.stats": ""',
   '"out.insert.seat": RLS_REFUSED',
   '"out.join.org1": "ok:0"',
   '"out.invite.steal": "not_invitee"',

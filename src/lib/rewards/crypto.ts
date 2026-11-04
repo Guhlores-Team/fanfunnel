@@ -12,6 +12,15 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:
 export const REWARD_KEY_ENV = "REWARD_ENCRYPTION_KEY";
 /** Which key `REWARD_ENCRYPTION_KEY` is (bump it when the key is rotated). */
 export const REWARD_KEY_VERSION_ENV = "REWARD_ENCRYPTION_KEY_VERSION";
+/**
+ * Keyring for rotation (docs/GO_LIVE.md, "Rotating the reward key"): the key
+ * that was current before the rotation, so values sealed under it still open
+ * while they are re-sealed or redeemed. Its version is the current version
+ * minus one unless `REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION` says otherwise.
+ * New values are always sealed with the current key.
+ */
+export const REWARD_KEY_PREVIOUS_ENV = "REWARD_ENCRYPTION_KEY_PREVIOUS";
+export const REWARD_KEY_PREVIOUS_VERSION_ENV = "REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION";
 
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
@@ -22,10 +31,24 @@ export interface SealedReward {
   keyVersion: number;
 }
 
+function parseVersion(raw: string | undefined, fallback: number): number {
+  const n = raw ? Number(raw) : fallback;
+  return Number.isInteger(n) && n >= 1 && n <= 32767 ? n : fallback;
+}
+
 function currentKeyVersion(): number {
-  const raw = process.env[REWARD_KEY_VERSION_ENV];
-  const n = raw ? Number(raw) : 1;
-  return Number.isInteger(n) && n >= 1 && n <= 32767 ? n : 1;
+  return parseVersion(process.env[REWARD_KEY_VERSION_ENV], 1);
+}
+
+function previousKeyVersion(): number {
+  return parseVersion(process.env[REWARD_KEY_PREVIOUS_VERSION_ENV], currentKeyVersion() - 1);
+}
+
+/** The key a stored value's version names: the current one, or the previous one during a rotation. */
+function keyForVersion(version: number): Buffer | null {
+  if (version === currentKeyVersion()) return loadKey();
+  if (version === previousKeyVersion() && version >= 1) return loadKey(REWARD_KEY_PREVIOUS_ENV);
+  return null;
 }
 
 function loadKey(name = REWARD_KEY_ENV): Buffer | null {
@@ -54,14 +77,16 @@ export function sealReward(plain: string, creatorId: string): SealedReward {
 }
 
 /**
- * Decrypt a stored reward. Throws on a missing key, a key-version mismatch, a
- * tampered ciphertext or the wrong creator: the caller treats any throw as
- * "can't deliver" and never shows a partial value.
+ * Decrypt a stored reward with the key its version names (the current key, or
+ * the previous key while a rotation is in progress). Throws on a missing key,
+ * a version the keyring does not hold, a tampered ciphertext or the wrong
+ * creator: the caller treats any throw as "can't deliver" and never shows a
+ * partial value.
  */
 export function openReward(sealed: SealedReward, creatorId: string): string {
-  const key = loadKey();
-  if (!key) throw new Error("reward_key_missing");
-  if (sealed.keyVersion !== currentKeyVersion()) throw new Error("reward_key_version");
+  if (!loadKey()) throw new Error("reward_key_missing");
+  const key = keyForVersion(sealed.keyVersion);
+  if (!key) throw new Error("reward_key_version");
   const iv = Buffer.from(sealed.iv, "base64");
   const body = Buffer.from(sealed.cipher, "base64");
   if (iv.length !== IV_BYTES || body.length < TAG_BYTES) throw new Error("reward_cipher_invalid");

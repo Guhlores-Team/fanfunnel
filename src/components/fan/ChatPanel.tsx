@@ -4,6 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/data/types";
 import { startPoll } from "@/lib/poll";
 import { blockedFanMessage } from "./blockedFan";
+import { FAN_STORAGE_PREFIXES, fanStorageKey } from "./fanStorage";
+
+/** The thread read is a POST (0068): the link token stays out of URLs and logs. */
+const fetchThread = (token: string) =>
+  fetch("/api/messages/fan/thread", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+    cache: "no-store",
+  });
 
 /** A locally-tracked optimistic outbound message awaiting / failing its send. */
 interface PendingMessage {
@@ -30,15 +40,26 @@ export default function ChatPanel({
 }) {
   const [open, setOpenState] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // Remember whether the fan had the chat open, per token, so a refresh doesn't
+  // Remember whether the fan had the chat open, per link, so a refresh doesn't
   // collapse the conversation (it stays visible like the creator's inbox does).
-  const openKey = `ff_chat_open_${token}`;
+  // Storage keys are hashed from the token (0068): the raw bearer credential
+  // never lands in localStorage. Nothing is persisted until the keys exist.
+  const [keys, setKeys] = useState<{ open: string; seen: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.all([fanStorageKey(FAN_STORAGE_PREFIXES.chatOpen, token), fanStorageKey(FAN_STORAGE_PREFIXES.chatSeen, token)])
+      .then(([open, seen]) => { if (live) setKeys({ open, seen }); })
+      .catch(() => { /* no SubtleCrypto: the panel works without persistence */ });
+    return () => { live = false; };
+  }, [token]);
+  const openKey = keys?.open ?? null;
+  const seenKey = keys?.seen ?? null;
   const setOpen = useCallback(
     (next: boolean | ((o: boolean) => boolean)) => {
       setOpenState((prev) => {
         const value = typeof next === "function" ? next(prev) : next;
         try {
-          window.localStorage.setItem(openKey, value ? "1" : "0");
+          if (openKey) window.localStorage.setItem(openKey, value ? "1" : "0");
         } catch {
           /* storage unavailable */
         }
@@ -48,8 +69,9 @@ export default function ChatPanel({
     [openKey]
   );
   useEffect(() => {
+    if (!openKey) return;
     try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted open state on mount
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted open state once the key is known
       if (window.localStorage.getItem(openKey) === "1") setOpenState(true);
     } catch {
       /* ignore */
@@ -65,11 +87,10 @@ export default function ChatPanel({
   // Guard so the auto-intro is only requested once per mount.
   const introRequested = useRef(false);
 
-  // "Last seen" creator-message timestamp, persisted per token so the unread
+  // "Last seen" creator-message timestamp, persisted per link so the unread
   // dot survives reloads. Read lazily (client-only) to stay SSR-safe.
-  const seenKey = `ff_chat_seen_${token}`;
   const readSeen = useCallback((): string => {
-    if (typeof window === "undefined") return "";
+    if (typeof window === "undefined" || !seenKey) return "";
     try {
       return window.localStorage.getItem(seenKey) ?? "";
     } catch {
@@ -78,7 +99,7 @@ export default function ChatPanel({
   }, [seenKey]);
   const writeSeen = useCallback(
     (at: string) => {
-      if (typeof window === "undefined") return;
+      if (typeof window === "undefined" || !seenKey) return;
       try {
         window.localStorage.setItem(seenKey, at);
       } catch {
@@ -104,9 +125,7 @@ export default function ChatPanel({
   const load = useCallback(async (): Promise<boolean> => {
     const id = ++loadReq.current;
     try {
-      const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
-        cache: "no-store",
-      });
+      const res = await fetchThread(token);
       if (!res.ok) return false;
       const d = await res.json();
       if (id !== loadReq.current) return true; // superseded by a newer load
@@ -126,9 +145,7 @@ export default function ChatPanel({
   // than the fan's last view exists, and toggle the unread dot.
   const checkUnread = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
-        cache: "no-store",
-      });
+      const res = await fetchThread(token);
       if (!res.ok) return false;
       const d = await res.json();
       const list: ChatMessage[] = d.messages ?? [];

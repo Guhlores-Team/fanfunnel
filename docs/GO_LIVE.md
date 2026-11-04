@@ -82,6 +82,22 @@ Variable names by scope (see the checks below for how to verify each):
 - [ ] **OWNER + AGENT**: Confirm server-controlled admin profiles and independent two-factor access. `ADMIN_EMAILS` is configuration, not a substitute for checking actual role/active/approval state or RLS.
 - [ ] **OWNER + AGENT**: Verify the shared rate-limit service and failure behavior. Supported variable pairs are `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL`/`KV_REST_API_TOKEN`. Without shared storage, bounded per-instance fallback does not provide a global distributed quota.
 - [ ] **OWNER + AGENT**: Verify Preview's existing VAPID configuration without replacing it: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`. Real installed-iPhone/Android receipt and privacy checks remain necessary. A future Production pair/configuration is a separate reviewed action.
+- [ ] **OWNER + AGENT**: Know the reward-key rotation procedure before it is ever needed (it is
+      the only supported way to change `REWARD_ENCRYPTION_KEY`; never swap the key in place):
+      1. Generate the new key (`openssl rand -base64 32`) and back it up through the private
+         operator path, next to the original.
+      2. Set `REWARD_ENCRYPTION_KEY_PREVIOUS` to the key that is current now and, if the
+         current version is not exactly one below the new one, `REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION`
+         to its version. Set `REWARD_ENCRYPTION_KEY` to the new key and bump
+         `REWARD_ENCRYPTION_KEY_VERSION`. Keep `REWARD_CODE_FINGERPRINT_KEY` unchanged (set it to
+         the ORIGINAL key first if the project still runs on version 1 without it).
+      3. Redeploy. New rewards are sealed with the new key; stored rewards sealed with the
+         previous key still open (`src/lib/rewards/crypto.ts` keyring, pinned by
+         `rewards.test.ts`). Anything sealed under an older version than the previous one is
+         refused, not mis-decrypted, so rotate one step at a time.
+      4. Once no undelivered reward sealed under the previous version remains (check
+         `prize_rewards` / `prize_reward_codes` key versions), remove the `_PREVIOUS` variables
+         and redeploy. Record the rotation (who, when, versions) in the operator log.
 - [ ] **OWNER + AGENT**: Securely back up the ORIGINAL `REWARD_ENCRYPTION_KEY`, its `REWARD_ENCRYPTION_KEY_VERSION` (default1 when unset), and the separate stable `REWARD_CODE_FINGERPRINT_KEY` through the existing private backup/operator path. Never rotate keys to silence an error, display values in logs or generate replacements and call them a backup. Review [instant delivery](INSTANT_DELIVERY.md).
 - [ ] **OWNER + AGENT**: Complete a disposable TEST restore rehearsal before real-value inventory. Prove dummy reward decryption, erased-code non-reuse, financial/data relationships and canary health using the original keys. Specify whether database, Auth associations, public media bytes/storage metadata and configuration are covered; record exclusions. A database backup and a key backup are both required, and their existence alone is not a restore pass.
 - [ ] **OWNER + AGENT**: After verified0063 rollout, inspect actual legacy erased/live-code and anchor counts, then follow the current System health result. Counts alone do not validate original keys or authorize initialization. Legacy erasure without an anchor requires the reviewed recovery path; never bless replacement keys or overwrite a mismatch.

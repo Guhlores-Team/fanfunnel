@@ -8,6 +8,8 @@ interface Invite {
   id: string;
   orgId: string;
   orgName: string;
+  /** null: join as a creator; otherwise the staff seat offered (0068). */
+  role?: string | null;
 }
 
 /**
@@ -79,11 +81,12 @@ export default function InvitesBanner() {
         >
           <div className="min-w-0">
             <p className="font-bold text-ink">
-              🏢 {inv.orgName} invited you to join their agency
+              🏢 {inv.orgName} invited you to {inv.role ? `join as a ${inv.role}` : "join their agency"}
             </p>
             <p className="text-sm text-muted">
-              Accepting lets the agency manage your wheels, fans, and fulfilment.
-              You can be removed at any time.
+              {inv.role
+                ? "Accepting gives you a staff seat there; your own account and data stay yours. You can be removed at any time."
+                : "Accepting lets the agency manage your wheels, fans, and fulfilment. You can be removed at any time."}
             </p>
           </div>
           <div className="flex items-center gap-2">

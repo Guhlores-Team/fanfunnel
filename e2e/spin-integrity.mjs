@@ -73,7 +73,9 @@ async function mintPass({
   const { error: fanError } = await admin.from("fans").update({ acked_at: new Date().toISOString(), acked_terms_version: FIXTURE_TERMS_VERSION,
     ...(blocked ? { blocked_at: new Date().toISOString() } : {}) }).eq("id", fanId);
   assert(!fanError, `ack/block fixture fan: ${fanError?.message}`);
-  const { error: passError } = await admin.from("fan_passes").update({ is_active: active, self_excluded_at: selfExcluded ? new Date().toISOString() : null }).eq("id", grant.passId);
+  // 0068: a paused link is never active, and self_excluded_at is written once
+  // (the fan path) and never cleared, so the fixture only ever sets it.
+  const { error: passError } = await admin.from("fan_passes").update({ is_active: active && !selfExcluded, ...(selfExcluded ? { self_excluded_at: new Date().toISOString() } : {}) }).eq("id", grant.passId);
   assert(!passError, `pass safety fixture: ${passError?.message}`);
   return { token: grant.token, fanId, passId: grant.passId };
 

@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { FAN_DELETE_PHRASE } from "@/lib/privacy/config";
 import { fanDataErrorMessage } from "@/lib/privacy/messages";
 import { exportDownloadWarning } from "@/lib/privacy/exportRecords";
+import { clearFanStorage } from "./fanStorage";
 
 /**
  * A fan's own privacy controls: "Download my data" and "Delete my data". The
@@ -74,6 +75,8 @@ export function FanDeleteFlow({
         setError(fanDataErrorMessage(d.error, "delete"));
         return;
       }
+      // The server is done; nothing about this link stays in the browser either.
+      await clearFanStorage(token);
       onDeleted();
     } catch {
       setError(fanDataErrorMessage(undefined, "delete"));

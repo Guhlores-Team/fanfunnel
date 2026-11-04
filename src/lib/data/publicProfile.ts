@@ -188,6 +188,24 @@ export async function getMyPublicProfile(): Promise<{
 // Cap stored avatar URLs so a multi-KB string can't be persisted via the note RPC.
 const MAX_AVATAR_URL_LEN = 2048;
 
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:" && value.length <= 2048 && !/\s/.test(value);
+  } catch {
+    return false;
+  }
+}
+
+/** An https URL whose path is our public avatars bucket (matches the 0068 RPC rule). */
+function isOurAvatarUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.pathname.startsWith("/storage/v1/object/public/avatars/") && !/\s/.test(value);
+  } catch {
+    return false;
+  }
+}
+
 /** Creator updates their SFW link-in-bio fields + fan-page personal note. */
 /** The stored form of a public slug (the `/c/<slug>` path segment). */
 export function normalizePublicSlug(raw: string): string {
@@ -233,9 +251,13 @@ export async function setMyPublicProfile(input: {
   // (TOCTOU) and could wipe an omitted note/avatar.
   if (input.slug !== undefined || input.tipUrl !== undefined || input.tagline !== undefined) {
     const slug = input.slug !== undefined ? normalizePublicSlug(input.slug) : null;
+    // A tip link is https only (bare domains are normalized to https://); the
+    // RPC refuses anything else (0068), so say so before the round trip.
+    const tipUrl = input.tipUrl !== undefined ? externalUrl(input.tipUrl) : null;
+    if (tipUrl && !isHttpsUrl(tipUrl)) return { error: "invalid_tip_url" };
     const { error } = await sb.rpc("set_public_profile", {
       p_slug: slug,
-      p_tip_url: input.tipUrl !== undefined ? externalUrl(input.tipUrl) : null,
+      p_tip_url: tipUrl,
       p_tagline: input.tagline !== undefined ? input.tagline : null,
     });
     if (error) return { error: "db_error" };
@@ -250,15 +272,10 @@ export async function setMyPublicProfile(input: {
       avatar = input.avatarUrl;
       if (avatar !== "") {
         if (avatar.length > MAX_AVATAR_URL_LEN) return { error: "invalid_avatar_url" };
-        let protocol: string;
-        try {
-          protocol = new URL(avatar).protocol;
-        } catch {
-          return { error: "invalid_avatar_url" };
-        }
-        if (protocol !== "http:" && protocol !== "https:") {
-          return { error: "invalid_avatar_url" };
-        }
+        // Only an object the avatar upload wrote to our public avatars bucket
+        // (https, path /storage/v1/object/public/avatars/...); the RPC enforces
+        // the same (0068).
+        if (!isOurAvatarUrl(avatar)) return { error: "invalid_avatar_url" };
       }
     }
     const { error: noteError } = await sb.rpc("set_creator_note", {

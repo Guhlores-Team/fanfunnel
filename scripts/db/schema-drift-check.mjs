@@ -31,6 +31,11 @@
 // the retention cleanup trims only settled history, spin_attempts FKs indexed.
 // And the seat-scope probe (0066, seatScopeProbe.mjs): a chatter reads/writes
 // only the inbox, a fulfiller only the fulfilment queue, of creators in scope.
+// And the tenant-boundary probe (0068, dbSecurityProbe.mjs): paused links stay
+// paused, forged cross-tenant references are refused, fan consent and link
+// tokens are the fan's, invitations enumerate nothing, deletion leaves no
+// link trace. The stub carries Supabase's default grants so these run
+// against the hosted project's real privileges.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -62,6 +67,7 @@ import { probeCryptoNamespace } from "./cryptoNamespaceProbe.mjs";
 import { probeGaps } from "./gapsProbe.mjs";
 import { probeHardening } from "./hardeningProbe.mjs";
 import { probeSeatScopes } from "./seatScopeProbe.mjs";
+import { probeDbSecurity } from "./dbSecurityProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -1034,6 +1040,17 @@ function probeSeatScopeRpcs(db) {
   }
 }
 
+function probeTenantBoundaries(db) {
+  const bad = probeDbSecurity(db, psql);
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: tenant boundaries, consent and deletion traces (0068)`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: 0068 paused links stay paused and tokens never change; forged cross-tenant references refused; consent, link tokens and messages are the fan's; invitations answer uniformly, seat nobody unasked and are throttled; e-mail sync; deletion scrubs link traces; URLs validated; no TRUNCATE, nothing for anon`);
+  }
+}
+
 function probeCompletenessGaps(db) {
   const bad = probeGaps(db, psql);
   if (bad.length) {
@@ -1412,6 +1429,7 @@ try {
     await probeCreatorActorContexts(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"actor context SQL failed");return r.stdout;});
     probeCompletenessGaps(db);
     probeSeatScopeRpcs(db);
+    probeTenantBoundaries(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

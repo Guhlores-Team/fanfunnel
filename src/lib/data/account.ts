@@ -27,8 +27,10 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  // fans → cascades fan_passes, spins, grants, messages, wishlists, referrals.
-  // wheels → cascades prizes, (wheel-scoped) passes, happy_hours.
+  // fans → cascades fan_passes, grants, messages, wishlists, referrals, and
+  //   (0068) scrubs the link token from safety reports and spin attempts;
+  //   spins are kept anonymized until their wheel goes.
+  // wheels → cascades prizes, spins, (wheel-scoped) passes, happy_hours.
   // Then standalone creator-owned tables.
   const tables = [
     "fans",
@@ -56,8 +58,11 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
   // DEFINER self-update RPCs — profiles_update RLS is admin-only): the
   // Get-started checklist comes back, and the public leaderboard returns to
   // its off default instead of silently staying live from before the reset.
-  // Best-effort: a pref that fails to reset shouldn't fail the whole wipe.
+  // The orphaned spin-attempt shells (fan and link gone, state settled) go too
+  // (wipe_my_spin_attempts, 0068). Best-effort: a step that fails shouldn't
+  // fail the whole wipe.
   await Promise.allSettled([
+    sb.rpc("wipe_my_spin_attempts"),
     sb.rpc("set_onboarding_dismissed", { p_dismissed: false }),
     sb.rpc("set_leaderboard_enabled", { p_enabled: false }),
     sb.rpc("set_chat_settings", { p_intro: "", p_outro: "" }),

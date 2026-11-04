@@ -135,6 +135,29 @@ suggests OnlyFans / Fansly / Fanvue (`PendingClient.tsx:132`).
   both (Supabase: Project Settings → General; Upstash: the database's details page) and correct
   the policy if either is outside the US. Confirm them again when signing each DPA.
 
+- **Fan consent and the link token (residual, migration 0068).** The leaderboard opt-in, the
+  board name and the age-gate/terms acknowledgement can only be written by the fan's own
+  token-bound paths; a creator session is refused by the database. The residual is that the
+  creator holds the fan's link token (they minted it), so a creator could open the fan page
+  and act as the fan. Fans have no account, so consent cannot be bound to a device or session
+  without one; the record of consent therefore proves "someone with this link agreed", not
+  "this person agreed". A lawyer should say whether that is enough for the leaderboard
+  (public display of a chosen name) and the age gate, or whether a fan account / e-mail
+  confirmation is needed for the consent to count.
+- **Creator notes and tags are not in the fan's export (decision recorded).** A creator's
+  private notes and tags about a fan are personal data about that fan, but the creator is the
+  controller of them and FanFunnel the processor (above). The fan export covers FanFunnel's
+  own records about the fan; a fan who wants the creator's notes asks the creator, who can
+  see them in the dashboard. Including them would also hand a fan the creator's remarks about
+  third parties and the creator's own opinions, which a controller may redact. If the lawyer
+  decides FanFunnel should serve them directly, the export already lists the columns it
+  omits (`src/lib/privacy/exportTypes.ts`), so adding `notes` and `tags` is a small change.
+- **Safety reports outlive the reported account (decision recorded).** A report about a
+  creator is kept (without the account link and without the e-mail address) when the
+  account is deleted or closes itself, and a suspended account or one with an open report
+  cannot close itself. This keeps evidence for child-safety and abuse reports; the owner
+  decides when a report may be deleted. A lawyer should confirm the retention basis.
+
 **US state privacy laws.** The CCPA/CPRA applies only above thresholds (roughly US$26M revenue,
 100,000 consumers, or 50% of revenue from selling or sharing data), so it probably does not
 apply yet. The policy offers the rights anyway, which is harmless. Several states (for example

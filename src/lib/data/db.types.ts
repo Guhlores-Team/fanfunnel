@@ -724,7 +724,8 @@ export type Database = {
       creator_reports: {
         Row: {
           created_at: string
-          creator_id: string
+          creator_id: string | null
+          creator_snapshot: Json | null
           detail: string | null
           fan_id: string | null
           id: string
@@ -737,7 +738,8 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          creator_id: string
+          creator_id?: string | null
+          creator_snapshot?: Json | null
           detail?: string | null
           fan_id?: string | null
           id?: string
@@ -750,7 +752,8 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          creator_id?: string
+          creator_id?: string | null
+          creator_snapshot?: Json | null
           detail?: string | null
           fan_id?: string | null
           id?: string
@@ -1746,6 +1749,7 @@ export type Database = {
           expires_at: string
           id: string
           org_id: string
+          role: Database["public"]["Enums"]["org_role"] | null
           status: string
         }
         Insert: {
@@ -1754,6 +1758,7 @@ export type Database = {
           expires_at?: string
           id?: string
           org_id: string
+          role?: Database["public"]["Enums"]["org_role"] | null
           status?: string
         }
         Update: {
@@ -1762,6 +1767,7 @@ export type Database = {
           expires_at?: string
           id?: string
           org_id?: string
+          role?: Database["public"]["Enums"]["org_role"] | null
           status?: string
         }
         Relationships: [
@@ -3258,6 +3264,24 @@ export type Database = {
             }
             Returns: Json
           }
+      creator_link_pass: {
+        Args: { p_token: string }
+        Returns: {
+          campaign_id: string
+          creator_id: string
+          fan_id: string
+          id: string
+          is_active: boolean
+        }[]
+      }
+      creator_link_tokens: {
+        Args: { p_creator: string; p_fan?: string }
+        Returns: {
+          fan_id: string
+          pass_id: string
+          token: string
+        }[]
+      }
       creator_inbox_threads: {
         Args: {
           p_before_at?: string
@@ -3715,6 +3739,7 @@ export type Database = {
       }
       set_creator_theme: { Args: { p_theme: Json }; Returns: Json }
       set_display_name: { Args: { p_name: string }; Returns: undefined }
+      wipe_my_spin_attempts: { Args: never; Returns: number }
       set_fan_pass_game: {
         Args: {
           p_actor?: string

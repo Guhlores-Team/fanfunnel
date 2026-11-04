@@ -418,9 +418,11 @@ const SECTIONS: LegalSection[] = [
     body: (
       <>
         <p>
-          <strong>You can stop at any time.</strong> Creators can ask us to delete their account by emailing{" "}
-          <ContactEmail />, and can wipe their wheels and fan data from the dashboard. Fans can pause their
-          link and ask the creator or us to delete their information.
+          <strong>You can stop at any time.</strong> Creators can close their account in Settings → Your data
+          (or ask us by emailing <ContactEmail />), and can wipe their wheels and fan data from the dashboard.
+          A suspended account, or one with a safety report under review, is closed by us once the review is
+          done. Fans can pause their link, download or delete their own data from Safety &amp; privacy on
+          their link, or ask the creator or us.
         </p>
         <p>
           <strong>We can suspend or close access</strong>, to an account, a wheel or a spin link, if we

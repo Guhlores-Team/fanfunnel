@@ -24,6 +24,8 @@ interface Member {
   role: string;
 }
 interface Invite {
+  /** null: a creator invitation; otherwise the seat role offered (0068). */
+  role?: string | null;
   id: string;
   email: string;
 }
@@ -56,7 +58,8 @@ async function manage(body: Record<string, unknown>): Promise<string | null> {
 // back to one generic line.
 const errLabel = (e: string) =>
   ({
-    no_such_user: "No account with that email.",
+    invalid_email: "Enter a valid email address.",
+    rate_limited: "Too many invitations in the last hour. Try again later.",
     already_in_org: "That creator is already in another agency.",
     expired: "That invitation has expired. Send a new invitation.",
     not_owner: "Only the agency owner can do that.",
@@ -177,9 +180,9 @@ export default function AgencyClient() {
       </div>
 
       {isOwner && <p className="mt-2 text-sm text-white/50">Invitations expire after {AGENCY_INVITE_TTL_DAYS} days. Send a new invitation if one expires.</p>}
-      {isOwner && data.invites.length > 0 && (
+      {isOwner && data.invites.some((inv) => !inv.role) && (
         <div className="mt-3 space-y-2">
-          {data.invites.map((inv) => (
+          {data.invites.filter((inv) => !inv.role).map((inv) => (
             <div
               key={inv.id}
               className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] p-4"
@@ -295,7 +298,25 @@ export default function AgencyClient() {
             )}
           </div>
         ))}
-        {data.members.length === 0 && (
+        {isOwner && data.invites.filter((inv) => !!inv.role).map((inv) => (
+          <div
+            key={inv.id}
+            className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] p-4"
+          >
+            <div className="min-w-0">
+              <p className="text-sm text-white/70">{inv.email}</p>
+              <p className="text-xs text-amber-300/80">Invited as {inv.role} · awaiting acceptance</p>
+            </div>
+            <button
+              onClick={() => runGuarded(`revoke:${inv.id}`, { action: "revoke_invite", inviteId: inv.id })}
+              disabled={busyKeys.has(`revoke:${inv.id}`)}
+              className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/50 hover:text-white disabled:opacity-50"
+            >
+              Revoke
+            </button>
+          </div>
+        ))}
+        {data.members.length === 0 && !data.invites.some((inv) => !!inv.role) && (
           <p className="text-sm text-white/40">No staff seats yet.</p>
         )}
       </div>

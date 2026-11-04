@@ -133,6 +133,8 @@ export interface OrgMember {
 export interface PendingInvite {
   id: string;
   email: string;
+  /** null: invited to join as a creator; otherwise the seat role on acceptance (0068). */
+  role: OrgRole | null;
 }
 export interface AgencyOverview {
   org: { id: string; name: string } | null;
@@ -179,7 +181,7 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     fans: number;
     spins: number;
     pending: number;
-    revenue: number;
+    revenue: number | null;
   }[]).map((r) => ({
     id: r.id,
     displayName: r.display_name ?? r.email ?? "Creator",
@@ -188,18 +190,20 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     fans: Number(r.fans),
     spins: Number(r.spins),
     pending: Number(r.pending),
-    revenue: Number(r.revenue),
+    // 0068: e-mail and revenue are null for a scoped seat that may not manage
+    // the creator (the stats RPC masks them); an owner/manager sees both.
+    revenue: Number(r.revenue ?? 0),
   }));
 
   // Pending outgoing invites (owner-only view; RLS returns none to staff).
   const { data: inviteRows } = await sb
     .from("org_invites")
-    .select("id, email")
+    .select("id, email, role")
     .eq("org_id", org.id)
     .eq("status", "pending")
     .gt("expires_at", new Date().toISOString());
-  const invites: PendingInvite[] = ((inviteRows ?? []) as { id: string; email: string }[]).map(
-    (r) => ({ id: r.id, email: r.email })
+  const invites: PendingInvite[] = ((inviteRows ?? []) as { id: string; email: string; role: OrgRole | null }[]).map(
+    (r) => ({ id: r.id, email: r.email, role: r.role ?? null })
   );
 
   const { data: memberRows } = await sb
@@ -261,7 +265,10 @@ async function agencyRpc(call: OrgRpc): Promise<{ ok: true } | { error: string }
   return data === "ok" ? { ok: true } : { error: String(data) };
 }
 
-// Creators join via consent: the owner sends an invite, the creator accepts.
+// Creators and staff join via consent: the owner sends an invite, the invitee
+// accepts (org_invite_respond). Both senders answer "ok" for any address
+// (0068: no account enumeration); the invitation shows up for that account
+// if and when it exists and is active.
 export const inviteOrgCreator = (orgId: string, email: string) =>
   agencyRpc({ fn: "org_invite_creator", args: { p_org: orgId, p_email: email } });
 export const revokeOrgInvite = (inviteId: string) =>
@@ -281,6 +288,8 @@ export interface MyInvite {
   id: string;
   orgId: string;
   orgName: string;
+  /** null: join as a creator; otherwise the staff seat offered (0068). */
+  role: OrgRole | null;
 }
 
 /** Pending agency invites addressed to the signed-in user (for their dashboard). */
@@ -293,15 +302,16 @@ export async function getMyInvites(): Promise<MyInvite[]> {
   if (!user?.email) return [];
   const { data } = await sb
     .from("org_invites")
-    .select("id, org_id, status, org:orgs(name)")
+    .select("id, org_id, status, role, org:orgs(name)")
     .eq("status", "pending")
     .eq("email", user.email.trim().toLowerCase())
     .gt("expires_at", new Date().toISOString());
   return ((data ?? []) as unknown as {
     id: string;
     org_id: string;
+    role: OrgRole | null;
     org: { name: string } | null;
-  }[]).map((r) => ({ id: r.id, orgId: r.org_id, orgName: r.org?.name ?? "An agency" }));
+  }[]).map((r) => ({ id: r.id, orgId: r.org_id, orgName: r.org?.name ?? "An agency", role: r.role ?? null }));
 }
 
 export async function updateAccount(

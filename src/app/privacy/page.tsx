@@ -417,6 +417,12 @@ const SECTIONS: LegalSection[] = [
           account or personal spin links, so past prizes can still be fulfilled and counted.
         </li>
         <li>
+          <strong>Safety reports about a creator:</strong> kept when the law requires it, even after the
+          reported account is deleted. The report then keeps only the creator&apos;s display name and public
+          page name (never an e-mail address or a spin link). A suspended account, or one with a report
+          under review, cannot close itself until the review is done.
+        </li>
+        <li>
           <strong>Check-ins, bingo cards, breaks and play reminders, Focus and Chase boosts and win-back records:</strong>{" "}
           kept with the fan record they belong to, and deleted with it (when the fan deletes their data, the
           creator deletes the fan or the account is closed). Visit check-ins are also deleted after{" "}
