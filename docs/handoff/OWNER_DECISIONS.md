@@ -1,7 +1,9 @@
 # Owner decisions — redesign parity + backlog (2026-10-26)
 
 Principle: the redesign keeps EVERY feature/control the prior (main) dashboard had, plus every
-feature added since. Item IDs (P#) refer to placement-interview.md in this folder.
+feature added since. Item IDs (P#) refer to the placement interview, which was a scratchpad
+working file (`.../scratchpad/placement-interview.md`, see `PHASE2_BRIEF.md`) and was never
+committed. The decisions below are self-contained; the P# numbers are labels only.
 
 ## Placement interview
 - Sign-offs: all 19 "as built = prior" items accepted (P2 P3 P13 P14 P15 P19 P20 P24 P25 P29 P31 P37 P39 P41 P45 P46 P50 P51 P54).

@@ -36,7 +36,7 @@ References: [binding rules](../AGENTS.md), [current handoff](handoff/HANDOFF.md)
 
 - [ ] **OWNER**: Verify provider two-factor and recovery for everyone with access, using [GitHub security](https://github.com/settings/security), [Vercel account](https://vercel.com/account), [Supabase account security](https://supabase.com/dashboard/account/security) and the owning email account. Save recovery codes privately; do not share logins/factors.
 - [ ] **OWNER**: Review [branch rules](https://github.com/Guhlores-Team/fanfunnel/settings/branches) for `main`: require a PR, the exact required green jobs and an approval. Record any plan limitation rather than assuming protection is enabled.
-- [ ] **OWNER**: In [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments), require your review for `production` database operations. This gate does not delay Vercel's independent deployment; section5 must resolve that ordering separately.
+- [ ] **OWNER**: In [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments), require your review for `production` database operations. On its own this does not delay Vercel's deployment; the section 5 Deployment Check on `db-migrations-production` does.
 - [ ] **OWNER**: Review [repository security](https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis): secret scanning, push protection and dependency alerts where supported. Dependabot configuration alone does not prove these settings are enabled.
 - [ ] **OWNER + AGENT**: Confirm required Actions secret names and target identity without exposing values: migration access token, TEST/PROD project refs and database passwords, plus TEST URL/anon/service credentials for real tests. A working Git connection does not prove permission to manage [Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions).
 
@@ -70,6 +70,11 @@ Variable names by scope (see the checks below for how to verify each):
       `openssl rand -base64 32`, Sensitive, backed up securely, never rotated), the web-push
       VAPID trio, and `RESEND_API_KEY` + `ALERT_EMAIL_TO` for alerts. Names, scopes and warnings:
       the table in [`DEPLOY.md` section 3](../DEPLOY.md#3-vercel-project-and-environment-variables).
+      **Known gap (env listing of 2026-10-31):** Production has neither `REWARD_ENCRYPTION_KEY`
+      nor `REWARD_CODE_FINGERPRINT_KEY` (Preview has them), and `CRON_SECRET` is set on neither
+      scope. Until they exist the 0063 startup canary reports the crypto configuration as missing
+      and the retention cron / error alerts refuse to run; the first LIVE smoke check (section 9)
+      must confirm System health is green.
 
 - [ ] **OWNER + AGENT**: Review [Vercel environment settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables) by scope. Preview must use TEST URL/anon/service credentials; future Production must use LIVE credentials. Service keys remain server-only. `FF_REQUIRE_SUPABASE=1` prevents accidental mock fallback; `NEXT_PUBLIC_ENABLE_DEBUG=1` belongs only in Preview and must be absent from Production.
 - [ ] **OWNER + AGENT**: Confirm server-controlled admin profiles and independent two-factor access. `ADMIN_EMAILS` is configuration, not a substitute for checking actual role/active/approval state or RLS.
@@ -88,13 +93,64 @@ Variable names by scope (see the checks below for how to verify each):
 **This section is future owner work, not current authorization.** A reviewed,
 backed-up LIVE schema must be ready before code that requires it can serve traffic.
 
+### The enforced gate (A39): Vercel Deployment Check on `db-migrations-production`
+
+Vercel deploys `main` from Git on its own, so ordering cannot come from GitHub
+alone. The gate that works with that setup is a **Vercel Deployment Check**:
+Vercel still builds each Production deployment, but does not assign it to the
+production domain until the named GitHub check on the same commit succeeds.
+
+- The [migration workflow](../.github/workflows/supabase-migrations.yml) job
+  `production` is named **`db-migrations-production`**. It runs on **every**
+  push to `main` (the old `paths:` filter is gone, so code-only pushes get the
+  check too), uses the `production` environment, runs `supabase db push`, then
+  re-reads `supabase migration list --linked` and fails unless the remote
+  history holds every migration file in that commit and nothing unknown
+  ([`scripts/ci/verify-migrations-applied.mjs`](../scripts/ci/verify-migrations-applied.mjs)).
+  The TEST job runs the same read-back on pull requests.
+- With the Deployment Check required, new code is promoted only after that
+  job passes; a failed, cancelled or never-approved job leaves the previous
+  Production deployment serving. A code-only push is a verified no-op run.
+- `node scripts/test/db-before-code.test.mjs` (CI `verify` job) pins the
+  trigger, the job name, the push-then-verify order and this section.
+
+Owner setup, once (nothing in the repo can turn it on):
+
+- [ ] **OWNER**: In [Vercel → Settings → Build and Deployment → Deployment Checks](https://vercel.com/easy-simple-sites/fanfunnel/settings/build-and-deployment#deployment-checks), select **Add Checks** → **GitHub** and require exactly `db-migrations-production`.
+- [ ] **OWNER**: In [Vercel → Settings → Environments → Production](https://vercel.com/easy-simple-sites/fanfunnel/settings/environments/production), confirm automatic aliasing for Production is ON (Deployment Checks only promote with it on).
+- [ ] **OWNER + AGENT**: Prove it on the first merge after setup: the new Production deployment shows the check as pending and stays un-aliased until `db-migrations-production` is green, then is promoted. Record the deployment and run links.
+- [ ] **OWNER**: The `production` environment's required reviewer now applies to every `main` push. Approving a code-only run is approving a verified no-op; rejecting it keeps the old deployment live.
+
+Residual gaps, stated plainly:
+
+- **Owner setting.** Until the Deployment Check is configured in Vercel, this
+  is not enforced; the repo cannot verify the setting. **Force Promote**,
+  Instant Rollback, `vercel --prod` and a manual redeploy bypass it.
+- **Old code meets the new schema.** The previous deployment keeps serving
+  while migrations apply, so every migration must stay compatible with the
+  code already live (expand, then contract in a later release). The check
+  does not prove that; review it per migration.
+- **Build time.** The new build runs before the check. It must not need the
+  new schema at build time; keep build-time data reads out of the app.
+- **Superseded commits.** The workflow's concurrency group replaces a pending
+  run with a newer one, so an intermediate `main` commit can end cancelled and
+  never be promoted; the newer commit carries its migrations.
+- **No runtime fail-closed check yet.** A `schema_version()` read at startup,
+  serving a maintenance page when the database is behind, was considered.
+  `supabase_migrations.schema_migrations` is not exposed through the Data API
+  (only `public`/`graphql_public` are), so the service role cannot read it
+  without SQL. Follow-up for migration **0066**: a `security definer`
+  `public.schema_version()` returning `max(version)` from that table, granted
+  to `service_role` only (revoked from `anon`/`authenticated`), plus an app
+  constant of the required migration that fails closed when the read is lower
+  or errors. No migration is added here.
+
+### Release plan before any merge
+
 The current [migration workflow](../.github/workflows/supabase-migrations.yml)
-runs TEST on pull requests. Its Production job runs only on a push to `main`
-that changes migration/config paths, uses the `production` environment, links the
-configured project and runs `supabase db push`. Vercel can independently deploy
-`main` at the same time. Workflow concurrency and an approval gate do **not**
-establish database-before-code ordering. Code-only pushes do not trigger that
-Production migration job, and it does not itself list history or compare types.
+runs TEST on pull requests and the gated Production job on every push to
+`main`. Workflow concurrency and the environment approval alone do **not**
+establish ordering; the Deployment Check above does, once configured.
 
 - [ ] **OWNER + AGENT**: Prepare and approve a concrete release plan before any main merge. One option is owner-run pre-application of the exact reviewed migrations while the old code remains safely served, but only after proving old-code/new-schema compatibility. If that cannot be proved, prepare a separately reviewed traffic/deployment hold and restoration plan. Do not assume additive numbering makes an old deployment compatible; later auth/RPC contracts can deliberately retire old calls.
 - [ ] **OWNER**: Verify a recoverable LIVE backup and the original-key backup, intended project identity and actual migration history. Keep LIVE credentials in approved private controls; the agent does not obtain or use them. Never run `supabase/reset.sql` on LIVE.
@@ -107,13 +163,56 @@ Production migration job, and it does not itself list history or compare types.
 
 ## 6. Optional chosen TEST data transfer — separate approval
 
-The owner wants to keep selected TEST work at go-live. No transfer script or
-Production operation is authorized by this checklist.
+The owner wants to keep selected TEST work at go-live. The tool is
+[`scripts/golive/carry-over.mjs`](../scripts/golive/carry-over.mjs) (A38). It
+exists and is tested; **running it against LIVE is not authorized by this
+checklist** and the agent never runs it against a hosted project.
 
-- [ ] **OWNER**: Identify the exact accounts/data to keep; unselected TEST records must not move.
-- [ ] **AGENT**: Prepare a schema-complete, privacy-conscious transfer and rollback plan against the final migrations. A one-off script does not yet exist. Specify Auth recreation, fresh-password delivery, media bytes/metadata, original versus new IDs, fairness/economic history, Focus/Bingo state and secret re-encryption/creator associated-data implications. Do not blindly copy encrypted rows or assume changing IDs preserves historical proofs.
-- [ ] **OWNER + AGENT**: Dry-run with no LIVE writes and review per-account counts, balances (`fans` equals sum of passes), included/excluded data, key handling and failure/rollback behavior. Keep identifiers and exports private.
-- [ ] **OWNER**: Approve the exact transfer only after the dry run and prerequisites, then perform the reviewed LIVE operation using private credentials. A password reset or invitation email needs separate explicit send authorization. Verify one carried account and reconcile all recorded counts.
+What it does: copies chosen creators' **configuration** from TEST to LIVE,
+matched by Auth email. The LIVE account must already exist (the creator signs
+up or is invited; the tool never creates Auth users or sends email) and be an
+active, approved creator with the game features their games need.
+
+| Carried | Never carried |
+| --- | --- |
+| Profile look and copy: theme, display name, public page address/tagline/tip link, chat intro/outro, creator note, notification and leaderboard preferences | Fans, fan passes, spins, attempts, grants, redemptions, wishlists, referrals, messages, check-ins, outreach |
+| Unarchived games (wheel, scratch, bingo) with prizes and game config | Reward secrets (`prize_rewards`) and reward codes; archived games |
+| Campaigns and their packs | Media bytes and rows, avatar and prize image URLs |
+| Prize, wheel and DM templates; Focus setting | Webhooks, happy hours, role/approval/features/org/terms, Auth |
+
+Changes on the way, each listed in the plan: every row gets a new
+deterministic id; games arrive **paused**; link/text prizes become **manual**
+(re-enter the link/text in LIVE); code prizes arrive with **0 stock** (add
+codes in LIVE); a photo background falls back to `glow`; an avatar app icon
+falls back to `neutral`; **Chase is off**. A plan still pointing at the TEST
+project or at a TEST row id is blocked.
+
+Safety rails: `--from-ref` must be TEST `snmcrmhgevfqggxdiomu` and `--to-ref`
+must be LIVE `ttlogfmogcccwiraaoae` (equal refs are refused); each database
+URL comes only from `CARRY_FROM_DB_URL` / `CARRY_TO_DB_URL` (a URL on the
+command line is refused) and must name its own project; dry run is the
+default and reads both sides in read-only transactions; `--apply` refuses any
+blocked creator and then requires the exact typed line
+`CARRY snmcrmhgevfqggxdiomu -> ttlogfmogcccwiraaoae: <sorted emails>`. Each
+creator is one transaction that re-checks the LIVE account; the run stops at
+the first failure and the JSONL resume log (`--resume-log`, default
+`golive-carry-over-ttlogfmogcccwiraaoae.log.jsonl`) lets a re-run skip finished
+creators. Without the log a re-run still inserts nothing twice (same ids), but
+it re-applies profile fields, so keep the log.
+
+Proof: `node scripts/golive/carry-over.test.mjs` (pure refusals, binding,
+planner, SQL) and `node scripts/golive/carry-over.db.test.mjs` (two disposable
+Postgres 16 databases built from `supabase/schema.sql`: dry run writes
+nothing, blocked/unconfirmed applies write nothing, real triggers accept the
+writes, re-runs change nothing, a mid-run failure rolls back and resumes). CI
+runs both.
+
+- [ ] **OWNER**: Identify the exact creator emails to keep; unselected TEST records do not move.
+- [ ] **OWNER**: Make sure each chosen creator has a LIVE account that is approved and active, with the Scratch/Bingo features their games use (Admin in LIVE).
+- [ ] **OWNER + AGENT**: Dry run (no `--apply`) from a private machine with `psql`, the two URLs in the environment only, and review the printed plan per creator: carried counts, "not carried" counts, notes and blockers. Keep emails, URLs and output private.
+- [ ] **OWNER**: Approve the exact list only after the dry run and the section 4/5 prerequisites (LIVE backup first), then run with `--apply` and type the confirmation line yourself. Agents do not hold LIVE credentials.
+- [ ] **OWNER + AGENT**: Verify one carried account in LIVE (games paused, prizes, campaigns, templates), then have the creator re-enter link/text rewards, add codes, re-upload photos and turn games on. Keep the resume log with the release evidence.
+- Residual gaps: the hosted `postgres` role's privileges on LIVE and pooler behaviour are not exercised by the local test; carried rows keep their TEST `created_at`; the tool has never run against a hosted database.
 
 ## 7. Preview protection and old deployment retirement
 
@@ -127,7 +226,7 @@ Production operation is authorized by this checklist.
 - [ ] **AGENT**: Report the full checked SHA, both verification rounds, actual exact-SHA CI/TEST results, final audit status, hosted/manual evidence and outstanding limits. Confirm the branch has not advanced since the accepted Preview.
 - [ ] **OWNER**: Explicitly approve that exact release only after sections1–7 and the DB-before-code plan are complete. Any new code/schema change invalidates the affected sign-off and requires its checks again.
 - [ ] **OWNER**: Perform the reviewed merge to `main`; the coding agent does not merge or push main. Confirm which Production deployment serves traffic and its exact source.
-- [ ] **OWNER**: Inspect any triggered Production migration job and approve it only under the reviewed plan. If migrations were safely pre-applied it should be a verified no-op, not a race relied on for ordering. A code-only merge may not trigger this job. Confirm genuine history/types and deployment readiness before admitting new traffic.
+- [ ] **OWNER**: Inspect the Production migration job (`db-migrations-production`, which runs on every `main` push) and approve it only under the reviewed plan. If migrations were safely pre-applied it is a verified no-op. Confirm the Vercel deployment stayed un-aliased until the check passed, then confirm genuine history/types before admitting new traffic.
 
 ## 9. Owner-operated LIVE smoke checks after separate release approval
 

@@ -6,7 +6,8 @@ name: E2E (real Supabase — login UI)
 # to confirm the session reaches a working dashboard.
 #
 # Separate from the headless e2e-supabase workflow because it needs a build +
-# running app + Chromium. Self-skips (exit 0) when the secrets are absent. Use a
+# running app + Chromium. A25: missing secrets FAIL the login-ui job
+# (scripts/ci/supabase-secrets-gate.mjs); only a fork PR skips, visibly. Use a
 # DEDICATED test project (it creates and deletes users).
 
 on:
@@ -51,20 +52,40 @@ jobs:
           node-version: 22
           cache: npm
 
+      # A25: fail when the TEST secrets are missing; skip (visibly) only on a
+      # fork PR. Only presence booleans reach the gate, never secret values.
+      - name: Require TEST Supabase secrets (fork PRs skip visibly)
+        id: supabase-secrets
+        env:
+          GATE_JOB: Login-UI E2E
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
+          BASE_REF: ${{ github.base_ref }}
+          ACTOR: ${{ github.actor }}
+          HAS_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL != '' }}
+          HAS_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY != '' }}
+          HAS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: node scripts/ci/supabase-secrets-gate.mjs
+
       - name: Install dependencies
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npm ci
 
       # NEXT_PUBLIC_* are inlined here so the browser client points at the
-      # test project. (Falls back to mock build if secrets are unset; the test
-      # then skips.)
+      # test project.
       - name: Build
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npm run build
 
       # ubuntu-latest is 26.04: needs playwright >= 1.61 (first release supporting it).
       - name: Install Playwright browser
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
 
-      - name: Login-UI E2E (skips if secrets unset)
+      - name: Login-UI E2E
+        if: steps.supabase-secrets.outputs.run == 'true'
         env:
           # Only the Next runtime and login fixture need the private key.
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

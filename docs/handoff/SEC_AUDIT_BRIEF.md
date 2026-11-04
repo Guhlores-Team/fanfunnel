@@ -10,7 +10,8 @@ rules of engagement and finding format bind you. Adaptations by the orchestrator
   `docs/handoff/sec/<your-part>.md`, in the
   spec's finding format (ID placeholder `SEC-?`, severity, attacker model, exploit scenario, file:line evidence, safe PoC,
   fix, effort), plus a **verified-safe list** with evidence. The orchestrator merges the two parts, verifies every
-  Critical/High finding, and commits the final `docs/security/AUDIT-2026-10.md`.
+  Critical/High finding, and commits the final `docs/security/AUDIT-2026-10.md` (not written yet: as of
+  2026-10-31 the two-auditor pass has not run, so that file does not exist).
 - **Never** send traffic to production (`fanfunnel.vercel.app`) or the prod Supabase project (`ttlogfmogcccwiraaoae`).
   Dynamic testing is allowed only against:
   - a local build in mock mode (`npm run build && npx next start -p <your port>`);
