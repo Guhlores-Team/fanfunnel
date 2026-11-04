@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { setFanLinkGame } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // "Change game for this fan only" (0065): sets the game one fan link plays,
 // or follows its campaign and the live game again. Body: { token, wheelId }.
@@ -10,6 +11,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ fanId: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "fans/[fanId]/link-game:POST");
+  if (rateLimited) return rateLimited;
   const { fanId } = await params;
   const body = await parseJsonBody<{ token?: unknown; wheelId?: unknown }>(req);
   if (body === BAD_REQUEST) return badRequest();
