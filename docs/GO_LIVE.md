@@ -137,16 +137,25 @@ Residual gaps, stated plainly:
 - **Superseded commits.** The workflow's concurrency group replaces a pending
   run with a newer one, so an intermediate `main` commit can end cancelled and
   never be promoted; the newer commit carries its migrations.
-- **No runtime fail-closed check yet.** A `schema_version()` read at startup,
-  serving a maintenance page when the database is behind, was considered.
-  `supabase_migrations.schema_migrations` is not exposed through the Data API
-  (only `public`/`graphql_public` are), so the service role cannot read it
-  without SQL. Follow-up for a later migration (**0067**; 0066 shipped the agency seat
-  scopes instead): a `security definer`
-  `public.schema_version()` returning `max(version)` from that table, granted
-  to `service_role` only (revoked from `anon`/`authenticated`), plus an app
-  constant of the required migration that fails closed when the read is lower
-  or errors. No migration is added here.
+- **Runtime schema-version check (0067): flags, does not fail closed.**
+  `public.schema_version()` returns the migration level the database was
+  built to (67 after 0067). It is a constant every migration redefines with
+  its own number, not a read of `supabase_migrations.schema_migrations`: that
+  table is not exposed through the Data API and is empty when SQL was pasted
+  by hand, while the constant travels with the schema itself.
+  `src/lib/operations/schemaVersion.test.ts` (in `npm test`) fails unless the
+  newest migration redefines it to its own number, both snapshots end on it
+  and the app's `EXPECTED_SCHEMA_VERSION` matches. It is granted to
+  `service_role` only (revoked from `public`, `anon`, `authenticated`); the
+  server reads it with the service client. A database **behind** the code's
+  level (or without the function, i.e. before 0067) is shown in
+  **Admin › System health**, fails the manual **Run checks now** and the daily
+  maintenance cron (`/api/cron/retention`, HTTP 503), and is reported at server
+  startup through the existing error/alert pipeline with a fixed message.
+  A database **ahead** of the code passes (that is the normal DB-before-code
+  order). The app keeps serving either way: a maintenance page was rejected
+  because a false "behind" (a transient read error) would take the site down.
+- [ ] **OWNER + AGENT**: After every LIVE migration, open **Admin › System health** on LIVE and confirm the schema line reads "as this release expects" (or "newer"), then **Run checks now**. A "behind" line means the code is live without its migration: roll the deployment back or apply the reviewed migration before relying on the new features.
 
 ### Release plan before any merge
 
@@ -157,7 +166,7 @@ establish ordering; the Deployment Check above does, once configured.
 
 - [ ] **OWNER + AGENT**: Prepare and approve a concrete release plan before any main merge. One option is owner-run pre-application of the exact reviewed migrations while the old code remains safely served, but only after proving old-code/new-schema compatibility. If that cannot be proved, prepare a separately reviewed traffic/deployment hold and restoration plan. Do not assume additive numbering makes an old deployment compatible; later auth/RPC contracts can deliberately retire old calls.
 - [ ] **OWNER**: Verify a recoverable LIVE backup and the original-key backup, intended project identity and actual migration history. Keep LIVE credentials in approved private controls; the agent does not obtain or use them. Never run `supabase/reset.sql` on LIVE.
-- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations 0001–0066 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes 0059 Focus, 0060 Scratch, 0061 Bingo, 0062 account security, 0063 operational integrity, 0064 completeness gaps, 0065 per-fan game pins and batch-3 hardening, and 0066 agency seat scopes, the approval notice and alert release.
+- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations 0001–0067 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes 0059 Focus, 0060 Scratch, 0061 Bingo, 0062 account security, 0063 operational integrity, 0064 completeness gaps, 0065 per-fan game pins and batch-3 hardening, 0066 agency seat scopes, the approval notice and alert release, and 0067 cancelled-prize stock and `schema_version()`.
 - [ ] **OWNER + AGENT**: If historical SQL was pasted manually, investigate history/schema divergence with a separate reviewed reconciliation plan and backup. Do not mark a migration applied merely to make CI green, infer execution from a history row, or assume a rerun is harmless.
 - [ ] **OWNER + AGENT**: Review the existing ledger prechecks and migration-specific constraints on actual data, including negative balances/grants, stock and costs. A warning or skipped constraint is not proof of the intended invariant. Resolve unexpected counts before proceeding; do not repair financial records automatically.
 - [ ] **OWNER**: Only after explicit approval for that exact Production operation, use the pinned supported Supabase CLI from the final checked source, verify the selected project is LIVE, inspect `supabase migration list --linked` and the pending migration plan, then perform the reviewed `supabase db push --linked` in strict numeric order. Credentials go through secure operator controls, not chat, saved scripts or command logs. Review configured Vault/seed/role behavior and supported CLI flags rather than adding broad include/reset flags. This runbook is not an instruction to execute those commands now.
