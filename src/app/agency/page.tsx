@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import AgencyClient from "@/components/agency/AgencyClient";
+import { brandVars } from "@/lib/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export default async function AgencyPage() {
     if (!user) redirect("/login?next=/agency");
   }
   return (
-    <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black">
+    <main className="min-h-[100dvh] overflow-x-clip bg-base text-ink" style={brandVars("#ec4899")}>
       <AgencyClient />
     </main>
   );

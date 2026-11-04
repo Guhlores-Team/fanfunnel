@@ -5,7 +5,7 @@ import type { FormEvent } from "react";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useSheetDrag } from "@/lib/hooks/useSheetDrag";
 import { CloseButton } from "@/components/dashboard/ui";
-import { CountBadge, ICON, Icon, type Tab } from "@/components/dashboard/DashboardShell";
+import { AgencyNavLink, CountBadge, ICON, Icon, type Tab } from "@/components/dashboard/DashboardShell";
 import { moreGroups } from "@/components/dashboard/mobileNav";
 
 export interface MoreSheetProps {
@@ -15,6 +15,8 @@ export interface MoreSheetProps {
   badges: Partial<Record<Tab, number>>;
   /** Server-derived (`is_admin()` via checkAdmin) — never client state. */
   showAdmin: boolean;
+  /** Server-derived agency standing (A45) — never client state. */
+  showAgency?: boolean;
   accountName: string;
   accountSub: string;
   initials: string;
@@ -40,6 +42,7 @@ export default function MoreSheet({
   onSelect,
   badges,
   showAdmin,
+  showAgency = false,
   accountName,
   accountSub,
   initials,
@@ -134,6 +137,11 @@ export default function MoreSheet({
                     </li>
                   );
                 })}
+                {g.title === "Account" && showAgency && (
+                  <li>
+                    <AgencyNavLink iconSize={20} className={`${rowBase} font-medium text-[#d4cfdb] hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]`} />
+                  </li>
+                )}
               </ul>
             </div>
           ))}

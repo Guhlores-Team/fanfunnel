@@ -401,3 +401,42 @@ with `ALERT_ENVIRONMENTS` including `preview`, and an admin signed in with two-f
       prize win delivers it with `X-FanFunnel-Signature`; an auto-delivered win does not. Verify
       the signature with the secret shown under the hooks. A 6th hook, `http://localhost/` and
       `http://169.254.169.254/` are refused.
+
+## 20. Seats and approval notice (Preview on the TEST database)
+
+Needs four TEST accounts: **Owner** (an approved creator), **Creator C** (an approved creator),
+**Manager** and **Chatter** (each signs up as a creator; leave Chatter pending at first).
+`ALERT_EMAIL_TO`/`RESEND_API_KEY` set for Preview if you want to see the e-mail.
+
+Reaching the agency
+- [ ] Signed in as a creator with no agency, the dashboard's Account group (sidebar, and
+      **More** on a phone) has **no** Agency item.
+- [ ] Owner: go to `/agency` directly and **Create agency**. Reload the dashboard: **Agency** now
+      shows under Account (sidebar and More sheet) and opens the console.
+- [ ] Owner: **Invite creator by email** → Creator C. Creator C sees the invite banner on the
+      dashboard, selects **Accept**, then **Open Agency**: the page explains what the agency can do
+      (no "Start your agency" form). Creator C's Account group now shows Agency.
+
+Seats, approval and the approval notice
+- [ ] Owner: **Staff seats** explains staff need an approved creator account first. Add Chatter
+      (role chatter) and tick **+ Creator C**; add Manager (role manager).
+- [ ] Chatter, still pending: `/pending` says an agency seat starts working once approved.
+- [ ] Admin approves Chatter. Chatter gets the bell notice ("You're approved") and, if mail is
+      set up, the approval e-mail; signing in lands on the dashboard with **Agency** listed.
+- [ ] Chatter › Agency › **Your seat**: only Creator C, only the **Inbox** tab. A reply sent
+      there appears in Creator C's own Inbox. No Prizes tab, and the Campaigns tab shows **no**
+      "Working for" picker.
+- [ ] Admin suspends Chatter: Your seat shows nothing for Creator C. Reactivate afterwards.
+
+Campaigns for a creator (manager seat) and archive / reactivate
+- [ ] Manager › Dashboard › **Campaigns**: a **Working for** picker lists Creator C. Pick it:
+      the heading reads "Create a campaign for Creator C" and the game list is Creator C's games.
+- [ ] Create a campaign for Creator C, rename it, change its game, **Archive** it (it shows
+      Archived) and **Reactivate** it. Each change shows on Creator C's own Campaigns tab.
+      There is no Spin packs button and no Edit game button in this mode.
+- [ ] **Delete** that campaign: it disappears from Creator C's Campaigns tab.
+- [ ] Owner removes Manager's seat: Manager's Campaigns tab no longer offers Creator C, and a
+      request for it answers 403.
+- [ ] As Creator C on their own Campaigns tab: Archive a campaign — its fan links keep working and
+      it reads Archived; Reactivate restores it. A new fan link no longer defaults to an archived
+      campaign.

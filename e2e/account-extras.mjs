@@ -140,6 +140,24 @@ export async function accountExtrasJourney(page, { step, assert }, ctx) {
     }
   });
 
+  await step("agency link: the Account group links to /agency, which restyled says 'Demo only' (A45/A53)", async () => {
+    const other = await ctx.newPage();
+    try {
+      await goto(other, "/dashboard", 1500);
+      const nav = other.getByRole("navigation", { name: "Dashboard sections" }).getByTestId("nav-agency");
+      await nav.waitFor({ timeout: 8000 });
+      assert((await nav.getAttribute("href")) === "/agency", "the Agency item links to /agency");
+      assert((await nav.textContent())?.trim() === "Agency", "the item reads Agency");
+      await Promise.all([other.waitForURL((u) => u.pathname === "/agency", { timeout: 15000 }), nav.click()]);
+      await other.getByTestId("agency-demo-only").waitFor({ timeout: 8000 });
+      const bg = await other.evaluate(() => getComputedStyle(document.querySelector("main")).backgroundColor);
+      assert(bg === "rgb(12, 10, 14)", `the page uses the redesign base colour (got ${bg})`);
+      await other.getByRole("link", { name: /Back to dashboard/ }).waitFor({ timeout: 4000 });
+    } finally {
+      await other.close().catch(() => {});
+    }
+  });
+
   await step("public page: a demo link-in-bio save is kept and shows on /c/ (A36)", async () => {
     const before = await json(await ctx.request.get(BASE + "/api/public-profile"), "read public profile");
     originalTagline = before.tagline ?? "";
@@ -148,11 +166,18 @@ export async function accountExtrasJourney(page, { step, assert }, ctx) {
     const pub = page.locator("section[aria-labelledby='settings-public']");
     const tagline = pub.getByPlaceholder(/Spin my wheel/);
     await tagline.waitFor({ timeout: 8000 });
+    // The card fills itself from GET /api/public-profile after it renders; typing
+    // before that lands lets the load overwrite the new tagline. The demo slug is
+    // never empty, so a filled slug means the saved fields are in.
+    const slug = pub.getByPlaceholder("your-name");
+    await page.waitForFunction((el) => el && el.value !== "", await slug.elementHandle(), { timeout: 8000 });
     const value = `Spin with me ${randomUUID().slice(0, 4)}`;
     await tagline.fill(value);
     const saved = page.waitForResponse((r) => r.url().endsWith("/api/public-profile") && r.request().method() === "PUT");
     await pub.getByRole("button", { name: /^Save$/ }).click();
-    assert((await saved).ok(), "the save is accepted");
+    const put = await saved;
+    assert(put.ok(), "the save is accepted");
+    assert(put.request().postDataJSON()?.tagline === value, "the save sent the typed tagline");
     const after = await json(await ctx.request.get(BASE + "/api/public-profile"), "read public profile again");
     assert(after.tagline === value, "the demo really kept the tagline");
     // The save revalidates /c/<slug> (ISR); the next visits render the new tagline.

@@ -188,6 +188,29 @@ export async function mobileJourney(browser, { step, assert }, sink) {
       await page.keyboard.press("Escape");
     });
 
+    await step("mobile: the More sheet links to /agency, which fits at 360 and 390 (A45/A53)", async () => {
+      await page.setViewportSize(PHONE);
+      await more.click();
+      await sheet.waitFor({ timeout: 4000 });
+      const link = sheet.getByTestId("nav-agency");
+      assert((await link.count()) === 1 && (await link.getAttribute("href")) === "/agency", "More lists the Agency link");
+      await page.keyboard.press("Escape");
+      await sheet.waitFor({ state: "hidden", timeout: 4000 });
+      const agency = await ctx.newPage();
+      attachSink(agency, sink);
+      try {
+        for (const width of [390, 360]) {
+          await agency.setViewportSize({ width, height: 760 });
+          await goto(agency, "/agency", 1200);
+          await agency.getByTestId("agency-demo-only").waitFor({ timeout: 8000 });
+          const over = await overflowX(agency);
+          assert(over <= 0, `/agency overflows by ${over}px at ${width}`);
+        }
+      } finally {
+        await agency.close().catch(() => {});
+      }
+    });
+
     await step("mobile: reduced motion collapses the sheet animation", async () => {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await more.click();

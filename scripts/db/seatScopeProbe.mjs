@@ -19,6 +19,12 @@
 //    a non-member lists nothing; anon cannot call it.
 //  - set_redemption_state (0067) splits the same way as the redemptions RLS.
 //  - a suspended chatter reads nothing for C.
+//  - campaigns (A28 residual): the manager and the owner create, rename/
+//    archive/pin and delete C's (and D's) campaigns through campaigns_write
+//    RLS and can_act_for 'manage', and read C's games for the pin check; the
+//    chatter and the fulfiller (no 'manage') change nothing and cannot insert;
+//    nobody in the org reaches X's campaigns; a suspended manager and a
+//    removed manager change nothing.
 
 const id = (n) => `00000000-0000-4000-8000-0000000066${n}`;
 const U = { O: id("a1"), M: id("a2"), CH: id("a3"), FU: id("a4"), C: id("a5"), D: id("a6"), X: id("a7"), OUT: id("a8") };
@@ -29,6 +35,7 @@ const F = { C: id("c1"), D: id("c2"), X: id("c3") };
 const P = { C: id("d1"), D: id("d2"), X: id("d3") };
 const S = { C: id("41"), D: id("42"), X: id("43") };
 const R = { C: id("51"), D: id("52"), X: id("53") };
+const K = { C: id("61"), D: id("62"), X: id("63") };
 
 const SEED = `
   insert into auth.users (id, email) values ${Object.entries(U).map(([k, v]) => `('${v}', 'probe-0066-${k.toLowerCase()}@example.test')`).join(", ")};
@@ -54,7 +61,8 @@ const SEED = `
   insert into public.redemptions (id, spin_id, creator_id) values ('${R.C}', '${S.C}', '${U.C}'), ('${R.D}', '${S.D}', '${U.D}'), ('${R.X}', '${S.X}', '${U.X}');
   insert into public.messages (creator_id, fan_id, sender, body) values
     ('${U.C}', '${F.C}', 'fan', 'hello c'), ('${U.D}', '${F.D}', 'fan', 'hello d'), ('${U.X}', '${F.X}', 'fan', 'hello x');
-  grant all on table public.redemptions, public.spins, public.fans, public.messages to anon, authenticated;`;
+  insert into public.campaigns (id, creator_id, name) values ('${K.C}', '${U.C}', 'camp c'), ('${K.D}', '${U.D}', 'camp d'), ('${K.X}', '${U.X}', 'camp x');
+  grant all on table public.redemptions, public.spins, public.fans, public.messages, public.campaigns, public.wheels to anon, authenticated;`;
 
 const as = (uid, stmt) =>
   `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true);` +
@@ -168,6 +176,42 @@ export function probeSeatScopes(db, psql) {
     ${threads("CH", "C")}
     ${as(U.CH, `select 'CH-suspended-seats:' || count(*) from public.my_seat_creators();`)}`), [
     "CH-threads-C:", "CH-suspended-seats:0",
+  ]);
+  // A28 residual: campaign writes for a creator need 'manage' (owners, managers).
+  const campUpd = (who, creator, tag) =>
+    as(U[who], `with u as (update public.campaigns set name = '${tag}', is_active = false, pinned_wheel_id = '${W[creator]}' where id = '${K[creator]}' returning 1) select '${who}-upd-${creator}:' || count(*) from u;`);
+  const campDel = (who, creator) =>
+    as(U[who], `with d as (delete from public.campaigns where id = '${K[creator]}' returning 1) select '${who}-del-${creator}:' || count(*) from d;`);
+  expect("campaigns: the manager and the owner run C's and D's campaigns; the chatter, the fulfiller and outsiders change nothing", run(`
+    ${campUpd("CH", "C", "ch")} ${campUpd("FU", "C", "fu")} ${campUpd("OUT", "C", "out")} ${campUpd("M", "X", "mx")} ${campUpd("O", "X", "ox")}
+    ${campDel("CH", "C")} ${campDel("FU", "C")} ${campDel("M", "X")}
+    ${campUpd("M", "C", "mc")} ${campUpd("O", "D", "od")}
+    ${as(U.M, `select 'M-games-C:' || count(*) from public.wheels where creator_id = '${U.C}' and id = '${W.C}';`)}
+    ${as(U.M, `with i as (insert into public.campaigns (creator_id, name, pinned_wheel_id) values ('${U.C}', 'by manager', '${W.C}') returning 1) select 'M-create-C:' || count(*) from i;`)}
+    ${as(U.M, `select 'M-manage:' || public.can_act_for('${U.C}', 'manage')::text || ',' || public.can_act_for('${U.D}', 'manage')::text || ',' || public.can_act_for('${U.X}', 'manage')::text;`)}
+    ${as(U.O, `select 'O-manage-C:' || public.can_act_for('${U.C}', 'manage')::text;`)}
+    ${campDel("M", "D")}
+    select 'names:' || string_agg(name || '/' || is_active, ',' order by name) from public.campaigns where id in ('${K.C}', '${K.D}', '${K.X}');`), [
+    "CH-upd-C:0", "FU-upd-C:0", "OUT-upd-C:0", "M-upd-X:0", "O-upd-X:0",
+    "CH-del-C:0", "FU-del-C:0", "M-del-X:0",
+    "M-upd-C:1", "O-upd-D:1", "M-games-C:1", "M-create-C:1",
+    "M-manage:true,true,false", "O-manage-C:true", "M-del-D:1",
+    "names:camp x/true,mc/false",
+  ]);
+  for (const who of ["CH", "FU"]) {
+    const r = run(as(U[who], `insert into public.campaigns (creator_id, name) values ('${U.C}', 'nope');`));
+    if (!/row-level security/.test(r.stderr || "")) bad.push(`the ${who === "CH" ? "chatter" : "fulfiller"} creating a campaign for C was not refused (${err(r)})`);
+  }
+  expect("campaigns: a suspended or removed manager changes nothing for C", run(`
+    update public.profiles set is_active = false where id = '${U.M}';
+    ${as(U.M, `with u as (update public.campaigns set name = 'suspended' where id = '${K.C}' returning 1) select 'M-suspended-upd:' || count(*) || ',' || public.can_act_for('${U.C}', 'manage')::text from u;`)}
+    ${as(U.M, `with d as (delete from public.campaigns where id = '${K.C}' returning 1) select 'M-suspended-del:' || count(*) from d;`)}
+    update public.profiles set is_active = true where id = '${U.M}';
+    delete from public.org_members where id = '${SEAT.M}';
+    ${as(U.M, `with u as (update public.campaigns set name = 'removed' where id = '${K.C}' returning 1) select 'M-removed-upd:' || count(*) || ',' || public.can_act_for('${U.C}', 'manage')::text from u;`)}
+    ${as(U.M, `with d as (delete from public.campaigns where id = '${K.D}' returning 1) select 'M-removed-del:' || count(*) from d;`)}
+    select 'after:' || string_agg(name, ',' order by name) from public.campaigns where id in ('${K.C}', '${K.D}');`), [
+    "M-suspended-upd:0,false", "M-suspended-del:0", "M-removed-upd:0,false", "M-removed-del:0", "after:camp c,camp d",
   ]);
   return bad;
 }

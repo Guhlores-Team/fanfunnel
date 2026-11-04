@@ -54,6 +54,7 @@ export type { CrmFan, CreatorCrm } from "./fans";
 export {
   createCampaign,
   listCampaigns,
+  listActingCampaigns,
   getCampaignStats,
   getUncategorizedStats,
   listCampaignPacks,

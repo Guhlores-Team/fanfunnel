@@ -46,6 +46,7 @@ export function CampaignGameSelect({
   onChange,
   describedBy,
   className = "",
+  followLabel = "Follow my live game",
 }: {
   id: string;
   value: string;
@@ -55,6 +56,8 @@ export function CampaignGameSelect({
   onChange: (wheelId: string) => void;
   describedBy?: string;
   className?: string;
+  /** The "follow the live game" option, e.g. for an agency seat working for a creator. */
+  followLabel?: string;
 }) {
   const listed = games.filter((game) => !game.archivedAt || game.id === value);
   return (
@@ -66,7 +69,7 @@ export function CampaignGameSelect({
       aria-describedby={describedBy}
       onChange={(e) => onChange(e.target.value)}
     >
-      <option value={FOLLOW_LIVE}>{liveTitle ? `Follow my live game (now: ${liveTitle})` : "Follow my live game"}</option>
+      <option value={FOLLOW_LIVE}>{liveTitle ? `${followLabel} (now: ${liveTitle})` : followLabel}</option>
       {listed.map((game) => (
         <option key={game.id} value={game.id} disabled={!!pinUnavailableReason(game) && game.id !== value}>
           {gameOptionLabel(game)}
