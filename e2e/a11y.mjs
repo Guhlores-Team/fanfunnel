@@ -416,10 +416,28 @@ const PAGES = [
 // Impacts that fail the build vs. advisory-only.
 const BLOCKING = new Set(["critical", "serious"]);
 
+// The state preps wait a fixed few hundred ms after a click or a mount, while
+// cards and sheets enter with keyframe animations (lift-in 0.5 s, slides,
+// fades). On a busy box a scan can sample a card still mid-entrance, at an
+// opacity below 1, and axe then reports a transient color-contrast failure
+// (seen once on "fan spin (install nudge, iPhone guide)"). Wait for every
+// finite animation to finish first; infinite ambient loops (the glow pulse,
+// floats, shimmers) never carry text and are left running. Bounded so a stuck
+// animation cannot hang the scan.
+async function settleAnimations(page) {
+  await page.evaluate(() => Promise.race([
+    Promise.all(document.getAnimations()
+      .filter((a) => { const t = a.effect?.getTiming?.(); return !t || t.iterations !== Infinity; })
+      .map((a) => a.finished.catch(() => {}))),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]));
+}
+
 async function scan(page, { path, name, prep, cleanup, advisory = [], viewport = DESKTOP }) {
   await page.setViewportSize(viewport);
   if (path) await goto(page, path, 1600);
   if (prep) await prep(page);
+  await settleAnimations(page);
   await injectAxe(page, AXE_SRC);
   const result = await page.evaluate(async () => {
     // WCAG 2 A & AA.
@@ -464,7 +482,7 @@ try {
     lines.push(
       `  ${mark} ${name}: blocking=${block.length} advisory=${adv.length} moderate=${moderate} minor=${minor}`
     );
-    for (const v of block) lines.push(`        [${v.impact}] ${v.id} (${v.nodes.length}) — ${v.help}`);
+    for (const v of block) lines.push(`        [${v.impact}] ${v.id} (${v.nodes.length}) — ${v.help}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`);
     for (const v of adv) lines.push(`        [advisory: ${v.impact}] ${v.id} (${v.nodes.length}) — tracked in ROADMAP`);
   }
   lines.push(`\n================ CSP VIOLATIONS: ${cspViolations.length} ================`);
