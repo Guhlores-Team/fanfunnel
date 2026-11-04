@@ -73,7 +73,7 @@ function Glyph({ d, size = 18, className = "" }: { d: string; size?: number; cla
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const recessed = "border border-[var(--hair)] [background:var(--s2)]";
 const primaryBtn =
-  "btn-brand inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] px-[15px] text-[13px] font-bold disabled:opacity-50";
+  "btn-brand inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] px-[15px] text-[13px] font-bold disabled:opacity-50 aria-disabled:opacity-50";
 const secondaryBtn =
   "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 const fieldLabel = "flex min-w-0 flex-col gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-muted";
@@ -513,6 +513,9 @@ function HappyHourScheduler() {
   const [endsAt, setEndsAt] = useState("");
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState<ListLoad>("loading");
+  // Whether the lists have ever loaded: a failed refresh keeps the last good
+  // lists (and Schedule) and only says the refresh failed.
+  const [loaded, setLoaded] = useState(false);
   const toast = useToast();
 
   // A15: a failed read is an error with a retry, never "no happy hours yet"
@@ -525,12 +528,13 @@ function HappyHourScheduler() {
       ]);
       setWheels(w.wheels ?? []);
       setWindows(h.happyHours ?? []);
-      if (!wheelId && w.wheels?.[0]) setWheelId(w.wheels[0].id);
+      setWheelId((current) => current || w.wheels?.[0]?.id || "");
+      setLoaded(true);
       setState("ok");
     } catch {
       setState("failed");
     }
-  }, [wheelId]);
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
@@ -538,6 +542,7 @@ function HappyHourScheduler() {
   }, [load]);
 
   const create = async () => {
+    if (busy || !loaded) return;
     if (!wheelId || !startsAt || !endsAt) {
       toast("Pick a wheel and a start/end time");
       return;
@@ -643,19 +648,21 @@ function HappyHourScheduler() {
             className="ff-input w-full min-w-0 normal-case tracking-normal"
           />
         </label>
-        <button type="submit" disabled={busy || state !== "ok"} className={`${primaryBtn} col-span-2 sm:col-span-1 lg:col-span-1`}>
+        {/* Off (disabled) until the lists first load; while a save is in
+            flight it is only aria-disabled, so a keyboard user keeps focus. */}
+        <button type="submit" disabled={!loaded} aria-disabled={busy || undefined} className={`${primaryBtn} col-span-2 sm:col-span-1 lg:col-span-1`}>
           Schedule
         </button>
       </form>
 
       {state === "failed" && (
         <div data-testid="happy-hours-load-error" className="mt-3">
-          <LoadError what="your happy hours and wheels" onRetry={() => void load()} />
+          <LoadError what={loaded ? "the latest happy hours" : "your happy hours and wheels"} onRetry={() => void load()} />
         </div>
       )}
-      {state === "loading" && windows.length === 0 ? (
-        <p className="mt-3 text-xs text-muted" aria-busy="true">Loading happy hours…</p>
-      ) : state === "failed" && windows.length === 0 ? null : windows.length === 0 ? (
+      {!loaded ? (
+        state === "loading" ? <p className="mt-3 text-xs text-muted" aria-busy="true">Loading happy hours…</p> : null
+      ) : windows.length === 0 ? (
         <p className="mt-3 text-xs text-[#8b8494]">No happy hours yet. Pick a window above to boost rare odds.</p>
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
@@ -839,6 +846,7 @@ function WebhooksCard() {
   }, [attempt]);
 
   const add = async () => {
+    if (busy || state !== "ok" || hooks.length >= WEBHOOK_MAX) return;
     const value = url.trim();
     if (!/^https?:\/\//i.test(value)) {
       toast("Enter a URL starting with http(s)://");
@@ -926,7 +934,7 @@ function WebhooksCard() {
             ))}
           </select>
         </label>
-        <button type="submit" disabled={busy || state !== "ok" || hooks.length >= WEBHOOK_MAX} className={primaryBtn}>
+        <button type="submit" disabled={state !== "ok"} aria-disabled={busy || hooks.length >= WEBHOOK_MAX || undefined} className={primaryBtn}>
           Add
         </button>
       </form>

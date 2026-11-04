@@ -290,6 +290,8 @@ export async function themingJourney(page, { step, assert }, ctx) {
       await form.getByRole("button", { name: "Send report" }).click();
       assert((await sent).ok(), "the token-less report is accepted");
       await form.getByRole("status").filter({ hasText: /safety team/ }).waitFor({ timeout: 5000 });
+      assert(await form.getByRole("button", { name: "Send report" }).evaluate((el) => el === document.activeElement),
+        "after sending, focus stays on Send report instead of dropping to the page (WCAG 2.4.3)");
       const list = await themeJson(await ctx.request.get(BASE + "/api/admin/reports?status=open"), "read admin reports");
       const row = list.reports.find((r) => (r.detail ?? "").includes(photos[1].id) && (r.detail ?? "").includes(`/c/${slug}`));
       assert(row && row.reason === "Inappropriate photo" && row.urgent, "Admin › Reports lists it as an urgent photo report");

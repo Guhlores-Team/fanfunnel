@@ -144,6 +144,8 @@ export async function gameSwitchingJourney(browser, { step, assert }, sink, ctx)
       const res = await saved;
       assert(res.ok() && JSON.parse(res.request().postData() ?? "{}").isActive === false, "archive goes through the campaign PATCH");
       await card.getByTestId("campaign-archived").waitFor({ timeout: 8000 });
+      assert(await card.getByRole("button", { name: `Reactivate campaign Follow ${suffix}` }).evaluate((el) => el === document.activeElement),
+        "focus stays on the button while it saves and flips to Reactivate (WCAG 2.4.3)");
       const listed = (await json(await ctx.request.get(BASE + "/api/campaigns"), "read campaigns")).campaigns.find((c) => c.id === state.follow.id);
       assert(listed?.isActive === false, "the server lists the campaign as archived");
       const fanPage = await ctx.newPage(); attachSink(fanPage, sink);

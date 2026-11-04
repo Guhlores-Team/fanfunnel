@@ -21,7 +21,7 @@ function pinRefusal(error: string | undefined): string {
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
-  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--color-line))] hover:text-ink disabled:opacity-50";
+  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--color-line))] hover:text-ink disabled:opacity-50 aria-disabled:opacity-50";
 
 // 24x24 line icons (Command Center set); the megaphone is the sidebar's
 // Campaigns glyph so the empty state matches the nav item.
@@ -326,6 +326,7 @@ function CampaignCard({
   // A28: archive / reactivate. Reversible, so no confirm; the copy says
   // exactly what changes (and that existing links keep working).
   async function setActive(isActive: boolean) {
+    if (busy) return;
     setBusy(true);
     try {
       const res = await fetch(`/api/campaigns/${campaign.id}`, {
@@ -517,7 +518,9 @@ function CampaignCard({
               <button
                 type="button"
                 onClick={() => void setActive(!campaign.isActive)}
-                disabled={busy}
+                // aria-disabled, not disabled: the button keeps keyboard focus
+                // while its label flips between Archive and Reactivate.
+                aria-disabled={busy || undefined}
                 aria-label={`${campaign.isActive ? "Archive" : "Reactivate"} campaign ${campaign.name}`}
                 aria-describedby={lifecycleHelpId}
                 className={ghostBtn}

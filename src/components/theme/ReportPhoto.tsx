@@ -21,7 +21,7 @@ export default function ReportPhoto({ slug, media }: { slug: string; media: Them
   if (media.length === 0) return null;
 
   async function send() {
-    if (!mediaId) return;
+    if (busy || !mediaId) return;
     setBusy(true);
     setResult(null);
     try {
@@ -94,7 +94,9 @@ export default function ReportPhoto({ slug, media }: { slug: string; media: Them
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
-          <button type="submit" disabled={busy || !mediaId} className="btn-brand mt-3 w-full rounded-xl py-2.5 text-sm font-bold disabled:opacity-50">
+          {/* aria-disabled, not disabled: after a send clears the form the
+              button keeps keyboard focus; an empty pick is caught by `required`. */}
+          <button type="submit" aria-disabled={busy || !mediaId || undefined} className="btn-brand mt-3 w-full rounded-xl py-2.5 text-sm font-bold aria-disabled:opacity-50">
             {busy ? "Sending…" : "Send report"}
           </button>
           <p role="status" className={`mt-2 min-h-4 text-xs ${result?.ok === false ? "text-amber-200" : "text-muted"}`}>

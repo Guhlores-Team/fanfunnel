@@ -29,12 +29,15 @@ export default function RouteErrorView({
       style={brandVars(DEFAULT_BRAND)}
     >
       <div className="relative z-[1] w-full max-w-md">
-        <div className="card rounded-[1.75rem] p-8 text-center" role="alert">
+        <div className="card rounded-[1.75rem] p-8 text-center">
           <div className="text-5xl" aria-hidden="true">
             😵‍💫
           </div>
-          <h1 className="mt-4 text-xl font-extrabold text-ink">{title}</h1>
-          <p className="mt-3 text-sm text-muted text-pretty">{body}</p>
+          {/* Only the message is announced; the controls below are not part of it. */}
+          <div role="alert">
+            <h1 className="mt-4 text-xl font-extrabold text-ink">{title}</h1>
+            <p className="mt-3 text-sm text-muted text-pretty">{body}</p>
+          </div>
           <button
             type="button"
             onClick={() => retry?.()}
