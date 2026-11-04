@@ -719,7 +719,9 @@ export async function deleteWheel(
   if (!row) return { error: "not_found" };
 
   // delete_wheel (0065) refuses a game with spin history (revenue/analytics
-  // records) under the wheel lock, taken after its Focus/Chase fans like a play.
+  // records) or a fan link stored on it (the cascade would erase that link and
+  // its balance) under the wheel lock, taken after its Focus/Chase fans and the
+  // fans whose links are set to it, like a play.
   const { data: deleted, error } = await sb.rpc("delete_wheel", { p_wheel: id });
   if (error) return { error: gameWriteError(error) };
   if (deleted === "has_history") return { error: "has_history" };

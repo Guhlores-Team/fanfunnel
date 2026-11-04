@@ -26,19 +26,24 @@ export async function probeHardening(db, psql, psqlAsync) {
        update public.profiles set is_active=true,approval_status='approved' where id in(${q(creator)},${q(stranger)});`);
   try {
     // ---------------------------------------------------------------- A44
-    const promise = () => {
-      const w = randomUUID(), p = randomUUID(), f = randomUUID(), s = randomUUID();
-      run(`insert into public.wheels(id,creator_id,title,is_active) values(${q(w)},${q(creator)},'A44 game',true);
+    // A game W with one fan's Focus promise on it. `elsewhere`: the fan's link
+    // is stored on another game V and set to play W (pinned_wheel_id), so W
+    // carries no stored link and can be deleted; `focus: false` drops the
+    // promise (only the link set to W ties the fan to it).
+    const promise = ({ elsewhere = false, focus = true } = {}) => {
+      const w = randomUUID(), v = randomUUID(), p = randomUUID(), f = randomUUID(), s = randomUUID();
+      run(`insert into public.wheels(id,creator_id,title,is_active) values(${q(w)},${q(creator)},'A44 game',true)${elsewhere ? `,(${q(v)},${q(creator)},'A44 stored game',false)` : ''};
            insert into public.prizes(id,wheel_id,label,weight,emoji,sort_order,boostable) values(${q(p)},${q(w)},'A44 prize',1,'🎯',0,true);
            insert into public.fans(id,creator_id,display_name) values(${q(f)},${q(creator)},'A44 fan');
-           insert into public.fan_passes(id,creator_id,fan_id,wheel_id,token) values(${q(s)},${q(creator)},${q(f)},${q(w)},'a44-${s}');
-           insert into public.fan_focus(creator_id,fan_id,fan_pass_id,wheel_id,prize_id,prize_label,kind,multiplier,total_spins,spins_left) values(${q(creator)},${q(f)},${q(s)},${q(w)},${q(p)},'A44 prize','focus',2,5,5);`);
-      return { w, f };
+           insert into public.fan_passes(id,creator_id,fan_id,wheel_id,pinned_wheel_id,token) values(${q(s)},${q(creator)},${q(f)},${q(elsewhere ? v : w)},${elsewhere ? q(w) : 'null'},'a44-${s}');
+           ${focus ? `insert into public.fan_focus(creator_id,fan_id,fan_pass_id,wheel_id,prize_id,prize_label,kind,multiplier,total_spins,spins_left) values(${q(creator)},${q(f)},${q(s)},${q(w)},${q(p)},'A44 prize','focus',2,5,5);` : ''}`);
+      return { w, f, s };
     };
-    // The play side: fan row, then (once the editor is seen waiting) the wheel row.
+    // The play side (commit_spin_attempt's order): fan row, its pass, then
+    // (once the editor is seen waiting) the wheel row.
     const lockRace = async (label, fixture, editor) => {
       const tag = `ff-a44-${randomUUID().slice(0, 8)}`;
-      const play = psqlAsync(db, `begin;set local statement_timeout='20s';select 1 from public.fans where id=${q(fixture.f)} for update;set local application_name='${tag}-held';${seen(`${tag}-edit`, " and wait_event_type='Lock'")}select 1 from public.wheels where id=${q(fixture.w)} for update;commit;`);
+      const play = psqlAsync(db, `begin;set local statement_timeout='20s';select 1 from public.fans where id=${q(fixture.f)} for update;select 1 from public.fan_passes where id=${q(fixture.s)} for update;set local application_name='${tag}-held';${seen(`${tag}-edit`, " and wait_event_type='Lock'")}select 1 from public.wheels where id=${q(fixture.w)} for update;commit;`);
       const ready = await psqlAsync(db, `${seen(`${tag}-held`, '')}select count(*) from pg_stat_activity where application_name='${tag}-held';`);
       if (ready.stdout.trim() !== '1') { await play; throw Error(`${label}: the play never reached its held fan row`); }
       const edit = psqlAsync(db, `begin;set local statement_timeout='20s';set local application_name='${tag}-edit';${editor};commit;`);
@@ -49,13 +54,27 @@ export async function probeHardening(db, psql, psqlAsync) {
     const plain = await lockRace('control', control, `update public.wheels set archived_at=now(),is_active=false where id=${q(control.w)};`);
     check(plain.deadlock, `A44 control: the pre-0065 direct archive UPDATE deadlocks a credited play (40P01) under the barrier (${[plain.play.stderr, plain.edit.stderr].join(' ').trim().split('\n')[0] || 'no error'})`);
     for (const [label, call] of [['archive_wheel', 'archive_wheel'], ['delete_wheel', 'delete_wheel']]) {
-      const fixture = promise();
+      const fixture = promise({ elsewhere: call === 'delete_wheel' });
       const raced = await lockRace(label, fixture, `${asUser(creator, `select public.${call}(${q(fixture.w)});`)}`);
       check(!raced.deadlock && !raced.timedOut && raced.play.status === 0 && raced.edit.status === 0, `A44 ${label}: a creator's ${label} racing a credited play never deadlocks (${[raced.play.stderr, raced.edit.stderr].join(' ').trim().split('\n')[0] || 'clean'})`);
       check(raced.edit.stdout.trim().split('\n').at(-1) === 'ok', `A44 ${label}: the creator's call succeeds once the play commits`);
       const after = run(`select coalesce((select case when archived_at is null then 'live' else 'archived' end from public.wheels where id=${q(fixture.w)}),'deleted')||','||(select string_agg(status,',') from public.fan_focus where fan_id=${q(fixture.f)});`);
       check(after === `${call === 'archive_wheel' ? 'archived' : 'deleted'},released`, `A44 ${label}: the game is ${call === 'archive_wheel' ? 'archived' : 'deleted'} and its Focus promise released (${after})`);
     }
+    // Deleting a game also clears the links set to it (ON DELETE SET NULL),
+    // which locks those passes: a fan with no promise on the game, only a
+    // link set to it, must be taken first as well.
+    const pinOnly = promise({ elsewhere: true, focus: false });
+    const plainDelete = await lockRace('delete control', pinOnly, `delete from public.wheels where id=${q(pinOnly.w)};`);
+    check(plainDelete.deadlock, `A44 control: a direct DELETE of a game a link is set to deadlocks a credited play on that link (${[plainDelete.play.stderr, plainDelete.edit.stderr].join(' ').trim().split('\n')[0] || 'no error'})`);
+    const pinOnlyFix = promise({ elsewhere: true, focus: false });
+    const pinRace = await lockRace('delete_wheel (link set to the game)', pinOnlyFix, `${asUser(creator, `select public.delete_wheel(${q(pinOnlyFix.w)});`)}`);
+    check(!pinRace.deadlock && !pinRace.timedOut && pinRace.play.status === 0 && pinRace.edit.status === 0 && pinRace.edit.stdout.trim().split('\n').at(-1) === 'ok', `A44 delete_wheel: deleting a game a link is set to never deadlocks a play on that link (${[pinRace.play.stderr, pinRace.edit.stderr].join(' ').trim().split('\n')[0] || pinRace.edit.stdout.trim().split('\n').at(-1)})`);
+    check(run(`select (select count(*) from public.wheels where id=${q(pinOnlyFix.w)})||','||coalesce((select coalesce(pinned_wheel_id::text,'null') from public.fan_passes where id=${q(pinOnlyFix.s)}),'gone');`) === '0,null', 'A44 delete_wheel: the game is gone and the link survives, following its campaign and the live game again');
+    // A link stored on the game would be erased by the cascade (and its balance with it).
+    const stored = promise({ focus: false });
+    check(run(`begin;${asUser(creator, `select public.delete_wheel(${q(stored.w)});`)}commit;`).split('\n').at(-1) === 'has_history', 'A44 delete_wheel: a game a fan link is stored on is archived instead, never deleted');
+    check(run(`select (select count(*) from public.wheels where id=${q(stored.w)})||','||(select count(*) from public.fan_passes where id=${q(stored.s)});`) === '1,1', 'A44 delete_wheel: the refused delete keeps the game and the link');
     const guarded = promise();
     check(run(`begin;${asUser(stranger, `select public.archive_wheel(${q(guarded.w)});`)}commit;`).split('\n').at(-1) === 'not_found' && run(`begin;${asUser(stranger, `select public.delete_wheel(${q(guarded.w)});`)}commit;`).split('\n').at(-1) === 'not_found', 'A44: another creator cannot archive or delete the game');
     check(run(`select archived_at is null from public.wheels where id=${q(guarded.w)};`) === 't', 'A44: the refused calls leave the game live');

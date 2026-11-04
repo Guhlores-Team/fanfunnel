@@ -16,10 +16,15 @@
 --        the 0062 active-admin fence and needs the account's confirmed email.
 --  A35   redemptions.cost_cents_at_award, captured in the commit transaction
 --        and immutable afterwards.
---  A44   archive_wheel / delete_wheel take the game's Focus/Chase fans before
---        the wheel row, the order a credited play uses (fan -> ... -> wheel).
+--  A44   archive_wheel / delete_wheel take the game's Focus/Chase fans (and
+--        the fans whose links are set to it) before the wheel row, the order a
+--        credited play uses (fan -> pass -> ... -> wheel -> prize). delete_wheel
+--        also refuses a game any fan link is stored on (the cascade would erase
+--        that link and its balance).
 --  0063  initialize_reward_crypto_canary starts its lock timeout after the
---        serializing advisory waits, so a queued initializer never times out.
+--        serializing advisory waits and answers an existing anchor before the
+--        inventory fence, so a queued initializer never times out or reports
+--        busy behind its predecessor's commit.
 -- ── Per-fan game pin ───────────────────────────────────────────────────────
 alter table public.fan_passes add column if not exists pinned_wheel_id uuid references public.wheels(id) on delete set null;
 create index if not exists fan_passes_pinned_wheel_idx on public.fan_passes(pinned_wheel_id) where pinned_wheel_id is not null;
@@ -595,27 +600,33 @@ end $$;
 revoke execute on function public.bootstrap_first_admin(uuid,text) from public,anon,authenticated;
 grant execute on function public.bootstrap_first_admin(uuid,text) to service_role;
 -- ── A44: archive / delete in the play lock order ───────────────────────────
--- A credited play and a Focus grant lock fan -> ... -> wheel. Archiving or
--- deleting a game releases every Focus/Chase promise on it (aa_focus_lifecycle
--- -> _release_fan_focus, which locks each fan), so a plain UPDATE/DELETE held
--- the wheel row first and then waited for fans: 40P01 against a play. This
--- takes those fans first, then the wheel. A promise granted in between is
--- taken with NOWAIT (the wheel lock now stops new grants); if its fan is busy
--- the attempt rolls back its locks and starts again.
+-- A credited play and a Focus grant lock fan -> pass -> ... -> wheel -> prize.
+-- Archiving or deleting a game releases every Focus/Chase promise on it
+-- (aa_focus_lifecycle -> _release_fan_focus, which locks each fan and its
+-- passes), and deleting it also clears the links set to it (pinned_wheel_id
+-- ON DELETE SET NULL updates those passes). A plain UPDATE/DELETE held the
+-- wheel row first and then waited for those fans or passes: 40P01 against a
+-- play. This takes those fans first, then the wheel. A promise granted (or a
+-- link set to the game) in between is taken with NOWAIT (the wheel lock now
+-- stops new ones: their foreign-key check needs it); if its fan is busy the
+-- attempt rolls back its locks and starts again.
 create or replace function public._lock_wheel_lifecycle(p_wheel uuid)
 returns void language plpgsql security definer set search_path=public as $$
 declare v_try integer;
 begin
  for v_try in 1..20 loop
    begin
-     perform 1 from public.fans where id in(select fan_id from public.fan_focus where wheel_id=p_wheel and status in('active','paused')) order by id for update;
+     perform 1 from public.fans where id in(select fan_id from public.fan_focus where wheel_id=p_wheel and status in('active','paused')
+       union select fan_id from public.fan_passes where pinned_wheel_id=p_wheel) order by id for update;
      perform 1 from public.wheels where id=p_wheel for update;
-     perform 1 from public.fans where id in(select fan_id from public.fan_focus where wheel_id=p_wheel and status in('active','paused')) order by id for update nowait;
+     perform 1 from public.fans where id in(select fan_id from public.fan_focus where wheel_id=p_wheel and status in('active','paused')
+       union select fan_id from public.fan_passes where pinned_wheel_id=p_wheel) order by id for update nowait;
      return;
    exception when lock_not_available then null;
    end;
  end loop;
- perform 1 from public.fans where id in(select fan_id from public.fan_focus where wheel_id=p_wheel and status in('active','paused')) order by id for update;
+ perform 1 from public.fans where id in(select fan_id from public.fan_focus where wheel_id=p_wheel and status in('active','paused')
+   union select fan_id from public.fan_passes where pinned_wheel_id=p_wheel) order by id for update;
  perform 1 from public.wheels where id=p_wheel for update;
 end $$;
 revoke execute on function public._lock_wheel_lifecycle(uuid) from public,anon,authenticated,service_role;
@@ -642,8 +653,12 @@ begin
  if v_creator is null or not (public.can_act_for(v_creator,'edit_wheel') or public.is_admin()) then return 'not_found'; end if;
  perform public._lock_wheel_lifecycle(p_wheel);
  -- A game with play history is archived, never deleted (spins and
- -- redemptions are revenue and analytics records).
- if exists(select 1 from public.spins where wheel_id=p_wheel) then return 'has_history'; end if;
+ -- redemptions are revenue and analytics records), and so is a game any fan
+ -- link is stored on: fan_passes.wheel_id cascades, so the delete would erase
+ -- the link and its balance even when the link now plays another game. Under
+ -- the wheel lock no new link can reference it (its foreign-key check waits).
+ if exists(select 1 from public.spins where wheel_id=p_wheel)
+   or exists(select 1 from public.fan_passes where wheel_id=p_wheel) then return 'has_history'; end if;
  delete from public.wheels where id=p_wheel;
  return 'ok';
 end $$;
@@ -667,6 +682,19 @@ begin
  -- crypto functions keep exactly the pinned search_path config
  -- (scripts/db/cryptoNamespaceProbe.mjs).
  perform set_config('lock_timeout','3s',true);
+ if p_actor is not null then
+   if not public._creator_actor_allowed(p_context,p_actor,p_actor,'system_health','system_health') then return jsonb_build_object('status','forbidden');end if;
+   perform 1 from public.profiles where id=p_actor and role='admin' and is_active;
+   if not found then return jsonb_build_object('status','forbidden'); end if;
+ end if;
+ -- 0065: an existing anchor is answered before the inventory fence. Only an
+ -- initializer writes the anchor and initializers serialize on the lock above,
+ -- so a queued one sees its predecessor's committed anchor here. Checked after
+ -- the try-lock below (as before 0065), a queued initializer woken by the
+ -- predecessor's commit could find the inventory fence not yet released (a
+ -- commit releases its advisory locks one by one) and answered inventory_busy.
+ select public.read_reward_crypto_canary() into v_existing;
+ if v_existing is not null then return jsonb_build_object('status','existing','canary',v_existing); end if;
  -- Never queue behind in-flight inventory writers: a waiting exclusive request
  -- would make later shared requests wait too, and an inventory writer that then
  -- waits for a fan row (set_prize_delivery -> prize lifecycle -> _release_fan_focus)
@@ -674,13 +702,6 @@ begin
  if not pg_try_advisory_xact_lock(hashtextextended('reward-crypto-canary-initialize',0)) then
    return jsonb_build_object('status','inventory_busy');
  end if;
- if p_actor is not null then
-   if not public._creator_actor_allowed(p_context,p_actor,p_actor,'system_health','system_health') then return jsonb_build_object('status','forbidden');end if;
-   perform 1 from public.profiles where id=p_actor and role='admin' and is_active;
-   if not found then return jsonb_build_object('status','forbidden'); end if;
- end if;
- select public.read_reward_crypto_canary() into v_existing;
- if v_existing is not null then return jsonb_build_object('status','existing','canary',v_existing); end if;
  if p_canary is null or jsonb_typeof(p_canary)<>'object' or
    (select count(*) from jsonb_object_keys(p_canary))<>4 or
    p_canary->>'cipher' is null or length(p_canary->>'cipher') not between 24 and 2048 or
