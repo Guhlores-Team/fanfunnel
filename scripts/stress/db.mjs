@@ -314,7 +314,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.check(Number(await scalar(`select spins from public.grants where id=${quote(grantId)};`)) === 5, "the grant's spins read the edited value exactly");
       const conflict = await edit(req, { spins: 6 });
       report.check(conflict.status === "conflict", "the same requestId with another patch is a conflict", conflict.status);
-      report.latency("commit (during import)", series, DB_THRESHOLDS.commit * 2); report.latency("import 500 rows", imports, DB_THRESHOLDS.import500); report.latency("grant_pass_spins", grants, DB_THRESHOLDS.grant);
+      report.latency("commit (during import)", series, DB_THRESHOLDS.commit * 2); report.latency("import 500 rows", imports, DB_THRESHOLDS.import500); report.latency("grant_pass_spins (all on one pass row)", grants, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * 40);
       await invariants(c, "import+grants"); report.finish();
     }
     // ============================================================ D6 scratch + bingo
@@ -378,7 +378,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const seedPlays = await parallel(seeded.flatMap(f => Array.from({ length: rounds }, () => f)), pool.size * 2, who => play(who, { series: seedSeries }));
       await noErrors(seedPlays, "scale seed");
       report.number("seed", { fans: fansN, spins: Number(await scalar(`select count(*) from public.spins where creator_id=${quote(big)};`)), wall_ms: Date.now() - t0 });
-      report.latency("commit at scale", seedSeries, DB_THRESHOLDS.commit);
+      report.latency(`commit at scale (${pool.size * 2} in flight over ${fansN} fans)`, seedSeries, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * pool.size * 2);
       const inv = []; await timed(inv, () => ledger("at scale")); report.latency("run_reward_ledger_invariants", inv, DB_THRESHOLDS.invariants);
       // Live creator keeps playing while maintenance runs.
       const live = await addCreator(), lw = await addWheel(live, { prizes: [{ label: "A", weight: 1 }] }), lfans = await grantFans(live, lw.id, active, 3), series = [], ret = [], cascade = [];

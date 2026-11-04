@@ -99,7 +99,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       const sameTokenOtherIp = await spin(victim, { from: nextIp() });
       report.check(sameTokenOtherIp.status === 200, "the flooded token from another address (carrier NAT neighbour) still spins", sameTokenOtherIp.status);
       // Per-token message cap (10/min) on the fan message route.
-      const msgs = await parallel(Array.from({ length: 15 }), 15, i => call("POST", "/api/messages/fan", { body: { token: legit.token, body: `hello ${i}` }, ip: legit.ip }));
+      const msgs = await parallel(Array.from({ length: 15 }), 15, (_, i) => call("POST", "/api/messages/fan", { body: { token: legit.token, body: `hello ${i}` }, ip: legit.ip }));
       const mt = codes(msgs); report.number("fan_message_statuses", mt);
       report.check((mt["200"] ?? 0) <= 10 && (mt["429"] ?? 0) >= 5, "fan messages cap at 10/min per token");
       report.check(serverErrorsSince(mark).length === 0, "no 5xx during the flood", serverErrorsSince(mark).slice(0, 2));
@@ -115,7 +115,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       const pt = codes(prime); report.number("prime_statuses", pt);
       report.check((pt["404"] ?? 0) === 120 && (pt["429"] ?? 0) === 1, "the 121st request from one IP on a public route (120/min) is throttled");
       const t0 = Date.now();
-      const flood = await parallel(Array.from({ length: distinct }), 64, i => timed(series, () => call("GET", "/api/share-cards/none", { ip: ip(200_000 + i) })));
+      const flood = await parallel(Array.from({ length: distinct }), 64, (_, i) => timed(series, () => call("GET", "/api/share-cards/none", { ip: ip(200_000 + i) })));
       const ft = codes(flood); report.number("flood_statuses", ft); report.number("throughput_rps", Math.round(distinct / ((Date.now() - t0) / 1000)));
       report.check((ft["404"] ?? 0) === distinct, "every first request from a new address is served (capacity never answers 429)", ft);
       const again = await call("GET", "/api/share-cards/none", { ip: blocked }), fresh = await call("GET", "/api/share-cards/none", { ip: nextIp() });
@@ -213,7 +213,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       report.check(sixth.status === 429, "a 6th import within a minute from the same IP is throttled (5/min)", sixth.status);
       const conflict = await call("POST", "/api/fans/import", { body: { batchId, rows: body.rows.slice(0, 10) }, ip: nextIp() });
       report.check(conflict.status === 409, "the same batchId with other rows is a 409 conflict", conflict.status);
-      const more = await parallel(Array.from({ length: batches }), 3, i => call("POST", "/api/fans/import", { body: { batchId: randomUUID(), rows: Array.from({ length: rows }, (_, j) => ({ name: `Bulk ${i}-${j}`, spins: 1, amountCents: 100 })) }, ip: nextIp() }));
+      const more = await parallel(Array.from({ length: batches }), 3, (_, i) => call("POST", "/api/fans/import", { body: { batchId: randomUUID(), rows: Array.from({ length: rows }, (_, j) => ({ name: `Bulk ${i}-${j}`, spins: 1, amountCents: 100 })) }, ip: nextIp() }));
       report.check(more.every(r => r.value.status === 200 && r.value.json.created === rows), `${batches} further batches import cleanly`, codes(more));
       report.check(serverErrorsSince(mark).length === 0, "no 5xx");
       report.latency("spin during import", series, HTTP_THRESHOLDS.spin); report.latency("import 500 rows", importSeries, HTTP_THRESHOLDS.import500);
@@ -224,7 +224,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       const n = scale(20);
       report.scenario("H7", `10 push devices subscribed, then ${n} winning spins: fan-out happens after the response and never slows the spin`);
       const pushIp = nextIp(), before = (await call("GET", "/api/push/outbox")).json.deliveries.length;
-      const subs = await parallel(Array.from({ length: 11 }), 4, i => call("POST", "/api/push/subscribe", { body: { subscription: { endpoint: `https://fcm.googleapis.com/fcm/send/stress-${i}`, keys: { p256dh: "BP".padEnd(87, "a"), auth: "b".repeat(22) } } }, ip: pushIp }));
+      const subs = await parallel(Array.from({ length: 11 }), 4, (_, i) => call("POST", "/api/push/subscribe", { body: { subscription: { endpoint: `https://fcm.googleapis.com/fcm/send/stress-${i}`, keys: { p256dh: "BP".padEnd(87, "a"), auth: "b".repeat(22) } } }, ip: pushIp }));
       const st = codes(subs); report.number("subscribe_statuses", st);
       report.check((st["201"] ?? 0) === 10 && subs.filter(r => r.value.status >= 400).length === 1, "10 devices subscribe, the 11th is refused (device cap)");
       const fans = await makePasses(n, 1), series = [], mark = stats.serverErrors.length;
@@ -267,13 +267,13 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       const demoAnyId = p => /^\/(c|api\/public\/wheel)\//.test(p);
       report.check(trav.every((r, i) => ([400, 404].includes(r.value.status) || (r.value.status === 200 && demoAnyId(traversals[i][1]))) && !/"name": "fanfunnel"|root:x:0|SUPABASE/.test(r.value.text)), "every traversal/encoding probe is a 400/404 (or the demo's own page/teaser) and never serves a file", trav.map(r => r.value.status));
       const guesses = scale(300), guessSeries = [];
-      const guessed = await parallel(Array.from({ length: guesses }), 40, i => timed(guessSeries, () => call("GET", `/spin/${randomUUID().replaceAll("-", "")}`, { ip: ip(300_000 + i) })));
+      const guessed = await parallel(Array.from({ length: guesses }), 40, (_, i) => timed(guessSeries, () => call("GET", `/spin/${randomUUID().replaceAll("-", "")}`, { ip: ip(300_000 + i) })));
       report.check(guessed.every(r => r.value.status === 404), `${guesses} guessed tokens all 404`, codes(guessed));
       // Mass reports and error reports from rotating addresses stop at the global/per-IP caps.
-      const reports = await parallel(Array.from({ length: 30 }), 10, i => call("POST", "/api/report", { body: { token: legit.token, reason: "spam", detail: `r${i}` }, ip: ip(400_000 + (i % 3)) }));
+      const reports = await parallel(Array.from({ length: 30 }), 10, (_, i) => call("POST", "/api/report", { body: { token: legit.token, reason: "spam", detail: `r${i}` }, ip: ip(400_000 + (i % 3)) }));
       const rt = codes(reports); report.number("report_statuses", rt);
       report.check((rt["429"] ?? 0) >= 15, "fan reports from 3 rotating addresses cap at 5/min each", rt);
-      const errs = await parallel(Array.from({ length: 40 }), 10, i => call("POST", "/api/errors", { body: { message: `boom ${i}`, kind: "error" }, ip: ip(500_000 + (i % 2)) }));
+      const errs = await parallel(Array.from({ length: 40 }), 10, (_, i) => call("POST", "/api/errors", { body: { message: `boom ${i}`, kind: "error" }, ip: ip(500_000 + (i % 2)) }));
       const et = codes(errs); report.number("error_report_statuses", et);
       report.check((et["204"] ?? 0) <= 40 && (et["429"] ?? 0) >= 0 && Object.keys(et).every(s => ["204", "429"].includes(s)), "browser error reports answer 204 or 429 only", et);
       report.check(serverErrorsSince(mark).length === 0, "no 5xx from any abuse input", serverErrorsSince(mark).slice(0, 3));
@@ -286,7 +286,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       report.scenario("H10", `dashboard reads by ${users} users x ${iterations}, then ${fansOnPage} fans load /spin, recent wins and the leaderboard behind two shared addresses`);
       const mark = stats.serverErrors.length, reads = {};
       const routes = ["/api/overview", "/api/fans", "/api/messages/inbox", "/api/notifications", "/api/redemptions", "/api/crm", "/api/campaigns/stats", "/api/metrics?days=30"];
-      const readAll = await parallel(Array.from({ length: users * iterations }), users, i => Promise.all(routes.map(r => timed(reads[r] ??= [], () => call("GET", r, { ip: ip(600_000 + (i % users)) })))));
+      const readAll = await parallel(Array.from({ length: users * iterations }), users, (_, i) => Promise.all(routes.map(r => timed(reads[r] ??= [], () => call("GET", r, { ip: ip(600_000 + (i % users)) })))));
       const flat = readAll.flatMap(r => r.value), rt = tally(flat.map(v => ({ ok: true, value: v })), v => String(v.status)); report.number("read_statuses", rt);
       report.check(Object.keys(rt).every(s => s === "200"), "every dashboard read answers 200", rt);
       for (const r of routes) report.latency(`GET ${r}`, reads[r], HTTP_THRESHOLDS.dashboardRead);
