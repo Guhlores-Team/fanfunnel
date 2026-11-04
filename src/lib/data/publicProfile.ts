@@ -96,7 +96,7 @@ export async function getPublicProfileBySlug(
         creatorTitle: "Demo Creator",
         tagline: saved.tagline || "Spin my wheel — every spin wins 🎡",
         brandColor: "#ec4899",
-        avatarUrl: null,
+        avatarUrl: saved.avatarUrl || null,
         // Parity with the Supabase path: the demo's live wheel, fan-safe.
         prizes: teaserPrizes(mockGetPublicWheelTeaser()?.wheel.prizes ?? []),
         hasTipUrl: true,

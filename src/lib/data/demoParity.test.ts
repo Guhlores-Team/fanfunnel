@@ -28,6 +28,12 @@ async function main() {
   const pass = mockCreatePass("Parity Fan", 1);
   const view = await data.getFanPass(pass.token);
   check("the fan page shows the saved creator note", view?.creatorNote === "Thanks for playing!");
+  check("a saved avatar shows on the public page", "ok" in await data.setMyPublicProfile({ avatarUrl: "https://example.com/me.png" })
+    && (await data.getPublicProfileBySlug("demo-star"))?.profile.avatarUrl === "https://example.com/me.png");
+  await data.setMyPublicProfile({ note: "" });
+  check("a cleared note shows no note, not the sample", (await data.getFanPass(pass.token))?.creatorNote === null);
+  resetMockPublicProfile();
+  check("before any save the demo shows its sample note", /spin away/.test((await data.getFanPass(pass.token))?.creatorNote ?? ""));
 
   // Autopilot: no cards in the demo, and the route says why.
   check("demo Autopilot has no cards", (await data.getAutopilot()).length === 0);

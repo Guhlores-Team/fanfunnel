@@ -20,7 +20,7 @@ import { demoCodeFingerprint } from "@/lib/rewards/demoFingerprint";
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
 import { mockGetTheme, mockListMedia } from "./mockTheme";
 import { addMockReport, mockReportStore } from "./mockReports";
-import { mockGetPublicProfileFields } from "./mockPublicProfile";
+import { mockCreatorNote, mockGetPublicProfileFields } from "./mockPublicProfile";
 import { toDbTheme } from "@/lib/creatorTheme/config";
 import { makeFairRng, makeFairRngV3, normalizeClientSeed, randomSeedHex, sha256Hex } from "@/lib/games/wheel/fairness";
 import {
@@ -1147,7 +1147,7 @@ export async function mockGetFanPass(
     leaderboardEnabled: store.leaderboardEnabled,
     leaderboardOptIn: fan.leaderboardOptIn === true,
     // A36: the note the demo creator saved in Settings, else the sample one.
-    creatorNote: mockGetPublicProfileFields().note || "Hey you 😘 spin away — every spin wins!",
+    creatorNote: mockCreatorNote(),
     creatorAvatarUrl: mockGetPublicProfileFields().avatarUrl || null,
     nextSpinHash: pass?.nextServerSeedHash ?? null,
     play: mockPlayState(fan),
