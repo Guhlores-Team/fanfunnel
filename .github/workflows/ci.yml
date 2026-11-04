@@ -39,13 +39,15 @@ jobs:
 
       # Workflow guards and pure script tests under scripts/ (npm test covers
       # src/ only): A25 secrets gate, A39 DB-before-code check, A38 carry-over
-      # refusals and planner, TEST maintenance guards. No network, no secrets.
+      # refusals and planner, TEST maintenance guards, A26 stress-harness plumbing.
+      # No network, no secrets.
       - name: Script and workflow-guard tests
         run: |
           node scripts/test/ci-secrets-gate.test.mjs
           node scripts/test/db-before-code.test.mjs
           node scripts/golive/carry-over.test.mjs
           node scripts/ops/test-maintenance.test.mjs
+          node --test scripts/stress/harness.test.mjs
 
       - name: Build
         run: npm run build
