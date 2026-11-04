@@ -10,6 +10,7 @@ import { externalUrl } from "@/lib/format";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
 import { hasStockToShow, stockLabel } from "@/components/fan/stockDisplay";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 
 // ISR: public, viewer-independent data (service-client read, no cookies or
 // headers), so each slug renders on first visit and is re-generated at most
@@ -30,9 +31,9 @@ export async function generateMetadata({
   const { slug } = await params;
   const data = await getPublicProfileBySlug(slug);
   if (!data) return { title: "FanFunnel" };
-  const title = `${data.profile.creatorTitle} · Prize Wheel`;
-  const description =
-    data.profile.tagline ?? "Spin to win — every spin wins a prize. 🎡";
+  const copy = publicGameCopy(data.profile.gameKind);
+  const title = `${data.profile.creatorTitle} · ${copy.titleSuffix}`;
+  const description = data.profile.tagline ?? copy.metaDescription;
   return {
     title,
     description,
@@ -53,6 +54,7 @@ export default async function PublicProfilePage({
   if (!data) notFound();
   const { profile, tipUrl } = data;
   const { look } = profile;
+  const copy = publicGameCopy(profile.gameKind);
   const { style, plan } = themeStyle(look.theme, profile.brandColor, themeFontFamily(look.theme.font));
 
   return (
@@ -79,14 +81,14 @@ export default async function PublicProfilePage({
               background: `radial-gradient(circle, color-mix(in oklab, var(--brand) 40%, transparent), transparent 70%)`,
             }}
           >
-            🎡
+            {copy.emoji}
           </div>
         )}
         <h1 className="font-[family-name:var(--font-display)] text-3xl font-extrabold text-ink">
           {profile.creatorTitle}
         </h1>
         <p className="mx-auto mt-2 max-w-sm text-sm text-muted text-pretty">
-          {profile.tagline ?? "Spin my wheel — every spin wins a prize. 🎁"}
+          {profile.tagline ?? copy.defaultTagline}
         </p>
 
         {profile.prizes.length > 0 && (
@@ -132,15 +134,15 @@ export default async function PublicProfilePage({
             rel="noopener noreferrer"
             className="btn-brand mt-8 inline-block w-full rounded-2xl py-4 text-lg font-extrabold"
           >
-            Get your spins →
+            {copy.cta}
           </a>
         ) : (
           <p className="mt-8 text-sm text-muted">
-            DM {profile.creatorTitle} to get your personal spin link.
+            {copy.dmLine(profile.creatorTitle)}
           </p>
         )}
         <p className="mt-3 text-xs text-muted">
-          Every spin wins · rare drops keep it exciting
+          {copy.everyPlayWins}
         </p>
         {look.media.length > 0 && (
           <div className="mt-8">

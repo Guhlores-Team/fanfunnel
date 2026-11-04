@@ -1,10 +1,9 @@
 # 🎡 FanFunnel
 
-Personalized prize-wheel games for creators. A creator sends each fan a
-**unique link**; the fan spins and **always wins something** — but the rare
-drops are what keep them coming back. Built to run on a creator's OnlyFans
-audience (link-in-DM), with the wheel being game #1 of a planned suite
-(scratch tickets, bingo, …).
+Personalized prize games for creators: a prize wheel, scratch tickets and
+personal bingo. A creator sends each fan a **unique link**; the fan plays and
+**always wins something** — but the rare drops are what keep them coming back.
+Built to run on a creator's OnlyFans audience (link-in-DM).
 
 > **No gambling, no payment processing in-app.** Fans tip the creator on their
 > existing platform; the creator grants spins. Every spin yields a guaranteed
@@ -109,8 +108,9 @@ there you can:
 - See cross-account metrics (accounts, total fans, spins, prizes pending)
 - Suspend / reactivate any creator account
 - Promote a creator to admin (or back)
-- Toggle per-account feature flags (Prize Wheel is the base; Scratch / Bingo
-  unlock as we ship them)
+- Toggle per-account game access: Prize Wheel is always on; Scratch Tickets
+  and Bingo are switched on per creator (off by default for new accounts).
+  Turning one off stops new games of that kind; existing paid links keep working.
 - Create a new creator account directly — you set their login and hand it over
 
 ## Resetting everything
@@ -146,8 +146,13 @@ metrics, admin console, agency console (orgs and staff seats), boosts
 verify page, PWA install, in-house error monitoring with email alerts (0053),
 versioned Terms/Privacy (0055), web push (0056), instant reward delivery
 (0057), creator theming (0058), Focus and Chase (0059), scratch tickets (0060),
-personal bingo (0061), account security (0062), operational integrity (0063).
+personal bingo (0061), account security (0062), operational integrity (0063),
+audit batch 1 with fan-report review (0064), per-fan game links and lifecycle
+locks (0065), agency seat scopes and alert release (0066), plus the game and
+campaign switching UX and the go-live tooling (carry-over script, DB-before-code
+check). 0062–0066 are on the `orch/fixes` integration branch and not yet on
+any hosted database.
 
-Next: the open audit gaps and go-live tooling in
-`docs/handoff/MASTER_TRACKER.md`, then the security audit and go-live per
-`docs/GO_LIVE.md`.
+Next: batch 4 (0067 runtime schema-version check, agency seats on campaigns,
+load/abuse harness, QA pass), then the owner's Preview acceptance, the security
+audits and go-live per `docs/GO_LIVE.md`. Live state: `docs/handoff/MASTER_TRACKER.md`.

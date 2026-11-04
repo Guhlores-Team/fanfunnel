@@ -54,6 +54,32 @@ export function reportClientError(e: { message: string; stack?: string; kind: Re
   }
 }
 
+/** A CSP violation as a report message: the directive and only the ORIGIN
+ *  (or keyword: inline, eval) of what was blocked, never a full URL that may
+ *  carry a token. Null for content a browser extension injected. */
+export function describeCspViolation(ev: {
+  effectiveDirective?: string;
+  violatedDirective?: string;
+  blockedURI?: string;
+  sourceFile?: string;
+}): string | null {
+  const ext = /^(?:chrome|moz|safari(?:-web)?|ms-browser)-extension:/i;
+  if (ext.test(ev.blockedURI ?? "") || ext.test(ev.sourceFile ?? "")) return null;
+  const directive = (ev.effectiveDirective || ev.violatedDirective || "unknown").replace(/[^a-z-]/gi, "").slice(0, 40);
+  const blocked = ev.blockedURI ?? "";
+  let what: string;
+  if (/^(?:https?|wss?):/i.test(blocked)) {
+    try {
+      what = new URL(blocked).origin;
+    } catch {
+      what = "url";
+    }
+  } else {
+    what = (blocked.split(":")[0] || "unknown").replace(/[^a-z-]/gi, "").slice(0, 40) || "unknown";
+  }
+  return `CSP blocked ${directive}: ${what}`;
+}
+
 /** Register the window listeners once (instrumentation-client.ts calls this). */
 export function installErrorMonitor(): void {
   if (typeof window === "undefined") return;
@@ -69,5 +95,11 @@ export function installErrorMonitor(): void {
   window.addEventListener("unhandledrejection", (ev) => {
     const thrown = describeThrown(ev.reason);
     reportClientError({ message: thrown.message || "Unhandled promise rejection", stack: thrown.stack, kind: "unhandledrejection" });
+  });
+  // The CSP is enforced, so a source missing from it breaks a feature for real
+  // users; reporting it makes that visible in Admin › Errors.
+  document.addEventListener("securitypolicyviolation", (ev) => {
+    const message = describeCspViolation(ev);
+    if (message) reportClientError({ message, kind: "error" });
   });
 }

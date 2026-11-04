@@ -29,7 +29,6 @@ async function creatorForFan(fanId: string): Promise<{ creatorId: string; actorI
   if (permissionError || permitted !== true) return { error: "forbidden" };
   return { creatorId: fan.creator_id, actorId: user.id, session, service: createServiceClient(), blocked: !!fan.blocked_at, breakUntil: fan.break_until };
 }
-export async function getFanFocus(token: string): Promise<FanFocusView | null> { return (await getFanFocusDisplay(token)).focus; }
 export async function getFanFocusDisplay(token: string, service?: Service): Promise<{ focus: FanFocusView | null; odds?: FanOddsView; stock?: Record<string, import("@/lib/games/wheel/types").PublicStock> }> {
   if (!isSupabaseConfigured()) {
     const { mockFanFocusDisplay } = await import("./mock");

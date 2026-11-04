@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { acknowledgeFixtureFan, startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON } from "./harness.mjs";
+import { acknowledgeFixtureFan, startServer, stopServer, goto, passAgeGate, clickTab, log, BASE, MORE_BUTTON, injectAxe, watchCsp } from "./harness.mjs";
 import { createRevealFan, forceRarity, clearForcedRarity, spinAndTime } from "./reveal.mjs";
 import { mintFanLink, fakeInstallPrompt, spinAndCloseWin, IPHONE_UA } from "./pwa.mjs";
 import { spinViaApi } from "./play.mjs";
@@ -420,7 +420,7 @@ async function scan(page, { path, name, prep, cleanup, advisory = [], viewport =
   await page.setViewportSize(viewport);
   if (path) await goto(page, path, 1600);
   if (prep) await prep(page);
-  await page.addScriptTag({ content: AXE_SRC });
+  await injectAxe(page, AXE_SRC);
   const result = await page.evaluate(async () => {
     // WCAG 2 A & AA.
     return await window.axe.run(document, {
@@ -440,6 +440,9 @@ try {
   log(`A11y scan → ${BASE}`);
   browser = await chromium.launch();
   const page = await browser.newContext({ viewport: DESKTOP }).then((c) => c.newPage());
+  // Every scanned state also proves the app runs under its CSP: any violation
+  // the browser reports fails the scan.
+  const cspViolations = watchCsp(page, []);
 
   let blocking = 0;
   let advisories = 0;
@@ -448,6 +451,7 @@ try {
     // A `context` entry gets its own browser context (user agent, storage).
     const own = p.context ? await browser.newContext({ viewport: p.viewport ?? DESKTOP, ...p.context }) : null;
     const target = own ? await own.newPage() : page;
+    if (own) watchCsp(target, cspViolations);
     const { name, violations, advisory } = await scan(target, p).finally(() => own?.close());
     // Split serious/critical into blocking vs. advisory (per-page allow-list).
     const block = violations.filter((v) => BLOCKING.has(v.impact) && !advisory.has(v.id));
@@ -463,6 +467,9 @@ try {
     for (const v of block) lines.push(`        [${v.impact}] ${v.id} (${v.nodes.length}) — ${v.help}`);
     for (const v of adv) lines.push(`        [advisory: ${v.impact}] ${v.id} (${v.nodes.length}) — tracked in ROADMAP`);
   }
+  lines.push(`\n================ CSP VIOLATIONS: ${cspViolations.length} ================`);
+  for (const v of cspViolations.slice(0, 20)) lines.push(`  ✗ ${v}`);
+  blocking += cspViolations.length;
   lines.push(
     blocking === 0
       ? `\n✅ A11Y PASSED (no blocking violations${advisories ? `; ${advisories} tracked advisory` : ""})`

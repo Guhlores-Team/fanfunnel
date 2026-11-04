@@ -2933,6 +2933,7 @@ export function mockGetShareCard(shareId: string): ShareCardData | null {
         color: win.color ?? RARITY_COLORS[win.rarity],
         imageUrl: win.imageUrl ?? null,
         at: win.at,
+        gameKind: win.gameKind ?? "wheel",
       });
     }
   }

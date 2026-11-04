@@ -4,6 +4,8 @@ import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/s
 import { externalUrl } from "@/lib/format";
 import type { PublicPrize, PublicWheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER } from "@/lib/games/wheel/types";
+import type { GameKind } from "@/lib/games/core/gameProof";
+import { publicGameKind } from "@/lib/games/publicCopy";
 import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
 import { mockGetPublicWheelTeaser } from "./mock";
@@ -65,6 +67,8 @@ export interface PublicProfile {
   // RM-2: plus the fan-safe stock (exact count only when the wheel shows it).
   prizes: TeaserPrize[];
   hasTipUrl: boolean;
+  /** The live game's kind, so the page never calls a scratch or bingo game a wheel. */
+  gameKind: GameKind;
   /** Per-creator theming: headline font, background and photo hub. */
   look: CreatorThemeView;
 }
@@ -91,15 +95,18 @@ export async function getPublicProfileBySlug(
 ): Promise<{ profile: PublicProfile; tipUrl: string | null } | null> {
   if (!isSupabaseConfigured()) {
     const saved = mockGetPublicProfileFields();
+    // Parity with the Supabase path: the demo's live game, fan-safe; an unset
+    // tagline stays null so the page shows the game's own default line.
+    const live = mockGetPublicWheelTeaser()?.wheel;
     return {
       profile: {
         creatorTitle: "Demo Creator",
-        tagline: saved.tagline || "Spin my wheel — every spin wins 🎡",
+        tagline: saved.tagline || null,
         brandColor: "#ec4899",
         avatarUrl: saved.avatarUrl || null,
-        // Parity with the Supabase path: the demo's live wheel, fan-safe.
-        prizes: teaserPrizes(mockGetPublicWheelTeaser()?.wheel.prizes ?? []),
+        prizes: teaserPrizes(live?.prizes ?? []),
         hasTipUrl: true,
+        gameKind: publicGameKind(live?.gameKind),
         look: await getCreatorThemeView(null),
       },
       tipUrl: saved.tipUrl || "#",
@@ -123,6 +130,7 @@ export async function getPublicProfileBySlug(
   const wheelId = await resolveActiveWheelId(sb, p.id, new Date());
   let brandColor = "#ec4899";
   let prizes: TeaserPrize[] = [];
+  let gameKind: GameKind = "wheel";
   if (wheelId) {
     const { data: wheelData } = await sb
       .from("wheels")
@@ -133,6 +141,7 @@ export async function getPublicProfileBySlug(
       const cfg = toWheelConfig(wheelData as unknown as DbWheelRow);
       brandColor = cfg.brandColor ?? "#ec4899";
       prizes = teaserPrizes(toPublicWheel(cfg).prizes);
+      gameKind = publicGameKind(cfg.gameKind);
     }
   }
 
@@ -144,6 +153,7 @@ export async function getPublicProfileBySlug(
       avatarUrl: p.avatar_url,
       prizes,
       hasTipUrl: !!p.tip_url,
+      gameKind,
       look: await getCreatorThemeView(p.id),
     },
     tipUrl: p.tip_url,

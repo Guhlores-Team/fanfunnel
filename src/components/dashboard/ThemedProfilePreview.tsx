@@ -6,6 +6,7 @@ import { DEFAULT_THEME } from "@/lib/creatorTheme/config";
 import { themeFontFamily } from "@/lib/creatorTheme/fonts";
 import { themeStyle } from "@/lib/creatorTheme/tokens";
 import type { ThemePreviewValue } from "./lookAndFeel";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 
 /** The public-page preview shares its fonts, background and gallery renderer. */
 export default function ThemedProfilePreview({
@@ -15,6 +16,7 @@ export default function ThemedProfilePreview({
   tagline,
   hasTipUrl,
   look,
+  gameKind,
 }: {
   brandColor: string;
   avatarUrl: string;
@@ -22,10 +24,13 @@ export default function ThemedProfilePreview({
   tagline: string;
   hasTipUrl: boolean;
   look: ThemePreviewValue | null;
+  /** The live game's kind; the public page's copy follows it. */
+  gameKind?: string;
 }) {
   const theme = look?.theme ?? DEFAULT_THEME;
   const { style, plan } = themeStyle(theme, brandColor, themeFontFamily(theme.font));
   const name = displayName.trim() || "Creator";
+  const copy = publicGameCopy(gameKind);
   return (
     <div
       className="relative isolate min-w-0 overflow-hidden rounded-2xl border border-[var(--hair)] shadow-[var(--lift)] [transform:translateZ(0)]"
@@ -41,18 +46,18 @@ export default function ThemedProfilePreview({
             // eslint-disable-next-line @next/next/no-img-element -- matches the public avatar
             <img src={avatarUrl} alt="" className="mx-auto mb-5 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand)]" />
           ) : (
-            <div aria-hidden="true" className="mx-auto mb-5 grid h-20 w-20 place-items-center rounded-full bg-surface text-4xl">🎡</div>
+            <div aria-hidden="true" className="mx-auto mb-5 grid h-20 w-20 place-items-center rounded-full bg-surface text-4xl">{copy.emoji}</div>
           )}
           <p className="font-display text-2xl font-extrabold text-ink [overflow-wrap:anywhere]">{name}</p>
           <p className="mx-auto mt-2 max-w-xs text-sm text-pretty text-muted [overflow-wrap:anywhere]">
-            {tagline || "Spin my wheel — every spin wins a prize. 🎁"}
+            {tagline || copy.defaultTagline}
           </p>
           {hasTipUrl ? (
-            <span className="btn-brand mt-7 inline-block w-full rounded-2xl py-3.5 text-base font-extrabold">Get your spins →</span>
+            <span className="btn-brand mt-7 inline-block w-full rounded-2xl py-3.5 text-base font-extrabold">{copy.cta}</span>
           ) : (
-            <p className="mt-7 text-sm text-muted [overflow-wrap:anywhere]">DM {name} to get your personal spin link.</p>
+            <p className="mt-7 text-sm text-muted [overflow-wrap:anywhere]">{copy.dmLine(name)}</p>
           )}
-          <p className="mt-3 text-xs text-muted">Every spin wins · rare drops keep it exciting</p>
+          <p className="mt-3 text-xs text-muted">{copy.everyPlayWins}</p>
           {!!look?.media.length && (
             <div className="mt-7"><PhotoGallery media={look.media} creatorTitle={name} compact /></div>
           )}
