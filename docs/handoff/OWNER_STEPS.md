@@ -59,7 +59,8 @@ Never paste passwords or API keys into chat — put keys straight into the servi
 - [ ] 19. **Resend API key for error alerts** — https://resend.com/api-keys → Create → Permission "Sending access" → domain = your domain.
       Paste it ONLY into Vercel: https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables
       → `RESEND_API_KEY` (Production), and `ALERT_EMAIL_TO` = the address(es) that should get alerts.
-- [ ] 19a. **Live reward keys and cron secret** (missing from Production as of 2026-10-31; Preview already has the two reward keys):
+- [ ] 19a. **Live reward keys and cron secret** (missing from Production as of 2026-11-04, with `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE`, the VAPID trio and the alert pair; Preview already has the two reward keys).
+      **Step by step, in order, with the exact names: `docs/handoff/GO_LIVE_KEYS.md`.** In short:
       on the same page, scope **Production** only, generate fresh values (never copy Preview's):
       `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY` (each `openssl rand -base64 32`, mark Sensitive,
       back both up privately, never rotate them to silence an error) and `CRON_SECRET` (`openssl rand -hex 32`).

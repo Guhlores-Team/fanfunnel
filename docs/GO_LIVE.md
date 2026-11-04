@@ -54,6 +54,8 @@ an allowed URL. Prepared templates are not proof of delivery or correct redirect
 
 ## 4. Verify configuration, original keys and operational recovery
 
+Owner step-by-step: [`docs/handoff/GO_LIVE_KEYS.md`](handoff/GO_LIVE_KEYS.md) (checked against the real Vercel env list on 2026-11-04, names only).
+
 Variable names by scope (see the checks below for how to verify each):
 
 - [ ] **OWNER**: **Production** scope: LIVE `NEXT_PUBLIC_SUPABASE_URL`,
@@ -61,11 +63,11 @@ Variable names by scope (see the checks below for how to verify each):
       `FF_REQUIRE_SUPABASE=1`. **`NEXT_PUBLIC_ENABLE_DEBUG` must NOT be set.**
 - [ ] **OWNER**: **Preview** scope: the TEST trio, the same `ADMIN_EMAILS`,
       `FF_REQUIRE_SUPABASE=1` and `NEXT_PUBLIC_ENABLE_DEBUG=1`.
-- [ ] **OWNER**: **Required** shared rate-limit store (A22): confirm the Upstash integration
-      injected `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or the `UPSTASH_REDIS_REST_URL` /
-      `UPSTASH_REDIS_REST_TOKEN` pair) into **both** Production and Preview. Without them every
-      route limit is per serverless instance, not shared, and the retention cron reports the
-      store as `per_instance`.
+- [x] **Done (env listing of 2026-11-04)**: the shared rate-limit store (A22) is configured. The
+      Upstash integration injected `KV_REST_API_URL` and `KV_REST_API_TOKEN` (plus `KV_URL`,
+      `REDIS_URL`, `KV_REST_API_READ_ONLY_TOKEN`) into **both** Production and Preview. Without
+      them every route limit would be per serverless instance and the retention cron would report
+      the store as `per_instance`; the first LIVE smoke check confirms it reads `shared`.
 - [ ] **OWNER**: **Production** scope, **required**, generated fresh for LIVE (never copied from Preview):
       `CRON_SECRET` (`openssl rand -hex 32`; without it the retention cron refuses to run and
       Admin › Errors alerts), `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY` (each
@@ -74,11 +76,13 @@ Variable names by scope (see the checks below for how to verify each):
       the table in [`DEPLOY.md` section 3](../DEPLOY.md#3-vercel-project-and-environment-variables).
       **Optional**, only during a reward-key rotation (procedure below): `REWARD_ENCRYPTION_KEY_PREVIOUS`
       and, when needed, `REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION`; unset otherwise.
-      **Known gap (env listing of 2026-10-31):** Production has neither `REWARD_ENCRYPTION_KEY`
-      nor `REWARD_CODE_FINGERPRINT_KEY` (Preview has them), and `CRON_SECRET` is set on neither
-      scope. Until they exist the 0063 startup canary reports the crypto configuration as missing
-      and the retention cron / error alerts refuse to run; the first LIVE smoke check (section 9)
-      must confirm System health is green.
+      **Known gap (env listing of 2026-11-04, names only):** Production is still missing
+      `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE`, `CRON_SECRET`, `REWARD_ENCRYPTION_KEY`,
+      `REWARD_CODE_FINGERPRINT_KEY`, the VAPID trio, `RESEND_API_KEY` and `ALERT_EMAIL_TO`
+      (Preview has all but the two alert variables; `CRON_SECRET` is set on neither scope). Until
+      they exist the 0063 startup canary reports the crypto configuration as missing and the
+      retention cron / error alerts refuse to run; the first LIVE smoke check (section 9) must
+      confirm System health is green. The owner's checklist: `docs/handoff/GO_LIVE_KEYS.md`.
 
 - [ ] **OWNER + AGENT**: Review [Vercel environment settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables) by scope. Preview must use TEST URL/anon/service credentials; future Production must use LIVE credentials. Service keys remain server-only. `FF_REQUIRE_SUPABASE=1` prevents accidental mock fallback; `NEXT_PUBLIC_ENABLE_DEBUG=1` belongs only in Preview and must be absent from Production.
 - [ ] **OWNER + AGENT**: Confirm server-controlled admin profiles and independent two-factor access. `ADMIN_EMAILS` is configuration, not a substitute for checking actual role/active/approval state or RLS.
