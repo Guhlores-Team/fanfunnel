@@ -84,7 +84,8 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
     const c = a.context, inPool = p => p.stock == null || p.stock > 0;
     const snapshot = { v: 3, rules: "focus-v1", game: "wheel", prizes: c.prizes.filter(inPool).map(p => ({ id: p.id, label: p.label, emoji: p.emoji, rarity: p.rarity, w: Math.round(p.weight), baseW: p.weight })).sort((x, y) => x.id.localeCompare(y.id)), modifiers: { happyHour: { multiplier: c.happyHourMultiplier ?? 1 }, pity: { counter: c.pityCounter, threshold: 10 }, focus: null, chase: null } };
     const p = c.prizes.find(x => x.id === prizeId);
-    const expected = p.delivery === "codes" ? await freeCode(p.id, used) ?? { delivery: "codes", codeId: randomUUID(), cipher: "", iv: "", keyVersion: 1 } : { delivery: p.delivery ?? "manual" };
+    // Like the service: the oldest free code not yet seen taken; when every code it saw is gone, re-read the free list; when none is free the stale context's stock is wrong and SQL answers sold_out.
+    const expected = p.delivery === "codes" ? await freeCode(p.id, used) ?? await freeCode(p.id, []) ?? { delivery: "codes", codeId: randomUUID(), cipher: "", iv: "", keyVersion: 1 } : { delivery: p.delivery ?? "manual" };
     return { ctx: { contextHash: c.contextHash }, spin: spinRow(a, c, p, { client_seed: "stress", pool_snapshot: snapshot, pool_hash: hash(canonical(snapshot)), fair_trace: { excluded, won: p.id } }), expected, next: nextSeed(), prizeId: p.id, codeId: expected.codeId };
   };
   const scratchBody = async (a, excluded) => {
@@ -120,7 +121,9 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       trail.push(r.status);
       if (r.status === "committed") return { status: "committed", kind, spin: r.spin, prizeId: body.prizeId, codeId: body.codeId, trail, retries, redraws, attempt: a };
       if (r.status === "sold_out") { excluded.push(body.prizeId); redraws++; continue; }
-      if (r.status === "retry_context" || r.status === "changed") { if (body.codeId) used.push(body.codeId); retries++; a = await prep(who, a.id); continue; }
+      // changed: the chosen code was taken meanwhile (remember it); retry_context: the game changed under the attempt (the code may still be free).
+      if (r.status === "changed" && body.codeId) used.push(body.codeId);
+      if (r.status === "retry_context" || r.status === "changed") { retries++; a = await prep(who, a.id); continue; }
       return { status: r.status, error: r.error ?? null, trail, retries, redraws, attempt: a };
     }
     await cancel(who, a).catch(() => {});
@@ -359,11 +362,11 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const fans = await grantFans(c, w.id, n), series = [], pastes = [];
       const pick = (ctx, ex) => { const cp = ctx.prizes.find(p => p.id === w.prizes.Codes); return !ex.includes(cp.id) && (cp.stock == null || cp.stock > 0) ? cp.id : w.prizes.Other; };
       const [results, pasted] = await Promise.all([
-        parallel(fans, pool.size * 2, who => play(who, { pick, series })),
+        parallel(fans, pool.size * 2, who => play(who, { pick, series, maxRounds: 24 })),
         (async () => { await sleep(30); return timed(pastes, () => rpc("add_reward_codes", [quote(w.prizes.More), quote(c), json(Array.from({ length: paste }, (_, i) => codeRow("b", i)))])); })(),
       ]);
       await noErrors(results, "code race");
-      report.number("outcomes", outcomes(results)); report.number("retries_changed", results.reduce((t, r) => t + (r.value?.retries ?? 0), 0)); report.number("redraws_sold_out", results.reduce((t, r) => t + (r.value?.redraws ?? 0), 0));
+      report.number("outcomes", outcomes(results)); report.number("retries_changed_or_context", results.reduce((t, r) => t + (r.value?.retries ?? 0), 0)); report.number("redraws_sold_out", results.reduce((t, r) => t + (r.value?.redraws ?? 0), 0));
       report.check(results.every(r => st(r) === "committed"), "every fan ends committed");
       report.check((await scalar(`select count(*)||','||count(distinct spin_id) from public.prize_reward_codes where prize_id=${quote(w.prizes.Codes)} and spin_id is not null;`)) === `${codes},${codes}`, `exactly ${codes} distinct codes assigned`);
       report.check((await scalar(`select count(*) from public.spins where prize_id=${quote(w.prizes.Codes)};`)) === String(codes) && await stockOf(w.prizes.Codes) === 0, `${codes} code wins, stock 0`);
