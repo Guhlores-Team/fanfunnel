@@ -61,10 +61,12 @@ Variable names by scope (see the checks below for how to verify each):
       `FF_REQUIRE_SUPABASE=1`. **`NEXT_PUBLIC_ENABLE_DEBUG` must NOT be set.**
 - [ ] **OWNER**: **Preview** scope: the TEST trio, the same `ADMIN_EMAILS`,
       `FF_REQUIRE_SUPABASE=1` and `NEXT_PUBLIC_ENABLE_DEBUG=1`.
-- [ ] **OWNER**: Upstash: confirm the integration injected `KV_REST_API_URL` and
-      `KV_REST_API_TOKEN` into **both** Production and Preview. Without them the rate limits are
-      per instance, not shared.
-- [ ] **OWNER**: **Production** scope, generated fresh for LIVE (never copied from Preview):
+- [ ] **OWNER**: **Required** shared rate-limit store (A22): confirm the Upstash integration
+      injected `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or the `UPSTASH_REDIS_REST_URL` /
+      `UPSTASH_REDIS_REST_TOKEN` pair) into **both** Production and Preview. Without them every
+      route limit is per serverless instance, not shared, and the retention cron reports the
+      store as `per_instance`.
+- [ ] **OWNER**: **Production** scope, **required**, generated fresh for LIVE (never copied from Preview):
       `CRON_SECRET` (`openssl rand -hex 32`; without it the retention cron refuses to run and
       Admin › Errors alerts), `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY` (each
       `openssl rand -base64 32`, Sensitive, backed up securely, never rotated), the web-push
@@ -139,7 +141,8 @@ Residual gaps, stated plainly:
   serving a maintenance page when the database is behind, was considered.
   `supabase_migrations.schema_migrations` is not exposed through the Data API
   (only `public`/`graphql_public` are), so the service role cannot read it
-  without SQL. Follow-up for migration **0066**: a `security definer`
+  without SQL. Follow-up for a later migration (**0067**; 0066 shipped the agency seat
+  scopes instead): a `security definer`
   `public.schema_version()` returning `max(version)` from that table, granted
   to `service_role` only (revoked from `anon`/`authenticated`), plus an app
   constant of the required migration that fails closed when the read is lower
@@ -154,7 +157,7 @@ establish ordering; the Deployment Check above does, once configured.
 
 - [ ] **OWNER + AGENT**: Prepare and approve a concrete release plan before any main merge. One option is owner-run pre-application of the exact reviewed migrations while the old code remains safely served, but only after proving old-code/new-schema compatibility. If that cannot be proved, prepare a separately reviewed traffic/deployment hold and restoration plan. Do not assume additive numbering makes an old deployment compatible; later auth/RPC contracts can deliberately retire old calls.
 - [ ] **OWNER**: Verify a recoverable LIVE backup and the original-key backup, intended project identity and actual migration history. Keep LIVE credentials in approved private controls; the agent does not obtain or use them. Never run `supabase/reset.sql` on LIVE.
-- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations0001–0064 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes0059 Focus,0060 Scratch,0061 Bingo,0062 account security,0063 operational integrity and0064 completeness gaps.
+- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations 0001–0066 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes 0059 Focus, 0060 Scratch, 0061 Bingo, 0062 account security, 0063 operational integrity, 0064 completeness gaps, 0065 per-fan game pins and batch-3 hardening, and 0066 agency seat scopes, the approval notice and alert release.
 - [ ] **OWNER + AGENT**: If historical SQL was pasted manually, investigate history/schema divergence with a separate reviewed reconciliation plan and backup. Do not mark a migration applied merely to make CI green, infer execution from a history row, or assume a rerun is harmless.
 - [ ] **OWNER + AGENT**: Review the existing ledger prechecks and migration-specific constraints on actual data, including negative balances/grants, stock and costs. A warning or skipped constraint is not proof of the intended invariant. Resolve unexpected counts before proceeding; do not repair financial records automatically.
 - [ ] **OWNER**: Only after explicit approval for that exact Production operation, use the pinned supported Supabase CLI from the final checked source, verify the selected project is LIVE, inspect `supabase migration list --linked` and the pending migration plan, then perform the reviewed `supabase db push --linked` in strict numeric order. Credentials go through secure operator controls, not chat, saved scripts or command logs. Review configured Vault/seed/role behavior and supported CLI flags rather than adding broad include/reset flags. This runbook is not an instruction to execute those commands now.

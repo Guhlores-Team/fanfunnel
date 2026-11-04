@@ -160,7 +160,7 @@ const goLive = readFileSync(new URL("../../docs/GO_LIVE.md", import.meta.url), "
 const section5 = goLive.slice(goLive.indexOf("## 5."), goLive.indexOf("## 6."));
 check("GO_LIVE section 5 names the exact required Vercel check", section5.includes(`\`${CHECK_NAME}\``) && /Deployment Checks/.test(section5));
 check("GO_LIVE section 5 states the residual gaps", /Residual gap/i.test(section5) && /Force Promote/.test(section5));
-check("GO_LIVE section 5 records the runtime schema check as a 0066 follow-up", /0066/.test(section5) && /schema_version\(\)/.test(section5));
+check("GO_LIVE section 5 records the runtime schema check as a 0067 follow-up", /0067/.test(section5) && /schema_version\(\)/.test(section5));
 check("CI runs this guard", jobBlock(readWorkflow("ci.yml"), "verify").includes("node scripts/test/db-before-code.test.mjs"));
 
 console.log(`db-before-code.test: ${passed} checks passed`);
