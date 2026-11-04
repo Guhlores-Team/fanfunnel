@@ -73,6 +73,7 @@ export function statusForError(code: string): number {
     case "stock_changed":
     case "already_delivered":
     case "has_history":
+    case "game_busy":
     case "conflict":
     case "last_admin":
     case "account_cleanup_pending":

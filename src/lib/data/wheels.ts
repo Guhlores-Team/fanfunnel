@@ -623,6 +623,14 @@ export async function duplicateWheel(
   return { wheel: saved };
 }
 
+/** A lock wait that gave up (deadlock victim, lock or statement timeout, or
+ *  a serialization failure): the archive/delete changed nothing and can simply
+ *  be retried. _lock_wheel_lifecycle (0065) only blocks after 20 NOWAIT tries,
+ *  so this needs fans playing the game the whole time. */
+function lifecycleBusy(error: { code?: string } | null | undefined): boolean {
+  return ["40P01", "55P03", "57014", "40001"].includes(error?.code ?? "");
+}
+
 /**
  * Archive a wheel. If it was the active one, promote the oldest remaining
  * non-archived wheel to active so the creator always has a live wheel.
@@ -650,7 +658,7 @@ export async function archiveWheel(
   // archive_wheel (0065) takes the game's Focus/Chase fans before the wheel
   // row, the order a credited play uses; a plain UPDATE could deadlock with it.
   const { data: archived, error } = await sb.rpc("archive_wheel", { p_wheel: id });
-  if (error) return { error: gameWriteError(error) };
+  if (error) return { error: lifecycleBusy(error) ? "game_busy" : gameWriteError(error) };
   if (archived !== "ok") return { error: "not_found" };
 
   // If we just archived the active wheel, promote the oldest survivor.
@@ -723,7 +731,7 @@ export async function deleteWheel(
   // its balance) under the wheel lock, taken after its Focus/Chase fans and the
   // fans whose links are set to it, like a play.
   const { data: deleted, error } = await sb.rpc("delete_wheel", { p_wheel: id });
-  if (error) return { error: gameWriteError(error) };
+  if (error) return { error: lifecycleBusy(error) ? "game_busy" : gameWriteError(error) };
   if (deleted === "has_history") return { error: "has_history" };
   if (deleted !== "ok") return { error: "not_found" };
 

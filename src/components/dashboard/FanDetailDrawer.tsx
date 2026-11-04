@@ -816,11 +816,17 @@ function TopUpForm({
   // Balances are kept per game a link was made for; a game with no link for
   // this fan yet gets a new one. Only games the server will issue a link for
   // (isPlayableGame: not archived, saved and complete) are offered.
+  // A link's balance is stored on the game it was made for, but the link plays
+  // what its own choice, its campaign or the live game says (linkGame, the
+  // server's resolver): when those differ, the option names both.
   const topUpTargets = wheels
     .filter((w) => isPlayableGame(w))
     .map((w) => {
       const own = summary?.passes.find((p) => p.wheelId === w.id);
-      return { id: w.id, label: own ? `${w.title} balance (${own.spinsRemaining} spins)` : `${w.title} balance (new link)` };
+      if (!own) return { id: w.id, label: `${w.title} balance (new link)` };
+      const plays = linkGame(own, campaigns, wheels, new Date())?.game;
+      const elsewhere = plays && plays.id !== w.id ? ` · this link plays ${plays.title}` : "";
+      return { id: w.id, label: `${w.title} balance (${own.spinsRemaining} spins)${elsewhere}` };
     });
   // Which balance the top-up targets. Default to the fan's first link whose
   // game is still offered, else the first offered game, so the select never
