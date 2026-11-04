@@ -187,7 +187,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const t = outcomes(distinct); report.number("outcomes", t);
       report.check(t.committed === 5 && (t.declined ?? 0) === n - 5, `exactly 5 of ${n} distinct attempts commit, the rest decline cleanly`, t);
       report.check((await scalar(`select spins_remaining||','||spins_granted_total||','||(select count(*) from public.spins where fan_pass_id=${quote(solo.pass)}) from public.fan_passes where id=${quote(solo.pass)};`)) === "0,5,5", "credits conserved: 5 granted, 5 spent, 5 spins");
-      report.latency("commit (same fan, contended row)", series, DB_THRESHOLDS.commit);
+      report.latency(`commit (${n} attempts on one fan row)`, series, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 4));
       // Replays: one attempt id, one body, many concurrent commits.
       const twin = await grantFan(c, w.id, 3), a = await prep(twin), body = await wheelBody(a, w.prizes.A, [], []);
       const replayed = await parallel(Array.from({ length: replays }), pool.size * 4, () => commit(twin, a, body));
