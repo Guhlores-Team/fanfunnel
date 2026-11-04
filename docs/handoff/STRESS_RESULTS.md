@@ -84,7 +84,7 @@ Supabase-backed reads.
 
 ## Findings
 
-### KNOWN-BUG `COMMIT_RESOLVES_WHEEL_PER_STATEMENT` (DB, needs a migration; not fixed on this branch)
+### FIXED `COMMIT_RESOLVES_WHEEL_PER_STATEMENT` (DB, migration 0070 on `gaps/b5-spinlock`)
 
 **Repro** `PG_BIN=/usr/lib/postgresql/16/bin node scripts/stress/run.mjs --db --only D4`:
 while 40 fans play, a loop updates `campaigns.pinned_wheel_id` between two
@@ -98,8 +98,8 @@ Process B waits for ShareLock on transaction of C                  (while lockin
 Process C waits for AccessShareLock on tuple of wheels             (SELECT 1 FROM ONLY "public"."wheels" x WHERE "id" = $1 FOR KEY SHARE OF x  -- the FK check of the spins insert)
 ```
 
-**Root cause** `commit_spin_attempt` (`supabase/schema.sql`, the 0066
-definition) evaluates `public._resolved_spin_wheel(p.id)` in four separate
+**Root cause** `commit_spin_attempt` (the 0065 definition, in force until
+0070) evaluated `public._resolved_spin_wheel(p.id)` in four separate
 statements: the Bingo card lookup, the wheel lock
 (`perform 1 from public.wheels where id=_resolved_spin_wheel(p.id) for update`),
 the prize lock (`perform 1 from public.prizes where wheel_id=_resolved_spin_wheel(p.id) ... for update`)
@@ -121,22 +121,50 @@ durable recovery would), but under a pin flip a share of commits fail with a
 raw SQL error that the service surfaces as a retryable `spin_pending`/503, and
 the spin can resolve on the game the pin pointed at a statement earlier.
 
-**Suggested fix (0067 on `gaps/b4-db`)** resolve once, lock in order, recheck:
+**Fix (0070, `supabase/migrations/0070_resolve_spin_game_once.sql`)** resolve
+once, lock everything on that one game:
 
 ```sql
-v_wheel := public._resolved_spin_wheel(p.id);                       -- right after the fan and pass locks
+v_wheel:=public._resolved_spin_wheel(p.id);                          -- right after the fan and pass locks
 select * into card from public.bingo_cards where fan_id=f.id and wheel_id=v_wheel ... for update;
 perform 1 from public.wheels where id=v_wheel for update;
-if public._resolved_spin_wheel(p.id) is distinct from v_wheel then return jsonb_build_object('status','retry_context'); end if;
 perform 1 from public.prizes where wheel_id=v_wheel or id=r.prize_id order by id for update;
-current_context := public._spin_attempt_context(p.id);              -- unchanged; its wheelId is v_wheel now, or the hash check returns retry_context
+current_context:=public._spin_attempt_context(p.id,v_wheel);         -- the context of that game; a changed ranking still fails the hash check -> retry_context
 ```
 
-and the same single evaluation in `prepare_spin_attempt` / `cancel_spin_attempt`
-where they take the wheel lock. A regression check: D4 with `STRESS_STRICT=1`
-(0 deadlocks) plus an interplay case that flips the campaign pin between the
-two lock statements (advisory-lock injection, as 0061 did for the Bingo
-publish fault).
+`_spin_attempt_context(pass, wheel)` is a new two-argument form (0061's body
+with the caller's game instead of its own resolution); the one-argument form
+delegates to it for `get_fan_focus_state`. `prepare_spin_attempt` resolves
+once the same way (its `no_wheel` check and its context). There is no second
+resolution after the wheel lock: the context hash already answers
+`retry_context` when the ranking changed, and the service re-prepares
+(`src/lib/data/spinAttempts.ts`). The only resolution left after the locks is
+the receipt's lock-free card read (`_spin_attempt_receipt` ->
+`get_bingo_card_state`, the card of the game the link plays next). Lock
+order (fan -> pass -> wheel -> prize), SECURITY DEFINER, the fixed
+`search_path`, every grant and the response contract are unchanged;
+`cancel_spin_attempt` never resolved a game.
+
+**Regression coverage** `scripts/db/spinResolutionProbe.mjs` (drift check,
+every build path): static exactly-once checks on both function sources; a
+counting shim around the resolver proves one resolution per prepare and one
+per commit before the spin is written; the shim flips the campaign pin in the
+instant after the commit's resolution and the play still commits on the
+resolved game (against the 0065 definitions the same probe reports 7
+resolutions per commit and `retry_context`). D4's known-bug lines are hard
+checks now: `deadlocks_retried <= 0` (`D4_DEADLOCK_BOUND` in `db.mjs`), every
+play commits, and the commit ceiling always applies.
+
+**Before / after (D4, full size, 40 fans x 3 rounds under continuous pin flips)**
+
+| | deadlocks retried | outcomes | commit p50 / p95 / max ms |
+|---|---|---|---|
+| before 0070 (run on `2d0ba4f`) | 257 | 110 committed, 10 exhausted after 12 deadlocks each | 4054 / 10205 / 20373 (including deadlock waits) |
+| after 0070 (five runs on `a59120f`) | 0 | 120 committed | 85-108 / 282-332 / 353-423 |
+
+The D4 wall time dropped from tens of seconds to about 1 s, so fewer pin
+flips land during a run (8-16 campaign flips, 2-4 link pins); the probe's
+shim covers the exact instant the harness can no longer hit by timing.
 
 ### Observations (no defect)
 
@@ -162,11 +190,13 @@ publish fault).
 - **Oversized bodies.** A 6 MB JSON body is parsed and then refused by
   validation (400) or, when it parses to a valid request, served (200 on
   `/api/passes` with the name truncated, 404 on `/api/spin` for the unknown
-  token); only `/api/errors` refuses on `Content-Length` (413). Vercel's 4.5 MB
+  token); only `/api/errors` refused on `Content-Length` (413). Vercel's 4.5 MB
   request cap bounds this in production, and the local server answers a
-  legitimate spin at normal latency immediately afterwards. A shared
-  `Content-Length` cap in `parseJsonBody` would be the app-level follow-up;
-  not changed here.
+  legitimate spin at normal latency immediately afterwards. Since
+  `gaps/b5-spinlock`, `parseJsonBody` refuses a body over 1 MiB
+  (`JSON_BODY_MAX_BYTES`, declared Content-Length first, then while reading)
+  with the routes' usual 400 before anything is parsed; `/api/errors` keeps
+  its own 16 KB cap and 413.
 - **Actor-context cap (0062).** 32 live actor contexts per actor. A 40-way
   burst of distinct `grant_pass_spins` calls through the pool of 32 sessions
   reached the cap once in two runs (39 granted, one `54000 actor context
@@ -182,9 +212,9 @@ publish fault).
   cycle on row locks) while the other creator's account cascade, two
   retention runs and a fan deletion were in flight; five later quick and full
   runs did not reproduce it. The verification rounds keep the Postgres log
-  (`STRESS_PG_LOG`), which names the statements if it recurs; it may be the
-  same per-statement resolution hazard as D4 (a game-ranking input changing
-  between the wheel and prize locks), which the suggested fix also removes.
+  (`STRESS_PG_LOG`), which names the statements if it recurs; it was most
+  likely the same per-statement resolution hazard as D4 (a game-ranking input
+  changing between the wheel and prize locks), which 0070 removes.
 - **`/api/fans/import` accepts 500 rows x 5 replays in parallel** in both
   halves with exactly one batch; the demo mock and `import_fans_durable`
   agree. The 11 000-address flood (H2) is served at about 720 requests/s with
