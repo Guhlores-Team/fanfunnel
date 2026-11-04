@@ -43,8 +43,9 @@ export class Report {
   /** A documented defect (see STRESS_RESULTS.md): a KNOWN-BUG line by default, a failing check with STRESS_STRICT=1. */
   known(id, ok, label, detail) {
     if (ok || this.strict) return this.check(ok, `${label} [${id}]`, detail);
-    this.current.known.push({ id, label, detail: detail ?? null });
-    this.log(`  KNOWN-BUG ${id}: ${label}${detail != null ? ` (${detail})` : ""}`);
+    const text = detail == null ? null : typeof detail === "string" ? detail : JSON.stringify(detail);
+    this.current.known.push({ id, label, detail: text });
+    this.log(`  KNOWN-BUG ${id}: ${label}${text != null ? ` (${text})` : ""}`);
     return false;
   }
   scenario(id, title) {

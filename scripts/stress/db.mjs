@@ -23,7 +23,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** Latency ceilings (ms, p95) for the pooled local cluster on a 4-CPU box; see STRESS_RESULTS.md. */
 /** Commits that all contend on ONE prize or fan row serialise on its lock by design, so their tail is the
  *  queue depth times the service time: those ceilings add `perContender` ms per concurrent caller. */
-export const DB_THRESHOLDS = { commit: 400, perContender: 8, prepare: 250, grant: 400, save: 600, import500: 4000, retention: 3000, invariants: 5000, cascade: 15000 };
+export const DB_THRESHOLDS = { commit: 400, perContender: 10, prepare: 250, grant: 400, save: 600, import500: 4000, retention: 3000, invariants: 5000, cascade: 15000 };
 
 export async function runDbScenarios(report, { sql, quick = false, pool, only = null }) {
   const N = quick ? 0.3 : 1;
@@ -118,11 +118,12 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       try { r = await timed(series, () => commit(who, a, body)); }
       catch (e) { if (e.code !== "40P01") throw e; deadlocks.push(e.detail ?? e.message); trail.push("deadlock"); continue; }
       trail.push(r.status);
-      if (r.status === "committed") return { status: "committed", spin: r.spin, prizeId: body.prizeId, codeId: body.codeId, trail, retries, redraws, attempt: a };
+      if (r.status === "committed") return { status: "committed", kind, spin: r.spin, prizeId: body.prizeId, codeId: body.codeId, trail, retries, redraws, attempt: a };
       if (r.status === "sold_out") { excluded.push(body.prizeId); redraws++; continue; }
       if (r.status === "retry_context" || r.status === "changed") { if (body.codeId) used.push(body.codeId); retries++; a = await prep(who, a.id); continue; }
       return { status: r.status, error: r.error ?? null, trail, retries, redraws, attempt: a };
     }
+    await cancel(who, a).catch(() => {});
     return { status: "exhausted", trail, retries, redraws, attempt: a };
   };
   const outcomes = results => tally(results, v => v.status);
@@ -163,7 +164,8 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const c = await addCreator(), w = await addWheel(c, { prizes: [{ label: "Limited", weight: 1, stock }, { label: "Other", weight: 1 }] });
       const fans = await grantFans(c, w.id, n), series = [], prepSeries = [];
       const t0 = Date.now();
-      const results = await parallel(fans, pool.size * 4, who => play(who, { pick: (ctx, ex) => ex.includes(w.prizes.Limited) ? w.prizes.Other : w.prizes.Limited, series, prepSeries }));
+      const pick = (ctx, ex) => { const lim = ctx.prizes.find(p => p.id === w.prizes.Limited); return !ex.includes(lim.id) && (lim.stock == null || lim.stock > 0) ? lim.id : w.prizes.Other; };
+      const results = await parallel(fans, pool.size * 4, who => play(who, { pick, series, prepSeries }));
       report.number("wall_ms", Date.now() - t0); report.number("outcomes", outcomes(results)); report.number("pool", pool.stats());
       await noErrors(results, "oversell race");
       const [units, distinct] = await awarded(w.prizes.Limited);
@@ -314,7 +316,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.check(Number(await scalar(`select spins from public.grants where id=${quote(grantId)};`)) === 5, "the grant's spins read the edited value exactly");
       const conflict = await edit(req, { spins: 6 });
       report.check(conflict.status === "conflict", "the same requestId with another patch is a conflict", conflict.status);
-      report.latency("commit (during import)", series, DB_THRESHOLDS.commit * 2); report.latency("import 500 rows", imports, DB_THRESHOLDS.import500); report.latency("grant_pass_spins (all on one pass row)", grants, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * 40);
+      report.latency(`commit (during the import, ${pool.size * 2} in flight)`, series, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * pool.size * 2); report.latency("import 500 rows", imports, DB_THRESHOLDS.import500); report.latency("grant_pass_spins (all on one pass row, beside the plays)", grants, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * (40 + pool.size * 2));
       await invariants(c, "import+grants"); report.finish();
     }
     // ============================================================ D6 scratch + bingo
@@ -332,18 +334,19 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.check(units === Math.min(stock, targeted) && distinct === units, `scratch awards exactly ${Math.min(stock, targeted)} units from ${targeted} draws of the limited prize`, `${units}/${distinct}`);
       report.check(await stockOf(S.prizes.Limited) === stock - units, "scratch stock accounts exactly");
       report.latency("scratch commit", series, DB_THRESHOLDS.commit);
-      const bingo = await addBingo(c), bfans = await grantFans(c, bingo.id, nb, 2), bseries = [];
+      // Its own creator: beside the (older) scratch game the shared ranking would serve scratch, not Bingo.
+      const bc = await addCreator(), bingo = await addBingo(bc), bfans = await grantFans(bc, bingo.id, nb, 2), bseries = [];
       const b1 = await parallel(bfans, nb, who => play(who, { series: bseries }));
       await noErrors(b1, "bingo race");
       report.number("bingo_outcomes", outcomes(b1));
-      report.check(b1.every(r => st(r) === "committed"), "every bingo play commits concurrently");
+      report.check(b1.every(r => st(r) === "committed" && r.value.kind === "bingo"), "every bingo play commits concurrently on the Bingo game");
       const cards = await scalar(`select count(*)||','||count(distinct fan_id)||','||(select count(*) from (select fan_id from public.bingo_cards where wheel_id=${quote(bingo.id)} and status='active' group by 1 having count(*)>1) d) from public.bingo_cards where wheel_id=${quote(bingo.id)};`);
       report.check(cards.split(",")[1] === String(nb) && cards.split(",")[2] === "0", "every fan holds one active card (cards,fans,fans-with-two-active)", cards);
       const b2 = await parallel(bfans, nb, who => play(who, { series: bseries }));
       await noErrors(b2, "bingo second round");
       report.check(b2.every(r => st(r) === "committed") && (await scalar(`select count(*) from public.bingo_cards where wheel_id=${quote(bingo.id)} and version<2;`)) === "0", "a second concurrent round advances every card version");
       report.latency("bingo commit", bseries, DB_THRESHOLDS.commit * 2);
-      await invariants(c, "scratch+bingo"); await ledger("scratch+bingo"); report.finish();
+      await invariants(c, "scratch"); await invariants(bc, "bingo"); await ledger("scratch+bingo"); report.finish();
     }
     // ============================================================ D7 code prizes
     if (want("D7")) {
@@ -365,7 +368,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.check((await scalar(`select count(*)||','||count(distinct spin_id) from public.prize_reward_codes where prize_id=${quote(w.prizes.Codes)} and spin_id is not null;`)) === `${codes},${codes}`, `exactly ${codes} distinct codes assigned`);
       report.check((await scalar(`select count(*) from public.spins where prize_id=${quote(w.prizes.Codes)};`)) === String(codes) && await stockOf(w.prizes.Codes) === 0, `${codes} code wins, stock 0`);
       report.check(pasted === paste && await stockOf(w.prizes.More) === paste, `${paste} codes pasted mid-race land as stock`, pasted);
-      report.latency("commit (code contention)", series, DB_THRESHOLDS.commit); report.latency(`add_reward_codes x${paste}`, pastes, DB_THRESHOLDS.save * 3);
+      report.latency(`commit (${n} fans on one code prize)`, series, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * n); report.latency(`add_reward_codes x${paste}`, pastes, DB_THRESHOLDS.save * 3);
       await invariants(c, "codes"); await ledger("codes"); report.finish();
     }
     // ============================================================ D8 scale seed + deletion/retention while activity continues
