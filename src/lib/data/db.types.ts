@@ -3118,7 +3118,9 @@ export type Database = {
       }
       _scratch_visible: { Args: { p_value: string }; Returns: string }
       _session_mfa_satisfied: { Args: never; Returns: boolean }
-      _spin_attempt_context: { Args: { p_pass: string }; Returns: Json }
+      _spin_attempt_context:
+        | { Args: { p_pass: string }; Returns: Json }
+        | { Args: { p_pass: string; p_wheel: string }; Returns: Json }
       _spin_attempt_receipt: {
         Args: { p_attempt: string; p_replayed: boolean }
         Returns: Json
