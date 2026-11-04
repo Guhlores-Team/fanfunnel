@@ -60,9 +60,11 @@ eq(pickLiveGame([game("b", { isActive: true }), game("a", { isActive: true })], 
 eq(pickLiveGame([game("older-open", { activeUntil: "2026-12-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z" }), game("newer-open", { activeUntil: "2026-12-01T00:00:00Z", createdAt: "2026-05-01T00:00:00Z" })], NOW)?.game.id, "newer-open", "open-ended windows: newest created wins");
 eq(pickLiveGame([game("late", { activeFrom: "2026-10-29T11:30:00Z" }), game("early", { activeFrom: "2026-10-29T10:00:00Z", createdAt: "2026-06-01T00:00:00Z" })], NOW)?.game.id, "late", "latest start wins over a newer creation");
 const draftLink = linkGame({ wheelId: "spin", campaignId: "c2" }, [{ id: "c2", name: "Winter", pinnedWheelId: "draft" }], [...games, game("draft", { title: "Draft", gameReady: false })], NOW);
-eq([draftLink?.via, draftLink?.game.id, draftLink?.ignored], ["live", "scratch", { title: "Draft", why: "draft: finish and save it first" }], "a link whose campaign chose a draft says so and plays the live game");
+eq([draftLink?.via, draftLink?.game.id, draftLink?.ignored], ["live", "scratch", { title: "Draft", why: "it's an unfinished draft" }], "a link whose campaign chose a draft says so and plays the live game");
 eq(linkGame({ wheelId: "spin", campaignId: "c3" }, [{ id: "c3", name: "Gone", pinnedWheelId: "deleted" }], games, NOW)?.ignored, { title: null, why: "it was deleted" }, "a deleted campaign game is reported on the link");
 eq(pinnedLink?.ignored, null, "a played campaign game is not reported as ignored");
+// QA 2026-11-04: the reason is read inside "is set to play X, but <why>, so …", so it must be a clause.
+for (const why of [draftLink?.ignored?.why, "it was deleted"]) assert.ok(why && /^it( was|'s| can't)/.test(why), `"${why}" reads as a clause`);
 // 0065: the link's own game (per-fan pin) comes before its campaign's game.
 const plainScratch = game("plain-scratch", { title: "Plain scratch", gameKind: "scratch", createdAt: "2026-10-26T00:00:00Z" });
 const fanGames = [...games, plainScratch];
@@ -71,7 +73,7 @@ eq([fanLink?.game.id, fanLink?.via, fanLink?.because, fanLink?.ignoredLinkPin], 
 eq(resolvePlayingGame(fanGames, { linkPinnedWheelId: "plain-scratch" }, NOW)?.reason.kind, "link_pinned", "link pin beats an open schedule");
 eq(resolvePlayingGame([...fanGames, game("future", { activeFrom: "2026-12-01T00:00:00Z" })], { linkPinnedWheelId: "future" }, NOW)?.game.id, "future", "a link pin ignores the game's own window, like a campaign pin");
 const archivedPin = linkGame({ wheelId: "spin", campaignId: "c1", pinnedWheelId: "old" }, [{ id: "c1", name: "Summer", pinnedWheelId: "spin" }], [...games, game("old", { title: "Old", archivedAt: "2026-10-01T00:00:00Z" })], NOW);
-eq([archivedPin?.game.id, archivedPin?.via, archivedPin?.ignoredLinkPin], ["spin", "campaign", { title: "Old", why: "archived" }], "an archived link pin falls through to the campaign's game and says why");
+eq([archivedPin?.game.id, archivedPin?.via, archivedPin?.ignoredLinkPin], ["spin", "campaign", { title: "Old", why: "it's archived" }], "an archived link pin falls through to the campaign's game and says why");
 const draftPin = resolvePlayingGame([...games, game("draft2", { gameReady: false })], { linkPinnedWheelId: "draft2" }, NOW);
 eq([draftPin?.game.id, draftPin?.reason.kind, typeof draftPin?.ignoredLinkPin === "object"], ["scratch", "scheduled", true], "a draft link pin falls through to the live game");
 eq(resolvePlayingGame(games, { linkPinnedWheelId: "another-creators-game" }, NOW)?.ignoredLinkPin, "missing", "a link pin outside the owner's games is ignored (and reported missing)");

@@ -1,120 +1,79 @@
-# FanFunnel hand-off (2026-10-29)
+# FanFunnel hand-off (2026-10-29, §1–§3 refreshed 2026-11-04)
+
+> **Superseded by [MASTER_TRACKER.md](./MASTER_TRACKER.md) (2026-11-04).** The tracker is the
+> single source of truth for what is done and what is left. This file keeps the owner facts
+> (§4), the verify commands (§5), the rules (§6) and history. §1–§3 below were refreshed on
+> 2026-11-04 and only summarise the tracker; where they disagree, the tracker wins.
 
 Read this first, then `AGENTS.md` (binding), then the other files in `docs/handoff/`.
 Everything below was true at the time of writing; verify with `git` before acting.
 
 **Owner's weekly-usage rule: at 3% remaining, prepare the safe handoff and pause.**
-This supersedes the earlier 2% threshold. The agent cannot observe the usage meter;
-the owner must flag the threshold. Follow the [checkpoint procedure](./TAKEOVER_CHECKPOINT.md#weekly-usage-checkpoint-rule)
-and refresh the [concise resume brief](./RESUME_BRIEF.md). Do not start another
-feature at the threshold or let unfinished work exist only in chat or temporary files.
+The agent cannot observe the usage meter; the owner must flag the threshold. Follow the
+[checkpoint procedure](./TAKEOVER_CHECKPOINT.md#weekly-usage-checkpoint-rule) and refresh the
+[concise resume brief](./RESUME_BRIEF.md). Do not start another feature at the threshold or
+let unfinished work exist only in chat or temporary files. (The 2026-10-29 pause at 2% was
+lifted; work resumed and built 0060–0066.)
 
-**Takeover checkpoint:** read [TAKEOVER_CHECKPOINT.md](./TAKEOVER_CHECKPOINT.md)
-before the historical merge notes below. It records the verified TEST release,
-actual CI/deployment evidence, portable remaining-feature sources and the exact
-resume gates. The owner requested a committed handoff before the usage allowance
-runs out. A local commit is not a pushed, hosted or verified release.
+## 1. Where things stand (2026-11-04)
 
-**Pause triggered:** the owner has now reported **2% weekly usage remaining**.
-The 3% checkpoint threshold has been crossed; new feature work is paused.
-The owner can access GitHub repository secrets, but suspects the GitHub Actions
-allowance was exhausted overnight. This is unconfirmed: all four workflows for
-`a4c276adc472da466b06605a391903c48b5b4044` completed successfully. Check current
-Actions/billing before the next release; do not bypass required CI or enable paid
-usage without authorization. The final pause-note commit may have pending CI.
-
-## 1. Where things stand
-
-- **Integration branch:** `dashboard-redesign` (draft PR #78 → `main`).
-  **Verified application release `5f72680` (0059)** is on stable Preview/TEST.
-  Both full local rounds passed: each 206 unit files, 163 browser steps with zero
-  signals, 103 axe states with zero blocking violations, 43 MJS syntax checks
-  and both complete PG16 crypto layouts. Exact-SHA CI/history/types, real runtime
-  (20/20 integration, 8/8 spin integrity plus RLS negatives) and login UI (6/6)
-  passed. The actual hosted correction verified 15 trusted crypto search paths.
-  Seven HTTP checks, four public mobile-layout interactions and a 12-chunk public
-  bundle scan passed before stable alias promotion. Authenticated feature/manual
-  device acceptance and the final security audits remain pending. Any immediate
-  handoff-only HEAD changes docs/artifacts; application bytes/modes remain those
-  of `5f72680`. See `RELEASE_CHECKPOINT.json`. Continue with 0060.
-- **Preview (TEST database `snmcrmhgevfqggxdiomu`):**
-  https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
-  Vercel login protection is OFF for testing (`ssoProtection` was `all_except_custom_domains`;
-  turn it back on at go-live).
-- **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`, us-east-2/Ohio).
-  Still runs an old July build. **`main` = production. Never push or merge to `main`**
-  without (a) green CI and (b) the owner's explicit "tested on Preview, go".
-- **TEST database migrations applied:** 0001–0059, with the actual one-time
-  pgcrypto configuration correction verified independently. Stable Preview code
-  and TEST schema now match. Production remains unchanged; it receives migrations
-  only at an explicitly approved go-live, before or exactly at the merge.
+- **Integration branch for the go-live candidate:** `orch/fixes`. It holds migrations
+  **0001–0066**, the final hardening (36 paths) and audit batch 3 (merges 4a49139 b3-db,
+  43e4840 b3-app, 2a0f979 b3-ui, c73dd44 b3-ops; reconciled docs 7bea8ac).
+- **`dashboard-redesign`** (draft PR #78 → `main`, head 8bf5c4c) has 0001–0061 plus the
+  game/campaign switching UX. **Nothing new has been merged to it**; 0062–0066 and batch 3
+  reach it only after the owner's "go".
+- **Batch 4 is in flight** on branches off `orch/fixes` 7bea8ac: `gaps/b4-db` (0067),
+  `gaps/b4-seats` (agency seats on campaigns, A28 residual), `gaps/b4-stress` (load/abuse
+  harness, A26) and `gaps/b4-qa` (docs, public-page copy, exploratory QA; see
+  `QA_PASS_2026-11-04.md`). Those branches carry a `vercel.json` commit so they never deploy
+  a Preview.
+- **TEST database (`snmcrmhgevfqggxdiomu`) is at 0061.** 0062–0066 have not been applied to
+  any hosted database.
+- **Preview (TEST):** https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app
+- **Live:** https://fanfunnel.vercel.app (prod database `ttlogfmogcccwiraaoae`). Unchanged; an
+  old July build. **`main` = production. Never push or merge to `main`** without (a) green CI
+  and (b) the owner's explicit "tested on Preview, go".
+- **Waiting on the owner's "go"** to move `orch/fixes` onto `dashboard-redesign`, apply
+  0062+ to TEST, and run Preview acceptance (`e2e/MANUAL-CHECKLIST.md`, now with §19).
 
 ## 2. Roadmap status (owner chose: build ALL before alpha)
 
-| Item | Migration | Branch @ sha | State |
-|---|---|---|---|
-| RM-1 reveal theater, RM-2 stock, RM-4 PWA, Fairness v3 | 0045–0048 | in `dashboard-redesign` | done, on Preview |
-| RM-6 spend guardrail (F5 `withFanToken`, F6 `fanEngagementAllowed`) | 0049 | merged | done, on Preview |
-| RM-3 visit glow | 0050 | merged | done (glow gate now delegates to F6) |
-| RM-5 win-back queue | 0051 | merged | done (`src/lib/engagement.ts` re-exports F6) |
-| Go-live hardening (agency org RLS fix, Dependabot, docs/GO_LIVE.md) | 0052 | merged | done |
-| Error monitoring + email alerts (Admin › Errors) | 0053 | merged | done |
-| **Privacy & safety pack** | 0054 | merged as `612b606` | done; two full local verification rounds, green CI, on Preview / TEST |
-| **Terms / Privacy + clickwrap** | 0055 | merged as `c1b4098` | done; two full local verification rounds, green CI, on Preview / TEST |
-| **Web push (creators)** | 0056 | merged and hardened through `4431546` | done; two final full rounds (141 unit files, 130 browser checks, 69 accessibility states), green CI / TEST, deployed Preview |
-| **#26 instant-delivery prizes** | 0057 | normal merge of `rm/26-instant-delivery`, finished through `2abae19` | on Preview/TEST; two full local rounds (151 unit files, 140 browser checks, 76 axe states), green CI and real TEST integration/RLS tests |
-| **Per-creator theming** | 0058 | normally merged, verified through `540f018` | on Preview/TEST; two full local rounds, exact-SHA CI, history/types/runtime and real public mobile checks pass |
-| **#25 focus pack → chase pity** | 0059 | verified/deployed `5f72680` | two fresh full rounds, exact-SHA CI, actual TEST crypto repair/history/types/runtime/login and public Preview checks passed; Chase remains off; manual feature acceptance pending |
-| **RM-7 scratch tickets** | 0060 | source frozen separately | pure replay, SQL, data and UI prepared; integrated release verification remains after 0059 |
-| **RM-7 personal bingo** | 0061 | source frozen separately | must follow scratch; common fixes need carrying; no TEST application |
-| **Account security follow-up** | 0062 | source frozen separately | enrolled creator MFA, invite expiry and last-active-admin safeguards; integrate only after 0061 |
-| **Ledger operations / small fixes** | 0063, then code-only | source frozen separately | seven-path startup/secret-scope/legacy-count overlay required before 0063 verification; see portable checkpoint |
+All roadmap stages are built. Per-stage state, commits and what closes each row live in
+[MASTER_TRACKER §1](./MASTER_TRACKER.md#1-roadmap-stages-prepared-source--integrate).
 
-Historical feature branches are pushed to origin. The later frozen 0060–0063
-and final-hardening preparations are source artifacts, **not released branches**;
-preserve and reconstruct them using the checkpoint. Existing branches based on
-older integration commits require a normal merge, never a rebase/force-push of
-someone else's history.
+| Item | Migration | Where | State |
+|---|---|---|---|
+| RM-1 … RM-6, fairness v3, privacy pack, terms, web push, #26 instant rewards, theming, #25 focus/chase | 0045–0059 | `dashboard-redesign`, Preview/TEST | done (`5f72680` verified release; see `RELEASE_CHECKPOINT.json`) |
+| RM-7a scratch tickets | 0060 | `dashboard-redesign`, TEST | integrated; Preview acceptance pending |
+| RM-7b personal bingo + interplay suite | 0061 | `dashboard-redesign`, TEST | integrated; Preview acceptance pending |
+| Game/campaign switching UX | — | `dashboard-redesign` | done-pending-Preview |
+| Account security follow-up | 0062 | `orch/fixes` | integrated, not on any hosted DB |
+| Ledger operations + safety overlay | 0063 | `orch/fixes` | integrated, not on any hosted DB |
+| Audit batch 1 | 0064 | `orch/fixes` | integrated, not on any hosted DB |
+| Per-fan game pins + batch-3 DB hardening | 0065 | `orch/fixes` | integrated, not on any hosted DB |
+| Agency seat scopes, approval notice, alert release | 0066 | `orch/fixes` | integrated, not on any hosted DB |
+| Runtime schema-version check (A39 residual) | 0067 | `gaps/b4-db` | in flight |
 
 ## 3. Next steps, in order
 
-### 3a. Merge the three finished branches, strictly in migration order
-0054–0059 are complete on Preview and TEST. The owner confirmed enabling two-factor
-login before 0054 was pushed. Continue with 0060; do not repeat earlier merges or MFA
-enrolment. The 0057 type-only follow-up preserves the exact generator syntax;
-its declarations and runtime behavior are unchanged from the twice-verified tree.
+1. **Finish batch 4** and merge its branches into `orch/fixes` (DB branch first, so 0067 lands
+   before code that needs it). Each branch reports two full verification rounds (§5).
+2. **Owner's "go"** → merge `orch/fixes` into `dashboard-redesign`; CI applies 0062–0067 to
+   TEST (DB before code, AGENTS.md). Confirm with `list_migrations` on TEST, then deploy the
+   exact checked SHA to Preview per `docs/PREVIEW_DEPLOY.md`.
+3. **Preview acceptance** by the owner: `e2e/MANUAL-CHECKLIST.md` (including §19 games,
+   campaigns and links) and `docs/handoff/OWNER_STEPS.md`.
+4. **Verification and acceptance gates** in [MASTER_TRACKER §3](./MASTER_TRACKER.md#3-verification--acceptance-from-takeover_checkpoint-open-gaps):
+   two fresh security audits, hosted feature checks, installed-phone push, key backup and
+   TEST restore drill, second-admin recovery, email/cron checks, Production env vars.
+5. **Go-live** per `docs/GO_LIVE.md`, only on the owner's explicit "go": migrations to prod
+   before (or exactly at) the merge to `main`.
+
+### Merge tips (still true)
 
 `supabase db push` (CI `test` job) rejects a migration numbered lower than the remote's latest,
-so **0054 → 0055 → 0056 → 0057 → 0058 → …** must reach `dashboard-redesign` in that order.
-
-1. `git merge --no-ff origin/ops/privacy-safety` (0054).
-   - Its `run_retention_cleanup` skips `app_errors` via `to_regclass` until 0053 exists: 0053 now
-     exists, so confirm the drift-check probe still passes and that resolved `app_errors` are cleaned.
-   - Adds `vercel.json` (cron 04:17 UTC → `/api/cron/retention`); watch for conflicts.
-   - **0054 makes `is_admin()` require an aal2 (2FA) session.** The owner must enrol 2FA on
-     every admin account (Settings › Security › Two-factor) or loses admin access on Preview.
-     Tell them before pushing.
-2. `git merge --no-ff origin/legal/terms-privacy` (0055). Contact email lives only in
-   `src/lib/legal.ts` (test-enforced). Fans who acked before 0055 see the age gate once more.
-3. `git merge --no-ff origin/rm/web-push` (0056). New dependency `web-push@3.6.7` (allowed by spec).
-   **Wire the F6 gate:** `pushAboutFanAllowed` in `src/lib/push/notify.ts` (~73, marked
-   `// F6: wire to fanEngagementAllowed at merge`) must call `fanEngagementAllowed` from
-   `src/lib/play/playGuard.ts` with `breakUntil` read from `fans.break_until`; add an on-break
-   case to `src/lib/push/notify.test.ts` (both Supabase and mock paths).
-
-   Integration also uncovered an approval bypass: pending/rejected creators could
-   write their own business data and use agency/import paths. 0056
-   tightens the shared authorization predicates without renumbering later
-   features. The local regression has 106 assertions: 47 failures before the fix,
-   zero after. Active legacy admins retain own-account operations; cross-account
-   admin power still requires aal2. New TEST fixtures explicitly approve positive
-   creator accounts and separately test pending/rejected refusals.
-
-   Other integration hardening: public-upload cleanup before account deletion,
-   avatar eligibility checks before and after upload, and deterministic daily
-   push-log retention (including inactive accounts). Storage errors retain the
-   account/metadata for retry. Durable tracking for in-flight uploads and deletion
-   retries remains an explicit requirement of the 0058 storage work.
+so migrations must reach `dashboard-redesign` in number order.
 
 Expected conflicts (seen on every merge so far) are parallel appends in:
 `e2e/a11y.mjs`, `e2e/run.mjs`, `scripts/db/schema-drift-check.mjs`,
@@ -136,61 +95,15 @@ this branch, so deploy the exact checked SHA through the authenticated CLI after
 TEST application/type/history checks and all CI jobs succeed. Never deploy an
 uncommitted source directory or change a Production alias.
 
-### 3b. Finish #26 and theming
-0057 is complete on Preview. 0058 passed both full integrated rounds and has been
-pushed only to `dashboard-redesign`. TEST migration/history/types/runtime and all
-CI jobs pass, and the exact checked commit is on Preview. Continue with 0060. The historical WIP details below describe
-what had to be completed; they are not the remaining task list.
-- **#26** (`rm/26-instant-delivery`): last step in progress was the static migration guard test
-  (`src/lib/security/instantRewards.test.ts`) and route authz test (`src/app/api/prizes/rewardAuthz.test.ts`).
-  Reward codes are AES-256-GCM encrypted with server-only `REWARD_ENCRYPTION_KEY` (Node `crypto`).
-  Codes must be reserved atomically with the spin claim (20-way race probe already in the drift check).
-  Reinspection found the creator editor, fan reveal/re-view, Auto fulfilment UI,
-  e2e and accessibility work were still missing; do not treat the two WIP tests as
-  the only remaining tasks. Also verify atomic/idempotent finalization, cross-paste
-  code uniqueness, immutable delivered values, full history beyond 50 wins,
-  every-view logging, and erasure of delivered secrets when a fan deletes data.
-- **Theming** (`rm/theming`): last step in progress was the Settings "Look & feel" card; then
-  a11y states (themed fan page + link-in-bio, light/dark extremes), screenshots, verify.
-  It uses `sharp` to re-encode uploads to WebP — confirm `sharp` is already a dependency
-  (Next ships it); if it is newly added to package.json, flag it to the owner.
-  The Settings card, admin controls and browser/accessibility coverage were absent
-  on the saved branch. Integrate storage failure handling, audit hooks, exports,
-  mock resets, closed-account media cleanup and durable upload/deletion recovery.
+After each merge run the full verify (§5) twice before pushing.
 
-### 3c. Build #25 then RM-7
-0059 is released. Next: 0060 scratch, then 0061 bingo, 0062 account security,
-0063 operations (including the mandatory seven-path safety overlay), then small
-fixes and the final audit. Use the repaired-common artifact index. Remove only
-0059's one-time TEST correction workflow invocation with 0060 before verification;
-retain the helper and all tests. Preserve newer common controllers and mirrors.
+### History
 
-Specs: `docs/handoff/PROPOSALS.md` (#25 §, RM-7 §, §8 "riskiest three"). Rules:
-`docs/handoff/ROADMAP_BUILD_BRIEF.md`. Migrations 0059 (#25), 0060+ (RM-7).
-Never change odds outside the committed seed derivation (Fairness v3, 0047); keep `fans == SUM(passes)`.
-Every "come back / keep going" surface must call F6 `fanEngagementAllowed`.
-
-### 3d. Small fixes (all closed on `orch/fixes` as of 2026-10-31)
-- ~~Malformed percent-encoded URLs return 500~~ — closed by final hardening: `src/proxy.ts`
-  answers a generic 400 and reports a static occurrence to monitoring (`src/proxyEncoding.test.ts`).
-- ~~Server-side refusal of creator top-ups to a fan on a break~~ — closed: the grant path
-  returns `on_break` (`src/lib/data/fans.ts`, `isOnBreak(fan.break_until)` check).
-- ~~Debug banner covers the win-back queue buttons at 390px~~ — closed by final hardening:
-  `EnvBadge` paints below dashboard content (`z-30`); `e2e/winback.mjs` checks the overlap.
-- ~~Creator 2FA enforced at login/proxy only~~ — closed by 0062 (enrolled creators need `aal2`
-  in the database; 00e9bdb proves it gates the 0064 queue, inbox and webhooks).
-- ~~Pending agency invites never expire~~ — closed by 0062 (`org_invites.expires_at`, 7-day default).
-- ~~Protect the last active admin~~ — closed by 0062 (`profiles_preserve_active_admin` and the
-  admin serialization trigger).
-- ~~Hash fan tokens/IPs before rate-limit storage; bound the fallback map~~ — closed by final
-  hardening (`src/lib/rateLimit.ts`, `src/lib/rateLimitPrivacy.test.ts`).
-
-### 3e. Security audit, then go-live
-- Run the audit per `docs/handoff/SEC_AUDIT_BRIEF.md` (two independent auditors + privacy-promise
-  verification + outside-attacker pass) → `docs/security/AUDIT-2026-10.md` (to be written by that
-  audit; it does not exist yet); fix Critical/High.
-- Then the owner tests on Preview (`e2e/MANUAL-CHECKLIST.md`) and works through
-  `docs/handoff/OWNER_STEPS.md`. Go-live steps: `docs/GO_LIVE.md`.
+The 2026-10-29 merge plan (0054–0059 merges, #26/theming finishing notes, the 0060+ build
+order) is complete. It is kept in Git history (`git show 7bea8ac:docs/handoff/HANDOFF.md`) and
+summarised in `TAKEOVER_CHECKPOINT.md`. The small fixes listed then are all closed on
+`orch/fixes` (percent-encoded URLs, on-break top-ups, debug banner overlap, creator 2FA in the
+database, invite expiry, last-active-admin, private rate-limit keys).
 
 ## 4. Owner (do not lose these)
 

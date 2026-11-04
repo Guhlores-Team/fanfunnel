@@ -74,7 +74,11 @@ export interface LinkGame<T extends ChoiceGame = ChoiceGame> {
 /** Why a chosen game is being skipped, in the words the campaign card uses. */
 function ignoredPinText<T extends ChoiceGame>(ignoredPin: T | "missing" | undefined): { title: string | null; why: string } | null {
   if (ignoredPin === undefined) return null;
-  return ignoredPin === "missing" ? { title: null, why: "it was deleted" } : { title: ignoredPin.title, why: pinUnavailableReason(ignoredPin) ?? "it can't be played" };
+  if (ignoredPin === "missing") return { title: null, why: "it was deleted" };
+  // Read in "is set to play X, but <why>, so …": a full clause, not the picker's short tag.
+  const reason = pinUnavailableReason(ignoredPin);
+  const why = reason === "archived" ? "it's archived" : ignoredPin.gameReady !== true ? "it's an unfinished draft" : "it can't be played";
+  return { title: ignoredPin.title, why };
 }
 
 /**

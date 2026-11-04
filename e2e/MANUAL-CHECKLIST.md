@@ -401,3 +401,73 @@ with `ALERT_ENVIRONMENTS` including `preview`, and an admin signed in with two-f
       prize win delivers it with `X-FanFunnel-Signature`; an auto-delivered win does not. Verify
       the signature with the secret shown under the hooks. A 6th hook, `http://localhost/` and
       `http://169.254.169.254/` are refused.
+
+## 19. Games, campaigns and links (0065 per-fan games; Preview on the TEST database)
+
+Needs migration 0065 on the TEST project. Use one disposable TEST creator with at least
+two finished games of different kinds (for example a wheel called "Spin to Win" and a
+scratch ticket called "Test Scratch"), one disposable campaign and two disposable fan links
+in that campaign. Every game name in the dashboard is followed by a small badge that says
+**Wheel**, **Scratch** or **Bingo**. The badge is the thing to read, not its colour.
+
+**Which game is live**
+
+- [ ] 1. Open [Games](https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/dashboard?section=editor). A box at the top says
+      **Live for fans now:** with a game name, its badge, and a reason in plain words (for
+      example "because it's your active game").
+- [ ] 2. The game chips under it each show the right badge (Wheel / Scratch / Bingo).
+
+**Scheduling a game takes over (with a confirm)**
+
+- [ ] 3. Select the game that is *not* live. Under its schedule, pick an **Active from** time a
+      minute ago and no **Active until**, then select **Save schedule**.
+- [ ] 4. A box opens titled **Replace <live game> for fans?** It names both games with their
+      badges and says campaigns that chose a game keep playing it. Select **Don't schedule**:
+      nothing changes and **Live for fans now** still shows the old game.
+- [ ] 5. Repeat step 3 and select **Yes, schedule it**. **Live for fans now** switches to the
+      scheduled game and says your active game comes back when the schedule ends.
+- [ ] 6. Open a fan link that has no game chosen for it: it plays the scheduled game.
+- [ ] 7. Select **Always on** on the scheduled game to undo it; **Live for fans now** goes back.
+
+**The campaign's game**
+
+- [ ] 8. Open [Campaigns](https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/dashboard?section=campaigns). Each campaign shows either
+      **Plays:** with a game and badge, or **Follows your live game (currently …)**.
+- [ ] 9. Use **Change game** on the campaign to pick the other game. The line changes to
+      **Plays:** that game, and both fan links in the campaign now play it (open one to check).
+- [ ] 10. When creating a new campaign, the **Game fans play** picker offers the same choices.
+- [ ] 11. Archive the game the campaign plays (in Games). Back in Campaigns, the campaign shows
+       an amber line: **Set to play <game>, but it's archived, so fans get your live game.
+       Pick another game below.** Open a fan link in the campaign: it plays your live game,
+       not an error. Unarchive the game afterwards.
+
+**One fan's own game ("This link plays")**
+
+- [ ] 12. Open [Fans](https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/dashboard?section=fans) and open the first disposable fan. In the
+       drawer, **This link plays:** names the game, its badge and why (for example
+       "(via campaign …)" or "(your live game: …)").
+- [ ] 13. Select **Change game**. Under **Change game for this fan only**, pick a different
+       game. The line now says "(chosen for this fan only)". Open that fan's link: it plays the
+       chosen game.
+- [ ] 14. Open the second fan in the same campaign: it still plays the campaign's game. Only the
+       first fan changed.
+- [ ] 15. Archive the game chosen for the first fan. Its drawer shows an amber line saying the
+       link is set to play that game, but it's archived, so it plays the game below. The link
+       still works. Unarchive the game.
+- [ ] 16. Set the first fan back to **Follow campaign "…"**; it plays the campaign's game again.
+
+**The fan sees new odds after a change ("Odds were updated")**
+
+- [ ] 17. Open a disposable fan link on a phone and leave it open. On the dashboard, change a
+       prize's weight on the game that link plays and save.
+- [ ] 18. Without reloading the fan page, play once. The win card says **Odds were updated
+       since you opened this page. This spin used the new odds; see them on the verify page.**
+       The link opens the verify page for that play.
+- [ ] 19. Play again without changing anything: the notice does not appear.
+
+**Public pages say the right game**
+
+- [ ] 20. With a scratch or bingo game live, open your public page (`/c/<your link name>`).
+       It talks about tickets (scratch) or bingo, not a wheel or spins. Share a win from a
+       scratch or bingo fan link and open the share link: the text under the prize names the
+       same game.

@@ -49,7 +49,7 @@ Batch 3 branches (all merged into `orch/fixes` on 2026-11-04, in this order):
 New batch-3 items (2026-10-29):
 - A43: remove the dead legacy spin path in `src/lib/data/spins.ts` (below the `commitSpinAttempt` return, ~L270) plus `finalizeInstantSpin` / `reserveRewardCode` / `releaseRewardCode`, which call 0057 RPCs revoked from every role in 0059.
 - A44 (lock order): archiving a wheel locks wheel then fans (0059 lifecycle trigger) while play locks fan then wheel, so the two can deadlock. Add a lockRace probe, then fix the order.
-- A7 follow-up (batch 3, owner text): Terms and Privacy must mention scratch tickets and personal bingo now that 0060/0061 shipped; `src/app/terms/page.tsx` and `src/app/privacy/page.tsx` still describe only "prize wheels".
+- ~~A7 follow-up (batch 3, owner text): Terms and Privacy must mention scratch tickets and personal bingo~~ — **closed** (A49, 2026-11-04): `src/app/terms/page.tsx` (metadata, intro, §1, the "Scratch tickets and bingo are other ways to use a spin" rule) and `src/app/privacy/page.tsx` (intro, "Game cards and tickets") cover both, landed in 8903f22 with `gaps/b3-ui`.
 - Flake watch (batch 3): e2e `reveal.mjs` "the reveal is up within 6400ms" missed by 29ms once under load (gaps-1-final round). The budget is `SPIN_MS` 4400 + `MAX_THEATER_EXTRA_MS` 1500 + 500; investigate the budget against the reveal animation timing before widening anything.
 
 Closed early inside 0061: A2 (`expected_stock` compare-and-set), CROSS_TENANT_HAPPY_HOUR, ISSUANCE_IGNORES_SCHEDULE, ACTIVE_ORDER_MISMATCH and the bingo review fixes; the focus-pack grant lock order was fixed in 79239e7.
