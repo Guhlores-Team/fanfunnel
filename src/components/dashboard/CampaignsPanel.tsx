@@ -301,10 +301,10 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
           {seat
             ? chosenNewGame === FOLLOW_LIVE
               ? `${followLabel}: this campaign's links play whatever is live on ${seat.displayName}'s Games screen.`
-              : "This campaign's links always play the game you pick here. You can change it later on the campaign card."
+              : "This campaign's links play the game you pick here (a fan link set to its own game keeps that). You can change it later on the campaign card."
             : chosenNewGame === FOLLOW_LIVE
               ? "Follow my live game: this campaign's links play whatever is live on your Games screen, so scheduling or activating another game changes it."
-              : "This campaign's links always play the game you pick here, even if you schedule or activate another game. You can change it later on the campaign card."}
+              : "This campaign's links play the game you pick here, even if you schedule or activate another game (a fan link you set to its own game keeps that). You can change it later on the campaign card."}
         </p>
       </section>
 
@@ -658,8 +658,8 @@ function CampaignCard({
       </div>
       <p id={gameHelpId} className="mt-2 text-xs text-muted text-pretty">
         {seat
-          ? `Applies to every link in this campaign, new and existing. “Follow ${seat.displayName}'s live game” uses whatever is live on their Games screen.`
-          : <>Applies to every link in this campaign, new and existing. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.</>}
+          ? `Applies to every link in this campaign, new and existing, except a fan link set to its own game in Fans. “Follow ${seat.displayName}'s live game” uses whatever is live on their Games screen.`
+          : <>Applies to every link in this campaign, new and existing, except a fan link you set to its own game in Fans. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.</>}
       </p>
       <p id={lifecycleHelpId} className="mt-1 text-xs text-muted text-pretty">
         {campaign.isActive

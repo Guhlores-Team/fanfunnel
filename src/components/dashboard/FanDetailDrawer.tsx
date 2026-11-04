@@ -1314,8 +1314,10 @@ function LinkPlays({
               </p>
             </>
           ) : (
-            <p className="text-[11.5px] text-pretty">
-              This link isn&apos;t in a campaign, so it plays your live game. To give fans a specific game, mint them a link in a campaign that plays it, or change your live game on the Games screen.
+            <p data-testid="link-no-campaign-help" className="text-[11.5px] text-pretty">
+              {pinnedWheelId
+                ? "This link isn't in a campaign. It plays the game chosen above; choose “Follow my live game” to give it your live game again."
+                : "This link isn't in a campaign, so it plays your live game unless you choose a game for it above. To give a group of fans a game, mint their links in a campaign that plays it."}
             </p>
           )}
           {onOpenCampaigns && (

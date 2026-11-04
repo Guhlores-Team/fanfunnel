@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { pickLiveGame, resolvePlayingGame, scheduleTakeover, playReasonText, type LiveGameCandidate } from "./liveGame";
-import { campaignGame, campaignsUsing, defaultCampaignGameId, linkGame, liveExplanation, gameOptionLabel } from "@/components/dashboard/gameAssignment";
+import { campaignGame, campaignsUsing, defaultCampaignGameId, linkGame, liveExplanation, gameOptionLabel, pinUnavailableReason } from "@/components/dashboard/gameAssignment";
 
 // The owner's report: "Test Scratch" was scheduled now → Oct 31 while
 // "Spin to Win" was active, so every unpinned link (including one whose
@@ -63,6 +63,12 @@ const draftLink = linkGame({ wheelId: "spin", campaignId: "c2" }, [{ id: "c2", n
 eq([draftLink?.via, draftLink?.game.id, draftLink?.ignored], ["live", "scratch", { title: "Draft", why: "it's an unfinished draft" }], "a link whose campaign chose a draft says so and plays the live game");
 eq(linkGame({ wheelId: "spin", campaignId: "c3" }, [{ id: "c3", name: "Gone", pinnedWheelId: "deleted" }], games, NOW)?.ignored, { title: null, why: "it was deleted" }, "a deleted campaign game is reported on the link");
 eq(pinnedLink?.ignored, null, "a played campaign game is not reported as ignored");
+// QA 2026-11-04: a just-created game with no prizes is served by the resolver but every play
+// is refused (no_prizes), so the pickers must not offer it as a link's or campaign's game.
+eq(pinUnavailableReason({ ...scratch, prizeCount: 0 }), "add at least 2 prizes first", "an empty game can't be chosen");
+eq(gameOptionLabel({ ...scratch, prizeCount: 1 }), "Test Scratch · Scratch (add at least 2 prizes first)", "the option says why");
+eq(pinUnavailableReason({ ...scratch, prizeCount: 2 }), null, "a game with enough prizes can be chosen");
+eq(pinUnavailableReason({ ...scratch, prizeCount: 0, archivedAt: "2026-10-01T00:00:00Z" }), "archived", "archived still reads first");
 // QA 2026-11-04: the reason is read inside "is set to play X, but <why>, so …", so it must be a clause.
 for (const why of [draftLink?.ignored?.why, "it was deleted"]) assert.ok(why && /^it( was|'s| can't)/.test(why), `"${why}" reads as a clause`);
 // 0065: the link's own game (per-fan pin) comes before its campaign's game.

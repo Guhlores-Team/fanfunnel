@@ -3,7 +3,8 @@
 // bottom sheet, and nothing hides behind the bar or overflows at 360px.
 // Read-only against the demo data, so it can run before the first-run wipe.
 
-import { attachSink, goto, clickTab, NAV_ITEMS, MORE_BUTTON } from "./harness.mjs";
+import { randomUUID } from "node:crypto";
+import { acknowledgeFixtureFan, attachSink, BASE, goto, clickTab, NAV_ITEMS, MORE_BUTTON } from "./harness.mjs";
 
 const PHONE = { width: 390, height: 844 };
 const BAR = ["Today", "Inbox", "Games", "Fans"];
@@ -220,6 +221,31 @@ export async function mobileJourney(browser, { step, assert }, sink) {
       await page.keyboard.press("Escape");
       await sheet.waitFor({ state: "hidden", timeout: 4000 });
       await page.emulateMedia({ reducedMotion: null });
+    });
+
+    await step("mobile: the Message button never covers the SPIN button (390×844, QA 2026-11-04)", async () => {
+      const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+      const fan = await phone.newPage();
+      attachSink(fan, sink);
+      // Its own link: /spin/demo is self-excluded by fanExtras before this journey runs.
+      const created = await phone.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "Message overlap fan", spins: 2 } });
+      assert(created.ok(), "overlap fan link created");
+      const own = await created.json();
+      try {
+        assert((await acknowledgeFixtureFan(phone.request, own.token)).ok(), "overlap fan acknowledged");
+        await goto(fan, `/spin/${own.token}`, 1200);
+        const spin = fan.getByTestId("fan-spin");
+        await spin.waitFor({ timeout: 10000 });
+        const box = await spin.boundingBox();
+        const onTop = await fan.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest("[data-testid='fan-spin']") !== null, [box.x + box.width - 24, box.y + box.height / 2]);
+        assert(onTop, "the right edge of SPIN is SPIN, not the Message button");
+        await fan.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
+        await fan.locator("[data-testid='chat-fab']:not([data-step-aside])").waitFor({ timeout: 4000 });
+        assert(await fan.getByRole("button", { name: "Message creator" }).isVisible(), "the Message button is back once SPIN scrolls away");
+      } finally {
+        await phone.request.delete(`${BASE}/api/fans/${own.fanId}`).catch(() => {});
+        await phone.close();
+      }
     });
 
     await step("mobile: the sidebar returns from lg (1280px)", async () => {

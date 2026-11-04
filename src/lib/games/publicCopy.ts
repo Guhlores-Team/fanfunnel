@@ -23,6 +23,9 @@ export interface PublicGameCopy {
   shareFooter: string;
 }
 
+/** "A Rare", "An Uncommon", "An Epic". */
+const a = (word: string) => (/^[aeiou]/i.test(word) ? `An ${word}` : `A ${word}`);
+
 const COPY: Record<GameKind, PublicGameCopy> = {
   wheel: {
     kind: "wheel",
@@ -34,7 +37,7 @@ const COPY: Record<GameKind, PublicGameCopy> = {
     dmLine: (c) => `DM ${c} to get your personal spin link.`,
     everyPlayWins: "Every spin wins · rare drops keep it exciting",
     wonOn: (c) => `Won on ${c}’s prize wheel — every spin wins.`,
-    dropOn: (r, c) => `A ${r} drop on ${c}'s wheel.`,
+    dropOn: (r, c) => `${a(r)} drop on ${c}'s wheel.`,
     ogFooter: "🎉 I just won this — every spin wins",
     shareFooter: "Powered by FanFunnel · every spin wins",
   },
@@ -48,7 +51,7 @@ const COPY: Record<GameKind, PublicGameCopy> = {
     dmLine: (c) => `DM ${c} to get your personal ticket link.`,
     everyPlayWins: "Every ticket wins · rare drops keep it exciting",
     wonOn: (c) => `Won on ${c}’s scratch tickets — every ticket wins.`,
-    dropOn: (r, c) => `A ${r} drop on ${c}'s scratch tickets.`,
+    dropOn: (r, c) => `${a(r)} drop on ${c}'s scratch tickets.`,
     ogFooter: "🎉 I just won this — every ticket wins",
     shareFooter: "Powered by FanFunnel · every ticket wins",
   },
@@ -62,7 +65,7 @@ const COPY: Record<GameKind, PublicGameCopy> = {
     dmLine: (c) => `DM ${c} to get your personal bingo link.`,
     everyPlayWins: "Every play wins · every line wins another prize",
     wonOn: (c) => `Won on ${c}’s bingo card — every play wins.`,
-    dropOn: (r, c) => `A ${r} drop on ${c}'s bingo card.`,
+    dropOn: (r, c) => `${a(r)} drop on ${c}'s bingo card.`,
     ogFooter: "🎉 I just won this — every play wins",
     shareFooter: "Powered by FanFunnel · every play wins",
   },

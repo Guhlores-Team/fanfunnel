@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { shouldStepAside } from "./fabOverlap";
 import type { ChatMessage } from "@/lib/data/types";
 import { startPoll } from "@/lib/poll";
 import { blockedFanMessage } from "./blockedFan";
@@ -84,6 +85,8 @@ export default function ChatPanel({
   // A4: set when the server says the creator blocked this fan mid-session.
   const [blockedNote, setBlockedNote] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const fabRef = useRef<HTMLButtonElement>(null);
+  const [stepAside, setStepAside] = useState(false);
   // Guard so the auto-intro is only requested once per mount.
   const introRequested = useRef(false);
 
@@ -264,11 +267,38 @@ export default function ChatPanel({
     await deliver(m.body, m.localId);
   };
 
+  // Step aside while the floating button would cover the play button (see fabOverlap.ts).
+  useEffect(() => {
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const fab = fabRef.current;
+      const play = document.querySelector("[data-testid='fan-spin']");
+      const inUse = open || (!!fab && document.activeElement === fab);
+      setStepAside(shouldStepAside(fab?.getBoundingClientRect() ?? null, play?.getBoundingClientRect() ?? null, inUse));
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    measure();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
+    observer?.observe(document.body);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      observer?.disconnect();
+    };
+  }, [open]);
+
   return (
     <>
       <button
+        ref={fabRef}
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)]"
+        data-testid="chat-fab"
+        data-step-aside={stepAside ? "true" : undefined}
+        className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)] ${stepAside ? "invisible opacity-0" : ""}`}
         aria-label="Message creator"
       >
         💬 Message

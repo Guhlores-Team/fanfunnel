@@ -193,7 +193,13 @@ export async function revealJourney(page, { step, assert }, ctx) {
         return id ? document.getElementById(id)?.textContent?.trim() : "";
       });
       assert(/^Legendary/.test(described || ""), `the dialog is described by its rarity (${described})`);
-      await closeReveal(page);
+      // QA 2026-11-04: closing from the keyboard used to leave focus on <body>
+      // (SPIN was disabled while the play ran); it returns to SPIN.
+      await page.getByRole("button", { name: "Awesome!" }).focus();
+      await page.keyboard.press("Enter");
+      await card.waitFor({ state: "hidden", timeout: 4000 });
+      await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "fan-spin", null, { timeout: 4000 }).catch(() => {});
+      assert(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")) === "fan-spin", "keyboard focus returns to SPIN after the win card closes");
     });
   } finally {
     // Never leak the forced rarity or reduced motion into later journeys.

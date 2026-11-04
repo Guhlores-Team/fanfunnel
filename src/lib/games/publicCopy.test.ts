@@ -25,6 +25,8 @@ for (const kind of ["scratch", "bingo"] as const) {
     && copy.dmLine("Ava").includes("Ava") && copy.wonOn("Ava").includes("Ava") && copy.dropOn("Rare", "Ava").includes("Rare"));
   check(`${kind}: the copy record is the kind asked for`, copy.kind === kind);
 }
+check("the article follows the rarity", publicGameCopy("wheel").dropOn("Uncommon", "Ava") === "An Uncommon drop on Ava's wheel."
+  && publicGameCopy("bingo").dropOn("Epic", "Ava").startsWith("An Epic") && publicGameCopy("scratch").dropOn("Legendary", "Ava").startsWith("A Legendary"));
 check("scratch copy names tickets", /ticket/i.test(publicGameCopy("scratch").titleSuffix) && /ticket/i.test(publicGameCopy("scratch").cta));
 check("bingo copy names bingo", /bingo/i.test(publicGameCopy("bingo").titleSuffix) && /bingo/i.test(publicGameCopy("bingo").wonOn("Ava")));
 
