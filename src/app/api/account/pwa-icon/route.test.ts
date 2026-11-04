@@ -74,7 +74,7 @@ async function main() {
   // --- 1. Signed out (anon) → 401, nothing read, no RPC ----------------------
   user = null;
   {
-    const g = await GET();
+    const g = await GET(new Request("http://localhost/"));
     check("GET signed out → 401", g.status === 401);
     check("GET signed out → no mode leaked", !("mode" in (await g.json())));
     check("GET signed out → no table read", reads.length === 0);
@@ -88,14 +88,14 @@ async function main() {
   // --- 2. Signed in --------------------------------------------------------------
   user = { id: "creator-a" };
   {
-    const g = await GET();
+    const g = await GET(new Request("http://localhost/"));
     const d = await g.json();
     check("GET signed in → 200 with own mode", g.status === 200 && d.mode === "avatar");
     check("GET → private, no-store", /private/.test(g.headers.get("cache-control") ?? "") && /no-store/.test(g.headers.get("cache-control") ?? ""));
     profileRow = { pwa_icon_mode: "something-else" };
-    check("GET normalises an unknown stored value to neutral", (await (await GET()).json()).mode === "neutral");
+    check("GET normalises an unknown stored value to neutral", (await (await GET(new Request("http://localhost/"))).json()).mode === "neutral");
     profileRow = null;
-    check("GET with no row → neutral default", (await (await GET()).json()).mode === "neutral");
+    check("GET with no row → neutral default", (await (await GET(new Request("http://localhost/"))).json()).mode === "neutral");
 
     for (const bad of [{ mode: "selfie" }, { mode: "" }, { mode: null }, {}, { mode: ["avatar"] }]) {
       const p = await put(bad);
@@ -123,7 +123,7 @@ async function main() {
   {
     rpcs.length = 0;
     check("demo PUT avatar → 200", (await put({ mode: "avatar" })).status === 200);
-    check("demo GET reflects it", (await (await GET()).json()).mode === "avatar");
+    check("demo GET reflects it", (await (await GET(new Request("http://localhost/"))).json()).mode === "avatar");
     check("demo PUT bogus → 400", (await put({ mode: "bogus" })).status === 400);
     check("demo never calls the RPC", rpcs.length === 0);
     await put({ mode: "neutral" });

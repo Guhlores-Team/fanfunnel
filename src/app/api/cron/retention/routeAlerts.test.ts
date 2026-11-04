@@ -14,8 +14,18 @@ const check = (label: string, cond: unknown) => {
 };
 
 const captured: { source: string; message: string; route?: string | null }[] = [];
+let digestRuns = 0;
+let digestOrder: number[] = [];
 mock.module("@/lib/monitoring/capture", {
-  namedExports: { captureNow: async (e: { source: string; message: string; route?: string | null }) => void captured.push(e) },
+  namedExports: {
+    captureNow: async (e: { source: string; message: string; route?: string | null }) => void captured.push(e),
+    // A27: the cron flushes the pending digest after its own alerts.
+    flushAlertDigest: async () => { digestRuns++; digestOrder.push(captured.length); return "none"; },
+  },
+});
+let needsAdmin = 0;
+mock.module("@/lib/account/deletionRetry", {
+  namedExports: { retryPausedDeletions: async () => ({ due: 0, resumed: 0, completed: 0, pending: 0, failed: 0, waiting: 0, needsAdmin }) },
 });
 // 0063 operational checks alert through their own fixed messages (runtime.test.ts);
 // keep them healthy here so only the retention route's own alerts are counted.
@@ -65,6 +75,46 @@ async function main() {
   storageFailed = 2;
   check("failed storage work → 503", (await call({ authorization: `Bearer ${SECRET}` })).status === 503);
   check("…is alerted", captured.length === 1 && /storage cleanup failed/.test(captured[0].message));
+
+  storageFailed = 0;
+
+  // A18: deletions that exhausted their automatic retries are alerted (Admin shows them).
+  captured.length = 0;
+  needsAdmin = 1;
+  check("deletions waiting for an admin → 202 (outstanding work)", (await call({ authorization: `Bearer ${SECRET}` })).status === 202);
+  check("…is alerted with a fixed message", captured.length === 1 && /Account deletions are paused/.test(captured[0].message));
+  needsAdmin = 0;
+
+  // A22: production without a shared rate-limit store is reported (fixed
+  // message, no env values), without changing the run's status.
+  captured.length = 0;
+  process.env.VERCEL_ENV = "production";
+  delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN;
+  let res = await call({ authorization: `Bearer ${SECRET}` });
+  check("production without a shared rate-limit store still completes (200)", res.status === 200 && (await res.json()).rateLimitStore === "per_instance");
+  check("…and is alerted with a fixed message", captured.length === 1 && /Rate limits are per instance in production/.test(captured[0].message));
+  process.env.KV_REST_API_URL = "https://kv.example.invalid"; process.env.KV_REST_API_TOKEN = "fixture-token";
+  captured.length = 0;
+  res = await call({ authorization: `Bearer ${SECRET}` });
+  check("with a shared store nothing is alerted", res.status === 200 && (await res.json()).rateLimitStore === "ok" && captured.length === 0);
+  delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN;
+  delete process.env.VERCEL_ENV;
+
+  // A27: every authorized run flushes the digest, after the run's own alerts;
+  // refused runs never do.
+  digestRuns = 0; digestOrder = [];
+  captured.length = 0;
+  storageFailed = 1;
+  await call({ authorization: `Bearer ${SECRET}` });
+  check("an authorized run flushes the pending error digest once", digestRuns === 1);
+  check("…after recording the run's own alerts (so the digest can include them)", digestOrder[0] === captured.length && captured.length === 1);
+  storageFailed = 0;
+  digestRuns = 0;
+  await call({ authorization: "Bearer guess" });
+  delete process.env.CRON_SECRET;
+  await call({ authorization: `Bearer ${SECRET}` });
+  check("refused or unconfigured runs never flush the digest", digestRuns === 0);
 
   console.log(`retention cron alerts: ${passed} checks passed`);
 }

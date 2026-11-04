@@ -4,6 +4,7 @@ import { getMyPublicProfile, normalizePublicSlug, setMyPublicProfile } from "@/l
 import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Field limits and slug shape enforced before persistence. The slug is further
 // normalized in the data layer, so we only need to reject oversized/illegal
@@ -29,7 +30,9 @@ function isValidTipUrl(raw: string): boolean {
 }
 
 // The signed-in creator's link-in-bio settings.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "public-profile:GET");
+  if (rateLimited) return rateLimited;
   const profile = await getMyPublicProfile();
   return NextResponse.json(profile);
 }
@@ -61,6 +64,8 @@ function isTrustedAvatarUrl(url: string): boolean {
 }
 
 export async function PUT(req: Request) {
+  const rateLimited = await limitRoute(req, "public-profile:PUT");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{
     slug?: string;
     tipUrl?: string;

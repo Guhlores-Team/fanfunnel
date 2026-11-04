@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { mock } from "node:test";
+import { FakeSpinLedger, intentFor, ok } from "./fakeSpinLedger";
 
 // Regression: the spin path fired the creator's webhooks as a dangling promise
 // (`void fireWebhooks(...)`). On a serverless host the invocation can be frozen
@@ -36,82 +37,37 @@ globalThis.fetch = (async (url: string | URL) => {
   return new Response(null, { status: 204 });
 }) as typeof fetch;
 
-// --- A scriptable Supabase client (same shape as spinStock.test.ts) -----------
-type Op = { name: string; args: unknown[] };
-type Resp = { data: unknown; error: { message: string } | null };
-const ok = (data: unknown): Resp => ({ data, error: null });
-const has = (ops: Op[], name: string, arg?: string) =>
-  ops.some((o) => o.name === name && (arg === undefined || String(o.args[0]).includes(arg)));
+// --- the ledger, plus the creator's webhooks the fan-out reads ----------------
 let webhookReads = 0;
-const TABLES: Record<string, (ops: Op[]) => Resp> = {
-  fan_passes: () =>
-    ok({
-      id: "pass-1", creator_id: "creator-1", campaign_id: null, wheel_id: "wheel-1", fan_id: "fan-1",
-      next_server_seed: "f".repeat(64), next_server_seed_hash: "0".repeat(64),
-    }),
-  wheels: (ops) =>
-    has(ops, "select", "prizes(")
-      ? ok({
-          id: "wheel-1", title: "W", subtitle: null, brand_color: null, label_color: null, label_size: null,
-          prizes: [
-            { id: "a", label: "A", description: null, rarity: "common", weight: 1, color: null, emoji: null, image_url: null, cost_cents: null, stock: null, sort_order: 0 },
-            { id: "b", label: "B", description: null, rarity: "rare", weight: 1, color: null, emoji: null, image_url: null, cost_cents: null, stock: null, sort_order: 1 },
-          ],
-        })
-      : ok([{ id: "wheel-1", is_active: true, active_from: null, active_until: null, game_ready: true, created_at: "2026-01-01T00:00:00Z" }]),
-  fans: () => ok({ pity_counter: 0 }),
-  happy_hours: () => ok([]),
-  spins: () => ok({ id: "spin-1", share_id: "share-1" }),
-  redemptions: () => ok(null),
-  webhooks: () => {
-    webhookReads++;
-    return ok([{ url: "https://93.184.216.34/hook" }, { url: "http://127.0.0.1/internal" }]);
-  },
-};
-function fakeClient() {
-  const builder = (table: string) => {
-    const ops: Op[] = [];
-    const proxy: unknown = new Proxy(
-      {},
-      {
-        get(_t, prop) {
-          if (prop === "then") {
-            return (res: (v: Resp) => unknown, rej: (e: unknown) => unknown) => {
-              const h = TABLES[table];
-              if (!h) return Promise.reject(new Error(`fake client: no handler for ${table}`)).then(res, rej);
-              return Promise.resolve(h(ops)).then(res, rej);
-            };
-          }
-          return (...args: unknown[]) => {
-            ops.push({ name: String(prop), args });
-            return proxy;
-          };
-        },
+const ledger = new FakeSpinLedger(
+  [
+    { id: "a", label: "A", rarity: "common", weight: 1, stock: null },
+    { id: "b", label: "B", rarity: "rare", weight: 1, stock: null },
+  ],
+  {
+    tables: {
+      webhooks: () => {
+        webhookReads++;
+        return ok([{ url: "https://93.184.216.34/hook" }, { url: "http://127.0.0.1/internal" }]);
       },
-    );
-    return proxy;
-  };
-  return { from: (table: string) => builder(table), rpc: async () => ok(null) };
-}
+    },
+  },
+);
 
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => true,
-    createClient: async () => fakeClient(),
-    createServiceClient: () => fakeClient(),
+    createClient: async () => ledger.client(),
+    createServiceClient: () => ledger.client(),
   },
 });
 
 async function main() {
   await mockAfter();
-  const { completeClaimedSpin } = await import("./index");
+  await ledger.init();
+  const { commitSpinAttempt } = await import("./spinAttempts");
 
-  const result = await completeClaimedSpin(
-    fakeClient() as unknown as Parameters<typeof completeClaimedSpin>[0],
-    "tok-1",
-    "seed",
-    2,
-  );
+  const result = await commitSpinAttempt("tok-1", intentFor(ledger, "seed"), ledger.client());
   check("the spin succeeds", !("error" in result));
 
   // Let any dangling promise make progress before looking.
@@ -129,6 +85,15 @@ async function main() {
   check("running the scheduled work reads the creator's webhooks exactly once", webhookReads === 1);
   check("it delivers to the public endpoint", fetched.includes("https://93.184.216.34/hook"));
   check("the SSRF guard still refuses a private target", !fetched.some((u) => u.includes("127.0.0.1")));
+
+  // A replayed receipt (same request id after a lost response) is served from
+  // the stored receipt: the TS side schedules no fan-out for it, so a retry
+  // can never deliver the same win's webhook twice.
+  scheduled.length = 0;
+  ledger.loseNextCommitResponse = true;
+  const replayed = await commitSpinAttempt("tok-1", intentFor(ledger, "again"), ledger.client());
+  check("a recovered (replayed) commit is a win", !("error" in replayed) && replayed.replayed === true);
+  check("a replayed receipt schedules no webhook delivery", scheduled.length === 0);
 
   console.log(`webhookAfter.test: ${passed} checks passed`);
 }

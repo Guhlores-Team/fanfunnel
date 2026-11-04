@@ -66,6 +66,8 @@ const SIGNED_IN_ONLY = [
   // same can_act_for('edit_wheel') / is_admin() rule as the wheels_write policy.
   "archive_wheel",
   "delete_wheel",
+  // 0066 (A19): the caller's own agency seats, gated by can_act_for.
+  "my_seat_creators",
 ];
 // RLS policies call these, so anon must keep EXECUTE (an anon read that
 // evaluates a policy would otherwise error instead of returning no rows).

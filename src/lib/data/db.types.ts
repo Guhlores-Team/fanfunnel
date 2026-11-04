@@ -78,18 +78,21 @@ export type Database = {
           errors: number
           id: string
           kind: string
+          requeue: string[]
           sent_at: string
         }
         Insert: {
           errors?: number
           id?: string
           kind: string
+          requeue?: string[]
           sent_at?: string
         }
         Update: {
           errors?: number
           id?: string
           kind?: string
+          requeue?: string[]
           sent_at?: string
         }
         Relationships: []
@@ -3256,7 +3259,12 @@ export type Database = {
             Returns: Json
           }
       creator_inbox_threads: {
-        Args: { p_before_at?: string; p_before_fan?: string; p_limit?: number }
+        Args: {
+          p_before_at?: string
+          p_before_fan?: string
+          p_creator?: string
+          p_limit?: number
+        }
         Returns: {
           fan_id: string
           fan_name: string
@@ -3270,6 +3278,7 @@ export type Database = {
         Args: {
           p_before_at?: string
           p_before_id?: string
+          p_creator?: string
           p_limit?: number
           p_query?: string
           p_status?: string
@@ -3514,6 +3523,15 @@ export type Database = {
         Args: { p_creator: string; p_permission: string }
         Returns: string
       }
+      my_seat_creators: {
+        Args: never
+        Returns: {
+          can_chat: boolean
+          can_fulfil: boolean
+          creator_id: string
+          display_name: string
+        }[]
+      }
       org_account_stats: {
         Args: { p_org: string }
         Returns: {
@@ -3623,6 +3641,7 @@ export type Database = {
         Args: { p_user: string; p_version: string }
         Returns: string
       }
+      release_app_error_alert: { Args: { p_alert: string }; Returns: boolean }
       release_reward_code: { Args: { p_spin: string }; Returns: boolean }
       reserve_reward_code: {
         Args: { p_prize: string; p_spin: string }

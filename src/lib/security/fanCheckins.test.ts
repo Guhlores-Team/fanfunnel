@@ -84,7 +84,7 @@ for (const p of spinEngine) {
   const s = read(p);
   check(`${rel(p)} doesn't import the glow`, !GLOW_IMPORT.test(s) && !s.includes("fan_checkins"));
 }
-for (const p of ["src/app/api/spin/route.ts", "src/lib/data/spinSeed.ts", "src/lib/data/liveStock.ts", "src/lib/data/boosts.ts"]) {
+for (const p of ["src/app/api/spin/route.ts", "src/lib/data/spinAttempts.ts", "src/lib/data/focusDisplay.ts", "src/lib/data/boosts.ts"]) {
   const s = read(join(ROOT, p));
   check(`${p} doesn't touch the glow`, !GLOW_IMPORT.test(s) && !s.includes("fan_checkins"));
 }

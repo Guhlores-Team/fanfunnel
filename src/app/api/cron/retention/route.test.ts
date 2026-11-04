@@ -37,7 +37,10 @@ mock.module("@/lib/data", {
   namedExports: { recordAudit: async (e: Record<string, unknown>) => void audits.push(e) },
 });
 // Failure alerts are covered by routeAlerts.test.ts; keep this file's RPC count exact.
-mock.module("@/lib/monitoring/capture", { namedExports: { captureNow: async () => {} } });
+mock.module("@/lib/monitoring/capture", { namedExports: { captureNow: async () => {}, flushAlertDigest: async () => "none" } });
+let deletionRuns = 0;
+let deletions = { due: 0, resumed: 0, completed: 0, pending: 0, failed: 0, waiting: 0, needsAdmin: 0 };
+mock.module("@/lib/account/deletionRetry", { namedExports: { retryPausedDeletions: async () => { deletionRuns++; return deletions; } } });
 
 async function main() {
   const { GET } = await import("./route");
@@ -62,6 +65,7 @@ async function main() {
   check("nothing ran without the right header", rpcCalls.length === 0);
   check("unauthorized requests never process durable storage work", storageRuns === 0);
   check("unauthorized requests never run integrity checks", healthRuns === 0);
+  check("unauthorized requests never resume paused account deletions", deletionRuns === 0);
 
   res = await call(`Bearer ${SECRET}`);
   check("right header → 200", res.status === 200 && /no-store/.test(res.headers.get("cache-control") ?? ""));
@@ -76,6 +80,7 @@ async function main() {
   );
   check("a run that deleted nothing logs nothing", audits.length === 0);
   check("authorized retention also processes bounded storage retries", storageRuns === 1);
+  check("authorized retention resumes paused account deletions (A18)", deletionRuns === 1);
 
   deleted = { push_log: 2, admin_audit_log: 3, creator_notices: 0, link_tombstones: 2, org_invites: 4, app_errors: null };
   res = await call(`Bearer ${SECRET}`);
@@ -95,7 +100,14 @@ async function main() {
   storage = { ...storage, accountsPending: 0, failed: 1 };
   res = await call(`Bearer ${SECRET}`);
   check("retry failures are reported503 rather than completed cleanup", res.status === 503 && (await res.json()).ok === false);
-  storage = { ...storage, failed: 0 }; healthOkay = false;
+  storage = { ...storage, failed: 0 };
+  deletions = { ...deletions, waiting: 1 };
+  res = await call(`Bearer ${SECRET}`);
+  check("a paused deletion waiting out its backoff is reported 202, never complete", res.status === 202 && (await res.json()).deletions.waiting === 1);
+  deletions = { ...deletions, waiting: 0, failed: 1 };
+  res = await call(`Bearer ${SECRET}`);
+  check("a failed deletion resume is reported 503", res.status === 503 && (await res.json()).ok === false);
+  deletions = { ...deletions, failed: 0 }; healthOkay = false;
   res = await call(`Bearer ${SECRET}`);
   check("integrity failure returns503 with honest health status", res.status === 503 && (await res.json()).health.ok === false);
   console.log(`retention cron route: ${passed} checks passed`);

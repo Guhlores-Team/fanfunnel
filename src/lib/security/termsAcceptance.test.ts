@@ -166,7 +166,7 @@ async function main() {
   user = null;
   reset();
   {
-    const g = await terms.GET();
+    const g = await terms.GET(new Request("http://localhost/"));
     check("GET terms signed out → 401", g.status === 401);
     const p = await post(terms, { accept: true }, "10.0.0.2");
     check("POST terms signed out → 401", p.status === 401);
@@ -208,7 +208,7 @@ async function main() {
   reset();
   profileRow = { terms_version: "2020-01-01", terms_accepted_at: "2020-01-01T00:00:00Z" };
   {
-    const g = await terms.GET();
+    const g = await terms.GET(new Request("http://localhost/"));
     const d = (await g.json()) as Record<string, unknown>;
     check("GET stale version → needsAcceptance", g.status === 200 && d.needsAcceptance === true && d.current === LEGAL.version);
     check(
@@ -219,7 +219,7 @@ async function main() {
   }
   profileRow = { terms_version: LEGAL.version, terms_accepted_at: "2026-10-27T00:00:00Z" };
   {
-    const d = (await (await terms.GET()).json()) as Record<string, unknown>;
+    const d = (await (await terms.GET(new Request("http://localhost/"))).json()) as Record<string, unknown>;
     check("GET current version → no prompt", d.needsAcceptance === false);
   }
   profileRow = null;
@@ -273,7 +273,7 @@ async function main() {
   // --- 3. Demo path parity ------------------------------------------------------
   configured = false;
   {
-    const g = (await (await terms.GET()).json()) as Record<string, unknown>;
+    const g = (await (await terms.GET(new Request("http://localhost/"))).json()) as Record<string, unknown>;
     check("demo: starts accepted at the current version", g.version === LEGAL.version && g.needsAcceptance === false);
     const p = await post(terms, { accept: true }, "10.0.0.9");
     check("demo: POST accept → 200 at the current version", p.status === 200 && p.data.version === LEGAL.version);

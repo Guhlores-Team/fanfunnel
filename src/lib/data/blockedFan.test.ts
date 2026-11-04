@@ -95,7 +95,8 @@ async function main() {
   await data.setFanBlocked(fan.fanId, true);
   const sent = await call(fanMessage, { token: fan.token, body: "let me in" });
   check("demo: a blocked fan's message → 403 blocked", sent.status === 403 && sent.body?.error === "blocked");
-  check("demo: the message was not stored", !(await data.getThread(fan.fanId)).some((x) => x.body === "let me in"));
+  const thread = await data.getThread(fan.fanId);
+  check("demo: the message was not stored", Array.isArray(thread) && !thread.some((x) => x.body === "let me in"));
   const add = await call(wishAdd, { token: fan.token, prizeLabel: prize });
   check("demo: a blocked fan's wishlist add → 403 blocked", add.status === 403 && add.body?.error === "blocked");
   const remove = await call(wishRemove, { token: fan.token, prizeLabel: prize }, "DELETE");

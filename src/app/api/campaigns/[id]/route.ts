@@ -3,6 +3,7 @@ import { setCampaignPinnedWheel, renameCampaign, deleteCampaign } from "@/lib/da
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { campaignPinError } from "@/lib/data/shared";
+import { limitRoute } from "@/lib/api/limit";
 
 const statusFor = (e: string) =>
   e === "unauthorized" ? 401 : e === "not_found" ? 404 : 400;
@@ -12,6 +13,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "campaigns/[id]:PATCH");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
 
   const body = await parseJsonBody<{ pinnedWheelId?: string | null; name?: string }>(req);
@@ -92,9 +95,11 @@ export async function PATCH(
 
 // Delete a campaign (grants keep their history; their campaign link is cleared).
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "campaigns/[id]:DELETE");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const result = await deleteCampaign(id);
   if ("error" in result) return errorResponse(result.error);

@@ -29,6 +29,8 @@
 // And the 0065 hardening probe (hardeningProbe.mjs): archiving/deleting a game
 // never deadlocks a credited play, racing first-admin claims give one admin,
 // the retention cleanup trims only settled history, spin_attempts FKs indexed.
+// And the seat-scope probe (0066, seatScopeProbe.mjs): a chatter reads/writes
+// only the inbox, a fulfiller only the fulfilment queue, of creators in scope.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -59,6 +61,7 @@ import { probeStorageWork, probeStorageSecurityRaces } from "./storageWorkProbe.
 import { probeCryptoNamespace } from "./cryptoNamespaceProbe.mjs";
 import { probeGaps } from "./gapsProbe.mjs";
 import { probeHardening } from "./hardeningProbe.mjs";
+import { probeSeatScopes } from "./seatScopeProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -305,8 +308,9 @@ const SIGNED_IN_ONLY = [
   "org_add_member(uuid, text, public.org_role)",
   "org_remove_member(uuid)",
   "org_scope_creator(uuid, uuid, boolean)",
-  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer)",
-  "creator_inbox_threads(timestamp with time zone, uuid, integer)",
+  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid)",
+  "creator_inbox_threads(timestamp with time zone, uuid, integer, uuid)",
+  "my_seat_creators()",
 ];
 const RLS_HELPERS = [
   "is_admin()", "can_act_for(uuid, text)", "current_user_active()", "_owns_org(uuid)",
@@ -700,6 +704,8 @@ function probeAppErrors(db) {
   denied("creator DELETE app_errors", as(CREATOR_UID, "delete from public.app_errors"));
   denied("creator record_app_error()", as(CREATOR_UID, `select public.record_app_error('${ERR_FP}', 'production', 'client', 'x')`), /permission denied for function record_app_error/);
   denied("creator claim_app_error_alert()", as(CREATOR_UID, "select public.claim_app_error_alert(10)"), /permission denied for function claim_app_error_alert/);
+  denied("anon release_app_error_alert()", `set local role anon; select public.release_app_error_alert('${ERR_FP.slice(0, 8)}-0000-4000-8000-000000000000');`, /permission denied for function release_app_error_alert/);
+  denied("creator release_app_error_alert()", as(CREATOR_UID, `select public.release_app_error_alert('${ERR_FP.slice(0, 8)}-0000-4000-8000-000000000000')`), /permission denied for function release_app_error_alert/);
   denied("admin UPDATE of app_errors.count (resolve-only grant)", as(ADMIN_UID, "update public.app_errors set count = 99"));
   denied("admin INSERT app_errors", as(ADMIN_UID, `insert into public.app_errors (fingerprint, environment, source, message) values ('${ERR_FP}', 'preview', 'client', 'x')`));
 
@@ -757,7 +763,16 @@ function probeAppErrors(db) {
     select 'pending:' || count(*) from public.app_errors where alert_pending;
     delete from public.app_error_alerts;
     set local role service_role;
-    select 'digest:' || (r->>'send') || ',' || (r->>'pending') from (select public.claim_app_error_alert(2) r) s;
+    select 'digest:' || (r->>'send') || ',' || (r->>'pending') || ',' || (set_config('probe.alert', r->>'alert_id', true) <> '')::text from (select public.claim_app_error_alert(2) r) s;
+    reset role;
+    select 'claimed-pending:' || count(*) from public.app_errors where alert_pending;
+    set local role service_role;
+    select 'release:' || public.release_app_error_alert(current_setting('probe.alert')::uuid);
+    select 'release-again:' || public.release_app_error_alert(current_setting('probe.alert')::uuid);
+    reset role;
+    select 'released-slots:' || count(*) || ',requeued:' || (select count(*) from public.app_errors where alert_pending) from public.app_error_alerts;
+    set local role service_role;
+    select 'digest-retry:' || (r->>'send') || ',' || (r->>'pending') from (select public.claim_app_error_alert(2) r) s;
     select 'prune:' || (r->>'is_new') from (select public.record_app_error('fedcba9876543210fedcba9876543210', 'production', 'server', 'other', null, null, null, 1) r) s;
     reset role;
     select 'rows:' || count(*) from public.app_errors;`);
@@ -771,7 +786,12 @@ function probeAppErrors(db) {
     "claim3:false",
     "digest-throttled:false",
     "pending:1",
-    "digest:true,1",
+    "digest:true,1,true",
+    "claimed-pending:0",
+    "release:true",
+    "release-again:false",
+    "released-slots:0,requeued:1",
+    "digest-retry:true,1",
     "prune:true",
     "rows:1",
   ];
@@ -785,7 +805,7 @@ function probeAppErrors(db) {
     console.log(`FAIL  ${db}: app_errors access + behaviour`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: app_errors is admin-read/resolve only, server-write only; upsert, reopen, throttle and prune behave`);
+    console.log(`PASS  ${db}: app_errors is admin-read/resolve only, server-write only; upsert, reopen, throttle, slot release and prune behave`);
   }
 }
 
@@ -1000,6 +1020,17 @@ function probeApproval(db) {
     for (const message of bad) console.log(`  - ${message}`);
   } else {
     console.log(`PASS  ${db}: approval gates own writes, imports, push and agency access; approved creators, legacy admins, MFA and role scopes retain their permissions`);
+  }
+}
+
+function probeSeatScopeRpcs(db) {
+  const bad = probeSeatScopes(db, psql);
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: agency seat scopes (0066)`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: seat-scoped inbox/queue RPCs follow can_act_for (chatter: inbox only, fulfiller: queue only, manager/owner: both, outsiders: nothing); my_seat_creators lists exactly each seat's jobs`);
   }
 }
 
@@ -1380,6 +1411,7 @@ try {
     await probeCreatorStorage(db);
     await probeCreatorActorContexts(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"actor context SQL failed");return r.stdout;});
     probeCompletenessGaps(db);
+    probeSeatScopeRpcs(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

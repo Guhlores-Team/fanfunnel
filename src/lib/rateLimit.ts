@@ -11,6 +11,8 @@ import { createHash } from "node:crypto";
 interface Window {
   count: number;
   resetAt: number;
+  /** The limit this window was counted against (to tell blocked from open). */
+  limit: number;
 }
 
 // Mirror the mock store's globalThis pattern so the map is shared across every
@@ -19,9 +21,31 @@ const g = globalThis as unknown as { __ffRateLimit?: Map<string, Window> };
 const store: Map<string, Window> = g.__ffRateLimit ?? (g.__ffRateLimit = new Map());
 
 // Bound memory even when many different tokens or addresses hit one instance.
-// Never evict a live counter: that would let new keys reset existing limits.
-const MAX_WINDOWS = 10_000;
+// At capacity the limiter fails OPEN on capacity, never on the count: refusing
+// every new key until a window expired turned a full table (about 150 route
+// scopes x client IPs, A22) into a 429 for legitimate first requests. Instead
+// expired windows are swept, then a batch is evicted, chosen to cost the least
+// protection: expired ones first, then windows still under their limit (forgetting
+// them only restores allowance a caller had anyway), then the soonest to reset.
+// A blocked caller therefore stays blocked unless the whole table is blocked.
+export const RATE_LIMIT_MAX_WINDOWS = 10_000;
+/** Live windows dropped per eviction, so a flood of new keys costs one sort per batch. */
+export const RATE_LIMIT_EVICT_BATCH = 500;
 let nextSweep = 0;
+
+function makeRoom(t: number): void {
+  if (t >= nextSweep) {
+    for (const [storedKey, window] of store) {
+      if (t >= window.resetAt) store.delete(storedKey);
+    }
+    nextSweep = t + 1000;
+  }
+  if (store.size < RATE_LIMIT_MAX_WINDOWS) return;
+  const victims = [...store.entries()]
+    .sort(([, a], [, b]) => Number(t < a.resetAt) - Number(t < b.resetAt) || Number(a.count >= a.limit) - Number(b.count >= b.limit) || a.resetAt - b.resetAt)
+    .slice(0, Math.max(1, store.size - RATE_LIMIT_MAX_WINDOWS + RATE_LIMIT_EVICT_BATCH));
+  for (const [storedKey] of victims) store.delete(storedKey);
+}
 function digestKey(key: string): string {
   return createHash("sha256").update(key, "utf8").digest("hex");
 }
@@ -36,23 +60,13 @@ export function rateLimit(
   const privateKey = digestKey(key);
   const existing = store.get(privateKey);
 
-  if (store.size >= MAX_WINDOWS && t >= nextSweep) {
-    for (const [storedKey, window] of store) {
-      if (t >= window.resetAt) store.delete(storedKey);
-    }
-    nextSweep = t + 1000;
-  }
-
   if (!existing || t >= existing.resetAt) {
-    if (!existing && store.size >= MAX_WINDOWS) {
-      // At capacity, refuse a new identity briefly rather than allocate without
-      // a bound or discard another identity's still-active counter.
-      return { ok: false, retryAfter: Math.max(1, Math.min(windowMs, 1000)) };
-    }
-    store.set(privateKey, { count: 1, resetAt: t + windowMs });
+    if (!existing && store.size >= RATE_LIMIT_MAX_WINDOWS) makeRoom(t);
+    store.set(privateKey, { count: 1, resetAt: t + windowMs, limit });
     return { ok: true, retryAfter: 0 };
   }
 
+  existing.limit = limit;
   if (existing.count >= limit) {
     return { ok: false, retryAfter: existing.resetAt - t };
   }
@@ -70,8 +84,7 @@ export function rateLimit(
 
 // Upstash's own names, or the KV_REST_API_* names Vercel's Upstash integration
 // injects. Taken as a pair so a URL is never sent with the other store's token.
-function upstashEnv(): { url: string; token: string } | null {
-  const e = process.env;
+function upstashEnv(e: Record<string, string | undefined> = process.env): { url: string; token: string } | null {
   if (e.UPSTASH_REDIS_REST_URL && e.UPSTASH_REDIS_REST_TOKEN) {
     return { url: e.UPSTASH_REDIS_REST_URL, token: e.UPSTASH_REDIS_REST_TOKEN };
   }
@@ -79,6 +92,20 @@ function upstashEnv(): { url: string; token: string } | null {
     return { url: e.KV_REST_API_URL, token: e.KV_REST_API_TOKEN };
   }
   return null;
+}
+
+/** Whether counters are shared across instances (a configured Upstash/KV store). */
+export function hasSharedRateLimitStore(env: Record<string, string | undefined> = process.env): boolean {
+  return upstashEnv(env) !== null;
+}
+
+/**
+ * Production without a shared store: every limit is per serverless instance,
+ * so a flood spread over instances (or cold starts) multiplies it. Reported by
+ * the maintenance cron and shown in Admin › System health.
+ */
+export function sharedRateLimitStoreMissing(env: Record<string, string | undefined> = process.env): boolean {
+  return env.VERCEL_ENV === "production" && !hasSharedRateLimitStore(env);
 }
 
 // Preview and Production share one store, so namespace the counters: testing on

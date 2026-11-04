@@ -26,7 +26,7 @@ mock.module("@/lib/supabase/server", { namedExports: {
     return { data: { status: "imported", batchId: args.p_batch, replayed: false, items: [{ ordinal: 0, fanId: ACTOR, passId: ACTOR, grantId: ACTOR, token: "synthetic-import-token" }] }, error: null };
   } }),
 } });
-mock.module("@/lib/api/limit", { namedExports: { rateLimitOr429: async () => null } });
+mock.module("@/lib/api/limit", { namedExports: { rateLimitOr429: async () => null, limitRoute: async () => null } });
 let checks = 0;
 const check = (label: string, condition: unknown) => { assert.ok(condition, label); checks++; };
 const request = (path: string, method: string, body: unknown) => new Request(`http://localhost${path}`, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

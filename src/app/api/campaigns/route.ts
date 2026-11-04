@@ -2,10 +2,13 @@ import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { createCampaign, listCampaigns } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // A creator's campaigns: named groupings of links they can compare against
 // each other. Creator-scoped; newest first.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "campaigns:GET");
+  if (rateLimited) return rateLimited;
   return completeReadResponse(async () => {
     const campaigns = await listCampaigns();
     return NextResponse.json({ campaigns });
@@ -13,6 +16,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "campaigns:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ name?: string; pinnedWheelId?: string | null }>(req);
   if (body === BAD_REQUEST) return badRequest();
 

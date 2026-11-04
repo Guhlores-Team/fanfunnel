@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { addPrizeCodes } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { MAX_CODES_PER_PASTE, parseCodeList } from "@/lib/rewards/config";
+import { limitRoute } from "@/lib/api/limit";
 
 // #26: paste unlock codes onto a prize, one per line. Body: { codes: string }.
 // The prize becomes a code list whose stock is its unused codes; each code is
 // encrypted on the server and handed to exactly one winner. The response never
 // echoes a code (only counts and masked hints).
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const rateLimited = await limitRoute(req, "prizes/[id]/codes:POST", "costly");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const body = await parseJsonBody<{ codes?: unknown }>(req);
   if (body === BAD_REQUEST || !body || typeof body !== "object") return badRequest();

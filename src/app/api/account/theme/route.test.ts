@@ -85,7 +85,7 @@ async function main() {
   // --- 1. Signed out → 401, nothing read, no RPC ---------------------------------
   user = null;
   {
-    const g = await GET();
+    const g = await GET(new Request("http://localhost/"));
     check("GET signed out → 401", g.status === 401);
     check("GET signed out → no theme leaked", !("theme" in (await g.json())));
     check("GET signed out → no table read", reads.length === 0);
@@ -99,12 +99,12 @@ async function main() {
   // --- 2. Signed in -----------------------------------------------------------------
   user = { id: "creator-a" };
   {
-    const g = await GET();
+    const g = await GET(new Request("http://localhost/"));
     const d = await g.json();
     check("GET → own theme", g.status === 200 && d.theme.font === "syne" && d.theme.background === "noir");
     check("GET → private, no-store", /private/.test(g.headers.get("cache-control") ?? "") && /no-store/.test(g.headers.get("cache-control") ?? ""));
     storedTheme = { font: "<script>", background: "url(x)" };
-    const junk = await (await GET()).json();
+    const junk = await (await GET(new Request("http://localhost/"))).json();
     check("GET normalises a junk stored theme to the defaults", junk.theme.font === "bricolage" && junk.theme.background === "glow");
 
     const refused: [unknown, string][] = [

@@ -128,7 +128,7 @@ function files(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
-const touching = files(SRC).filter((f) => /\b(openReward|sealReward|getFanReward|reserveRewardCode|loadPrizeReward|mockGetFanReward|mockTakeReward)\b/.test(readFileSync(f, "utf8")));
+const touching = files(SRC).filter((f) => /\b(openReward|sealReward|getFanReward|loadPrizeReward|mockGetFanReward|mockTakeReward)\b/.test(readFileSync(f, "utf8")));
 check("found the modules that handle reward values", touching.length >= 5);
 // An identifier (not a property such as error.code) named like a secret holder.
 const SECRET = /(?<![.\w])(value|plain|reward|delivered|sealed|input|codes|body|code)\b(?!\.(status|length))/;

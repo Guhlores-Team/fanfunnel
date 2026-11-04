@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { isUuid } from "@/lib/data/shared";
 import { createPass } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Creates a unique, working fan pass and returns its token. The creator's
 // dashboard calls this so every generated link genuinely opens and spins.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "passes:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{
     name?: string;
     spins?: number;

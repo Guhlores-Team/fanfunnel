@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { setMyNotificationPrefs } from "@/lib/data";
+import { limitRoute } from "@/lib/api/limit";
 
 // Persist the creator's notification preferences (per account). Each flag is
 // coerced to a boolean; the data layer uses a narrow SECURITY DEFINER RPC.
 export async function PUT(req: Request) {
+  const rateLimited = await limitRoute(req, "account/notifications:PUT");
+  if (rateLimited) return rateLimited;
   let body: { newSpin?: unknown; lowBalance?: unknown; messages?: unknown };
   try {
     body = await req.json();

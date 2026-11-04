@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import { acceptMyTerms, submitCreatorApplication } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { ValidationError, str } from "@/lib/api/validate";
+import { limitRoute } from "@/lib/api/limit";
 
 // A signed-in, pending user submits their creator details for vetting. The form
 // carries the Terms clickwrap: `acceptTerms` must be literally true, and the
 // acceptance is recorded server-side (session user, LEGAL.version, now()).
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "creator-application:POST", "costly");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{
     displayName?: string;
     socials?: string;

@@ -114,19 +114,19 @@ async function main() {
   // --- secret route: negative first ---------------------------------------------------
   serviceUses.length = 0;
   signedIn = false;
-  check("signed out: secret → 401", (await getSecret()).status === 401);
-  check("signed out: rotate → 401", (await rotateSecret()).status === 401);
+  check("signed out: secret → 401", (await getSecret(new Request("http://localhost/"))).status === 401);
+  check("signed out: rotate → 401", (await rotateSecret(new Request("http://localhost/"))).status === 401);
   signedIn = true;
   canManage = false;
-  check("no 'manage' (e.g. suspended): secret → 403", (await getSecret()).status === 403);
-  check("no 'manage': rotate → 403", (await rotateSecret()).status === 403);
+  check("no 'manage' (e.g. suspended): secret → 403", (await getSecret(new Request("http://localhost/"))).status === 403);
+  check("no 'manage': rotate → 403", (await rotateSecret(new Request("http://localhost/"))).status === 403);
   check("refused callers never reached the service role", serviceUses.length === 0);
   canManage = true;
-  const res = await getSecret();
+  const res = await getSecret(new Request("http://localhost/"));
   const json = (await res.json()) as { secret?: string };
   check("the creator reads their secret", res.status === 200 && json.secret === SECRET && res.headers.get("cache-control")?.includes("no-store") === true);
   queries.length = 0;
-  check("rotate → 200", (await rotateSecret()).status === 200);
+  check("rotate → 200", (await rotateSecret(new Request("http://localhost/"))).status === 200);
   const upsert = queries.find((q) => q.table === "webhook_secrets" && q.ops.some((o) => o.name === "upsert"))?.ops.find((o) => o.name === "upsert");
   const row = upsert?.args[0] as { creator_id?: string; secret?: string } | undefined;
   check("rotation writes a fresh 64-hex secret for the caller only", row?.creator_id === "creator-1" && /^[0-9a-f]{64}$/.test(row?.secret ?? "") && row?.secret !== SECRET);

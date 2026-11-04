@@ -6,6 +6,8 @@ import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import type { AdminAccount, AdminOverview, AppRole } from "./types";
 import { provisionCreatorUser } from "./creatorAccount";
 import { recordAudit } from "./audit";
+import { leaveApprovalNotice, sendApprovalEmail } from "@/lib/account/approvalNotice";
+import { runAfterResponse } from "@/lib/afterResponse";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
 
 // ---------------------------------------------------------------------------
@@ -460,9 +462,18 @@ export async function decideCreatorApplication(
     .eq("profile_id", profileId);
   if (aErr) return { error: "db_error" };
 
-  const { error: pErr } = await sb
-    .from("profiles")
-    .update({ approval_status: decision })
-    .eq("id", profileId);
-  return pErr ? { error: "db_error" } : { ok: true };
+  // A30: only a real transition to approved leaves a notice and an e-mail, so
+  // re-approving (or two admins approving at once) never notifies twice: the
+  // approve update itself matches only a row that is not approved yet, and
+  // only the request whose update changed the row notifies.
+  let update = sb.from("profiles").update({ approval_status: decision }).eq("id", profileId);
+  if (decision === "approved") update = update.neq("approval_status", "approved");
+  const { data: updated, error: pErr } = await update.select("id").maybeSingle();
+  if (pErr) return { error: "db_error" };
+  if (decision === "approved" && updated) {
+    const svc = createServiceClient();
+    await leaveApprovalNotice(svc, profileId);
+    runAfterResponse(() => sendApprovalEmail(svc, profileId));
+  }
+  return { ok: true };
 }

@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { setMyDisplayName } from "@/lib/data";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
+import { limitRoute } from "@/lib/api/limit";
 
 // Update the creator's display name (Account → Settings). The data layer routes
 // this through a narrow SECURITY DEFINER RPC since profiles_update is admin-only.
 export async function PUT(req: Request) {
+  const rateLimited = await limitRoute(req, "account/profile:PUT");
+  if (rateLimited) return rateLimited;
   let body: { displayName?: unknown };
   try {
     body = await req.json();

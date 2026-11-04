@@ -26,7 +26,7 @@ function check(label: string, cond: boolean) {
     return { status: res.status, data: (await res.json()) as Record<string, unknown> };
   }
   async function labels(): Promise<string[]> {
-    const data = (await (await GET()).json()) as { templates: { label: string }[] };
+    const data = (await (await GET(new Request("http://localhost/"))).json()) as { templates: { label: string }[] };
     return data.templates.map((t) => t.label);
   }
 

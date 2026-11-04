@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { LEGAL } from "@/lib/legal";
 import { mock } from "node:test";
 import type { PublicPrize, PublicStock, SpinResult, WheelConfig } from "@/lib/games/wheel/types";
+import { FakeSpinLedger, intentFor } from "./fakeSpinLedger";
 
 // RM-2 negative + parity test: with a wheel's "Show stock to fans" switch OFF,
 // no stock count reaches a fan — not on the fan page payload, not in the spin
@@ -71,7 +72,6 @@ const TABLES: Record<string, (ops: Op[]) => Resp> = {
     return ok([{ id: WHEEL_ID, is_active: true, active_from: null, active_until: null, game_ready: true, created_at: "2026-01-01T00:00:00Z" }]);
   },
   prizes: (ops) => {
-    if (has(ops, "update")) return ok({ id: "pz-2" }); // the CAS takes a unit
     if (has(ops, "select", "id, stock")) return ok(LIVE_ROWS);
     if (has(ops, "select", "*")) return ok(PRIZE_ROWS);
     if (has(ops, "delete") || has(ops, "insert")) return ok(null);
@@ -126,6 +126,7 @@ mock.module("@/lib/supabase/server", {
 
 async function main() {
   const data = await import("./index");
+  const { commitSpinAttempt } = await import("./spinAttempts");
   const { toWheelConfig } = await import("./shared");
   const { mockAckFan, mockCreatePass, mockGetWheel, mockSpin } = await import("./mock");
   const { GET: publicWheelGET } = await import("@/app/api/public/wheel/[creatorId]/route");
@@ -248,13 +249,16 @@ async function main() {
       toWheelConfig(wheelRow() as unknown as Parameters<typeof toWheelConfig>[0]).showStock === true
     );
 
-    const spinOnce = () =>
-      data.completeClaimedSpin(
-        fakeClient() as unknown as Parameters<typeof data.completeClaimedSpin>[0],
-        "tok-1",
-        "stock",
-        2,
-      );
+    // The live path: one commit through the 0059 ledger, on a wheel whose
+    // "Show stock" switch is the column under test. The limited prize is the
+    // only winnable one, so every spin takes a unit of it (3 → 2).
+    const spinOnce = async () => {
+      const ledger = await new FakeSpinLedger(
+        PRIZE_ROWS.map((p) => ({ id: p.id, label: p.label, rarity: p.rarity as "common", weight: p.weight, stock: p.stock, cost_cents: p.cost_cents })),
+        { creatorId: CREATOR, wheelId: WHEEL_ID, showStock: showStockColumn !== false, balance: 2 },
+      ).init();
+      return commitSpinAttempt("tok-1", intentFor(ledger, "stock"), ledger.client());
+    };
 
     showStockColumn = false;
     const off = await fanSurfaces(CREATOR, spinOnce, "tok-1");

@@ -8,6 +8,7 @@ import { readCappedText } from "@/lib/monitoring/report";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { recordAudit } from "@/lib/data/audit";
 import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
+import { hasSharedRateLimitStore } from "@/lib/rateLimit";
 
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: NO_STORE_HEADERS });
 export async function GET() {
@@ -21,7 +22,7 @@ export async function GET() {
   try { svc = createServiceClient(); }
   catch { return json({ demo: false, canary: { status: "unavailable" }, summary: null }, 503); }
   const [canary, summary] = await Promise.all([readCanary(svc), readHealthSummary(svc)]);
-  return json({ demo: false, canary, summary });
+  return json({ demo: false, canary, summary, rateLimitStore: hasSharedRateLimitStore() ? "shared" : "per_instance" });
 }
 export async function POST(req: Request) {
   const admin = await requireAdminRoute();

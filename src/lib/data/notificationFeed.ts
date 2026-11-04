@@ -8,7 +8,7 @@
 // when it happened after the creator last opened the bell. No server imports,
 // so the client can share the types.
 
-export type NotificationKind = "win" | "message" | "low_stock" | "out_of_spins" | "fan_deleted";
+export type NotificationKind = "win" | "message" | "low_stock" | "out_of_spins" | "fan_deleted" | "approved";
 
 /** Where an item takes the creator, through the dashboard's in-app navigation. */
 export interface NotificationTarget {
@@ -68,6 +68,8 @@ export interface NotificationSources {
   /** A fan used "Delete my data" (creator_notices, 0054). No fan PII: the fan
    *  is gone, only how many of their spins stay (anonymized) in the stats. */
   fanDeletions?: { id: string; spinsKept: number; at: string }[];
+  /** A30: an admin approved this creator account (creator_notices, 0066). */
+  approvals?: { id: string; at: string }[];
 }
 
 /** A limited prize is "low" at this many units left (0 = out of stock). */
@@ -124,6 +126,7 @@ export interface NotificationSourceFor {
   low_stock: NotificationSources["lowStock"][number];
   out_of_spins: NotificationSources["outOfSpins"][number];
   fan_deleted: NonNullable<NotificationSources["fanDeletions"]>[number];
+  approved: NonNullable<NotificationSources["approvals"]>[number];
 }
 
 /**
@@ -136,6 +139,7 @@ export const KIND_PREF: Record<NotificationKind, keyof FeedPrefs | null> = {
   low_stock: null,
   out_of_spins: "lowBalance",
   fan_deleted: null,
+  approved: null,
 };
 
 export function kindEnabled(kind: NotificationKind, prefs: FeedPrefs): boolean {
@@ -199,6 +203,17 @@ export function toNotificationItem<K extends NotificationKind>(
         target: { section: "fans", fanName: f.fanName },
       };
     }
+    case "approved": {
+      const a = source as NotificationSourceFor["approved"];
+      return {
+        id: `approved:${a.id}`,
+        kind: "approved",
+        title: "You're approved",
+        body: "Your creator account is live. Set up your first game and share your link.",
+        at: a.at,
+        target: { section: "editor" },
+      };
+    }
     default: {
       const d = source as NotificationSourceFor["fan_deleted"];
       return {
@@ -244,6 +259,8 @@ export function buildNotificationItems(src: NotificationSources, prefs: FeedPref
     for (const f of src.outOfSpins) items.push(toNotificationItem("out_of_spins", f));
   // Erasure notices always remain visible, irrespective of alert preferences.
   for (const d of src.fanDeletions ?? []) items.push(toNotificationItem("fan_deleted", d));
+  // The approval notice is an account notice, not an alert: always shown.
+  for (const a of src.approvals ?? []) items.push(toNotificationItem("approved", a));
   return items;
 }
 

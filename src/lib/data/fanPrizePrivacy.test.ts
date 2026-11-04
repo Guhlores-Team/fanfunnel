@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { LEGAL } from "@/lib/legal";
 import { mock } from "node:test";
 import type { WheelConfig } from "@/lib/games/wheel/types";
+import { FakeSpinLedger, intentFor } from "./fakeSpinLedger";
 
 // Regression: a prize's fulfilment cost is creator-private (it feeds the Prize
 // ROI analytics), but toWheelConfig copied `cost_cents` into every prize and
@@ -127,6 +128,7 @@ mock.module("@/lib/supabase/server", {
 
 async function main() {
   const data = await import("./index");
+  const { commitSpinAttempt } = await import("./spinAttempts");
   const { toWheelConfig } = await import("./shared");
   const { mockAckFan, mockCreatePass } = await import("./mock");
   const { GET: publicWheelGET } = await import("@/app/api/public/wheel/[creatorId]/route");
@@ -182,12 +184,12 @@ async function main() {
     assert.ok(pass, "supabase: fan pass view");
     assertFanSafeWheel("supabase fan page payload", wire(pass).wheel);
 
-    const spun = await data.completeClaimedSpin(
-      fakeClient() as unknown as Parameters<typeof data.completeClaimedSpin>[0],
-      "tok-1",
-      "privacy",
-      2,
-    );
+    // The live path: the response prize is projected by the commit itself.
+    const ledger = await new FakeSpinLedger(
+      PRIZE_ROWS.map((p) => ({ id: p.id, label: p.label, rarity: p.rarity as "common", weight: p.weight, stock: p.stock, cost_cents: p.cost_cents, description: p.description })),
+      { creatorId: CREATOR, wheelId: WHEEL_ID, balance: 2 },
+    ).init();
+    const spun = await commitSpinAttempt("tok-1", intentFor(ledger, "privacy"), ledger.client());
     assert.ok(!("error" in spun), `supabase: spin succeeded (${JSON.stringify(spun)})`);
     const prize = wire(spun).prize;
     check("supabase spin response: no cost on the won prize", costPaths(prize).length === 0);

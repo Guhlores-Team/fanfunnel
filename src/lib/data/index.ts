@@ -34,7 +34,7 @@ export {
   setWheelSchedule,
 } from "./wheels";
 export { listWebhooks, createWebhook, deleteWebhook, fireWebhooks } from "./webhooks";
-export { getFanPass, spin, getSpinAttemptStatus, completeClaimedSpin, createPass } from "./spins";
+export { getFanPass, spin, getSpinAttemptStatus, createPass, FanPassUnavailableError } from "./spins";
 export { setPlayReminder, takeBreak } from "./playGuard";
 export {
   editGrant,
@@ -192,6 +192,6 @@ export { getPrizeDelivery, setPrizeDelivery, addPrizeCodes, getFanReward, getFan
 export { getCreatorThemeView, getMyTheme, setMyTheme, addMyMedia, setMyMediaCaption, reorderMyMedia, deleteMyMedia, adminRemoveCreatorMedia } from "./creatorTheme";
 export type { CreatorThemeView, MyThemeView, ThemeMedia } from "./creatorTheme";
 
-export { getFocusConfig, getFanFocusState, getFanFocus, getCreatorFocus, grantFocusPack, cancelFanFocus } from "./focus";
+export { getFanFocusState, getFanFocus, getCreatorFocus, grantFocusPack, cancelFanFocus } from "./focus";
 export type { FanFocusView, CreatorFocusView } from "./focusView";
 export type { SpinIntent, SpinAttemptStatus } from "./spinAttempts";

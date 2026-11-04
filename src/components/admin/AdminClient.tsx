@@ -11,6 +11,7 @@ import { accountErrorMessage, deleteErrorMessage, inviteErrorMessage, mfaResetEr
 import { P, Glyph, SectionTitle, raised, recessed, btnGhost, btnDanger, pill } from "./adminUi";
 import AdminErrors from "./AdminErrors";
 import SystemHealthCard from "./SystemHealthCard";
+import StuckDeletions from "./StuckDeletions";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
 import AdminReports from "./AdminReports";
@@ -379,6 +380,7 @@ export default function AdminClient() {
         </section>
 
         <SystemHealthCard />
+        <StuckDeletions />
         <AdminErrors />
         <AdminActivity />
       </div>

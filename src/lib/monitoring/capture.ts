@@ -5,7 +5,7 @@
 // the request that hit the error.
 import { runAfterResponse } from "@/lib/afterResponse";
 import { rateLimit } from "@/lib/rateLimit";
-import { claimAppErrorAlert, recordAppError } from "@/lib/data/appErrors";
+import { claimAppErrorAlert, recordAppError, releaseAppErrorAlert, type AlertClaim } from "@/lib/data/appErrors";
 import {
   DIGEST_CHECK_INTERVAL_MS,
   MAX_MESSAGE,
@@ -27,6 +27,8 @@ import {
   noteAlertsOff,
   sendAlertEmail,
   shouldAlert,
+  type AlertConfig,
+  type AlertMail,
   type RecordOutcome,
 } from "./alert";
 
@@ -76,6 +78,17 @@ export async function storeError(e: CleanError): Promise<RecordOutcome | null> {
 }
 
 /**
+ * Send the e-mail for a claimed slot. A27: when Resend refuses it (or cannot be
+ * reached) the slot is released, so the failure neither burns the hourly budget
+ * nor loses the alert: its errors wait, pending, for the next digest.
+ */
+async function sendClaimed(claim: AlertClaim, cfg: AlertConfig, mail: AlertMail): Promise<boolean> {
+  const ok = await sendAlertEmail(cfg, mail);
+  if (!ok && claim.alertId) await releaseAppErrorAlert(claim.alertId);
+  return ok;
+}
+
+/**
  * E-mail the first occurrence of a fingerprint (or a resolved one returning)
  * within the global hourly budget; a repeat instead checks, at most once per
  * DIGEST_CHECK_INTERVAL_MS per instance, whether throttled errors are waiting
@@ -92,7 +105,8 @@ export async function alertFor(e: CleanError, outcome: RecordOutcome): Promise<v
     if (shouldAlert(outcome, e.environment, cfg)) {
       const claim = await claimAppErrorAlert(cfg.maxPerHour, outcome.id);
       if (!claim.send) return;
-      await sendAlertEmail(
+      await sendClaimed(
+        claim,
         cfg,
         buildErrorEmail(
           {
@@ -113,10 +127,31 @@ export async function alertFor(e: CleanError, outcome: RecordOutcome): Promise<v
     if (!rateLimit("monitoring:digest-check", 1, DIGEST_CHECK_INTERVAL_MS).ok) return;
     const digest = await claimAppErrorAlert(cfg.maxPerHour);
     if (digest.send && digest.pending > 0) {
-      await sendAlertEmail(cfg, buildDigestEmail(digest.pending, e.environment, link));
+      await sendClaimed(digest, cfg, buildDigestEmail(digest.pending, e.environment, link));
     }
   } catch {
     /* alerts are best-effort */
+  }
+}
+
+/**
+ * A27: send a waiting digest of throttled errors even when no new error comes
+ * along to trigger the check in alertFor. Run by the maintenance cron, so a
+ * burst that stops still reaches ALERT_EMAIL_TO within a day. Never throws.
+ */
+export async function flushAlertDigest(environment: ErrorEnvironment = currentEnvironment()): Promise<"sent" | "none" | "off" | "failed"> {
+  try {
+    const cfg = alertConfig();
+    if (!cfg.enabled) {
+      noteAlertsOff(cfg);
+      return "off";
+    }
+    if (!cfg.environments.includes(environment)) return "off";
+    const digest = await claimAppErrorAlert(cfg.maxPerHour);
+    if (!digest.send || digest.pending <= 0) return "none";
+    return (await sendClaimed(digest, cfg, buildDigestEmail(digest.pending, environment, adminErrorsUrl()))) ? "sent" : "failed";
+  } catch {
+    return "failed";
   }
 }
 

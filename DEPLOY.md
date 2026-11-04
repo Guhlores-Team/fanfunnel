@@ -71,7 +71,7 @@ Development = TEST.
 | `ADMIN_EMAILS` | owner email(s) | same | Comma-separated allowlist for the one-time admin claim (see step 4). Unset = nobody can claim admin. |
 | `FF_REQUIRE_SUPABASE` | `1` | `1` | Fail closed instead of falling back to the in-memory demo. `VERCEL_ENV=production` already forces this on Vercel. |
 | `NEXT_PUBLIC_ENABLE_DEBUG` | **unset** | `1` | Turns on the `?debug=1` error console and the "PREVIEW · TEST database" badge. Must never be set on Production. |
-| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | set by the Upstash integration | same | Shared rate-limit counters across instances (`src/lib/rateLimit.ts`). `UPSTASH_REDIS_REST_URL`/`_TOKEN` also work. Unset = per-instance in-memory limits. |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | set by the Upstash integration | same | Shared rate-limit counters across instances (`src/lib/rateLimit.ts`). `UPSTASH_REDIS_REST_URL`/`_TOKEN` also work. Unset = per-instance in-memory limits; **required on Production**: without it the daily maintenance cron records "Rate limits are per instance in production" in Admin › Errors and Admin › System health says so. |
 | `VAPID_PUBLIC_KEY` | separate public key | separate public key | Web push; see setup below. `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is accepted as an alternative name. |
 | `VAPID_PRIVATE_KEY` | private key (Sensitive) | private key (Sensitive) | Server-only; never a `NEXT_PUBLIC_*` variable. |
 | `VAPID_SUBJECT` | `mailto:you@yourdomain` | same | Contact for browser push services. |

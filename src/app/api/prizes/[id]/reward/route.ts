@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getPrizeDelivery, setPrizeDelivery } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { normalizeRewardLink, normalizeRewardText } from "@/lib/rewards/config";
+import { limitRoute } from "@/lib/api/limit";
 
 // #26: a prize's instant delivery, for the creator's wheel editor.
 // GET  -> { delivery } (codes are masked, never returned in full)
@@ -21,12 +22,16 @@ function respond(result: Awaited<ReturnType<typeof getPrizeDelivery>>) {
   return NextResponse.json({ delivery: result }, { headers: noStore });
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const rateLimited = await limitRoute(req, "prizes/[id]/reward:GET");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   return respond(await getPrizeDelivery(id));
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const rateLimited = await limitRoute(req, "prizes/[id]/reward:PUT");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const body = await parseJsonBody<{ kind?: unknown; value?: unknown }>(req);
   if (body === BAD_REQUEST || !body || typeof body !== "object") return badRequest();

@@ -6,6 +6,7 @@ import { badRequest, errorResponse } from "@/lib/api/handler";
 import type { ExpectedStock } from "@/lib/data/wheels";
 import { normalizeWheelPayload } from "@/lib/games/wheel/validate";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
+import { limitRoute } from "@/lib/api/limit";
 
 // Reject prize fields the data layer forwards without sanitizing. rarity drives
 // the odds defaults, and imageUrl is rendered (and must not be a non-http(s)
@@ -40,7 +41,9 @@ function isValidHttpUrl(value: string): boolean {
 }
 
 // Read the signed-in creator's wheel configuration.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "wheel:GET");
+  if (rateLimited) return rateLimited;
   const wheel = await getWheel();
   if (!wheel) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   return NextResponse.json({ wheel });
@@ -62,6 +65,8 @@ function readExpectedStock(value: unknown): ExpectedStock | null {
 
 // Save the creator's wheel (title, branding, prizes).
 export async function PUT(req: Request) {
+  const rateLimited = await limitRoute(req, "wheel:PUT");
+  if (rateLimited) return rateLimited;
   let config: WheelConfig;
   let expectedStock: ExpectedStock | null;
   try {

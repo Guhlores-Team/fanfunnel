@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { listWebhooks, createWebhook } from "@/lib/data";
 import { isWebhookEvent } from "@/lib/data/webhooks";
 import { clientIp } from "@/lib/api/clientIp";
-import { rateLimitOr429 } from "@/lib/api/limit";
+import { rateLimitOr429, limitRoute } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // A creator's outbound webhooks. Creator-scoped; newest first.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "webhooks:GET");
+  if (rateLimited) return rateLimited;
   const webhooks = await listWebhooks();
   return NextResponse.json({ webhooks });
 }

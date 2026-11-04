@@ -10,10 +10,13 @@ import {
   type OrgRole,
 } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Owner-guarded agency mutations. Each RPC re-checks ownership server-side, so
 // this route only dispatches. Body: { action, ...args }.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "agency/manage:POST", "costly");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<Record<string, unknown>>(req);
   if (body === BAD_REQUEST) return badRequest();
   const action = body.action as string;

@@ -3,15 +3,20 @@ import { listPrizeTemplates, createPrizeTemplate } from "@/lib/data";
 import { RARITY_ORDER, type Rarity } from "@/lib/games/wheel/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { normalizeHex } from "@/lib/games/wheel/validate";
+import { limitRoute } from "@/lib/api/limit";
 
 // The creator's saved prize presets.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "templates/prizes:GET");
+  if (rateLimited) return rateLimited;
   const templates = await listPrizeTemplates();
   return NextResponse.json({ templates });
 }
 
 // Save a prize preset.
 export async function POST(req: Request) {
+  const rateLimited = await limitRoute(req, "templates/prizes:POST");
+  if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{
     label?: string;
     description?: string;

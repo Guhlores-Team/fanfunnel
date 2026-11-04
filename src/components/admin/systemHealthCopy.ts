@@ -31,7 +31,14 @@ export function ledgerMessage(summary: HealthSummary | null): string {
   return "Inventory and credit checks were incomplete or unavailable. Ask your operator to review the check limits and database access.";
 }
 
-export type SystemHealthStatus = { demo: boolean; canary: { status: CanaryStatus | "demo" }; summary: HealthSummary | null };
+/** A22: whether rate limits are shared across instances (Upstash/KV) or per instance. */
+export type RateLimitStore = "shared" | "per_instance";
+export type SystemHealthStatus = { demo: boolean; canary: { status: CanaryStatus | "demo" }; summary: HealthSummary | null; rateLimitStore?: RateLimitStore };
+export function rateLimitStoreMessage(store: RateLimitStore | undefined): string | null {
+  return store === "per_instance"
+    ? "Rate limits are counted per server instance: no shared store is configured. In production, ask your operator to connect Upstash or Vercel KV (see DEPLOY.md)."
+    : null;
+}
 export function parseSystemHealthStatus(raw: unknown): SystemHealthStatus | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const row = raw as Record<string, unknown>, canary = row.canary as Record<string, unknown> | undefined;
@@ -43,5 +50,6 @@ export function parseSystemHealthStatus(raw: unknown): SystemHealthStatus | null
     if (!counts || typeof counts !== "object" || Array.isArray(counts) || Object.entries(counts).some(([key,value]) => !INVARIANT_KEYS.includes(key as typeof INVARIANT_KEYS[number]) || !Number.isSafeInteger(value) || Number(value)<0)) return null;
     for (const key of ["canaryCheckedAt","canaryFailureAt","invariantsCheckedAt","lastMaintenanceAt"]) if (summary[key] !== null && (typeof summary[key] !== "string" || !Number.isFinite(Date.parse(summary[key] as string)))) return null;
   }
-  return { demo: row.demo, canary: {status:canary.status as CanaryStatus | "demo"}, summary: summary as unknown as HealthSummary | null };
+  const rateLimitStore = row.rateLimitStore === "shared" || row.rateLimitStore === "per_instance" ? row.rateLimitStore : undefined;
+  return { demo: row.demo, canary: {status:canary.status as CanaryStatus | "demo"}, summary: summary as unknown as HealthSummary | null, ...(rateLimitStore ? { rateLimitStore } : {}) };
 }

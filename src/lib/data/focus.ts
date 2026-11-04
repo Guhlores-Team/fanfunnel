@@ -113,24 +113,6 @@ export async function cancelFanFocus(fanId: string, focusId: string): Promise<{ 
   return result?.status === "released" || result?.status === "absent" ? { focusId, released: result.status === "released", focus: toFanFocusView(result.focus as FocusRow) } : { error: "db_error" };
 }
 
-export async function getFocusConfig(): Promise<{ focusEnabled: boolean; chaseEnabled: boolean; reason: "rollout_disabled" | "focus_disabled" | null } | FocusError> {
-  if (!isSupabaseConfigured()) {
-    const { mockFocusState } = await import("./mockFocus");
-    const chaseEnabled = mockFocusState().chaseEnabled === true;
-    return { focusEnabled: true, chaseEnabled, reason: chaseEnabled ? null : "rollout_disabled" };
-  }
-  const session = await createClient();
-  const { data: { user }, error } = await session.auth.getUser();
-  if (error || !user) return { error: "unauthorized" };
-  const { data: permission, error: denied } = await session.rpc("can_act_for", { target_creator: user.id, perm: "grant" });
-  if (denied || permission !== true) return { error: "forbidden" };
-  const { data, error: configError } = await createServiceClient().from("focus_creator_config").select("focus_enabled,chase_enabled").eq("creator_id", user.id).maybeSingle();
-  if (configError) return { error: "db_error" };
-  const focusEnabled = data?.focus_enabled !== false;
-  const chaseEnabled = focusEnabled && data?.chase_enabled === true;
-  return { focusEnabled, chaseEnabled, reason: !focusEnabled ? "focus_disabled" : chaseEnabled ? null : "rollout_disabled" };
-}
-
 /** Token-authenticated polling: the same closed-link refusals as the other F5 endpoints. */
 export async function getFanFocusState(token: string): Promise<{ focus: FanFocusView | null; odds?: FanOddsView; stock?: Record<string, import("@/lib/games/wheel/types").PublicStock> } | { error: "not_found" | "blocked" | "db_error" }> {
   if (!isSupabaseConfigured()) {

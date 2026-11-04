@@ -9,12 +9,15 @@ import {
 } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
+import { limitRoute } from "@/lib/api/limit";
 
 // Load one wheel's full config.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "wheels/[id]:GET");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const wheel = await getWheelById(id);
   if (!wheel) return NextResponse.json({ error: "not_found" }, { status: 404 });
@@ -27,6 +30,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "wheels/[id]:PATCH");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
 
   const body = await parseJsonBody<{
@@ -104,6 +109,8 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "wheels/[id]:DELETE");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const hard = new URL(req.url).searchParams.get("hard") === "1";
   const result = hard ? await deleteWheel(id) : await archiveWheel(id);

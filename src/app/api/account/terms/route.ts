@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { acceptMyTerms, getMyTermsStatus } from "@/lib/data";
 import { clientIp } from "@/lib/api/clientIp";
-import { rateLimitOr429 } from "@/lib/api/limit";
+import { rateLimitOr429, limitRoute } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 
 // The signed-in creator's acceptance of the Terms of Service and Privacy Policy
@@ -11,7 +11,9 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 // it is ignored. The account is the session user, the version is the server's
 // LEGAL.version and the time is the database's now(), so a client can neither
 // accept for someone else nor forge or backdate an acceptance.
-export async function GET() {
+export async function GET(req: Request) {
+  const rateLimited = await limitRoute(req, "account/terms:GET");
+  if (rateLimited) return rateLimited;
   const result = await getMyTermsStatus();
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });
