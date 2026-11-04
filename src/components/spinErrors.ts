@@ -24,7 +24,7 @@ const MESSAGES: Record<string, SpinErrorInfo> = {
     message: "Please confirm your age and accept the terms to keep spinning.",
     reopenAgeGate: true,
   },
-  no_prizes: { message: "This wheel isn't ready yet — check back soon. 🎡" },
+  no_prizes: { message: "This game isn't ready yet — check back soon." },
   not_found: { message: "We couldn't find this link. Double-check it with your creator." },
   db_error: { message: "We hit a snag on our end. Give it another try in a moment." },
   spin_pending: {

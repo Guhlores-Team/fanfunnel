@@ -60,6 +60,7 @@ export async function gameSwitchingJourney(browser, { step, assert }, sink, ctx)
       const dialog = page.getByRole("dialog", { name: `Replace ${state.beforeTitle} for fans?` });
       await dialog.waitFor({ timeout: 5000 });
       assert((await dialog.innerText()).includes(`Switch Scratch ${suffix}`), "confirm names the game that takes over");
+      assert(/fan links you set to their own game, keep playing it/.test(await dialog.innerText()), "confirm says per-fan link games are kept (0065)");
       assert(await page.evaluate(() => document.activeElement?.textContent?.includes("Don’t schedule")), "focus lands on the safe choice");
       await dialog.getByRole("button", { name: "Yes, schedule it" }).click();
       await page.locator(`[data-testid='live-game'][data-live-game-id='${state.scratch.id}']`).waitFor({ timeout: 8000 });
@@ -146,6 +147,24 @@ export async function gameSwitchingJourney(browser, { step, assert }, sink, ctx)
       await drawer.locator(`[data-testid='link-plays'][data-plays-game-id='${state.wheelId}']`).first().waitFor({ timeout: 8000 });
       assert(/via campaign/.test(await drawer.getByTestId("link-plays").first().innerText()), "the link follows its campaign's game again");
       state.followToken = fan.token;
+    });
+
+    await step("game switching: a link with no campaign explains its own game, before and after choosing one (QA 2026-11-04)", async () => {
+      const fan = await json(await ctx.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: `Loose fan ${suffix}`, spins: 2 } }), "mint link without a campaign");
+      state.fans.push(fan.fanId);
+      await goto(page, "/dashboard", 600);
+      await clickTab(page, "Fans");
+      await page.getByRole("button", { name: `View Loose fan ${suffix}` }).first().click();
+      const drawer = page.getByRole("dialog", { name: "Fan details" });
+      await drawer.getByTestId("link-plays").first().getByRole("button", { name: "Change game" }).click();
+      const help = drawer.getByTestId("link-no-campaign-help").first();
+      assert(/unless you choose a game for it above/.test(await help.innerText()), "an unpinned loose link says the live game applies unless one is chosen");
+      const pinned = page.waitForResponse((r) => r.url().includes(`/api/fans/${fan.fanId}/link-game`) && r.request().method() === "POST");
+      await drawer.getByLabel("Change game for this fan only").first().selectOption(state.wheelId);
+      assert((await pinned).ok(), "pinning a loose link is accepted");
+      await drawer.locator(`[data-testid='link-plays'][data-plays-game-id='${state.wheelId}']`).first().waitFor({ timeout: 8000 });
+      assert(/plays the game chosen above/.test(await help.innerText()) && !/so it plays your live game/.test(await help.innerText()), "after pinning, the help no longer claims it plays the live game");
+      await page.keyboard.press("Escape");
     });
 
     await step("campaign lifecycle: archive says links keep working, they do, and Reactivate undoes it (A28)", async () => {

@@ -211,7 +211,7 @@ export default function CampaignsPanel({ onOpenGame }: { onOpenGame?: (wheelId: 
         <p id={newGameHelpId} className="mt-2 text-xs text-muted text-pretty">
           {chosenNewGame === FOLLOW_LIVE
             ? "Follow my live game: this campaign's links play whatever is live on your Games screen, so scheduling or activating another game changes it."
-            : "This campaign's links always play the game you pick here, even if you schedule or activate another game. You can change it later on the campaign card."}
+            : "This campaign's links play the game you pick here, even if you schedule or activate another game (a fan link you set to its own game keeps that). You can change it later on the campaign card."}
         </p>
       </section>
 
@@ -553,7 +553,7 @@ function CampaignCard({
         </div>
       </div>
       <p id={gameHelpId} className="mt-2 text-xs text-muted text-pretty">
-        Applies to every link in this campaign, new and existing. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.
+        Applies to every link in this campaign, new and existing, except a fan link you set to its own game in Fans. &ldquo;Follow my live game&rdquo; uses whatever is live on your Games screen.
       </p>
       <p id={lifecycleHelpId} className="mt-1 text-xs text-muted text-pretty">
         {campaign.isActive

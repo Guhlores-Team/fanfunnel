@@ -833,7 +833,7 @@ export default function WheelEditor({
               </span>
               <p className="text-[14.5px] font-bold text-ink">No prizes yet</p>
               <p className="max-w-[300px] text-[13px] text-muted text-pretty">
-                Add your first prize to start building the wheel. Set its rarity, tickets and
+                Add your first prize to start building {wheel.gameKind === "scratch" ? "the scratch ticket" : wheel.gameKind === "bingo" ? "the bingo card" : "the wheel"}. Set its rarity, tickets and
                 odds — or pull one from your library below.
               </p>
               <button

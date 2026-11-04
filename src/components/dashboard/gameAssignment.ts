@@ -3,9 +3,10 @@
 // Games, Campaigns and Fans screens all explain the same decision.
 import type { WheelSummary } from "@/lib/data/types";
 import type { GameKind } from "@/lib/games/core/gameProof";
+import { MIN_WHEEL_PRIZES } from "@/lib/games/wheel/validate";
 import { byAge, isPlayableGame, pickLiveGame, playReasonText, resolvePlayingGame, type LiveReason } from "@/lib/games/liveGame";
 
-export type ChoiceGame = Pick<WheelSummary, "id" | "title" | "isActive" | "archivedAt" | "activeFrom" | "activeUntil" | "createdAt" | "gameKind" | "gameReady">;
+export type ChoiceGame = Pick<WheelSummary, "id" | "title" | "isActive" | "archivedAt" | "activeFrom" | "activeUntil" | "createdAt" | "gameKind" | "gameReady"> & { prizeCount?: number };
 export type ChoiceCampaign = { id: string; name: string; pinnedWheelId?: string | null };
 
 /** Short visible kind names (badges and option text). */
@@ -16,7 +17,9 @@ export const kindOf = (game: { gameKind?: GameKind }): GameKind => game.gameKind
 export function pinUnavailableReason(game: ChoiceGame): string | null {
   if (game.archivedAt) return "archived";
   if (game.gameReady !== true) return "draft: finish and save it first";
-  return isPlayableGame(game) ? null : "it can't be played";
+  if (!isPlayableGame(game)) return "it can't be played";
+  // The server would serve it, but every play is refused (no_prizes) until it has prizes.
+  return game.prizeCount !== undefined && game.prizeCount < MIN_WHEEL_PRIZES ? `add at least ${MIN_WHEEL_PRIZES} prizes first` : null;
 }
 
 /** "Spin to Win · Wheel", plus why it can't be chosen when it can't. */

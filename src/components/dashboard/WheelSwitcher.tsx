@@ -364,11 +364,11 @@ export default function WheelSwitcher({
             <p className="mt-2 text-[13.5px] text-muted text-pretty">
               {takeover.startsNow ? "Starting now" : `Starting ${formatWhen(takeover.at)}`}
               {takeover.body.activeUntil ? ` until ${formatWhen(takeover.body.activeUntil)}` : " with no end date"}, fans
-              on every link whose campaign hasn&rsquo;t chosen its own game will get{" "}
+              on every link that hasn&rsquo;t got its own game (from its campaign or from you) will get{" "}
               <strong className="text-ink">{selected.title}</strong> ({KIND_LABEL(selected.gameKind)}) instead of{" "}
               <strong className="text-ink">{takeover.replaces.title}</strong> ({KIND_LABEL(takeover.replaces.gameKind)}).
             </p>
-            <p className="mt-2 text-[12.5px] text-muted text-pretty">Campaigns that chose a game keep playing it.</p>
+            <p className="mt-2 text-[12.5px] text-muted text-pretty">Campaigns that chose a game, and fan links you set to their own game, keep playing it.</p>
             <div className="mt-5 flex flex-wrap gap-2">
               <button
                 ref={takeoverKeepRef}
@@ -407,7 +407,7 @@ export default function WheelSwitcher({
               : ""}
             {pinnedCount > 0
               ? `Links in ${pinnedCount === 1 ? "1 campaign that has" : `${pinnedCount} campaigns that have`} chosen a game play that game instead.`
-              : "Every fan link plays this game unless its campaign chooses one."}
+              : "Every fan link plays this game unless its campaign chooses one or you chose a game for that fan."}
           </p>
         </div>
       )}
@@ -659,8 +659,9 @@ export default function WheelSwitcher({
             </span>
           </div>
           {selected.gameReady === false && <p className="mt-2 text-xs text-amber-200">Finish and save this draft before activating it or setting a schedule.</p>}
+          {selected.gameReady !== false && selected.prizeCount < MIN_WHEEL_PRIZES && <p data-testid="schedule-needs-prizes" className="mt-2 text-xs text-amber-200">Save at least {MIN_WHEEL_PRIZES} prizes before scheduling this game, or fans would get a game they can&rsquo;t play.</p>}
           <p id="schedule-effect" className="mt-2 text-[12px] text-muted text-pretty">
-            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link whose campaign hasn&rsquo;t chosen its own game. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game.
+            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link that hasn&rsquo;t got its own game from its campaign or from you. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex min-w-0 flex-col gap-1.5">
@@ -674,7 +675,7 @@ export default function WheelSwitcher({
                 onChange={(e) => setFrom(e.target.value)}
                 aria-label="Active from"
                 aria-describedby="schedule-effect"
-                disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
+                disabled={busy || selected.gameReady === false || selected.prizeCount < MIN_WHEEL_PRIZES || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
             <label className="flex min-w-0 flex-col gap-1.5">
@@ -688,7 +689,7 @@ export default function WheelSwitcher({
                 onChange={(e) => setUntil(e.target.value)}
                 aria-label="Active until"
                 aria-describedby="schedule-effect"
-                disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
+                disabled={busy || selected.gameReady === false || selected.prizeCount < MIN_WHEEL_PRIZES || !canCreateGame(selected.gameKind ?? "wheel", features)}
               />
             </label>
           </div>
@@ -696,7 +697,7 @@ export default function WheelSwitcher({
             <button
               type="button"
               onClick={saveSchedule}
-              disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features)}
+              disabled={busy || selected.gameReady === false || selected.prizeCount < MIN_WHEEL_PRIZES || !canCreateGame(selected.gameKind ?? "wheel", features)}
               className="btn-brand min-h-9 rounded-[9px] px-3.5 text-xs font-bold disabled:opacity-50"
             >
               Save schedule

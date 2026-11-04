@@ -80,3 +80,6 @@ for (const bad of [null, 7, {}, "", "totally_new_code"]) {
 }
 
 console.log(`spinErrors.test: ${passed} checks passed`);
+
+// QA 2026-11-04: scratch and bingo fans see this too, so it names no wheel.
+assert.ok(!/wheel|🎡/i.test(spinErrorInfo("no_prizes").message), "no_prizes copy is game-neutral");
