@@ -1,5 +1,5 @@
 -- 0066: agency seat scopes, the approval notice and alert-slot release
--- (audit #2: A19, A30, A27). Additive and idempotent. Redefines the two 0064
+-- (audit #2: A19, A30, A27), and the last legacy spin RPC retired (A20). Additive and idempotent. Redefines the two 0064
 -- queue/inbox RPCs from their 0064 definitions with one new trailing argument,
 -- and claim_app_error_alert from its 0053 definition (same signature).
 --
@@ -24,6 +24,9 @@
 --      claim now records which errors it covers and returns its alert_id;
 --      release_app_error_alert(alert_id) (service role only) gives the slot
 --      back and re-queues those errors for the next digest.
+--  A20 rollback_claimed_spin (0038, pre-0059 spin path) was revoked from the
+--      browser roles only; 0059 retired the rest of that path from service_role
+--      too but missed it. It has no caller; it is now retired for every role.
 
 -- ── A30: approval notice ──────────────────────────────────────────────────
 alter table public.creator_notices drop constraint if exists creator_notices_kind_check;
@@ -225,3 +228,6 @@ end;
 $$;
 revoke execute on function public.release_app_error_alert(uuid) from public, anon, authenticated;
 grant execute on function public.release_app_error_alert(uuid) to service_role;
+
+-- ── A20: retire the last pre-0059 spin RPC for the service role too ───────
+revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated, service_role;

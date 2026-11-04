@@ -3,9 +3,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 // A20 / A43: the pre-0059 claim → record → stock → refund spin path is gone.
-// Its RPCs (claim_spin, rollback_claimed_spin, reserve_reward_code,
-// release_reward_code, finalize_reward_spin) were revoked from EVERY role in
-// 0059, so any surviving caller would fail at runtime in production while
+// Its RPCs are revoked from EVERY role, service_role included: claim_spin,
+// reserve_reward_code, release_reward_code and finalize_reward_spin in 0059;
+// rollback_claimed_spin (browser roles since 0038) only in 0066, which 0059
+// missed. Any surviving caller would fail at runtime in production while
 // still passing unit tests against a fake. This guard fails the build the
 // moment one comes back. The live path is commitSpinAttempt (spinAttempts.ts).
 
@@ -61,5 +62,15 @@ const writers = sources.filter((p) => {
 });
 for (const w of writers) console.error("  ✗ direct spin/stock writer:", rel(w));
 check("no TS module writes spin rows or prize stock directly (the SQL commit owns them)", writers.length === 0);
+
+// 0066 retires rollback_claimed_spin for the service role too, in the migration
+// and both snapshots, after its last definition.
+const norm = (p: string) => readFileSync(join(ROOT, p), "utf8").replace(/--[^\n]*/g, " ").replace(/\s+/g, " ").toLowerCase();
+for (const p of ["supabase/migrations/0066_seat_scopes_approval_notice.sql", "supabase/schema.sql", "supabase/migrations_combined.sql"]) {
+  const sql = norm(p);
+  const revoke = "revoke execute on function public.rollback_claimed_spin(text, uuid) from public, anon, authenticated, service_role;";
+  check(`${p}: rollback_claimed_spin is revoked from every role, service_role included`, sql.includes(revoke));
+  check(`${p}: …after its last definition and with no later grant`, sql.lastIndexOf(revoke) > sql.lastIndexOf("create or replace function public.rollback_claimed_spin") && !/grant execute on function public\.rollback_claimed_spin\(/.test(sql.slice(sql.lastIndexOf(revoke))));
+}
 
 console.log(`deadSpinPath.test: ${passed} checks passed`);
