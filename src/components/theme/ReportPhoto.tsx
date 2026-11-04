@@ -55,7 +55,7 @@ export default function ReportPhoto({ slug, media }: { slug: string; media: Them
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((o) => !o)}
-        className="text-xs text-muted underline underline-offset-2 hover:text-ink"
+        className="inline-flex min-h-10 items-center text-xs text-muted underline underline-offset-2 hover:text-ink"
       >
         Report a photo
       </button>
