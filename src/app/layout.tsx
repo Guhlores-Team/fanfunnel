@@ -17,9 +17,9 @@ const sans = Geist({ variable: "--ff-sans", subsets: ["latin"] });
 const mono = Geist_Mono({ variable: "--ff-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "FanFunnel — Creator Prize Wheels",
+  title: "FanFunnel — Creator Prize Games",
   description:
-    "Send each fan a personal prize wheel. Every spin wins; rare drops keep them coming back.",
+    "Send each fan a personal prize game: a wheel, scratch tickets or bingo. Every play wins; rare drops keep them coming back.",
 };
 
 // viewportFit:"cover" + safe-area padding (in globals.css) keeps content clear
