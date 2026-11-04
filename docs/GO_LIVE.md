@@ -70,6 +70,11 @@ Variable names by scope (see the checks below for how to verify each):
       `openssl rand -base64 32`, Sensitive, backed up securely, never rotated), the web-push
       VAPID trio, and `RESEND_API_KEY` + `ALERT_EMAIL_TO` for alerts. Names, scopes and warnings:
       the table in [`DEPLOY.md` section 3](../DEPLOY.md#3-vercel-project-and-environment-variables).
+      **Known gap (env listing of 2026-10-31):** Production has neither `REWARD_ENCRYPTION_KEY`
+      nor `REWARD_CODE_FINGERPRINT_KEY` (Preview has them), and `CRON_SECRET` is set on neither
+      scope. Until they exist the 0063 startup canary reports the crypto configuration as missing
+      and the retention cron / error alerts refuse to run; the first LIVE smoke check (section 9)
+      must confirm System health is green.
 
 - [ ] **OWNER + AGENT**: Review [Vercel environment settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables) by scope. Preview must use TEST URL/anon/service credentials; future Production must use LIVE credentials. Service keys remain server-only. `FF_REQUIRE_SUPABASE=1` prevents accidental mock fallback; `NEXT_PUBLIC_ENABLE_DEBUG=1` belongs only in Preview and must be absent from Production.
 - [ ] **OWNER + AGENT**: Confirm server-controlled admin profiles and independent two-factor access. `ADMIN_EMAILS` is configuration, not a substitute for checking actual role/active/approval state or RLS.

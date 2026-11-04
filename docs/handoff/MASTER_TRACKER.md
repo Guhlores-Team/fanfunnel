@@ -40,11 +40,14 @@ Batch 3 branches (local commits; none pushed or merged yet):
   - **A25** done-pending-CI: missing TEST secrets fail the `supabase` and `login-ui` jobs; only fork PRs skip, with a warning and a NOT RUN summary (`scripts/ci/supabase-secrets-gate.mjs`, guard `scripts/test/ci-secrets-gate.test.mjs`). Owner: add the TEST trio as Dependabot secrets (OWNER_STEPS 14a).
   - **A39** done-pending-owner-setting: `db-migrations-production` runs on every `main` push and verifies the remote history; Vercel Deployment Checks hold Production until it passes (`docs/GO_LIVE.md` §5, guard `scripts/test/db-before-code.test.mjs`). Not enforced until the owner adds the check in Vercel (OWNER_STEPS 14b). Runtime `schema_version()` check deferred to 0066.
   - **A38** done (never run against a hosted DB): `scripts/golive/carry-over.mjs`, dry run by default, tested on disposable Postgres (`carry-over.test.mjs`, `carry-over.db.test.mjs`); `docs/GO_LIVE.md` §6.
-  - **A40** done: stale references fixed in OWNER_DECISIONS, AGENT_BRIEF, SEC_AUDIT_BRIEF, HANDOFF (§3d closed items, pending audit file), COMPLETENESS_AUDIT (superseded) and this tracker. Left: `README.md` roadmap (outside the docs/ scope of this branch).
+  - **A40** done: stale references fixed in OWNER_DECISIONS, AGENT_BRIEF, SEC_AUDIT_BRIEF, HANDOFF (§3d closed items, pending audit file), COMPLETENESS_AUDIT (superseded), the `README.md` roadmap and this tracker.
+  - Review fixes (2026-11-04): `scripts/ci/verify-migrations-applied.mjs` now parses what CLI 2.122.0 really prints (cells in backticks, "` `" for an absent side, box-drawing variants); the first version rejected every real listing, which would have failed `db-migrations-production` on every push and blocked all promotions. The pure TEST-maintenance guard runs in CI `verify` on every push/PR (it was dispatch-only). Carry-over: a bad percent-escape in a DB URL is a `DB_URL_MALFORMED` refusal, not a crash.
 
 New batch-3 items (2026-10-29):
 - A43: remove the dead legacy spin path in `src/lib/data/spins.ts` (below the `commitSpinAttempt` return, ~L270) plus `finalizeInstantSpin` / `reserveRewardCode` / `releaseRewardCode`, which call 0057 RPCs revoked from every role in 0059.
 - A44 (lock order): archiving a wheel locks wheel then fans (0059 lifecycle trigger) while play locks fan then wheel, so the two can deadlock. Add a lockRace probe, then fix the order.
+- A7 follow-up (batch 3, owner text): Terms and Privacy must mention scratch tickets and personal bingo now that 0060/0061 shipped; `src/app/terms/page.tsx` and `src/app/privacy/page.tsx` still describe only "prize wheels".
+- Flake watch (batch 3): e2e `reveal.mjs` "the reveal is up within 6400ms" missed by 29ms once under load (gaps-1-final round). The budget is `SPIN_MS` 4400 + `MAX_THEATER_EXTRA_MS` 1500 + 500; investigate the budget against the reveal animation timing before widening anything.
 
 Closed early inside 0061: A2 (`expected_stock` compare-and-set), CROSS_TENANT_HAPPY_HOUR, ISSUANCE_IGNORES_SCHEDULE, ACTIVE_ORDER_MISMATCH and the bingo review fixes; the focus-pack grant lock order was fixed in 79239e7.
 
@@ -59,3 +62,4 @@ Follow-up: per-fan game assignment (a link chooses its own game, not only via it
 - Old Preview retirement (owner approval).
 - Owner acceptance on Preview via `e2e/MANUAL-CHECKLIST.md`, then go-live per `docs/GO_LIVE.md` only on the owner's explicit "go".
 - `scripts/security/rls-runtime-test.mjs`: run the new happy-hour negative (cross-tenant happy hour refused, 0061) against TEST in CI after push.
+- Go-live environment (seen 2026-10-31 in the Vercel env listing): **Production lacks `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY`** (Preview has them), and `CRON_SECRET` is on neither scope. Without the reward keys the 0063 startup canary reports the crypto configuration as missing and system health stays unhealthy; without `CRON_SECRET` the retention cron and Admin › Errors alerts refuse to run. Owner adds them (OWNER_STEPS 19a; `docs/GO_LIVE.md` §4), generated fresh for LIVE and backed up.

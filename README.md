@@ -143,7 +143,11 @@ export E2E_BASE_URL=http://localhost:3000; npm run e2e && npm run e2e:a11y
 Shipped: creator/admin auth, persisted multi-wheel editor, fulfilment inbox and
 metrics, admin console, agency console (orgs and staff seats), boosts
 (happy hours, webhooks, link-in-bio), provably-fair v3 spins with a public
-verify page, PWA install.
+verify page, PWA install, in-house error monitoring with email alerts (0053),
+versioned Terms/Privacy (0055), web push (0056), instant reward delivery
+(0057), creator theming (0058), Focus and Chase (0059), scratch tickets (0060),
+personal bingo (0061), account security (0062), operational integrity (0063).
 
-Next: final legal text, error monitoring, web push, more games (scratch
-tickets, bingo) on the same prize/fan/account system.
+Next: the open audit gaps and go-live tooling in
+`docs/handoff/MASTER_TRACKER.md`, then the security audit and go-live per
+`docs/GO_LIVE.md`.
