@@ -182,9 +182,13 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
         const created = await call("POST", "/api/wheels", { body: { name: "Stress B" }, ip: editIp }); edits.push(`create:${created.status}`);
         const bId = created.json?.wheel?.id;
         if (bId) {
+          // A blank game starts without prizes; 0069 refuses pinning a game with fewer than 2 (campaignPinError / aa_campaign_game).
+          const b = { ...created.json.wheel, prizes: w.prizes.slice(0, 2).map((p, j) => ({ ...p, id: `stress-b${j + 1}`, stock: null })) };
+          edits.push(`prizesB:${(await call("PUT", "/api/wheel", { body: { wheel: b, expectedStock: {} }, ip: editIp })).status}`);
           edits.push(`activateB:${(await call("PATCH", `/api/wheels/${bId}`, { body: { isActive: true }, ip: editIp })).status}`);
           const camp = await call("POST", "/api/campaigns", { body: { name: "Stress campaign", pinnedWheelId: bId }, ip: editIp }); edits.push(`campaign:${camp.status}`);
-          if (camp.json?.id) edits.push(`pin:${(await call("PATCH", `/api/campaigns/${camp.json.id}`, { body: { pinnedWheelId: null }, ip: editIp })).status}`);
+          const campId = camp.json?.campaign?.id;
+          if (campId) edits.push(`pin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: w.id }, ip: editIp })).status}`, `unpin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: null }, ip: editIp })).status}`);
           edits.push(`archiveB:${(await call("PATCH", `/api/wheels/${bId}`, { body: { archived: true }, ip: editIp })).status}`);
           edits.push(`activateA:${(await call("PATCH", `/api/wheels/${w.id}`, { body: { isActive: true }, ip: editIp })).status}`);
         }
