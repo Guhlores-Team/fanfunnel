@@ -121,6 +121,36 @@ export function probeSeatScopes(db, psql) {
   const anon = run(asAnon("select * from public.my_seat_creators();"));
   if (!/permission denied for function my_seat_creators/.test(anon.stderr || "")) bad.push(`anon calling my_seat_creators was not refused (${err(anon)})`);
 
+  // Nobody widens their own seat. Table privileges are granted for this block so
+  // the RLS policies alone must refuse (rolled back with the rest).
+  const ESC_GRANTS = "grant all on table public.org_members, public.org_member_creators, public.orgs, public.profiles to authenticated;";
+  const refusedWrite = (label, who, stmt) => {
+    const r = run(`${ESC_GRANTS} ${as(U[who], stmt)}`);
+    const n = out(r).find((l) => /^n:/.test(l));
+    if (!(r.status !== 0 && /row-level security|permission denied/.test(r.stderr || "")) && n !== "n:0") bad.push(`${label} was not refused (${r.status === 0 ? `wrote ${n ?? "?"}` : err(r)})`);
+  };
+  refusedWrite("the chatter scoping itself to creator D", "CH", `insert into public.org_member_creators (member_id, creator_id) values ('${SEAT.CH}', '${U.D}');`);
+  refusedWrite("the chatter promoting its own seat to manager", "CH", `with u as (update public.org_members set role = 'manager' where id = '${SEAT.CH}' returning 1) select 'n:' || count(*) from u;`);
+  refusedWrite("the fulfiller promoting its own seat to owner", "FU", `with u as (update public.org_members set role = 'owner' where id = '${SEAT.FU}' returning 1) select 'n:' || count(*) from u;`);
+  refusedWrite("the chatter re-pointing its scope row at creator D", "CH", `with u as (update public.org_member_creators set creator_id = '${U.D}' where member_id = '${SEAT.CH}' returning 1) select 'n:' || count(*) from u;`);
+  refusedWrite("an outside creator joining the agency as a manager", "X", `insert into public.org_members (org_id, profile_id, role) values ('${ORG}', '${U.X}', 'manager');`);
+  refusedWrite("the chatter taking over the agency", "CH", `with u as (update public.orgs set owner_id = '${U.CH}' where id = '${ORG}' returning 1) select 'n:' || count(*) from u;`);
+  refusedWrite("the chatter promoting its profile to admin", "CH", `with u as (update public.profiles set role = 'admin' where id = '${U.CH}' returning 1) select 'n:' || count(*) from u;`);
+  refusedWrite("a creator moving itself into the agency", "X", `with u as (update public.profiles set org_id = '${ORG}' where id = '${U.X}' returning 1) select 'n:' || count(*) from u;`);
+  // The refused inserts abort their own transaction; the updates are replayed
+  // here so the checks run after them, in the same transaction.
+  expect("after the self-escalation attempts the seats still hold only their own jobs", run(`${ESC_GRANTS}
+    ${as(U.CH, `update public.org_members set role = 'manager' where id = '${SEAT.CH}';`)}
+    ${as(U.CH, `update public.org_member_creators set creator_id = '${U.D}' where member_id = '${SEAT.CH}';`)}
+    ${as(U.CH, `update public.orgs set owner_id = '${U.CH}' where id = '${ORG}';`)}
+    ${as(U.CH, `update public.profiles set role = 'admin' where id = '${U.CH}';`)}
+    ${as(U.X, `update public.profiles set org_id = '${ORG}' where id = '${U.X}';`)}
+    ${as(U.CH, `select 'CH-after:' || public.can_act_for('${U.D}', 'chat')::text || ',' || public.can_act_for('${U.C}', 'fulfil')::text || ',' || public.can_act_for('${U.C}', 'manage')::text || ',' || public.is_admin()::text;`)}
+    ${as(U.X, `select 'X-after:' || public.can_act_for('${U.C}', 'view')::text || ',' || count(*) from public.my_seat_creators();`)}
+    ${threads("CH", "D")} ${queue("CH", "C")}`), [
+    "CH-after:false,false,false,false", "X-after:false,0", "CH-threads-D:", "CH-queue-C:",
+  ]);
+
   expect("a suspended chatter reads nothing for its creator", run(`
     update public.profiles set is_active = false where id = '${U.CH}';
     ${threads("CH", "C")}
