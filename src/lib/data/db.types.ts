@@ -78,18 +78,21 @@ export type Database = {
           errors: number
           id: string
           kind: string
+          requeue: string[]
           sent_at: string
         }
         Insert: {
           errors?: number
           id?: string
           kind: string
+          requeue?: string[]
           sent_at?: string
         }
         Update: {
           errors?: number
           id?: string
           kind?: string
+          requeue?: string[]
           sent_at?: string
         }
         Relationships: []
@@ -3616,6 +3619,7 @@ export type Database = {
         Args: { p_user: string; p_version: string }
         Returns: string
       }
+      release_app_error_alert: { Args: { p_alert: string }; Returns: boolean }
       release_reward_code: { Args: { p_spin: string }; Returns: boolean }
       reserve_reward_code: {
         Args: { p_prize: string; p_spin: string }

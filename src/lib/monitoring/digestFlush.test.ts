@@ -69,10 +69,29 @@ async function main() {
   Date.now = () => realNow() + 2 * 60 * 60_000;
   try {
     check("a send Resend refuses is reported failed", (await cap.flushAlertDigest("production")) === "failed");
+    // A27: the refused digest gave its slot back and its error is pending again.
+    accept = true;
+    const retried = sent.length;
+    check("the refused digest is not lost: the next run sends it", (await cap.flushAlertDigest("production")) === "sent" && sent.length === retried + 1 && sent.at(-1)!.subject.includes("1 more new error"));
+    check("…once", (await cap.flushAlertDigest("production")) === "none");
   } finally {
     Date.now = realNow;
     accept = true;
   }
+
+  // A27: a first-occurrence alert Resend refuses frees its slot and waits for
+  // the next digest instead of vanishing.
+  store.resetMemoryAppErrors();
+  accept = false;
+  const lost = cap.cleanError({ source: "server", message: "refused first alert", environment: "production" })!;
+  await cap.alertFor(lost, (await cap.storeError(lost))!);
+  const memStore = (globalThis as unknown as { __ffAppErrors: { alerts: number[]; rows: Map<string, { alertPending: boolean }> } }).__ffAppErrors;
+  check("a refused first alert takes no slot from the hourly budget", memStore.alerts.length === 0);
+  check("…and its error is pending for the digest", [...memStore.rows.values()].every((r) => r.alertPending));
+  accept = true;
+  const beforeRetry = sent.length;
+  check("the next flush reports it", (await cap.flushAlertDigest("production")) === "sent" && sent.length === beforeRetry + 1 && sent.at(-1)!.subject.includes("1 more new error"));
+  check("a release of an unknown slot is refused", (await store.releaseAppErrorAlert("00000000-0000-4000-8000-000000000000")) === false);
 
   // Off switches.
   const before = sent.length;

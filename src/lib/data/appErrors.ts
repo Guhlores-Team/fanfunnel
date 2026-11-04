@@ -47,15 +47,19 @@ interface MemRow extends AppErrorRow {
 interface MemStore {
   rows: Map<string, MemRow>;
   alerts: number[];
+  /** Claimed slots by alert id: when, and which rows a release re-queues. */
+  claims: Map<string, { at: number; requeue: string[] }>;
 }
 const g = globalThis as unknown as { __ffAppErrors?: MemStore };
 function mem(): MemStore {
-  return (g.__ffAppErrors ??= { rows: new Map(), alerts: [] });
+  const store = (g.__ffAppErrors ??= { rows: new Map(), alerts: [], claims: new Map() });
+  store.claims ??= new Map();
+  return store;
 }
 
 /** Test hook: empty the in-memory store. */
 export function resetMemoryAppErrors(): void {
-  g.__ffAppErrors = { rows: new Map(), alerts: [] };
+  g.__ffAppErrors = { rows: new Map(), alerts: [], claims: new Map() };
 }
 
 const HOUR = 60 * 60 * 1000;
@@ -111,7 +115,14 @@ function memRecord(input: RecordInput, maxRows: number): RecordOutcome {
   return { id: row.id, isNew: true, reopened: false, count: 1, firstSeen: now };
 }
 
-function memClaim(limit: number, errorId?: string): { send: boolean; pending: number } {
+export interface AlertClaim {
+  send: boolean;
+  pending: number;
+  /** The claimed slot (send = true only); hand it to releaseAppErrorAlert when the e-mail fails. */
+  alertId?: string;
+}
+
+function memClaim(limit: number, errorId?: string): AlertClaim {
   const store = mem();
   const now = Date.now();
   const { allowed, recent } = throttleAllows(store.alerts, now, limit);
@@ -124,9 +135,23 @@ function memClaim(limit: number, errorId?: string): { send: boolean; pending: nu
   }
   const pending = rows.filter((r) => r.alertPending && !r.resolved && r.id !== errorId).length;
   if (!errorId && pending === 0) return { send: false, pending: 0 };
+  const requeue = rows.filter((r) => r.alertPending || r.id === errorId).map((r) => r.id);
   for (const r of rows) r.alertPending = false;
   store.alerts.push(now);
-  return { send: true, pending };
+  const alertId = crypto.randomUUID();
+  store.claims.set(alertId, { at: now, requeue });
+  return { send: true, pending, alertId };
+}
+
+function memRelease(alertId: string): boolean {
+  const store = mem();
+  const claim = store.claims.get(alertId);
+  if (!claim) return false;
+  store.claims.delete(alertId);
+  const i = store.alerts.indexOf(claim.at);
+  if (i >= 0) store.alerts.splice(i, 1);
+  for (const r of store.rows.values()) if (claim.requeue.includes(r.id) && !r.resolved) r.alertPending = true;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,15 +198,30 @@ export async function recordAppError(
 export async function claimAppErrorAlert(
   limit: number,
   errorId?: string,
-): Promise<{ send: boolean; pending: number }> {
+): Promise<AlertClaim> {
   if (!isSupabaseConfigured()) return memClaim(limit, errorId);
   const { data, error } = await createServiceClient().rpc("claim_app_error_alert", {
     p_limit: limit,
     p_error_id: errorId,
   });
-  const d = data as { send?: unknown; pending?: unknown } | null;
+  const d = data as { send?: unknown; pending?: unknown; alert_id?: unknown } | null;
   if (error || !d) return { send: false, pending: 0 };
-  return { send: d.send === true, pending: typeof d.pending === "number" ? d.pending : 0 };
+  return {
+    send: d.send === true,
+    pending: typeof d.pending === "number" ? d.pending : 0,
+    ...(typeof d.alert_id === "string" ? { alertId: d.alert_id } : {}),
+  };
+}
+
+/**
+ * A27: the e-mail for a claimed slot was not accepted. Give the slot back to
+ * the hourly budget and re-queue the errors it covered for the next digest
+ * (service role, 0066). False when the slot is unknown or the call failed.
+ */
+export async function releaseAppErrorAlert(alertId: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) return memRelease(alertId);
+  const { data, error } = await createServiceClient().rpc("release_app_error_alert", { p_alert: alertId });
+  return !error && data === true;
 }
 
 type DbRow = {

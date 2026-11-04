@@ -700,6 +700,8 @@ function probeAppErrors(db) {
   denied("creator DELETE app_errors", as(CREATOR_UID, "delete from public.app_errors"));
   denied("creator record_app_error()", as(CREATOR_UID, `select public.record_app_error('${ERR_FP}', 'production', 'client', 'x')`), /permission denied for function record_app_error/);
   denied("creator claim_app_error_alert()", as(CREATOR_UID, "select public.claim_app_error_alert(10)"), /permission denied for function claim_app_error_alert/);
+  denied("anon release_app_error_alert()", `set local role anon; select public.release_app_error_alert('${ERR_FP.slice(0, 8)}-0000-4000-8000-000000000000');`, /permission denied for function release_app_error_alert/);
+  denied("creator release_app_error_alert()", as(CREATOR_UID, `select public.release_app_error_alert('${ERR_FP.slice(0, 8)}-0000-4000-8000-000000000000')`), /permission denied for function release_app_error_alert/);
   denied("admin UPDATE of app_errors.count (resolve-only grant)", as(ADMIN_UID, "update public.app_errors set count = 99"));
   denied("admin INSERT app_errors", as(ADMIN_UID, `insert into public.app_errors (fingerprint, environment, source, message) values ('${ERR_FP}', 'preview', 'client', 'x')`));
 
@@ -757,7 +759,16 @@ function probeAppErrors(db) {
     select 'pending:' || count(*) from public.app_errors where alert_pending;
     delete from public.app_error_alerts;
     set local role service_role;
-    select 'digest:' || (r->>'send') || ',' || (r->>'pending') from (select public.claim_app_error_alert(2) r) s;
+    select 'digest:' || (r->>'send') || ',' || (r->>'pending') || ',' || (set_config('probe.alert', r->>'alert_id', true) <> '')::text from (select public.claim_app_error_alert(2) r) s;
+    reset role;
+    select 'claimed-pending:' || count(*) from public.app_errors where alert_pending;
+    set local role service_role;
+    select 'release:' || public.release_app_error_alert(current_setting('probe.alert')::uuid);
+    select 'release-again:' || public.release_app_error_alert(current_setting('probe.alert')::uuid);
+    reset role;
+    select 'released-slots:' || count(*) || ',requeued:' || (select count(*) from public.app_errors where alert_pending) from public.app_error_alerts;
+    set local role service_role;
+    select 'digest-retry:' || (r->>'send') || ',' || (r->>'pending') from (select public.claim_app_error_alert(2) r) s;
     select 'prune:' || (r->>'is_new') from (select public.record_app_error('fedcba9876543210fedcba9876543210', 'production', 'server', 'other', null, null, null, 1) r) s;
     reset role;
     select 'rows:' || count(*) from public.app_errors;`);
@@ -771,7 +782,12 @@ function probeAppErrors(db) {
     "claim3:false",
     "digest-throttled:false",
     "pending:1",
-    "digest:true,1",
+    "digest:true,1,true",
+    "claimed-pending:0",
+    "release:true",
+    "release-again:false",
+    "released-slots:0,requeued:1",
+    "digest-retry:true,1",
     "prune:true",
     "rows:1",
   ];
@@ -785,7 +801,7 @@ function probeAppErrors(db) {
     console.log(`FAIL  ${db}: app_errors access + behaviour`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: app_errors is admin-read/resolve only, server-write only; upsert, reopen, throttle and prune behave`);
+    console.log(`PASS  ${db}: app_errors is admin-read/resolve only, server-write only; upsert, reopen, throttle, slot release and prune behave`);
   }
 }
 

@@ -69,6 +69,28 @@ for (const [name, sql] of [
   }
 }
 
+// A27 (0066): giving a refused alert's slot back is server-only too, and the
+// claim keeps the same shape (definer, pinned search_path) in its redefinition.
+const mig66 = norm(readFileSync(join(SUPA, "migrations", "0066_seat_scopes_approval_notice.sql"), "utf8"));
+const RELEASE_SIG = "release_app_error_alert(uuid)";
+for (const [name, sql] of [
+  ["migration 0066", mig66],
+  ["schema.sql", norm(readFileSync(join(SUPA, "schema.sql"), "utf8"))],
+  ["migrations_combined.sql", norm(readFileSync(join(SUPA, "migrations_combined.sql"), "utf8"))],
+] as const) {
+  for (const [fn, sig] of [["release_app_error_alert", RELEASE_SIG], ["claim_app_error_alert", CLAIM_SIG]] as const) {
+    const at = sql.lastIndexOf(`create or replace function public.${fn}(`);
+    const block = at >= 0 ? sql.slice(at, sql.indexOf("$$;", sql.indexOf("$$", at) + 2) + 3) : "";
+    check(`${name}: defines ${fn} (0066)`, !!block);
+    check(`${name}: ${fn} (0066) is SECURITY DEFINER with a pinned search_path`, /security definer set search_path = public/.test(block));
+    check(`${name}: ${fn} (0066) never reads user/app metadata`, !/metadata/.test(block));
+    check(`${name}: ${fn} (0066) revoked from public, anon AND authenticated after its definition`, sql.lastIndexOf(`revoke execute on function public.${sig} from public, anon, authenticated;`) > at);
+    check(`${name}: ${fn} (0066) granted to service_role only`, sql.lastIndexOf(`grant execute on function public.${sig} to service_role;`) > at && !new RegExp(`grant execute on function public\\.${fn}\\([^;]*to (anon|authenticated|public)`).test(sql));
+  }
+  check(`${name}: the claim returns its alert_id and records what a release re-queues`, /'alert_id', v_alert/.test(sql) && /add column if not exists requeue uuid\[\]/.test(sql));
+  check(`${name}: a release re-queues only unresolved errors`, /update public\.app_errors set alert_pending = true where id = any\(coalesce\(v_requeue, '\{\}'\)\) and not resolved;/.test(sql));
+}
+
 // --- code side -------------------------------------------------------------------
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
@@ -112,7 +134,7 @@ check("POST /api/errors answers 204 with no body", /new NextResponse\(null, \{ s
 // the cookie-bound client so RLS applies.
 const data = read("lib/data/appErrors.ts");
 const svcUses = [...data.matchAll(/createServiceClient\(\)\.rpc\("(\w+)"/g)].map((m) => m[1]);
-check("data layer: service role is used only for record_app_error + claim_app_error_alert", JSON.stringify(svcUses.sort()) === '["claim_app_error_alert","record_app_error"]' && (data.match(/createServiceClient\(\)/g) ?? []).length === 2);
+check("data layer: service role is used only for record_app_error + claim_app_error_alert + release_app_error_alert (A27)", JSON.stringify(svcUses.sort()) === '["claim_app_error_alert","record_app_error","release_app_error_alert"]' && (data.match(/createServiceClient\(\)/g) ?? []).length === 3);
 check("data layer: list/resolve use the caller's client (RLS)", /const sb = await createClient\(\);[\s\S]*from\("app_errors"\)[\s\S]*\.update\(\{ resolved, resolved_at: resolvedAt \}\)/.test(data));
 
 console.log(`security/appErrors: ${passed} checks passed`);

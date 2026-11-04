@@ -1,6 +1,7 @@
--- 0066: agency seat scopes and the approval notice (audit #2: A19, A30).
--- Additive and idempotent. Redefines the two 0064 queue/inbox RPCs from their
--- 0064 definitions with one new trailing argument.
+-- 0066: agency seat scopes, the approval notice and alert-slot release
+-- (audit #2: A19, A30, A27). Additive and idempotent. Redefines the two 0064
+-- queue/inbox RPCs from their 0064 definitions with one new trailing argument,
+-- and claim_app_error_alert from its 0053 definition (same signature).
 --
 --  A19 A staff seat can do its job for the creators it is scoped to, and only
 --      that job: creator_inbox_threads() and creator_redemption_queue() take an
@@ -18,6 +19,11 @@
 --      the creators the caller may act for and which of the two jobs.
 --  A30 creator_notices accepts a 'creator_approved' notice, left by the server
 --      (service role) when an admin approves a creator.
+--  A27 claim_app_error_alert() took the hourly slot and cleared the pending
+--      flags before the e-mail was sent, so a refused send lost the alert. The
+--      claim now records which errors it covers and returns its alert_id;
+--      release_app_error_alert(alert_id) (service role only) gives the slot
+--      back and re-queues those errors for the next digest.
 
 -- ── A30: approval notice ──────────────────────────────────────────────────
 alter table public.creator_notices drop constraint if exists creator_notices_kind_check;
@@ -148,3 +154,74 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke execute on function public.my_seat_creators() from public, anon;
 grant execute on function public.my_seat_creators() to authenticated;
+
+-- ── A27: give an alert slot back when its e-mail was not accepted ─────────
+alter table public.app_error_alerts add column if not exists requeue uuid[] not null default '{}';
+
+create or replace function public.claim_app_error_alert(
+  p_limit integer,
+  p_error_id uuid default null
+)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_sent integer;
+  v_pending integer;
+  v_cleared uuid[];
+  v_alert uuid;
+begin
+  perform pg_advisory_xact_lock(hashtext('public.app_error_alerts'));
+  delete from public.app_error_alerts where sent_at < now() - interval '1 day';
+  select count(*) into v_sent from public.app_error_alerts where sent_at > now() - interval '1 hour';
+
+  if v_sent >= greatest(coalesce(p_limit, 0), 0) then
+    if p_error_id is not null then
+      update public.app_errors set alert_pending = true where id = p_error_id;
+    end if;
+    return jsonb_build_object('send', false, 'pending', 0);
+  end if;
+
+  select count(*) into v_pending from public.app_errors
+   where alert_pending and not resolved and (p_error_id is null or id <> p_error_id);
+  if p_error_id is null and v_pending = 0 then
+    return jsonb_build_object('send', false, 'pending', 0);
+  end if;
+  with cleared as (
+    update public.app_errors set alert_pending = false where alert_pending returning id
+  )
+  select coalesce(array_agg(id), '{}') into v_cleared from cleared;
+
+  insert into public.app_error_alerts (kind, errors, requeue)
+  values (case when p_error_id is null then 'digest' else 'error' end,
+          greatest(v_pending + case when p_error_id is null then 0 else 1 end, 1),
+          case when p_error_id is null then v_cleared else array_append(array_remove(v_cleared, p_error_id), p_error_id) end)
+  returning id into v_alert;
+  return jsonb_build_object('send', true, 'pending', v_pending, 'alert_id', v_alert);
+end;
+$$;
+revoke execute on function public.claim_app_error_alert(integer, uuid) from public, anon, authenticated;
+grant execute on function public.claim_app_error_alert(integer, uuid) to service_role;
+
+-- The e-mail for a claimed slot was refused or never reached Resend: drop the
+-- slot (it no longer counts against the hourly budget) and mark the errors it
+-- covered pending again, so the next digest reports them. False when the slot
+-- is unknown (already released, or pruned after a day).
+create or replace function public.release_app_error_alert(p_alert uuid)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare
+  v_requeue uuid[];
+begin
+  if p_alert is null then
+    return false;
+  end if;
+  perform pg_advisory_xact_lock(hashtext('public.app_error_alerts'));
+  delete from public.app_error_alerts where id = p_alert returning requeue into v_requeue;
+  if not found then
+    return false;
+  end if;
+  update public.app_errors set alert_pending = true
+   where id = any(coalesce(v_requeue, '{}')) and not resolved;
+  return true;
+end;
+$$;
+revoke execute on function public.release_app_error_alert(uuid) from public, anon, authenticated;
+grant execute on function public.release_app_error_alert(uuid) to service_role;
