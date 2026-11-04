@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { brandVars } from "@/lib/theme";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
@@ -50,9 +50,14 @@ const BoostsPanel = dynamic(() => import("@/components/dashboard/BoostsPanel"), 
 const AnalyticsPanel = dynamic(() => import("@/components/dashboard/AnalyticsPanel"), {
   loading: PanelFallback,
 });
-const SettingsPanel = dynamic(() => import("@/components/dashboard/SettingsPanel"), {
+// memo: a deep link (/dashboard?section=settings) server-renders this panel.
+// If the dashboard re-renders it (its first data loads) before the split chunk
+// has hydrated, React throws away the server HTML and client-renders the panel
+// again, so every node a fan of the page (or a test) already found is replaced.
+// With stable props the re-render stops here and the panel hydrates in place.
+const SettingsPanel = memo(dynamic(() => import("@/components/dashboard/SettingsPanel"), {
   loading: PanelFallback,
-});
+}));
 // Admin lives in the shell as "Account › Admin". It only renders behind the
 // server-derived `isAdmin` gate below, and every /api/admin route re-checks.
 const AdminClient = dynamic(() => import("@/components/admin/AdminClient"), {
@@ -307,6 +312,14 @@ export default function DashboardClient({
   const accountName =
     account.data?.displayName?.trim() || (email ? email.split("@")[0] : "Demo creator");
   const accountSub = email ?? "Demo workspace — connect Supabase to go live";
+  // Stable Settings callbacks (the memoized panel only re-renders on real change).
+  // Re-tint the whole dashboard the instant a new brand color is saved in
+  // Settings (it persists to the active wheel; mirror it locally so --brand
+  // updates with no refresh — #9) …
+  const onSettingsBrandColor = useCallback((color: string) => setWheel((w) => ({ ...w, brandColor: color })), []);
+  // …and the sidebar's workspace name the moment a new one is saved.
+  const setAccountData = account.setData;
+  const onSettingsDisplayName = useCallback((displayName: string) => setAccountData((d) => ({ ...d, displayName })), [setAccountData]);
 
   // Shared by the sidebar (desktop) and the More sheet (phone).
   const guardSignOut = (e: React.FormEvent, form: HTMLFormElement) => {
@@ -532,16 +545,8 @@ export default function DashboardClient({
         {tab === "settings" && (
           <SettingsPanel
             pushFocus={pushFocus}
-            // Re-tint the whole dashboard the instant a new brand color is saved
-            // in Settings (it persists to the active wheel; mirror it locally so
-            // --brand updates with no refresh — #9).
-            onBrandColorChange={(color) =>
-              setWheel((w) => ({ ...w, brandColor: color }))
-            }
-            // …and the sidebar's workspace name the moment a new one is saved.
-            onDisplayNameChange={(displayName) =>
-              account.setData((d) => ({ ...d, displayName }))
-            }
+            onBrandColorChange={onSettingsBrandColor}
+            onDisplayNameChange={onSettingsDisplayName}
           />
         )}
         {tab === "admin" && adminVisible && <AdminClient />}
