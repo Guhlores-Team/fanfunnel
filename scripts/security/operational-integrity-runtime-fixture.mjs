@@ -12,7 +12,10 @@ export async function testOperationalIntegrityRuntime({a, anonymous, check}) {
     const calls = [
       ["read_reward_crypto_canary",undefined],
       ["reward_crypto_inventory_page",{p_after:"x".repeat(65),p_limit:1}],
-      ["initialize_reward_crypto_canary",{p_canary:{},p_inventory_digest:"0".repeat(64),p_actor:null}],
+      // p_context named explicitly: only the 0063 four-argument gateway matches,
+      // so a retired three-argument overload can never make PostgREST answer
+      // "ambiguous" instead of the privilege refusal this asserts.
+      ["initialize_reward_crypto_canary",{p_canary:{},p_inventory_digest:"0".repeat(64),p_actor:null,p_context:null}],
       ["run_reward_ledger_invariants",{}],
       ["record_system_health_check",{p_source:"invalid-negative-probe",p_canary_status:"healthy"}],
     ];

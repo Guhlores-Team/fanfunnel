@@ -34,6 +34,11 @@ import { fixtureCreatorRpc, fixtureActorContext } from "./actor-context-fixture.
  *     them to the owner only); a suspended account or one with an open report
  *     cannot close itself; invitations answer ok for any address and seat
  *     nobody until accepted; a confirmed e-mail change reaches profiles.email
+ *   • the hosted schema_version() (0067) is the newest migration file, so a
+ *     stale TEST fails before its first retired call; set_redemption_state is
+ *     the one fulfilment write (0067) and a session cannot insert an award
+ *     (0069); a game needs two prizes to be set on a link, a campaign or a
+ *     schedule (0069); a game with play history is never deleted (0065)
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -47,7 +52,7 @@ import { createClient } from "@supabase/supabase-js";
 import { isLegacyCanaryTestProject, readLegacyCanaryCounts } from "./legacy-canary-counts.mjs";
 import { fixtureTotp } from "./totp-fixture.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { testBingoRuntime } from "./bingo-runtime-fixture.mjs";
 
 try {
@@ -219,6 +224,16 @@ async function main() {
   try {
     await sweepStaleUsers();
 
+    // 0067: schema_version() names the migration level the hosted project was
+    // built to. The expectations below are written for the newest migration
+    // file, so a TEST that is behind (or ahead) fails here, before its first
+    // retired call. Service-role only (0068 and 0069 re-state the grant).
+    const expectedSchema = Math.max(...readdirSync(new URL("../../supabase/migrations/", import.meta.url)).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => Number(f.slice(0, 4))));
+    const schema = await admin.rpc("schema_version");
+    if (schema.error || schema.data !== expectedSchema) throw new Error(`schema_version(): TEST reports ${schema.error?.message ?? schema.data}, the migration files expect ${expectedSchema}`);
+    console.log(`TEST schema_version() = ${schema.data} (the newest migration file).`);
+    check((await createClient(URL_, ANON, { auth: { persistSession: false } }).rpc("schema_version")).error?.code === "42501", "anon cannot execute schema_version");
+
     console.log(`Creating two throwaway creators (run ${RUN})…`);
     const A = await makeCreator("a");
     const B = await makeCreator("b");
@@ -278,6 +293,10 @@ async function main() {
     // 0065: the lifecycle RPCs answer not_found for another creator's game.
     check((await a.rpc("archive_wheel", { p_wheel: B.wheelId })).data === "not_found", "A cannot archive B's wheel through archive_wheel");
     check((await a.rpc("delete_wheel", { p_wheel: B.wheelId })).data === "not_found", "A cannot delete B's wheel through delete_wheel");
+    // 0065: a game with play history (A's wheel carries a spin and a link) is
+    // never deleted, not even by its owner; it can only be archived.
+    check((await a.rpc("delete_wheel", { p_wheel: A.wheelId })).data === "has_history", "0065 delete_wheel refuses a game with play history");
+    check(((await admin.from("wheels").select("id").eq("id", A.wheelId)).data?.length ?? 0) === 1, "A's wheel still exists after the refused delete");
     // 0065: a link's own game is written only through set_fan_pass_game, even on
     // A's own link, and no session can delete a redemption (its award cost).
     const pinPatch = await a.from("fan_passes").update({ pinned_wheel_id: A.wheelId }).eq("id", A.passId).select("id");
@@ -325,6 +344,11 @@ async function main() {
     check((selfResolve.data?.length ?? 0) === 0, "the reported creator cannot dismiss its own report");
     const { data: reportAfter } = await admin.from("creator_reports").select("status, resolved_by").eq("id", report.id).maybeSingle();
     check(reportAfter?.status === "open" && reportAfter?.resolved_by === null, `the report is still open and unreviewed (got ${reportAfter?.status})`);
+    // 0064: a review is stamped by the database (resolved_at from the row's
+    // status change, never from the request) and the pre-0064 statuses are gone.
+    check((await admin.from("creator_reports").update({ status: "actioned" }).eq("id", report.id)).error?.code === "23514", "0064 the retired review statuses are refused");
+    const dismissed = must(await admin.from("creator_reports").update({ status: "dismissed", resolution_note: "runtime 0064", resolved_at: "2000-01-01T00:00:00Z" }).eq("id", report.id).select("status, resolved_at").single(), "0064 the server dismisses the report");
+    check(dismissed.status === "dismissed" && !!dismissed.resolved_at && Date.parse(dismissed.resolved_at) > Date.parse("2001-01-01T00:00:00Z"), `0064 the database stamps resolved_at itself (got ${dismissed.resolved_at})`);
     check(!!(await a.from("webhook_secrets").select("secret")).error, "a creator cannot read webhook_secrets");
     check(!!(await a.from("webhook_secrets").insert({ creator_id: A.id, secret: "a".repeat(64) })).error, "a creator cannot write its own webhook secret");
     for (let i = 0; i < 5; i++) must(await a.from("webhooks").insert({ creator_id: A.id, url: `https://93.184.216.34/rls-${RUN}-${i}`, event: "all" }).select("id").single(), `A's hook ${i + 1}`);
@@ -345,7 +369,10 @@ async function main() {
       const pack=must(await admin.from("campaign_packs").insert({creator_id:B.id,label:`runtime ${kind}`,spins:10,pack_kind:kind,focus_spins:5,chase_within:5}).select("id").single(),`seed ${kind} pack`);
       const granted=must(await fixtureCreatorRpc(admin,creatorFixtureClients.get(B.id),"grant_focus_pack",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_pack:pack.id,p_prize:B.prizeId}),`grant real ${kind} fixture`);
       check(granted.status==="granted",`real ${kind} RPC creates owned metadata`);
-      must(await admin.rpc("cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:granted.focus.id,p_actor:B.id}),`release ${kind} fixture`);
+      // 0062: cancel_fan_focus(p_context, …) needs the actor's 'grant' context
+      // like the grant above; the 4-argument form is retired for every role.
+      const released=must(await fixtureCreatorRpc(admin,creatorFixtureClients.get(B.id),"cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:granted.focus.id,p_actor:B.id}),`release ${kind} fixture`);
+      check(released.status==="released",`real ${kind} promise is released through the actor-context gateway (got ${released.status})`);
     }
     must(await admin.from("prizes").update({stock:null}).eq("id",B.prizeId).select("id").single(),"restore B unlimited fixture");
     const ownConfig=await b.from("focus_creator_config").select("creator_id").eq("creator_id",B.id);
@@ -407,6 +434,20 @@ async function main() {
     for(const [fn,args] of [["import_fans",{p_rows:[]}],["claim_spin",{p_token:B.token}],["credit_pass_spins",{p_fan_id:B.fanId,p_spins:1}],["finalize_reward_spin",{p_spin:{},p_expected:{}}],["reserve_reward_code",{p_prize:B.prizeId,p_spin:randomUUID()}],["release_reward_code",{p_spin:randomUUID()}]])check(!!(await admin.rpc(fn,args)).error,`service cannot execute retired ${fn}`);
     check((await admin.rpc("edit_pass_grant",{p_creator:B.id,p_grant:randomUUID(),p_spins:1,p_bonus:0,p_amount:0})).error?.code==="42501","service cannot bypass edit journal through retired positional API");
     check((await admin.rpc("cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:randomUUID()})).error?.code==="42501","service cannot release promises through retired actorless cancellation API");
+    // 0062 retired every pre-context creator gateway for the service role too
+    // (the service JWT is never actor assurance); 0066 retired the last
+    // pre-0059 spin RPC. Each call names exactly the old signature.
+    for(const [fn,args] of [
+      ["cancel_fan_focus",{p_creator:B.id,p_fan:B.fanId,p_focus:randomUUID(),p_actor:B.id}],
+      ["grant_focus_pack",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_pack:randomUUID(),p_prize:B.prizeId}],
+      ["grant_pass_spins",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_pass:B.passId,p_spins:1,p_bonus:0,p_amount:0}],
+      ["create_pass_grant",{p_request:randomUUID(),p_creator:B.id,p_fan:B.fanId,p_wheel:B.wheelId,p_name:"forged",p_spins:1,p_bonus:0,p_amount:0,p_campaign:null}],
+      ["edit_pass_grant",{p_request:randomUUID(),p_creator:B.id,p_grant:randomUUID(),p_patch:{spins:1},p_actor:B.id}],
+      ["import_fans_durable",{p_batch:randomUUID(),p_creator:B.id,p_request_hash:sha("denial"),p_rows:[]}],
+      ["reconcile_creator_request",{p_request:randomUUID(),p_creator:B.id,p_actor:B.id,p_kind:"pass",p_cancel:false,p_authorized:false}],
+      ["save_game_wheel",{p_wheel:B.wheelId,p_creator:B.id,p_prizes:[],p_config:{},p_actor:B.id}],
+      ["rollback_claimed_spin",{p_token:B.token,p_prize_id:B.prizeId}],
+    ])check((await admin.rpc(fn,args)).error?.code==="42501",`service cannot execute the pre-0062 ${fn} signature`);
     check((await a.rpc("import_fans",{p_rows:[]})).error?.code==="42501","authenticated cannot bypass durable imports through the legacy API");
     check((await createClient(URL_,ANON,{auth:{persistSession:false}}).rpc("import_fans",{p_rows:[]})).error?.code==="42501","anon cannot bypass durable imports through the legacy API");
 
@@ -436,7 +477,11 @@ async function main() {
     await setBGameFeatures(false);
     must(await b.from("wheels").update({title:"grandfathered scratch",game_config:{style:"classic"}}).eq("id",scratchWheel.id).select("id").single(),"same-kind scratch metadata survives feature removal");
     check((await admin.from("wheels").insert({...scratchSettings,title:"duplicate existing scratch"})).error?.code==="42501","duplicating grandfathered scratch cannot mint a disabled new game");
-    for(const client of [a,createClient(URL_,ANON,{auth:{persistSession:false}}),admin])check((await client.rpc("_game_feature_allowed",{p_creator:B.id,p_kind:"scratch"})).error?.code==="42501","API roles cannot execute the private game permission helper");
+    for(const client of [a,createClient(URL_,ANON,{auth:{persistSession:false}}),admin]){
+      check((await client.rpc("_game_feature_allowed",{p_creator:B.id,p_kind:"scratch"})).error?.code==="42501","API roles cannot execute the private game permission helper");
+      // 0065: the pin-aware ranking helper is private like its 0061 form.
+      check((await client.rpc("_creator_default_wheel",{p_creator:B.id,p_campaign:null,p_pinned:B.wheelId})).error?.code==="42501","API roles cannot execute the private game resolver");
+    }
     must(await admin.from("profiles").update({features:originalGameFeatures}).eq("id",B.id).select("id").single(),"restore disposable B features");
 
     await testBingoRuntime({admin,a,anonymous:createClient(URL_,ANON,{auth:{persistSession:false}}),actorA:A.id,makeUser,signedClient,must,check});
@@ -563,8 +608,11 @@ async function main() {
     const sStats = await s.rpc("org_account_stats", { p_org: org.id });
     const statIds = (sStats.data ?? []).map((r) => r.id);
     check(!sStats.error && statIds.length === 1 && statIds[0] === A.id, `the seat's org stats list only its scoped creator A, not C (${sStats.error?.message ?? statIds.join(",")})`);
+    // 0068: a scoped seat sees no e-mail or revenue; the owner still does.
+    check((sStats.data ?? []).every((r) => r.email === null && r.revenue === null), "0068 the chatter seat's org stats carry no e-mail or revenue");
     const ownStats = await (await signedClient(OWN.email)).rpc("org_account_stats", { p_org: org.id });
     check(!ownStats.error && ownStats.data?.length === 2, `the org owner's stats list both of its creators (${ownStats.error?.message ?? `got ${ownStats.data?.length}`})`);
+    check((ownStats.data ?? []).every((r) => r.email === A.email || r.email === C.email), "0068 the owner's org stats still carry its creators' e-mail");
     const sPromote = await s.from("org_members").update({ role: "owner" }).eq("id", seat.id).select("id");
     check((sPromote.data?.length ?? 0) === 0, "the seat cannot promote its own seat");
     const sScope = await s.from("org_member_creators").insert({ member_id: seat.id, creator_id: B.id }).select("member_id");
@@ -728,7 +776,9 @@ async function main() {
       const aal1Promote = await a.from("profiles").update({ is_active: true }).eq("id", B.id).select("id");
       check((aal1Promote.data?.length ?? 0) === 0, "an aal1 admin cannot UPDATE another profile");
     } finally {
-      await admin.from("profiles").update({ role: "creator" }).eq("id", A.id);
+      // 0062 keeps the last active admin: this needs another active admin on
+      // TEST, and a silent failure would leave A an admin for cleanup to trip on.
+      must(await admin.from("profiles").update({ role: "creator" }).eq("id", A.id).select("id").single(), "demote A after the aal1 check");
     }
     // 0055: Terms acceptance is server-only. A creator can't record it for
     // another creator (or for itself) through the RPC or a direct UPDATE, and
@@ -914,6 +964,10 @@ async function main() {
     const retainedB=must(await admin.from("creator_media").select("caption,path").eq("id",mediaB).single(),"0058 foreign row remains");
     check(retainedB.caption===null&&retainedB.path===objectPath(B.id,mediaB),"0058 foreign media remains unchanged after all forged calls");
 
+    // The 0052 fixture above left the agency owner and the seat suspended;
+    // every consent, seat and agency-authority check from here needs the
+    // owner eligible again (_owns_org and can_act_for both require it).
+    must(await admin.from("profiles").update({ is_active: true, approval_status: "approved" }).in("id", [OWN.id, SEAT.id]).select("id"), "re-activate the agency owner and seat");
     // 0062 consent deadlines: only this run's recipient/org are changed.
     const recipient=await makeUser("expiry");
     const recipientClient=await signedClient(recipient.email);
@@ -944,7 +998,9 @@ async function main() {
     // creator and an explicit manager only in this disposable fixture.
     must(await admin.from("org_members").upsert({org_id:org.id,profile_id:A.id,role:"manager"},{onConflict:"org_id,profile_id"}).select("id").single(),"0062 manager fixture");
     check((await a.rpc("can_act_for",{target_creator:C.id,perm:"grant"})).data===true,"0062 unenrolled creator retains ordinary agency access");
-    const beforeEnrollmentContext=await fixtureActorContext(a,A.id,"grant");
+    // The economic intent below is A (the org's manager) granting to C's fan:
+    // A's own fan is on the RM-6 break above, which the grant core refuses.
+    const beforeEnrollmentContext=await fixtureActorContext(a,C.id,"grant");
     const enrolled=await a.auth.mfa.enroll({factorType:"totp",friendlyName:"RLS0062"});
     check(!enrolled.error&&!!enrolled.data?.id&&!!enrolled.data?.totp?.secret,"0062 TEST supports actual TOTP enrollment");
     if(enrolled.error||!enrolled.data?.id||!enrolled.data?.totp?.secret)throw Error("0062 TOTP fixture enrollment failed");
@@ -977,7 +1033,7 @@ async function main() {
     const highQueue=await a.rpc("creator_redemption_queue",{p_limit:100});
     check(!highQueue.error&&(highQueue.data?.length??0)>0,"0064 challenged aal2 creator regains own fulfilment queue");
     check((await a.rpc("can_act_for",{target_creator:C.id,perm:"grant"})).data===true,"0062 challenged aal2 manager regains rightful agency authority");
-    const serviceIntent={p_request:randomUUID(),p_creator:A.id,p_actor:A.id,p_fan:A.fanId,p_pass:A.passId,p_spins:1,p_bonus:0,p_amount:0,p_campaign:null};
+    const serviceIntent={p_request:randomUUID(),p_creator:C.id,p_actor:A.id,p_fan:C.fanId,p_pass:C.passId,p_spins:1,p_bonus:0,p_amount:0,p_campaign:null};
     const sessionRace=await admin.rpc("grant_pass_spins",{...serviceIntent,p_context:beforeEnrollmentContext});
     check(!sessionRace.error&&sessionRace.data?.status==="unavailable","0062 newly verified factor refuses prior aal1 service capability");
     const serviceLow=await fixtureCreatorRpc(admin,low,"grant_pass_spins",{...serviceIntent,p_request:randomUUID()});
@@ -990,11 +1046,57 @@ async function main() {
     const publicFanState=await admin.rpc("get_fan_focus_state",{p_token:A.token});
     check(!publicFanState.error&&publicFanState.data?.status==="ok","0062 token-bound fan state remains independent of creator login assurance");
 
+    const code = (r) => r.error?.code ?? (r.data?.length ? "accepted" : "no-op");
+    // 0067: a won prize's status, note and due date are patched through
+    // set_redemption_state on the caller's own session (can_act_for 'fulfil'
+    // or is_admin, checked on auth.uid()); 0068 took the EXECUTE grant away
+    // from the service role, anon never had it, and the stock-unit
+    // bookkeeping is written only inside that RPC. A is aal2 here.
+    console.log("\n0067 fulfilment writes:");
+    const aRedemption = must(await admin.from("redemptions").select("id").eq("creator_id", A.id).limit(1).single(), "0067 A's award");
+    const ownPatch = await a.rpc("set_redemption_state", { p_redemption: aRedemption.id, p_creator: A.id, p_patch: { notes: "runtime 0067" } });
+    check(!ownPatch.error && ownPatch.data?.status === "ok", `0067 the creator patches its own award through set_redemption_state (${ownPatch.error?.message ?? ownPatch.data?.status})`);
+    const otherPatch = await b.rpc("set_redemption_state", { p_redemption: aRedemption.id, p_creator: A.id, p_patch: { status: "cancelled" } });
+    check(!otherPatch.error && otherPatch.data?.status === "forbidden", `0067 another creator cannot cancel A's award (${otherPatch.error?.message ?? otherPatch.data?.status})`);
+    check((await admin.rpc("set_redemption_state", { p_redemption: aRedemption.id, p_creator: A.id, p_patch: { notes: "x" } })).error?.code === "42501", "0068 the service role holds no EXECUTE on set_redemption_state");
+    check((await anonClient.rpc("set_redemption_state", { p_redemption: aRedemption.id, p_creator: A.id, p_patch: { notes: "x" } })).error?.code === "42501", "anon cannot execute set_redemption_state");
+    const unitWrite = await a.from("redemptions").update({ stock_unit: "held" }).eq("id", aRedemption.id).select("id");
+    check(unitWrite.error?.code === "42501", `0067 a stock unit is moved only by set_redemption_state (${code(unitWrite)})`);
+    const patched = must(await admin.from("redemptions").select("notes, status, stock_unit").eq("id", aRedemption.id).single(), "0067 the award after the patches");
+    check(patched.notes === "runtime 0067" && patched.status !== "cancelled" && patched.stock_unit === null, `0067 only the owner's note landed (status ${patched.status}, unit ${patched.stock_unit})`);
+    check((await a.rpc("schema_version")).error?.code === "42501", "0067 a creator cannot execute schema_version");
+
+    // 0069: a game needs at least 2 prizes to be set on a link, pinned to a
+    // campaign or scheduled, for every role. A's seeded wheel has one prize;
+    // a second game of A's with two is the playable comparison.
+    console.log("\n0069 minimum prizes:");
+    const twoWheel = must(await admin.from("wheels").insert({ creator_id: A.id, title: "a two-prize game" }).select("id").single(), "0069 seed A's two-prize game");
+    must(await admin.from("prizes").insert([1, 2].map((n) => ({ wheel_id: twoWheel.id, label: `a two ${n}`, rarity: "common", weight: 10 }))).select("id"), "0069 seed its prizes");
+    const setGame = (wheel) => fixtureCreatorRpc(admin, a, "set_fan_pass_game", { p_creator: A.id, p_pass: A.passId, p_wheel: wheel, p_actor: A.id });
+    const pinOne = await setGame(A.wheelId);
+    check(!pinOne.error && pinOne.data?.status === "game_not_playable", `0069 a link cannot be set to a one-prize game (${pinOne.error?.message ?? pinOne.data?.status})`);
+    const pinTwo = await setGame(twoWheel.id);
+    check(!pinTwo.error && pinTwo.data?.status === "ok" && pinTwo.data?.pinnedWheelId === twoWheel.id, `0069 a link is set to a two-prize game (${pinTwo.error?.message ?? pinTwo.data?.status})`);
+    const unpin = await setGame(null);
+    check(!unpin.error && unpin.data?.status === "ok" && unpin.data?.pinnedWheelId === null, `0069 the link follows the live game again (${unpin.error?.message ?? unpin.data?.status})`);
+    const campaignOnOne = await a.from("campaigns").insert({ creator_id: A.id, name: `rls ${RUN} one`, pinned_wheel_id: A.wheelId }).select("id");
+    check(campaignOnOne.error?.code === "22023", `0069 a campaign cannot pin a one-prize game (${code(campaignOnOne)})`);
+    const campaignOnB = await a.from("campaigns").insert({ creator_id: A.id, name: `rls ${RUN} b`, pinned_wheel_id: B.wheelId }).select("id");
+    check(campaignOnB.error?.code === "42501", `0069 a campaign cannot pin another creator's game (${code(campaignOnB)})`);
+    const serviceCampaignOnOne = await admin.from("campaigns").insert({ creator_id: A.id, name: `rls ${RUN} svc`, pinned_wheel_id: A.wheelId }).select("id");
+    check(serviceCampaignOnOne.error?.code === "22023", `0069 not even the service role pins a one-prize game (${code(serviceCampaignOnOne)})`);
+    const campaignOnTwo = await a.from("campaigns").insert({ creator_id: A.id, name: `rls ${RUN} two`, pinned_wheel_id: twoWheel.id }).select("id");
+    check(!campaignOnTwo.error && campaignOnTwo.data?.length === 1, `0069 a campaign pins a two-prize game (${campaignOnTwo.error?.message ?? "ok"})`);
+    const scheduleOne = await a.from("wheels").update({ active_from: new Date().toISOString() }).eq("id", A.wheelId).select("id");
+    check(scheduleOne.error?.code === "22023", `0069 a one-prize game cannot be scheduled (${code(scheduleOne)})`);
+    const scheduleTwo = await a.from("wheels").update({ active_from: new Date().toISOString() }).eq("id", twoWheel.id).select("id");
+    check(!scheduleTwo.error && scheduleTwo.data?.length === 1, `0069 a two-prize game is scheduled (${scheduleTwo.error?.message ?? "ok"})`);
+    check(((await admin.from("campaigns").select("id").eq("creator_id", A.id)).data?.length ?? 0) === 1, "0069 only the two-prize campaign landed");
+
     // 0068: tenant boundaries, fan consent and deletion traces, on the hosted
     // project's real grants. Every negative is a direct PostgREST write that
     // the route layer never makes; the database alone must refuse it.
     console.log("\n0068 tenant boundaries, consent and link tokens:");
-    const code = (r) => r.error?.code ?? (r.data?.length ? "accepted" : "no-op");
     const creatorPause = await a.from("fan_passes").update({ self_excluded_at: new Date().toISOString(), is_active: false }).eq("id", A.passId).select("id");
     check(creatorPause.error?.code === "42501", `0068 a creator cannot pause its fan's link (${code(creatorPause)})`);
     const creatorToken = await a.from("fan_passes").update({ token: `abcd-${RUN}` }).eq("id", A.passId).select("id");
@@ -1008,9 +1110,24 @@ async function main() {
     const resolvedOther = await b.rpc("creator_link_pass", { p_token: A.token });
     check(!resolvedOther.error && (resolvedOther.data ?? []).length === 0, "0068 another creator cannot resolve A's token to its pass");
     const bSpin = must(await admin.from("spins").select("id").eq("creator_id", B.id).limit(1).single(), "0068 B's spin");
+    const aSpin = must(await admin.from("spins").select("id").eq("creator_id", A.id).limit(1).single(), "0068 A's spin");
+    // 0069 revoked INSERT on redemptions from authenticated: a session cannot
+    // insert an award at all (forged or its own), refused at the privilege
+    // before the 0068 tenant guard is reached; anon reaches no table (0068);
+    // the guard itself still refuses the forged row for the service role.
     const forgedRedemption = await a.from("redemptions").insert({ spin_id: bSpin.id, creator_id: A.id }).select("id");
-    check(forgedRedemption.error?.code === "42501", `0068 a creator cannot attach another creator's spin to a redemption (${code(forgedRedemption)})`);
-    const forgedMessage = await a.from("messages").insert({ creator_id: A.id, fan_id: B.fanId, sender: "creator", body: "hi" }).select("id");
+    check(forgedRedemption.error?.code === "42501", `0069 a creator cannot insert a redemption on another creator's spin (${code(forgedRedemption)})`);
+    const ownRedemption = await a.from("redemptions").insert({ spin_id: aSpin.id, creator_id: A.id }).select("id");
+    check(ownRedemption.error?.code === "42501", `0069 a creator cannot insert a redemption even on its own spin (${code(ownRedemption)})`);
+    const anonRedemption = await anonClient.from("redemptions").insert({ spin_id: aSpin.id, creator_id: A.id }).select("id");
+    check(anonRedemption.error?.code === "42501", `0068 anon cannot insert a redemption (${code(anonRedemption)})`);
+    const serviceForgedRedemption = await admin.from("redemptions").insert({ spin_id: bSpin.id, creator_id: A.id }).select("id");
+    check(serviceForgedRedemption.error?.code === "42501", `0068 not even the service role attaches another creator's spin to a redemption (${code(serviceForgedRedemption)})`);
+    check(((await admin.from("redemptions").select("id").eq("spin_id", bSpin.id).eq("creator_id", A.id)).data?.length ?? 0) === 0, "0068 no forged redemption landed");
+    // B's fan was erased by the reward fixture above, so C's fan is the
+    // cross-tenant target: A may act for C as the org's manager, but the row
+    // names A as the creator, and the guard checks the row, not the actor.
+    const forgedMessage = await a.from("messages").insert({ creator_id: A.id, fan_id: C.fanId, sender: "creator", body: "hi" }).select("id");
     check(forgedMessage.error?.code === "42501", `0068 a creator cannot message another creator's fan (${code(forgedMessage)})`);
     const fanSent = await a.from("messages").insert({ creator_id: A.id, fan_id: A.fanId, sender: "fan", body: "forged" }).select("id");
     check(fanSent.error?.code === "42501", `0068 a creator cannot insert a fan-sent message (${code(fanSent)})`);
@@ -1033,7 +1150,10 @@ async function main() {
     check(openReport.creator_snapshot?.display_name !== undefined && !("email" in (openReport.creator_snapshot ?? {})), "0068 a report carries a non-PII snapshot of the account from the start");
     const reportedClose = await admin.rpc("creator_storage_account", { p_operation: "begin", p_owner: A.id, p_actor: A.id, p_action: "account.self_close" });
     check(!reportedClose.error && reportedClose.data?.error === "reports_open", `0068 an account with an open report cannot close itself (${JSON.stringify(reportedClose.data ?? reportedClose.error?.message)})`);
-    check(((await admin.from("creator_storage_deletions").select("owner_id").eq("owner_id", A.id)).data?.length ?? 0) === 0, "0068 a refused self-close starts no deletion job");
+    // The 0058 fixture above seeded a paused deletion row for A; a refused
+    // self-close must leave it paused (a started job would be 'pending').
+    const aJobs = await admin.from("creator_storage_deletions").select("state").eq("owner_id", A.id);
+    check(!aJobs.error && (aJobs.data ?? []).every((j) => j.state === "paused"), `0068 a refused self-close starts no deletion job (${(aJobs.data ?? []).map((j) => j.state).join(",") || "none"})`);
     must(await admin.from("creator_reports").delete().eq("id", openReport.id).select("id").single(), "0068 remove the seeded report");
     // Invitations: uniform answers, consent before a seat, e-mail sync.
     const unknownInvite = await ownerClient.rpc("org_invite_creator", { p_org: org.id, p_email: `nobody-${RUN}@fanfunnel.test` });
