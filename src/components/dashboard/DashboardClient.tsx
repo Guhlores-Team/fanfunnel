@@ -93,6 +93,7 @@ interface DashboardLeaveRequest {
 
 export default function DashboardClient({
   isAdmin,
+  showAgency = false,
   email,
   initialWheel,
   initialOnboardingDismissed = false,
@@ -101,6 +102,9 @@ export default function DashboardClient({
   /** Server-derived (dashboard/page.tsx): an active admin per is_admin(), or
    *  demo mode. The only input to the Admin section gate. */
   isAdmin: boolean;
+  /** Server-derived (dashboard/page.tsx): owns an agency, holds a seat or is
+   *  managed by one. Only decides whether the Agency link shows. */
+  showAgency?: boolean;
   email: string | null;
   initialWheel: WheelConfig;
   initialOnboardingDismissed?: boolean;
@@ -419,6 +423,7 @@ export default function DashboardClient({
         // Server-derived gate: is_admin() via checkAdmin in dashboard/page.tsx
         // (or demo mode, decided there too). The /api/admin routes re-check.
         showAdmin={adminVisible}
+        showAgency={showAgency}
         accountName={accountName}
         accountSub={accountSub}
         showSignOut={!!email}
@@ -584,6 +589,7 @@ export default function DashboardClient({
         badges={{ prizes: pending, inbox: unread, admin: openReports }}
         // Same server-derived gate as the sidebar (never client state).
         showAdmin={adminVisible}
+        showAgency={showAgency}
         accountName={accountName}
         accountSub={accountSub}
         initials={accountInitials(accountName)}

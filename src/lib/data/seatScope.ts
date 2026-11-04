@@ -77,3 +77,42 @@ export async function listMySeatCreators(opts: { manage?: boolean } = {}): Promi
   }
   return out;
 }
+
+export interface AgencyStanding {
+  /** Owns an agency. */
+  ownsOrg: boolean;
+  /** Holds a staff seat in one. */
+  hasSeat: boolean;
+  /** Is a creator an agency manages (accepted an invite). */
+  inAgency: boolean;
+}
+
+/**
+ * A45: the caller's tie to an agency, read on its own session (orgs,
+ * org_members and its own profile, all under RLS). Decides whether the
+ * dashboard links to /agency and what /agency shows a managed creator. Never
+ * an authorization input: every agency action re-checks on the server.
+ */
+export async function getAgencyStanding(): Promise<AgencyStanding | null> {
+  if (!isSupabaseConfigured()) return null;
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
+  const [owned, seat, profile] = await Promise.all([
+    sb.from("orgs").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
+    sb.from("org_members").select("id", { count: "exact", head: true }).eq("profile_id", user.id),
+    sb.from("profiles").select("org_id").eq("id", user.id).maybeSingle(),
+  ]);
+  return {
+    ownsOrg: (owned.count ?? 0) > 0,
+    hasSeat: (seat.count ?? 0) > 0,
+    inAgency: !!(profile.data as { org_id: string | null } | null)?.org_id,
+  };
+}
+
+/** Whether the dashboard shows the Agency link. Demo: yes (its /agency explains agencies). */
+export async function showAgencyLink(): Promise<boolean> {
+  if (!isSupabaseConfigured()) return true;
+  const s = await getAgencyStanding();
+  return !!s && (s.ownsOrg || s.hasSeat || s.inAgency);
+}

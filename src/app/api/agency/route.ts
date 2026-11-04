@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAgencyOverview } from "@/lib/data";
 import { limitRoute } from "@/lib/api/limit";
+import { getAgencyStanding } from "@/lib/data/seatScope";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 
 // The agency roll-up for the org the signed-in user owns or belongs to.
@@ -11,5 +12,9 @@ export async function GET(req: Request) {
   // create form that keeps nothing.
   if (!isSupabaseConfigured()) return NextResponse.json({ org: null, demo: true });
   const overview = await getAgencyOverview();
-  return NextResponse.json(overview);
+  if (overview) return NextResponse.json(overview);
+  // A45: a creator an agency manages has no console of its own; the page
+  // explains what the agency can do instead of offering to start one.
+  const standing = await getAgencyStanding();
+  return NextResponse.json(standing?.inAgency ? { org: null, managed: true } : null);
 }

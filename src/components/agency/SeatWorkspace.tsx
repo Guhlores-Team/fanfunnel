@@ -40,12 +40,12 @@ export default function SeatWorkspace() {
   const active = tabs.includes(tab) ? tab : tabs[0];
 
   return (
-    <section aria-labelledby={`${id}-title`} className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-5">
+    <section aria-labelledby={`${id}-title`} className="mt-8 rounded-2xl border border-line bg-surface p-5">
       <h2 id={`${id}-title`} className="text-lg font-bold">Your seat</h2>
-      <p className="mt-1 text-sm text-white/50">Work for the creators your agency assigned to you. You only see the jobs your role allows.</p>
+      <p className="mt-1 text-sm text-muted">Work for the creators your agency assigned to you. You only see the jobs your role allows.</p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="text-sm">
-          <span className="block text-white/60">Creator</span>
+          <span className="block text-muted">Creator</span>
           <select
             value={seat.creatorId}
             onChange={(e) => {
@@ -54,7 +54,7 @@ export default function SeatWorkspace() {
               if (next) setTab(seatTabs(next)[0] ?? "inbox");
               setMsg("");
             }}
-            className="mt-1 rounded-lg border border-white/15 bg-zinc-900 px-3 py-2"
+            className="ff-input mt-1 w-auto"
           >
             {seats.map((s) => (
               <option key={s.creatorId} value={s.creatorId}>{s.displayName}</option>
@@ -69,7 +69,7 @@ export default function SeatWorkspace() {
               type="button"
               aria-selected={active === t}
               onClick={() => setTab(t)}
-              className={`rounded-lg px-3 py-2 text-sm font-semibold ${active === t ? "bg-white text-black" : "border border-white/15 text-white/70"}`}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold ${active === t ? "bg-[var(--brand)] text-[var(--brand-ink)]" : "border border-line text-muted"}`}
             >
               {t === "inbox" ? "Inbox" : "Prizes to fulfil"}
             </button>
@@ -124,8 +124,8 @@ function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: str
     }
   }
 
-  if (!threads) return <p className="text-sm text-white/40">Loading…</p>;
-  if (threads.length === 0) return <p className="text-sm text-white/40">No conversations yet.</p>;
+  if (!threads) return <p className="text-sm text-muted">Loading…</p>;
+  if (threads.length === 0) return <p className="text-sm text-muted">No conversations yet.</p>;
   return (
     <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
       <ul className="space-y-1">
@@ -135,11 +135,11 @@ function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: str
               type="button"
               aria-current={fanId === t.fanId}
               onClick={() => { setFanId(t.fanId); void loadThread(t.fanId); }}
-              className={`w-full rounded-lg px-3 py-2 text-left text-sm ${fanId === t.fanId ? "bg-white/15" : "hover:bg-white/10"}`}
+              className={`w-full rounded-lg px-3 py-2 text-left text-sm ${fanId === t.fanId ? "bg-surface-2" : "hover:bg-surface-2"}`}
             >
               <span className="font-semibold">{t.fanName}</span>
-              {t.unread > 0 && <span className="ml-2 rounded-full bg-pink-500 px-2 text-xs text-black">{t.unread}</span>}
-              <span className="block truncate text-white/50">{t.lastBody}</span>
+              {t.unread > 0 && <span className="ml-2 rounded-full bg-[var(--brand)] px-2 text-xs text-[var(--brand-ink)]">{t.unread}</span>}
+              <span className="block truncate text-muted">{t.lastBody}</span>
             </button>
           </li>
         ))}
@@ -148,12 +148,12 @@ function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: str
         <div>
           <ol className="max-h-80 space-y-2 overflow-y-auto">
             {messages.map((m) => (
-              <li key={m.id} className={`rounded-lg px-3 py-2 text-sm ${m.sender === "creator" ? "ml-8 bg-pink-500/20" : "mr-8 bg-white/10"}`}>{m.body}</li>
+              <li key={m.id} className={`rounded-lg px-3 py-2 text-sm ${m.sender === "creator" ? "ml-8 bg-[color-mix(in_oklab,var(--brand)_18%,transparent)]" : "mr-8 bg-surface-2"}`}>{m.body}</li>
             ))}
           </ol>
-          <label htmlFor={replyId} className="mt-3 block text-sm text-white/60">Reply</label>
-          <textarea id={replyId} value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={2000} rows={2} className="mt-1 w-full rounded-lg border border-white/15 bg-zinc-900 px-3 py-2 text-sm" />
-          <button type="button" onClick={() => void send()} disabled={busy || !draft.trim()} className="mt-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-black disabled:opacity-50">
+          <label htmlFor={replyId} className="mt-3 block text-sm text-muted">Reply</label>
+          <textarea id={replyId} value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={2000} rows={2} className="ff-input mt-1 w-full text-sm" />
+          <button type="button" onClick={() => void send()} disabled={busy || !draft.trim()} className="mt-2 btn-brand rounded-lg px-3 py-2 text-sm font-semibold">
             {busy ? "Sending…" : "Send"}
           </button>
         </div>
@@ -191,14 +191,14 @@ function SeatPrizes({ creatorId, onError }: { creatorId: string; onError: (m: st
     }
   }
 
-  if (!items) return <p className="text-sm text-white/40">Loading…</p>;
-  if (items.length === 0) return <p className="text-sm text-white/40">Nothing waiting to be fulfilled.</p>;
+  if (!items) return <p className="text-sm text-muted">Loading…</p>;
+  if (items.length === 0) return <p className="text-sm text-muted">Nothing waiting to be fulfilled.</p>;
   return (
     <ul className="space-y-2">
       {items.map((it) => (
-        <li key={it.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white/5 px-3 py-2 text-sm">
+        <li key={it.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface px-3 py-2 text-sm">
           <span><span className="font-semibold">{it.prizeLabel}</span> for {it.fanName}</span>
-          <button type="button" onClick={() => void fulfil(it.id)} disabled={busy !== null} className="rounded-lg border border-white/20 px-3 py-1 font-semibold disabled:opacity-50" aria-label={`Mark ${it.prizeLabel} for ${it.fanName} fulfilled`}>
+          <button type="button" onClick={() => void fulfil(it.id)} disabled={busy !== null} className="rounded-lg border border-line px-3 py-1 font-semibold disabled:opacity-50" aria-label={`Mark ${it.prizeLabel} for ${it.fanName} fulfilled`}>
             {busy === it.id ? "Saving…" : "Mark fulfilled"}
           </button>
         </li>

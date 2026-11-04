@@ -20,7 +20,7 @@ export type Tab =
   | "admin";
 
 // 24×24 stroke paths (1.7px line icons) from the Command Center prototype.
-export const ICON: Record<Tab | "signout" | "setup", string> = {
+export const ICON: Record<Tab | "signout" | "setup" | "agency", string> = {
   today: "M3 10.6 12 3l9 7.6M5 9.2V21h14V9.2",
   inbox: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z",
   prizes:
@@ -37,7 +37,23 @@ export const ICON: Record<Tab | "signout" | "setup", string> = {
   admin: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10ZM9.5 12l2 2 3.5-4",
   signout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   setup: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+  agency: "M3 21h18M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M15 9h2a2 2 0 0 1 2 2v10M9 7h2M9 11h2M9 15h2",
 };
+
+/**
+ * A45: the Agency console lives on its own page (/agency), so it is a link,
+ * not a section. It shows in the Account group only when the server says the
+ * viewer owns an agency, holds a seat, or is a creator one manages. A full
+ * page load on purpose: unsaved edits still get the browser's leave prompt.
+ */
+export function AgencyNavLink({ className, iconSize = 19 }: { className: string; iconSize?: number }) {
+  return (
+    <a href="/agency" data-testid="nav-agency" className={className}>
+      <Icon d={ICON.agency} size={iconSize} className="text-[#8b8494]" />
+      <span className="flex-1">Agency</span>
+    </a>
+  );
+}
 
 export function Icon({ d, size = 19, className = "" }: { d: string; size?: number; className?: string }) {
   return (
@@ -113,6 +129,7 @@ export function Sidebar({
   onSelect,
   badges,
   showAdmin,
+  showAgency = false,
   accountName,
   accountSub,
   showSignOut,
@@ -124,6 +141,8 @@ export function Sidebar({
   badges: Partial<Record<Tab, number>>;
   /** Server-derived (`is_admin()` via checkAdmin) — never client state. */
   showAdmin: boolean;
+  /** Server-derived agency standing (A45) — never client state. */
+  showAgency?: boolean;
   accountName: string;
   accountSub: string;
   showSignOut: boolean;
@@ -261,6 +280,11 @@ export function Sidebar({
                   </li>
                 );
               })}
+              {g.title === "Account" && showAgency && (
+                <li className="flex">
+                  <AgencyNavLink className={`${itemBase} w-full font-medium text-[#b8b2c0] hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] hover:text-ink`} />
+                </li>
+              )}
             </ul>
           </div>
         ))}

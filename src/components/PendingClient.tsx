@@ -105,6 +105,9 @@ export default function PendingClient({
           Thanks! We&rsquo;ll review your details and email{" "}
           <span className="text-ink">{email}</span> when your account is approved.
         </p>
+        <p className="mt-2 text-xs text-muted text-pretty">
+          Added to an agency as staff? Your seat starts working once you&rsquo;re approved.
+        </p>
         <form action="/auth/signout" method="post" className="mt-6">
           <button className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-muted transition hover:text-ink">
             Sign out
@@ -124,6 +127,11 @@ export default function PendingClient({
         <p className="mt-2 text-sm text-muted text-pretty">
           FanFunnel creator accounts are approved by hand, and they&rsquo;re free
           for now. Tell us about you and we&rsquo;ll review it shortly.
+        </p>
+        <p data-testid="pending-seat-note" className="mt-2 text-xs text-muted text-pretty">
+          Joining an agency as staff (chatter, fulfiller, manager)? Request access here
+          too. Your agency seat starts working once this account is approved; then
+          you&rsquo;ll find it under Agency in your dashboard.
         </p>
       </div>
 

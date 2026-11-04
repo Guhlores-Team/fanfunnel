@@ -6,6 +6,7 @@ import { resolveSection } from "@/components/dashboard/dashboardSection";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { checkAdmin } from "@/lib/auth/admin";
 import { getWheel, getMyApprovalStatus, getOnboardingDismissed } from "@/lib/data";
+import { showAgencyLink } from "@/lib/data/seatScope";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import AdminMfaBanner from "@/components/auth/AdminMfaBanner";
 
@@ -52,9 +53,12 @@ export default async function DashboardPage({
     if (status !== "approved") redirect("/pending");
   }
 
-  const [wheelResult, onboardingDismissed] = await Promise.all([
+  // A45: the Agency link shows only for an agency owner, a staff seat or a
+  // creator an agency manages (read server-side; /agency re-checks itself).
+  const [wheelResult, onboardingDismissed, showAgency] = await Promise.all([
     getWheel(),
     getOnboardingDismissed(),
+    showAgencyLink(),
   ]);
   const initialWheel = wheelResult ?? SAMPLE_WHEEL;
   // ?section= deep link (the /admin route redirects to ?section=admin).
@@ -68,6 +72,7 @@ export default async function DashboardPage({
       {adminNeedsMfa && <AdminMfaBanner />}
       <DashboardClient
         isAdmin={isAdmin}
+        showAgency={showAgency}
         email={email}
         initialWheel={initialWheel}
         initialOnboardingDismissed={onboardingDismissed}
