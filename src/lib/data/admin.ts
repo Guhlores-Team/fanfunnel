@@ -462,11 +462,6 @@ export async function decideCreatorApplication(
   const sb = await createClient();
   if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 
-  // A30: only a real transition to approved leaves a notice and an e-mail, so
-  // re-approving (or approving an admin's own row) never notifies twice.
-  const { data: before } = await sb.from("profiles").select("approval_status").eq("id", profileId).maybeSingle();
-  const wasApproved = (before as { approval_status?: string } | null)?.approval_status === "approved";
-
   const now = new Date().toISOString();
   const { error: aErr } = await sb
     .from("creator_applications")
@@ -474,14 +469,15 @@ export async function decideCreatorApplication(
     .eq("profile_id", profileId);
   if (aErr) return { error: "db_error" };
 
-  const { data: updated, error: pErr } = await sb
-    .from("profiles")
-    .update({ approval_status: decision })
-    .eq("id", profileId)
-    .select("id")
-    .maybeSingle();
+  // A30: only a real transition to approved leaves a notice and an e-mail, so
+  // re-approving (or two admins approving at once) never notifies twice: the
+  // approve update itself matches only a row that is not approved yet, and
+  // only the request whose update changed the row notifies.
+  let update = sb.from("profiles").update({ approval_status: decision }).eq("id", profileId);
+  if (decision === "approved") update = update.neq("approval_status", "approved");
+  const { data: updated, error: pErr } = await update.select("id").maybeSingle();
   if (pErr) return { error: "db_error" };
-  if (decision === "approved" && updated && !wasApproved) {
+  if (decision === "approved" && updated) {
     const svc = createServiceClient();
     await leaveApprovalNotice(svc, profileId);
     runAfterResponse(() => sendApprovalEmail(svc, profileId));

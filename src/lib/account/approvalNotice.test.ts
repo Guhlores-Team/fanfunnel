@@ -37,7 +37,14 @@ function chain(table: string) {
             if (!noticeError) notices.push(insert.args[0] as Record<string, unknown>);
             return Promise.resolve({ data: null, error: noticeError }).then(res);
           }
-          if (table === "profiles" && ops.some((o) => o.name === "update")) return Promise.resolve({ data: updatedRow, error: null }).then(res);
+          if (table === "profiles" && ops.some((o) => o.name === "update")) {
+            // The row as stored is `before`; an approve matches it only while it is not approved yet.
+            const skips = ops.some((o) => o.name === "neq" && o.args[0] === "approval_status" && o.args[1] === before);
+            const decided = (ops.find((o) => o.name === "update")?.args[0] as { approval_status?: string } | undefined)?.approval_status;
+            const data = skips ? null : updatedRow;
+            if (data && decided) before = decided;
+            return Promise.resolve({ data, error: null }).then(res);
+          }
           if (table === "profiles") return Promise.resolve({ data: { approval_status: before }, error: null }).then(res);
           return Promise.resolve({ data: null, error: null }).then(res);
         };
@@ -86,6 +93,13 @@ async function main() {
   check("…says it is approved and links to the dashboard", /approved/i.test(sent[0].subject) && sent[0].text.includes("https://ff.example/dashboard"));
   check("…and names nobody (no address or id in the body)", !sent[0].text.includes("new.creator") && !sent[0].html.includes("new.creator") && !sent[0].text.includes(CREATOR));
 
+  // A second approve of the same (now approved) row: the guarded update
+  // matches nothing, so a double-click or two admins at once notify only once.
+  notices.length = 0; sent.length = 0;
+  r = await decideCreatorApplication(CREATOR, "approved");
+  await flush();
+  check("a second, racing approval of the now-approved row notifies nobody", "ok" in r && notices.length === 0 && sent.length === 0);
+
   // --- no notification without a real transition --------------------------------
   notices.length = 0; sent.length = 0;
   before = "approved";
@@ -96,6 +110,7 @@ async function main() {
   r = await decideCreatorApplication(CREATOR, "rejected");
   await flush();
   check("a rejection leaves no approval notice or e-mail", "ok" in r && notices.length === 0 && sent.length === 0);
+  before = "pending";
   updatedRow = null;
   r = await decideCreatorApplication(CREATOR, "approved");
   await flush();
@@ -103,10 +118,12 @@ async function main() {
   updatedRow = { id: CREATOR };
 
   // --- failures never undo the approval -----------------------------------------
+  before = "pending";
   noticeError = { code: "23514" };
   r = await decideCreatorApplication(CREATOR, "approved");
   check("a failed notice insert still approves", "ok" in r);
   noticeError = null;
+  before = "pending";
   accept = false;
   after.length = 0;
   r = await decideCreatorApplication(CREATOR, "approved");
