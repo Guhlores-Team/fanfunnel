@@ -1,5 +1,8 @@
 # Checkpoint — 2026-10-31 (work paused by owner request)
 
+> Superseded by [`CHECKPOINT_2026-11-04.md`](CHECKPOINT_2026-11-04.md): batch 3 is now
+> integrated and verified on `orch/fixes`.
+
 Everything below is committed and pushed to GitHub on the branches named here.
 `main` and Production are untouched. The TEST database is at migration **0061**.
 
