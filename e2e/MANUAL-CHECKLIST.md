@@ -90,9 +90,13 @@ TEST environment. It does not approve Production, data copying or a merge to mai
 - [ ] Play once; exactly one credit is used and a win appears.
 - [ ] Fulfil that TEST win in the creator dashboard.
 
-## 5. Load / concurrency (optional)
-- [ ] Many fans playing at once never double-spend (the current atomic play/finalization path). Run it
-      against the test database, never production.
+## 5. Load / concurrency
+Automated: `npm run stress` (A26, `docs/handoff/STRESS_RESULTS.md`) drives the atomic play path with
+hundreds of concurrent fans on a disposable local database and floods the built app in demo mode,
+and fails on any oversell, double-spend, lost replay, 5xx or latency regression. Run it locally
+before a release; it never touches a hosted project.
+- [ ] `npm run stress` passes on the release commit (no FAIL lines; KNOWN-BUG lines are listed in
+      STRESS_RESULTS.md).
 
 ## 6. Home-screen install (RM-4: real iPhone on iOS 16.4+ and a real Android phone, Preview)
 Automated e2e covers the manifest, icons, headers and the install card in an emulated
