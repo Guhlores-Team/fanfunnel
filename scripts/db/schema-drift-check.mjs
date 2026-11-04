@@ -40,6 +40,10 @@
 // link trace. The stub carries Supabase's default grants so these run
 // against the hosted project's real privileges.
 // Campaign writes for another creator need 'manage' (A28 residual).
+// And the spin-resolution probe (0070, spinResolutionProbe.mjs): a play
+// resolves its game exactly once per prepare and per commit, every lock and
+// the context use that one game, and a campaign pin flipping right after the
+// resolution cannot split the wheel lock and the prize lock across two games.
 //
 // Needs Postgres 16 binaries (initdb/pg_ctl/psql) on PATH, in $PG_BIN, or
 // under /usr/lib/postgresql/*/bin. No TCP port is opened (unix socket only),
@@ -73,6 +77,7 @@ import { probeHardening } from "./hardeningProbe.mjs";
 import { probeSeatScopes } from "./seatScopeProbe.mjs";
 import { probeDbSecurity } from "./dbSecurityProbe.mjs";
 import { probeIntegration } from "./integrationProbe.mjs";
+import { probeSpinResolution } from "./spinResolutionProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -1479,6 +1484,9 @@ try {
     const hardening = await probeHardening(db, psql, psqlAsync);
     if (hardening.bad.length) { failures++; for (const message of hardening.bad) console.log(`FAIL  ${db}: 0065 hardening: ${message}`); }
     else console.log(`PASS  ${db}: 0065 hardening: ${hardening.checks} checks (A44 archive/delete lock order, A17 first-admin race, A11 retention, A12 indexes)`);
+    const resolution = await probeSpinResolution(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"spin resolution SQL failed");return r.stdout;});
+    if (resolution.bad.length) { failures++; for (const message of resolution.bad) console.log(`FAIL  ${db}: 0070 spin resolution: ${message}`); }
+    else console.log(`PASS  ${db}: 0070 spin resolution: ${resolution.checks} checks (one resolution per prepare and per commit; a campaign pin flip after the resolution leaves every lock and the context on the resolved game)`);
     const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
     if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }

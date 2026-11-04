@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { withActorContext, mintActorContext } from "../db/actorContextFixture.mjs";
-import { parallel, summarize, timed, tally } from "./metrics.mjs";
+import { parallel, timed, tally } from "./metrics.mjs";
 
 const quote = s => `'${String(s).replaceAll("'", "''")}'`;
 const json = v => `${quote(JSON.stringify(v))}::jsonb`;
@@ -24,6 +24,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** Commits that all contend on ONE prize or fan row serialise on its lock by design, so their tail is the
  *  queue depth times the service time: those ceilings add `perContender` ms per concurrent caller. */
 export const DB_THRESHOLDS = { commit: 400, perContender: 10, prepare: 250, grant: 400, save: 600, import500: 4000, retention: 3000, invariants: 5000, cascade: 15000 };
+/** D4: deadlock retries allowed between commit_spin_attempt and a campaign pin flip (0 since 0070; a small bound keeps a regression from hiding behind one stray retry). */
+export const D4_DEADLOCK_BOUND = 0;
 
 export async function runDbScenarios(report, { sql, quick = false, pool, only = null }) {
   const N = quick ? 0.3 : 1;
@@ -244,7 +246,8 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const n = scale(40);
       report.scenario("D4", `campaign pin and per-link pin flip between two games while ${n} fans play`);
       const c = await addCreator(), camp = uid();
-      const A = await addWheel(c, { title: "A", prizes: [{ label: "A1", weight: 1 }] }), B = await addWheel(c, { title: "B", active: false, prizes: [{ label: "B1", weight: 1 }] });
+      // Two prizes per game: 0069 refuses pinning a game with fewer (campaign and link).
+      const A = await addWheel(c, { title: "A", prizes: [{ label: "A1", weight: 1 }, { label: "A2", weight: 1 }] }), B = await addWheel(c, { title: "B", active: false, prizes: [{ label: "B1", weight: 1 }, { label: "B2", weight: 1 }] });
       await sql(`insert into public.campaigns(id,creator_id,name,pinned_wheel_id) values(${quote(camp)},${quote(c)},'stress',${quote(A.id)});`);
       const fans = await grantFans(c, null, n, 3, camp), series = []; let flips = 0, pins = 0;
       let playing = true;
@@ -267,24 +270,23 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const [results] = await Promise.all([parallel(fans.flatMap(f => [f, f, f]), pool.size * 2, who => play(who, { series })).finally(() => { playing = false; }), pinner()]);
       const dl = deadlocks.splice(0), dlDetail = dl.length ? `${dl.length} deadlocks; ${await named(dl[0])}` : undefined;
       report.number("outcomes", outcomes(results)); report.number("flips", { campaign: flips, link: pins }); report.number("deadlocks_retried", dl.length);
-      // KNOWN-BUG COMMIT_RESOLVES_WHEEL_PER_STATEMENT (see STRESS_RESULTS.md): commit_spin_attempt
-      // evaluates _resolved_spin_wheel(p.id) once per statement, so a campaign-pin change between
-      // its wheel lock and its prize lock makes it lock the other game's prizes and then wait for
-      // an FK share lock on a wheel it never locked: 40P01 against the commits that locked in order.
-      report.known("COMMIT_RESOLVES_WHEEL_PER_STATEMENT", dl.length === 0, "no deadlock between commit_spin_attempt and a campaign pin change", dlDetail);
+      // COMMIT_RESOLVES_WHEEL_PER_STATEMENT, fixed by 0070 (see STRESS_RESULTS.md): commit_spin_attempt
+      // resolves the game once, under the fan and pass locks, and locks the wheel and the prizes of
+      // that one game, so a campaign-pin change mid-call can no longer make it hold game A's wheel
+      // and game B's prizes (257 deadlock retries per run before the fix). A regression fails here.
+      report.check(dl.length <= D4_DEADLOCK_BOUND, `at most ${D4_DEADLOCK_BOUND} deadlock(s) between commit_spin_attempt and a campaign pin change (0070)`, dlDetail ?? dl.length);
       await noErrors(results, "pin flips during play");
-      report.known("COMMIT_RESOLVES_WHEEL_PER_STATEMENT", results.every(r => st(r) === "committed"), "every play commits on whichever game the pin resolved to (deadlocked plays retried up to 12 times)", outcomes(results));
+      report.check(results.every(r => st(r) === "committed"), "every play commits on whichever game the pin resolved to", outcomes(results));
       report.check((await scalar(`select count(*) from public.spins where creator_id=${quote(c)} and wheel_id not in(${quote(A.id)},${quote(B.id)});`)) === "0", "every spin is on A or B");
       report.number("spins_per_game", Object.fromEntries((await sql(`select w.title,count(*) from public.spins s join public.wheels w on w.id=s.wheel_id where s.creator_id=${quote(c)} group by 1 order by 1;`)).split("\n").map(l => l.split("\t"))));
-      if (dl.length === 0) report.latency("commit", series, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * pool.size * 2);
-      else report.number("commit_latency_including_deadlock_waits_ms", summarize(series));
+      report.latency("commit", series, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * pool.size * 2);
       await invariants(c, "pins"); report.finish();
     }
     // ============================================================ D5 bulk import + grants under load
     if (want("D5")) {
       const rows = 500, par = 5, n = scale(40);
       report.scenario("D5", `a ${rows}-row import replayed ${par}x in parallel plus concurrent grants/edits while ${n} fans play`);
-      const c = await addCreator(), w = await addWheel(c, { prizes: [{ label: "A", weight: 1 }] });
+      const c = await addCreator(), w = await addWheel(c, { prizes: [{ label: "A", weight: 1 }, { label: "B", weight: 1 }] });
       const fans = await grantFans(c, w.id, n, 2), series = [], imports = [], grants = [];
       const slots = Array.from({ length: rows }, (_, i) => ({ name: `Imported ${i}`, spins: 2, amountCents: 0, campaignId: null, wheelId: null, error: null }));
       const requestHash = hash(canonical(["fan-import-v1", slots])), batch = randomUUID();
@@ -387,7 +389,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.latency(`commit at scale (${pool.size * 2} in flight over ${fansN} fans)`, seedSeries, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * pool.size * 2);
       const inv = []; await timed(inv, () => ledger("at scale")); report.latency("run_reward_ledger_invariants", inv, DB_THRESHOLDS.invariants);
       // Live creator keeps playing while maintenance runs.
-      const live = await addCreator(), lw = await addWheel(live, { prizes: [{ label: "A", weight: 1 }] }), lfans = await grantFans(live, lw.id, active, 3), series = [], ret = [], cascade = [];
+      const live = await addCreator(), lw = await addWheel(live, { prizes: [{ label: "A", weight: 1 }, { label: "B", weight: 1 }] }), lfans = await grantFans(live, lw.id, active, 3), series = [], ret = [], cascade = [];
       const victim = lfans[0];
       const maintenance = async () => {
         await sleep(20);
