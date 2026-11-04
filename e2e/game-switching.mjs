@@ -44,7 +44,7 @@ export async function gameSwitchingJourney(browser, { step, assert }, sink, ctx)
       const beforeGame = games.find((w) => w.id === state.before);
       assert(beforeGame && beforeGame.id !== state.scratch.id, "a different game is live before scheduling");
       state.beforeTitle = beforeGame.title;
-      state.wheelId = games.find((w) => (w.gameKind ?? "wheel") === "wheel" && w.gameReady !== false && !w.archivedAt)?.id;
+      state.wheelId = games.find((w) => (w.gameKind ?? "wheel") === "wheel" && w.gameReady !== false && !w.archivedAt && w.prizeCount >= 2)?.id; // an empty game can't be chosen (QA 2026-11-04)
       assert(state.wheelId, "a playable wheel exists to choose for a campaign");
       assert(await page.getByTestId("live-game").getByTestId("kind-badge").count() === 1, "live line carries a visible kind badge");
       const switcher = page.getByRole("region", { name: "Game switcher" });
