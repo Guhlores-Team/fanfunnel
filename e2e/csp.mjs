@@ -34,7 +34,7 @@ export async function cspJourney(_page, { step, assert }, ctx) {
   });
 
   await step("csp: public and API routes get the static policy and isolation headers", async () => {
-    for (const path of ["/", "/privacy", "/spin/csp-no-such-link", "/api/me"]) {
+    for (const path of ["/", "/privacy", "/spin/csp-no-such-link", "/dashboard/csp-no-such-page", "/api/me"]) {
       const res = await ctx.request.get(BASE + path);
       const h = res.headers();
       const script = directive(h["content-security-policy"] ?? "", "script-src");

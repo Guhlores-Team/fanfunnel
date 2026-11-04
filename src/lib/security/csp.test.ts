@@ -30,7 +30,7 @@ function parse(csp: string): Map<string, string[]> {
 const SB = "https://abcdefghijklmnop.supabase.co";
 
 async function main() {
-  const { buildCsp, createNonce, supabaseOrigins } = await import("./csp");
+  const { buildCsp, createNonce, supabaseOrigins, STRICT_CSP_PAGES } = await import("./csp");
   const { getScriptNonceFromHeader } = await import(
     "next/dist/server/app-render/get-script-nonce-from-header"
   );
@@ -111,7 +111,7 @@ async function main() {
   const { needsSessionRefresh } = await import("../supabase/middleware");
   const event = { waitUntil() {} } as unknown as Parameters<typeof proxy>[1];
   const seen = new Set<string>();
-  for (const path of ["/dashboard", "/dashboard/settings", "/admin", "/agency", "/pending", "/login", "/mfa"]) {
+  for (const path of ["/dashboard", "/admin", "/agency", "/pending", "/login", "/mfa", "/dashboard"]) {
     const res = await proxy(new NextRequest(`https://fanfunnel.test${path}`), event);
     const header = res.headers.get("content-security-policy") ?? "";
     const n = getScriptNonceFromHeader(header);
@@ -120,9 +120,11 @@ async function main() {
     seen.add(n!);
   }
   check("every request gets its own nonce", seen.size === 7);
-  for (const path of ["/c/caf%C3%A9", "/spin/a%20b"]) {
+  // Valid percent paths on public routes, and unknown paths under the proxied
+  // ones: those are answered by prerendered HTML (its scripts have no nonce).
+  for (const path of ["/c/caf%C3%A9", "/spin/a%20b", "/dashboard/settings", "/admin/x", "/signup", "/dashboard%20x"]) {
     const res = await proxy(new NextRequest(`https://fanfunnel.test${path}`), event);
-    check(`${path}: valid percent path on a public route is not given a nonce policy`, !res.headers.get("content-security-policy") && !res.headers.get("x-middleware-request-content-security-policy"));
+    check(`${path}: not given a nonce policy`, !res.headers.get("content-security-policy") && !res.headers.get("x-middleware-request-content-security-policy"));
   }
 
   // A nonce policy on a prerendered page would block its scripts (they carry
@@ -137,6 +139,10 @@ async function main() {
   })(join("src", "app"));
   const strictPages = pages.filter(({ path }) => needsSessionRefresh(path));
   check("found the signed-in pages", strictPages.length >= 6);
+  check(
+    "the strict list is exactly the pages the proxy runs on",
+    JSON.stringify(strictPages.map((p) => p.path).sort()) === JSON.stringify([...STRICT_CSP_PAGES].sort())
+  );
   for (const { path, file } of strictPages) {
     const src = readFileSync(file, "utf8");
     check(`${path} never opts into static output`, !/export\s+const\s+(revalidate|dynamic\s*=\s*["']force-static)|generateStaticParams/.test(src));

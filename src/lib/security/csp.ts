@@ -1,11 +1,12 @@
 // Content-Security-Policy for every response. Two script policies:
 //
-// - "strict" (per request, set by src/proxy.ts): the signed-in surfaces the
-//   proxy already runs on (/dashboard, /admin, /agency, /pending, /login,
-//   /signup, /mfa). These are dynamically rendered, so Next reads the nonce
-//   from the request's CSP header and stamps it on its own scripts. Only
-//   nonced scripts (and what they load, via 'strict-dynamic') run: an injected
-//   <script> or inline handler is refused.
+// - "strict" (per request, set by src/proxy.ts): the signed-in pages the
+//   proxy already runs on (STRICT_CSP_PAGES below: /dashboard, /admin,
+//   /agency, /pending, /login, /mfa). They are dynamically rendered, so Next
+//   reads the nonce from the request's CSP header and stamps it on its own
+//   scripts. Only nonced scripts (and what they load, via 'strict-dynamic')
+//   run: an injected <script> or inline handler is refused. Unknown paths
+//   under them keep the public policy (see STRICT_CSP_PAGES).
 // - "public" (static, from next.config.ts): every other route. /, /c/[slug]
 //   (ISR), /privacy, /terms, /forgot-password and /reset-password are
 //   prerendered, and a prerendered page has no per-request nonce to carry.
@@ -21,6 +22,16 @@
 // variables throughout. Dependency-free: next.config.ts imports this.
 
 export type CspMode = "strict" | "public";
+
+/** The pages that get the strict policy: every page the proxy runs on (all
+ *  dynamically rendered). Exact paths only: an unknown path under them (say
+ *  /dashboard/x or /signup) is answered by the prerendered not-found page,
+ *  whose scripts carry no nonce, so it keeps the public policy. */
+export const STRICT_CSP_PAGES: readonly string[] = ["/dashboard", "/admin", "/agency", "/pending", "/login", "/mfa"];
+
+export function usesStrictCsp(pathname: string): boolean {
+  return STRICT_CSP_PAGES.includes(pathname);
+}
 
 export interface CspOptions {
   mode: CspMode;

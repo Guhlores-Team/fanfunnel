@@ -1,6 +1,6 @@
 import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { needsSessionRefresh, updateSession } from "@/lib/supabase/middleware";
-import { buildCsp, createNonce } from "@/lib/security/csp";
+import { buildCsp, createNonce, usesStrictCsp } from "@/lib/security/csp";
 
 // Next 16 renamed the `middleware` file convention to `proxy` (same behavior).
 // This refreshes the Supabase session before the auth pages render. It runs
@@ -21,7 +21,8 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.json({ error: "bad_request" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
   if (!needsSessionRefresh(request.nextUrl.pathname)) return NextResponse.next();
-  // Every page here is dynamically rendered, so Next reads the nonce from the
+  if (!usesStrictCsp(request.nextUrl.pathname)) return await updateSession(request);
+  // These pages are dynamically rendered, so Next reads the nonce from the
   // request's CSP header and puts it on its scripts. updateSession forwards
   // the request headers on NextResponse.next({ request }).
   const csp = buildCsp({

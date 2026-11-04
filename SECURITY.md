@@ -20,6 +20,7 @@ bypasses RLS) is used **server-side only**, never shipped to the client.
 | **Fan links** | `/spin/<token>` uses unguessable random tokens. Spins are recorded **server-side & atomically** (`claim_spin`), so a fan can't tamper the page to mint spins. |
 | **Auth** | Supabase Auth (bcrypt passwords, JWT sessions). |
 | **Rate limiting** | `/api/spin` and the public GETs (recent wins, leaderboard, fan messages) are rate-limited (`src/lib/rateLimit.ts`). When `KV_REST_API_URL`/`KV_REST_API_TOKEN` (Vercel's Upstash integration) or `UPSTASH_REDIS_REST_URL`/`_TOKEN` are set, the counters are shared across every instance in Upstash Redis. Unset, or if Redis fails, it falls back to per-instance memory (bounded at 10,000 windows; when full it evicts expired, then under-limit, then soonest-to-reset windows, so it never refuses a first request for capacity and a blocked caller stays blocked). Production without a shared store is reported by the maintenance cron (Admin › Errors) and shown in Admin › System health; configure one before go-live. Every API route handler has a per-IP default limit (`limitRoute`, pinned by `routeLimits.test.ts`). |
+| **Content-Security-Policy** | Enforced on every response (`src/lib/security/csp.ts`). The signed-in pages (dashboard, admin, agency, pending, login, mfa) get a per-request nonce from the proxy: `script-src 'self' 'nonce-…' 'strict-dynamic'`, so an injected `<script>`, inline handler or `eval` does not run. Every other route gets a static policy that keeps prerendering and ISR: `script-src 'self' 'unsafe-inline'` (no eval, no other script origin). Both allow connections only to this origin and Supabase, and no plugins, `<base>` hijacking or framing by other sites. Violations are reported to Admin › Errors (origin only). Pinned by `csp.test.ts` and `e2e/csp.mjs`; e2e and a11y fail on any violation. Pages also send COOP `same-origin`; the API sends CORP `same-origin`. |
 | **Agency seats** | Per-command RLS split + `can_act_for(creator, perm)` so a chatter/fulfiller seat can only do its job, only for assigned creators. Org tables check each other through SECURITY DEFINER helpers (no policy recursion), and `org_account_stats` shows a seat only the creators it may view. Every org helper, policy and RPC requires an active caller, so a suspended owner can't manage seats, scopes or invites and a suspended seat reaches nothing; a suspended creator keeps only a read-only view of its own account (migration 0052). |
 
 ## Automated checks
@@ -52,6 +53,11 @@ npm run e2e:supabase                             # live TEST project: RLS + RPC 
   repo can turn on. Owner to enable.
 - Enable Supabase **leaked-password protection** in Auth settings.
 - No error monitoring (Sentry, log drain) yet: owner decision pending.
+- **Public pages keep `'unsafe-inline'` scripts.** A nonce needs a per-request render, so it would
+  turn the prerendered pages (/, /privacy, /terms, /forgot-password, /reset-password) and the ISR
+  creator page /c/[slug] dynamic, and the proxy would add a hop to every fan page (/spin, /share,
+  /verify, /leaderboard). These pages render user content only through React's escaping. Moving a
+  route onto the nonce policy means adding it to the proxy and keeping it dynamic.
 
 ## If you suspect a leak
 1. Run `node scripts/security/rls-runtime-test.mjs` and `npm run e2e:supabase` against the TEST project. They fail loudly and name the table.
