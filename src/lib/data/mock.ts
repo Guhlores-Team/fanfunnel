@@ -1949,6 +1949,7 @@ export function mockListFans(): FanAccountSummary[] {
       pinnedWheelId: p.pinnedWheelId ?? null,
       campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
       spinsRemaining: p.spinsRemaining,
+      createdAt: p.createdAt,
     }));
     return {
       fanId: f.id,

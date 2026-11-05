@@ -267,6 +267,7 @@ export default function FansPanel({
     });
     if (!data) throw new Error("grant_rejected");
     await load().catch(() => toast("Top-up confirmed. Refresh the fan list to see it.", { tone: "error" }));
+    return { token: data.token };
   }
 
   async function copyLink(acc: FanAccountSummary) {
@@ -645,7 +646,7 @@ function FanRow({
         </span>
       )}
       <span className="tnum shrink-0 text-[13.5px] font-semibold text-muted">
-        <span className="text-ink">{account.spinsRemaining}</span> spins
+        <span className="text-ink">{account.spinsRemaining}</span> spin{account.spinsRemaining === 1 ? "" : "s"}
       </span>
       <button
         type="button"

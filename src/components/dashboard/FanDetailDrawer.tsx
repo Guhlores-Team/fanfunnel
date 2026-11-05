@@ -22,7 +22,7 @@ import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import GrantRow from "./GrantEditRow";
 import { CampaignGameSelect, FOLLOW_LIVE, GameName } from "./GameChoice";
 import { KIND_SHORT, gameOptionLabel, kindOf, linkGame, liveExplanation, pinUnavailableReason, type ChoiceGame } from "./gameAssignment";
-import { isPlayableGame } from "@/lib/games/liveGame";
+import { linkNames, spinsText, topUpOutcome, topUpTargets } from "./topUpTargets";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -37,7 +37,7 @@ export type TopUpFn = (
   packId?: string | null,
   wheelId?: string,
   packUnits?: number,
-) => void | Promise<void>;
+) => void | Promise<void | { token: string }>;
 
 const well = "rounded-[10px] border border-[var(--hair)] [background:var(--s2)]";
 const actionBtn =
@@ -332,6 +332,7 @@ export default function FanDetailDrawer({
     { label: `Days visited (last ${GLOW_WINDOW_DAYS})`, value: `${detail?.visits7 ?? 0} of ${GLOW_WINDOW_DAYS}` },
   ];
   const pending = loading || !detail;
+  const passNames = linkNames(summary?.passes ?? [], campaigns, wheels, now ?? new Date());
   // RM-6: the fan chose a break. The creator sees only that (never the fan's
   // reminder or counts), and the "keep going" tools are off until it ends
   // (F6 engagement gate). The server already drops a break that has ended.
@@ -482,6 +483,7 @@ export default function FanDetailDrawer({
                     summary={summary}
                     campaigns={campaigns}
                     wheels={wheels}
+                    now={now ?? new Date()}
                     onTopUp={onTopUp}
                     engagementBlocked={!!breakEnd || blocked}
                     toppingUp={toppingUpFans.has(fanId)}
@@ -684,11 +686,11 @@ export default function FanDetailDrawer({
                     {summary.passes.map((p) => (
                       <li key={p.token} className={`px-[13px] py-[11px] ${well}`}>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="min-w-0 truncate text-[13.5px] font-semibold text-ink">
-                            {p.campaignName ? `Link in “${p.campaignName}”` : "Link (no campaign)"}
+                          <span data-testid="link-name" className="min-w-0 truncate text-[13.5px] font-semibold text-ink">
+                            {passNames.get(p.token)}
                           </span>
                           <span className="tnum shrink-0 text-xs font-bold text-brand">
-                            {p.spinsRemaining} spins
+                            {spinsText(p.spinsRemaining)}
                           </span>
                         </div>
                         <LinkPlays
@@ -792,6 +794,7 @@ function TopUpForm({
   summary,
   campaigns,
   wheels,
+  now,
   onTopUp,
   toppingUp,
   isToppingUp,
@@ -805,6 +808,7 @@ function TopUpForm({
   summary: FanAccountSummary | null;
   campaigns: Campaign[];
   wheels: Wheel[];
+  now: Date;
   onTopUp: TopUpFn;
   toppingUp: boolean;
   isToppingUp: (fanId: string) => boolean;
@@ -813,38 +817,29 @@ function TopUpForm({
   onModifierPick: (pack: CampaignPack) => void;
   engagementBlocked: boolean;
 }) {
-  // Balances are kept per game a link was made for; a game with no link for
-  // this fan yet gets a new one. Only games the server will issue a link for
-  // (isPlayableGame: not archived, saved and complete) are offered.
-  // A link's balance is stored on the game it was made for, but the link plays
-  // what its own choice, its campaign or the live game says (linkGame, the
-  // server's resolver): when those differ, the option names both.
-  const topUpTargets = wheels
-    .filter((w) => isPlayableGame(w))
-    .map((w) => {
-      const own = summary?.passes.find((p) => p.wheelId === w.id);
-      if (!own) return { id: w.id, label: `${w.title} balance (new link)` };
-      const plays = linkGame(own, campaigns, wheels, new Date())?.game;
-      const elsewhere = plays && plays.id !== w.id ? ` · this link plays ${plays.title}` : "";
-      return { id: w.id, label: `${w.title} balance (${own.spinsRemaining} spins)${elsewhere}` };
-    });
-  // Which balance the top-up targets. Default to the fan's first link whose
-  // game is still offered, else the first offered game, so the select never
-  // shows one choice while the request carries another.
-  const [wheelId, setWheelId] = useState<string>(() => {
-    const own = summary?.passes.find((p) => topUpTargets.some((t) => t.id === p.wheelId));
-    return own?.wheelId ?? topUpTargets[0]?.id ?? "";
-  });
-  const [spins, setSpins] = useState(3);
-  // Per-spin price as its own state so typing two digits works.
-  const [perSpin, setPerSpin] = useState<string>("");
-  const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
+  const toast = useToast();
   // Default the top-up to a campaign this fan already belongs to, so revenue
   // doesn't silently fall into "untracked" (a top-up = more spins on a wheel).
   const [campaignId, setCampaignId] = useState<string>(() => {
     const names = summary?.campaignNames ?? [];
     return campaigns.find((c) => names.includes(c.name))?.id ?? "";
   });
+  // Where the spins go (topUpTargets.ts has the server contract): one of the
+  // fan's own links, named by what it plays, or a clearly new link that is set
+  // to play the chosen game. Unplayable games (draft, archived, under 2
+  // prizes) are never offered.
+  const { existing, fresh } = topUpTargets({ passes: summary?.passes ?? [], campaigns, games: wheels, now, campaignId });
+  const targets = [...existing, ...fresh];
+  // Default to the link the fan is handed (Copy link), else their first link.
+  const [targetKey, setTargetKey] = useState<string>(() => {
+    const share = summary ? copyLinkToken(summary) : null;
+    return (existing.find((t) => t.token === share) ?? existing[0] ?? fresh[0])?.key ?? "";
+  });
+  const target = targets.find((t) => t.key === targetKey) ?? null;
+  const [spins, setSpins] = useState(3);
+  // Per-spin price as its own state so typing two digits works.
+  const [perSpin, setPerSpin] = useState<string>("");
+  const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
   // The pack a preset filled in, if any. Sent to the server which resolves it
   // authoritatively; cleared on any manual override so we don't mis-attribute.
   const [packId, setPackId] = useState<string | null>(null);
@@ -856,21 +851,36 @@ function TopUpForm({
   async function submit() {
     // In-flight guard: a double-click, or collapsing and reopening the form
     // mid-request, must not double-grant spins/spend.
-    if (isToppingUp(fanId) || engagementBlocked) return;
+    if (isToppingUp(fanId) || engagementBlocked || (summary && !target)) return;
     onToppingUp(fanId, true);
     setError("");
     let confirmed = false;
     try {
-      await onTopUp(
+      const granted = await onTopUp(
         fanId,
         spins,
         amount ? Number(amount) || undefined : undefined,
         campaignId || undefined,
         packId,
-        wheelId || undefined,
+        target?.wheelId,
         packId ? packUnits : undefined,
       );
       confirmed = true;
+      // A new link is stored on the chosen game but would play the live (or
+      // campaign) game: set it to play the chosen one. Never re-point a link
+      // the fan already had.
+      const token = granted && typeof granted === "object" ? granted.token : null;
+      if (target?.pinWheelId && token && !summary?.passes.some((p) => p.token === token)) {
+        const pinned = await fetch(`/api/fans/${fanId}/link-game`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, wheelId: target.pinWheelId }),
+        }).then((res) => res.ok, () => false);
+        toast(pinned
+          ? `Spins added on a new link that plays ${target.plays?.title ?? "the chosen game"}. Send the fan this new link.`
+          : `Spins were added on a new link, but it couldn't be set to play ${target.plays?.title ?? "the chosen game"}. Use Change game under Links to set it.`,
+          { tone: pinned ? "success" : "error" });
+      }
       setUncertain(false);
       setPerSpin("");
       setPackId(null);
@@ -919,16 +929,23 @@ function TopUpForm({
         <Field label="Add spins to">
           <select
             className="ff-input w-full"
-            value={wheelId}
-            onChange={(e) => setWheelId(e.target.value)}
+            data-testid="topup-target"
+            value={targetKey}
+            onChange={(e) => setTargetKey(e.target.value)}
             aria-describedby={`${id}-target-help`}
           >
-            {wheels.length === 0 && <option value="">This fan&apos;s link</option>}
-            {topUpTargets.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
+            {!summary && <option value="">This fan&apos;s link</option>}
+            {summary && targets.length === 0 && <option value="">No playable game: finish and save one first</option>}
+            {existing.length > 0 && (
+              <optgroup label="This fan's links">
+                {existing.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </optgroup>
+            )}
+            {fresh.length > 0 && (
+              <optgroup label="Or start a new link">
+                {fresh.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </optgroup>
+            )}
           </select>
         </Field>
         <Field label="Campaign">
@@ -949,8 +966,10 @@ function TopUpForm({
           </select>
         </Field>
       </div>
-      <p id={`${id}-target-help`} className="mt-2 text-[11.5px] text-muted text-pretty">
-        Picks which of this fan&apos;s spin balances gets the spins. It doesn&apos;t choose the game: each link plays its campaign&apos;s game, or your live game.
+      <p id={`${id}-target-help`} data-testid="topup-outcome" className="mt-2 text-[11.5px] text-muted text-pretty">
+        {target
+          ? topUpOutcome(target, campaigns.find((c) => c.id === campaignId)?.name ?? null, spins)
+          : summary ? "This fan has no link that can take spins, and no game is ready for a new one. Finish and save a game with at least 2 prizes first." : "Spins go to this fan's link."}
       </p>
       {campaignId && (
         <div className="mt-2.5">
@@ -973,7 +992,7 @@ function TopUpForm({
         </p>
         <button
           type="button"
-          disabled={toppingUp || engagementBlocked}
+          disabled={toppingUp || engagementBlocked || (!!summary && !target)}
           onClick={submit}
           className="btn-brand min-h-9 rounded-[9px] px-4 text-[13px] font-bold disabled:opacity-50"
         >

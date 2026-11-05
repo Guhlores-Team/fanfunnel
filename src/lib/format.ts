@@ -60,3 +60,8 @@ export function timeAgo(iso: string, opts: TimeAgoOptions = {}): string {
   if (months < 12) return `${months}mo ago`;
   return `${Math.round(days / 365)}y ago`;
 }
+
+/** "1 spin", "3 spins". */
+export function spinsText(n: number): string {
+  return `${n} spin${n === 1 ? "" : "s"}`;
+}

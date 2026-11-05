@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { CampaignPack } from "@/lib/data/types";
-import { formatCents } from "@/lib/format";
+import { formatCents, spinsText } from "@/lib/format";
 import { stackPack } from "./packHelpers";
 import { DEFAULT_CHASE_WITHIN, DEFAULT_FOCUS_MULTIPLIER, DEFAULT_FOCUS_SPINS } from "@/lib/focus/config";
 
@@ -101,7 +101,7 @@ export default function PackPresets({
             {modifier && <span className="ml-1.5 font-semibold">{p.packKind === "chase" ? `Chase · within ${p.chaseWithin ?? DEFAULT_CHASE_WITHIN}` : `Focus ×${p.focusMultiplier ?? DEFAULT_FOCUS_MULTIPLIER} · ${p.focusSpins ?? DEFAULT_FOCUS_SPINS} spins`}</span>}
             <span className="tnum text-muted">
               {" "}
-              · {p.spins} spins · {formatCents(p.amountCents)}
+              · {spinsText(p.spins)} · {formatCents(p.amountCents)}
               {p.bonusSpins > 0 ? ` (+${p.bonusSpins})` : ""}
             </span>
             {!modifier && count > 1 && (
