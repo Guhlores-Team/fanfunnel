@@ -346,6 +346,85 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       report.number("abuse_caps", capped);
       report.finish();
     }
+    // ============================================================ H11 Focus/Chase over HTTP (the D9 flow through the dashboard and fan routes)
+    if (want("H11")) {
+      const n = scale(40), rounds = 8, editIp = nextIp(), mark = stats.serverErrors.length;
+      report.scenario("H11", `${n} fans spin ${rounds} rounds while the creator grants (some double-submitted), cancels Focus/Chase packs, edits the Focus prize's stock and archives its game`);
+      const enable = await call("POST", "/api/debug/focus-fixture", { body: { chaseEnabled: true }, ip: editIp });
+      report.check(enable.status === 200 && enable.json?.chaseEnabled === true, "Chase enabled on the demo store (debug fixture)", enable.status);
+      const pack = async kind => { const r = await call("POST", "/api/campaign-packs", { body: { label: `H11 ${kind}`, spins: 6, amountCents: 0, packKind: kind, focusMultiplier: 3, focusSpins: 5, chaseWithin: 5 }, ip: editIp }); if (r.status !== 200) throw Error(`pack ${kind}: ${r.status} ${r.text.slice(0, 80)}`); return r.json.pack.id; };
+      const packs = { focus: await pack("focus"), chase: await pack("chase") };
+      const previous = await wheel();
+      const created = await call("POST", "/api/wheels", { body: { name: "H11 Focus game" }, ip: editIp });
+      const F = { ...created.json.wheel, prizes: [
+        { id: "h11-common", label: "Common", rarity: "common", weight: 20, stock: null, boostable: false },
+        { id: "h11-focus", label: "Focus target", rarity: "common", weight: 2, stock: 30, boostable: true },
+        { id: "h11-chase", label: "Chase target", rarity: "rare", weight: 1, stock: 12, boostable: true },
+        { id: "h11-rare", label: "Rare", rarity: "rare", weight: 1, stock: null, boostable: false },
+      ] };
+      const savedF = await call("PUT", "/api/wheel", { body: { wheel: F, expectedStock: {} }, ip: editIp });
+      const activated = await call("PATCH", `/api/wheels/${F.id}`, { body: { isActive: true }, ip: editIp });
+      report.check(created.status === 200 && savedF.status === 200 && activated.status === 200, "the creator sets up and activates a 4-prize Focus game", [created.status, savedF.status, activated.status]);
+      const live = (await wheel()).prizes, idOf = label => live.find(p => p.label === label)?.id;
+      const target = { focus: idOf("Focus target"), chase: idOf("Chase target") };
+      const fans = await makePasses(n, 4), series = [], grants = [], groups = [], cancels = [], edits = [];
+      for (const fan of fans) { const r = await call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }); fan.passId = r.json?.passes?.[0]?.id; }
+      report.check(fans.every(f => f.passId), "every fan's pass is visible to the creator's focus panel");
+      let playing = true, archived = false;
+      const fanLoop = async fan => { const out = []; for (let i = 0; i < rounds; i++) { const r = await spin(fan, { series }); out.push(r); if (r.status !== 200) break; } return out; };
+      const grantOnce = async (fan, kind, copies) => {
+        const body = { requestId: randomUUID(), packId: packs[kind], prizeId: target[kind], passId: fan.passId };
+        const rs = await parallel(Array.from({ length: copies }), copies, () => call("POST", `/api/fans/${fan.fanId}/focus`, { body, ip: nextIp() }));
+        const out = rs.map(r => r.value); grants.push(...out.map(r => r.status === 200 ? "granted" : `${r.status}:${r.json?.error}`));
+        if (copies > 1) groups.push(out);
+        if (out.some(r => r.status === 200)) fan.packs = (fan.packs ?? 0) + 1;
+      };
+      const creator = async () => {
+        for (let i = 0; playing; i++) {
+          const fan = fans[i % n];
+          if (archived) { await sleep(20); continue; }
+          if (i % 3 === 2) { const r = await call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }); if (r.json?.focusId) { const c = await call("DELETE", `/api/fans/${fan.fanId}/focus`, { body: { focusId: r.json.focusId }, ip: nextIp() }); cancels.push(c.status === 200 ? `released:${c.json?.released}` : `${c.status}:${c.json?.error}`); continue; } }
+          await grantOnce(fan, i % 2 ? "chase" : "focus", i % 5 === 0 ? 3 : 1);
+          await sleep(10);
+        }
+      };
+      const editor = async () => {
+        const stale = await wheel(); const staleStock = Object.fromEntries(stale.prizes.map(p => [p.id, p.stock ?? null]));
+        for (let i = 0; i < 6 && playing; i++) {
+          await sleep(60);
+          const w = i % 3 === 2 ? stale : await wheel(); const expectedStock = i % 3 === 2 ? staleStock : Object.fromEntries(w.prizes.map(p => [p.id, p.stock ?? null]));
+          const prizes = w.prizes.map(p => p.id === target.focus && i % 3 !== 2 ? { ...p, stock: (p.stock ?? 0) + (i % 2 ? -1 : 3) } : p);
+          const r = await call("PUT", "/api/wheel", { body: { wheel: { ...w, prizes }, expectedStock }, ip: editIp }); edits.push(`${i % 3 === 2 ? "stale" : "save"}:${r.status}`);
+        }
+        while (playing && fans.filter(f => f.done).length < n / 2) await sleep(20);
+        const a = await call("PATCH", `/api/wheels/${F.id}`, { body: { archived: true }, ip: editIp }); edits.push(`archive:${a.status}`);
+        const back = await call("PATCH", `/api/wheels/${previous.id}`, { body: { isActive: true }, ip: editIp }); edits.push(`activate previous:${back.status}`);
+        archived = true;
+      };
+      const [plays] = await Promise.all([parallel(fans, n, fan => fanLoop(fan).finally(() => { fan.done = true; })).finally(() => { playing = false; }), creator(), editor()]);
+      const flat = plays.flatMap(r => r.value); report.number("spin_statuses", codes(flat.map(v => ({ ok: true, value: v }))));
+      report.number("grants", tally(grants.map(v => ({ ok: true, value: v })), v => v)); report.number("cancels", tally(cancels.map(v => ({ ok: true, value: v })), v => v)); report.number("editor", edits);
+      const won = flat.filter(r => r.status === 200).map(r => r.json);
+      report.number("modifiers", { focusConsumed: won.filter(r => r.focusConsumed).length, chaseConsumed: won.filter(r => r.chaseConsumed).length, chaseCompleted: won.filter(r => r.chaseCompleted).length, chaseAwarded: won.filter(r => r.chaseAwarded).length, pityAwarded: won.filter(r => r.pityAwarded).length });
+      report.check(serverErrorsSince(mark).length === 0, "no 5xx", serverErrorsSince(mark).slice(0, 2));
+      report.check(flat.every(r => r.status === 200 || (r.status === 409 && r.json?.error === "no_spins")), "every spin answers 200 until the fan's credits run out", codes(flat.map(v => ({ ok: true, value: v }))));
+      report.check(grants.every(g => g === "granted" || /^409:(focus_exists|sold_out|invalid_target|rejected|unavailable)$/.test(g)), "every purchase is granted or a clean 409 refusal", grants.filter(g => g !== "granted" && !/^409:/.test(g)).slice(0, 3));
+      report.check(groups.every(g => { const ok = g.filter(r => r.status === 200); return ok.length === 0 ? new Set(g.map(r => r.status)).size === 1 : ok.length === g.length && new Set(ok.map(r => r.json.grantId)).size === 1 && ok.filter(r => r.json.replayed === false).length === 1; }), `${groups.length} double-submitted purchases apply once (one grant, the copies replayed)`);
+      report.check(cancels.every(c => /^released:(true|false)$/.test(c)), "every cancel answers 200", cancels.filter(c => !/^released:/.test(c)).slice(0, 3));
+      report.check(won.filter(r => r.chaseAwarded).every(r => r.prize?.id === target.chase && r.chaseCompleted), "every forced Chase award is the Chase target and completes the promise");
+      report.check(edits.every(e => /:(200|409)$/.test(e)) && edits.includes("archive:200"), "every stock save is 200 or a clean stock_changed 409, and the game is archived mid-play", edits);
+      const spun = new Map(fans.map(f => [f, plays[fans.indexOf(f)].value.filter(r => r.status === 200).length]));
+      const panels = await parallel(fans, 8, fan => call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }));
+      const balanceOff = fans.filter((fan, i) => panels[i].value.json?.passes?.[0]?.spinsRemaining !== 4 + 6 * (fan.packs ?? 0) - spun.get(fan));
+      report.check(balanceOff.length === 0, "each fan's balance is 4 + 6 per granted pack - spins played (the ledger, double-submits counted once)", balanceOff.slice(0, 2).map(f => ({ packs: f.packs, spun: spun.get(f), panel: panels[fans.indexOf(f)].value.json?.passes?.[0]?.spinsRemaining })));
+      report.check(panels.every(r => r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase)), "no promise survives on the archived game's prizes");
+      const fAfter = await call("GET", `/api/wheels/${F.id}`, { ip: editIp }), chaseLeft = fAfter.json?.wheel?.prizes?.find(p => p.id === target.chase)?.stock;
+      const chaseWins = won.filter(r => r.prize?.id === target.chase).length;
+      report.number("chase_stock", { left: chaseLeft ?? null, won: chaseWins, read: fAfter.status });
+      if (typeof chaseLeft === "number") report.check(chaseLeft >= 0 && chaseLeft + chaseWins === 12, "Chase stock conserved over HTTP: 12 = left + won (held units returned on archive)", { chaseLeft, chaseWins });
+      report.latency("spin during focus/chase grants", series, HTTP_THRESHOLDS.spinContended);
+      report.finish();
+    }
     // ============================================================ H8 cron, fan deletion and account reset while activity continues (last: it clears the store)
     if (want("H8")) {
       const n = scale(20);
