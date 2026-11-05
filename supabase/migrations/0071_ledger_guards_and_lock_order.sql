@@ -172,7 +172,11 @@ create trigger zz_chosen_game_prizes after delete or update of wheel_id on publi
 create or replace function public._guard_new_game_schedule()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  if exists (select 1 from public.wheels w where w.id = new.id and (w.active_from is not null or w.active_until is not null))
+  -- Only a game inserted WITH a schedule (a later schedule is the UPDATE
+  -- guard's), and only while it is still scheduled and in play.
+  if new.active_from is null and new.active_until is null then return null; end if;
+  if exists (select 1 from public.wheels w where w.id = new.id and w.archived_at is null
+               and (w.active_from is not null or w.active_until is not null))
      and not public._game_has_min_prizes(new.id) then
     raise exception 'game_needs_prizes' using errcode = '22023';
   end if;
@@ -338,27 +342,30 @@ grant execute on function public.org_leave(uuid) to authenticated, service_role;
 comment on function public.org_leave(uuid) is 'The caller leaves an agency: its own seat and, as a member creator, the org (0071).';
 
 -- ── (g) L1: own-row reads need the enrolled-MFA session ─────────────────────
+-- can_act_for(auth.uid(), 'view') is exactly the session MFA check for the
+-- caller's own id (and is already executable by sessions; the private
+-- _session_mfa_satisfied is not), the check every creator-scoped policy uses.
 drop policy if exists spins_select on public.spins;
 create policy spins_select on public.spins for select
-  using ((creator_id = auth.uid() and public._session_mfa_satisfied()) or public.is_admin());
+  using ((creator_id = auth.uid() and public.can_act_for(auth.uid(), 'view')) or public.is_admin());
 drop policy if exists creator_request_journal_select on public.creator_request_journal;
 create policy creator_request_journal_select on public.creator_request_journal for select to authenticated
-  using ((actor_id = auth.uid() and public._session_mfa_satisfied()) or public.can_act_for(creator_id, 'view') or public.is_admin());
+  using ((actor_id = auth.uid() and public.can_act_for(auth.uid(), 'view')) or public.can_act_for(creator_id, 'view') or public.is_admin());
 drop policy if exists actor_request_cancellations_select on public.actor_request_cancellations;
 create policy actor_request_cancellations_select on public.actor_request_cancellations for select to authenticated
-  using ((actor_id = auth.uid() and public._session_mfa_satisfied()) or public.is_admin());
+  using ((actor_id = auth.uid() and public.can_act_for(auth.uid(), 'view')) or public.is_admin());
 drop policy if exists creator_storage_deletions_read on public.creator_storage_deletions;
 create policy creator_storage_deletions_read on public.creator_storage_deletions for select to authenticated
-  using ((owner_id = auth.uid() and public._session_mfa_satisfied()) or public.is_admin());
+  using ((owner_id = auth.uid() and public.can_act_for(auth.uid(), 'view')) or public.is_admin());
 drop policy if exists creator_storage_dispatches_read on public.creator_storage_dispatches;
 create policy creator_storage_dispatches_read on public.creator_storage_dispatches for select to authenticated
-  using ((owner_id = auth.uid() and public._session_mfa_satisfied()) or public.is_admin());
+  using ((owner_id = auth.uid() and public.can_act_for(auth.uid(), 'view')) or public.is_admin());
 drop policy if exists creator_storage_objects_read on public.creator_storage_objects;
 create policy creator_storage_objects_read on public.creator_storage_objects for select to authenticated
-  using ((owner_id = auth.uid() and public._session_mfa_satisfied()) or public.is_admin());
+  using ((owner_id = auth.uid() and public.can_act_for(auth.uid(), 'view')) or public.is_admin());
 drop policy if exists creator_apps_select on public.creator_applications;
 create policy creator_apps_select on public.creator_applications for select
-  using ((profile_id = auth.uid() and public._session_mfa_satisfied()) or public.is_admin());
+  using ((profile_id = auth.uid() and public.can_act_for(auth.uid(), 'view')) or public.is_admin());
 
 -- ── (h) L2: profile fields validated in the RPCs ────────────────────────────
 create or replace function public.set_public_profile(p_slug text, p_tip_url text, p_tagline text)

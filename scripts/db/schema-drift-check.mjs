@@ -40,6 +40,8 @@
 // link trace. The stub carries Supabase's default grants so these run
 // against the hosted project's real privileges.
 // Campaign writes for another creator need 'manage' (A28 residual).
+// And the 0071 probes: ledgerGuardsProbe.mjs (security audit 3 negatives) and
+// lockOrderProbe.mjs (the concurrency audit's deadlocks, staged deterministically).
 // And the spin-resolution probe (0070, spinResolutionProbe.mjs): a play
 // resolves its game exactly once per prepare and per commit, every lock and
 // the context use that one game, and a campaign pin flipping right after the
@@ -78,6 +80,8 @@ import { probeSeatScopes } from "./seatScopeProbe.mjs";
 import { probeDbSecurity } from "./dbSecurityProbe.mjs";
 import { probeIntegration } from "./integrationProbe.mjs";
 import { probeSpinResolution } from "./spinResolutionProbe.mjs";
+import { probeLedgerGuards } from "./ledgerGuardsProbe.mjs";
+import { probeLockOrder } from "./lockOrderProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -1088,6 +1092,22 @@ function probeBatch4Integration(db) {
   }
 }
 
+// 0071 (security audit 3): sessions cannot delete a game with history, write
+// the grant ledger, delete a link or a campaign, or take a chosen game below 2
+// prizes; the e-mail is never a display name; seats only by consent; own-row
+// reads need MFA; profile fields validated; invitations need a confirmed
+// address; future tables grant anon nothing; no context for an ineligible account.
+function probeLedger0071(db) {
+  const { bad, checks } = probeLedgerGuards(db, psql);
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: 0071 ledger guards, consent and profile hygiene`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: 0071 ${checks} checks: a game with history is never deleted (seat, owner, service role) but the account cascade and the owner's own reset still remove it; sessions cannot write grants or delete links or campaigns; a chosen game keeps 2 prizes; no e-mail display names (sign-up, writes, masked stats); seats only by invitation, one agency per owner, org_leave; MFA own-row reads; slug/tagline/name validated; confirmed invitee only; future tables closed to anon; no context for pending or suspended accounts`);
+  }
+}
+
 function probeCompletenessGaps(db) {
   const bad = probeGaps(db, psql);
   if (bad.length) {
@@ -1469,6 +1489,7 @@ try {
     probeSchemaVersion(db);
     probeTenantBoundaries(db);
     probeBatch4Integration(db);
+    probeLedger0071(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");
@@ -1487,6 +1508,9 @@ try {
     const resolution = await probeSpinResolution(async(q)=>{const r=await psqlAsync(db,q);if(r.status!==0)throw Error(r.stderr||"spin resolution SQL failed");return r.stdout;});
     if (resolution.bad.length) { failures++; for (const message of resolution.bad) console.log(`FAIL  ${db}: 0070 spin resolution: ${message}`); }
     else console.log(`PASS  ${db}: 0070 spin resolution: ${resolution.checks} checks (one resolution per prepare and per commit; a campaign pin flip after the resolution leaves every lock and the context on the resolved game)`);
+    const order = await probeLockOrder(db, psqlAsync);
+    if (order.bad.length) { failures++; for (const message of order.bad) console.log(`FAIL  ${db}: 0071 lock order: ${message}`); }
+    else console.log(`PASS  ${db}: 0071 lock order: ${order.checks} checks (fan deletion, link pause, prize edit, creator suspension and campaign deletion each staged against a committing play: no 40P01, every side finishes)`);
     const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
     if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }
