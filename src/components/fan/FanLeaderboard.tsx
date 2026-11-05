@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useFetch } from "@/lib/hooks/useFetch";
+import { FAN_CLIENT_HEADER } from "@/lib/api/fanClientHeader";
 import { blockedFanMessage } from "./blockedFan";
 
 interface Entry {
@@ -111,9 +112,11 @@ export default function FanLeaderboard({
   // `refreshKey` is folded into the URL so a spin forces a refetch. A failed
   // read leaves `data` null and the board hides (same as before) — but the
   // error is now owned by the hook instead of swallowed in a bare catch.
+  // The link token only keys the per-fan rate limit (fans behind one shared
+  // address are not refused for each other's reads); the board never depends on it.
   const { data: view, reload } = useFetch<View>(
     `/api/leaderboard/${creatorId}?k=${refreshKey}`,
-    { refreshOnVisible: false }
+    { refreshOnVisible: false, headers: { [FAN_CLIENT_HEADER]: token } }
   );
 
   if (!view || !view.enabled) return optIn ? (

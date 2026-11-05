@@ -5,7 +5,7 @@ import { join, relative, sep } from "node:path";
 // A22: every route handler under src/app/api is throttled or guarded before it
 // does any work. A handler passes when its own body (or a module-local helper it
 // calls) invokes one of
-//   limiter  limitRoute / rateLimitOr429 / rateLimitShared / withFanToken
+//   limiter  limitRoute / limitSharedRead / rateLimitOr429 / rateLimitShared / withFanToken
 //   guard    requireAdminRoute (active admin + aal2) / cronAuthorized (secret)
 // and the call comes before the handler's first data-layer call. Anything else
 // must be listed in ALLOWLIST with the reason it needs neither; a stale entry
@@ -34,7 +34,7 @@ const ALLOWLIST: Record<string, string> = {
     "Debug-demo fixture: returns a static 404 unless NEXT_PUBLIC_ENABLE_DEBUG=1 AND Supabase is unconfigured (checked first, no I/O); the in-memory demo has no shared state to protect.",
 };
 
-const LIMITER = /\b(limitRoute|rateLimitOr429|rateLimitShared|withFanToken)\s*[(<]/;
+const LIMITER = /\b(limitRoute|limitSharedRead|rateLimitOr429|rateLimitShared|withFanToken)\s*[(<]/;
 const GUARD = /\b(requireAdminRoute|cronAuthorized)\s*\(/;
 const PROTECTS = new RegExp(`${LIMITER.source}|${GUARD.source}`);
 const METHOD = /export\s+(?:async\s+function\s+|function\s+|const\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g;

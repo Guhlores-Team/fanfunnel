@@ -306,22 +306,44 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       if (failedBatches.length) report.warn(`${failedBatches.length} burst batch(es) did not complete: ${failedBatches[0].error}`);
       const fans = await makePasses(fansOnPage, 1), page = [], wins = [], board = [], checkins = [];
       const natIp = [nextIp(), nextIp()];
+      // A fan page's public reads carry its link token in x-fan-token (FanLeaderboard, RecentWinsTicker): one minute on the page is
+      // the load, three recent-wins polls (every 20s) and the leaderboard twice (load + the refetch after a spin), all at the origin (no CDN here).
+      const fanRead = (fan, i, path, series) => timed(series, () => call("GET", path, { ip: natIp[i % 2], headers: { "x-fan-token": fan.token } }));
       const loads = await parallel(fans, fansOnPage, (fan, i) => Promise.all([
         timed(page, () => call("GET", `/spin/${encodeURIComponent(fan.token)}`, { ip: natIp[i % 2] })),
-        timed(wins, () => call("GET", "/api/recent-wins/acc-you", { ip: natIp[i % 2] })),
-        timed(board, () => call("GET", "/api/leaderboard/acc-you", { ip: natIp[i % 2] })),
+        (async () => { const out = []; for (let k = 0; k < 3; k++) out.push(await fanRead(fan, i, `/api/recent-wins/acc-you?k=${k}`, wins)); return out; })(),
+        (async () => [await fanRead(fan, i, "/api/leaderboard/acc-you?k=0", board), await fanRead(fan, i, "/api/leaderboard/acc-you?k=1", board)])(),
         timed(checkins, () => call("POST", "/api/fan/checkin", { body: { token: fan.token }, ip: natIp[i % 2] })),
       ]));
-      const per = k => tally(loads.map(r => ({ ok: true, value: r.value[k] })), v => String(v.status));
-      report.number("fan_page_statuses", per(0)); report.number("recent_wins_statuses", per(1)); report.number("leaderboard_statuses", per(2)); report.number("checkin_statuses", per(3));
+      const per = (k, many = false) => tally(loads.flatMap(r => (many ? r.value[k] : [r.value[k]]).map(value => ({ ok: true, value }))), v => String(v.status));
+      report.number("fan_page_statuses", per(0)); report.number("recent_wins_statuses", per(1, true)); report.number("leaderboard_statuses", per(2, true)); report.number("checkin_statuses", per(3));
       report.check(loads.every(r => r.value[0].status === 200), `${fansOnPage} fan pages all render (SSR, no limiter)`);
-      // 120/min/IP on recent wins and 60/min/IP on the leaderboard: fans behind one address beyond that see 429 (documented NAT false positive, A22).
-      const natFalsePositives = loads.filter(r => r.value[1].status === 429 || r.value[2].status === 429).length;
-      report.number("nat_429_fans", natFalsePositives);
-      report.check(loads.every(r => [200, 429].includes(r.value[1].status) && [200, 429].includes(r.value[2].status)), "shared-address fans get 200 or a clean 429 on the polled public reads (never 5xx)");
+      // A22 NAT false positive: per-address windows alone (60/min leaderboard, 120/min recent wins) refused legitimate fans
+      // behind one address. The shared-read limiter keys each fan by address + link token under a looser per-address ceiling.
+      const refusedFans = k => loads.filter(r => r.value[k].some(v => v.status === 429)).length;
+      const natFalsePositives = loads.filter(r => r.value[1].some(v => v.status === 429) || r.value[2].some(v => v.status === 429) || r.value[3].status === 429).length;
+      report.number("nat_429_fans", { any: natFalsePositives, leaderboard: refusedFans(2), recent_wins: refusedFans(1), checkin: loads.filter(r => r.value[3].status === 429).length });
+      report.check(natFalsePositives === 0, `0 of ${fansOnPage} legitimate fans behind two shared addresses get a 429 on the leaderboard, recent wins or check-in`, natFalsePositives);
+      report.check(loads.every(r => r.value[1].every(v => v.status === 200) && r.value[2].every(v => v.status === 200) && [200, 404].includes(r.value[3].status)), "every polled public read answers 200 (check-in 200, or 404 for a demo link it does not track)", { wins: per(1, true), board: per(2, true), checkin: per(3) });
       report.check(serverErrorsSince(mark).length === 0, "no 5xx", serverErrorsSince(mark).slice(0, 2));
       const budget = Math.max(HTTP_THRESHOLDS.fanPage, HTTP_THRESHOLDS.perPageLoad * fansOnPage);
       report.latency(`GET /spin/[token] (SSR, ${fansOnPage} concurrent)`, page, budget); report.latency("GET /api/recent-wins (during the page load)", wins, budget); report.latency("GET /api/leaderboard (during the page load)", board, budget); report.latency("POST /api/fan/checkin (during the page load)", checkins, budget);
+      // The abuse side of the same limiter (H1/H2 style, each from a fresh address): one address + token, an address rotating
+      // forged tokens, and an address sending no token are all still capped; a neighbour's token on the flooded address is not.
+      const flood = async (path, n, headersFor) => { const from = nextIp(); const rs = await parallel(Array.from({ length: n }), 50, (_, i) => call("GET", path, { ip: from, headers: headersFor(i) })); return { from, ok: rs.filter(r => r.value.status === 200).length, limited: rs.filter(r => r.value.status === 429).length, other: rs.filter(r => ![200, 429].includes(r.value.status)).length }; };
+      const capped = {};
+      for (const [name, path, perClient, perAddress] of [["leaderboard", "/api/leaderboard/acc-you", 60, 300], ["recent_wins", "/api/recent-wins/acc-you", 120, 600]]) {
+        const token = randomUUID().replaceAll("-", ""), one = await flood(path, perClient + 40, () => ({ "x-fan-token": token }));
+        const neighbour = await call("GET", path, { ip: one.from, headers: { "x-fan-token": randomUUID().replaceAll("-", "") } });
+        const rotating = await flood(path, perAddress + 100, () => ({ "x-fan-token": randomUUID().replaceAll("-", "") }));
+        const anonymous = await flood(path, perClient + 40, () => ({}));
+        capped[name] = { one_token: one, neighbour: neighbour.status, rotating_tokens: rotating, no_token: anonymous };
+        report.check(one.ok === perClient && one.limited === 40 && one.other === 0, `${name}: a flood from one address + token is capped at ${perClient}/min`, one);
+        report.check(neighbour.status === 200, `${name}: another fan's token on the flooded address is still served`, neighbour.status);
+        report.check(rotating.ok === perAddress && rotating.limited === 100 && rotating.other === 0, `${name}: an address rotating forged tokens is capped at the ${perAddress}/min per-address ceiling`, rotating);
+        report.check(anonymous.ok === perClient && anonymous.limited === 40 && anonymous.other === 0, `${name}: requests without a token share one ${perClient}/min window per address (unchanged)`, anonymous);
+      }
+      report.number("abuse_caps", capped);
       report.finish();
     }
     // ============================================================ H8 cron, fan deletion and account reset while activity continues (last: it clears the store)

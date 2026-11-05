@@ -59,6 +59,8 @@ async function main() {
       authorization: "Bearer someone",
     });
     check("same body regardless of viewer cookies/auth", (await authed.text()) === anonBody);
+    const withToken = await call("demo", { "x-fan-token": "c".repeat(32) });
+    check("same body and Cache-Control with the fan token header (it only keys the limiter)", (await withToken.text()) === anonBody && withToken.headers.get("cache-control") === anon.headers.get("cache-control"));
     check(
       "same Cache-Control regardless of viewer",
       authed.headers.get("cache-control") === anon.headers.get("cache-control")
@@ -75,6 +77,18 @@ async function main() {
     check("429 is no-store, so the CDN can't serve it to other fans", last?.headers.get("cache-control") === "no-store");
     const other = await call("demo", { "x-real-ip": "203.0.113.8" });
     check("another IP is unaffected", other.status === 200);
+  }
+
+  // --- A22 carrier NAT: fans behind one address are keyed by their own token --
+  {
+    const fan = (i: number) => ({ "x-real-ip": "203.0.113.9", "x-fan-token": `${i.toString(16).padStart(8, "0")}${"d".repeat(24)}` });
+    const polls: number[] = [];
+    // 100 fans, three polls each (one minute on the page): 300 > the old 120/min per address.
+    for (let round = 0; round < 3; round++) for (let i = 0; i < 100; i++) polls.push((await call("demo", fan(i))).status);
+    check("100 fans polling 3x/min behind one address are never refused", polls.every((s) => s === 200));
+    let looping: Response | null = null;
+    for (let i = 0; i < 121 && (!looping || looping.status !== 429); i++) looping = await call("demo", fan(500));
+    check("one fan token looping behind the shared address is capped at 120/min", looping?.status === 429 && looping.headers.get("cache-control") === "no-store");
   }
 
   console.log(`recent-wins route: ${passed} checks passed`);

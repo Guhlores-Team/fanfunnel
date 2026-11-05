@@ -493,7 +493,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
       {gallery}
 
       {engaged && pass.leaderboardEnabled && pass.creatorId && (
-        <RecentWinsTicker creatorId={pass.creatorId} refreshKey={boardRefresh} />
+        <RecentWinsTicker creatorId={pass.creatorId} token={pass.token} refreshKey={boardRefresh} />
       )}
 
       {pass.happyHour && <HappyHourBanner status={pass.happyHour} />}

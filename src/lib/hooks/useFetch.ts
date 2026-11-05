@@ -43,6 +43,8 @@ export interface UseFetchOptions<T> {
   select?: (raw: unknown) => T;
   /** Skip fetching entirely while false (e.g. missing id). Defaults to true. */
   enabled?: boolean;
+  /** Extra request headers (compared by value, so an inline object is fine). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -59,7 +61,9 @@ export function useFetch<T>(
   url: string | null,
   opts: UseFetchOptions<T> = {}
 ): FetchState<T> {
-  const { pollMs = 0, refreshOnVisible = true, select, enabled = true } = opts;
+  const { pollMs = 0, refreshOnVisible = true, select, enabled = true, headers } = opts;
+  // Callers pass headers inline; key on the value so a re-render is not a refetch.
+  const headerKey = headers ? JSON.stringify(headers) : "";
 
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,7 +91,7 @@ export function useFetch<T>(
     if (!active || typeof window === "undefined") return true;
     const id = ++reqId.current;
     try {
-      const res = await fetch(url as string, { cache: "no-store" });
+      const res = await fetch(url as string, { cache: "no-store", ...(headerKey ? { headers: JSON.parse(headerKey) as Record<string, string> } : {}) });
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const raw: unknown = await res.json();
       const value = selectRef.current ? selectRef.current(raw) : (raw as T);
@@ -102,7 +106,7 @@ export function useFetch<T>(
     } finally {
       if (mounted.current && id === reqId.current) setLoading(false);
     }
-  }, [url, active]);
+  }, [url, active, headerKey]);
 
   const load = useCallback(async () => {
     await fetchOnce();
