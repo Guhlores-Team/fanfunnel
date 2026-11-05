@@ -24,8 +24,16 @@ export async function GET(
   return NextResponse.json({ wheel });
 }
 
-// Activate and/or schedule a wheel. Both can be applied in one PATCH; the first
-// error (if any) is returned, else { ok: true }.
+// The fields PATCH understands. Anything else is refused with 400 rather than
+// answered 200 while nothing changes.
+const PATCH_FIELDS = new Set(["isActive", "archived", "activeFrom", "activeUntil"]);
+const isScheduleValue = (v: unknown) =>
+  v === null || (typeof v === "string" && !Number.isNaN(new Date(v).getTime()));
+
+// Activate, schedule, archive or restore a wheel. Activate, schedule and
+// restore can be combined in one PATCH; the first error (if any) is returned,
+// else { ok: true }. `archived: true` archives exactly as DELETE (no ?hard=1)
+// does and must be sent alone.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -42,16 +50,30 @@ export async function PATCH(
   }>(req);
   if (body === BAD_REQUEST) return badRequest();
 
-  // Validate field types up front so a malformed payload returns 400 cleanly.
+  // Validate the payload up front so a malformed or no-op request returns 400
+  // cleanly. Only `isActive: true` exists (a wheel stops being active when
+  // another one is activated), so `isActive: false` would change nothing.
+  const fields = Object.keys(body);
+  if (fields.length === 0) return errorResponse("nothing_to_change");
+  if (fields.some((field) => !PATCH_FIELDS.has(field))) return errorResponse("unsupported_field");
   if (
-    (body.isActive !== undefined && typeof body.isActive !== "boolean") ||
+    (body.isActive !== undefined && body.isActive !== true) ||
     (body.archived !== undefined && typeof body.archived !== "boolean") ||
-    (typeof body.activeFrom === "string" &&
-      Number.isNaN(new Date(body.activeFrom).getTime())) ||
-    (typeof body.activeUntil === "string" &&
-      Number.isNaN(new Date(body.activeUntil).getTime()))
+    ("activeFrom" in body && !isScheduleValue(body.activeFrom)) ||
+    ("activeUntil" in body && !isScheduleValue(body.activeUntil))
   ) {
     return badRequest();
+  }
+
+  // Archive: the same data-layer call (and authorization) as DELETE without
+  // ?hard=1. It takes the game off fans, so it is never mixed with activation
+  // or scheduling in one request.
+  if (body.archived === true) {
+    if (fields.length > 1) return errorResponse("conflicting_fields");
+    const result = await archiveWheel(id);
+    if ("error" in result) return errorResponse(result.error);
+    await revalidateMyPublicPage();
+    return NextResponse.json({ ok: true });
   }
 
   // The writes below run as separate calls, so a failure partway through could

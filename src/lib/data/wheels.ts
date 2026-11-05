@@ -710,12 +710,24 @@ export async function unarchiveWheel(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb
+  // The authorization archive_wheel (0065) applies on the way in: the caller
+  // must hold edit_wheel for the creator (can_act_for also requires an active
+  // profile). The update stays creator-scoped, and matching no row is
+  // not_found rather than a silent success.
+  const { data: canEdit, error: permissionError } = await sb.rpc("can_act_for", {
+    target_creator: user.id, perm: "edit_wheel",
+  });
+  if (permissionError || canEdit !== true) return { error: "forbidden" };
+
+  const { data: restored, error } = await sb
     .from("wheels")
     .update({ archived_at: null })
     .eq("id", id)
-    .eq("creator_id", user.id);
-  return error ? { error: gameWriteError(error) } : { ok: true };
+    .eq("creator_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: gameWriteError(error) };
+  return restored ? { ok: true } : { error: "not_found" };
 }
 
 /**

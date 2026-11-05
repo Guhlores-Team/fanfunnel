@@ -189,7 +189,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
           const camp = await call("POST", "/api/campaigns", { body: { name: "Stress campaign", pinnedWheelId: bId }, ip: editIp }); edits.push(`campaign:${camp.status}`);
           const campId = camp.json?.campaign?.id;
           if (campId) edits.push(`pin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: w.id }, ip: editIp })).status}`, `unpin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: null }, ip: editIp })).status}`);
-          // Archive is DELETE /api/wheels/[id] (no ?hard=1); PATCH has no archive field and ignores one.
+          // Archive is DELETE /api/wheels/[id] (no ?hard=1); PATCH { archived: true } takes the same path.
           edits.push(`archiveB:${(await call("DELETE", `/api/wheels/${bId}`, { ip: editIp })).status}`);
           edits.push(`activateA:${(await call("PATCH", `/api/wheels/${w.id}`, { body: { isActive: true }, ip: editIp })).status}`);
         }
