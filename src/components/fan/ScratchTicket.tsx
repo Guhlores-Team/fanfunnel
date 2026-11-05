@@ -122,7 +122,7 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
         {!revealed && <canvas ref={canvas} aria-hidden="true" data-testid="scratch-foil"
           className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-xl" onPointerDown={begin} onPointerMove={scratch} onPointerUp={stop} onPointerCancel={stop} />}
       </div>
-      <button ref={revealAll} type="button" onClick={reveal} disabled={revealed} aria-describedby={instructions} data-testid="scratch-reveal-all"
+      <button ref={revealAll} type="button" onClick={reveal} disabled={revealed} aria-describedby={instructions} data-testid="scratch-reveal-all" data-fab-avoid
         className="btn-brand mt-4 min-h-11 w-full rounded-xl px-4 py-3 font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-text)]">
         {revealed ? "Ticket revealed" : "Reveal all"}
       </button>

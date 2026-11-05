@@ -570,6 +570,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             </span>
           </div>
           <button
+            type="button"
+            data-fab-avoid
             onClick={() => setMuted((m) => !m)}
             className="rounded-full border border-line bg-surface/70 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
             aria-label={muted ? "Unmute" : "Mute"}
@@ -594,6 +596,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         <button
           ref={playRef}
           data-testid="fan-spin"
+          data-fab-avoid
           onClick={handleSpin}
           disabled={playDisabled}
           className="btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
