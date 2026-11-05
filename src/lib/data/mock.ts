@@ -827,7 +827,10 @@ function toWheelSummary(w: WheelConfig): WheelSummary {
     title: w.title,
     subtitle: w.subtitle ?? null,
     brandColor: w.brandColor ?? "#ec4899",
-    isActive: w.id === mockResolveActiveWheelId(),
+    // The flag, as the database lists it (wheels.is_active), not the game that
+    // is live now: a schedule can override the active game, and the dashboard
+    // explains that from the flag (QA b5 m11).
+    isActive: w.isActive === true,
     archivedAt: w.archivedAt ?? null,
     activeFrom: w.activeFrom ?? null,
     activeUntil: w.activeUntil ?? null,

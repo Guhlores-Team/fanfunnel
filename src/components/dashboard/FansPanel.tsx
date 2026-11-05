@@ -10,6 +10,7 @@ import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { CloseButton, Field, initialsOf } from "./ui";
 import { copyLinkToken, fanRowMeta, noLinkMessage, threadFanIds } from "./fansHelpers";
+import { fanFromSearch, fanHref, sectionHref } from "./dashboardSection";
 import { TEMPLATE_TOKENS } from "@/lib/winback/template";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
 import PackPresets from "@/components/dashboard/PackPresets";
@@ -74,8 +75,58 @@ export default function FansPanel({
   const [newFanUncertain, setNewFanUncertain] = useState(false);
   const creatingRef = useRef(false);
   useCreatorDraft("new-fan", "this new fan link", !!name.trim() || perSpin !== "" || !!packId, creating || newFanUncertain);
-  const [openFanId, setOpenFanId] = useState<string | null>(null);
   const leave = useCreatorLeave();
+  // m5: the open drawer is its own history entry (?section=fans&fan=<id>), so
+  // Back (the phone's, above all) closes it instead of leaving the dashboard.
+  // A drawer in the URL on mount (a reload, or Back from another section)
+  // opens again.
+  const [openFanId, setOpenFanId] = useState<string | null>(null);
+  useEffect(() => {
+    // Read after hydration: the server render has no drawer open.
+    const fan = fanFromSearch(window.location.search);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- restore the drawer named in the URL once mounted
+    if (fan) setOpenFanId(fan);
+  }, []);
+  const openFanRef = useRef(openFanId);
+  useEffect(() => { openFanRef.current = openFanId; }, [openFanId]);
+  // Whether the current history entry is one this panel pushed for the drawer
+  // (closing then steps back over it), and a step back to ignore.
+  const drawerEntry = useRef(false);
+  const ignorePop = useRef(false);
+  const openFan = useCallback((id: string) => {
+    setOpenFanId(id);
+    const href = fanHref(id, window.location.pathname);
+    if (drawerEntry.current) window.history.replaceState({ ffFan: id }, "", href);
+    else window.history.pushState({ ffFan: id }, "", href);
+    drawerEntry.current = true;
+  }, []);
+  /** `leaving`: another section is opening, which writes its own entry. */
+  const closeFan = useCallback((leaving = false) => {
+    setOpenFanId(null);
+    if (leaving) { drawerEntry.current = false; return; }
+    if (drawerEntry.current) {
+      drawerEntry.current = false;
+      ignorePop.current = true;
+      window.history.back();
+    } else if (fanFromSearch(window.location.search)) {
+      window.history.replaceState({}, "", sectionHref("fans", window.location.pathname));
+    }
+  }, []);
+  useEffect(() => {
+    const onPop = () => {
+      if (ignorePop.current) { ignorePop.current = false; return; }
+      const fan = fanFromSearch(window.location.search);
+      const open = openFanRef.current;
+      if (fan === open) return;
+      drawerEntry.current = false;
+      if (open) {
+        // Back with the drawer open: close it through the unsaved-changes guard.
+        leave(() => setOpenFanId(fan), { scope: [`fan-focus:${open}`, `fan-topup:${open}`, `fan-edit:${open}`, `fan-message:${open}`], consequence: "Closing discards these selections. It does not undo a grant request already sent." });
+      } else if (fan) setOpenFanId(fan);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [leave]);
   const [search, setSearch] = useState(initialSearch);
   const [campaignFilter, setCampaignFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
@@ -523,7 +574,7 @@ export default function FansPanel({
             <FanRow
               key={acc.fanId}
               account={acc}
-              onOpen={() => openFanId && openFanId !== acc.fanId ? leave(() => setOpenFanId(acc.fanId), { scope: [`fan-focus:${openFanId}`, `fan-topup:${openFanId}`, `fan-edit:${openFanId}`] }) : setOpenFanId(acc.fanId)}
+              onOpen={() => openFanId && openFanId !== acc.fanId ? leave(() => openFan(acc.fanId), { scope: [`fan-focus:${openFanId}`, `fan-topup:${openFanId}`, `fan-edit:${openFanId}`, `fan-message:${openFanId}`] }) : openFan(acc.fanId)}
               onCopy={() => copyLink(acc)}
             />
           ))}
@@ -536,11 +587,11 @@ export default function FansPanel({
         campaigns={campaigns}
         wheels={wheels}
         now={now}
-        onOpenGame={onOpenGame ? (wheelId) => leave(() => { setOpenFanId(null); onOpenGame(wheelId); }) : undefined}
-        onOpenCampaigns={onOpenCampaigns ? () => leave(() => { setOpenFanId(null); onOpenCampaigns(); }) : undefined}
+        onOpenGame={onOpenGame ? (wheelId) => leave(() => { closeFan(true); onOpenGame(wheelId); }) : undefined}
+        onOpenCampaigns={onOpenCampaigns ? () => leave(() => { closeFan(true); onOpenCampaigns(); }) : undefined}
         onCampaignsChanged={async () => { await Promise.all([loadCampaigns(), loadWheels()]); }}
         templates={templates}
-        onClose={() => setOpenFanId(null)}
+        onClose={() => closeFan()}
         onSaved={load}
         onTopUp={topUp}
         onDeleted={load}
@@ -550,7 +601,7 @@ export default function FansPanel({
             ? (fanId) => {
                 // Guard before unmounting the drawer; the Inbox navigation
                 // must not erase the very registrations it needs to inspect.
-                leave(() => { setOpenFanId(null); onMessage(fanId); });
+                leave(() => { closeFan(true); onMessage(fanId); });
               }
             : undefined
         }
