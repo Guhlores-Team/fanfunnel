@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { linkNames, topUpOutcome, topUpTargets, type TopUpPass } from "./topUpTargets";
+import { linkNames, newLinkPin, topUpOutcome, topUpTargets, type TopUpPass } from "./topUpTargets";
 import { linkGame, mintPlaysReason, type ChoiceGame } from "./gameAssignment";
 
 let passed = 0;
@@ -79,5 +79,24 @@ check("1 spin is singular", topUpOutcome(topUpTargets({ passes: [pass("t1", "w")
   check("a following campaign still says it follows", mint("c2") === "(your live game, because “Open” follows it)");
   check("a campaign game is named as chosen", mint("c3") === "(the game chosen for “Pinned”)");
   check("no campaign: just the live game", mint(null) === "(your live game)");
+}
+// B5 follow-up: a "New link that plays Second wheel" top-up confirmed only by
+// "Check outcome" after a reload has no reply token; the receipt's pin and the
+// server's rule (oldest active link stored on that game) find the new link.
+{
+  const before = [pass("t1", "w")];
+  const minted = pass("fresh", "w2", { createdAt: "2026-06-01T00:00:00Z" });
+  check("reply token not in the pre-grant list: that new link is set", JSON.stringify(newLinkPin(before, "w2", "fresh")) === '{"token":"fresh"}');
+  check("reply token of a link stored elsewhere (an existing link was credited): nothing to set", "skip" in newLinkPin(before, "w2", "t1"));
+  check("retry after a reload: the new link is listed, stored on the pin, unpinned: set it", JSON.stringify(newLinkPin([...before, minted], "w2", "fresh")) === '{"token":"fresh"}');
+  check("Check outcome (no token): the link stored on the chosen game is set", JSON.stringify(newLinkPin([...before, minted], "w2")) === '{"token":"fresh"}');
+  check("Check outcome: the oldest link stored on that game, as the server credits",
+    JSON.stringify(newLinkPin([...before, pass("later", "w2", { createdAt: "2026-07-01T00:00:00Z" }), minted], "w2")) === '{"token":"fresh"}');
+  check("Check outcome: a link already set to the chosen game needs nothing", "done" in newLinkPin([...before, { ...minted, pinnedWheelId: "w2" }], "w2"));
+  const elsewhere = newLinkPin([...before, { ...minted, pinnedWheelId: "w" }], "w2");
+  check("a link set to another game is never re-pointed", "skip" in elsewhere && elsewhere.skip === "pinned_elsewhere");
+  const missing = newLinkPin(before, "w2");
+  check("no link on the chosen game yet (list unread or stale): nothing is guessed", "skip" in missing && missing.skip === "not_found");
+  check("an unread list is not found either", "skip" in newLinkPin(null, "w2"));
 }
 console.log(`topUpTargets.test: ${passed} checks passed`);

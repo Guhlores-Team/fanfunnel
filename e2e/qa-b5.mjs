@@ -155,6 +155,56 @@ export async function qaB5Journey(browser, { step, assert }, sink, ctx) {
       await json(await request.patch(`${BASE}/api/wheels/${scratch.wheel.id}`, { data: { activeFrom: new Date(Date.now() - 1000).toISOString(), activeUntil: null } }), "reschedule the scratch fixture");
     });
 
+    await step("b5 follow-up: a new-link top-up confirmed only by Check outcome after a reload still plays the chosen game", async () => {
+      // The scratch fixture unscheduled again, so the new link's chosen game is
+      // not the live one: without its pin the link would play the live game.
+      await json(await request.patch(`${BASE}/api/wheels/${scratch.wheel.id}`, { data: { activeFrom: null, activeUntil: null } }), "unschedule the scratch fixture");
+      const name = `QA b5 recover ${Date.now().toString(36)}`;
+      const fan = await newFan(request, name, 1);
+      fans.push(fan.fanId);
+      const page = await ctx.newPage();
+      attachSink(page, sink);
+      try {
+        await goto(page, "/dashboard?section=fans", 1200);
+        await page.getByRole("button", { name: `View ${name}`, exact: true }).click();
+        let drawer = page.getByRole("dialog", { name: "Fan details" });
+        await drawer.getByRole("button", { name: "Top up spins" }).click();
+        const select = drawer.getByTestId("topup-target");
+        await select.waitFor();
+        const fresh = (await select.locator("option").allInnerTexts()).find((o) => o.startsWith(`New link that plays ${scratch.wheel.title}`));
+        assert(fresh, "the scratch game is offered as a new link");
+        await select.selectOption({ label: fresh });
+        // The grant commits on the server; its reply never reaches the browser.
+        await page.route("**/api/passes", async (route) => {
+          await json(await route.fetch(), "commit the top-up before the lost reply");
+          await route.abort("aborted");
+        });
+        await drawer.getByRole("button", { name: /^Grant/ }).click();
+        await drawer.getByTestId("creator-request-recovery").waitFor({ timeout: 8000 });
+        await page.unroute("**/api/passes");
+        const receipt = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`ff:creator-intent:topup:${id}`) ?? "null"), fan.fanId);
+        assert(receipt && Object.keys(receipt).sort().join(",") === "id,pin,signature" && receipt.pin === scratch.wheel.id, `the receipt keeps only the request id, its hash and the chosen game (${JSON.stringify(receipt && Object.keys(receipt))})`);
+        const acceptReload = (dialog) => dialog.accept();
+        page.on("dialog", acceptReload);
+        try { await page.reload(); } finally { page.off("dialog", acceptReload); }
+        drawer = page.getByRole("dialog", { name: "Fan details" });
+        await drawer.waitFor({ timeout: 8000 });
+        await drawer.getByRole("button", { name: "Top up spins" }).click();
+        await drawer.getByTestId("creator-request-check").waitFor({ timeout: 8000 });
+        const pinned = page.waitForResponse((r) => r.url().includes(`/api/fans/${fan.fanId}/link-game`) && r.request().method() === "POST", { timeout: 8000 });
+        pinned.catch(() => {});
+        await drawer.getByTestId("creator-request-check").click();
+        assert((await pinned).ok(), "Check outcome sets the new link to play the chosen game");
+        await page.waitForFunction((id) => [...document.querySelectorAll("[data-testid='link-plays']")].some((el) => el.getAttribute("data-plays-game-id") === id), scratch.wheel.id, { timeout: 8000 });
+        const account = (await json(await request.get(`${BASE}/api/fans`), "read the fan list")).fans.find((f) => f.fanId === fan.fanId);
+        const links = account?.passes ?? [];
+        assert(links.length === 2 && links.filter((p) => p.wheelId === scratch.wheel.id && p.pinnedWheelId === scratch.wheel.id).length === 1, "exactly one new link, stored on and set to the chosen game");
+        assert(links.some((p) => p.wheelId !== scratch.wheel.id && !p.pinnedWheelId), "the fan's original link was not re-pointed");
+        assert(await page.evaluate((id) => sessionStorage.getItem(`ff:creator-intent:topup:${id}`) === null, fan.fanId), "the confirmed outcome released the receipt");
+      } finally { await page.unroute("**/api/passes").catch(() => {}); await page.close(); }
+      await json(await request.patch(`${BASE}/api/wheels/${scratch.wheel.id}`, { data: { activeFrom: new Date(Date.now() - 1000).toISOString(), activeUntil: null } }), "reschedule the scratch fixture");
+    });
+
     await step("qa-b5 m5: the dashboard section lives in the URL; reload and Back keep it", async () => {
       const page = await ctx.newPage();
       attachSink(page, sink);

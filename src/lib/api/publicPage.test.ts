@@ -57,7 +57,7 @@ async function main() {
   const profileRoute = await import("@/app/api/account/profile/route");
   const brandRoute = await import("@/app/api/account/brand-color/route");
   const publicProfileRoute = await import("@/app/api/public-profile/route");
-  const { getWheel, createWheel } = await import("@/lib/data");
+  const { getWheel, createWheel, listWheels } = await import("@/lib/data");
 
   const live = await getWheel();
   assert.ok(live, "mock wheel");
@@ -88,6 +88,21 @@ async function main() {
   await expectRevalidated("unarchive", true, () =>
     wheelIdRoute.PATCH(req("PATCH", `/api/wheels/${extra.id}`, { archived: false }), params(extra.id))
   );
+  // PATCH { archived: true } archives exactly as DELETE does; a field PATCH
+  // ignores is refused instead of answering 200 for a no-op.
+  const archivedAt = async () => (await listWheels(true)).find((w) => w.id === extra.id)?.archivedAt ?? null;
+  check("unarchive really restored the wheel", (await archivedAt()) === null);
+  await expectRevalidated("archive via PATCH", true, () =>
+    wheelIdRoute.PATCH(req("PATCH", `/api/wheels/${extra.id}`, { archived: true }), params(extra.id))
+  );
+  check("PATCH archived:true really archived the wheel", typeof (await archivedAt()) === "string");
+  await expectRevalidated("PATCH with an ignored field", false, () =>
+    wheelIdRoute.PATCH(req("PATCH", `/api/wheels/${extra.id}`, { title: "Renamed" }), params(extra.id))
+  );
+  await expectRevalidated("unarchive via PATCH", true, () =>
+    wheelIdRoute.PATCH(req("PATCH", `/api/wheels/${extra.id}`, { archived: false }), params(extra.id))
+  );
+  check("PATCH archived:false really restored the wheel", (await archivedAt()) === null);
   await expectRevalidated("delete", true, () =>
     wheelIdRoute.DELETE(req("DELETE", `/api/wheels/${extra.id}?hard=1`), params(extra.id))
   );
