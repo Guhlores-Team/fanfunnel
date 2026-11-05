@@ -101,9 +101,11 @@ export default function FanDetailDrawer({
   const [blocking, setBlocking] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const composeId = useId();
   const [focusPreset, setFocusPreset] = useState<{ id: string | null; nonce: number }>({ id: null, nonce: 0 });
   const leave = useCreatorLeave();
-  const closeDrawer = useCallback(() => leave(onClose, { scope: [`fan-focus:${fanId}`, `fan-topup:${fanId}`, `fan-edit:${fanId}`], consequence: "Closing discards these selections. It does not undo a grant request already sent." }), [leave, onClose, fanId]);
+  const closeDrawer = useCallback(() => leave(onClose, { scope: [`fan-focus:${fanId}`, `fan-topup:${fanId}`, `fan-edit:${fanId}`, `fan-message:${fanId}`], consequence: "Closing discards these selections. It does not undo a grant request already sent." }), [leave, onClose, fanId]);
   // Fans with a top-up request in flight. Held here, not in TopUpForm, because
   // the form unmounts when it is collapsed, the fan changes or the drawer closes;
   // its local state would reset and let a second grant through mid-request.
@@ -158,6 +160,7 @@ export default function FanDetailDrawer({
     setNotes("");
     setBlocked(false);
     setTopUpOpen(false);
+    setComposeOpen(false);
     setFocusPreset({ id: null, nonce: 0 });
     setConfirmDelete(false);
     (async () => {
@@ -443,21 +446,19 @@ export default function FanDetailDrawer({
                     Copy link
                   </button>
                   {onMessage && (
-                    // Threads start on the fan's side (chat is spin-gated), so
-                    // without one there is nothing to open: say so instead of
-                    // landing on an empty inbox.
+                    // With a thread: open it in the Inbox. Without one, the
+                    // creator can start it here (QA b5 m8); the fan reads it in
+                    // the chat on their spin link.
                     <button
                       type="button"
-                      onClick={() => {
-                        if (hasThread) onMessage(fanId);
-                        else
-                          toast("No conversation yet — fans can message you after their first spin.", {
-                            tone: "info",
-                          });
-                      }}
-                      aria-disabled={hasThread ? undefined : true}
-                      title={hasThread ? "Open this fan's thread in the Inbox" : "No conversation yet"}
-                      className={`${actionBtn} aria-disabled:opacity-60`}
+                      onClick={() => (hasThread ? onMessage(fanId) : setComposeOpen((v) => !v))}
+                      aria-expanded={hasThread ? undefined : composeOpen}
+                      aria-controls={hasThread ? undefined : composeId}
+                      disabled={!hasThread && (blocked || !!breakEnd)}
+                      aria-describedby={!hasThread && breakEnd ? breakNoteId : undefined}
+                      title={hasThread ? "Open this fan's thread in the Inbox" : "Start a conversation with this fan"}
+                      data-has-thread={hasThread ? "true" : "false"}
+                      className={`${actionBtn} disabled:cursor-not-allowed disabled:opacity-50`}
                     >
                       Message
                     </button>
@@ -472,8 +473,16 @@ export default function FanDetailDrawer({
                 </div>
                 {breakEnd && (
                   <p id={breakNoteId} className="mt-2 text-[12px] text-muted">
-                    Paused by the fan: they&rsquo;re taking a break until {breakEnd}. Top-up and Copy DM are off until then.
+                    Paused by the fan: they&rsquo;re taking a break until {breakEnd}. Top-up, Copy DM and starting a conversation are off until then.
                   </p>
+                )}
+                {composeOpen && !hasThread && onMessage && !blocked && !breakEnd && (
+                  <StartConversation
+                    id={composeId}
+                    fanId={fanId}
+                    name={name}
+                    onSent={() => { setComposeOpen(false); onMessage(fanId); }}
+                  />
                 )}
                 {topUpOpen && (
                   <TopUpForm
@@ -1003,6 +1012,51 @@ function TopUpForm({
         setUncertain(false); setError("");
         if (outcome === "committed" || outcome === "gone") { setPerSpin(""); setPackId(null); await onDone(); }
       }} />
+    </div>
+  );
+}
+
+/** The first message of a conversation, sent from the drawer. */
+function StartConversation({ id, fanId, name, onSent }: { id: string; fanId: string; name: string; onSent: () => void }) {
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+  useCreatorDraft(`fan-message:${fanId}`, "an unsent message", body.trim().length > 0, sending);
+  async function send() {
+    const text = body.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      const res = await fetch("/api/messages/creator", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fanId, body: text }),
+      });
+      if (!res.ok) { setError("Couldn't send. Your message is still here; try again."); return; }
+      setBody("");
+      toast(`Sent. ${name || "This fan"} sees it in the chat on their spin link.`, { tone: "success" });
+      onSent();
+    } catch {
+      setError("Couldn't send. Your message is still here; try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+  return (
+    <div id={id} data-testid="start-conversation" className={`lift-in mt-2.5 p-3.5 ${well}`}>
+      <label className="block text-[12.5px] font-semibold text-ink" htmlFor={`${id}-body`}>
+        Start a conversation with {name || "this fan"}
+      </label>
+      <p className="mt-0.5 text-[11.5px] text-muted">They read it in the chat on their spin link; replies land in your Inbox.</p>
+      <textarea id={`${id}-body`} className="ff-input mt-2 w-full text-[13.5px]" rows={3} maxLength={2000} value={body} disabled={sending} onChange={(e) => setBody(e.target.value)} />
+      {error && <p role="alert" className="mt-1.5 text-xs text-amber-200">{error}</p>}
+      <div className="mt-2 flex justify-end">
+        <button type="button" onClick={() => void send()} disabled={sending || !body.trim()} className="btn-brand min-h-9 rounded-[9px] px-4 text-[13px] font-bold disabled:opacity-50">
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
     </div>
   );
 }

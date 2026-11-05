@@ -631,9 +631,8 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     await page
       .waitForFunction(() => {
         const b = [...document.querySelectorAll("[role='dialog'] button")].find((x) => x.textContent?.trim() === "Message");
-        return b && !b.getAttribute("aria-disabled");
-      })
-      .catch(() => {});
+        return b?.getAttribute("data-has-thread") === "true";
+      }, null, { timeout: 8000 });
     await msg.click();
     const inboxNav = page.locator(NAV_ITEMS).filter({ hasText: "Inbox" }).first();
     await inboxNav.and(page.locator("[aria-current='page']")).waitFor({ timeout: 5000 });

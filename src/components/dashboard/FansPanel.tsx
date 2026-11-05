@@ -21,7 +21,7 @@ import { creatorIntent, creatorIntentComplete } from "./creatorIntent";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import { GameName } from "./GameChoice";
-import { linkGame } from "./gameAssignment";
+import { linkGame, mintPlaysReason } from "./gameAssignment";
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -383,9 +383,7 @@ export default function FansPanel({
             <span className="font-semibold text-ink">This link will play:</span>
             <GameName game={mintPlays.game} />
             <span>
-              {mintPlays.via === "campaign" && mintPlays.campaign
-                ? `(the game chosen for “${mintPlays.campaign.name}”)`
-                : `(your live game${mintPlays.campaign ? `, because “${mintPlays.campaign.name}” follows it` : ""})`}
+              {mintPlaysReason(mintPlays)}
             </span>
             {onOpenCampaigns && (
               <button type="button" onClick={onOpenCampaigns} className="font-semibold text-ink underline underline-offset-2">

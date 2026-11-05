@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { linkNames, topUpOutcome, topUpTargets, type TopUpPass } from "./topUpTargets";
-import type { ChoiceGame } from "./gameAssignment";
+import { linkGame, mintPlaysReason, type ChoiceGame } from "./gameAssignment";
 
 let passed = 0;
 const check = (label: string, cond: unknown) => { assert.ok(cond, label); passed++; };
@@ -71,4 +71,13 @@ const pass = (token: string, wheelId: string, extra: Partial<TopUpPass> = {}): T
 }
 
 check("1 spin is singular", topUpOutcome(topUpTargets({ passes: [pass("t1", "w")], campaigns: [], games, now }).existing[0], null, 1).startsWith("Link (no campaign) gets 1 spin (1 spin after)"));
+// QA b5 m7: the mint line for a campaign set to an archived game.
+{
+  const campaigns = [{ id: "c1", name: "Spring", pinnedWheelId: "w0005" }, { id: "c2", name: "Open", pinnedWheelId: null }, { id: "c3", name: "Pinned", pinnedWheelId: "w2" }];
+  const mint = (campaignId: string | null) => mintPlaysReason(linkGame({ wheelId: "", campaignId }, campaigns, games, now)!);
+  check("an archived campaign game is named, not called 'follows'", mint("c1") === "(your live game: “Spring” is set to play Old wheel, but it's archived)");
+  check("a following campaign still says it follows", mint("c2") === "(your live game, because “Open” follows it)");
+  check("a campaign game is named as chosen", mint("c3") === "(the game chosen for “Pinned”)");
+  check("no campaign: just the live game", mint(null) === "(your live game)");
+}
 console.log(`topUpTargets.test: ${passed} checks passed`);
