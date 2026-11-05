@@ -10,7 +10,9 @@ async function main() {
   const lost = await submitFanImport(storage, "current", rows, async body => { calls++; firstId = body.batchId; throw new Error("reply lost after commit"); });
   check("lost responses retain a durable batch identity", lost.status === "pending" && calls === 1 && records.size === 1);
   const stored = [...records.values()][0];
-  check("only UUID and digest are persisted, never CSV names or tokens", Object.keys(JSON.parse(stored)).sort().join() === "id,signature" && !stored.includes(rows[0].name) && !stored.includes("500"));
+  // Shape, not substrings: a random SHA-256 hex digest can contain "500" by chance.
+  const persisted = JSON.parse(stored);
+  check("only UUID and digest are persisted, never CSV names or tokens", Object.keys(persisted).sort().join() === "id,signature" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(persisted.id) && /^[a-f0-9]{64}$/.test(persisted.signature) && !stored.includes(rows[0].name));
   const changed = await submitFanImport(storage, "current", [{ ...rows[0], spins: 4 }], async () => { calls++; throw new Error("must not send"); });
   check("unknown imports cannot be replaced by edited rows or a new batch blindly", changed.status === "pending" && calls === 1 && [...records.values()][0] === stored);
   const denied = await submitFanImport(storage, "current", rows, async body => { calls++; assert.equal(body.batchId, firstId); return { ok: false, json: async () => ({ error: "forbidden" }) }; });
