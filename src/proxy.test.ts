@@ -103,7 +103,7 @@ async function main() {
   //     refreshes the session there.
   const withCookie = (path: string) =>
     unstable_doesMiddlewareMatch({ config, nextConfig, url: path, cookies: { "sb-x-auth-token": "1" } });
-  for (const path of ["/api/spin", "/api/campaigns/stats", "/api/wheel", "/api/account/profile"]) {
+  for (const path of ["/api/spin", "/api/campaigns/stats", "/api/wheel", "/api/account/profile", "/api/agency/leave"]) {
     check(`${path} with a cookie runs the proxy (origin check)`, withCookie(path) && !needsSessionRefresh(path));
   }
   for (const path of ["/c/demo", "/spin/some-token", "/share/abc", "/verify/abc", "/"]) {

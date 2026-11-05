@@ -14,7 +14,9 @@ export async function GET(req: Request) {
   const overview = await getAgencyOverview();
   if (overview) return NextResponse.json(overview);
   // A45: a creator an agency manages has no console of its own; the page
-  // explains what the agency can do instead of offering to start one.
+  // explains what the agency can do instead of offering to start one, and
+  // offers to leave it (the caller's own profiles.org_id; org_leave acts on
+  // the caller's own rows only, so the id grants nothing).
   const standing = await getAgencyStanding();
-  return NextResponse.json(standing?.inAgency ? { org: null, managed: true } : null);
+  return NextResponse.json(standing?.inAgency ? { org: null, managed: true, orgId: standing.creatorOrgId } : null);
 }

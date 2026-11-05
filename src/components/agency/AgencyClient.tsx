@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AGENCY_INVITE_TTL_DAYS } from "@/lib/agency/config";
 import { formatCents } from "@/lib/format";
 import SeatWorkspace from "./SeatWorkspace";
+import LeaveAgency, { LeftAgency, leaveKind, type LeaveKind } from "./LeaveAgency";
 
 interface CreatorStat {
   id: string;
@@ -35,6 +36,8 @@ interface Overview {
   demo?: boolean;
   /** A45: the caller is a creator an agency manages (no console of its own). */
   managed?: boolean;
+  /** With `managed`: that agency's id, so the creator can leave it. */
+  orgId?: string | null;
   isOwner: boolean;
   totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
   creators: CreatorStat[];
@@ -78,6 +81,7 @@ export default function AgencyClient() {
   // Stable keys for in-flight destructive actions so each button can disable
   // itself while its request is pending (prevents double-submits).
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
+  const [left, setLeft] = useState<LeaveKind | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -121,7 +125,14 @@ export default function AgencyClient() {
 
   if (loading) return <p className="p-8 text-sm text-muted">Loading…</p>;
 
-  if (data && !data.org && data.managed) return <ManagedByAgency />;
+  if (left) return <LeftAgency kind={left} />;
+
+  // Never the owner, the demo or a non-member (leaveKind).
+  const canLeave = leaveKind(data);
+
+  if (data && !data.org && data.managed) {
+    return <ManagedByAgency orgId={canLeave === "creator" ? data.orgId ?? null : null} onLeft={() => setLeft("creator")} />;
+  }
 
   // No org yet → let the user create one.
   if (!data || !data.org) {
@@ -334,6 +345,8 @@ export default function AgencyClient() {
           <p className="text-sm text-muted">No staff seats yet.</p>
         )}
       </div>
+
+      {canLeave === "staff" && <LeaveAgency kind="staff" orgId={org.id} orgName={org.name} onLeft={() => setLeft("staff")} />}
     </div>
   );
 }
@@ -450,19 +463,21 @@ function AddByEmail({
   );
 }
 
-/** A45: a creator an agency manages has no console; say what that means. */
-function ManagedByAgency() {
+/** A45: a creator an agency manages has no console; say what that means,
+ *  and let them leave it. */
+function ManagedByAgency({ orgId, onLeft }: { orgId: string | null; onLeft: () => void }) {
   return (
     <div data-testid="agency-managed" className="mx-auto max-w-md px-5 py-24 text-center text-ink">
       <h1 className="text-xl font-bold">You&apos;re part of an agency</h1>
       <p className="mt-3 text-sm text-muted text-pretty">
         You accepted an agency&apos;s invitation. Its owner and managers can run your games, campaigns, fans and
         fulfilment, and staff it assigns to you can answer your inbox or fulfil your prizes. Everything they do shows up
-        in your own dashboard. The agency owner can remove you at any time; ask them if you want to leave.
+        in your own dashboard. The agency owner can remove you at any time{orgId ? ", and you can leave it yourself below." : "; ask them if you want to leave."}
       </p>
       <Link href="/dashboard" className="mt-6 inline-flex min-h-10 items-center rounded-lg border border-line px-4 text-sm font-semibold text-muted hover:bg-surface-2 hover:text-ink">
         ← Back to dashboard
       </Link>
+      {orgId && <LeaveAgency kind="creator" orgId={orgId} onLeft={onLeft} />}
     </div>
   );
 }

@@ -63,6 +63,7 @@ async function main() {
   check("a creator an agency manages gets the link", (await showAgencyLink()) === true);
   const standing = await getAgencyStanding();
   check("…and its standing says so (inAgency only)", standing?.inAgency === true && !standing.ownsOrg && !standing.hasSeat);
+  check("…with the agency's id from the caller's own profile (to leave it)", standing?.creatorOrgId === "f0000000-0000-4000-8000-000000000001");
   signedIn = false;
   check("signed out: no link and no standing", (await showAgencyLink()) === false && (await getAgencyStanding()) === null);
   signedIn = true;
@@ -74,7 +75,7 @@ async function main() {
   const { GET } = await import("@/app/api/agency/route");
   const req = () => new Request("http://localhost/api/agency");
   world = { owns: 0, seats: 0, orgId: "f0000000-0000-4000-8000-000000000001" };
-  check("/api/agency: a managed creator gets the managed notice, not the start-an-agency form", JSON.stringify(await (await GET(req())).json()) === '{"org":null,"managed":true}');
+  check("/api/agency: a managed creator gets the managed notice, not the start-an-agency form", JSON.stringify(await (await GET(req())).json()) === '{"org":null,"managed":true,"orgId":"f0000000-0000-4000-8000-000000000001"}');
   world = { owns: 0, seats: 0, orgId: null };
   check("/api/agency: anyone else still gets null (start an agency)", (await (await GET(req())).json()) === null);
 

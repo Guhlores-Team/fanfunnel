@@ -309,6 +309,13 @@ const openLinkRescue = async (page) => {
   await page.getByRole("button", { name: "Delete my data" }).waitFor({ timeout: 4000 });
   await page.waitForTimeout(300);
 };
+const LEAVE_ORG = { id: "0a0a0a0a-0000-4000-8000-00000000000a", name: "A11y Talent" };
+const openLeaveAgency = (answer) => async (page) => {
+  await page.route("**/api/agency", (r) => r.fulfill({ json: answer }));
+  await goto(page, "/agency", 1200);
+  await page.getByRole("button", { name: "Leave agency" }).click();
+  await page.getByRole("group", { name: /Leave .*\?/ }).waitFor({ timeout: 5000 });
+};
 const openCloseAccount = async (page) => {
   await clickTab(page, "Settings");
   await page.getByRole("button", { name: /Close my account/ }).click();
@@ -413,6 +420,10 @@ const PAGES = [
   // A45/A53: the Agency console in the demo's "Demo only" create-agency state.
   { path: "/agency", name: "agency (demo only: start an agency)", prep: async page => { await page.getByTestId("agency-demo-only").waitFor({ timeout: 8000 }); } },
   { path: "/agency", name: "agency phone (demo only: start an agency)", viewport: PHONE, prep: async page => { await page.getByTestId("agency-demo-only").waitFor({ timeout: 8000 }); } },
+  // b6: Leave agency, asked to confirm (the demo has no agencies, so the
+  // /api/agency answer is stubbed in the state's own context).
+  { path: null, name: "agency (managed creator: leave confirmation)", context: {}, prep: openLeaveAgency({ org: null, managed: true, orgId: LEAVE_ORG.id }) },
+  { path: null, name: "agency phone (staff seat: leave confirmation)", viewport: PHONE, context: PHONE_CTX, prep: openLeaveAgency({ org: LEAVE_ORG, isOwner: false, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] }) },
 ];
 
 // Impacts that fail the build vs. advisory-only.

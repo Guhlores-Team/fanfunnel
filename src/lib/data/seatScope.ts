@@ -87,6 +87,8 @@ export interface AgencyStanding {
   hasSeat: boolean;
   /** Is a creator an agency manages (accepted an invite). */
   inAgency: boolean;
+  /** That agency's id (the caller's own profiles.org_id), for leaving it. */
+  creatorOrgId: string | null;
 }
 
 /**
@@ -105,10 +107,12 @@ export async function getAgencyStanding(): Promise<AgencyStanding | null> {
     sb.from("org_members").select("id", { count: "exact", head: true }).eq("profile_id", user.id),
     sb.from("profiles").select("org_id").eq("id", user.id).maybeSingle(),
   ]);
+  const orgId = (profile.data as { org_id: string | null } | null)?.org_id ?? null;
   return {
     ownsOrg: (owned.count ?? 0) > 0,
     hasSeat: (seat.count ?? 0) > 0,
-    inAgency: !!(profile.data as { org_id: string | null } | null)?.org_id,
+    inAgency: !!orgId,
+    creatorOrgId: orgId,
   };
 }
 
