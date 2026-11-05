@@ -310,12 +310,19 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       // A fan page's public reads carry its link token in x-fan-token (FanLeaderboard, RecentWinsTicker): one minute on the page is
       // the load, three recent-wins polls (every 20s) and the leaderboard twice (load + the refetch after a spin), all at the origin (no CDN here).
       const fanRead = (fan, i, path, series) => timed(series, () => call("GET", path, { ip: natIp[i % 2], headers: { "x-fan-token": fan.token } }));
+      // The page load is timed (as before); the follow-up polls come after it, inside the same one-minute windows.
       const loads = await parallel(fans, fansOnPage, (fan, i) => Promise.all([
         timed(page, () => call("GET", `/spin/${encodeURIComponent(fan.token)}`, { ip: natIp[i % 2] })),
-        (async () => { const out = []; for (let k = 0; k < 3; k++) out.push(await fanRead(fan, i, `/api/recent-wins/acc-you?k=${k}`, wins)); return out; })(),
-        (async () => [await fanRead(fan, i, "/api/leaderboard/acc-you?k=0", board), await fanRead(fan, i, "/api/leaderboard/acc-you?k=1", board)])(),
+        fanRead(fan, i, "/api/recent-wins/acc-you?k=0", wins).then(v => [v]),
+        fanRead(fan, i, "/api/leaderboard/acc-you?k=0", board).then(v => [v]),
         timed(checkins, () => call("POST", "/api/fan/checkin", { body: { token: fan.token }, ip: natIp[i % 2] })),
       ]));
+      const followUps = [];
+      await parallel(fans, 50, async (fan, i) => {
+        const l = loads[i].value;
+        l[1].push(await fanRead(fan, i, "/api/recent-wins/acc-you?k=1", followUps), await fanRead(fan, i, "/api/recent-wins/acc-you?k=2", followUps));
+        l[2].push(await fanRead(fan, i, "/api/leaderboard/acc-you?k=1", followUps));
+      });
       const per = (k, many = false) => tally(loads.flatMap(r => (many ? r.value[k] : [r.value[k]]).map(value => ({ ok: true, value }))), v => String(v.status));
       report.number("fan_page_statuses", per(0)); report.number("recent_wins_statuses", per(1, true)); report.number("leaderboard_statuses", per(2, true)); report.number("checkin_statuses", per(3));
       report.check(loads.every(r => r.value[0].status === 200), `${fansOnPage} fan pages all render (SSR, no limiter)`);
