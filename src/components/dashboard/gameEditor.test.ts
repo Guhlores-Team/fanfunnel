@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { gameSaveFeatureAllowed, canCreateGame, creatorGameSettings, editableGamePayload, gameDraftError, gameRefusalMessage, readGameFeatures, type CreatorGameWheel } from "./gameEditor";
+import { bingoMissing, bingoSquareCount, gameSaveFeatureAllowed, canCreateGame, creatorGameSettings, editableGamePayload, gameDraftError, gameRefusalMessage, readGameFeatures, type CreatorGameWheel } from "./gameEditor";
 import { FEATURES, defaultFeatures } from "@/lib/features";
 
 for (const raw of [null, undefined, [], {}, { features: null }, { features: [] }]) assert.equal(readGameFeatures(raw), null);
@@ -16,7 +16,17 @@ assert.equal(FEATURES.find(feature => feature.key === "bingo")?.comingSoon, unde
 
 const wheel: CreatorGameWheel = { id: "game", title: "Bingo", gameKind: "bingo", gameConfig: { size: 3, linePrizeId: "p0" }, gameKindLocked: false, gameReady: true, prizes: Array.from({ length: 9 }, (_, index) => ({ id: `p${index}`, label: `Prize ${index}`, rarity: index === 0 ? "rare" : "common", weight: 1, stock: null })) };
 assert.equal(gameDraftError(wheel), null);
-assert.equal(gameDraftError({ ...wheel, gameReady: false, gameConfig: { size: 3, linePrizeId: null } }), "Choose valid game settings before saving.", "inactive draft null target never passes ready settings");
+assert.equal(gameDraftError({ ...wheel, gameReady: false, gameConfig: { size: 3, linePrizeId: null } }), "Bingo still needs a line prize: choose it under Line prize (its normal tickets may be zero).", "inactive draft null target never passes ready settings, and says the line prize is what's missing");
+// QA b5 m3: a brand-new bingo draft (3 common prizes, no line prize) names every missing piece.
+{
+  const fresh: CreatorGameWheel = { ...wheel, gameReady: false, gameConfig: { size: 3, linePrizeId: null }, prizes: wheel.prizes.slice(1, 4) };
+  assert.deepEqual(bingoMissing(fresh).map((item) => item.split(" ")[0] + " " + item.split(" ")[1]), ["6 more", "an unlimited", "a line"], "six squares, a fallback and a line prize");
+  assert.match(gameDraftError(fresh)!, /^Bingo still needs 6 more card-square prizes .*; an unlimited rare, epic or legendary prize .*; and a line prize: choose it under Line prize/);
+  assert.match(gameDraftError({ ...fresh, prizes: wheel.prizes.slice(0, 8), gameConfig: { size: 3, linePrizeId: "p0" } })!, /^Bingo still needs 1 more card-square prize \(/, "singular when one square is missing");
+  assert.equal(bingoSquareCount(wheel), 9);
+  assert.deepEqual(bingoMissing(wheel), [], "a complete bingo game misses nothing");
+  assert.equal(gameDraftError({ ...wheel, gameKind: "scratch", gameConfig: { style: "nope" } } as unknown as CreatorGameWheel), "Choose valid game settings before saving.", "other invalid settings keep the general message");
+}
 assert.equal(creatorGameSettings({ ...wheel, gameConfig: { size: 3, linePrizeId: null } }), null);
 assert.match(gameDraftError({ ...wheel, prizes: wheel.prizes.slice(0, 8) })!, /9 distinct unlimited/);
 assert.match(gameDraftError({ ...wheel, prizes: [...wheel.prizes.slice(0, 8), wheel.prizes[0]] })!, /9 distinct unlimited/, "duplicate IDs cannot masquerade as nine squares");

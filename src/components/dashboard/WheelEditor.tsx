@@ -38,6 +38,7 @@ import {
 import {
   MAX_PRIZE_LABEL,
   MIN_WHEEL_PRIZES,
+  gameNoun,
   colorFromInput,
   normalizeHex,
   validateWheelDraft,
@@ -324,7 +325,7 @@ export default function WheelEditor({
         // Refresh the onboarding "wheelBuilt" signal now that this wheel saved.
         onWheelMutated();
       } else {
-        const message = gameRefusalMessage(data.error) ?? wheelSaveErrorMessage(data.error);
+        const message = gameRefusalMessage(data.error) ?? wheelSaveErrorMessage(data.error, wheel.gameKind);
         setSaveError(message);
         toast(message, { tone: "error" });
       }
@@ -571,7 +572,7 @@ export default function WheelEditor({
   const minNote = prizeCountMsg
     ? null
     : wheel.prizes.length === MIN_WHEEL_PRIZES
-      ? `Remove is off: a wheel needs at least ${MIN_WHEEL_PRIZES} prizes. Add one first to swap a prize out.`
+      ? `Remove is off: a ${gameNoun(wheel.gameKind)} needs at least ${MIN_WHEEL_PRIZES} prizes. Add one first to swap a prize out.`
       : null;
 
   return (
@@ -1004,7 +1005,7 @@ export default function WheelEditor({
                         title={
                           canRemove
                             ? "Remove prize"
-                            : `A wheel needs at least ${MIN_WHEEL_PRIZES} prizes`
+                            : `A ${gameNoun(wheel.gameKind)} needs at least ${MIN_WHEEL_PRIZES} prizes`
                         }
                         aria-label="Remove prize"
                       >

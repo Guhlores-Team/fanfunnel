@@ -69,10 +69,17 @@ export const NO_WINNABLE_PRIZE = "At least one prize needs more than 0 tickets."
 export const ZERO_TICKETS_NOTE =
   "0 tickets: this prize won't come up in normal spins. Rare or better prizes can still land through the pity guarantee or happy hour.";
 
-export function prizeCountError(count: number): string | null {
+/** What the creator is building, for copy: "a wheel", "a scratch ticket"… */
+export type GameNounKind = "wheel" | "scratch" | "bingo";
+const GAME_NOUN: Record<GameNounKind, string> = { wheel: "wheel", scratch: "scratch ticket", bingo: "bingo game" };
+export function gameNoun(kind: unknown): string {
+  return typeof kind === "string" && Object.hasOwn(GAME_NOUN, kind) ? GAME_NOUN[kind as GameNounKind] : GAME_NOUN.wheel;
+}
+
+export function prizeCountError(count: number, kind: unknown = "wheel"): string | null {
   if (count >= MIN_WHEEL_PRIZES) return null;
   const more = MIN_WHEEL_PRIZES - count;
-  return `A wheel needs at least ${MIN_WHEEL_PRIZES} prizes. Add ${more} more to save.`;
+  return `A ${gameNoun(kind)} needs at least ${MIN_WHEEL_PRIZES} prizes. Add ${more} more to save.`;
 }
 
 export type PrizeField = "label" | "weight" | "stock" | "color";
@@ -129,7 +136,7 @@ export function validateWheelDraft(wheel: WheelConfig): WheelDraftErrors {
     if (Object.keys(errs).length > 0) out.prizes[p.id] = errs;
   });
 
-  const count = prizeCountError(wheel.prizes.length);
+  const count = prizeCountError(wheel.prizes.length, (wheel as { gameKind?: unknown }).gameKind);
   if (count) {
     out.prizeCount = count;
     out.issues.push({ key: "prizeCount", message: count });

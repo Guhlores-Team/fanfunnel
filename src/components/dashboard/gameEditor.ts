@@ -35,14 +35,41 @@ export function editableGamePayload(wheel: CreatorGameWheel): CreatorGameWheel {
   return value;
 }
 
+/** Distinct prizes that can be bingo card squares. */
+export function bingoSquareCount(wheel: CreatorGameWheel): number {
+  return new Set(wheel.prizes.filter(bingoEligible).map((prize) => prize.id)).size;
+}
+
+/**
+ * Exactly what a bingo draft still lacks, in plain words (QA b5 m3: a new
+ * draft only said "Choose valid game settings"). Empty when it can be saved.
+ */
+export function bingoMissing(wheel: CreatorGameWheel): string[] {
+  const missing: string[] = [];
+  const squares = bingoSquareCount(wheel);
+  if (squares < BINGO_CELL_COUNT) {
+    const more = BINGO_CELL_COUNT - squares;
+    missing.push(`${more} more card-square prize${more === 1 ? "" : "s"} (Bingo needs ${BINGO_CELL_COUNT} distinct unlimited prizes with more than 0 tickets; a code list can't be a square)`);
+  }
+  if (!wheel.prizes.filter(bingoEligible).some(isRareBonus)) missing.push("an unlimited rare, epic or legendary prize with more than 0 tickets, used as the line-bonus fallback");
+  const config = wheel.gameConfig as { linePrizeId?: unknown } | undefined;
+  const linePrizeId = typeof config?.linePrizeId === "string" && config.linePrizeId ? config.linePrizeId : null;
+  if (!linePrizeId) missing.push("a line prize: choose it under Line prize (its normal tickets may be zero)");
+  else if (!wheel.prizes.some((prize) => prize.id === linePrizeId)) missing.push("a line prize from this game: Choose a saved line prize, the one chosen is no longer in this game");
+  return missing;
+}
+
+function listText(items: string[]): string {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join("; ")}; and ${items.at(-1)}`;
+}
+
 export function gameDraftError(wheel: CreatorGameWheel): string | null {
+  if (creatorGameKind(wheel) === "bingo") {
+    const missing = bingoMissing(wheel);
+    if (missing.length) return `Bingo still needs ${listText(missing)}.`;
+  }
   const settings = creatorGameSettings(wheel);
   if (!settings) return "Choose valid game settings before saving.";
-  if (settings.gameKind !== "bingo") return null;
-  const cells = wheel.prizes.filter(bingoEligible);
-  if (new Set(cells.map((prize) => prize.id)).size < BINGO_CELL_COUNT) return `Bingo needs at least ${BINGO_CELL_COUNT} distinct unlimited prizes with positive tickets and manual, text or link delivery. Code lists cannot be card squares.`;
-  if (!cells.some(isRareBonus)) return "Keep at least one unlimited rare, epic or legendary prize with positive tickets as the line-bonus fallback.";
-  if (!wheel.prizes.some((prize) => prize.id === settings.gameConfig.linePrizeId)) return "Choose a saved line prize from this game. Its normal tickets may be zero.";
   return null;
 }
 
