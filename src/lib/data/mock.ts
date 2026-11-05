@@ -865,11 +865,34 @@ export function mockGetWheel(): WheelConfig {
   return { ...structuredClone(wheel), gameKind: wheel.gameKind ?? "wheel", gameConfig: wheel.gameConfig ?? {}, gameReady: wheel.gameReady !== false, gameKindLocked: wheel.gameKindLocked === true };
 }
 
-export function mockSaveWheel(config: WheelConfig): WheelConfig {
+/**
+ * save_wheel_prizes' stock rule (schema.sql): for a saved prize whose loaded
+ * stock the editor sent (`expectedStock`), stock is a compare-and-set. When the
+ * live stock still matches, or the save makes the prize unlimited, the edited
+ * value is stored. Otherwise a finite edit is applied as the creator's delta
+ * over the live value (floored at 0), so wins that landed while the editor was
+ * open are never put back; a limited/unlimited switch the creator did not see
+ * is `stock_changed`. Without an expected value the edited stock is stored.
+ */
+function mockSavedStock(prize: Prize, existing: WheelConfig | undefined, expectedStock: Readonly<Record<string, number | null>>): Prize["stock"] {
+  const current = existing?.prizes.find((p) => p.id === prize.id);
+  if (!current || !Object.hasOwn(expectedStock, prize.id)) return prize.stock;
+  const live = current.stock ?? null, loaded = expectedStock[prize.id] ?? null;
+  // prizeRow stores a finite stock as a non-negative integer, else unlimited.
+  const next = prize.stock != null && Number.isFinite(prize.stock) ? Math.max(0, Math.trunc(prize.stock)) : null;
+  if (live === loaded || next === null) return next;
+  if (live === null || loaded === null) throw new Error("stock_changed");
+  return Math.max(0, live + (next - loaded));
+}
+
+export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Record<string, number | null>> = {}): WheelConfig {
   // Save by id into the wheels map. If the id matches no existing wheel, treat
   // the save as targeting the active wheel (preserving its stable id).
   const targetId = store.wheels.has(config.id) ? config.id : activeWheel().id;
   const existing = store.wheels.get(targetId);
+  // Resolve stock against the live store first, so a refused save changes nothing.
+  const stocks = config.prizes.map((prize) => mockSavedStock(prize, existing, expectedStock));
+  config = { ...config, prizes: config.prizes.map((prize, i) => ({ ...prize, stock: stocks[i] })) };
   const settings = gameSettings(config.gameKind ?? existing?.gameKind, config.gameConfig ?? existing?.gameConfig);
   const kindChanged=settings.gameKind !== (existing?.gameKind ?? "wheel");
   if(kindChanged && existing?.gameKindLocked)throw new Error("game_kind_locked");

@@ -376,6 +376,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       const live = (await wheel()).prizes, idOf = label => live.find(p => p.label === label)?.id;
       const target = { focus: idOf("Focus target"), chase: idOf("Chase target") };
       const fans = await makePasses(n, 4), series = [], grants = [], groups = [], cancels = [], edits = [];
+      let focusDelta = 0;
       for (const fan of fans) { const r = await call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }); fan.passId = r.json?.passes?.[0]?.id; }
       report.check(fans.every(f => f.passId), "every fan's pass is visible to the creator's focus panel");
       let playing = true, archived = false;
@@ -404,6 +405,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
           const w = i % 3 === 2 ? stale : await wheel(); const expectedStock = i % 3 === 2 ? staleStock : Object.fromEntries(w.prizes.map(p => [p.id, p.stock ?? null]));
           const prizes = w.prizes.map(p => p.id === target.focus && i % 3 !== 2 ? { ...p, stock: (p.stock ?? 0) + (i % 2 ? -1 : 3) } : p);
           const r = await call("PUT", "/api/wheel", { body: { wheel: { ...w, prizes }, expectedStock }, ip: editIp }); edits.push(`${i % 3 === 2 ? "stale" : "save"}:${r.status}`);
+          if (r.status === 200 && i % 3 !== 2) focusDelta += i % 2 ? -1 : 3;
         }
         while (playing && fans.filter(f => f.done).length < n / 2) await sleep(20);
         const a = await call("DELETE", `/api/wheels/${F.id}`, { ip: editIp }); edits.push(`archive:${a.status}`);
@@ -427,13 +429,16 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       const balanceOff = fans.filter((fan, i) => panels[i].value.json?.passes?.[0]?.spinsRemaining !== 4 + 6 * (fan.packs ?? 0) - spun.get(fan));
       report.check(balanceOff.length === 0, "each fan's balance is 4 + 6 per granted pack - spins played (the ledger, double-submits counted once)", balanceOff.slice(0, 2).map(f => ({ packs: f.packs, spun: spun.get(f), panel: panels[fans.indexOf(f)].value.json?.passes?.[0]?.spinsRemaining })));
       report.check(panels.every(r => r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase)), "no promise survives on the archived game's prizes", panels.filter(r => !(r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase))).slice(0, 2).map(r => ({ status: r.value.status, focus: r.value.json?.focus })));
-      const fAfter = await call("GET", `/api/wheels/${F.id}`, { ip: editIp }), chaseLeft = fAfter.json?.wheel?.prizes?.find(p => p.id === target.chase)?.stock;
-      const chaseWins = won.filter(r => r.prize?.id === target.chase).length;
+      const fAfter = await call("GET", `/api/wheels/${F.id}`, { ip: editIp }), stockAfter = id => fAfter.json?.wheel?.prizes?.find(p => p.id === id)?.stock;
+      const chaseLeft = stockAfter(target.chase), focusLeft = stockAfter(target.focus);
+      const chaseWins = won.filter(r => r.prize?.id === target.chase).length, focusWins = won.filter(r => r.prize?.id === target.focus).length;
       report.number("chase_stock", { left: chaseLeft ?? null, won: chaseWins, read: fAfter.status });
+      report.number("focus_stock", { left: focusLeft ?? null, won: focusWins, creatorDelta: focusDelta });
       report.check(fAfter.status === 200 && typeof chaseLeft === "number" && chaseLeft >= 0, "the archived game's Chase prize stock is readable and never negative", { status: fAfter.status, chaseLeft });
-      // The demo store's saveWheel ignores expectedStock (SQL save_wheel_prizes applies the editor's delta, D3/D9), so a
-      // save that races a win puts the won unit back: demo-only, documented in STRESS_RESULTS.md.
-      report.known("DEMO_SAVE_IGNORES_EXPECTED_STOCK", chaseLeft + chaseWins === 12, "Chase stock conserved over HTTP: 12 = left + won (held units returned on archive)", { chaseLeft, chaseWins });
+      // The demo store's save applies the editor's stock as a delta over the live value, as SQL save_wheel_prizes does
+      // (D3/D9): a stale editor or a save that races a win never puts a won unit back.
+      report.check(chaseLeft + chaseWins === 12, "Chase stock conserved over HTTP: 12 = left + won (held units returned on archive; stale saves never restock)", { chaseLeft, chaseWins });
+      report.check(focusLeft === 30 + focusDelta - focusWins, "Focus stock is its start plus the creator's deltas minus wins (stale saves never restock)", { focusLeft, focusDelta, focusWins });
       report.latency("spin during focus/chase grants", series, HTTP_THRESHOLDS.spinContended);
       report.finish();
     }

@@ -243,7 +243,7 @@ export async function saveWheel(
   if (rule) return { error: rule };
 
   if (!isSupabaseConfigured()) {
-    try { return { wheel: mockSaveWheel(config) }; } catch(error) { return { error: error instanceof Error ? error.message : "db_error" }; }
+    try { return { wheel: mockSaveWheel(config, expectedStock) }; } catch(error) { return { error: error instanceof Error ? error.message : "db_error" }; }
   }
 
   const sb = await createClient();
