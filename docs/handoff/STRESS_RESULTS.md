@@ -84,6 +84,37 @@ Supabase-backed reads.
 
 ## Findings
 
+### FIXED A22 shared-address false positive (`gaps/b5-stress2`, no migration)
+
+**Repro** `node scripts/stress/run.mjs --http --only H10` on `ba756cb` (before
+the fix, with the H10 below): 200 fans behind two addresses, each spending a
+minute on the page (the load, three recent-wins polls at 20 s, the
+leaderboard on load and after a spin), all at the origin. The per-address
+windows (`board:<ip>` 60/min, `wins:<ip>` 120/min) refused **144 of 200
+fans**: 280 of 400 leaderboard reads and 360 of 600 recent-wins reads were
+429 (the older H10, one read each, counted 80). Check-in was never refused:
+it is keyed per address + token (`checkin:<ip>:<token>`, 20/min).
+
+**Fix** `limitSharedRead` (`src/lib/api/limit.ts`), used by
+`GET /api/leaderboard/[creatorId]` and `GET /api/recent-wins/[creatorId]`:
+the old limit now applies per address + fan link token (the widgets send the
+token in `x-fan-token`; callers without one, or with one that is not a link
+token's shape, share one window per address, exactly as before), under a
+per-address ceiling 5x the old limit (leaderboard 60 -> 300/min, recent wins
+120 -> 600/min). The caller's own window is checked first, so a refused
+request does not spend its neighbours' share of the ceiling. The header only
+keys the limiter: it is not a credential, and the responses (and the
+recent-wins CDN caching) do not depend on it.
+
+**After** (same H10): 0 of 200 fans refused; one address + token is still
+capped at 60 (leaderboard) / 120 (recent wins), an address rotating forged
+tokens stops at 300 / 600, an address with no token at 60 / 120, and another
+fan's token on a flooded address is still served. Unit tests:
+`src/lib/api/sharedReadLimit.test.ts`, the two route tests, and
+`EngagementWidgets.test.ts` (both widgets send the token). The trade-off is
+deliberate: a scraper that forges tokens gets 5x the old per-address budget
+on these two cheap public reads, and nothing more.
+
 ### FIXED `COMMIT_RESOLVES_WHEEL_PER_STATEMENT` (DB, migration 0070 on `gaps/b5-spinlock`)
 
 **Repro** `PG_BIN=/usr/lib/postgresql/16/bin node scripts/stress/run.mjs --db --only D4`:
@@ -175,10 +206,38 @@ shim covers the exact instant the harness can no longer hit by timing.
   gives D8 a 460 ms p50 over 400 fans. Spread across prizes and creators the
   per-commit cost stays a few milliseconds (D3: p50 138 ms with the editor
   saving, D6 Bingo: 94 ms).
-- **Carrier-NAT false positives (A22).** 200 fans behind two addresses: the
-  120/min/IP recent-wins cap holds, but the 60/min/IP leaderboard cap sends
-  80 of them a 429 on the first poll (`nat_429_fans = 80` in H10). The spin
-  page (SSR, no limiter) and `/api/spin` (per IP+token) are unaffected.
+- **Carrier-NAT false positives (A22).** Fixed on `gaps/b5-stress2` (above).
+  The spin page (SSR, no limiter), `/api/spin` and `/api/fan/checkin` (per
+  address + token) were never affected. Not changed: the token-keyed fan
+  routes (`withFanToken`, check-in) have no per-address ceiling, so an
+  address rotating forged tokens is limited only by the token lookup failing
+  (404), as before.
+- **Focus/Chase under contention (D9, H11).** No defect. Round 1: 60 fans,
+  780 plays, 144 grants (32 triple-submits each applied once), 19 cancels,
+  14 stock saves (3 stale) and an `archive_wheel` mid-play: 0 deadlocks,
+  every Focus spin and Chase step is one committed play, every consumed
+  Chase unit is one win of its own prize by its own fan, Chase stock and
+  codes conserved exactly, the Focus prize's stock is its start plus the
+  creator's deltas minus wins (stale re-saves never restock), pity forced 17
+  times and the Chase guarantee 17 times, only when the counters entitled
+  them, and all 50 forged outcomes (a common prize while pity or Chase was
+  due, an early Chase completion) refused with 22023 (2 met a changed context
+  or a decline first). Over HTTP (H11) the same flow answers no 5xx,
+  double-submitted purchases apply once and each fan's balance equals its
+  grants minus its plays.
+- **KNOWN-BUG `DEMO_SAVE_IGNORES_EXPECTED_STOCK` (demo store only).** The
+  in-memory `mockSaveWheel` ignores `expectedStock`, so a `PUT /api/wheel`
+  that races a win (or a stale editor) writes back the stock it loaded and
+  restocks units already won; H11 sees the Chase prize end above its start
+  (round 1: 8 left + 15 won of 12). The Supabase path applies the editor's delta
+  (`save_wheel_prizes`, D3/D9), so production is not affected; the demo
+  diverges. Not fixed here (H11 prints it as KNOWN-BUG; `STRESS_STRICT=1`
+  fails on it).
+- **`PATCH /api/wheels/[id]` ignores `archived: true`.** It validates the
+  field, answers 200 and archives nothing (archive is `DELETE` without
+  `?hard=1`; PATCH only handles `archived: false`). H5 relied on it, so its
+  "archive B" step never archived; H5 and H11 now use `DELETE`. Not changed
+  in the route (the dashboard uses `DELETE`).
 - **Dashboard reads at 5 000 fans in the demo store.** One user: `/api/fans`
   223 ms and `/api/crm` 197 ms p50, every other route under 15 ms. Twenty
   users polling all eight routes at once: 18 requests/s, p50 1.9 s, p95 42 s
@@ -228,49 +287,49 @@ shim covers the exact instant the harness can no longer hit by timing.
 
 ## Results
 
-Full-size runs after 0070, under the heavy lock on the shared 4-CPU box: the
-DB half from verification round 1 on `52a47d3` (0070 plus the two-prize
-fixtures), the HTTP half on the same code plus the H5 fixture fix below.
+Full-size runs under the heavy lock on the shared 4-CPU box, from
+verification round 1 on `gaps/b5-stress2` (`83e34a1`: D9, H11, the A22
+shared-read limiter and the H10 rewrite on top of `orch/fixes` 829a288).
 `--out` JSON reports and the Postgres/server logs are in the session log
 directory and are regenerated by every verification round (`stress-db` and
-`stress-http` steps of the round script). DB half: 8 scenarios, 25 s, 0
-failures, 0 known bugs (D4: 0 deadlocks retried, 120 of 120 plays committed;
-before 0070 on `2d0ba4f`: 147 s, 257 deadlocks retried, 10 plays exhausted).
-HTTP half: 11 scenarios, 64 s, 14 107 requests, 0 failures, no 5xx. The H5
-editor now gives its new game two prizes before pinning a campaign to it
-(0069 refuses fewer, so the first run on 0069+ answered `campaign:400`) and
-exercises the campaign PATCH (pin, unpin) that the harness had skipped on a
-response-shape mismatch.
+`stress-http` steps of the round script). DB half: 9 scenarios, 19 s, 0
+failures, 0 known bugs (D9: 0 deadlocks retried). HTTP half: 12 scenarios,
+58 s, 16 933 requests, 0 failures, no 5xx, 1 known bug
+(`DEMO_SAVE_IGNORES_EXPECTED_STOCK`, demo store only). Latency columns are
+p50 / p95 / max ms (n); the ceilings are in `DB_THRESHOLDS` /
+`HTTP_THRESHOLDS`.
 
 ### DB half (`--db`, pool 32, local PostgreSQL 16)
 
-| Scenario | Checks | p50 / p95 / max ms (n) | Result |
+| Scenario | Checks | Latency (p50 / p95 / max ms, n) | Result |
 |---|---|---|---|
-| D1 200 fans spin one finite-stock prize (stock 25) concurrently | 12/12 | prepare: 184.2 / 423.2 / 486.9 (200), ceiling 1530<br>commit (all on one prize row): 445.7 / 577.5 / 617 (303), ceiling 1680 | pass |
-| D2 idempotency: 100 distinct attempts on a balance of 5, 50 replays of one attempt, binding conflict, status recovery | 15/15 | commit (100 attempts on one fan row): 165.9 / 193.5 / 198.6 (296), ceiling 1400 | pass |
-| D3 60 fans play 2 rounds while the creator saves odds/stock, switches games and archives | 11/11 | commit: 70.8 / 124.9 / 166.8 (495), ceiling 400<br>save_wheel_prizes: 42.5 / 100.7 / 100.7 (10), ceiling 600 | pass |
-| D4 campaign pin and per-link pin flip between two games while 40 fans play | 11/11 | commit: 52.2 / 128.6 / 227.2 (285), ceiling 1040 | pass |
-| D5 a 500-row import replayed 5x in parallel plus concurrent grants/edits while 40 fans play | 20/20 | commit (during the import, 64 in flight): 118.7 / 545.4 / 616.2 (120), ceiling 1040<br>import 500 rows: 677.9 / 680.1 / 680.1 (5), ceiling 4000<br>grant_pass_spins (all on one pass row, beside the plays): 84.1 / 681.7 / 685.7 (60), ceiling 1440 | pass |
-| D6 scratch: 40 fans on a 5-unit prize; bingo: 12 fans play concurrently | 24/24 | scratch commit: 64.9 / 175.7 / 184.8 (75), ceiling 400<br>bingo commit: 53.7 / 92.1 / 97.4 (24), ceiling 800 | pass |
-| D7 50 fans on a 5-code prize while 1000 codes are pasted on another prize | 14/14 | commit (50 fans on one code prize): 73.1 / 133.5 / 151.7 (167), ceiling 900<br>add_reward_codes x1000: 58.1 / 58.1 / 58.1 (1), ceiling 1800 | pass |
-| D8 seed 400 fans x 5 spins, then retention cleanup, a creator deletion cascade and a fan deletion while 40 fans keep playing | 16/16 | commit at scale (64 in flight over 400 fans): 90 / 171 / 305.2 (5553), ceiling 1040<br>run_reward_ledger_invariants: 12.2 / 12.2 / 12.2 (1), ceiling 5000<br>commit during maintenance: 79.5 / 160.3 / 222.7 (190), ceiling 800<br>run_retention_cleanup: 16.6 / 20.2 / 20.2 (2), ceiling 3000<br>creator deletion cascade (400 fans, 2000 spins): 1101.7 / 1101.7 / 1101.7 (1), ceiling 15000 | pass |
+| D1 200 fans spin one finite-stock prize (stock 25) concurrently | 12/12 | prepare: 118.5 / 359 / 403.5 (200)<br>commit (all on one prize row): 364.3 / 489.5 / 533.1 (303) | pass |
+| D2 idempotency: 100 distinct attempts on a balance of 5, 50 replays of one attempt, binding conflict, status recovery | 15/15 | commit (100 attempts on one fan row): 112.4 / 151.4 / 158.1 (296) | pass |
+| D3 60 fans play 2 rounds while the creator saves odds/stock, switches games and archives | 11/11 | commit: 53.5 / 106.2 / 160.7 (589)<br>save_wheel_prizes: 36.5 / 106.6 / 106.6 (10) | pass |
+| D4 campaign pin and per-link pin flip between two games while 40 fans play | 11/11 | commit: 44.1 / 109.8 / 203.6 (315) | pass |
+| D5 a 500-row import replayed 5x in parallel plus concurrent grants/edits while 40 fans play | 20/20 | commit (during the import, 64 in flight): 96.2 / 485.5 / 528.8 (120)<br>import 500 rows: 537.2 / 568.4 / 568.4 (5)<br>grant_pass_spins (all on one pass row, beside the plays): 66.6 / 522.7 / 527.4 (60) | pass |
+| D6 scratch: 40 fans on a 5-unit prize; bingo: 12 fans play concurrently | 24/24 | scratch commit: 74.1 / 135.6 / 140.9 (75)<br>bingo commit: 42.6 / 74.7 / 77.6 (24) | pass |
+| D7 50 fans on a 5-code prize while 1000 codes are pasted on another prize | 14/14 | commit (50 fans on one code prize): 52.8 / 89.2 / 100.4 (174)<br>add_reward_codes x1000: 85.8 / 85.8 / 85.8 (1) | pass |
+| D8 seed 400 fans x 5 spins, then retention cleanup, a creator deletion cascade and a fan deletion while 40 fans keep playing | 16/16 | commit at scale (64 in flight over 400 fans): 51.1 / 94.7 / 140.5 (5556)<br>run_reward_ledger_invariants: 5 / 5 / 5 (1)<br>commit during maintenance: 42.7 / 95.6 / 111.6 (179)<br>run_retention_cleanup: 7.8 / 8.7 / 8.7 (2)<br>creator deletion cascade (400 fans, 2000 spins): 559.5 / 559.5 / 559.5 (1) | pass |
+| D9 60 fans play up to 16 rounds while Focus/Chase packs are granted, replayed and cancelled, the creator edits the Focus prize's stock and archives its game | 27/27 | commit (every fan on one game's prize rows): 111.4 / 155.7 / 193.4 (943)<br>prepare: 36.3 / 64.1 / 170.6 (885)<br>grant_focus_pack (beside the plays): 8.3 / 255.8 / 341.7 (221)<br>cancel_fan_focus: 4.2 / 13.7 / 13.7 (19)<br>save_wheel_prizes (Focus prize stock): 3.8 / 160.1 / 160.1 (14)<br>archive_wheel: 289.9 / 289.9 / 289.9 (1) | pass |
 
-Key numbers: D1 {"wall_ms":1619,"outcomes":{"committed":200},"pool":{"inflight":0,"queued":0,"peakQueue":96},"redraws":103,"n":200}; D2 {"outcomes":{"committed":5,"declined":95}}; D3 {"outcomes":{"committed":120},"editor":["saved","saved","saved","saved","switch->B","saved","saved","archive B","saved","saved","unarchive B, switch->A","saved","saved"],"declined_reasons":{},"retries":330}; D4 {"outcomes":{"committed":120},"flips":{"campaign":10,"link":2},"deadlocks_retried":0,"spins_per_game":{"A":"73","B":"47"}}; D5 {"burst_40_distinct_grants":{"granted":40,"refused":0,"codes":{}},"edit_outcomes":{"updated:true":9,"updated:false":1}}; D6 {"outcomes":{"committed":40},"bingo_outcomes":{"committed":12}}; D7 {"outcomes":{"committed":50},"retries_changed_or_context":74,"redraws_sold_out":43}; D8 {"seed":{"fans":400,"spins":2000,"wall_ms":13321},"deleted_fan_outcomes":{"committed:":3}}
+Key numbers: D9 plays {"committed":780,"declined":45}, rate_limit_pauses 60, grants {"granted":144,"sold_out":11,"focus_exists":40,"rejected":22,"invalid_target":4}, cancels {"released":19}, forged {"pity":8,"chase":10,"early":32}, forged_outcomes {"early:22023:refused":31,"chase:22023:refused":10,"pity:retry_context":1,"pity:22023:refused":7,"early:declined":1}, deadlocks_retried 0; ledger {"pityAwarded":17,"chaseAwarded":17,"focusConsumed":154,"chaseCompleted":20,"focusPaused":11,"spinsOnF":461,"spinsOnG":319,"focusStatuses":{"chase:done":20,"focus:done":29,"chase:active":14,"focus:active":14,"chase:released":12,"focus:released":13}}; every mismatch counter (Focus/Chase consumption, double consumption, grant and balance ledger, unentitled or missed guarantees, promises or held units left on the archived game) 0.
 
 ### HTTP half (`--http`, demo `next start` on the round's port)
 
-| Scenario | Checks | p50 / p95 / max ms (n) | Result |
+| Scenario | Checks | Latency (p50 / p95 / max ms, n) | Result |
 |---|---|---|---|
-| H1 100-request spin flood from one IP+token (limit 10/10s) while a legitimate fan keeps playing | 7/7 | legit spin during flood: 6 / 266 / 266 (10), ceiling 400<br>flood request (mostly 429): 66.7 / 278.9 / 290.3 (100), ceiling 400 | pass |
-| H2 11000 distinct IPs on a public route (limiter capacity 10k windows): fails open, a blocked caller stays blocked | 5/5 | public GET under address flood: 80.8 / 127.7 / 1648.5 (11000), ceiling 250 | pass |
-| H3 60 fans spin a finite-stock prize (stock 10) concurrently through /api/spin | 6/6 | spin (concurrent, one prize): 121.5 / 140.5 / 142.4 (60), ceiling 1500 | pass |
-| H4 30 concurrent /api/spin with one requestId, a seed mismatch, and /api/spin/status recovery | 6/6 | spin replay: 48 / 56.2 / 56.8 (30), ceiling 400<br>spin/status: 4.9 / 4.9 / 4.9 (1), ceiling 300 | pass |
-| H5 40 fans play 2 rounds while the creator saves odds/stock, creates/switches/archives games and pins a campaign | 5/5 | spin during edits: 128 / 196.4 / 200.1 (80), ceiling 1500 | pass |
-| H6 a 500-row import replayed 5x in parallel while 30 fans play, the per-IP cap, then 9 more batches to grow the store | 6/6 | spin during import: 100 / 158.7 / 161.3 (60), ceiling 400<br>import 500 rows: 76.6 / 86 / 86 (5), ceiling 3000 | pass |
-| H7 10 push devices subscribed, then 20 winning spins: fan-out happens after the response and never slows the spin | 4/4 | spin with push fan-out: 80.6 / 100.9 / 103 (20), ceiling 400 | pass |
-| H9 abuse inputs: oversized bodies, malformed JSON, unicode/HTML injection, path traversal, bad encoding, token guessing | 12/12 | oversized body refusal: 74.4 / 110.5 / 110.5 (5), ceiling 2000<br>token guess (SSR 404): 309.7 / 383.1 / 464.6 (300), ceiling 1500 | pass |
-| H10 dashboard reads by 20 users x 5, then 200 fans load /spin, recent wins and the leaderboard behind two shared addresses | 5/5 | GET /api/overview (one user): 3.6 / 6.9 / 6.9 (5), ceiling 1500<br>GET /api/fans (one user): 235.8 / 339.2 / 339.2 (5), ceiling 1500<br>GET /api/messages/inbox (one user): 7.3 / 11.3 / 11.3 (5), ceiling 1500<br>GET /api/notifications (one user): 4.1 / 6.2 / 6.2 (5), ceiling 1500<br>GET /api/redemptions (one user): 3.4 / 7.3 / 7.3 (5), ceiling 1500<br>GET /api/crm (one user): 215.8 / 242.2 / 242.2 (5), ceiling 1500<br>GET /api/campaigns/stats (one user): 5.1 / 8.8 / 8.8 (5), ceiling 1500<br>GET /api/metrics?days=30 (one user): 7.9 / 12.3 / 12.3 (5), ceiling 1500<br>GET /spin/[token] (SSR, 200 concurrent): 1085.9 / 2102.6 / 2173.2 (200), ceiling 4000<br>GET /api/recent-wins (during the page load): 1051.3 / 2069.3 / 2148.1 (200), ceiling 4000<br>GET /api/leaderboard (during the page load): 1053.5 / 2071.3 / 2150 (200), ceiling 4000<br>POST /api/fan/checkin (during the page load): 2364.3 / 2507.5 / 2528.3 (200), ceiling 4000 | pass |
-| H8 retention cron twice in parallel, a fan deleted mid-play, then an account reset while 20 fans play | 10/10 | spin during cron/deletion: 125 / 219.6 / 225.6 (60), ceiling 400<br>cron retention: 3.3 / 57.8 / 57.8 (2), ceiling 2000 | pass |
+| H1 100-request spin flood from one IP+token (limit 10/10s) while a legitimate fan keeps playing | 7/7 | legit spin during flood: 4.4 / 346.9 / 346.9 (10)<br>flood request (mostly 429): 50.1 / 351.4 / 361.6 (100) | pass |
+| H2 11000 distinct IPs on a public route (limiter capacity 10k windows): fails open, a blocked caller stays blocked | 5/5 | public GET under address flood: 70.9 / 122.8 / 1228.9 (11000) | pass |
+| H3 60 fans spin a finite-stock prize (stock 10) concurrently through /api/spin | 6/6 | spin (concurrent, one prize): 114.9 / 129.2 / 130.9 (60) | pass |
+| H4 30 concurrent /api/spin with one requestId, a seed mismatch, and /api/spin/status recovery | 6/6 | spin replay: 31.5 / 37.6 / 37.9 (30)<br>spin/status: 4.4 / 4.4 / 4.4 (1) | pass |
+| H5 40 fans play 2 rounds while the creator saves odds/stock, creates/switches/archives games and pins a campaign | 5/5 | spin during edits: 72.7 / 165.7 / 168.4 (80) | pass |
+| H6 a 500-row import replayed 5x in parallel while 30 fans play, the per-IP cap, then 9 more batches to grow the store | 6/6 | spin during import: 80.7 / 147.8 / 153.7 (60)<br>import 500 rows: 73.8 / 84.2 / 84.2 (5) | pass |
+| H7 10 push devices subscribed, then 20 winning spins: fan-out happens after the response and never slows the spin | 4/4 | spin with push fan-out: 67.4 / 84.1 / 86.1 (20) | pass |
+| H9 abuse inputs: oversized bodies, malformed JSON, unicode/HTML injection, path traversal, bad encoding, token guessing | 12/12 | oversized body refusal: 58.9 / 86.4 / 86.4 (5)<br>token guess (SSR 404): 254.5 / 321.6 / 351.7 (300) | pass |
+| H10 dashboard reads by 20 users x 5, then 200 fans load /spin, recent wins and the leaderboard behind two shared addresses | 14/14 | GET /api/overview (one user): 2.9 / 8.7 / 8.7 (5)<br>GET /api/fans (one user): 182.4 / 296.2 / 296.2 (5)<br>GET /api/messages/inbox (one user): 7.5 / 12 / 12 (5)<br>GET /api/notifications (one user): 3.6 / 7.6 / 7.6 (5)<br>GET /api/redemptions (one user): 2.4 / 4 / 4 (5)<br>GET /api/crm (one user): 155.4 / 185.2 / 185.2 (5)<br>GET /api/campaigns/stats (one user): 3.7 / 9.2 / 9.2 (5)<br>GET /api/metrics?days=30 (one user): 6.5 / 11.1 / 11.1 (5)<br>GET /spin/[token] (SSR, 200 concurrent): 1426.3 / 1678 / 1759.9 (200)<br>GET /api/recent-wins (during the page load): 641.3 / 1649.7 / 1735.6 (200)<br>GET /api/leaderboard (during the page load): 642.2 / 1651.5 / 1737.6 (200)<br>POST /api/fan/checkin (during the page load): 1912.1 / 2020.6 / 2037.9 (200) | pass |
+| H11 40 fans spin 8 rounds while the creator grants (some double-submitted), cancels Focus/Chase packs, edits the Focus prize's stock and archives its game | 13/13 | spin during focus/chase grants: 269.6 / 502.4 / 915.9 (284) | pass (1 known bug) |
+| H8 retention cron twice in parallel, a fan deleted mid-play, then an account reset while 20 fans play | 10/10 | spin during cron/deletion: 96.3 / 157.1 / 161.9 (60)<br>cron retention: 1.8 / 3.1 / 3.1 (2) | pass |
 | H0 server totals | 1/1 | - | pass |
 
-Key numbers: H1 {"flood_statuses":{"200":10,"429":90},"fan_message_statuses":{"200":10,"429":5}}; H2 {"prime_statuses":{"404":120,"429":1},"flood_statuses":{"404":11000},"throughput_rps":719}; H3 {"statuses":{"200":60}}; H4 {"statuses":{"200":30}}; H5 {"spin_statuses":{"200":80},"editor":["save:200","save:200","save:200","save:200","save:200","save:200","save:200","save:200","create:200","prizesB:200","activateB:200","campaign:200","pin:200","unpin:200","archiveB:200","activateA:200"]}; H6 {"spin_statuses":{"200":60},"import_statuses":{"200":5}}; H7 {"subscribe_statuses":{"201":10,"429":1},"deliveries":50}; H9 {"oversized_6MB":[400,400,400,400,413],"traversal_statuses":["/api/demo/creator-media/..%2F..%2Fpackage.json -> 404","/api/demo/creator-media/../../package.json -> 404","/api/share-cards/..%2f..%2fetc%2fpasswd -> 404","/c/..%2f..%2f.env -> 200","/api/account/media/..%2F..%2F..%2Fetc%2Fpasswd -> 404","/spin/%2e%2e%2f%2e%2e%2fetc%2fpasswd -> 404","/_next/static/../../package.json -> 404","/api/public/wheel/..%2f..%2fadmin -> 200","/spin/%E0%A4%A -> 400","/api/share-cards/%00 -> 404"],"report_statuses":{"200":15,"429":15},"error_report_statuses":{"204":40}}; H10 {"burst_read_statuses":{"200":480},"burst_reads":{"users":20,"requests":480,"batches_timed_out":0,"wall_ms":26545,"rps":18,"p50_ms":1728,"p95_ms":24995},"fan_page_statuses":{"200":200},"recent_wins_statuses":{"200":200},"leaderboard_statuses":{"200":120,"429":80},"checkin_statuses":{"200":200},"nat_429_fans":80}; H8 {"spin_statuses":{"200":57,"404":3},"cron_statuses":{"200":2},"reset":200,"spins_during_reset":{"404":10,"409":10}}; H0 {"requests":14107,"by_status":{"200":2395,"201":10,"204":40,"400":11,"401":1,"404":11443,"409":12,"413":1,"429":194}}
+Key numbers: H10 recent_wins_statuses {"200":600}, leaderboard_statuses {"200":400}, checkin_statuses {"200":200}, nat_429_fans {"any":0,"leaderboard":0,"recent_wins":0,"checkin":0}, abuse_caps {"leaderboard":{"one_token":{"from":"10.0.1.154","ok":60,"limited":40,"other":0},"neighbour":200,"rotating_tokens":{"from":"10.0.1.155","ok":300,"limited":100,"other":0},"no_token":{"from":"10.0.1.156","ok":60,"limited":40,"other":0}},"recent_wins":{"one_token":{"from":"10.0.1.157","ok":120,"limited":40,"other":0},"neighbour":200,"rotating_tokens":{"from":"10.0.1.158","ok":600,"limited":100,"other":0},"no_token":{"from":"10.0.1.159","ok":120,"limited":40,"other":0}}}; H11 spin_statuses {"200":272,"409":12}, grants {"granted":61,"409:focus_exists":17,"409:rejected":10}, cancels {"released:true":21,"released:false":1}, editor ["save:200","save:200","stale:200","save:200","save:200","stale:200","archive:200","activate previous:200"], modifiers {"focusConsumed":46,"chaseConsumed":35,"chaseCompleted":4,"chaseAwarded":3,"pityAwarded":0}, chase_stock {"left":8,"won":15,"read":200}; H0 requests 16933, by status {"200":4902,"201":10,"204":40,"400":11,"401":1,"404":11443,"409":51,"413":1,"429":474}. H10 before the A22 fix (same H10 on `ba756cb`): recent wins {"200":240,"429":360}, leaderboard {"200":120,"429":280}, nat_429_fans {"any":144,"leaderboard":144,"recent_wins":123,"checkin":0}.
