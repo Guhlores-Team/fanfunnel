@@ -19,7 +19,7 @@ import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
 import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import NotificationBell from "@/components/dashboard/NotificationBell";
 import TermsPrompt from "@/components/dashboard/TermsPrompt";
-import { resolveSection } from "@/components/dashboard/dashboardSection";
+import { resolveSection, sectionFromSearch, sectionHref } from "@/components/dashboard/dashboardSection";
 import { deliveryLeaveDecision, type DeliveryNavigationState } from "@/components/dashboard/deliveryNavigation";
 import { CreatorDraftProvider, type CreatorDraftScope, type CreatorDraftState, type CreatorLeaveOptions } from "./CreatorDrafts";
 import { creatorNavigationState, creatorScopeIncludes } from "./creatorNavigation";
@@ -186,8 +186,8 @@ export default function DashboardClient({
     if (decision === "confirm") {
       const request: DashboardLeaveRequest = {
         action,
-        what: [...(intent === "signout" && wheelDirty ? ["your wheel"] : []), ...state.descriptions].join(" and ") || "your changes",
-        consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your wheel edits stay here."),
+        what: [...(intent === "signout" && wheelDirty ? ["your game edits"] : []), ...state.descriptions].join(" and ") || "your changes",
+        consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your game edits stay here."),
         scope: options?.scope,
       };
       leaveRequestRef.current = request;
@@ -266,17 +266,40 @@ export default function DashboardClient({
 
   // Brand-new creators land on Today, where "Your first steps" guides them
   // (RD-5) — no auto-switch to the Wheel editor any more.
-  const goTab = useCallback((t: Tab, after?: () => void) => {
+  // m5: the section is in the URL. A section change pushes a history entry;
+  // Back/Forward (popstate, below) switch section through the same guard.
+  const tabRef = useRef(tab);
+  useEffect(() => { tabRef.current = tab; }, [tab]);
+  const writeSection = useCallback((t: Tab, mode: "push" | "replace") => {
+    const href = sectionHref(t, window.location.pathname);
+    if (window.location.pathname + window.location.search === href) return;
+    if (mode === "push") window.history.pushState({ ffSection: t }, "", href);
+    else window.history.replaceState({ ffSection: t }, "", href);
+  }, []);
+  const goTab = useCallback((t: Tab, after?: () => void, history: "push" | "replace" = "push") => {
     if (t === "admin" && !adminVisible) return;
     const navigate = () => {
       setTab(t);
+      writeSection(t, history);
       after?.();
     };
     // A plain re-select preserves the mounted editor. Actions such as search
     // can remount even the current section, so they still use the guard.
     if (t === tab && !after) navigate();
     else requestLeave(navigate, "section");
-  }, [tab, adminVisible, requestLeave]);
+  }, [tab, adminVisible, requestLeave, writeSection]);
+  useEffect(() => {
+    const onPop = () => {
+      const next = sectionFromSearch(window.location.search, adminVisible);
+      if (next === tabRef.current) return;
+      // The URL already shows `next`; if the creator keeps their unsaved work
+      // instead, onKeep below puts the current section back in the URL.
+      goTab(next, undefined, "replace");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [adminVisible, goTab]);
+  const restoreSectionUrl = () => writeSection(tabRef.current, "replace");
 
   // Onboarding CTAs: switch to the relevant tab AND scroll its panel into view,
   // so a creator on a phone is actually taken to the section to act on it.
@@ -559,7 +582,7 @@ export default function DashboardClient({
           <DiscardChangesDialog
             what={leaveRequest.what}
             consequence={leaveRequest.consequence}
-            onKeep={() => { leaveRequestRef.current = null; setLeaveRequest(null); }}
+            onKeep={() => { leaveRequestRef.current = null; setLeaveRequest(null); restoreSectionUrl(); }}
             onDiscard={() => {
               const next = leaveRequestRef.current;
               leaveRequestRef.current = null;
@@ -577,7 +600,7 @@ export default function DashboardClient({
           />
         )}
         {blockedDeliveryLeave && blockedNavigation.pending && (
-          <DiscardChangesDialog pending what="your changes" pendingTitle={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "A request still needs checking"} pendingMessage={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "Keep this page open while the request finishes. If its result is unconfirmed, use the form's Check again button before leaving. Then choose where to go next."} onKeep={() => setBlockedDeliveryLeave(false)} onDiscard={() => {}} />
+          <DiscardChangesDialog pending what="your changes" pendingTitle={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "A request still needs checking"} pendingMessage={blockedNavigation.pendingDescriptions.length === 1 && blockedNavigation.pendingDescriptions[0] === "prize delivery" ? undefined : "Keep this page open while the request finishes. If its result is unconfirmed, use the form's Check again button before leaving. Then choose where to go next."} onKeep={() => { setBlockedDeliveryLeave(false); restoreSectionUrl(); }} onDiscard={() => {}} />
         )}
       </div>
         </div>

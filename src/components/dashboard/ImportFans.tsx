@@ -5,91 +5,29 @@ import { useToast } from "@/components/ui/Toast";
 import { submitFanImport } from "./importIntent";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
-
-interface ParsedRow {
-  name: string;
-  spins: number;
-  amountCents?: number;
-}
-
-interface ParseResult {
-  rows: ParsedRow[];
-  warnings: string[];
-  skippedHeader: boolean;
-}
-
-const MAX_ROWS = 500;
-
-// Parse pasted/loaded CSV text into fan rows. Columns: name, spins, amount($).
-// Header row optional — if the first line's 2nd cell isn't a number, skip it.
-function parseCsv(text: string): ParseResult {
-  const warnings: string[] = [];
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-
-  let skippedHeader = false;
-  if (lines.length > 0) {
-    const firstCells = lines[0].split(",").map((c) => c.trim());
-    const spinsCell = firstCells[1] ?? "";
-    // A header is detected when the spins column isn't a number.
-    if (spinsCell === "" || Number.isNaN(Number(spinsCell))) {
-      lines.shift();
-      skippedHeader = true;
-    }
-  }
-
-  const rows: ParsedRow[] = [];
-  lines.forEach((line, i) => {
-    const cells = line.split(",").map((c) => c.trim());
-    const name = cells[0] ?? "";
-    if (!name) {
-      warnings.push(`Row ${i + 1}: missing name — skipped.`);
-      return;
-    }
-    const spinsRaw = cells[1] ?? "";
-    const spinsNum = Number(spinsRaw);
-    if (spinsRaw === "" || Number.isNaN(spinsNum)) {
-      warnings.push(`Row ${i + 1} (${name}): invalid spins "${spinsRaw}" — skipped.`);
-      return;
-    }
-    const spins = Math.max(0, Math.floor(spinsNum));
-
-    let amountCents: number | undefined;
-    const amountRaw = cells[2] ?? "";
-    if (amountRaw !== "") {
-      const dollars = Number(amountRaw.replace(/[$,]/g, ""));
-      if (Number.isNaN(dollars)) {
-        warnings.push(`Row ${i + 1} (${name}): invalid amount "${amountRaw}" — ignored.`);
-      } else {
-        amountCents = Math.max(0, Math.round(dollars * 100));
-      }
-    }
-
-    rows.push({ name, spins, amountCents });
-  });
-
-  if (rows.length > MAX_ROWS) {
-    warnings.push(`Only the first ${MAX_ROWS} rows will be imported (cap reached).`);
-  }
-
-  return { rows: rows.slice(0, MAX_ROWS), warnings, skippedHeader };
-}
+import { Field } from "./ui";
+import { MAX_IMPORT_ROWS as MAX_ROWS, parseFanCsv } from "./importCsv";
 
 /**
  * The bulk-import form. The "Import fans" trigger lives in the Fans list
  * controls, so the form is controlled: mount it while `open`, `onClose` hides.
  */
 export default function ImportFans({
-  campaignId,
+  campaignId: initialCampaignId,
+  campaigns = [],
+  existingNames = [],
   onImported,
   onClose,
 }: {
+  /** Preselected campaign (the mint form's). Shown and changeable here. */
   campaignId?: string;
+  campaigns?: { id: string; name: string; isActive?: boolean }[];
+  /** Current fan names, to warn before an import creates a second "Carol". */
+  existingNames?: readonly string[];
   onImported: () => void;
   onClose: () => void;
 }) {
+  const [campaignId, setCampaignId] = useState(initialCampaignId ?? "");
   const toast = useToast();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -98,7 +36,8 @@ export default function ImportFans({
   const leave = useCreatorLeave();
   useCreatorDraft("fan-import", "a fan import", text.trim().length > 0, submitting || pending || checking);
 
-  const parsed = useMemo(() => parseCsv(text), [text]);
+  const parsed = useMemo(() => parseFanCsv(text, existingNames), [text, existingNames]);
+  const campaignName = campaigns.find((c) => c.id === campaignId)?.name ?? null;
 
   async function submit() {
     if (parsed.rows.length === 0 || pending || checking || submitting) return;
@@ -169,6 +108,25 @@ export default function ImportFans({
         onChange={(e) => setText(e.target.value)}
       />
 
+      <div className="mt-3 max-w-sm">
+        <Field label="Imported fans join">
+          <select
+            className="ff-input w-full"
+            data-testid="import-campaign"
+            value={campaignId}
+            disabled={submitting || pending || checking}
+            onChange={(e) => setCampaignId(e.target.value)}
+          >
+            <option value="">No campaign (untracked)</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.isActive === false ? `${c.name} (archived)` : c.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <label className="text-xs font-semibold text-muted">
           <span className="inline-flex min-h-8 cursor-pointer items-center rounded-[9px] border border-line px-3 transition-colors hover:text-ink">
@@ -182,8 +140,18 @@ export default function ImportFans({
         </span>
       </div>
 
+      {parsed.errors.length > 0 && (
+        <div data-testid="import-errors" className="mt-3 rounded-[10px] bg-[#ef4444]/12 p-3 text-xs text-[#fca5a5]">
+          <p className="font-semibold">{parsed.errors.length === 1 ? "1 row won't import:" : `${parsed.errors.length} rows won't import:`}</p>
+          <ul className="mt-1 space-y-1">
+            {parsed.errors.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {parsed.warnings.length > 0 && (
-        <ul className="mt-3 space-y-1 rounded-[10px] bg-[#f59e0b]/15 p-3 text-xs text-[#fcd34d]">
+        <ul data-testid="import-warnings" className="mt-3 space-y-1 rounded-[10px] bg-[#f59e0b]/15 p-3 text-xs text-[#fcd34d]">
           {parsed.warnings.map((w, i) => (
             <li key={i}>{w}</li>
           ))}
@@ -236,6 +204,9 @@ export default function ImportFans({
           ? "Importing…"
           : `Create ${parsed.rows.length} fan${parsed.rows.length === 1 ? "" : "s"}`}
       </button>
+      <p className="mt-2 text-xs text-muted" data-testid="import-campaign-note">
+        {campaignName ? `Each new fan's link and grant go in “${campaignName}”.` : "New fans aren't added to a campaign (untracked)."} Each row creates a new fan; it never tops up an existing one.
+      </p>
     </section>
   );
 }

@@ -52,11 +52,11 @@ export default function TopUpMoment({
           {typeof target.stock === "number" && target.stock <= TOPUP_SCARCITY_AT && (
             <span className="tnum font-semibold text-ink">(only {target.stock} left) </span>
           )}
-          — top up and chase it.
+          — more spins from {creatorTitle} give you another shot at it.
         </p>
       ) : (
         <p className="mt-1 text-sm text-muted">
-          Top up to keep spinning with {creatorTitle}.
+          More spins come from {creatorTitle}: fans can&rsquo;t buy them here.
         </p>
       )}
       {tipUrl ? (
@@ -69,8 +69,10 @@ export default function TopUpMoment({
           Tip {creatorTitle} to unlock more spins →
         </a>
       ) : (
-        <p className="mt-4 text-sm font-semibold text-brand">
-          Tip {creatorTitle} to unlock more spins.
+        // Plain text, not a link look-alike: without a tip link the way to more
+        // spins is to ask the creator.
+        <p className="mt-4 text-sm text-muted text-pretty" data-testid="topup-ask">
+          Ask {creatorTitle} for more spins.
         </p>
       )}
     </div>

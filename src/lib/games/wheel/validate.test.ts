@@ -8,6 +8,8 @@ import {
   stockError,
   labelError,
   validateWheelDraft,
+  prizeCountError,
+  gameNoun,
   normalizeWheelPayload,
   colorFromInput,
   wheelRulesError,
@@ -208,6 +210,16 @@ function wheel(over: Partial<WheelConfig> = {}): WheelConfig {
     wheelRulesError([prize({ id: "a", weight: 0 }), prize({ id: "b", weight: 1 })]) === null
   );
   check("rules: the minimum is MIN_WHEEL_PRIZES", MIN_WHEEL_PRIZES === 2);
+}
+
+// QA b5 m2: the scratch and bingo editors said "A wheel needs…".
+{
+  check("noun: wheel by default", prizeCountError(1) === "A wheel needs at least 2 prizes. Add 1 more to save.");
+  check("noun: scratch ticket", prizeCountError(0, "scratch") === "A scratch ticket needs at least 2 prizes. Add 2 more to save.");
+  check("noun: bingo game", prizeCountError(1, "bingo") === "A bingo game needs at least 2 prizes. Add 1 more to save.");
+  check("noun: unknown kinds fall back to wheel", gameNoun("toString") === "wheel" && gameNoun(undefined) === "wheel");
+  const scratch = { id: "s", title: "S", prizes: [], gameKind: "scratch" } as unknown as WheelConfig;
+  check("validateWheelDraft names the game being edited", validateWheelDraft(scratch).prizeCount === "A scratch ticket needs at least 2 prizes. Add 2 more to save.");
 }
 
 console.log(`validate: ${passed} checks passed`);

@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { shouldStepAside } from "./fabOverlap";
+import { FAB_AVOID_SELECTOR, shouldStepAside } from "./fabOverlap";
 import type { ChatMessage } from "@/lib/data/types";
 import { startPoll } from "@/lib/poll";
 import { blockedFanMessage } from "./blockedFan";
 import { FAN_STORAGE_PREFIXES, fanStorageKey } from "./fanStorage";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 
 /** The thread read is a POST (0068): the link token stays out of URLs and logs. */
 const fetchThread = (token: string) =>
@@ -86,6 +87,18 @@ export default function ChatPanel({
   const [blockedNote, setBlockedNote] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const fabRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Opened from the floating button: a modal dialog (focus moves in, Tab is
+  // trapped, Escape closes, focus returns to the button). A panel restored
+  // open after a reload is not modal: it never steals focus from the page,
+  // and in particular never from the age gate on top of it.
+  const [modal, setModal] = useState(false);
+  const closeChat = useCallback(() => {
+    setModal(false);
+    setOpen(false);
+    requestAnimationFrame(() => fabRef.current?.focus());
+  }, [setOpen]);
+  const dialogRef = useFocusTrap<HTMLDivElement>({ active: open && modal, onEscape: closeChat, initialFocus: unlocked ? inputRef : undefined, restoreFocus: false });
   const [stepAside, setStepAside] = useState(false);
   // Guard so the auto-intro is only requested once per mount.
   const introRequested = useRef(false);
@@ -267,15 +280,15 @@ export default function ChatPanel({
     await deliver(m.body, m.localId);
   };
 
-  // Step aside while the floating button would cover the play button (see fabOverlap.ts).
+  // Step aside while the floating button would cover a play control (see fabOverlap.ts).
   useEffect(() => {
     let frame = 0;
     const measure = () => {
       frame = 0;
       const fab = fabRef.current;
-      const play = document.querySelector("[data-testid='fan-spin']");
+      const controls = Array.from(document.querySelectorAll(FAB_AVOID_SELECTOR), (el) => el.getBoundingClientRect());
       const inUse = open || (!!fab && document.activeElement === fab);
-      setStepAside(shouldStepAside(fab?.getBoundingClientRect() ?? null, play?.getBoundingClientRect() ?? null, inUse));
+      setStepAside(shouldStepAside(fab?.getBoundingClientRect() ?? null, controls, inUse));
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
     measure();
@@ -295,7 +308,11 @@ export default function ChatPanel({
     <>
       <button
         ref={fabRef}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (open) { closeChat(); return; }
+          setModal(true);
+          setOpen(true);
+        }}
         data-testid="chat-fab"
         data-step-aside={stepAside ? "true" : undefined}
         className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)] ${stepAside ? "invisible opacity-0" : ""}`}
@@ -313,16 +330,19 @@ export default function ChatPanel({
 
       {open && (
         <div
+          ref={dialogRef}
           role="dialog"
-          aria-modal="true"
+          aria-modal={modal ? "true" : undefined}
           aria-label={`Chat with ${creatorTitle}`}
+          data-testid="chat-panel"
           className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[80vh] w-full max-w-md flex-col rounded-t-3xl border border-line bg-surface p-4 shadow-2xl sm:bottom-4 sm:right-4 sm:left-auto sm:mx-0 sm:max-h-[28rem] sm:rounded-3xl"
           style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
         >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-bold text-ink">{creatorTitle}</p>
             <button
-              onClick={() => setOpen(false)}
+              type="button"
+              onClick={closeChat}
               className="text-muted transition hover:text-ink"
               aria-label="Close chat"
             >
@@ -398,6 +418,7 @@ export default function ChatPanel({
               ) : (
               <div className="mt-2 flex items-center gap-2">
                 <input
+                  ref={inputRef}
                   aria-label={`Message ${creatorTitle}`}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}

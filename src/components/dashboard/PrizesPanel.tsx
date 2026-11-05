@@ -114,6 +114,9 @@ export default function PrizesPanel({
         toast("Prize cancelled. Its limited unit is back in stock.", { tone: "success" });
       } else if (body?.stock === "taken") {
         toast("Prize reopened. One limited unit is set aside for this fan again.", { tone: "success" });
+      } else if ("notes" in patch || "dueAt" in patch) {
+        // The note and due date save on blur with no button, so confirm it.
+        toast("notes" in patch ? (patch.notes ? "Note saved" : "Note cleared") : patch.dueAt ? "Due date saved" : "Due date cleared", { tone: "success" });
       }
     } catch {
       error = "network";

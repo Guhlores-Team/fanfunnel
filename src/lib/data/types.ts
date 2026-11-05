@@ -320,6 +320,8 @@ export interface FanPassInfo {
   wheelTitle: string;
   campaignName: string | null;
   spinsRemaining: number;
+  /** When the link was made: a top-up credits the oldest link per stored game. */
+  createdAt?: string;
 }
 
 /** A persistent fan account with its links — for the creator's Fans tab. */

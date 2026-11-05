@@ -241,6 +241,7 @@ export async function listFans(): Promise<FanAccountSummary[]> {
         pinnedWheelId: p.pinned_wheel_id ?? null,
         campaignName: p.campaign?.name ?? null,
         spinsRemaining: p.spins_remaining ?? 0,
+        createdAt: p.created_at,
       }));
     return {
       fanId: r.id,

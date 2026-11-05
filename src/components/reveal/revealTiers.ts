@@ -282,6 +282,19 @@ export function revealReducer(state: RevealState, event: RevealEvent): RevealSta
   }
 }
 
+/**
+ * Scratch and bingo have no spinning wheel to land on, so their equivalent of
+ * the landed beat is a hold on the revealed ticket (or the freshly marked
+ * card) before the win card covers it. A recovered play, which reappears
+ * after a reload, holds for less: the fan has seen it once already.
+ */
+export const GAME_RESULT_HOLD_MS = 1200;
+export const RECOVERED_GAME_RESULT_HOLD_MS = 500;
+
+export function gameResultHoldMs(recovered: boolean): number {
+  return recovered ? RECOVERED_GAME_RESULT_HOLD_MS : GAME_RESULT_HOLD_MS;
+}
+
 /** A spin is on screen (button stays busy) from start until the card opens. */
 export function revealInFlight(phase: RevealPhase): boolean {
   return phase === "spinning" || phase === "buildup" || phase === "landed";

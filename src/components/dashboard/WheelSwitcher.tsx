@@ -13,6 +13,7 @@ import Modal from "@/components/ui/Modal";
 import { formatWhen, isPlayableGame, scheduleTakeover } from "@/lib/games/liveGame";
 import { KindBadge, GameName } from "./GameChoice";
 import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
+import { scheduleHint } from "./scheduleHint";
 
 type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
 
@@ -339,7 +340,7 @@ export default function WheelSwitcher({
     if (!selected) return;
     setFrom("");
     setUntil("");
-    await patchWheel(selected.id, { activeFrom: null, activeUntil: null }, "Set to always on");
+    await patchWheel(selected.id, { activeFrom: null, activeUntil: null }, "Schedule cleared");
   }
 
   const menuItem =
@@ -423,6 +424,7 @@ export default function WheelSwitcher({
                 w.activeFrom,
                 w.activeUntil,
                 w.isActive,
+                live?.game.id === w.id ? null : live?.game.title ?? null,
               )}`;
               return (
                 <div
@@ -655,7 +657,7 @@ export default function WheelSwitcher({
               <span className="min-w-0 truncate text-xs font-medium text-muted">{selected.title}</span>
             </h4>
             <span className="tnum text-xs text-muted">
-              {scheduleHint(selected.activeFrom, selected.activeUntil, selected.isActive)}
+              {scheduleHint(selected.activeFrom, selected.activeUntil, selected.isActive, live?.game.id === selected.id ? null : live?.game.title ?? null)}
             </span>
           </div>
           {selected.gameReady === false && <p className="mt-2 text-xs text-amber-200">Finish and save this draft before activating it or setting a schedule.</p>}
@@ -708,7 +710,7 @@ export default function WheelSwitcher({
               disabled={busy || selected.gameReady === false || !canCreateGame(selected.gameKind ?? "wheel", features) || (!from && !until)}
               className="min-h-9 rounded-[9px] border border-[var(--hair)] px-3.5 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)] disabled:opacity-50"
             >
-              Always on
+              Clear schedule
             </button>
           </div>
           <div data-testid="game-used-by" className="mt-3 border-t border-[var(--hair)] pt-3 text-[12.5px] text-muted">
@@ -768,24 +770,4 @@ function toLocalInput(iso: string | null): string {
   // Shift to local time, then trim seconds/zone for the YYYY-MM-DDTHH:mm format.
   const off = d.getTimezoneOffset() * 60000;
   return new Date(d.getTime() - off).toISOString().slice(0, 16);
-}
-
-/** A compact human hint describing a wheel's schedule window. */
-function scheduleHint(
-  activeFrom: string | null,
-  activeUntil: string | null,
-  isActive: boolean,
-): string {
-  // An unscheduled wheel is "Always on" only if it's THE active wheel; otherwise
-  // it's simply inactive (exactly one wheel serves fans at a time).
-  if (!activeFrom && !activeUntil) return isActive ? "Always on" : "Inactive";
-  const fmt = (iso: string) => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime())
-      ? "—"
-      : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  };
-  if (activeFrom && activeUntil) return `${fmt(activeFrom)} → ${fmt(activeUntil)}`;
-  if (activeFrom) return `From ${fmt(activeFrom)}`;
-  return `Until ${fmt(activeUntil as string)}`;
 }

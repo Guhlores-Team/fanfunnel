@@ -28,6 +28,7 @@ import {
 import { WHEEL_SELECT, clampInt, isUuid, toWheelConfig } from "./shared";
 import type { Json } from "./db.types";
 import type { AnyClient, DbWheelRow } from "./shared";
+import { copyTitle } from "@/lib/games/copyTitle";
 
 // ---------------------------------------------------------------------------
 // Wheel resolution (Model C hybrid). Decides WHICH wheel a fan link points at
@@ -597,6 +598,9 @@ export async function duplicateWheel(
   if (!source) throw new Error("not_found");
   const settings = gameSettings(source.gameKind, source.gameConfig,true);
   await requireGameFeature(sb, user.id, settings.gameKind);
+  // A distinct title, so pickers never list two identical games (QA b5 m1).
+  const { data: siblings, error: siblingsError } = await sb.from("wheels").select("title").eq("creator_id", user.id);
+  if (siblingsError) throw new Error("db_error");
 
   const { data: wheel, error } = await sb
     .from("wheels")
@@ -605,7 +609,7 @@ export async function duplicateWheel(
       game_kind: settings.gameKind,
       game_config: settings.gameKind === "bingo" ? {size:3,linePrizeId:null} : settings.gameConfig,
       game_ready:settings.gameKind !== "bingo",
-      title: source.title.slice(0, 120),
+      title: copyTitle(source.title, (siblings ?? []).map((row) => row.title as string)),
       subtitle: source.subtitle?.slice(0, 200) ?? null,
       brand_color: source.brandColor ?? "#ec4899",
       label_color: source.labelColor ?? null,

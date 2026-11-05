@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useFetch } from "@/lib/hooks/useFetch";
 import { FAN_CLIENT_HEADER } from "@/lib/api/fanClientHeader";
 import { blockedFanMessage } from "./blockedFan";
+import { spinsText } from "@/lib/format";
 
 interface Entry {
   rank: number;
@@ -199,7 +200,7 @@ export default function FanLeaderboard({
                   )}
                 </span>
                 <span className="shrink-0 text-right text-xs text-muted">
-                  {e.spins} spins
+                  {spinsText(e.spins)}
                   {e.rareWins > 0 && (
                     <span title={`${e.rareWins} rare-or-better ${e.rareWins === 1 ? "win" : "wins"}`}>
                       {" "}· {e.rareWins}✨

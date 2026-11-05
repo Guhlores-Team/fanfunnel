@@ -106,3 +106,12 @@ export function campaignsUsing(gameId: string, campaigns: readonly ChoiceCampaig
 export function defaultCampaignGameId(games: readonly ChoiceGame[], now: Date): string {
   return pickLiveGame(games, now)?.game.id ?? "";
 }
+
+/** Why a link minted now plays its game, for the mint form's "This link will play" line. */
+export function mintPlaysReason(plays: Pick<LinkGame, "via" | "campaign" | "ignored">): string {
+  if (plays.via === "campaign" && plays.campaign) return `(the game chosen for “${plays.campaign.name}”)`;
+  // The campaign chose a game that can't be played (archived, a draft or
+  // deleted): say so, rather than claiming the campaign follows the live game.
+  if (plays.campaign && plays.ignored) return `(your live game: “${plays.campaign.name}” is set to play ${plays.ignored.title ?? "a game"}, but ${plays.ignored.why})`;
+  return `(your live game${plays.campaign ? `, because “${plays.campaign.name}” follows it` : ""})`;
+}

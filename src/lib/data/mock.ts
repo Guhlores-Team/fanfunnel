@@ -125,6 +125,7 @@ import {
 } from "@/lib/privacy/exportTypes";
 import { EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
 import { NEUTRAL_CREATOR_TITLE } from "@/lib/publicCreator";
+import { copyTitle } from "@/lib/games/copyTitle";
 import {
   FEED_LIMIT,
   LOW_STOCK_THRESHOLD,
@@ -827,7 +828,10 @@ function toWheelSummary(w: WheelConfig): WheelSummary {
     title: w.title,
     subtitle: w.subtitle ?? null,
     brandColor: w.brandColor ?? "#ec4899",
-    isActive: w.id === mockResolveActiveWheelId(),
+    // The flag, as the database lists it (wheels.is_active), not the game that
+    // is live now: a schedule can override the active game, and the dashboard
+    // explains that from the flag (QA b5 m11).
+    isActive: w.isActive === true,
     archivedAt: w.archivedAt ?? null,
     activeFrom: w.activeFrom ?? null,
     activeUntil: w.activeUntil ?? null,
@@ -994,7 +998,7 @@ export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
     ...structuredClone(src),
     ...settings, gameKindLocked: false,
     id: newId,
-    title: src.title,
+    title: copyTitle(src.title, Array.from(store.wheels.values(), (w) => w.title)),
     prizes: src.prizes.map((p) => ({ ...structuredClone(p), id: genId("prize") })),
     isActive: false,
     activeFrom: null,
@@ -1950,6 +1954,7 @@ export function mockListFans(): FanAccountSummary[] {
       pinnedWheelId: p.pinnedWheelId ?? null,
       campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
       spinsRemaining: p.spinsRemaining,
+      createdAt: p.createdAt,
     }));
     return {
       fanId: f.id,

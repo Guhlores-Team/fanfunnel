@@ -17,6 +17,15 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
   const covered = useRef(new Set<number>());
   const strokes = useRef<ScratchPoint[][]>([]);
   const completed = useRef(false);
+  const revealAll = useRef<HTMLButtonElement>(null);
+  // PLAY is disabled while the ticket arrives, which drops focus to <body>;
+  // the next Tab would then skip Reveal all (it sits above PLAY). Land the
+  // keyboard on Reveal all instead, unless focus already moved elsewhere.
+  useEffect(() => {
+    if (reducedMotion) return;
+    const active = document.activeElement;
+    if (!active || active === document.body || (active instanceof HTMLButtonElement && active.disabled)) revealAll.current?.focus({ preventScroll: true });
+  }, [reducedMotion]);
   const reveal = useCallback(() => {
     if (completed.current) return;
     completed.current = true;
@@ -113,7 +122,7 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
         {!revealed && <canvas ref={canvas} aria-hidden="true" data-testid="scratch-foil"
           className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-xl" onPointerDown={begin} onPointerMove={scratch} onPointerUp={stop} onPointerCancel={stop} />}
       </div>
-      <button type="button" onClick={reveal} disabled={revealed} aria-describedby={instructions} data-testid="scratch-reveal-all"
+      <button ref={revealAll} type="button" onClick={reveal} disabled={revealed} aria-describedby={instructions} data-testid="scratch-reveal-all" data-fab-avoid
         className="btn-brand mt-4 min-h-11 w-full rounded-xl px-4 py-3 font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-text)]">
         {revealed ? "Ticket revealed" : "Reveal all"}
       </button>

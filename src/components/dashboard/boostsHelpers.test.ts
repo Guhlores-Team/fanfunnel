@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { demandPct, formatWindow, happyHourStatus } from "./boostsHelpers";
+import { demandPct, formatWindow, happyHourGames, happyHourStatus } from "./boostsHelpers";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -43,6 +43,14 @@ function check(label: string, cond: boolean) {
   check("cross-day window shows both dates with an arrow", /→/.test(twoDays) && !/·/.test(twoDays));
 
   check("bad input falls back to the raw strings", formatWindow("x", "y") === "x → y");
+}
+
+// QA b5 m9: the happy-hour picker lists only games a boost can apply to.
+{
+  const g = (id: string, extra: Record<string, unknown> = {}) => ({ id, title: id, isActive: false, archivedAt: null, activeFrom: null, activeUntil: null, gameKind: "wheel" as const, gameReady: true, prizeCount: 3, ...extra });
+  const list = happyHourGames([g("ok"), g("empty", { prizeCount: 0 }), g("one", { prizeCount: 1 }), g("draft", { gameReady: false }), g("old", { archivedAt: "2026-01-01T00:00:00Z" }), g("scratch", { gameKind: "scratch" })]);
+  assert.deepEqual(list.map((x) => x.id), ["ok", "scratch"]);
+  passed++;
 }
 
 console.log(`boostsHelpers: ${passed} checks passed`);

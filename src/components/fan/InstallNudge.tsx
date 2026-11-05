@@ -114,7 +114,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
         Add {name} to your home screen <span aria-hidden="true">⭐</span>
       </h2>
       <p className="mt-1 text-sm text-muted text-pretty">
-        Open your wheel in one tap, like an app.
+        Open this page in one tap, like an app.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {deferred ? (

@@ -1,5 +1,6 @@
 "use client";
 
+import { publicGameCopy } from "@/lib/games/publicCopy";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useToast } from "@/components/ui/Toast";
@@ -128,7 +129,7 @@ export default function SettingsPanel({
         <GroupHeader
           id="settings-public"
           title="Public page"
-          hint="A clean, safe-for-work link-in-bio you can post in your Instagram/TikTok bio — your wheel teaser plus a way in. No explicit content."
+          hint="A clean, safe-for-work link-in-bio you can post in your Instagram/TikTok bio — your game teaser plus a way in. No explicit content."
         />
         <PublicPageSection
           profile={profile}
@@ -904,7 +905,7 @@ function PublicPageSection({
               value={tagline}
               onChange={(e) => patchProfile({ tagline: e.target.value })}
               className="ff-input w-full"
-              placeholder="Spin my wheel — every spin wins 🎡"
+              placeholder={publicGameCopy(gameKind).defaultTagline}
             />
           </Field>
           <Field label="Tip / buy-spins link (where fans go to pay)">

@@ -283,15 +283,16 @@ export async function creatorJourney(page, { step, assert }) {
 
   await step("boosts: leaderboard toggle succeeds (no error toast)", async () => {
     await clickTab(page, "Boosts");
-    const toggle = page.locator("button[aria-pressed]").first();
-    if (await toggle.count()) {
-      const before = await toggle.getAttribute("aria-pressed");
+    const toggle = page.getByRole("switch", { name: "Public leaderboard" });
+    await toggle.waitFor({ timeout: 5000 });
+    {
+      const before = await toggle.getAttribute("aria-checked");
+      assert(before === "true" || before === "false", "the leaderboard switch exposes its state");
       const handle = await toggle.elementHandle();
       await toggle.click();
       // Web-first wait for the toggle to reflect its new state instead of a fixed sleep.
       await page
-        .waitForFunction(([el, b]) => el.getAttribute("aria-pressed") !== b, [handle, before])
-        .catch(() => {});
+        .waitForFunction(([el, b]) => el.getAttribute("aria-checked") !== b, [handle, before], { timeout: 5000 });
       const body = await page.locator("body").innerText();
       assert(!/couldn.?t update leaderboard/i.test(body), "no leaderboard error toast");
     }
@@ -631,9 +632,8 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     await page
       .waitForFunction(() => {
         const b = [...document.querySelectorAll("[role='dialog'] button")].find((x) => x.textContent?.trim() === "Message");
-        return b && !b.getAttribute("aria-disabled");
-      })
-      .catch(() => {});
+        return b?.getAttribute("data-has-thread") === "true";
+      }, null, { timeout: 8000 });
     await msg.click();
     const inboxNav = page.locator(NAV_ITEMS).filter({ hasText: "Inbox" }).first();
     await inboxNav.and(page.locator("[aria-current='page']")).waitFor({ timeout: 5000 });

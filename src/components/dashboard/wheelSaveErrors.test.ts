@@ -32,4 +32,8 @@ check("unknown code → generic", wheelSaveErrorMessage("db_error") === "Couldn'
 check("undefined → generic", wheelSaveErrorMessage(undefined) === "Couldn't save. Try again.");
 check("prototype key → generic", wheelSaveErrorMessage("toString") === "Couldn't save. Try again.");
 
+check("too_few_prizes names a scratch ticket", wheelSaveErrorMessage("too_few_prizes", "scratch") === "Couldn't save: a scratch ticket needs at least 2 prizes.");
+check("too_few_prizes names a bingo game", wheelSaveErrorMessage("too_few_prizes", "bingo") === "Couldn't save: a bingo game needs at least 2 prizes.");
+check("the kind never changes other codes", wheelSaveErrorMessage("bad_weight", "bingo") === wheelSaveErrorMessage("bad_weight"));
+
 console.log(`wheelSaveErrors: ${passed} checks passed`);
