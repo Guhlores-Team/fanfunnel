@@ -59,6 +59,10 @@ const SIGNED_IN_ONLY = [
   "org_add_member",
   "org_remove_member",
   "org_scope_creator",
+  // 0071: the caller leaves its own seat / agency (auth.uid() rows only), and
+  // a campaign is deleted fan -> link -> campaign under can_act_for('manage').
+  "org_leave",
+  "delete_campaign",
   // 0064: SECURITY INVOKER queue/inbox reads, pinned to auth.uid().
   "creator_redemption_queue",
   "creator_inbox_threads",
