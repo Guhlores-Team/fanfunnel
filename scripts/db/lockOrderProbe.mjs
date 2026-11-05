@@ -13,7 +13,7 @@
 //   F3  save_wheel_prizes / set_prize_delivery drop a Focus target vs its play
 //   F4  a creator suspension vs a Chase fan's play (two fans, id order)
 //   F5  delete_campaign vs a play on a link in that campaign
-//   F6  an account deletion cascade vs a committing play
+//   F6  an account deletion cascade vs a committing play (and a preparing one)
 import { createHash, randomUUID } from "node:crypto";
 import { withActorContext } from "./actorContextFixture.mjs";
 
@@ -182,6 +182,17 @@ export async function probeLockOrder(db, psqlAsync) {
       commitSql(who, a), `delete from auth.users where id=${quote(c)};`);
     clean("F6 account deletion vs a committing play", r, committed(r.last(r.first)) && r.second.status === 0);
     check((await sql(`select count(*) from public.profiles where id=${quote(c)};`)).trim() === "0", "F6 the account is gone after the play");
+  });
+  // F6 (prepare): a fresh play's prepare held the fan and then took the
+  // profile key share for its spin_attempts insert; the account deletion held
+  // the profile and waited for that fan (found by stress D10). Gate: the fan.
+  await guard("F6 prepare", async () => {
+    const c = await addCreator(), cw = await addWheel(c), who = await addFan(c, cw.id), id = randomUUID();
+    const r = await staged(`select 1 from public.fans where id=${quote(who.fan)} for update;`,
+      `begin;set local role service_role;select public.prepare_spin_attempt(${quote(id)},${quote(who.token)},${quote(hash(id))});commit;`,
+      `delete from auth.users where id=${quote(c)};`);
+    clean("F6 account deletion vs a preparing play", r, /"status": "ready"/.test(r.last(r.first)) && r.second.status === 0);
+    check((await sql(`select count(*) from public.profiles where id=${quote(c)};`)).trim() === "0", "F6 the account is gone after the prepare");
   });
   return { bad, checks };
 }

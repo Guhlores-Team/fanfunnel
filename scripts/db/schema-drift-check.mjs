@@ -1510,7 +1510,7 @@ try {
     else console.log(`PASS  ${db}: 0070 spin resolution: ${resolution.checks} checks (one resolution per prepare and per commit; a campaign pin flip after the resolution leaves every lock and the context on the resolved game)`);
     const order = await probeLockOrder(db, psqlAsync);
     if (order.bad.length) { failures++; for (const message of order.bad) console.log(`FAIL  ${db}: 0071 lock order: ${message}`); }
-    else console.log(`PASS  ${db}: 0071 lock order: ${order.checks} checks (fan deletion, link pause, prize edit, creator suspension and campaign deletion each staged against a committing play: no 40P01, every side finishes)`);
+    else console.log(`PASS  ${db}: 0071 lock order: ${order.checks} checks (fan deletion, link pause, prize edit, creator suspension, campaign deletion and account deletion each staged against a committing or preparing play: no 40P01, every side finishes)`);
     const cryptoFailures = probeCryptoNamespace(db, psql, CRYPTO_SCHEMA);
     if (cryptoFailures.length) throw new Error(cryptoFailures.join("; "));
   }

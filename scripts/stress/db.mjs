@@ -140,6 +140,8 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
   const noErrors = async (results, label) => { if (deadlocks.length) { report.check(false, `${label}: no deadlocks retried`, `${deadlocks.length}; ${await named(deadlocks[0])}`); deadlocks.length = 0; } const bad = results.filter(r => !r.ok); const shown = []; for (const r of bad.slice(0, 2)) shown.push(`${r.code}: ${r.error}${r.detail ? ` | ${await named(r.detail)}` : ""}`); return report.check(bad.length === 0, `${label}: no SQL errors or deadlocks`, bad.length ? `${bad.length} errors; ${shown.join(" || ")}` : undefined); };
   const stockOf = async prize => { const v = await scalar(`select coalesce(stock::text,'null') from public.prizes where id=${quote(prize)};`); return v === "null" ? null : Number(v); };
   const awarded = prize => scalar(`select count(*)||','||count(distinct fan_id) from public.spins where prize_id=${quote(prize)};`).then(v => v.split(",").map(Number));
+  // Nonces are unique per link; a deleted fan's anonymised spins keep their
+  // nonces but lose the link (fan_pass_id SET NULL), so they are not grouped.
   const invariants = async (creator, label) => {
     const v = JSON.parse(await scalar(`select jsonb_build_object(
       'fanMismatch',(select count(*) from public.fans f where f.creator_id=${quote(creator)} and (f.spins_remaining<>coalesce((select sum(p.spins_remaining) from public.fan_passes p where p.fan_id=f.id and p.is_active),0) or f.spins_granted_total<>coalesce((select sum(p.spins_granted_total) from public.fan_passes p where p.fan_id=f.id and p.is_active),0))),
@@ -148,7 +150,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       'spins',(select count(*) from public.spins where creator_id=${quote(creator)}),
       'redemptions',(select count(*) from public.redemptions where creator_id=${quote(creator)}),
       'pending',(select count(*) from public.spin_attempts where creator_id=${quote(creator)} and state='pending' and created_at<now()-interval '60 seconds'),
-      'nonceDup',(select count(*) from (select fan_pass_id,nonce from public.spins where creator_id=${quote(creator)} group by 1,2 having count(*)>1) d),
+      'nonceDup',(select count(*) from (select fan_pass_id,nonce from public.spins where creator_id=${quote(creator)} and fan_pass_id is not null group by 1,2 having count(*)>1) d),
       'crossWheel',(select count(*) from public.spins s join public.prizes pr on pr.id=s.prize_id where s.creator_id=${quote(creator)} and pr.wheel_id<>s.wheel_id),
       'codeDup',(select count(*) from (select spin_id from public.prize_reward_codes where creator_id=${quote(creator)} and spin_id is not null group by 1 having count(*)>1) d),
       'codeStock',(select count(*) from public.prizes pr join public.wheels w on w.id=pr.wheel_id where w.creator_id=${quote(creator)} and pr.delivery='codes' and pr.stock is distinct from (select count(*) from public.prize_reward_codes c where c.prize_id=pr.id and c.spin_id is null and c.erased_at is null)),

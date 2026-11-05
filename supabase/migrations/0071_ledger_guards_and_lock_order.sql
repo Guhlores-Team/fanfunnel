@@ -52,7 +52,8 @@
 --   (o) F4  A suspension/deletion pre-locks its fans; the account/storage
 --           writers take the profile FOR NO KEY UPDATE.
 --   (p) F5  delete_campaign locks the campaign's fans -> links -> campaign.
---   (q) F6  commit takes its creator's profile (key share) before the fan.
+--   (q) F6  prepare and commit take the creator's profile (key share)
+--           before the fan, as their spin_attempts/spins inserts do anyway.
 --   (r) schema_version() reports 71.
 
 -- ── shared helpers ───────────────────────────────────────────────────────────
@@ -772,6 +773,60 @@ begin
 end $$;
 revoke execute on function public.cancel_spin_attempt(uuid,text,text,text) from public,anon,authenticated;
 grant execute on function public.cancel_spin_attempt(uuid,text,text,text) to service_role;
+
+-- (prepare_spin_attempt: 0070_resolve_spin_game_once.sql's definition, edited)
+create or replace function public.prepare_spin_attempt(p_attempt uuid,p_token text,p_request_hash text)
+returns jsonb language plpgsql security definer set search_path=public,extensions,pg_temp as $$
+declare p public.fan_passes%rowtype; f public.fans%rowtype; a public.spin_attempts%rowtype; c jsonb; fresh boolean:=false; v_wheel uuid;
+begin
+ if p_attempt is null or p_request_hash !~ '^[a-f0-9]{64}$' then raise exception 'invalid attempt' using errcode='22023'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_attempt::text,59));
+ select * into a from public.spin_attempts where id=p_attempt;
+ if found then
+   if a.token_hash<>encode(digest(p_token,'sha256'),'hex') or a.request_hash<>p_request_hash then return jsonb_build_object('status','conflict'); end if;
+   if a.state<>'pending' then return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash); end if;
+ end if;
+ select * into p from public.fan_passes where token=p_token;
+ if not found then return jsonb_build_object('status','unavailable'); end if;
+ -- 0071 (F6): the creator's profile (key share, which the spin_attempts
+ -- insert below takes anyway) before the fan, so an account closure that
+ -- holds the profile waits here instead of waiting for this fan.
+ perform 1 from public.profiles where id=p.creator_id for key share;
+ select * into f from public.fans where id=p.fan_id and creator_id=p.creator_id for update;
+ if not found then return jsonb_build_object('status','unavailable'); end if;
+ select * into p from public.fan_passes where id=p.id for update;
+ if not found then return jsonb_build_object('status','unavailable'); end if;
+ if not p.is_active or p.self_excluded_at is not null or f.blocked_at is not null
+   or not exists(select 1 from public.profiles where id=p.creator_id and is_active and (approval_status='approved' or role='admin')) then
+   return jsonb_build_object('status','unavailable');
+ end if;
+ if a.id is null then
+   insert into public.spin_attempts(id,creator_id,fan_id,fan_pass_id,token_hash,request_hash)
+   values(p_attempt,p.creator_id,p.fan_id,p.id,encode(digest(p_token,'sha256'),'hex'),p_request_hash);
+ end if;
+ if f.break_until>now() or f.acked_at is null or f.acked_terms_version is distinct from '2026-10-27' or p.spins_remaining<=0 then
+   update public.spin_attempts set state='declined',error=case when f.break_until>now() then 'on_break' when f.acked_at is null or f.acked_terms_version is distinct from '2026-10-27' then 'needs_ack' else 'no_spins' end,finished_at=now() where id=p_attempt;
+   return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash);
+ end if;
+ v_wheel:=public._resolved_spin_wheel(p.id);
+ if v_wheel is null then
+   update public.spin_attempts set state='declined',error='no_wheel',finished_at=now() where id=p_attempt;
+   return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash);
+ end if;
+ perform set_config('fanfunnel.economic_write','on',true);
+ if p.next_server_seed is null or p.next_server_seed_hash is null then
+   p.next_server_seed:=encode(gen_random_bytes(32),'hex');
+   update public.fan_passes set next_server_seed=p.next_server_seed,next_server_seed_hash=encode(digest(p.next_server_seed,'sha256'),'hex') where id=p.id;
+   fresh:=true;
+ end if;
+ perform 1 from public.fan_focus where fan_id=p.fan_id and status in('active','paused') for update;
+ c:=public._spin_attempt_context(p.id,v_wheel);
+ c:=c||jsonb_build_object('commitment',case when fresh or (a.context->>'serverSeed'=c->>'serverSeed' and a.context->>'commitment'='fresh') then 'fresh' else 'stored' end);
+ update public.spin_attempts set context=c where id=p_attempt;
+ return jsonb_build_object('status','ready','context',c,'balance',p.spins_remaining);
+end $$;
+revoke execute on function public.prepare_spin_attempt(uuid,text,text) from public,anon,authenticated;
+grant execute on function public.prepare_spin_attempt(uuid,text,text) to service_role;
 
 -- ── (m) F2: a fan pauses its link fan -> pass ───────────────────────────────
 -- POST /api/self-exclude (selfExclude). The UPDATE's triggers lock the fan
