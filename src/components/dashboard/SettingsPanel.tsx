@@ -13,7 +13,7 @@ import ThemedProfilePreview from "./ThemedProfilePreview";
 import type { ThemePreviewValue } from "./lookAndFeel";
 import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecurityCards";
 import PushNotificationsCard from "./PushNotificationsCard";
-import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/account/profileErrors";
+import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profileErrors";
 
 /**
  * Settings (Command Center). Two groups:

@@ -13,7 +13,7 @@ import {
   mockSetActiveWheelBrandColor,
 } from "./mock";
 import { ensureWheelId, resolveActiveWheelId } from "./wheels";
-import { displayNameRpcError } from "@/lib/account/profileErrors";
+import { displayNameRpcError } from "@/lib/profileErrors";
 
 /**
  * Wipe ALL of the signed-in creator's data — wheels, prizes, fans, links, spins,

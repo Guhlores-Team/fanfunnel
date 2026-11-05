@@ -34,7 +34,7 @@ const RAW = /exception|violates|SQLSTATE|e-mail address$|invalid display name|in
 async function main() {
   const profile = await import("./route");
   const publicProfile = await import("@/app/api/public-profile/route");
-  const msg = await import("@/lib/account/profileErrors");
+  const msg = await import("@/lib/profileErrors");
 
   // --- display name: the route's own check (demo parity) --------------------
   for (const [label, name, code] of [

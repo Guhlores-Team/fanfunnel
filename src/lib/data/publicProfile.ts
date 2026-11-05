@@ -16,7 +16,7 @@ import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
 import { mockGetPublicProfileFields, mockSetPublicProfileFields } from "./mockPublicProfile";
 import { readPublicCreator } from "./publicCreatorRow";
 import { publicCreatorTitle } from "@/lib/publicCreator";
-import { publicProfileRpcError } from "@/lib/account/profileErrors";
+import { publicProfileRpcError } from "@/lib/profileErrors";
 
 // --- Public teaser ----------------------------------------------------------
 

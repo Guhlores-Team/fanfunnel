@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
-import { displayNameInputError } from "@/lib/account/profileErrors";
+import { displayNameInputError } from "@/lib/profileErrors";
 import { setMyDisplayName } from "@/lib/data";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 import { limitRoute } from "@/lib/api/limit";

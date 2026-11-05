@@ -108,7 +108,7 @@ export function LeaveAgencyView({
       data-testid="agency-leave"
       className="mt-8 rounded-2xl border border-line bg-surface p-5 text-left"
     >
-      <h2 id={`${id}-title`} className="text-base font-bold">
+      <h2 id={`${id}-title`} className="text-lg font-bold">
         Leave {name}
       </h2>
       <p id={`${id}-what`} className="mt-1 max-w-2xl text-sm text-muted text-pretty">
