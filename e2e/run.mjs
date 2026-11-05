@@ -46,6 +46,7 @@ import { checkSystemHealth, systemHealthJourney } from "./system-health.mjs";
 import { gameSwitchingJourney } from "./game-switching.mjs";
 import { safetyJourney } from "./safety.mjs";
 import { accountExtrasJourney } from "./account-extras.mjs";
+import { qaB5Journey } from "./qa-b5.mjs";
 
 let server = null;
 let browser = null;
@@ -93,6 +94,7 @@ try {
     await urlSafetyJourney(page, runner, ctx); // malformed URL privacy/security-header regression
     await cspJourney(page, runner, ctx); // L3: per-route CSP, nonces on every script, injected script/eval refused
     await accountExtrasJourney(page, runner, ctx); // A37/A36: DM templates, referrals, autopilot, close guard, demo-only states
+    await qaB5Journey(browser, runner, sink, ctx); // QA b5: scratch reveal beat, chat and age-gate focus, truthful top-up, URL sections, CSV import, start a chat
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

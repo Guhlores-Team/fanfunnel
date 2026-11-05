@@ -506,6 +506,7 @@ export default function FanDetailDrawer({
                       setTopUpOpen(false);
                       await reload();
                     }}
+                    onLinkGameSet={onSaved}
                   />
                 )}
               </div>
@@ -811,6 +812,7 @@ function TopUpForm({
   onDone,
   onModifierPick,
   engagementBlocked,
+  onLinkGameSet,
 }: {
   id: string;
   fanId: string;
@@ -825,6 +827,8 @@ function TopUpForm({
   onDone: () => void | Promise<void>;
   onModifierPick: (pack: CampaignPack) => void;
   engagementBlocked: boolean;
+  /** The new link was set to its game: reload the fan list. */
+  onLinkGameSet?: () => void | Promise<void>;
 }) {
   const toast = useToast();
   // Default the top-up to a campaign this fan already belongs to, so revenue
@@ -889,6 +893,7 @@ function TopUpForm({
           ? `Spins added on a new link that plays ${target.plays?.title ?? "the chosen game"}. Send the fan this new link.`
           : `Spins were added on a new link, but it couldn't be set to play ${target.plays?.title ?? "the chosen game"}. Use Change game under Links to set it.`,
           { tone: pinned ? "success" : "error" });
+        if (pinned) await onLinkGameSet?.();
       }
       setUncertain(false);
       setPerSpin("");

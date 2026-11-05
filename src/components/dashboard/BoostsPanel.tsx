@@ -445,12 +445,15 @@ function LeaderboardToggle({
           type="button"
           onClick={toggle}
           disabled={busy}
-          aria-pressed={on}
-          // The visible "On"/"Off" is part of the accessible name (WCAG 2.5.3).
-          aria-label={`Public leaderboard ${on ? "On" : "Off"}`}
+          // A switch named by the card title; its state is aria-checked (QA b5
+          // polish: a button whose label flipped On/Off read as two controls).
+          role="switch"
+          aria-checked={on}
+          aria-labelledby="boosts-leaderboard"
+          data-testid="leaderboard-switch"
           className="inline-flex items-center gap-2.5 rounded-full py-0.5 pl-2 pr-0.5 text-[12.5px] font-semibold text-muted transition-colors hover:text-ink disabled:opacity-60"
         >
-          {on ? "On" : "Off"}
+          <span aria-hidden="true">{on ? "On" : "Off"}</span>
           <span
             aria-hidden="true"
             className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand)]" : "bg-line"}`}
