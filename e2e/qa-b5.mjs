@@ -198,7 +198,7 @@ export async function qaB5Journey(browser, { step, assert }, sink, ctx) {
         assert(table.length === 3 && table[0].includes("Import, Cat") && table[1].includes("$1200.00"), `quoted names and $1,200 parse (${table.join(" / ")})`);
         assert(/Line 2 \(Carol\): spins can't be negative/.test(await form.getByTestId("import-errors").innerText()), "a negative row is rejected with its line");
         assert(/same name as line 4/.test(await form.getByTestId("import-warnings").innerText()), "a repeated name is warned about");
-        assert(/Imported fans join/.test(await form.innerText()) && await form.getByTestId("import-campaign").count() === 1, "the campaign imported fans join is shown");
+        assert(await form.getByLabel("Imported fans join").getAttribute("data-testid") === "import-campaign", "the campaign imported fans join is shown");
         await form.getByLabel("CSV rows").fill("");
         await form.getByRole("button", { name: "Close" }).click();
       } finally { await page.close(); }

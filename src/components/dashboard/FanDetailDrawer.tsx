@@ -1026,8 +1026,17 @@ function StartConversation({ id, fanId, name, onSent }: { id: string; fanId: str
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [sent, setSent] = useState(false);
+  const handedOff = useRef(false);
   const toast = useToast();
   useCreatorDraft(`fan-message:${fanId}`, "an unsent message", body.trim().length > 0, sending);
+  // Hand off only once the cleared, idle draft is registered, or the drawer's
+  // leave guard would still see an unsent message and hold the Inbox move.
+  useEffect(() => {
+    if (!sent || sending || body || handedOff.current) return;
+    handedOff.current = true;
+    onSent();
+  }, [sent, sending, body, onSent]);
   async function send() {
     const text = body.trim();
     if (!text || sending) return;
@@ -1042,7 +1051,7 @@ function StartConversation({ id, fanId, name, onSent }: { id: string; fanId: str
       if (!res.ok) { setError("Couldn't send. Your message is still here; try again."); return; }
       setBody("");
       toast(`Sent. ${name || "This fan"} sees it in the chat on their spin link.`, { tone: "success" });
-      onSent();
+      setSent(true);
     } catch {
       setError("Couldn't send. Your message is still here; try again.");
     } finally {

@@ -75,9 +75,11 @@ export async function creatorRecoveryJourney(page, { step, assert }, ctx) {
       const acceptReload = dialog => dialog.accept();
       page.on("dialog", acceptReload);
       try { await page.reload(); } finally { page.off("dialog", acceptReload); }
-      await clickTab(page, "Fans");
-      await page.getByRole("button", { name: `View ${fixture.name}`, exact: true }).click();
+      // The open fan is in the URL (?section=fans&fan=<id>), so the reload
+      // reopens this fan's drawer by itself.
+      assert(new URL(page.url()).searchParams.get("fan") === fixture.fanId, "the open fan survives the reload in the URL");
       drawer = page.getByRole("dialog", { name: "Fan details" });
+      await drawer.waitFor({ timeout: 8000 });
       form = drawer.getByTestId("grant-edit-form");
       await form.getByTestId("creator-request-check").waitFor({ timeout: 8000 });
       assert(await form.getByLabel("Spins", { exact: true }).isDisabled() && await form.getByTestId("grant-edit-save").isDisabled(), "reloaded opaque receipt permits status checks, not a reconstructed private edit");
