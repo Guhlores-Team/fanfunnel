@@ -236,7 +236,14 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
         }
       };
       const pick = (ctx, ex) => { const open = ctx.prizes.filter(p => !ex.includes(p.id) && (p.stock == null || p.stock > 0)); return (open.find(p => p.stock != null) ?? open[0])?.id ?? null; };
-      const [results] = await Promise.all([parallel(fans.flatMap(f => [f, f]), pool.size * 2, who => play(who, { pick, series })), editor()]);
+      // A play re-prepares at most once per context change made after its own
+      // prepare: 10 saves + 2 (switch) + 1 (archive) + 3 (unarchive, switch back)
+      // = 16, plus a sold_out redraw per prize. The default 12 rounds is below
+      // that, so on a slow box a play gave up mid-editor ("exhausted") although
+      // nothing was wrong. The service instead answers spin_pending and the
+      // fan's client resumes the same attempt; 24 rounds models that resume.
+      const D3_MAX_ROUNDS = 16 + 2 + 6;
+      const [results] = await Promise.all([parallel(fans.flatMap(f => [f, f]), pool.size * 2, who => play(who, { pick, series, maxRounds: D3_MAX_ROUNDS })), editor()]);
       report.number("outcomes", outcomes(results)); report.number("editor", edits);
       await noErrors(results, "edits during play");
       const allowed = new Set(["committed", "declined", "unavailable"]);
