@@ -424,6 +424,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const chase = async c => sql(`insert into public.focus_creator_config(creator_id,chase_enabled) values(${quote(c)},true) on conflict(creator_id) do update set chase_enabled=true;`);
       const focusOn = async (c, who, prize, kind) => {
         const pack = randomUUID();
+        await sql(`update public.prizes set boostable=true where id=${quote(prize)};`);
         await sql(`insert into public.campaign_packs(id,creator_id,label,spins,pack_kind,focus_spins,chase_within) values(${quote(pack)},${quote(c)},${quote(kind)},10,${quote(kind)},5,5);`);
         const g = await rpc("grant_focus_pack", [quote(randomUUID()), quote(c), quote(who.fan), quote(who.pass), quote(pack), quote(prize)]);
         if (g?.status !== "granted") throw Error(`${kind} grant refused: ${JSON.stringify(g)}`);
@@ -434,10 +435,15 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const rawPlay = async who => {
         const a = await prep(who); if (a.status !== "ready") return a.status;
         let r = null;
+        let refused = null;
         try { r = await commit(who, a, await wheelBody(a, a.context.prizes[0].id, [], [])); }
-        catch (e) { if (e.code !== "40P01") throw e; deadlocks.push(e.detail ?? e.message); }
+        catch (e) {
+          if (e.code === "40P01") deadlocks.push(e.detail ?? e.message);
+          else if (e.code === "22023" && /terms mismatch/.test(e.message)) refused = "terms_refused";
+          else throw e;
+        }
         if (r?.status !== "committed") await cancel(who, a);
-        return r?.status ?? "deadlock";
+        return r?.status ?? refused ?? "deadlock";
       };
       const three = [{ label: "A", weight: 1 }, { label: "B", weight: 1 }, { label: "C", weight: 1 }];
       // P: plays, fan deletions (F1), link pauses (F2) and prize writes over Focus/Chase fans (F3).
@@ -450,7 +456,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const editor = async () => {
         for (let i = 0; i < 6; i++) {
           await op("save_wheel_prizes", () => rpc("save_wheel_prizes", [quote(pw.id), quote(P), rows(1 + i)]));
-          await op("set_prize_delivery", () => rpc("set_prize_delivery", [quote(pw.prizes.C), quote(P), quote("manual")]));
+          await op("set_prize_delivery", () => scalar(`begin;set local role service_role;select public.set_prize_delivery(${quote(pw.prizes.C)},${quote(P)},'manual');commit;`));
           await sleep(15);
         }
       };

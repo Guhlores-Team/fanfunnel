@@ -12436,6 +12436,9 @@ comment on function public.schema_version() is 'Migration level of this database
 
 
 
+
+
+
 -- Migration0071: 0071: ledger guards, seat consent, profile hygiene and lock order (security
 -- 0071: ledger guards, seat consent, profile hygiene and lock order (security
 -- audit 3 and the DB concurrency audit on orch/fixes 829a288). Additive and
@@ -12484,6 +12487,8 @@ comment on function public.schema_version() is 'Migration level of this database
 --  Lock order (fan -> pass -> wheel -> prize kept everywhere):
 --   (l) F1  commit/cancel_spin_attempt lock fan -> pass before the attempt.
 --   (m) F2  self_exclude_pass: the fan's link pause locks fan -> pass.
+--           run_reward_ledger_invariants compares a fan's balance with its
+--           live links, as the balance trigger keeps it (a pause is no violation).
 --   (n) F3  _lock_wheel_focus_fans: the prize writers take the game's
 --           Focus/Chase fans before the game.
 --   (o) F4  A suspension/deletion pre-locks its fans; the account/storage
@@ -12548,6 +12553,10 @@ begin
   -- fan -> pass -> campaign/wheel -> prize, as every play takes them.
   perform 1 from public.fans where creator_id = p_creator order by id for update;
   perform 1 from public.fan_passes where creator_id = p_creator order by id for update;
+  -- Every link goes with its game (wheel_id cascades). Deleted here first, so
+  -- a link set to another game is never rewritten by that pin's SET NULL after
+  -- its own game is gone (its tenant guard would refuse the missing game).
+  delete from public.fan_passes where creator_id = p_creator;
   delete from public.campaigns where creator_id = p_creator;
   perform 1 from public.wheels where creator_id = p_creator order by id for update;
   perform set_config('fanfunnel.creator_reset', p_creator::text, true);
@@ -13227,6 +13236,50 @@ end $$;
 revoke execute on function public.self_exclude_pass(text) from public, anon, authenticated;
 grant execute on function public.self_exclude_pass(text) to service_role;
 comment on function public.self_exclude_pass(text) is 'A fan pauses its own link (self-exclusion), locking fan then pass (0071). Service role only.';
+
+-- A paused link keeps its credit, while fans.spins_remaining sums the live
+-- links only (0035 sync_fan_spin_aggregate). The 0063 invariant summed every
+-- link, so each pause with credit left counted as a fanCreditMismatch and the
+-- health check reported violations. It now compares the sum the trigger keeps.
+-- (run_reward_ledger_invariants: 0063_operational_integrity.sql's definition, edited)
+create or replace function public.run_reward_ledger_invariants(p_row_limit integer default 100000)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare v_limit integer:=least(greatest(coalesce(p_row_limit,100000),1),100000); v_counts jsonb; v_total integer;
+begin
+ if exists(
+   select 1 from (
+     select count(*) n from (select id from public.prizes limit v_limit+1) x union all
+     select count(*) from (select id from public.prize_reward_codes limit v_limit+1) x union all
+     select count(*) from (select id from public.fan_focus limit v_limit+1) x union all
+     select count(*) from (select id from public.chase_reservations limit v_limit+1) x union all
+     select count(*) from (select reservation_id from public.chase_stock_evidence limit v_limit+1) x union all
+     select count(*) from (select id from public.fans limit v_limit+1) x union all
+     select count(*) from (select id from public.fan_passes limit v_limit+1) x
+   ) bounded where n>v_limit
+ ) then return jsonb_build_object('status','incomplete','counts','{}'::jsonb,'rowLimit',v_limit); end if;
+ select jsonb_build_object(
+   'codeStockMismatch',(select count(*) from public.prizes p left join lateral
+       (select count(*) n from public.prize_reward_codes c where c.prize_id=p.id and c.spin_id is null and c.reserved_focus_id is null and c.erased_at is null and c.cipher is not null and c.iv is not null) free on true
+     where p.delivery='codes' and p.stock is distinct from free.n),
+   'heldReservationMismatch',(select count(*) from public.chase_reservations r left join public.fan_focus f on f.id=r.focus_id left join public.prizes p on p.id=r.prize_id left join public.wheels w on w.id=p.wheel_id
+     where r.state='held' and (f.id is null or f.kind<>'chase' or f.status not in('active','paused') or f.creator_id<>r.creator_id or f.prize_id is distinct from r.prize_id or w.creator_id is distinct from r.creator_id)),
+   'liveChaseMissingReservation',(select count(*) from public.fan_focus f left join public.chase_reservations r on r.focus_id=f.id
+     where f.kind='chase' and f.status in('active','paused') and (r.id is null or r.state<>'held')),
+   'heldCodeMismatch',(select count(*) from public.chase_reservations r left join public.prize_reward_codes c on c.id=r.code_id
+     where r.state='held' and r.kind='code' and (c.id is null or c.creator_id<>r.creator_id or c.prize_id is distinct from r.prize_id or c.spin_id is not null or c.erased_at is not null or c.cipher is null or c.iv is null or c.reserved_focus_id is distinct from r.focus_id)),
+   'orphanReservedCode',(select count(*) from public.prize_reward_codes c left join public.chase_reservations r on r.code_id=c.id and r.focus_id=c.reserved_focus_id and r.state='held'
+     where c.reserved_focus_id is not null and (c.spin_id is not null or r.id is null or r.kind<>'code')),
+   'unwitnessedStockReservation',(select count(*) from public.chase_reservations r left join public.chase_stock_evidence e on e.reservation_id=r.id left join public.prizes p on p.id=r.prize_id left join public.wheels w on w.id=p.wheel_id
+     where r.state='held' and r.kind='stock' and (e.reservation_id is null or e.units_taken<>1 or e.creator_id<>r.creator_id or e.prize_id is distinct from r.prize_id or p.stock is null)),
+   'fanCreditMismatch',(select count(*) from public.fans f left join lateral
+      (select coalesce(sum(p.spins_remaining),0) balance from public.fan_passes p where p.fan_id=f.id and p.is_active) credit on true
+     where f.spins_remaining::bigint<>credit.balance)
+ ) into v_counts;
+ select coalesce(sum(value::integer),0) into v_total from jsonb_each_text(v_counts);
+ return jsonb_build_object('status',case when v_total=0 then 'healthy' else 'violations' end,'counts',v_counts,'rowLimit',v_limit);
+end $$;
+revoke execute on function public.run_reward_ledger_invariants(integer) from public,anon,authenticated;
+grant execute on function public.run_reward_ledger_invariants(integer) to service_role;
 
 -- ── (n) F3: the prize writers lock fans before the game ─────────────────────
 -- The game's live Focus/Chase fans (a prize change releases their promises,

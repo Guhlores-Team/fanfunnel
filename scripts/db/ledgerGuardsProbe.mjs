@@ -232,6 +232,27 @@ export function probeLedgerGuards(db, psql) {
     select 'seats:' || (select count(*) from public.org_members where profile_id = '${uid("U")}') || ',' || (select count(*) from public.org_members where profile_id = '${uid("V")}');`,
     ["u-read:0", "u-accept:not_invitee", "v-read:1", "v-accept:ok", "seats:0,1"]);
 
+  // --- F2 + ledger: a fan's pause keeps its credit and is no ledger violation --
+  expect("F2 self_exclude_pass pauses the link, keeps its credit, and the ledger stays healthy", `
+    set local fanfunnel.economic_write = 'on';
+    update public.fan_passes set spins_remaining = 3, spins_granted_total = 3 where id = '${P1}';
+    set local fanfunnel.economic_write = '';
+    set local role service_role;
+    select 'pause:' || public.self_exclude_pass('probe-0071-p1') || ',' || public.self_exclude_pass('probe-0071-p1') || ',' || public.self_exclude_pass('probe-0071-none');
+    reset role;
+    select 'paused:' || p.is_active || ',' || p.spins_remaining || ',' || f.spins_remaining from public.fan_passes p join public.fans f on f.id = p.fan_id where p.id = '${P1}';
+    set local role service_role;
+    select 'ledger:' || (public.run_reward_ledger_invariants() -> 'counts' ->> 'fanCreditMismatch');
+    reset role;
+    set local fanfunnel.economic_write = 'on';
+    alter table public.fans disable trigger user;
+    update public.fans set spins_remaining = 7 where id = '${F}';
+    alter table public.fans enable trigger user;
+    set local role service_role;
+    select 'drift:' || (public.run_reward_ledger_invariants() -> 'counts' ->> 'fanCreditMismatch');`,
+    ["pause:ok,ok,not_found", "paused:false,3,0", "ledger:0", "drift:1"]);
+  refused("F2 a creator session calls self_exclude_pass", as("C", `select public.self_exclude_pass('probe-0071-p1');`), /permission denied for function self_exclude_pass/);
+
   // --- (j) I1: default privileges of future tables ----------------------------
   expect("I1 a future table grants anon nothing and nobody TRUNCATE", `
     create table public.probe_0071_future (id int);
