@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { BAD_REQUEST, JSON_BODY_MAX_BYTES, parseJsonBody } from "./handler";
+import { BAD_REQUEST, JSON_BODY_MAX_BYTES, isJsonObject, parseJsonBody } from "./handler";
 
 // parseJsonBody is the one JSON entry point of every route: a malformed or
 // missing body is BAD_REQUEST, and so is a body over JSON_BODY_MAX_BYTES,
@@ -18,6 +18,18 @@ async function main() {
   check("a small JSON body is parsed", small !== BAD_REQUEST && small.token === "t");
   check("a malformed body is BAD_REQUEST", (await parseJsonBody(post("{not json"))) === BAD_REQUEST);
   check("an empty body is BAD_REQUEST", (await parseJsonBody(post(null))) === BAD_REQUEST);
+
+  // L4: valid JSON that is not an object never reaches a route's body.x.
+  for (const raw of ["null", "[]", '[{"token":"t"}]', "1", "0", '"token"', "true", "false", " null "]) {
+    check(`a ${raw.trim()} body is BAD_REQUEST`, (await parseJsonBody(post(raw))) === BAD_REQUEST);
+  }
+  const empty = await parseJsonBody(post("{}"));
+  check("an empty object is parsed", empty !== BAD_REQUEST && Object.keys(empty).length === 0);
+  const allowed = await parseJsonBody(post(null), { allowEmpty: true });
+  check("allowEmpty reads an empty body as {}", allowed !== BAD_REQUEST && Object.keys(allowed).length === 0);
+  check("allowEmpty still refuses null", (await parseJsonBody(post("null"), { allowEmpty: true })) === BAD_REQUEST);
+  check("allowEmpty still refuses malformed JSON", (await parseJsonBody(post("{x"), { allowEmpty: true })) === BAD_REQUEST);
+  check("isJsonObject: objects only", isJsonObject({}) && !isJsonObject(null) && !isJsonObject([]) && !isJsonObject("x") && !isJsonObject(1));
 
   const declared = post("{}", { "content-length": String(JSON_BODY_MAX_BYTES + 1) });
   check("a declared Content-Length over the cap is refused up front", (await parseJsonBody(declared)) === BAD_REQUEST);

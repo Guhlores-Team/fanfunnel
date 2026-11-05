@@ -1,4 +1,5 @@
 import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
@@ -33,12 +34,8 @@ export async function POST(req: Request) {
   const limited = await rateLimitOr429("pwchange:" + user.id, 5, 60 * 60 * 1000);
   if (limited) return limited;
 
-  let body: { currentPassword?: unknown; newPassword?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ currentPassword?: unknown; newPassword?: unknown }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const currentPassword =
     typeof body.currentPassword === "string" ? body.currentPassword : "";

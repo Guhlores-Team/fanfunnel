@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { setMyDisplayName } from "@/lib/data";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 import { limitRoute } from "@/lib/api/limit";
@@ -8,12 +9,8 @@ import { limitRoute } from "@/lib/api/limit";
 export async function PUT(req: Request) {
   const rateLimited = await limitRoute(req, "account/profile:PUT");
   if (rateLimited) return rateLimited;
-  let body: { displayName?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ displayName?: unknown }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const name = typeof body.displayName === "string" ? body.displayName.trim() : "";
   if (!name) return NextResponse.json({ error: "name_required" }, { status: 400 });

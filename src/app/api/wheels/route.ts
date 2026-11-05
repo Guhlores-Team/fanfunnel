@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listWheels, createWheel } from "@/lib/data";
-import { errorResponse } from "@/lib/api/handler";
+import { errorResponse, BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
 
 // The creator's wheels. `?archived=1` includes archived wheels.
@@ -17,12 +17,10 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const rateLimited = await limitRoute(req, "wheels:POST");
   if (rateLimited) return rateLimited;
-  let body: { fromTemplateId?: string; name?: string; gameKind?: unknown; gameConfig?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  // Every field is optional, so an empty body creates a blank wheel; a body
+  // that is not a JSON object is a 400 (L4).
+  const body = await parseJsonBody<{ fromTemplateId?: string; name?: string; gameKind?: unknown; gameConfig?: unknown }>(req, { allowEmpty: true });
+  if (body === BAD_REQUEST) return badRequest();
 
   try {
     const result = await createWheel({

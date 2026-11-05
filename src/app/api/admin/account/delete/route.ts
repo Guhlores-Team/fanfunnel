@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import {
   isSupabaseConfigured,
   createServiceClient,
@@ -32,12 +33,8 @@ export async function POST(req: Request) {
   const admin = await requireAdminRoute();
   if (!admin.ok) return admin.response;
 
-  let body: { id?: string; email?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ id?: string; email?: string }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const id = typeof body.id === "string" ? body.id : "";
   const confirmEmail =
