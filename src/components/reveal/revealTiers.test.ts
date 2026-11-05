@@ -4,7 +4,9 @@ import { spinIntentBody, type BrowserSpinIntent } from "../fan/spinIntent";
 import { RARITY_COLORS, RARITY_ORDER, type Rarity } from "@/lib/games/wheel/types";
 import {
   BUILD_UP_RARITIES,
+  GAME_RESULT_HOLD_MS,
   MAX_THEATER_EXTRA_MS,
+  RECOVERED_GAME_RESULT_HOLD_MS,
   REDUCED_SPIN_MS,
   REVEAL_IDLE,
   SKIP_AFTER_SPINS,
@@ -12,6 +14,7 @@ import {
   SPIN_MS,
   SPIN_WATCHDOG_MS,
   canSkip,
+  gameResultHoldMs,
   nearStopAtMs,
   resolveRevealTier,
   revealConfetti,
@@ -213,6 +216,22 @@ const start = (rarity: Rarity, reducedMotion = false, spinsBefore = 0): RevealEv
     const src = readFileSync(new URL(`./${f}`, import.meta.url), "utf8");
     check(`${f} makes no network calls`, !/\bfetch\(|XMLHttpRequest|sendBeacon|\/api\//.test(src));
   }
+}
+
+// QA b5 M1: scratch and bingo hold their revealed result before the win card.
+check("a fresh scratch/bingo result holds long enough to read", gameResultHoldMs(false) === GAME_RESULT_HOLD_MS && GAME_RESULT_HOLD_MS >= 1000);
+check("a recovered play holds briefly", gameResultHoldMs(true) === RECOVERED_GAME_RESULT_HOLD_MS && RECOVERED_GAME_RESULT_HOLD_MS < GAME_RESULT_HOLD_MS);
+for (const r of RARITY_ORDER) {
+  const t = resolveRevealTier(r);
+  check(`${r}: the game hold plus its landed beat stays under the watchdog`, GAME_RESULT_HOLD_MS + t.stopBeatMs < SPIN_WATCHDOG_MS);
+}
+{
+  const client = readFileSync(new URL("../fan/FanGameController.tsx", import.meta.url), "utf8");
+  const complete = client.slice(client.indexOf("const handleGameComplete ="), client.indexOf("// The build-up"));
+  check("a finished scratch/bingo presentation is held, then lands like the wheel (no skip)",
+    /gameResultHoldMs\(/.test(complete) && /spinEndRef\.current\(\)/.test(complete) && !/type: "skip"/.test(complete));
+  check("the revealed ticket stays on screen after the win card closes",
+    /stagePresentation/.test(client) && /setStage\(null\)/.test(client.slice(client.indexOf("const runSpin ="), client.indexOf("const handleSpin ="))));
 }
 
 console.log(`revealTiers.test: ${passed} checks passed`);

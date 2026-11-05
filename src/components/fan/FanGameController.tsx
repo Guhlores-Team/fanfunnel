@@ -21,6 +21,7 @@ import {
   SPIN_WATCHDOG_MS,
   bumpSessionSpins,
   canSkip,
+  gameResultHoldMs,
   readSessionSpins,
   revealConfetti,
   revealEntrance,
@@ -87,6 +88,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const [spinsRemaining, setSpinsRemaining] = useState(pass.spinsRemaining);
   const [gameOutcome, setGameOutcome] = useState<CommittedGameView | null>(null);
   const [receiptKey, setReceiptKey] = useState<string | null>(null);
+  // The last scratch ticket stays on screen, revealed, after its win card
+  // closes; it is replaced only when the next play starts.
+  const [stage, setStage] = useState<{ presentation: CommittedGameView["presentation"]; key: string } | null>(null);
   const cardSource = readCardSource(pass);
   const [cardPatch, setCardPatch] = useState<{ base: unknown; card: BingoState | null } | null>(null);
   const cardView = currentGameCard(pass, cardPatch);
@@ -275,6 +279,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     if (!options.present) return;
     setGameOutcome(game);
     setReceiptKey(data.attemptId ?? null);
+    setStage(game.presentation?.kind === "scratch" && data.attemptId ? { presentation: game.presentation, key: data.attemptId } : null);
     setError(null);
     setRewardHistoryNonce(n => n + 1);
     recoveredWin.current = options.recovered;
@@ -322,6 +327,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     if (!muted) { unlockAudio(); haptic(12); }
     setError(null);
     setWonReward(null);
+    setStage(null);
     tapPoolHash.current = shownPoolHash.current;
     // Drop any focus poll already in flight: the spin response brings the odds.
     focusRevision.current++;
@@ -411,10 +417,18 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     spinEndRef.current = handleSpinEnd;
   }, [handleSpinEnd]);
 
+  // Scratch/bingo: hold on the revealed ticket (or the newly marked card) so
+  // the fan sees it before the win card opens, then land like the wheel does
+  // (its tier's beat, entrance and confetti). One hold per play.
+  const gameHold = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (gameHold.current) clearTimeout(gameHold.current); }, []);
   const handleGameComplete = useCallback(() => {
-    dispatchReveal({ type: "skip" });
-    handleSpinEnd();
-  }, [handleSpinEnd]);
+    if (gameHold.current) return;
+    gameHold.current = setTimeout(() => {
+      gameHold.current = null;
+      spinEndRef.current();
+    }, gameResultHoldMs(recoveredWin.current));
+  }, []);
 
   // The build-up (epic/legendary by default) starts ~1s before the stop.
   const handleNearStop = useCallback(() => {
@@ -458,6 +472,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     if (button && !button.disabled) { button.focus(); refocusPlay.current = false; }
   }, []);
   useEffect(() => { tryRefocusPlay(); }, [playDisabled, tryRefocusPlay]);
+  const stagePresentation = gameOutcome?.presentation ?? stage?.presentation ?? null;
+  const stageKey = receiptKey ?? (gameOutcome ? null : stage?.key ?? null);
   const theaterOn = activeGameKind === "wheel" && theaterVisible(rv);
   const spotlight =
     rv.tier && result && (rv.phase === "landed" || rv.phase === "revealed")
@@ -536,8 +552,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         </div>
       </div>
 
-      </> : activeGameKind ? <FanGameStage kind={activeGameKind} presentation={gameOutcome?.presentation ?? null}
-        card={currentCard} receiptKey={receiptKey} prizeLabel={won?.label} recovered={recoveredPresentation}
+      </> : activeGameKind ? <FanGameStage kind={activeGameKind} presentation={stagePresentation}
+        card={currentCard} receiptKey={stageKey} prizeLabel={won?.label} recovered={recoveredPresentation}
         reducedMotion={rv.tier?.animate === false} engaged={engaged} onComplete={handleGameComplete} /> : null}
       {!canPresentGame && <p role="status" className="rounded-xl border border-line bg-surface p-4 text-center text-sm text-ink" data-testid="game-unavailable">We could not load this game safely. Reload this link to check its current state before playing.</p>}
 
@@ -772,7 +788,12 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         <AgeGate
           token={pass.token}
           creatorTitle={pass.creatorTitle}
-          onAck={() => setNeedsAck(false)}
+          onAck={() => {
+            setNeedsAck(false);
+            // The gate held focus; hand it to the play button (m6), not <body>.
+            refocusPlay.current = true;
+            requestAnimationFrame(tryRefocusPlay);
+          }}
         />
       )}
     </div>
