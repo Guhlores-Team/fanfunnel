@@ -25,25 +25,37 @@ export const BAD_REQUEST: unique symbol = Symbol("bad_request");
 export const JSON_BODY_MAX_BYTES = 1024 * 1024;
 
 /**
- * Parse a JSON request body. Returns the parsed value, or the {@link BAD_REQUEST}
- * sentinel when the body is missing/malformed or larger than
- * {@link JSON_BODY_MAX_BYTES} — callers turn that into a 400. The cap is
- * enforced while reading (declared Content-Length first, then the stream), so
- * an oversized body is never buffered or parsed.
+ * Parse a JSON request body that must be a JSON object. Returns the parsed
+ * object, or the {@link BAD_REQUEST} sentinel when the body is missing,
+ * malformed, larger than {@link JSON_BODY_MAX_BYTES}, or valid JSON that is
+ * not an object (`null`, an array, a string, a number or a boolean: L4, a
+ * `null` body used to reach `body.x` and crash the route with a 500). Callers
+ * turn the sentinel into a 400. The cap is enforced while reading (declared
+ * Content-Length first, then the stream), so an oversized body is never
+ * buffered or parsed. `allowEmpty` reads an empty body as `{}` for a route
+ * whose every field is optional.
  *
  *   const body = await parseJsonBody<{ token?: string }>(req);
  *   if (body === BAD_REQUEST) return badRequest();
  */
-export async function parseJsonBody<T = unknown>(
+export async function parseJsonBody<T extends object = Record<string, unknown>>(
   req: Request,
+  opts: { allowEmpty?: boolean } = {},
 ): Promise<T | typeof BAD_REQUEST> {
   try {
     const text = await readCappedText(req, JSON_BODY_MAX_BYTES);
     if (text === "too_large") return BAD_REQUEST;
-    return JSON.parse(text) as T;
+    if (opts.allowEmpty && text.trim() === "") return {} as T;
+    const value: unknown = JSON.parse(text);
+    return isJsonObject(value) ? (value as T) : BAD_REQUEST;
   } catch {
     return BAD_REQUEST;
   }
+}
+
+/** A parsed JSON value that is an object (not null, not an array). */
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** A ready-to-send 400 `{ error }` response (default code `bad_request`). */

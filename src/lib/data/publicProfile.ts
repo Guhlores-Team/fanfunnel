@@ -14,6 +14,8 @@ import { getCreatorThemeView, type CreatorThemeView } from "./creatorTheme";
 import type { DbWheelRow } from "./shared";
 import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
 import { mockGetPublicProfileFields, mockSetPublicProfileFields } from "./mockPublicProfile";
+import { readPublicCreator } from "./publicCreatorRow";
+import { publicCreatorTitle } from "@/lib/publicCreator";
 
 // --- Public teaser ----------------------------------------------------------
 
@@ -27,7 +29,10 @@ export async function getPublicWheelTeaser(
   if (!isSupabaseConfigured()) return mockGetPublicWheelTeaser(creatorId);
 
   const sb = createServiceClient();
-  const wheelId = await resolveActiveWheelId(sb, creatorId, new Date());
+  // L5: a suspended or unapproved account has no public teaser (404).
+  const creator = await readPublicCreator(sb, creatorId, { by: "id" });
+  if (!creator) return null;
+  const wheelId = await resolveActiveWheelId(sb, creator.id, new Date());
   if (!wheelId) return null;
 
   const { data: wheelData } = await sb
@@ -37,14 +42,7 @@ export async function getPublicWheelTeaser(
     .maybeSingle();
   if (!wheelData) return null;
 
-  const { data: profile } = await sb
-    .from("profiles")
-    .select("display_name")
-    .eq("id", creatorId)
-    .maybeSingle();
-  const creatorTitle =
-    (profile as { display_name: string | null } | null)?.display_name ??
-    "Creator";
+  const creatorTitle = publicCreatorTitle(creator.display_name);
 
   const happyHour = await getActiveHappyHour(sb, wheelId, new Date(), creatorId);
   return {
@@ -113,18 +111,13 @@ export async function getPublicProfileBySlug(
     };
   }
   const sb = createServiceClient();
-  const { data: prof } = await sb
-    .from("profiles")
-    .select("id, display_name, public_tagline, tip_url, avatar_url")
-    .eq("public_slug", slug)
-    .maybeSingle();
-  const p = prof as {
-    id: string;
-    display_name: string | null;
+  // L5: a suspended or unapproved account's page is a 404 (its tip link must
+  // not keep soliciting payments), the same answer as an unknown slug.
+  const p = await readPublicCreator<{
     public_tagline: string | null;
     tip_url: string | null;
     avatar_url: string | null;
-  } | null;
+  }>(sb, slug, { by: "slug", extra: "public_tagline, tip_url, avatar_url" });
   if (!p) return null;
 
   const wheelId = await resolveActiveWheelId(sb, p.id, new Date());
@@ -147,7 +140,7 @@ export async function getPublicProfileBySlug(
 
   return {
     profile: {
-      creatorTitle: p.display_name ?? "Creator",
+      creatorTitle: publicCreatorTitle(p.display_name),
       tagline: p.public_tagline,
       brandColor,
       avatarUrl: p.avatar_url,

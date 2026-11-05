@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { getLeaderboard } from "@/lib/data";
 import { brandVars } from "@/lib/theme";
 
@@ -10,6 +11,8 @@ export default async function LeaderboardPage({
 }) {
   const { creatorId } = await params;
   const view = await getLeaderboard(creatorId);
+  // L5: an unknown, suspended or unapproved creator has no board.
+  if (!view) notFound();
 
   return (
     <main

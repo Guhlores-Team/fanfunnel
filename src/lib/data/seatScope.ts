@@ -9,6 +9,7 @@
 // own id, keeps the existing own-account behaviour.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { isUuid } from "./shared";
+import { publicCreatorTitle } from "@/lib/publicCreator";
 
 export type SeatJob = "chat" | "fulfil" | "manage";
 export type ActingCreator = { creatorId: string } | { error: "bad_request" | "forbidden" };
@@ -58,9 +59,10 @@ export async function listMySeatCreators(opts: { manage?: boolean } = {}): Promi
   if (!user) return { error: "unauthorized" };
   const { data, error } = await (sb as unknown as RpcClient).rpc("my_seat_creators");
   if (error) return { error: "db_error" };
-  const seats = ((data ?? []) as { creator_id: string; display_name: string; can_chat: boolean; can_fulfil: boolean }[]).map((r) => ({
+  const seats = ((data ?? []) as { creator_id: string; display_name: string | null; can_chat: boolean; can_fulfil: boolean }[]).map((r) => ({
     creatorId: r.creator_id,
-    displayName: r.display_name,
+    // M1: never an address, and a missing name reads as the neutral label.
+    displayName: publicCreatorTitle(r.display_name),
     canChat: r.can_chat === true,
     canFulfil: r.can_fulfil === true,
   }));

@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { mock } from "node:test";
 
 // A4: blocking a fan really stops them reaching the creator. A blocked fan's
-// chat sends, auto intro/outro, wishlist edits and leaderboard opt-in are
+// chat sends and thread reads (I7), auto intro/outro, wishlist edits and leaderboard opt-in are
 // refused server-side with 403 `blocked`; opting OUT of the leaderboard (a
 // consent withdrawal) always works; unblocking restores everything.
 //   - demo path through the real route handlers;
@@ -74,6 +74,7 @@ async function main() {
   const { POST: fanMessage } = await import("@/app/api/messages/fan/route");
   const { POST: wishAdd, DELETE: wishRemove } = await import("@/app/api/wishlists/route");
   const { POST: optIn } = await import("@/app/api/leaderboard/opt-in/route");
+  const { POST: fanThread } = await import("@/app/api/messages/fan/thread/route");
 
   const call = async (handler: (r: Request) => Promise<Response>, body: unknown, method = "POST") => {
     const res = await handler(new Request("http://localhost/api/x", {
@@ -92,7 +93,15 @@ async function main() {
   check("demo: before the block, wishlist works", (await call(wishAdd, { token: fan.token, prizeLabel: prize })).status === 200);
   check("demo: before the block, opt-in works", (await call(optIn, { token: fan.token, optIn: true, handle: "blockme" })).status === 200);
 
+  check("demo: before the block, the fan reads the thread", (await call(fanThread, { token: fan.token })).status === 200);
+  await data.sendCreatorMessage(fan.fanId, "a reply the fan has not seen");
   await data.setFanBlocked(fan.fanId, true);
+  // I7: a blocked fan can no longer read the thread, and nothing is marked read.
+  const read = await call(fanThread, { token: fan.token });
+  check("demo: a blocked fan's thread read → 403 blocked", read.status === 403 && read.body?.error === "blocked");
+  check("demo: …with no messages in the answer", !("messages" in (read.body ?? {})));
+  const creatorView = await data.getThread(fan.fanId);
+  check("demo: …and the creator's reply stays unread by the fan", Array.isArray(creatorView) && creatorView.some((x) => x.sender === "creator" && x.body === "a reply the fan has not seen" && x.readAt === null));
   const sent = await call(fanMessage, { token: fan.token, body: "let me in" });
   check("demo: a blocked fan's message → 403 blocked", sent.status === 403 && sent.body?.error === "blocked");
   const thread = await data.getThread(fan.fanId);
@@ -109,6 +118,7 @@ async function main() {
 
   await data.setFanBlocked(fan.fanId, false);
   check("demo: unblocked, chat works again", (await call(fanMessage, { token: fan.token, body: "back" })).status === 200);
+  check("demo: unblocked, the thread reads again", (await call(fanThread, { token: fan.token })).status === 200);
   check("demo: unblocked, wishlist works again", (await call(wishRemove, { token: fan.token, prizeLabel: prize }, "DELETE")).status === 200);
 
   // --- Supabase path ----------------------------------------------------------------
@@ -125,6 +135,7 @@ async function main() {
   check("supabase: blocked opt-in", JSON.stringify(await data.setFanLeaderboardOptIn("tok-blocked", true, "name")) === '{"error":"blocked"}');
   check("supabase: blocked auto intro", JSON.stringify(await data.ensureChatIntro("tok-blocked")) === '{"error":"blocked"}');
   check("supabase: blocked auto outro", JSON.stringify(await data.sendChatOutro("tok-blocked")) === '{"error":"blocked"}');
+  check("supabase: blocked thread read", JSON.stringify(await data.getFanMessages("tok-blocked")) === '{"error":"blocked"}');
   check("supabase: nothing was written for a blocked fan", writes.length === 0);
 
   PASS = { ...blockedPass, fan: null };
@@ -132,6 +143,7 @@ async function main() {
   check("supabase: still nothing written", writes.length === 0);
 
   PASS = { ...blockedPass, fan: { ...blockedPass.fan, blocked_at: null } };
+  check("supabase: an unblocked fan reads the thread", Array.isArray(await data.getFanMessages("tok-ok")));
   check("supabase: an unblocked fan's message is stored", "ok" in (await data.sendFanMessage("tok-ok", "hi")));
   check("supabase: an unblocked fan's wishlist add is stored", "ok" in (await data.addWishlist("tok-ok", "Prize")));
   check("supabase: the writes happened", writes.some((w) => w.table === "messages") && writes.some((w) => w.table === "wishlists"));

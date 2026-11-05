@@ -9,6 +9,7 @@ import { recordAudit } from "./audit";
 import { leaveApprovalNotice, sendApprovalEmail } from "@/lib/account/approvalNotice";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
+import { NEUTRAL_CREATOR_TITLE, publicCreatorName } from "@/lib/publicCreator";
 
 // ---------------------------------------------------------------------------
 // Admin (cross-account)
@@ -184,7 +185,10 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     revenue: number | null;
   }[]).map((r) => ({
     id: r.id,
-    displayName: r.display_name ?? r.email ?? "Creator",
+    // M1: org_account_stats masks the e-mail; a name that is itself an
+    // address is dropped here too, so the masked e-mail (or the neutral label)
+    // shows instead.
+    displayName: publicCreatorName(r.display_name) ?? r.email ?? NEUTRAL_CREATOR_TITLE,
     email: r.email ?? "",
     wheels: Number(r.wheels),
     fans: Number(r.fans),

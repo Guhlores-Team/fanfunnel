@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { recordAudit, updateAccount } from "@/lib/data";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import type { AppRole } from "@/lib/data/types";
@@ -36,6 +37,13 @@ export async function POST(req: Request) {
   }
   if (typeof body.isActive === "boolean") {
     await recordAudit({ ...target, action: body.isActive ? "account.reactivate" : "account.suspend" });
+    // L5: /c/<slug> is ISR (60s); drop the cached pages now so a suspended
+    // creator's page (and tip link) goes at once, not up to a minute later.
+    try {
+      revalidatePath("/c/[slug]", "page");
+    } catch (err) {
+      console.error("public page revalidation failed", err);
+    }
   }
   if (body.features && typeof body.features === "object") {
     const flags: Record<string, boolean> = {};

@@ -98,9 +98,15 @@ function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: str
     setThreads(((await r.json()) as { threads?: FanThread[] }).threads ?? []);
   }, [creatorId, onError]);
   const loadThread = useCallback(async (fan: string) => {
-    const r = await fetch(seatPath(`/api/messages/thread/${encodeURIComponent(fan)}`, creatorId), { cache: "no-store" });
+    const path = seatPath(`/api/messages/thread/${encodeURIComponent(fan)}`, creatorId);
+    const r = await fetch(path, { cache: "no-store" });
     if (!r.ok) return onError("This conversation is not available to your seat.");
-    setMessages(((await r.json()) as { messages?: ChatMessage[] }).messages ?? []);
+    const list = ((await r.json()) as { messages?: ChatMessage[] }).messages ?? [];
+    setMessages(list);
+    // I3: marking read is its own POST, never a side effect of the read.
+    if (list.some((m) => m.sender === "fan" && !m.readAt)) {
+      await fetch(path, { method: "POST", cache: "no-store" }).catch(() => null);
+    }
   }, [creatorId, onError]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives

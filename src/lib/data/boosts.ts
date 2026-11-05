@@ -31,6 +31,8 @@ import {
 } from "./mock";
 import { resolveFanByToken } from "./fans";
 import { withdrawFanLeaderboardConsent } from "./privacy";
+import { readPublicCreator } from "./publicCreatorRow";
+import { NEUTRAL_CREATOR_TITLE, publicCreatorTitle } from "@/lib/publicCreator";
 
 // ---------------------------------------------------------------------------
 // Phase 3: happy hours, share cards, wishlist, leaderboard, referrals, chat,
@@ -154,24 +156,25 @@ export async function getShareCard(
   const sb = createServiceClient();
   const { data } = await sb
     .from("spins")
-    .select(
-      "prize_label, prize_rarity, prize_image_url, created_at, game_kind, creator:profiles(display_name)"
-    )
+    .select("creator_id, prize_label, prize_rarity, prize_image_url, created_at, game_kind")
     .eq("share_id", shareId)
     .maybeSingle();
 
   const row = data as unknown as {
+    creator_id: string;
     prize_label: string;
     prize_rarity: Rarity;
     prize_image_url: string | null;
     created_at: string;
     game_kind: string | null;
-    creator: { display_name: string | null } | null;
   } | null;
   if (!row) return null;
+  // L5: a suspended or unapproved creator's share cards are gone (404).
+  const creator = await readPublicCreator(sb, row.creator_id, { by: "id" });
+  if (!creator) return null;
 
   return {
-    creatorTitle: row.creator?.display_name ?? "Creator",
+    creatorTitle: publicCreatorTitle(creator.display_name),
     prizeLabel: row.prize_label,
     rarity: row.prize_rarity,
     color: RARITY_COLORS[row.prize_rarity],
@@ -405,39 +408,32 @@ export async function setFanLeaderboardOptIn(
 }
 
 /**
- * The public leaderboard for a creator (service role; fans aren't authed). When
- * the creator hasn't enabled it, returns enabled:false with no entries. Only
+ * The public leaderboard for a creator (service role; fans aren't authed), or
+ * null (404) for an unknown, suspended or unapproved account (L5). When the
+ * creator hasn't enabled it, returns enabled:false with no entries and the
+ * neutral title: the creator's name is shown only on an open board (M1). Only
  * fans who EXPLICITLY opted in appear (spinning never opts anyone in), and only
  * their handle plus activity counts — never email/token/fan_id, and never spend.
  */
 export async function getLeaderboard(
   creatorIdOrSlug: string
-): Promise<LeaderboardView> {
+): Promise<LeaderboardView | null> {
   if (!isSupabaseConfigured()) return mockGetLeaderboard(creatorIdOrSlug);
   const cutoff = new Date().toISOString();
 
   const sb = createServiceClient();
   // Accept either a UUID id or a public_slug, so the shareable URL can be
   // /leaderboard/<slug> (pretty) or /leaderboard/<uuid> (internal).
-  const isUuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      creatorIdOrSlug
-    );
-  const { data: profile } = await sb
-    .from("profiles")
-    .select("id, display_name, leaderboard_enabled")
-    .eq(isUuid ? "id" : "public_slug", creatorIdOrSlug)
-    .maybeSingle();
-  const creatorId = (profile as { id: string } | null)?.id ?? creatorIdOrSlug;
-  const prof = profile as {
-    display_name: string | null;
-    leaderboard_enabled: boolean;
-  } | null;
-  const creatorTitle = prof?.display_name ?? "Creator";
-
-  if (!prof || !prof.leaderboard_enabled) {
-    return { enabled: false, creatorTitle, entries: [] };
+  const prof = await readPublicCreator<{ leaderboard_enabled: boolean }>(sb, creatorIdOrSlug, {
+    by: "either",
+    extra: "leaderboard_enabled",
+  });
+  if (!prof) return null;
+  if (!prof.leaderboard_enabled) {
+    return { enabled: false, creatorTitle: NEUTRAL_CREATOR_TITLE, entries: [] };
   }
+  const creatorId = prof.id;
+  const creatorTitle = publicCreatorTitle(prof.display_name);
 
   const fanRows = await readScopedRows<{ handle: string | null }>(sb, "fans", "handle", q => q.eq("creator_id", creatorId).eq("leaderboard_opt_in", true), cutoff);
   const fans = (fanRows ?? []) as {
@@ -490,14 +486,11 @@ export async function getRecentWins(creatorIdOrSlug: string): Promise<RecentWin[
   if (!isSupabaseConfigured()) return mockGetRecentWins();
   const cutoff = new Date().toISOString();
   const sb = createServiceClient();
-  const isUuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(creatorIdOrSlug);
-  const { data: profile } = await sb
-    .from("profiles")
-    .select("id, leaderboard_enabled")
-    .eq(isUuid ? "id" : "public_slug", creatorIdOrSlug)
-    .maybeSingle();
-  const prof = profile as { id: string; leaderboard_enabled: boolean } | null;
+  // L5: nothing for a suspended or unapproved account.
+  const prof = await readPublicCreator<{ leaderboard_enabled: boolean }>(sb, creatorIdOrSlug, {
+    by: "either",
+    extra: "leaderboard_enabled",
+  });
   if (!prof || !prof.leaderboard_enabled) return [];
 
   const fanRows = await readScopedRows<{ handle: string | null }>(sb, "fans", "handle", q => q.eq("creator_id", prof.id).eq("leaderboard_opt_in", true), cutoff);

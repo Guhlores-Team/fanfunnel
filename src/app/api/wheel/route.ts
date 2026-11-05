@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getWheel, saveWheel } from "@/lib/data";
 import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
-import { badRequest, errorResponse } from "@/lib/api/handler";
+import { badRequest, errorResponse, BAD_REQUEST, parseJsonBody, isJsonObject } from "@/lib/api/handler";
 import type { ExpectedStock } from "@/lib/data/wheels";
 import { normalizeWheelPayload } from "@/lib/games/wheel/validate";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
@@ -71,9 +71,10 @@ export async function PUT(req: Request) {
   if (rateLimited) return rateLimited;
   let config: WheelConfig;
   let expectedStock: ExpectedStock | null;
+  const body = await parseJsonBody<{ wheel?: unknown; expectedStock?: unknown }>(req);
+  if (body === BAD_REQUEST) return badRequest();
   try {
-    const body = await req.json();
-    config = body.wheel ?? body;
+    config = (isJsonObject(body.wheel) ? body.wheel : body) as unknown as WheelConfig;
     expectedStock = readExpectedStock(body.expectedStock);
   } catch {
     return badRequest();

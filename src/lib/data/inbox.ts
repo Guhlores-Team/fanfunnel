@@ -11,6 +11,7 @@ import {
   mockGetFanMessages,
   mockListThreads,
   mockGetThread,
+  mockMarkThreadRead,
   mockSendCreatorMessage,
   mockGetChatSettings,
   mockSetChatSettings,
@@ -191,18 +192,23 @@ export async function sendFanMessage(
   return { ok: true };
 }
 
-export async function getFanMessages(token: string): Promise<ChatMessage[]> {
+/**
+ * The fan's own thread. I7: a fan the creator blocked can no longer read it
+ * (403 blocked, the same answer as sending), and nothing is marked read.
+ */
+export async function getFanMessages(token: string): Promise<ChatMessage[] | { error: "blocked" }> {
   if (!isSupabaseConfigured()) return mockGetFanMessages(token);
 
   const sb = createServiceClient();
   const { data: passData } = await sb
     .from("fan_passes")
-    .select("creator_id, fan_id")
+    .select("creator_id, fan_id, fan:fans(blocked_at)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
-  const pass = passData as { creator_id: string; fan_id: string } | null;
+  const pass = passData as unknown as { creator_id: string; fan_id: string; fan?: { blocked_at: string | null } | null } | null;
   if (!pass) return [];
+  if (pass.fan?.blocked_at) return { error: "blocked" };
 
   const { data } = await sb
     .from("messages")
@@ -342,7 +348,7 @@ export async function getThread(fanId: string, creatorId?: unknown): Promise<Cha
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return [];
-  // A19: reading (and marking read) another creator's thread needs 'chat'.
+  // A19: reading another creator's thread needs 'chat'.
   const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
   if ("error" in acting) return acting;
   const owner = acting.creatorId;
@@ -361,16 +367,39 @@ export async function getThread(fanId: string, creatorId?: unknown): Promise<Cha
     .slice()
     .reverse();
 
-  // Mark fan→creator messages as read by the creator.
-  await sb
+  return rows.map(toChatMessage);
+}
+
+/**
+ * I3: mark a fan's messages read by the creator. Its own POST, never a side
+ * effect of reading the thread (a GET a cross-site link could trigger). The
+ * same 'chat' check as getThread; RLS scopes the update to the acting
+ * creator's messages.
+ */
+export async function markThreadRead(fanId: string, creatorId?: unknown): Promise<{ ok: true } | { error: "bad_request" | "forbidden" | "unauthorized" | "db_error" }> {
+  if (!isSupabaseConfigured()) {
+    const refused = demoActingCreator(creatorId);
+    if (refused) return refused;
+    mockMarkThreadRead(fanId);
+    return { ok: true };
+  }
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
+  if ("error" in acting) return acting;
+
+  const { error } = await sb
     .from("messages")
     .update({ read_at: new Date().toISOString() })
-    .eq("creator_id", owner)
+    .eq("creator_id", acting.creatorId)
     .eq("fan_id", fanId)
     .eq("sender", "fan")
     .is("read_at", null);
-
-  return rows.map(toChatMessage);
+  return error ? { error: "db_error" } : { ok: true };
 }
 
 export async function sendCreatorMessage(

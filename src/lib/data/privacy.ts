@@ -32,6 +32,7 @@ import {
 } from "./mock";
 
 import { EXPORT_PAGE_SIZE, EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
+import { publicCreatorName } from "@/lib/publicCreator";
 
 type Svc = ReturnType<typeof createServiceClient>;
 export type FanLinkStatus = "creator_closed" | "fan_deleted";
@@ -224,7 +225,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
   return safeExportValue({
     format: FAN_EXPORT_FORMAT, exportedAt: new Date().toISOString(), about: FAN_EXPORT_ABOUT,
     ...exportStatus(failed, truncated), excluded: [...FAN_EXPORT_EXCLUDED],
-    creator: { displayName: creator?.display_name ?? null },
+    creator: { displayName: publicCreatorName(creator?.display_name) },
     profile: { displayName: str(fan.display_name), handle: str(fan.handle), joinedAt: str(fan.created_at), spinsRemaining: num(fan.spins_remaining), spinsGrantedTotal: num(fan.spins_granted_total), lastSpinAt: str(fan.last_spin_at), referralCode: str(fan.referral_code), joinedThroughAReferral: fan.referred_by_fan_id != null, friendsReferred: refRes.count ?? 0 },
     consents: { ageAndTermsAcceptedAt: str(fan.acked_at), termsVersion: str(fan.acked_terms_version), leaderboardOptIn: fan.leaderboard_opt_in === true },
     links: links.map((row) => ({ linkEndsWith: maskToken(str(row.token)), isThisLink: row.token === token, wheel: str((row.wheel as ExportRow | null)?.title), createdAt: str(row.created_at), active: row.is_active === true, pausedByYouAt: str(row.self_excluded_at), spinsRemaining: num(row.spins_remaining), spinsGrantedTotal: num(row.spins_granted_total), lastSpinAt: str(row.last_spin_at) })),

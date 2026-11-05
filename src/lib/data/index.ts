@@ -74,6 +74,7 @@ export {
   listThreads,
   hasThreadWith,
   getThread,
+  markThreadRead,
   sendCreatorMessage,
   getChatSettings,
   setChatSettings,

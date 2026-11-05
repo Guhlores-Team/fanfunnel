@@ -28,6 +28,7 @@ import { readPlayState } from "./playGuard";
 import { readFanGlow } from "./checkins";
 import { fanNeedsAck } from "@/lib/legal";
 import { notifyCreator } from "@/lib/push/notify";
+import { publicCreatorTitle } from "@/lib/publicCreator";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -191,7 +192,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     blocked: !!pass.fan.blocked_at,
     fanName: pass.fan.display_name ?? pass.fan.handle ?? null,
     fanHandle: pass.fan.handle ?? null,
-    creatorTitle: pass.creator?.display_name ?? "Creator",
+    creatorTitle: publicCreatorTitle(pass.creator?.display_name),
     // Per-wheel: the balance the fan can spin on THIS wheel's link, the same
     // value the attempt ledger decrements, so the count matches before and
     // after a spin (never the fan-level aggregate across every link).

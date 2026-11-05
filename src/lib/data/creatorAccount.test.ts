@@ -18,10 +18,14 @@ type FakeAuthError = { message: string; code?: string; status?: number };
  *  updates are recorded. */
 function fakeClient(result: { user: { id: string } | null; error: FakeAuthError | null }) {
   const updates: Record<string, unknown>[] = [];
+  const created: Record<string, unknown>[] = [];
   const client = {
     auth: {
       admin: {
-        createUser: async () => ({ data: { user: result.user }, error: result.error }),
+        createUser: async (args: Record<string, unknown>) => {
+          created.push(args);
+          return { data: { user: result.user }, error: result.error };
+        },
       },
     },
     from: () => ({
@@ -31,7 +35,7 @@ function fakeClient(result: { user: { id: string } | null; error: FakeAuthError 
       },
     }),
   };
-  return { client: client as unknown as CreatorProvisioningClient, updates };
+  return { client: client as unknown as CreatorProvisioningClient, updates, created };
 }
 
 /** Run with console.error captured, so the test can assert what reached the log. */
@@ -117,13 +121,21 @@ async function main() {
 
   // Success: ok, and the profile row is approved with the display name.
   {
-    const { client, updates } = fakeClient({ user: { id: "u1" }, error: null });
+    const { client, updates, created } = fakeClient({ user: { id: "u1" }, error: null });
     const result = await provisionCreatorUser(client, EMAIL, "abc12345", "");
     check("success returns { ok: true }", "ok" in result && result.ok === true);
+    // M1 negative: the e-mail never becomes the (public) display name.
     check(
-      "success approves the profile, display name falls back to email",
-      updates.length === 1 && updates[0].approval_status === "approved" && updates[0].display_name === EMAIL
+      "success approves the profile; a missing display name stays null, never the e-mail",
+      updates.length === 1 && updates[0].approval_status === "approved" && updates[0].display_name === null
     );
+    check("no e-mail is written as the display name anywhere", !JSON.stringify([updates, created]).includes(`"display_name":"${EMAIL}"`));
+    check("the auth user gets no display-name metadata at all", created.length === 1 && !("user_metadata" in created[0]));
+  }
+  {
+    const { client, updates } = fakeClient({ user: { id: "u2" }, error: null });
+    await provisionCreatorUser(client, EMAIL, "abc12345", "  Bella  ");
+    check("a given display name is stored trimmed", updates.length === 1 && updates[0].display_name === "Bella");
   }
 
   console.log(`creatorAccount.test: ${passed} checks passed`);

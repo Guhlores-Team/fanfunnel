@@ -80,7 +80,7 @@ const TABLES: Record<string, (ops: Op[]) => Resp> = {
   spins: (ops) => (has(ops, "insert") ? ok({ id: "spin-1", share_id: "share-1" }) : ok([])),
   wishlists: () => ok([]),
   happy_hours: () => ok([]),
-  profiles: () => ok({ id: CREATOR, display_name: "Creator", public_tagline: null, tip_url: null, avatar_url: null }),
+  profiles: () => ok({ id: CREATOR, is_active: true, approval_status: "approved", display_name: "Creator", public_tagline: null, tip_url: null, avatar_url: null }),
   fans: () => ok({ pity_counter: 0 }),
   redemptions: () => ok(null),
   webhooks: () => ok([]),
