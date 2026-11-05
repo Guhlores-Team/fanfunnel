@@ -303,7 +303,7 @@ function LinkInBioCard({
       id="boosts-link-in-bio"
       icon={P.link}
       title="Link-in-bio (SFW)"
-      hint="A clean, safe-for-work page for your IG/TikTok bio — your wheel and a way in."
+      hint="A clean, safe-for-work page for your IG/TikTok bio — your game and a way in."
       aside={
         url ? (
           <a

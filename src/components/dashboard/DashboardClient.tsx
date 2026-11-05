@@ -186,8 +186,8 @@ export default function DashboardClient({
     if (decision === "confirm") {
       const request: DashboardLeaveRequest = {
         action,
-        what: [...(intent === "signout" && wheelDirty ? ["your wheel"] : []), ...state.descriptions].join(" and ") || "your changes",
-        consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your wheel edits stay here."),
+        what: [...(intent === "signout" && wheelDirty ? ["your game edits"] : []), ...state.descriptions].join(" and ") || "your changes",
+        consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your game edits stay here."),
         scope: options?.scope,
       };
       leaveRequestRef.current = request;

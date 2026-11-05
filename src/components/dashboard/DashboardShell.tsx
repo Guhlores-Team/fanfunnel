@@ -348,7 +348,8 @@ export function TopBar({
         <h1 className="truncate text-lg font-bold tracking-[-0.02em] text-ink sm:text-[22px]">
           {title}
         </h1>
-        <p className="mt-[3px] truncate text-[13px] text-muted" suppressHydrationWarning>
+        {/* Two lines on a phone rather than an ellipsis mid-phrase (QA b5 polish). */}
+        <p className="mt-[3px] line-clamp-2 text-[13px] leading-snug text-muted text-pretty lg:truncate" suppressHydrationWarning>
           {subtitle}
         </p>
       </div>

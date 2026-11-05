@@ -57,6 +57,9 @@ export default function RewardReveal({
   const prizeColor = prize.color ?? tier.color;
   const big = tier.rank >= 4;
   const [shared, setShared] = useState(false);
+  // No share sheet and no clipboard: show the link to copy by hand, rather
+  // than a button that silently does nothing (QA b5 polish).
+  const [manualUrl, setManualUrl] = useState<string | null>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
   const shareFirst = tier.sharePrimary && !!shareId;
 
@@ -88,9 +91,12 @@ export default function RewardReveal({
       } else if (await copyToClipboard(url)) {
         setShared(true);
         setTimeout(() => setShared(false), 1500);
+      } else {
+        setManualUrl(url);
       }
-    } catch {
-      /* user cancelled or share unavailable */
+    } catch (error) {
+      // A dismissed share sheet is the fan's choice; anything else gets the link.
+      if (!(error instanceof DOMException && error.name === "AbortError")) setManualUrl(url);
     }
   };
 
@@ -149,7 +155,7 @@ export default function RewardReveal({
           aria-modal="true"
           aria-label={`You won ${prize.label}`}
           aria-describedby="reveal-rarity"
-          className="card relative w-full max-w-sm rounded-[1.75rem] p-8 text-center"
+          className="card relative w-full max-w-sm rounded-[1.75rem] p-6 text-center sm:p-8"
           style={{
             boxShadow: `0 30px 80px -20px color-mix(in oklab, ${tier.color} ${big ? 70 : 50}%, transparent)`,
             border: `${big ? 2 : 1}px solid color-mix(in oklab, ${tier.color} ${big ? 80 : 55}%, transparent)`,
@@ -208,6 +214,20 @@ export default function RewardReveal({
           </p>
           {instant && shareId && <p className="mt-2 text-xs text-muted">Your reward stays private when you share your win.</p>}
           {shareBtn}
+          {manualUrl && (
+            <div data-testid="share-manual" className="mt-3 text-left">
+              <label htmlFor="share-manual-url" className="block text-xs text-muted">
+                Couldn&rsquo;t share or copy automatically. Copy this link:
+              </label>
+              <input
+                id="share-manual-url"
+                readOnly
+                value={manualUrl}
+                onFocus={(e) => e.currentTarget.select()}
+                className="ff-input mt-1 w-full font-mono text-xs"
+              />
+            </div>
+          )}
           <button
             ref={shareFirst ? undefined : primaryRef}
             onClick={onClose}
