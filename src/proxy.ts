@@ -1,6 +1,8 @@
 import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { needsSessionRefresh, updateSession } from "@/lib/supabase/middleware";
 import { buildCsp, createNonce, usesStrictCsp } from "@/lib/security/csp";
+import { isCrossOriginWrite } from "@/lib/security/sameOrigin";
+import { limitRoute } from "@/lib/api/limit";
 
 // Next 16 renamed the `middleware` file convention to `proxy` (same behavior).
 // This refreshes the Supabase session before the auth pages render. It runs
@@ -20,8 +22,25 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     ).catch(() => { /* monitoring cannot change the safe response */ }));
     return NextResponse.json({ error: "bad_request" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
-  if (!needsSessionRefresh(request.nextUrl.pathname)) return NextResponse.next();
-  if (!usesStrictCsp(request.nextUrl.pathname)) return await updateSession(request);
+  const path = request.nextUrl.pathname;
+  // I4: a cookie-carrying write to the API must come from this origin. Only
+  // cookie-carrying /api requests reach here (matcher); they never refresh
+  // the session here, so a slow Supabase can't delay the API.
+  if (path.startsWith("/api/")) {
+    if (isCrossOriginWrite({ method: request.method, path, headers: request.headers, allowedOrigins: [process.env.NEXT_PUBLIC_SITE_URL] })) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
+    return NextResponse.next();
+  }
+  // M1: the public leaderboard page is uncached and unauthenticated; cap it
+  // per client like its API (the page itself can't answer 429).
+  if (path.startsWith("/leaderboard/")) {
+    const limited = await limitRoute(request, "leaderboard-page:GET", "public");
+    if (limited) limited.headers.set("Cache-Control", "no-store");
+    return limited ?? NextResponse.next();
+  }
+  if (!needsSessionRefresh(path)) return NextResponse.next();
+  if (!usesStrictCsp(path)) return await updateSession(request);
   // These pages are dynamically rendered, so Next reads the nonce from the
   // request's CSP header and puts it on its scripts. updateSession forwards
   // the request headers on NextResponse.next({ request }).
@@ -40,9 +59,13 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 export const config = {
   // Auth routes must match `needsSessionRefresh` (src/proxy.test.ts). The
   // percent-only matcher adds encoding validation without auth on public paths.
+  // API requests run it only when they carry a cookie (the origin check, I4);
+  // the leaderboard page for its rate limit. Neither refreshes the session.
   // Must be literals: Next reads these statically.
   matcher: [
     "/(.*%.*)",
+    { source: "/api/:path*", has: [{ type: "header", key: "cookie" }] },
+    "/leaderboard/:path*",
     "/dashboard/:path*",
     "/admin/:path*",
     "/agency/:path*",

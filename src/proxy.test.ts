@@ -48,8 +48,10 @@ async function main() {
   const routes = appRoutes();
   check("found the app routes", routes.length > 50);
 
-  // 1. The matcher and needsSessionRefresh agree on every real route.
+  // 1. The matcher and needsSessionRefresh agree on every real route, except
+  //    the leaderboard page (rate limit only, below).
   for (const { path } of routes) {
+    if (path.startsWith("/leaderboard/")) continue;
     check(`matcher == needsSessionRefresh for ${path}`, matches(path) === needsSessionRefresh(path));
   }
 
@@ -81,7 +83,6 @@ async function main() {
     "/spin/some-token",
     "/share/abc",
     "/verify/abc",
-    "/leaderboard/abc",
     "/forgot-password",
     "/reset-password",
     "/auth/callback",
@@ -96,6 +97,19 @@ async function main() {
   for (const path of skipped) {
     check(`${path} skips the proxy`, !matches(path) && !needsSessionRefresh(path));
   }
+
+  // 4b. I4 / M1: the API runs the proxy only with a cookie (the origin
+  //     check), the leaderboard page always (its rate limit); neither ever
+  //     refreshes the session there.
+  const withCookie = (path: string) =>
+    unstable_doesMiddlewareMatch({ config, nextConfig, url: path, cookies: { "sb-x-auth-token": "1" } });
+  for (const path of ["/api/spin", "/api/campaigns/stats", "/api/wheel", "/api/account/profile"]) {
+    check(`${path} with a cookie runs the proxy (origin check)`, withCookie(path) && !needsSessionRefresh(path));
+  }
+  for (const path of ["/c/demo", "/spin/some-token", "/share/abc", "/verify/abc", "/"]) {
+    check(`${path} with a cookie still skips the proxy`, !withCookie(path));
+  }
+  check("the leaderboard page runs the proxy (rate limit) without a session refresh", matches("/leaderboard/abc") && !needsSessionRefresh("/leaderboard/abc"));
 
   // 5. Security headers still apply to routes the proxy no longer runs on.
   const expected = [
