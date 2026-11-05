@@ -33,6 +33,23 @@ await assert.rejects(durableCreatorIntent({ ...storage, setItem: () => { throw n
 await assert.rejects(durableCreatorIntent({ ...storage, getItem: () => null, setItem: () => {} }, "silent", payload), /intent_not_persisted/, "silently ignored writes must prevent the grant fetch too");
 await assert.rejects(durableCreatorIntent({ ...storage, getItem: () => null, setItem: () => { records.set("unrelated", "other data"); } }, "wrong-key", payload), /intent_not_persisted/, "an unrelated successful write is not proof the receipt persisted");
 assert.throws(() => completeCreatorIntent({ ...storage, removeItem: () => {} }, "new-fan", next), /intent_not_cleared/, "silently ignored deletes cannot be reported as receipt completion");
+// A top-up to a NEW link keeps the game that link is set to play with the
+// receipt, so a reload, a retry or "Check outcome" still sets it.
+const topUp = { fanId: "fan-1", spins: 3, wheelId: "11111111-1111-4111-8111-111111111111" };
+const pinned = await durableCreatorIntent(storage, "topup:fan-1", topUp, topUp.wheelId);
+const pinnedRaw = records.get("ff:creator-intent:topup:fan-1")!;
+assert.deepEqual(Object.keys(JSON.parse(pinnedRaw)).sort(), ["id", "pin", "signature"], "the receipt adds only the game id");
+assert.deepEqual(readCreatorIntent(storage, "topup:fan-1"), { id: pinned, signature: JSON.parse(pinnedRaw).signature, pin: topUp.wheelId });
+assert.equal(await durableCreatorIntent(storage, "topup:fan-1", topUp, null), pinned, "a retry from a reloaded form (no pin) reuses the same request");
+assert.equal(readCreatorIntent(storage, "topup:fan-1")?.pin, topUp.wheelId, "and keeps the first submission's pin");
+assert.equal(await durableCreatorIntent(storage, "topup:fan-1", topUp, "other-game"), pinned, "the pin never changes the request identity");
+assert.equal(records.get("ff:creator-intent:topup:fan-1"), pinnedRaw, "nor rewrites the receipt");
+assert.equal(readCreatorIntent(storage, "new-fan")?.pin, undefined, "a receipt without a new link has no pin");
+await assert.rejects(durableCreatorIntent(storage, "topup:fan-2", topUp, "https://x/spin/token"), /intent_invalid_pin/, "a pin is a game id, never a URL or token");
+for (const pin of [5, "", "a b", "x".repeat(65)]) {
+  records.set("ff:creator-intent:bad-pin", JSON.stringify({ id: pinned, signature: "a".repeat(64), pin }));
+  assert.throws(() => readCreatorIntent(storage, "bad-pin"), /intent_unreadable/, "a malformed pin fails closed");
+}
 console.log("creatorIntent.test: durable retry, quantity binding, privacy and fail-closed checks passed");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

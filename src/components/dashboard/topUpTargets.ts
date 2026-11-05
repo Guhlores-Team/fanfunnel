@@ -133,3 +133,29 @@ export function topUpOutcome(target: TopUpTarget, campaignName: string | null, s
     : "";
   return `${after} It plays ${target.plays.title}.${moved}`;
 }
+
+/** What to do after a top-up whose receipt says "new link that plays `pin`". */
+export type NewLinkPin =
+  | { token: string }
+  | { done: true }
+  | { skip: "not_found" | "not_new" | "pinned_elsewhere" };
+
+/**
+ * The link a "New link that plays X" top-up must now set to play X. `credited`
+ * is the token the grant reply returned; after "Check outcome" there is none
+ * (the outcome carries no link), and the server's rule decides: the grant
+ * credited the fan's OLDEST active link stored on X, minting it when there was
+ * none, which is why X was offered as a new link. A link set to play another
+ * game is never re-pointed, and one already set to X needs nothing.
+ */
+export function newLinkPin(passes: readonly TopUpPass[] | null | undefined, pin: string, credited?: string | null): NewLinkPin {
+  const link = credited
+    ? passes?.find((p) => p.token === credited)
+    : [...(passes ?? [])].filter((p) => p.wheelId === pin).sort(byCreated)[0];
+  // A token the list doesn't show yet is the link this grant just minted.
+  if (!link) return credited ? { token: credited } : { skip: "not_found" };
+  if (link.wheelId !== pin) return { skip: "not_new" };
+  if (link.pinnedWheelId === pin) return { done: true };
+  if (link.pinnedWheelId) return { skip: "pinned_elsewhere" };
+  return { token: link.token };
+}

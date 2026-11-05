@@ -18,7 +18,8 @@ export default function CreatorRequestRecovery({ scope, kind, guardScope = scope
   disabled?: boolean;
   request?: CreatorReceiptRequest;
   onFound: () => void;
-  onResolved: (status: TerminalCreatorRequestStatus) => void | Promise<void>;
+  /** `pin`: the game a top-up's new link is set to play, from the receipt. */
+  onResolved: (status: TerminalCreatorRequestStatus, receipt: { pin: string | null }) => void | Promise<void>;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -54,6 +55,9 @@ export default function CreatorRequestRecovery({ scope, kind, guardScope = scope
     try {
       const response = await request({ requestId, kind, cancel, creatorId });
       if (!response.ok) throw new Error("outcome_unconfirmed");
+      // Read before the release below removes the receipt.
+      const receipt = creatorIntentReceipt(scope);
+      const pin = receipt?.id === requestId ? receipt.pin ?? null : null;
       const status = releaseCreatorRequest(window.sessionStorage, scope, await response.json(), requestId, kind);
       if (!terminalCreatorRequest(status)) {
         setMessage("There is no final outcome yet. Keep the same request, check again, or cancel it before starting a different one.");
@@ -62,7 +66,7 @@ export default function CreatorRequestRecovery({ scope, kind, guardScope = scope
       confirmed = true;
       setRequestId(null); setConfirmCancel(false);
       setMessage(status === "committed" ? "The original request completed. No duplicate grant was added." : status === "gone" ? "The original result was removed. That request cannot recreate it." : status === "cancelled" ? "Cancellation confirmed. This request cannot complete later; you can review the form and start a new request." : "The server confirmed this request did not complete and cannot complete later. You can correct the form.");
-      await onResolved(status);
+      await onResolved(status, { pin });
     } catch {
       setError(confirmed ? "The outcome was confirmed, but the refreshed view couldn't load. Refresh before starting another request." : "The outcome couldn't be confirmed. Keep this request and check again; it has not been safely released.");
     } finally {

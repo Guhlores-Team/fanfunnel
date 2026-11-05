@@ -18,7 +18,7 @@ import ImportFans from "@/components/dashboard/ImportFans";
 import { prefersReducedMotion } from "@/lib/sound";
 import { isRegular } from "@/lib/glow/glow";
 import { REGULAR_MIN_VISITS } from "@/lib/glow/config";
-import { creatorIntent, creatorIntentComplete } from "./creatorIntent";
+import { creatorIntent, creatorIntentComplete, creatorIntentReceipt } from "./creatorIntent";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import { GameName } from "./GameChoice";
@@ -232,10 +232,10 @@ export default function FansPanel({
     return [...set].sort((x, y) => x.localeCompare(y));
   }, [accounts]);
 
-  async function call(body: Record<string, unknown>) {
+  async function call(body: Record<string, unknown>, pin?: string | null) {
     const scope = typeof body.fanId === "string" ? `topup:${body.fanId}` : "new-fan";
     let requestId: string;
-    try { requestId = await creatorIntent(scope, body); }
+    try { requestId = await creatorIntent(scope, body, pin); }
     catch (error) {
       const pending = error instanceof Error && error.message === "intent_pending";
       toast(pending ? "An earlier request still needs checking. Restore its original details and retry before starting a different grant." : "Couldn't save the request safely in this browser. No grant was sent. Allow session storage and retry.", { tone: "error" });
@@ -262,8 +262,11 @@ export default function FansPanel({
     }
     if (!res.ok || !data.token || data.requestId !== requestId) throw new Error("grant_unconfirmed");
     committed = true;
+    // The receipt's pin is the first submission's: a retry after a reload may
+    // come from a form that now lists the new link as an existing one.
+    const receiptPin = creatorIntentReceipt(scope)?.pin ?? null;
     creatorIntentComplete(scope, requestId);
-    return data as { token: string; fanId: string };
+    return { ...(data as { token: string; fanId: string }), pinWheelId: receiptPin };
     } catch {
       toast(committed ? "The grant was confirmed, but the browser couldn't clear its receipt. Retry the same selection to check it safely." : "The grant couldn't be confirmed. Keep the selection and retry the same request to check its result.", { tone: "error" });
       throw new Error("grant_unconfirmed");
@@ -307,6 +310,7 @@ export default function FansPanel({
     packId?: string | null,
     wheelId?: string,
     units = 1,
+    pinWheelId?: string | null,
   ) {
     const data = await call({
       fanId,
@@ -315,10 +319,10 @@ export default function FansPanel({
       campaignId: topUpCampaignId || undefined,
       wheelId: wheelId || undefined,
       ...(packId ? { packId, packUnits: units } : {}),
-    });
+    }, pinWheelId);
     if (!data) throw new Error("grant_rejected");
     await load().catch(() => toast("Top-up confirmed. Refresh the fan list to see it.", { tone: "error" }));
-    return { token: data.token };
+    return { token: data.token, pinWheelId: data.pinWheelId };
   }
 
   async function copyLink(acc: FanAccountSummary) {

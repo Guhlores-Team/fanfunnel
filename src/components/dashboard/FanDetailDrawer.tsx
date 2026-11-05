@@ -23,7 +23,7 @@ import GrantRow from "./GrantEditRow";
 import { CampaignGameSelect, FOLLOW_LIVE, GameName } from "./GameChoice";
 import { KIND_SHORT, gameOptionLabel, kindOf, linkGame, liveExplanation, pinUnavailableReason, type ChoiceGame } from "./gameAssignment";
 import { publicCreatorName } from "@/lib/publicCreator";
-import { linkNames, spinsText, topUpOutcome, topUpTargets } from "./topUpTargets";
+import { linkNames, newLinkPin, spinsText, topUpOutcome, topUpTargets, type NewLinkPin } from "./topUpTargets";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -38,7 +38,9 @@ export type TopUpFn = (
   packId?: string | null,
   wheelId?: string,
   packUnits?: number,
-) => void | Promise<void | { token: string }>;
+  /** A new link is set to play this game after the grant (kept in the receipt). */
+  pinWheelId?: string | null,
+) => void | Promise<void | { token: string; pinWheelId?: string | null }>;
 
 const well = "rounded-[10px] border border-[var(--hair)] [background:var(--s2)]";
 const actionBtn =
@@ -862,6 +864,42 @@ function TopUpForm({
   const [uncertain, setUncertain] = useState(false);
   useCreatorDraft(`fan-topup:${fanId}`, "this top-up selection", spins !== 3 || perSpin !== "" || !!packId, toppingUp || uncertain);
 
+  // A new link is stored on the chosen game but would play the live (or
+  // campaign) game: set it to play the chosen one. Never re-point a link the
+  // fan already had, or one set to another game.
+  async function setNewLinkGame(decision: NewLinkPin, pin: string) {
+    const title = wheels.find((w) => w.id === pin)?.title ?? "the chosen game";
+    if ("done" in decision || ("skip" in decision && decision.skip === "not_new")) return;
+    if ("skip" in decision) {
+      toast(decision.skip === "pinned_elsewhere"
+        ? `Spins were added on the link for ${title}. It is set to play another game under Links, so it was left as it is.`
+        : `Spins were added on a new link, but it couldn't be set to play ${title}. Use Change game under Links to set it.`,
+        { tone: decision.skip === "pinned_elsewhere" ? "info" : "error" });
+      return;
+    }
+    const pinned = await fetch(`/api/fans/${fanId}/link-game`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: decision.token, wheelId: pin }),
+    }).then((res) => res.ok, () => false);
+    toast(pinned
+      ? `Spins added on a new link that plays ${title}. Send the fan this new link.`
+      : `Spins were added on a new link, but it couldn't be set to play ${title}. Use Change game under Links to set it.`,
+      { tone: pinned ? "success" : "error" });
+    if (pinned) await onLinkGameSet?.();
+  }
+
+  // After "Check outcome" confirms a top-up there is no reply token: read the
+  // fan's links now (the grant has committed) and let the server's rule pick.
+  async function currentPasses(): Promise<FanAccountSummary["passes"] | null> {
+    try {
+      const res = await fetch("/api/fans", { cache: "no-store" });
+      if (!res.ok) return null;
+      const fans = ((await res.json()) as { fans?: FanAccountSummary[] }).fans ?? [];
+      return fans.find((f) => f.fanId === fanId)?.passes ?? null;
+    } catch { return null; }
+  }
+
   async function submit() {
     // In-flight guard: a double-click, or collapsing and reopening the form
     // mid-request, must not double-grant spins/spend.
@@ -878,24 +916,14 @@ function TopUpForm({
         packId,
         target?.wheelId,
         packId ? packUnits : undefined,
+        target?.pinWheelId ?? null,
       );
       confirmed = true;
-      // A new link is stored on the chosen game but would play the live (or
-      // campaign) game: set it to play the chosen one. Never re-point a link
-      // the fan already had.
+      // The receipt's pin wins over the form's: a retry after a reload sees
+      // the new link as one of the fan's links, with no pin of its own.
       const token = granted && typeof granted === "object" ? granted.token : null;
-      if (target?.pinWheelId && token && !summary?.passes.some((p) => p.token === token)) {
-        const pinned = await fetch(`/api/fans/${fanId}/link-game`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, wheelId: target.pinWheelId }),
-        }).then((res) => res.ok, () => false);
-        toast(pinned
-          ? `Spins added on a new link that plays ${target.plays?.title ?? "the chosen game"}. Send the fan this new link.`
-          : `Spins were added on a new link, but it couldn't be set to play ${target.plays?.title ?? "the chosen game"}. Use Change game under Links to set it.`,
-          { tone: pinned ? "success" : "error" });
-        if (pinned) await onLinkGameSet?.();
-      }
+      const pin = granted && typeof granted === "object" && granted.pinWheelId !== undefined ? granted.pinWheelId : target?.pinWheelId ?? null;
+      if (pin && token) await setNewLinkGame(newLinkPin(summary?.passes, pin, token), pin);
       setUncertain(false);
       setPerSpin("");
       setPackId(null);
@@ -1014,8 +1042,9 @@ function TopUpForm({
           {toppingUp ? "Checking…" : uncertain ? "Check this top-up again" : `Grant ${spins} spin${spins === 1 ? "" : "s"}`}
         </button>
       </div>
-      <CreatorRequestRecovery scope={`topup:${fanId}`} guardScope={`fan-topup:${fanId}`} kind="pass" refreshKey={toppingUp} disabled={toppingUp} onFound={() => setUncertain(true)} onBusyChange={(busy) => onToppingUp(fanId, busy)} onResolved={async (outcome) => {
+      <CreatorRequestRecovery scope={`topup:${fanId}`} guardScope={`fan-topup:${fanId}`} kind="pass" refreshKey={toppingUp} disabled={toppingUp} onFound={() => setUncertain(true)} onBusyChange={(busy) => onToppingUp(fanId, busy)} onResolved={async (outcome, { pin }) => {
         setUncertain(false); setError("");
+        if (outcome === "committed" && pin) await setNewLinkGame(newLinkPin(await currentPasses(), pin), pin);
         if (outcome === "committed" || outcome === "gone") { setPerSpin(""); setPackId(null); await onDone(); }
       }} />
     </div>
