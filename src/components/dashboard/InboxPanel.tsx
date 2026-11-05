@@ -673,9 +673,14 @@ function Thread({
     try {
       const res = await fetch(`/api/messages/thread/${fan.fanId}`, { cache: "no-store" });
       if (!res.ok) return false;
-      const list = (await res.json()).messages ?? [];
+      const list: ChatMessage[] = (await res.json()).messages ?? [];
       if (id !== reqId.current) return true;
       setMessages(list);
+      // I3: reading is side-effect free; mark what the creator now sees as
+      // read with its own POST, then refresh the list's unread counts.
+      if (list.some((m) => m.sender === "fan" && !m.readAt)) {
+        await fetch(`/api/messages/thread/${fan.fanId}`, { method: "POST", cache: "no-store" }).catch(() => null);
+      }
       onChangedRef.current();
       return true;
     } catch {

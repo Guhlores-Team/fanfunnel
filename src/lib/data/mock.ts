@@ -3441,9 +3441,10 @@ export function mockSendFanMessage(
 }
 
 /** A fan's full thread (oldest first); marks creator→fan messages read. */
-export function mockGetFanMessages(token: string): ChatMessage[] {
+export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blocked" } {
   const fan = fanForToken(token);
   if (!fan) return [];
+  if (fan.blockedAt) return { error: "blocked" }; // I7: parity with getFanMessages
   const now = new Date().toISOString();
   const rows = store.messages
     .filter((m) => m.fanId === fan.id)
@@ -3490,13 +3491,9 @@ export function mockListThreads(): FanThread[] {
 
 /** A single fan's thread for the creator (oldest first); marks fan→creator read. */
 export function mockGetThread(fanId: string): ChatMessage[] {
-  const now = new Date().toISOString();
   const rows = store.messages
     .filter((m) => m.fanId === fanId)
     .sort((a, b) => a.at.localeCompare(b.at));
-  for (const m of rows) {
-    if (m.sender === "fan" && m.readAt === null) m.readAt = now;
-  }
   return structuredClone(
     rows.map((m) => ({
       id: m.id,
@@ -3506,6 +3503,14 @@ export function mockGetThread(fanId: string): ChatMessage[] {
       readAt: m.readAt,
     }))
   );
+}
+
+/** I3: the creator marks a fan's messages read (its own POST). */
+export function mockMarkThreadRead(fanId: string): void {
+  const now = new Date().toISOString();
+  for (const m of store.messages) {
+    if (m.fanId === fanId && m.sender === "fan" && m.readAt === null) m.readAt = now;
+  }
 }
 
 export function mockSendCreatorMessage(

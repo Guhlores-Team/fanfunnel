@@ -106,7 +106,12 @@ async function main() {
   check("chatter: C's inbox is read through the RPC with p_creator = C", !("error" in threads) && dataRpcs().length === 1 && dataRpcs()[0].name === "creator_inbox_threads" && dataRpcs()[0].args.p_creator === C);
   reset();
   const thread = await inbox.getThread(FAN, C);
-  check("chatter: C's thread is read and marked read for C only", Array.isArray(thread) && reads.filter((x) => x.table === "messages").every((x) => eqCreator(x) === C) && reads.some((x) => x.table === "messages"));
+  check("chatter: C's thread is read for C only", Array.isArray(thread) && reads.filter((x) => x.table === "messages").every((x) => eqCreator(x) === C) && reads.some((x) => x.table === "messages"));
+  // I3: reading the thread never writes; marking read is its own call.
+  check("chatter: reading the thread writes nothing", writes("messages").length === 0);
+  reset();
+  const marked = await inbox.markThreadRead(FAN, C);
+  check("chatter: marking C's thread read updates C's messages only", "ok" in marked && writes("messages").length === 1 && writes("messages").every((w) => eqCreator(w) === C));
   reset();
   const sent = await inbox.sendCreatorMessage(FAN, "hello from the agency", C);
   check("chatter: the reply is written as C's message to C's fan", "ok" in sent && writes("messages").length === 1 && (writes("messages")[0].ops.find((o) => o.name === "insert")?.args[0] as { creator_id: string }).creator_id === C);
@@ -134,6 +139,8 @@ async function main() {
   check("fulfiller: C's inbox is refused, no inbox RPC", "error" in t2 && t2.error === "forbidden" && dataRpcs().length === 0);
   const g2 = await inbox.getThread(FAN, C);
   check("fulfiller: C's thread is refused before any read", !Array.isArray(g2) && g2.error === "forbidden" && !reads.some((x) => x.table === "messages"));
+  const m2 = await inbox.markThreadRead(FAN, C);
+  check("fulfiller: marking C's thread read is refused before any write", "error" in m2 && m2.error === "forbidden" && writes("messages").length === 0);
   const s2 = await inbox.sendCreatorMessage(FAN, "nope", C);
   check("fulfiller: a reply for C is refused before any write", "error" in s2 && s2.error === "forbidden" && writes("messages").length === 0);
 
