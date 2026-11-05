@@ -295,6 +295,7 @@ export default function FansPanel({
     return matchesSearch && matchesCampaign && matchesTag && matchesVisits;
   });
   const openAccount = accounts?.find((a) => a.fanId === openFanId) ?? null;
+  const existingFanNames = useMemo(() => (accounts ?? []).map((a) => a.name), [accounts]);
   const mintPlays = useMemo(() => linkGame({ wheelId: "", campaignId: campaignId || null }, campaigns, wheels, now), [campaignId, campaigns, wheels, now]);
 
   return (
@@ -492,6 +493,8 @@ export default function FansPanel({
       {importing && (
         <ImportFans
           campaignId={campaignId || undefined}
+          campaigns={campaigns}
+          existingNames={existingFanNames}
           onImported={load}
           onClose={() => setImporting(false)}
         />
