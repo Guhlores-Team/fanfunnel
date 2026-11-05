@@ -124,6 +124,7 @@ import {
   type FanDataExport,
 } from "@/lib/privacy/exportTypes";
 import { EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
+import { copyTitle } from "@/lib/games/copyTitle";
 import {
   FEED_LIMIT,
   LOW_STOCK_THRESHOLD,
@@ -993,7 +994,7 @@ export function mockDuplicateWheel(id: string): { wheel: WheelConfig } {
     ...structuredClone(src),
     ...settings, gameKindLocked: false,
     id: newId,
-    title: src.title,
+    title: copyTitle(src.title, Array.from(store.wheels.values(), (w) => w.title)),
     prizes: src.prizes.map((p) => ({ ...structuredClone(p), id: genId("prize") })),
     isActive: false,
     activeFrom: null,
