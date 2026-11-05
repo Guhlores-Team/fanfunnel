@@ -28,6 +28,15 @@ db.rpcHandlers.my_seat_creators = () => [
   { creator_id: C, display_name: "Creator C", can_chat: true, can_fulfil: true },
   { creator_id: D, display_name: "Creator D", can_chat: true, can_fulfil: false },
 ];
+// 0071: a campaign is deleted through delete_campaign (sessions can no longer
+// DELETE campaigns). The fake models the RPC: only the named creator's row.
+db.rpcHandlers.delete_campaign = (a) => {
+  const { p_campaign, p_creator } = a as { p_campaign: string; p_creator: string };
+  const before = db.rows("campaigns").length;
+  db.tables.campaigns = db.rows("campaigns").filter((r) => !(r.id === p_campaign && r.creator_id === p_creator));
+  return db.rows("campaigns").length < before ? "ok" : "not_found";
+};
+const deleteCalls = () => db.rpcCalls.filter((r) => r.name === "delete_campaign");
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => useSupabase,
@@ -67,6 +76,7 @@ async function main() {
   // --- refused seats: every route, before any campaign/wheel statement ----------
   const refusedEverywhere = async (who: string, creator: string) => {
     const mark = db.statements.length;
+    const deletesBefore = deleteCalls().length;
     const before = JSON.stringify(db.rows("campaigns"));
     const statuses = [
       (await list(creator)).status,
@@ -89,6 +99,7 @@ async function main() {
       await data.listActingCampaigns(creator),
     ];
     check(`${who}: the data layer refuses the same way (forbidden)`, direct.every((r) => "error" in r && r.error === "forbidden") && campaignWrites(mark).length === 0);
+    check(`${who}: …and never reaches delete_campaign`, deleteCalls().length === deletesBefore);
   };
 
   // A chatter + fulfiller for C (every job but manage).
@@ -143,6 +154,8 @@ async function main() {
   res = await del(made.id, C);
   check("manager: deletes C's campaign", res.status === 200 && !db.rows("campaigns").some((r) => r.id === made.id));
   check("manager: every campaign write named creator C", db.statements.filter((s) => s.table === "campaigns" && s.op !== "select" && s.op !== "insert").every((s) => s.filters.some((f) => f.col === "creator_id" && f.value === C)));
+  check("manager: both deletes went through delete_campaign naming creator C, none as a plain DELETE",
+    deleteCalls().length === 2 && deleteCalls().every((r) => r.args.p_creator === C) && !db.statements.some((s) => s.table === "campaigns" && s.op === "delete"));
 
   // --- the owner path is unchanged ----------------------------------------------
   perms = new Set();
@@ -163,6 +176,7 @@ async function main() {
   check("owner: creates for themselves", res.status === 200 && db.row("campaigns", mine.id).creator_id === USER);
   res = await del(mine.id);
   check("owner: deletes their own", res.status === 200 && !db.rows("campaigns").some((r) => r.id === mine.id));
+  check("owner: the delete names the caller as the creator", deleteCalls().at(-1)?.args.p_creator === USER && deleteCalls().at(-1)?.args.p_campaign === mine.id);
   check("owner: no can_act_for call anywhere on the owner path", permCalls().every((r) => r.args.target_creator !== USER));
 
   // --- the seat list for the Campaigns picker ------------------------------------

@@ -658,12 +658,12 @@ export async function selfExclude(
   token: string
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return mockSelfExclude(token);
-  const sb = createServiceClient();
-  const { error } = await sb
-    .from("fan_passes")
-    .update({ self_excluded_at: new Date().toISOString(), is_active: false })
-    .eq("token", token);
-  return error ? { error: "db_error" } : { ok: true };
+  // self_exclude_pass (0071) locks the fan, then the link, the order every
+  // play and grant takes them (a plain UPDATE locked the link first and its
+  // triggers the fan after it, which deadlocked against a committing play).
+  // An unknown token answers ok, as the plain UPDATE of no row did.
+  const { data, error } = await createServiceClient().rpc("self_exclude_pass", { p_token: token });
+  return error || (data !== "ok" && data !== "not_found") ? { error: "db_error" } : { ok: true };
 }
 
 /**

@@ -429,7 +429,11 @@ export async function setCampaignActive(
   return { ok: true };
 }
 
-/** Delete a campaign. Grants keep their history (campaign_id → null on delete). */
+/** Delete a campaign. Grants keep their history (campaign_id → null on delete).
+ *  delete_campaign (0071) re-checks manage, then locks the campaign's fans and
+ *  links before the campaign (a plain DELETE locked the campaign first and
+ *  deadlocked against plays on its links); sessions cannot DELETE campaigns.
+ *  A campaign that is not the acting creator's deletes nothing (ok, as before). */
 export async function deleteCampaign(
   campaignId: string,
   creatorId?: unknown
@@ -438,10 +442,6 @@ export async function deleteCampaign(
 
   const acting = await campaignActingSession(creatorId);
   if ("error" in acting) return acting;
-  const { error } = await acting.sb
-    .from("campaigns")
-    .delete()
-    .eq("id", campaignId)
-    .eq("creator_id", acting.creatorId);
-  return error ? { error: "db_error" } : { ok: true };
+  const { data, error } = await acting.sb.rpc("delete_campaign", { p_campaign: campaignId, p_creator: acting.creatorId });
+  return error || (data !== "ok" && data !== "not_found") ? { error: "db_error" } : { ok: true };
 }

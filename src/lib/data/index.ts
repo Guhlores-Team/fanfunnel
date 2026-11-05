@@ -127,6 +127,7 @@ export {
   addOrgMember,
   removeOrgMember,
   scopeOrgCreator,
+  leaveOrg,
   getMyInvites,
   updateAccount,
   createCreatorAccount,
