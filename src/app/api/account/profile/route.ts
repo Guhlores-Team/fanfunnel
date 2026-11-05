@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
+import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { displayNameInputError } from "@/lib/account/profileErrors";
 import { setMyDisplayName } from "@/lib/data";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 import { limitRoute } from "@/lib/api/limit";
@@ -14,13 +15,14 @@ export async function PUT(req: Request) {
 
   const name = typeof body.displayName === "string" ? body.displayName.trim() : "";
   if (!name) return NextResponse.json({ error: "name_required" }, { status: 400 });
-  if (name.length > 80) return NextResponse.json({ error: "name_too_long" }, { status: 400 });
+  // The 0071 rule (length, control characters, never an e-mail), checked here
+  // too so the demo answers like the database; set_display_name stays the
+  // authority and its refusals arrive as the same codes.
+  const invalid = displayNameInputError(name);
+  if (invalid) return badRequest(invalid);
 
   const result = await setMyDisplayName(name);
-  if ("error" in result) {
-    const status = result.error === "unauthorized" ? 401 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
+  if ("error" in result) return errorResponse(result.error);
   await revalidateMyPublicPage();
   return NextResponse.json({ ok: true, displayName: name });
 }

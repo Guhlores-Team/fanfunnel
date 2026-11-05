@@ -13,6 +13,7 @@ import ThemedProfilePreview from "./ThemedProfilePreview";
 import type { ThemePreviewValue } from "./lookAndFeel";
 import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecurityCards";
 import PushNotificationsCard from "./PushNotificationsCard";
+import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/account/profileErrors";
 
 /**
  * Settings (Command Center). Two groups:
@@ -330,12 +331,15 @@ function ProfileCard({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ displayName: name }),
           });
-          if (!res.ok) throw new Error();
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            throw new Error(typeof d.error === "string" ? d.error : "");
+          }
           patchAccount({ savedName: name });
           onDisplayNameChange?.(name);
-        } catch {
+        } catch (e) {
           ok = false;
-          toast("Couldn't save your name.", { tone: "error" });
+          toast(displayNameErrorMessage(e instanceof Error ? e.message : ""), { tone: "error" });
         }
       }
       if (avatarDirty) {
@@ -843,15 +847,7 @@ function PublicPageSection({
       patchProfile({ slug: normalized });
       markSaved({ slug: normalized, tipUrl, tagline, note });
     } catch (e) {
-      const code = e instanceof Error ? e.message : "";
-      toast(
-        code === "invalid_slug"
-          ? "Use letters, numbers, spaces, dashes or underscores in your link name."
-          : code === "invalid_tip_url"
-            ? "That tip link doesn't look like a web address."
-            : "Couldn't save — that slug may be taken.",
-        { tone: "error" }
-      );
+      toast(publicProfileErrorMessage(e instanceof Error ? e.message : ""), { tone: "error" });
     } finally {
       setBusy(false);
     }

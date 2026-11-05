@@ -16,6 +16,7 @@ import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
 import { mockGetPublicProfileFields, mockSetPublicProfileFields } from "./mockPublicProfile";
 import { readPublicCreator } from "./publicCreatorRow";
 import { publicCreatorTitle } from "@/lib/publicCreator";
+import { publicProfileRpcError } from "@/lib/account/profileErrors";
 
 // --- Public teaser ----------------------------------------------------------
 
@@ -263,7 +264,9 @@ export async function setMyPublicProfile(input: {
       p_tip_url: tipUrl,
       p_tagline: input.tagline !== undefined ? input.tagline : null,
     });
-    if (error) return { error: "db_error" };
+    // 0071: a refused slug/tagline/tip link (22023) or a taken slug (23505)
+    // is a stable code, never the database's text.
+    if (error) return { error: publicProfileRpcError(error) };
   }
   if (input.note !== undefined || input.avatarUrl !== undefined) {
     // Defense in depth: never persist an avatar URL with a non-http(s) scheme

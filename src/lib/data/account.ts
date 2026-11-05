@@ -13,6 +13,7 @@ import {
   mockSetActiveWheelBrandColor,
 } from "./mock";
 import { ensureWheelId, resolveActiveWheelId } from "./wheels";
+import { displayNameRpcError } from "@/lib/account/profileErrors";
 
 /**
  * Wipe ALL of the signed-in creator's data — wheels, prizes, fans, links, spins,
@@ -188,7 +189,8 @@ export async function setMyDisplayName(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
   const { error } = await sb.rpc("set_display_name", { p_name: name });
-  return error ? { error: "db_error" } : { ok: true };
+  // 0071: a refused name (22023) is a stable code, never the database's text.
+  return error ? { error: displayNameRpcError(error) } : { ok: true };
 }
 
 /** Update only the creator's notification preferences (self-update RPC). */
