@@ -11,7 +11,8 @@ import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
-import { demandPct, formatWindow, happyHourStatus, type HappyHourStatus } from "./boostsHelpers";
+import { demandPct, formatWindow, happyHourGames, happyHourStatus, type HappyHourStatus } from "./boostsHelpers";
+import { gameOptionLabel, liveExplanation } from "./gameAssignment";
 import { LoadError } from "./analyticsUi";
 
 /** A list read: loading, loaded, or failed (never shown as an empty list). */
@@ -526,9 +527,11 @@ function HappyHourScheduler() {
         getJson<{ wheels?: WheelSummary[] }>("/api/wheels"),
         getJson<{ happyHours?: HappyHour[] }>("/api/happy-hours"),
       ]);
-      setWheels(w.wheels ?? []);
+      const list = w.wheels ?? [];
+      setWheels(list);
       setWindows(h.happyHours ?? []);
-      setWheelId((current) => current || w.wheels?.[0]?.id || "");
+      // Default to the game fans are playing now (QA b5 m9), not the first listed.
+      setWheelId((current) => current && happyHourGames(list).some((g) => g.id === current) ? current : liveExplanation(happyHourGames(list), new Date())?.game.id ?? happyHourGames(list)[0]?.id ?? "");
       setLoaded(true);
       setState("ok");
     } catch {
@@ -544,7 +547,7 @@ function HappyHourScheduler() {
   const create = async () => {
     if (busy || !loaded) return;
     if (!wheelId || !startsAt || !endsAt) {
-      toast("Pick a wheel and a start/end time");
+      toast("Pick a game and a start/end time");
       return;
     }
     // Guard partial datetime-local values: .toISOString() on an Invalid Date
@@ -589,7 +592,9 @@ function HappyHourScheduler() {
     load();
   };
 
-  const wheelName = (id: string) => wheels.find((w) => w.id === id)?.title ?? "Wheel";
+  const wheelName = (id: string) => wheels.find((w) => w.id === id)?.title ?? "a game";
+  const playable = happyHourGames(wheels);
+  const liveId = liveExplanation(playable, new Date())?.game.id ?? null;
 
   return (
     <Card
@@ -609,11 +614,12 @@ function HappyHourScheduler() {
         className={`grid grid-cols-2 gap-3 rounded-xl p-3.5 lg:grid-cols-[minmax(0,1.3fr)_84px_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end ${recessed}`}
       >
         <label className={`${fieldLabel} col-span-2 lg:col-span-1`}>
-          Wheel
-          <select value={wheelId} onChange={(e) => setWheelId(e.target.value)} className="ff-input w-full min-w-0 normal-case tracking-normal">
-            {wheels.map((w) => (
+          Game
+          <select value={wheelId} onChange={(e) => setWheelId(e.target.value)} data-testid="happy-hour-game" className="ff-input w-full min-w-0 normal-case tracking-normal">
+            {playable.length === 0 && <option value="">No playable game yet</option>}
+            {playable.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.title}
+                {gameOptionLabel(w)}{w.id === liveId ? " · live now" : ""}
               </option>
             ))}
           </select>

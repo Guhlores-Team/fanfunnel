@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 
 // Set a new password. Reached via the recovery email → /auth/callback, which
 // establishes a (recovery) session before redirecting here. We confirm a session
@@ -11,7 +11,10 @@ import { createClient } from "@/lib/supabase/client";
 // or expired, so we point the user back to request a fresh one.
 export default function ResetPasswordPage() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
+  // Without Supabase (demo mode) there are no accounts: creating a client
+  // would throw on the missing URL and crash the page (QA b5 m10).
+  const [configured] = useState(isSupabaseConfigured);
+  const [checking, setChecking] = useState(configured);
   const [hasSession, setHasSession] = useState(false);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -19,12 +22,20 @@ export default function ResetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data }) => {
-      setHasSession(Boolean(data.session));
+    if (!configured) return;
+    let live = true;
+    try {
+      createClient().auth.getSession().then(({ data }) => {
+        if (!live) return;
+        setHasSession(Boolean(data.session));
+        setChecking(false);
+      }, () => { if (live) setChecking(false); });
+    } catch {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- a client that can't start means no session to use
       setChecking(false);
-    });
-  }, []);
+    }
+    return () => { live = false; };
+  }, [configured]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,7 +72,20 @@ export default function ResetPasswordPage() {
         </Link>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white">
-          {checking ? (
+          {!configured ? (
+            <>
+              <h1 className="text-lg font-bold">Password reset isn&rsquo;t available here</h1>
+              <p className="mt-2 text-sm text-white/60">
+                This is the demo workspace, which has no accounts or passwords. Open the dashboard to keep exploring.
+              </p>
+              <Link
+                href="/dashboard"
+                className="mt-5 inline-block rounded-xl bg-pink-600 px-4 py-2 text-sm font-bold text-white hover:bg-pink-500"
+              >
+                Open the demo dashboard
+              </Link>
+            </>
+          ) : checking ? (
             <p className="text-sm text-white/60">Checking your reset link…</p>
           ) : !hasSession ? (
             <>

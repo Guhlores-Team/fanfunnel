@@ -3,6 +3,8 @@
  * React so the status/bar math is unit-testable.
  */
 
+import { isPlayableGame } from "@/lib/games/liveGame";
+import { pinUnavailableReason, type ChoiceGame } from "./gameAssignment";
 export type HappyHourStatus = "live" | "scheduled" | "ended";
 
 /** Live while `now` is inside [startsAt, endsAt]; scheduled before; ended after. */
@@ -47,4 +49,9 @@ export function formatWindow(startsAt: string, endsAt: string, locale?: string):
     return `${s.toLocaleDateString(locale, day)} · ${s.toLocaleTimeString(locale, time)}–${e.toLocaleTimeString(locale, time)}`;
   }
   return `${s.toLocaleDateString(locale, day)}, ${s.toLocaleTimeString(locale, time)} → ${e.toLocaleDateString(locale, day)}, ${e.toLocaleTimeString(locale, time)}`;
+}
+
+/** Games a happy hour can boost: playable (saved, not archived) with at least 2 prizes. */
+export function happyHourGames<T extends ChoiceGame>(games: readonly T[]): T[] {
+  return games.filter((game) => isPlayableGame(game) && pinUnavailableReason(game) === null);
 }
