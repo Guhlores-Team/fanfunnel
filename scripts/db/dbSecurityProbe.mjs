@@ -58,7 +58,7 @@ const TOKEN = { A: "probe-0068-pa", B: "probe-0068-pb" };
 const EMAIL = (k) => `probe-0068-${k.toLowerCase()}@example.test`;
 
 const SEED = `
-  insert into auth.users (id, email) values ${Object.entries(U).map(([k, v]) => `('${v}', '${EMAIL(k)}')`).join(", ")};
+  insert into auth.users (id, email, email_confirmed_at) values ${Object.entries(U).map(([k, v]) => `('${v}', '${EMAIL(k)}', now())`).join(", ")};
   update public.profiles set is_active = true, approval_status = 'approved' where id in (${Object.values(U).map((v) => `'${v}'`).join(", ")});
   update public.profiles set role = 'admin' where id = '${U.ADM}';
   update public.profiles set display_name = 'Creator A', public_slug = 'creator-a' where id = '${U.A}';
@@ -135,8 +135,12 @@ export function probeDbSecurity(db, psql) {
   const FORGED_REDEMPTION = /redemption references another creator|redemption belongs to its spin's creator/;
   refused("a creator cannot insert a redemption at all (0069), forged or not", as(U.A, `insert into public.redemptions (spin_id, creator_id) values ('${S.B}', '${U.A}');`), /permission denied for table redemptions/);
   refused("the service role attaches another creator's spin to a redemption", asService(`insert into public.redemptions (spin_id, creator_id) values ('${S.B}', '${U.A}');`), FORGED_REDEMPTION);
-  refused("a creator grants to another creator's fan", `set local fanfunnel.economic_write = 'on'; ${as(U.A, `insert into public.grants (creator_id, fan_id, spins) values ('${U.A}', '${F.B}', 1);`)}`, /grant references another creator/);
-  refused("a creator grants under another creator's campaign", `set local fanfunnel.economic_write = 'on'; ${as(U.A, `insert into public.grants (creator_id, fan_id, campaign_id, spins) values ('${U.A}', '${F.A}', '${CAMP_B}', 1);`)}`, /grant references another creator/);
+  // 0071 revoked INSERT/UPDATE/DELETE on grants from authenticated: a session
+  // is refused at the privilege before the 0068 tenant guard is reached; the
+  // guard itself still refuses the forged row for the service role.
+  refused("a creator cannot insert a grant at all (0071), forged or not", `set local fanfunnel.economic_write = 'on'; ${as(U.A, `insert into public.grants (creator_id, fan_id, spins) values ('${U.A}', '${F.B}', 1);`)}`, /permission denied for table grants/);
+  refused("the service role grants to another creator's fan", `set local fanfunnel.economic_write = 'on'; ${asService(`insert into public.grants (creator_id, fan_id, spins) values ('${U.A}', '${F.B}', 1);`)}`, /grant references another creator/);
+  refused("the service role grants under another creator's campaign", `set local fanfunnel.economic_write = 'on'; ${asService(`insert into public.grants (creator_id, fan_id, campaign_id, spins) values ('${U.A}', '${F.A}', '${CAMP_B}', 1);`)}`, /grant references another creator/);
   refused("a creator messages another creator's fan", as(U.A, `insert into public.messages (creator_id, fan_id, sender, body) values ('${U.A}', '${F.B}', 'creator', 'hi');`), /message references another creator/);
   refused("a creator wishlists for another creator's fan", as(U.A, `insert into public.wishlists (creator_id, fan_id, prize_label) values ('${U.A}', '${F.B}', 'x');`), /wishlist references another creator/);
   refused("a creator wishlists another creator's prize", as(U.A, `insert into public.wishlists (creator_id, fan_id, prize_id, prize_label) values ('${U.A}', '${F.A}', '${PR.B}', 'x');`), /wishlist references another creator/);
