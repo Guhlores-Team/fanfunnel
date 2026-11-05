@@ -8,7 +8,8 @@ import { runOperationalChecks } from "@/lib/operations/runtime";
 import { processPendingStorageWork } from "@/lib/storage/work";
 import { captureNow, flushAlertDigest } from "@/lib/monitoring/capture";
 import { retryPausedDeletions } from "@/lib/account/deletionRetry";
-import { sharedRateLimitStoreMissing } from "@/lib/rateLimit";
+import { rateLimitShared, sharedRateLimitStoreMissing } from "@/lib/rateLimit";
+import { limitRoute } from "@/lib/api/limit";
 
 // Authenticated maintenance entry point: retention, integrity, storage retry,
 // paused account deletions (A18, with backoff) and the pending error digest (A27).
@@ -25,16 +26,34 @@ import { sharedRateLimitStoreMissing } from "@/lib/rateLimit";
 // Errors groups repeats and e-mails ALERT_EMAIL_TO on the first occurrence.
 const loud = (message: string) => captureNow({ source: "server", message, route: "/api/cron/retention" });
 
+/**
+ * L6: the two alerts an unauthenticated caller can provoke (no secret
+ * configured; a refused call claiming to be the scheduler, whose User-Agent
+ * anyone can send) fire at most once per window across all callers. One
+ * alert per hour is enough to get the problem fixed; more is noise.
+ */
+const CRON_ALERT_WINDOW_MS = 60 * 60 * 1000;
+async function loudOncePerWindow(kind: "not_configured" | "secret_mismatch", message: string) {
+  const { ok } = await rateLimitShared(`cron-alert:retention:${kind}`, 1, CRON_ALERT_WINDOW_MS);
+  if (ok) await loud(message);
+}
+
 export async function GET(req: Request) {
+  // L6: cap per client before anything else (the scheduler calls once a day).
+  const limited = await limitRoute(req, "cron/retention:GET", "costly");
+  if (limited) {
+    limited.headers.set("Cache-Control", "no-store");
+    return limited;
+  }
   const secret = process.env.CRON_SECRET;
   if (!secret || secret.length < MIN_CRON_SECRET_LENGTH) {
-    await loud(`Retention cron is not configured: set CRON_SECRET (at least ${MIN_CRON_SECRET_LENGTH} characters)`);
+    await loudOncePerWindow("not_configured", `Retention cron is not configured: set CRON_SECRET (at least ${MIN_CRON_SECRET_LENGTH} characters)`);
     return NextResponse.json({ error: "not_configured" }, { status: 503, headers: NO_STORE_HEADERS });
   }
   if (!cronAuthorized(req.headers.get("authorization"), secret)) {
     // Only the scheduler's own calls are worth an alert; random probes are not.
     if (/^vercel-cron\//i.test(req.headers.get("user-agent") ?? "")) {
-      await loud("Retention cron was refused: the scheduler's CRON_SECRET does not match");
+      await loudOncePerWindow("secret_mismatch", "Retention cron was refused: the scheduler's CRON_SECRET does not match");
     }
     return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: NO_STORE_HEADERS });
   }
