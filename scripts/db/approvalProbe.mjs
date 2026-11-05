@@ -119,7 +119,8 @@ create function ffapproval.attempt(stmt text) returns text language plpgsql as $
 grant execute on all functions in schema ffapproval to authenticated,service_role;
 -- Match Supabase's ordinary table grants; RLS remains the authorization gate.
 grant select,insert,update,delete on public.profiles,public.wheels,public.fans,public.orgs,public.org_members,public.org_member_creators,public.creator_applications to authenticated;
-insert into auth.users(id,email) values ${Object.entries(U).map(([name,id])=>`('${id}','${email(name)}')`).join(',')};
+-- 0071: invitations are answered only from a confirmed sign-in address.
+insert into auth.users(id,email,email_confirmed_at) values ${Object.entries(U).map(([name,id])=>`('${id}','${email(name)}',now())`).join(',')};
 update public.profiles set approval_status='approved' where id in (${['approved','inactive','owner','manager','chatter','creator','outside','invitee'].map(n=>`'${U[n]}'`).join(',')});
 update public.profiles set approval_status='rejected' where id='${U.rejected}';
 update public.profiles set is_active=false where id='${U.inactive}';

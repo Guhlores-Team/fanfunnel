@@ -104,7 +104,12 @@ export function probeIntegration(db, psql) {
   refused("a creator pins an archived game", `update public.wheels set archived_at = now() where id = '${W.W2}'; ${as(U.A, `update public.campaigns set pinned_wheel_id = '${W.W2}' where id = '${CAMP.A}';`)}`, /game_not_playable/);
   expect("a campaign pins a game with enough prizes, unpins, and re-saves a pin whose game lost its prizes later", `
     ${as(U.A, `with u as (update public.campaigns set pinned_wheel_id = '${W.W2}' where id = '${CAMP.A}' returning 1) select 'pin-two:' || count(*) from u;`)}
+    -- A game that lost a prize after it was pinned: since 0071 no writer can
+    -- take a chosen game below 2 prizes, so the legacy state is built with
+    -- the triggers off (the 0069 rule under test is the campaign re-save).
+    set local session_replication_role = replica;
     delete from public.prizes where id = '${PR.W2b}';
+    set local session_replication_role = origin;
     ${as(U.A, `with u as (update public.campaigns set pinned_wheel_id = '${W.W2}', name = 'renamed' where id = '${CAMP.A}' returning 1) select 'resave:' || count(*) from u;`)}
     ${as(U.A, `with u as (update public.campaigns set pinned_wheel_id = null where id = '${CAMP.A}' returning 1) select 'unpin:' || count(*) from u;`)}
     ${as(U.A, `with i as (insert into public.campaigns (creator_id, name, pinned_wheel_id) values ('${U.A}', 'follow', null) returning 1) select 'create-follow:' || count(*) from i;`)}`,

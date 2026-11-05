@@ -258,7 +258,8 @@ type OrgRpc =
   | { fn: "org_remove_creator"; args: { p_org: string; p_creator: string } }
   | { fn: "org_add_member"; args: { p_org: string; p_email: string; p_role: OrgRole } }
   | { fn: "org_remove_member"; args: { p_member: string } }
-  | { fn: "org_scope_creator"; args: { p_member: string; p_creator: string; p_on: boolean } };
+  | { fn: "org_scope_creator"; args: { p_member: string; p_creator: string; p_on: boolean } }
+  | { fn: "org_leave"; args: { p_org: string } };
 
 /** Run an owner-guarded agency RPC; the RPC returns a status string. */
 async function agencyRpc(call: OrgRpc): Promise<{ ok: true } | { error: string }> {
@@ -287,6 +288,10 @@ export const removeOrgMember = (memberId: string) =>
   agencyRpc({ fn: "org_remove_member", args: { p_member: memberId } });
 export const scopeOrgCreator = (memberId: string, creatorId: string, on: boolean) =>
   agencyRpc({ fn: "org_scope_creator", args: { p_member: memberId, p_creator: creatorId, p_on: on } });
+/** The signed-in user leaves an agency: its own seat, and as a member creator
+ *  the org itself (org_leave, 0071). Seats are only ever created by accepting
+ *  an invitation, so leaving is the user's own way back out. */
+export const leaveOrg = (orgId: string) => agencyRpc({ fn: "org_leave", args: { p_org: orgId } });
 
 export interface MyInvite {
   id: string;

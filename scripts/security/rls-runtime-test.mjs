@@ -39,6 +39,12 @@ import { fixtureCreatorRpc, fixtureActorContext } from "./actor-context-fixture.
  *     the one fulfilment write (0067) and a session cannot insert an award
  *     (0069); a game needs two prizes to be set on a link, a campaign or a
  *     schedule (0069); a game with play history is never deleted (0065)
+ *   • 0071: no session deletes a game, link or campaign directly or writes
+ *     the grant ledger (not even the service role deletes a played game);
+ *     a chosen game keeps two prizes; delete_campaign, self_exclude_pass and
+ *     reset_creator_content are scoped; an enrolled aal1 session reads no
+ *     spins; display names never hold an e-mail; slug/tagline/name are
+ *     validated; seats only by invitation, one agency per owner, org_leave
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -1175,6 +1181,116 @@ async function main() {
     check(!renamedUser.error, `0068 rename B's auth e-mail (${renamedUser.error?.message ?? "ok"})`);
     const renamedProfile = must(await admin.from("profiles").select("email").eq("id", B.id).single(), "0068 B's profile after the rename");
     check(renamedProfile.email === renamed, `0068 a confirmed e-mail change reaches profiles.email (${renamedProfile.email})`);
+    // 0071 (security audit 3): ledger guards, seat consent and profile hygiene,
+    // on the hosted grants. Refusals are read with a selecting (GET-shaped)
+    // request so the error code, not an empty body, is what is asserted.
+    console.log("\n0071 ledger guards, seat consent and profile hygiene:");
+    const directWheel = await a.from("wheels").delete().eq("id", A.wheelId).select("id");
+    check(directWheel.error?.code === "42501", `0071 a creator cannot delete its own game directly (${code(directWheel)})`);
+    const serviceWheel = await admin.from("wheels").delete().eq("id", A.wheelId).select("id");
+    check(serviceWheel.error?.code === "42501", `0071 not even the service role deletes a game with play history (${code(serviceWheel)})`);
+    check(((await admin.from("wheels").select("id").eq("id", A.wheelId)).data?.length ?? 0) === 1, "0071 A's played game still exists");
+    const unplayed = must(await admin.from("wheels").insert({ creator_id: A.id, title: `unplayed ${RUN}` }).select("id").single(), "0071 seed an unplayed game");
+    const unplayedDirect = await a.from("wheels").delete().eq("id", unplayed.id).select("id");
+    check(unplayedDirect.error?.code === "42501", `0071 even an unplayed game is deleted only through delete_wheel (${code(unplayedDirect)})`);
+    const unplayedRpc = await a.rpc("delete_wheel", { p_wheel: unplayed.id });
+    check(!unplayedRpc.error && unplayedRpc.data === "ok", `0071 delete_wheel still removes an unplayed game (${unplayedRpc.data ?? unplayedRpc.error?.message})`);
+    // The grant ledger is written by the grant RPCs only.
+    const grantEdit = await a.from("grants").update({ amount_cents: 0 }).eq("creator_id", A.id).select("id");
+    check(grantEdit.error?.code === "42501", `0071 a creator cannot rewrite a grant's money (${code(grantEdit)})`);
+    const grantDrop = await a.from("grants").delete().eq("creator_id", A.id).select("id");
+    check(grantDrop.error?.code === "42501", `0071 a creator cannot delete a grant (${code(grantDrop)})`);
+    const grantForge = await a.from("grants").insert({ creator_id: A.id, fan_id: A.fanId, spins: 99 }).select("id");
+    check(grantForge.error?.code === "42501", `0071 a creator cannot insert a grant (${code(grantForge)})`);
+    check(((await admin.from("grants").select("id").eq("creator_id", A.id).eq("spins", 99)).data?.length ?? 0) === 0, "0071 no forged grant landed");
+    const linkDrop = await a.from("fan_passes").delete().eq("id", A.passId).select("id");
+    check(linkDrop.error?.code === "42501", `0071 a creator cannot delete its fan's link (${code(linkDrop)})`);
+    check(((await admin.from("fan_passes").select("id").eq("id", A.passId)).data?.length ?? 0) === 1, "0071 A's link still exists");
+    // The 0069 two-prize game is scheduled and campaign-pinned: it keeps two prizes.
+    const twoPrizes = must(await admin.from("prizes").select("id").eq("wheel_id", twoWheel.id), "0071 the chosen game's prizes");
+    const prizeDrop = await a.from("prizes").delete().eq("id", twoPrizes[0].id).select("id");
+    check(prizeDrop.error?.code === "22023", `0071 a chosen game cannot drop below two prizes (${code(prizeDrop)})`);
+    check(((await admin.from("prizes").select("id").eq("wheel_id", twoWheel.id)).data?.length ?? 0) === 2, "0071 the chosen game still has both prizes");
+    // Campaigns are deleted through delete_campaign (fan -> link -> campaign).
+    const pinnedCampaign = campaignOnTwo.data?.[0]?.id;
+    check(!!pinnedCampaign, "0071 the 0069 campaign exists for the deletion checks");
+    if (pinnedCampaign) {
+      const campaignDrop = await a.from("campaigns").delete().eq("id", pinnedCampaign).select("id");
+      check(campaignDrop.error?.code === "42501", `0071 a creator cannot delete a campaign directly (${code(campaignDrop)})`);
+      const anonCampaign = await anonClient.rpc("delete_campaign", { p_campaign: pinnedCampaign, p_creator: A.id });
+      check(anonCampaign.error?.code === "42501", `0071 anon cannot call delete_campaign (${anonCampaign.error?.code ?? anonCampaign.data})`);
+      const otherCampaign = await b.rpc("delete_campaign", { p_campaign: pinnedCampaign, p_creator: A.id });
+      check(!otherCampaign.error && otherCampaign.data === "not_found", `0071 another creator cannot delete A's campaign (${otherCampaign.data ?? otherCampaign.error?.message})`);
+      const wrongOwner = await b.rpc("delete_campaign", { p_campaign: pinnedCampaign, p_creator: B.id });
+      check(!wrongOwner.error && wrongOwner.data === "not_found", `0071 naming itself as the owner does not reach A's campaign (${wrongOwner.data ?? wrongOwner.error?.message})`);
+      check(((await admin.from("campaigns").select("id").eq("id", pinnedCampaign)).data?.length ?? 0) === 1, "0071 the refused deletions left A's campaign");
+      const ownCampaign = await a.rpc("delete_campaign", { p_campaign: pinnedCampaign, p_creator: A.id });
+      check(!ownCampaign.error && ownCampaign.data === "ok", `0071 the owner deletes its campaign through delete_campaign (${ownCampaign.data ?? ownCampaign.error?.message})`);
+      check(((await admin.from("campaigns").select("id").eq("id", pinnedCampaign)).data?.length ?? 0) === 0, "0071 the campaign is gone");
+    }
+    // The fan's link pause is service-only (the fan page's server route).
+    const creatorExclude = await a.rpc("self_exclude_pass", { p_token: A.token });
+    check(creatorExclude.error?.code === "42501", `0071 a creator cannot call self_exclude_pass (${creatorExclude.error?.code ?? creatorExclude.data})`);
+    const anonExclude = await anonClient.rpc("self_exclude_pass", { p_token: A.token });
+    check(anonExclude.error?.code === "42501", `0071 anon cannot call self_exclude_pass (${anonExclude.error?.code ?? anonExclude.data})`);
+    const serviceExclude = await admin.rpc("self_exclude_pass", { p_token: A.token });
+    check(!serviceExclude.error && serviceExclude.data === "ok", `0071 an already paused link answers ok again (${serviceExclude.data ?? serviceExclude.error?.message})`);
+    const unknownExclude = await admin.rpc("self_exclude_pass", { p_token: `unknown-${RUN}` });
+    check(!unknownExclude.error && unknownExclude.data === "not_found", `0071 an unknown token answers not_found (${unknownExclude.data ?? unknownExclude.error?.message})`);
+    // The owner's full reset is service-only and needs the owner's own context.
+    const sessionReset = await a.rpc("reset_creator_content", { p_context: randomUUID(), p_creator: A.id, p_actor: A.id });
+    check(sessionReset.error?.code === "42501", `0071 a session cannot call reset_creator_content (${sessionReset.error?.code ?? sessionReset.data})`);
+    const R = await makeCreator("reset");
+    const rClient = creatorFixtureClients.get(R.id);
+    const foreignReset = await admin.rpc("reset_creator_content", { p_context: await fixtureActorContext(a, A.id, "edit_wheel"), p_creator: R.id, p_actor: A.id });
+    check(!foreignReset.error && foreignReset.data === "forbidden", `0071 another account's context cannot reset R (${foreignReset.data ?? foreignReset.error?.message})`);
+    const ownReset = await admin.rpc("reset_creator_content", { p_context: await fixtureActorContext(rClient, R.id, "edit_wheel"), p_creator: R.id, p_actor: R.id });
+    check(!ownReset.error && ownReset.data === "ok", `0071 the owner's own reset removes its played game (${ownReset.data ?? ownReset.error?.message})`);
+    check(((await admin.from("wheels").select("id").eq("creator_id", R.id)).data?.length ?? 0) === 0, "0071 R has no game left after its reset");
+    // MFA: an enrolled aal1 session reads none of its own play history.
+    const lowSpins = await low.from("spins").select("id").eq("creator_id", A.id);
+    check(!lowSpins.error && lowSpins.data?.length === 0, `0071 an enrolled aal1 session reads none of its spins (${lowSpins.error?.message ?? lowSpins.data?.length})`);
+    const highSpins = await a.from("spins").select("id").eq("creator_id", A.id);
+    check(!highSpins.error && (highSpins.data?.length ?? 0) > 0, "0071 the challenged aal2 session still reads its spins");
+    // Display names never carry an e-mail address.
+    const mailEmail = `rlstest+${RUN}-mailname@fanfunnel.test`;
+    const mailUser = await admin.auth.admin.createUser({ email: mailEmail, password: PW, email_confirm: true, user_metadata: { display_name: mailEmail } });
+    if (mailUser.data?.user?.id) createdUserIds.push(mailUser.data.user.id);
+    check(!mailUser.error, `0071 create a sign-up that offers its e-mail as its name (${mailUser.error?.message ?? "ok"})`);
+    let mailProfile = null;
+    for (let attempt = 0; mailUser.data?.user?.id && attempt < 20 && !mailProfile; attempt++) {
+      mailProfile = (await admin.from("profiles").select("display_name").eq("id", mailUser.data.user.id).maybeSingle()).data;
+      if (!mailProfile) await new Promise((r) => setTimeout(r, 250));
+    }
+    check(!!mailProfile && mailProfile.display_name === null, `0071 sign-up never stores an e-mail as the display name (${mailProfile?.display_name === undefined ? "no profile" : mailProfile.display_name === null ? "null" : "an e-mail-like name"})`);
+    must(await admin.from("profiles").update({ display_name: A.email }).eq("id", A.id).select("id").single(), "0071 write A's e-mail as its name");
+    check((await admin.from("profiles").select("display_name").eq("id", A.id).single()).data?.display_name === null, "0071 an e-mail written as a name is cleared, even by the service role");
+    const mailRename = await a.rpc("set_display_name", { p_name: A.email });
+    check(mailRename.error?.code === "22023", `0071 set_display_name refuses an e-mail address (${mailRename.error?.code ?? "accepted"})`);
+    const longRename = await a.rpc("set_display_name", { p_name: "n".repeat(81) });
+    check(longRename.error?.code === "22023", `0071 set_display_name refuses a name over 80 characters (${longRename.error?.code ?? "accepted"})`);
+    const homoglyph = await a.rpc("set_public_profile", { p_slug: "сlеo", p_tip_url: null, p_tagline: null });
+    check(homoglyph.error?.code === "22023", `0071 a non-ASCII (look-alike) slug is refused (${homoglyph.error?.code ?? "accepted"})`);
+    const longTagline = await a.rpc("set_public_profile", { p_slug: null, p_tip_url: null, p_tagline: "t".repeat(201) });
+    check(longTagline.error?.code === "22023", `0071 a tagline over 200 characters is refused (${longTagline.error?.code ?? "accepted"})`);
+    // Seats and agencies: invitation and RPCs only; one agency per owner.
+    const seatForge = await ownerClient.from("org_members").insert({ org_id: org.id, profile_id: recipient.id, role: "chatter" }).select("id");
+    check(seatForge.error?.code === "42501", `0071 an owner cannot seat an account without its consent (${code(seatForge)})`);
+    const seatPromote = await ownerClient.from("org_members").update({ role: "manager" }).eq("org_id", org.id).eq("profile_id", B.id).select("id");
+    check(seatPromote.error?.code === "42501", `0071 an owner cannot rewrite a seat's role directly (${code(seatPromote)})`);
+    const orgForge = await b.from("orgs").insert({ name: `forged ${RUN}`, owner_id: B.id }).select("id");
+    check(orgForge.error?.code === "42501", `0071 a session cannot insert an agency directly (${code(orgForge)})`);
+    const secondOrg = await admin.from("orgs").insert({ name: `second ${RUN}`, owner_id: OWN.id }).select("id");
+    check(secondOrg.error?.code === "23505", `0071 an owner holds at most one agency (${code(secondOrg)})`);
+    const bLeaving = await signedClient(renamed);
+    const leftSeat = await bLeaving.rpc("org_leave", { p_org: org.id });
+    check(!leftSeat.error && leftSeat.data === "ok", `0071 a seat leaves its agency (${leftSeat.data ?? leftSeat.error?.message})`);
+    check(((await admin.from("org_members").select("id").eq("org_id", org.id).eq("profile_id", B.id)).data?.length ?? 0) === 0, "0071 the seat is gone after leaving");
+    const leftAgain = await bLeaving.rpc("org_leave", { p_org: org.id });
+    check(!leftAgain.error && leftAgain.data === "not_member", `0071 leaving twice answers not_member (${leftAgain.data ?? leftAgain.error?.message})`);
+    const creatorLeft = await recipientClient.rpc("org_leave", { p_org: org.id });
+    check(!creatorLeft.error && creatorLeft.data === "ok", `0071 a member creator leaves its agency (${creatorLeft.data ?? creatorLeft.error?.message})`);
+    check(((await admin.from("profiles").select("org_id").eq("id", recipient.id).single()).data?.org_id ?? null) === null, "0071 the creator is independent after leaving");
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.

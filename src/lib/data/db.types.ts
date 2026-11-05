@@ -3062,6 +3062,7 @@ export type Database = {
         Returns: boolean
       }
       _game_has_min_prizes: { Args: { p_wheel: string }; Returns: boolean }
+      _game_is_chosen: { Args: { p_wheel: string }; Returns: boolean }
       _grant_focus_pack_core: {
         Args: {
           p_creator: string
@@ -3096,7 +3097,13 @@ export type Database = {
         Returns: Json
       }
       _is_org_member: { Args: { p_org: string }; Returns: boolean }
+      _lock_wheel_focus_fans: {
+        Args: { p_creator: string; p_wheel: string }
+        Returns: boolean
+      }
       _lock_wheel_lifecycle: { Args: { p_wheel: string }; Returns: undefined }
+      _looks_like_email: { Args: { p: string }; Returns: boolean }
+      _my_confirmed_email: { Args: never; Returns: string }
       _org_invite_email: { Args: { p_email: string }; Returns: string }
       _org_invite_throttled: { Args: { p_org: string }; Returns: boolean }
       _owns_org: { Args: { p_org: string }; Returns: boolean }
@@ -3116,6 +3123,10 @@ export type Database = {
           row_digest: string
         }[]
       }
+      _safe_display_name: {
+        Args: { p_email: string; p_name: string }
+        Returns: string
+      }
       _scratch_visible: { Args: { p_value: string }; Returns: string }
       _session_mfa_satisfied: { Args: never; Returns: boolean }
       _spin_attempt_context:
@@ -3125,6 +3136,7 @@ export type Database = {
         Args: { p_attempt: string; p_replayed: boolean }
         Returns: Json
       }
+      _valid_public_slug: { Args: { p: string }; Returns: boolean }
       _valid_scratch_presentation: {
         Args: { p_presentation: Json; p_prize: string; p_snapshot: Json }
         Returns: boolean
@@ -3404,6 +3416,10 @@ export type Database = {
         Returns: undefined
       }
       current_user_active: { Args: never; Returns: boolean }
+      delete_campaign: {
+        Args: { p_campaign: string; p_creator: string }
+        Returns: string
+      }
       delete_wheel: { Args: { p_wheel: string }; Returns: string }
       edit_pass_grant:
         | {
@@ -3596,6 +3612,7 @@ export type Database = {
         Returns: string
       }
       org_invite_revoke: { Args: { p_invite: string }; Returns: string }
+      org_leave: { Args: { p_org: string }; Returns: string }
       org_remove_creator: {
         Args: { p_creator: string; p_org: string }
         Returns: string
@@ -3679,6 +3696,10 @@ export type Database = {
         Args: { p_user: string }
         Returns: string
       }
+      reset_creator_content: {
+        Args: { p_actor: string; p_context: string; p_creator: string }
+        Returns: string
+      }
       reward_crypto_inventory_page: {
         Args: { p_after?: string; p_limit?: number }
         Returns: Json
@@ -3729,6 +3750,7 @@ export type Database = {
       }
       schema_version: { Args: never; Returns: number }
       scrub_fan_reward_values: { Args: { p_fan: string }; Returns: undefined }
+      self_exclude_pass: { Args: { p_token: string }; Returns: string }
       set_chat_settings: {
         Args: { p_intro: string; p_outro: string }
         Returns: undefined

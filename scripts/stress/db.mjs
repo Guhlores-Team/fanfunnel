@@ -2,7 +2,8 @@
 // SQL gateways (prepare/commit_spin_attempt, create_pass_grant, grant_pass_spins,
 // edit_pass_grant, import_fans_durable, save_wheel_prizes, add_reward_codes,
 // save_game_wheel, run_retention_cleanup, reserve_self_account_deletion,
-// grant_focus_pack, cancel_fan_focus, archive_wheel) driven
+// grant_focus_pack, cancel_fan_focus, archive_wheel, self_exclude_pass,
+// set_prize_delivery, delete_campaign) driven
 // by hundreds of concurrent sessions through the pool. Every scenario ends with
 // the ledger invariants from docs/handoff/COMPLETENESS_AUDIT_2.md. Fixtures
 // follow scripts/db/interplayProbe.mjs; no Supabase credential is read.
@@ -29,6 +30,8 @@ export const DB_THRESHOLDS = { commit: 400, perContender: 10, prepare: 250, gran
 export const D4_DEADLOCK_BOUND = 0;
 /** D9: deadlock retries allowed between plays, Focus/Chase grants and cancels, stock saves and archive_wheel (hard bound). */
 export const D9_DEADLOCK_BOUND = 0;
+/** D10: deadlocks allowed across the 0071 lock-order races (fan deletion, link pause, prize writes over Focus/Chase fans, suspension, campaign deletion, account closure vs plays); 0071 fixed every one. */
+export const D10_DEADLOCK_BOUND = 0;
 
 export async function runDbScenarios(report, { sql, quick = false, pool, only = null }) {
   const N = quick ? 0.3 : 1;
@@ -140,6 +143,8 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
   const noErrors = async (results, label) => { if (deadlocks.length) { report.check(false, `${label}: no deadlocks retried`, `${deadlocks.length}; ${await named(deadlocks[0])}`); deadlocks.length = 0; } const bad = results.filter(r => !r.ok); const shown = []; for (const r of bad.slice(0, 2)) shown.push(`${r.code}: ${r.error}${r.detail ? ` | ${await named(r.detail)}` : ""}`); return report.check(bad.length === 0, `${label}: no SQL errors or deadlocks`, bad.length ? `${bad.length} errors; ${shown.join(" || ")}` : undefined); };
   const stockOf = async prize => { const v = await scalar(`select coalesce(stock::text,'null') from public.prizes where id=${quote(prize)};`); return v === "null" ? null : Number(v); };
   const awarded = prize => scalar(`select count(*)||','||count(distinct fan_id) from public.spins where prize_id=${quote(prize)};`).then(v => v.split(",").map(Number));
+  // Nonces are unique per link; a deleted fan's anonymised spins keep their
+  // nonces but lose the link (fan_pass_id SET NULL), so they are not grouped.
   const invariants = async (creator, label) => {
     const v = JSON.parse(await scalar(`select jsonb_build_object(
       'fanMismatch',(select count(*) from public.fans f where f.creator_id=${quote(creator)} and (f.spins_remaining<>coalesce((select sum(p.spins_remaining) from public.fan_passes p where p.fan_id=f.id and p.is_active),0) or f.spins_granted_total<>coalesce((select sum(p.spins_granted_total) from public.fan_passes p where p.fan_id=f.id and p.is_active),0))),
@@ -148,7 +153,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       'spins',(select count(*) from public.spins where creator_id=${quote(creator)}),
       'redemptions',(select count(*) from public.redemptions where creator_id=${quote(creator)}),
       'pending',(select count(*) from public.spin_attempts where creator_id=${quote(creator)} and state='pending' and created_at<now()-interval '60 seconds'),
-      'nonceDup',(select count(*) from (select fan_pass_id,nonce from public.spins where creator_id=${quote(creator)} group by 1,2 having count(*)>1) d),
+      'nonceDup',(select count(*) from (select fan_pass_id,nonce from public.spins where creator_id=${quote(creator)} and fan_pass_id is not null group by 1,2 having count(*)>1) d),
       'crossWheel',(select count(*) from public.spins s join public.prizes pr on pr.id=s.prize_id where s.creator_id=${quote(creator)} and pr.wheel_id<>s.wheel_id),
       'codeDup',(select count(*) from (select spin_id from public.prize_reward_codes where creator_id=${quote(creator)} and spin_id is not null group by 1 having count(*)>1) d),
       'codeStock',(select count(*) from public.prizes pr join public.wheels w on w.id=pr.wheel_id where w.creator_id=${quote(creator)} and pr.delivery='codes' and pr.stock is distinct from (select count(*) from public.prize_reward_codes c where c.prize_id=pr.id and c.spin_id is null and c.erased_at is null)),
@@ -595,6 +600,104 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.latency("grant_focus_pack (beside the plays)", grantSeries, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("cancel_fan_focus", cancelSeries, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2));
       report.latency("save_wheel_prizes (Focus prize stock)", editSeries, DB_THRESHOLDS.save + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("archive_wheel", archiveSeries, DB_THRESHOLDS.retention);
       await invariants(c, "focus/chase"); await ledger("focus/chase"); report.finish();
+    }
+    // ============================================================ D10 lock-order races (0071)
+    if (want("D10")) {
+      const n = scale(40), m = scale(12), cut = Math.max(2, Math.round(n / 8));
+      report.scenario("D10", `lock-order races (0071, F1-F6): ${n} fans play while fans are deleted and pause their links, the game is re-saved over ${m} Focus/Chase fans, and other creators are suspended, lose a campaign or close their account`);
+      // Every maintenance call records its own 40P01 (play() records the commits').
+      const raceDeadlocks = [], raceErrors = [];
+      const op = async (label, fn) => { try { return await fn(); } catch (e) { (e.code === "40P01" ? raceDeadlocks : raceErrors).push(`${label}: ${e.code ?? ""} ${e.message}${e.detail ? ` | ${await named(e.detail)}` : ""}`); return null; } };
+      const asCreator = (c, q) => `begin;set local role authenticated;do $$begin perform set_config('request.jwt.claim.sub',${quote(c)},true);perform set_config('request.jwt.claims',${quote(JSON.stringify({ sub: c, role: "authenticated", aal: "aal1" }))},true);end$$;${q}commit;`;
+      const chase = async c => sql(`insert into public.focus_creator_config(creator_id,chase_enabled) values(${quote(c)},true) on conflict(creator_id) do update set chase_enabled=true;`);
+      const focusOn = async (c, who, prize, kind) => {
+        const pack = randomUUID();
+        await sql(`update public.prizes set boostable=true where id=${quote(prize)};`);
+        await sql(`insert into public.campaign_packs(id,creator_id,label,spins,pack_kind,focus_spins,chase_within) values(${quote(pack)},${quote(c)},${quote(kind)},10,${quote(kind)},5,5);`);
+        const g = await rpc("grant_focus_pack", [quote(randomUUID()), quote(c), quote(who.fan), quote(who.pass), quote(pack), quote(prize)]);
+        if (g?.status !== "granted") throw Error(`${kind} grant refused: ${JSON.stringify(g)}`);
+      };
+      // A Focus/Chase fan's commit with a plain body is refused on its terms
+      // AFTER it has taken every lock (scripts/db/lockOrderProbe.mjs), which is
+      // the contention F3/F4 are about; the attempt is then cancelled.
+      const rawPlay = async who => {
+        const a = await prep(who); if (a.status !== "ready") return a.status;
+        let r = null;
+        let refused = null;
+        try { r = await commit(who, a, await wheelBody(a, a.context.prizes[0].id, [], [])); }
+        catch (e) {
+          if (e.code === "40P01") deadlocks.push(e.detail ?? e.message);
+          else if (e.code === "22023" && /terms mismatch/.test(e.message)) refused = "terms_refused";
+          else throw e;
+        }
+        if (r?.status !== "committed") await cancel(who, a);
+        return r?.status ?? refused ?? "deadlock";
+      };
+      const three = [{ label: "A", weight: 1 }, { label: "B", weight: 1 }, { label: "C", weight: 1 }];
+      // P: plays, fan deletions (F1), link pauses (F2) and prize writes over Focus/Chase fans (F3).
+      const P = await addCreator(); await chase(P);
+      const pw = await addWheel(P, { prizes: three });
+      const players = await grantFans(P, pw.id, n, 3), focusFans = await grantFans(P, pw.id, m, 10);
+      for (const [i, who] of focusFans.entries()) await focusOn(P, who, i % 2 ? pw.prizes.B : pw.prizes.A, i % 2 ? "chase" : "focus");
+      const victims = new Set(players.slice(0, cut)), pausers = new Set(players.slice(cut, 2 * cut));
+      const rows = w => json(["A", "B", "C"].map((label, i) => ({ id: pw.prizes[label], label, rarity: "common", weight: w + i, emoji: "🟦", expected_stock: null })));
+      const editor = async () => {
+        for (let i = 0; i < 6; i++) {
+          await op("save_wheel_prizes", () => rpc("save_wheel_prizes", [quote(pw.id), quote(P), rows(1 + i)]));
+          await op("set_prize_delivery", () => scalar(`begin;set local role service_role;select public.set_prize_delivery(${quote(pw.prizes.C)},${quote(P)},'manual');commit;`));
+          await sleep(15);
+        }
+      };
+      const breaker = async () => {
+        await sleep(20);
+        await parallel([...pausers], 4, who => op("self_exclude_pass", () => scalar(`begin;set local role service_role;select public.self_exclude_pass(${quote(who.token)});commit;`)));
+        await parallel([...victims], 4, who => op("fan delete", () => sql(`delete from public.fans where id=${quote(who.fan)} and creator_id=${quote(P)};`)));
+      };
+      // S: a creator suspension over Chase fans (F4); K: delete_campaign under play (F5); X: an account closure under play (F6).
+      const S = await addCreator(); await chase(S);
+      const sw = await addWheel(S, { prizes: three }), sPlayers = await grantFans(S, sw.id, Math.ceil(n / 2), 3), sChase = await grantFans(S, sw.id, Math.ceil(m / 2), 10);
+      for (const who of sChase) await focusOn(S, who, sw.prizes.A, "chase");
+      const K = await addCreator(), kw = await addWheel(K, { prizes: three }), kc = uid();
+      await sql(`insert into public.campaigns(id,creator_id,name,pinned_wheel_id) values(${quote(kc)},${quote(K)},'stress race',${quote(kw.id)});`);
+      const kPlayers = await grantFans(K, null, Math.ceil(n / 2), 3, kc);
+      const X = await addCreator(), xw = await addWheel(X, { prizes: three }), xPlayers = await grantFans(X, xw.id, Math.ceil(n / 2), 3);
+      const lifecycle = async () => {
+        await sleep(30);
+        await op("suspend", () => sql(`update public.profiles set is_active=false where id=${quote(S)};`));
+        await op("delete_campaign", async () => { const r = (await sql(asCreator(K, `select public.delete_campaign(${quote(kc)},${quote(K)});`))).trim().split("\n").at(-1); if (r !== "ok") throw Error(`delete_campaign answered ${r}`); });
+        await op("reserve deletion", async () => { const r = await scalar(`begin;set local role service_role;select public.reserve_self_account_deletion(${quote(X)});commit;`); if (r !== "ok") throw Error(`reserve answered ${r}`); });
+        await op("account delete", () => sql(`delete from auth.users where id=${quote(X)};`));
+        await sleep(30);
+        await op("reactivate", () => sql(`update public.profiles set is_active=true where id=${quote(S)};`));
+      };
+      const thrice = list => list.flatMap(f => [f, f, f]);
+      const series = [];
+      const [pr, fr, sr, kr, xr] = await Promise.all([
+        parallel(thrice(players), pool.size, who => play(who, { series })),
+        parallel(thrice(focusFans), 4, rawPlay),
+        parallel(thrice([...sPlayers, ...sChase]), 4, who => sChase.includes(who) ? rawPlay(who) : play(who, { series })),
+        parallel(thrice(kPlayers), 4, who => play(who, { series })),
+        parallel(thrice(xPlayers), 4, who => play(who, { series })),
+        editor(), breaker(), lifecycle(),
+      ]);
+      const all = [pr, fr, sr, kr, xr].flat();
+      const dl = [...deadlocks.splice(0), ...raceDeadlocks, ...all.filter(r => !r.ok && r.code === "40P01").map(r => r.detail ?? r.error)];
+      const of = (res, list, keep) => res.filter((_, i) => keep(list[Math.floor(i / 3)]));
+      const steady = of(pr, players, w => !victims.has(w) && !pausers.has(w));
+      report.number("outcomes", { steady: outcomes(steady), deleted: tally(of(pr, players, w => victims.has(w)), v => v.status), paused: tally(of(pr, players, w => pausers.has(w)), v => v.status), focus: tally(fr, v => v), suspended: tally(sr, v => typeof v === "string" ? v : v.status), campaign: tally(kr, v => v.status), closed: tally(xr, v => v.status) });
+      report.number("deadlocks_retried", dl.length);
+      report.check(dl.length <= D10_DEADLOCK_BOUND, `at most ${D10_DEADLOCK_BOUND} deadlock(s) across the F1-F6 races (0071)`, dl.length ? `${dl.length}; ${await named(dl[0])}` : 0);
+      report.check(raceErrors.length === 0, "every deletion, pause, prize write, suspension, campaign deletion and account closure succeeds", raceErrors.slice(0, 2));
+      await noErrors([...steady, ...fr, ...sr, ...kr], "F1-F6 races");
+      report.check(steady.every(r => st(r) === "committed"), "fans outside every race all commit", outcomes(steady));
+      const clean = r => !r.ok ? /fan|pass|not found|violat/i.test(r.error) : ["committed", "unavailable", "declined", "conflict"].includes(r.value.status ?? r.value);
+      report.check(of(pr, players, w => victims.has(w) || pausers.has(w)).every(clean), "deleted fans' and paused links' plays end committed-before or cleanly refused");
+      report.check([...kr, ...xr].every(clean), "plays on a deleted campaign or a closed account end committed-before or cleanly refused", [...kr, ...xr].filter(r => !clean(r)).map(r => r.ok ? r.value.status : r.error).slice(0, 2));
+      report.check(sr.every(r => r.ok && (typeof r.value === "string" || ["committed", "unavailable", "declined"].includes(r.value.status))), "plays across the suspension end committed or cleanly refused", outcomes(sr.filter(r => r.ok && typeof r.value !== "string")));
+      report.check((await scalar(`select count(*) from public.chase_reservations where creator_id=${quote(S)} and state='active';`)) === "0", "the suspension released every Chase reservation");
+      report.check((await scalar(`select count(*) from public.profiles where id=${quote(X)};`)) === "0" && (await scalar(`select count(*) from public.campaigns where id=${quote(kc)};`)) === "0", "the account and the campaign are gone");
+      report.latency("commit during the races", series, DB_THRESHOLDS.commit * 2);
+      await invariants(P, "races P"); await invariants(S, "races S"); await invariants(K, "races K"); await ledger("after the races"); report.finish();
     }
   } finally {
     for (const b of bridges) { try { b.stdin.end(); b.kill(); } catch { /* already gone */ } }

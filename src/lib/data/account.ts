@@ -1,7 +1,8 @@
 import { creatorGameFeatures } from "./gameSettings";
 // Data layer — the signed-in creator's own account: profile prefs,
 // onboarding state, brand colour and the full data reset.
-import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
+import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
+import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import {
   mockClearMyData,
   mockGetOnboardingDismissed,
@@ -30,12 +31,27 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
   // fans → cascades fan_passes, grants, messages, wishlists, referrals, and
   //   (0068) scrubs the link token from safety reports and spin attempts;
   //   spins are kept anonymized until their wheel goes.
+  // Then the campaigns and games (0071: sessions can no longer DELETE either;
+  //   a game with history is removed only by this reset), then the standalone
+  //   creator-owned tables.
   // wheels → cascades prizes, spins, (wheel-scoped) passes, happy_hours.
-  // Then standalone creator-owned tables.
+  const fail = (table: string, message: string) => {
+    // Plain "db_error" like every other mutation (see shared.ts): the table
+    // name is operator detail, not something to hand to the client.
+    console.error("clearMyData: delete failed", { table, error: message });
+    return { error: "db_error" } as const;
+  };
+  const { error: fanError } = await sb.from("fans").delete().eq("creator_id", user.id);
+  if (fanError) return fail("fans", fanError.message);
+  // The service-only reset (0071) checks an edit_wheel actor context minted on
+  // this session for the creator itself, so a seat can never reset a creator.
+  const context = await issueCreatorActorContext(sb, user.id, "edit_wheel");
+  if (!context) return fail("campaigns+wheels", "no actor context");
+  const { data: reset, error: resetError } = await createServiceClient().rpc("reset_creator_content", {
+    p_context: context, p_creator: user.id, p_actor: user.id,
+  });
+  if (resetError || reset !== "ok") return fail("campaigns+wheels", resetError?.message ?? String(reset));
   const tables = [
-    "fans",
-    "wheels",
-    "campaigns",
     "campaign_packs",
     "dm_templates",
     "prize_templates",
@@ -46,12 +62,7 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
   ];
   for (const t of tables) {
     const { error } = await sb.from(t).delete().eq("creator_id", user.id);
-    if (error) {
-      // Plain "db_error" like every other mutation (see shared.ts): the table
-      // name is operator detail, not something to hand to the client.
-      console.error("clearMyData: delete failed", { table: t, error: error.message });
-      return { error: "db_error" };
-    }
+    if (error) return fail(t, error.message);
   }
 
   // A true fresh start also resets profile preferences (via the SECURITY
