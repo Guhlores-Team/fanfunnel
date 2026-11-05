@@ -89,7 +89,13 @@ export default async function SpinPage({
             gallery={look.media.length ? <PhotoGallery media={look.media} creatorTitle={pass.creatorTitle} /> : null}
           />
         </div>
-        <footer className="relative z-40 mt-10 flex flex-col items-center gap-2 text-center text-[11px] tracking-wide text-muted">
+        {/* Paints above the EnvBadge like the fan UI, so mid-scroll its muted
+            text can cross the badge band; the opaque theme-colour backing keeps
+            that text at its contrast on the page instead of on the badge. */}
+        <footer
+          className="relative z-40 mt-10 flex flex-col items-center gap-2 rounded-2xl px-3 py-1.5 text-center text-[11px] tracking-wide text-muted"
+          style={{ backgroundColor: "var(--theme-bg)" }}
+        >
           <span>Powered by FanFunnel · every spin wins</span>
           <SafetyMenu token={token} />
         </footer>

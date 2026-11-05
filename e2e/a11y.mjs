@@ -100,6 +100,20 @@ const installNudge = (platform) => async (page) => {
   await page.waitForTimeout(400);
 };
 const PHONE_CTX = { isMobile: true, hasTouch: true };
+const footerOverBadge = async (page) => {
+  const token = await mintFanLink(page.request, 1);
+  await goto(page, `/spin/${token}`, 1800);
+  await passAgeGate(page);
+  const parked = await page.evaluate(() => {
+    const badge = document.querySelector("[data-env-badge]");
+    const text = document.querySelector("footer > span");
+    if (!badge || !text) return false;
+    window.scrollBy(0, text.getBoundingClientRect().bottom - badge.getBoundingClientRect().bottom + 2);
+    const t = text.getBoundingClientRect(), b = badge.getBoundingClientRect();
+    return t.bottom > b.top && t.top < b.bottom;
+  });
+  if (!parked) throw new Error("could not park the fan footer on the Preview badge (badge needs NEXT_PUBLIC_ENABLE_DEBUG=1)");
+};
 
 // Web push: the Settings card in its states. Each runs in its own context so
 // the PushManager stub and route overrides stay local; none needs demo data.
@@ -386,6 +400,9 @@ const PAGES = [
   { path: "/", name: "fan spin (reduced-motion reveal)", prep: openReveal("epic", { reduced: true }), cleanup: closeReveal },
   { path: null, name: "fan spin (install nudge, Android)", viewport: PHONE, context: PHONE_CTX, prep: installNudge("android") },
   { path: null, name: "fan spin (install nudge, iPhone guide)", viewport: PHONE, context: { ...PHONE_CTX, userAgent: IPHONE_UA }, prep: installNudge("ios") },
+  // The footer paints above the Preview badge, so a scroll that parks it on the
+  // badge band once failed contrast by chance. Park it there on purpose.
+  { path: null, name: "fan spin phone (footer over the Preview badge)", viewport: PHONE, context: PHONE_CTX, prep: footerOverBadge },
   { path: "/", name: "verify (fairness v3 odds)", prep: openFreshVerify },
   { path: "/", name: "verify phone (fairness v3 odds)", viewport: PHONE, prep: openFreshVerify },
   // RM-2: "N left" chips + prize book counts. The editor's "Show stock to fans"
