@@ -81,6 +81,7 @@ Supabase-backed reads.
 | scratch / bingo | D6 | 40 fans on a 5-unit scratch prize (exact accounting, redraws), 12 fans playing a Bingo game concurrently, twice (one card each, versions advance) |
 | campaign / per-link pins mid-play | D4 | continuous campaign-pin flips plus `set_fan_pass_game` while 40 fans play 3 rounds |
 | push fan-out | H7 | 10 devices subscribed (11th refused), 20 winning spins, outbox growth and spin latency |
+| lock-order races (0071, concurrency audit F1-F6) | D10 | fan deletions and link pauses (`self_exclude_pass`) on playing fans, `save_wheel_prizes` / `set_prize_delivery` over Focus/Chase fans of the game, a creator suspension over Chase fans, `delete_campaign` and an account closure, all against concurrent plays; deadlocks bounded at 0 (`D10_DEADLOCK_BOUND`); the staged deterministic versions are `scripts/db/lockOrderProbe.mjs` |
 
 ## Findings
 

@@ -27,8 +27,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const DB_THRESHOLDS = { commit: 400, perContender: 10, prepare: 250, grant: 400, save: 600, import500: 4000, retention: 3000, invariants: 5000, cascade: 15000 };
 /** D4: deadlock retries allowed between commit_spin_attempt and a campaign pin flip (0 since 0070; a small bound keeps a regression from hiding behind one stray retry). */
 export const D4_DEADLOCK_BOUND = 0;
-/** D9: deadlocks allowed across the 0071 lock-order races (fan deletion, link pause, prize writes over Focus/Chase fans, suspension, campaign deletion, account closure vs plays); 0071 fixed every one. */
-export const D9_DEADLOCK_BOUND = 0;
+/** D10: deadlocks allowed across the 0071 lock-order races (fan deletion, link pause, prize writes over Focus/Chase fans, suspension, campaign deletion, account closure vs plays); 0071 fixed every one. */
+export const D10_DEADLOCK_BOUND = 0;
 
 export async function runDbScenarios(report, { sql, quick = false, pool, only = null }) {
   const N = quick ? 0.3 : 1;
@@ -413,10 +413,10 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.latency("commit during maintenance", series, DB_THRESHOLDS.commit * 2); report.latency("run_retention_cleanup", ret, DB_THRESHOLDS.retention); report.latency(`creator deletion cascade (${fansN} fans, ${fansN * rounds} spins)`, cascade, DB_THRESHOLDS.cascade);
       await invariants(live, "maintenance"); await ledger("after deletion"); report.finish();
     }
-    // ============================================================ D9 lock-order races (0071)
-    if (want("D9")) {
+    // ============================================================ D10 lock-order races (0071)
+    if (want("D10")) {
       const n = scale(40), m = scale(12), cut = Math.max(2, Math.round(n / 8));
-      report.scenario("D9", `lock-order races (0071, F1-F6): ${n} fans play while fans are deleted and pause their links, the game is re-saved over ${m} Focus/Chase fans, and other creators are suspended, lose a campaign or close their account`);
+      report.scenario("D10", `lock-order races (0071, F1-F6): ${n} fans play while fans are deleted and pause their links, the game is re-saved over ${m} Focus/Chase fans, and other creators are suspended, lose a campaign or close their account`);
       // Every maintenance call records its own 40P01 (play() records the commits').
       const raceDeadlocks = [], raceErrors = [];
       const op = async (label, fn) => { try { return await fn(); } catch (e) { (e.code === "40P01" ? raceDeadlocks : raceErrors).push(`${label}: ${e.code ?? ""} ${e.message}${e.detail ? ` | ${await named(e.detail)}` : ""}`); return null; } };
@@ -492,7 +492,7 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const steady = of(pr, players, w => !victims.has(w) && !pausers.has(w));
       report.number("outcomes", { steady: outcomes(steady), deleted: tally(of(pr, players, w => victims.has(w)), v => v.status), paused: tally(of(pr, players, w => pausers.has(w)), v => v.status), focus: tally(fr, v => v), suspended: tally(sr, v => typeof v === "string" ? v : v.status), campaign: tally(kr, v => v.status), closed: tally(xr, v => v.status) });
       report.number("deadlocks_retried", dl.length);
-      report.check(dl.length <= D9_DEADLOCK_BOUND, `at most ${D9_DEADLOCK_BOUND} deadlock(s) across the F1-F6 races (0071)`, dl.length ? `${dl.length}; ${await named(dl[0])}` : 0);
+      report.check(dl.length <= D10_DEADLOCK_BOUND, `at most ${D10_DEADLOCK_BOUND} deadlock(s) across the F1-F6 races (0071)`, dl.length ? `${dl.length}; ${await named(dl[0])}` : 0);
       report.check(raceErrors.length === 0, "every deletion, pause, prize write, suspension, campaign deletion and account closure succeeds", raceErrors.slice(0, 2));
       await noErrors([...steady, ...fr, ...sr, ...kr], "F1-F6 races");
       report.check(steady.every(r => st(r) === "committed"), "fans outside every race all commit", outcomes(steady));
