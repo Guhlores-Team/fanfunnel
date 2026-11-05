@@ -129,12 +129,7 @@ export default function ChatPanel({
     const id = ++loadReq.current;
     try {
       const res = await fetchThread(token);
-      if (!res.ok) {
-        // I7: blocked mid-session, the thread is closed; say why.
-        const note = res.status === 403 ? blockedFanMessage((await res.json().catch(() => null))?.error) : null;
-        if (note) setBlockedNote(note);
-        return false;
-      }
+      if (!res.ok) return false;
       const d = await res.json();
       if (id !== loadReq.current) return true; // superseded by a newer load
       const list: ChatMessage[] = d.messages ?? [];
