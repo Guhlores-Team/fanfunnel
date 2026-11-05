@@ -38,11 +38,14 @@ export async function provisionCreatorUser(
   password: string,
   displayName: string
 ): Promise<{ ok: true; id: string } | { error: CreateUserErrorCode }> {
+  // M1: a missing display name stays empty, never the e-mail: the name is
+  // shown on the creator's public pages.
+  const name = displayName.trim() || null;
   const { data, error } = await svc.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
-    user_metadata: { display_name: displayName || email },
+    ...(name ? { user_metadata: { display_name: name } } : {}),
   });
   if (error || !data.user) {
     // Raw Auth wording stays in the server log; the client gets a stable code.
@@ -56,7 +59,7 @@ export async function provisionCreatorUser(
 
   await svc
     .from("profiles")
-    .update({ display_name: displayName || email, approval_status: "approved" })
+    .update({ display_name: name, approval_status: "approved" })
     .eq("id", data.user.id);
   return { ok: true, id: data.user.id };
 }

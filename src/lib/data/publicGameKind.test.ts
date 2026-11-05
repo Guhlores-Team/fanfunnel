@@ -15,7 +15,7 @@ function table(name: string) {
     eq() { return q; },
     async maybeSingle() {
       if (name === "spins") return { data: spinRow, error: null };
-      if (name === "profiles") return { data: { id: "creator-1", display_name: "Ava", public_tagline: null, tip_url: null, avatar_url: null }, error: null };
+      if (name === "profiles") return { data: { id: "creator-1", is_active: true, approval_status: "approved", display_name: "Ava", public_tagline: null, tip_url: null, avatar_url: null }, error: null };
       if (name === "wheels") return { data: wheelRow, error: null };
       return { data: null, error: null };
     },
@@ -36,7 +36,7 @@ const wheel = (gameKind: string, gameConfig: unknown = {}) => ({ id: "wheel-1", 
 async function main() {
   const { getShareCard } = await import("./boosts");
   const { getPublicProfileBySlug } = await import("./publicProfile");
-  const base = { prize_label: "Signed photo", prize_rarity: "rare", prize_image_url: null, created_at: "2026-11-04T00:00:00Z", creator: { display_name: "Ava" } };
+  const base = { prize_label: "Signed photo", prize_rarity: "rare", prize_image_url: null, created_at: "2026-11-04T00:00:00Z", creator_id: "creator-1" };
   for (const kind of ["wheel", "scratch", "bingo"] as const) {
     spinRow = { ...base, game_kind: kind };
     check(`a ${kind} win's share card carries its kind`, (await getShareCard("share-1"))?.gameKind === kind);

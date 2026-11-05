@@ -23,6 +23,7 @@ import GrantRow from "./GrantEditRow";
 import { CampaignGameSelect, FOLLOW_LIVE, GameName } from "./GameChoice";
 import { KIND_SHORT, gameOptionLabel, kindOf, linkGame, liveExplanation, pinUnavailableReason, type ChoiceGame } from "./gameAssignment";
 import { isPlayableGame } from "@/lib/games/liveGame";
+import { publicCreatorName } from "@/lib/publicCreator";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -309,7 +310,7 @@ export default function FanDetailDrawer({
       link: primaryUrl,
       lastWin: summary?.lastWin?.label ?? null,
       days: lastWinAt ? Math.max(0, Math.floor((Date.now() - Date.parse(lastWinAt)) / 86_400_000)) : null,
-      creator: account?.displayName?.trim() || null,
+      creator: publicCreatorName(account?.displayName),
     });
     if (await copyToClipboard(text)) toast("DM copied", { tone: "success" });
     else toast("Couldn't copy DM.", { tone: "error" });

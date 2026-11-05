@@ -16,6 +16,8 @@ export async function GET(
     if (limited) return limited;
     const { creatorId } = await params;
     const view = await getLeaderboard(creatorId);
+    // L5: an unknown, suspended or unapproved creator has no board.
+    if (!view) return NextResponse.json({ error: "not_found" }, { status: 404 });
     return NextResponse.json(view);
   });
 }

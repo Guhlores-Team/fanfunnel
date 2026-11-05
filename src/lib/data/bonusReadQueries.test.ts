@@ -12,7 +12,7 @@ const recent = new Date(NOW - Math.min(HOUR, (NOW % DAY) / 2)).toISOString(), ol
 let signedIn = true, rowCap = 1000, failAfterCursorTable: string | null = null;
 let pageHook: ((table: string, after: string | null) => void) | null = null;
 const db: Record<string, Row[]> = {
-  profiles: [{ id: OWNER, public_slug: "creator", display_name: "Creator", leaderboard_enabled: true }],
+  profiles: [{ id: OWNER, is_active: true, approval_status: "approved", public_slug: "creator", display_name: "Creator", leaderboard_enabled: true }],
   fans: [
     { id: FAN, creator_id: OWNER, display_name: "PRIVATE NAME", handle: "alpha", leaderboard_opt_in: true, spins_remaining: 2, spins_granted_total: 3, tags: [], created_at: recent },
     { id: QUIET, creator_id: OWNER, display_name: "Other fan", handle: "beta", leaderboard_opt_in: true, spins_remaining: 1, spins_granted_total: 2, tags: [], created_at: older },
@@ -158,13 +158,13 @@ async function main() {
   check("fan detail counts one paid play and retains all four won prizes", detail.totalSpins === 1 && detail.winsByRarity.reduce((sum, item) => sum + item.count, 0) === 4 && detail.pendingPrizes.length === 3);
   check("fan campaign splits paid activity from its full reward distribution", detail.byCampaign[0].spinsPlayed === 1 && detail.byCampaign[0].prizes.reduce((sum, item) => sum + item.count, 0) === 4 && detail.byCampaign[0].spentCents === 1000);
   check("fan credits and grant totals do not grow with line bonuses", detail.spinsRemaining === 2 && detail.grantedTotal === 3 && detail.grants.length === 1 && detail.totalSpent === 1000);
-  const board = await getLeaderboard(OWNER), alpha = board.entries.find(row => row.handle === "alpha");
+  const board = (await getLeaderboard(OWNER))!, alpha = board.entries.find(row => row.handle === "alpha");
   check("public activity count excludes bonuses but rare wins include all real awards", alpha?.spins === 1 && alpha.rareWins === 3);
   check("public leaderboard remains opt-in, tenant scoped and without personal or financial fields", board.entries.length === 2 && !/PRIVATE|foreign|token|amount|revenue|fanId/i.test(JSON.stringify(board)));
   const recentWins = await getRecentWins(OWNER);
   check("public recent-win feed retains all consented bonus rewards", recentWins.length === 3 && recentWins.every(win => win.handle === "alpha"));
   const profile = db.profiles[0]; profile.leaderboard_enabled = false;
-  check("creator consent switch still suppresses public board and bonus feed", (await getLeaderboard(OWNER)).entries.length === 0 && (await getRecentWins(OWNER)).length === 0);
+  check("creator consent switch still suppresses public board and bonus feed", (await getLeaderboard(OWNER))!.entries.length === 0 && (await getRecentWins(OWNER)).length === 0);
   profile.leaderboard_enabled = true;
   // One deposit funds each extra primary. Line bonuses add rewards/costs,
   // never another credit or deposit. Every financial source crosses 2,001 rows.

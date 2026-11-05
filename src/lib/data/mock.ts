@@ -124,6 +124,7 @@ import {
   type FanDataExport,
 } from "@/lib/privacy/exportTypes";
 import { EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
+import { NEUTRAL_CREATOR_TITLE } from "@/lib/publicCreator";
 import {
   FEED_LIMIT,
   LOW_STOCK_THRESHOLD,
@@ -3356,7 +3357,8 @@ function publicHandle(f: { handle?: string }): string | null {
 
 export function mockGetLeaderboard(_creatorId?: string): LeaderboardView {
   if (!store.leaderboardEnabled) {
-    return { enabled: false, creatorTitle: CREATOR_TITLE, entries: [] };
+    // M1 parity: a closed board never names the creator.
+    return { enabled: false, creatorTitle: NEUTRAL_CREATOR_TITLE, entries: [] };
   }
   const rows = Array.from(store.fans.values())
     .filter((f) => f.leaderboardOptIn && publicHandle(f) !== null)

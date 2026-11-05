@@ -17,7 +17,7 @@ const svc = new FakeTables({
   fans: [fan, other], fan_passes: [pass], wheels: [wheel], campaigns: [],
   grants: [{ fan_id: fan.id, creator_id: creator, spins: 10 }],
   spins: [{ id: "earned-win", fan_id: fan.id, creator_id: creator, prize_rarity: "rare", created_at: "2026-01-01T00:00:00Z" }],
-  profiles: [{ id: creator, public_slug: creator, display_name: "Creator", leaderboard_enabled: true }],
+  profiles: [{ id: creator, is_active: true, approval_status: "approved", public_slug: creator, display_name: "Creator", leaderboard_enabled: true }],
 });
 let inconsistentRead = false;
 const runQuery = svc.run.bind(svc);
@@ -50,7 +50,7 @@ async function main() {
     fan.break_until = state === "break" ? "2099-01-01T00:00:00Z" : null;
     pass.is_active = !state.startsWith("paused"); pass.self_excluded_at = pass.is_active ? null : "2026-01-01T00:00:00Z";
     wheel.archived_at = state.includes("archived") ? "2026-01-01T00:00:00Z" : null;
-    check(`${state}: the opted-in entry is public before withdrawal`, (await getLeaderboard(creator)).entries.some(entry => entry.handle === "chosen_handle"));
+    check(`${state}: the opted-in entry is public before withdrawal`, (await getLeaderboard(creator))!.entries.some(entry => entry.handle === "chosen_handle"));
     const beforeEconomic = JSON.stringify({ pass, wheel, grants: svc.rows("grants"), spins: svc.rows("spins"), balance: fan.spins_remaining });
     svc.statements.length = 0;
     const result = await setFanLeaderboardOptIn(pass.token, false, "UNREQUESTED-RENAME");
@@ -61,7 +61,7 @@ async function main() {
       && on(svc, "fan_passes")[0].filters.length === 1 && eqValue(on(svc, "fan_passes")[0], "token") === pass.token);
     check(`${state}: handle, another fan and all economic/archived state stay intact`, fan.handle === "chosen_handle" && other.leaderboard_opt_in === true
       && JSON.stringify({ pass, wheel, grants: svc.rows("grants"), spins: svc.rows("spins"), balance: fan.spins_remaining }) === beforeEconomic);
-    check(`${state}: successful withdrawal removes the public entry`, !(await getLeaderboard(creator)).entries.some(entry => entry.handle === "chosen_handle"));
+    check(`${state}: successful withdrawal removes the public entry`, !(await getLeaderboard(creator))!.entries.some(entry => entry.handle === "chosen_handle"));
   }
   fan.leaderboard_opt_in = true;
   for (const token of ["", "short token", "/bad", "%broken", "a".repeat(129), "bad\nline"]) {

@@ -17,6 +17,7 @@ import {
 } from "@/lib/pwa/manifest";
 import { mockGetFanAppInfo, mockGetMyPwaIconMode, mockSetMyPwaIconMode } from "./mock";
 import { resolveWheelId } from "./wheels";
+import { publicCreatorTitle } from "@/lib/publicCreator";
 
 type PassRow = {
   creator_id: string;
@@ -59,7 +60,7 @@ export async function getFanAppInfo(token: string): Promise<FanAppInfo | null> {
   const { data: wheel } = await sb.from("wheels").select("brand_color").eq("id", wheelId).maybeSingle();
 
   return {
-    creatorTitle: pass.creator?.display_name ?? "Creator",
+    creatorTitle: publicCreatorTitle(pass.creator?.display_name),
     brandColor: (wheel as { brand_color: string | null } | null)?.brand_color ?? DEFAULT_BRAND,
     iconMode: normalizeIconMode(pass.creator?.pwa_icon_mode),
     avatarUrl: avatarSource(pass.creator?.avatar_url ?? null, process.env.NEXT_PUBLIC_SUPABASE_URL),

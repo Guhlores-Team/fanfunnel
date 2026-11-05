@@ -13,6 +13,7 @@ import { CardHeader, Glyph, ICON, LoadError, StatCell, hairGrid, raised } from "
 import WinbackQueue from "./WinbackQueue";
 import { postOutreach, winbackMessage, type WinbackFan, type WinbackTemplate } from "./winbackActions";
 import { takeWinbackQueueRequest } from "./winbackIntent";
+import { publicCreatorName } from "@/lib/publicCreator";
 
 interface CrmFan extends WinbackFan {
   spinsRemaining: number;
@@ -124,7 +125,8 @@ function WinbackCard({
   const templates: WinbackTemplate[] = [DEFAULT_WINBACK_TEMPLATE, ...(saved?.templates ?? [])];
   const [templateId, setTemplateId] = useState<string>(DEFAULT_WINBACK_TEMPLATE.id);
   const template = templates.find((t) => t.id === templateId) ?? templates[0];
-  const creator = account?.displayName?.trim() || null;
+  // M1: a fan DM never carries an e-mail address as the creator name.
+  const creator = publicCreatorName(account?.displayName);
   const [queue, setQueue] = useState<CrmFan[] | null>(null);
   const [busyFan, setBusyFan] = useState<string | null>(null);
   // Today's "Start win-back" card asked for the queue before this mounted.
