@@ -1,8 +1,7 @@
 import { completeReadResponse } from "@/lib/api/completeRead";
 import { NextResponse } from "next/server";
 import { getLeaderboard } from "@/lib/data";
-import { clientIp } from "@/lib/api/clientIp";
-import { rateLimitOr429 } from "@/lib/api/limit";
+import { limitSharedRead } from "@/lib/api/limit";
 
 // Public leaderboard for a creator. Returns enabled:false when the creator
 // hasn't turned it on. Only opted-in fans' handles ever appear.
@@ -11,8 +10,10 @@ export async function GET(
   { params }: { params: Promise<{ creatorId: string }> }
 ) {
   return completeReadResponse(async () => {
-    // Public and uncached: cap per-IP reads (scraping / enumeration).
-    const limited = await rateLimitOr429("board:" + clientIp(req), 60, 60_000);
+    // Public and uncached: cap reads per address + fan (scraping /
+    // enumeration) under a per-address ceiling, so fans sharing one address
+    // (carrier NAT) are not refused for each other's polls (A22).
+    const limited = await limitSharedRead(req, "leaderboard");
     if (limited) return limited;
     const { creatorId } = await params;
     const view = await getLeaderboard(creatorId);

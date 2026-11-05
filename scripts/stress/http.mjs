@@ -189,7 +189,8 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
           const camp = await call("POST", "/api/campaigns", { body: { name: "Stress campaign", pinnedWheelId: bId }, ip: editIp }); edits.push(`campaign:${camp.status}`);
           const campId = camp.json?.campaign?.id;
           if (campId) edits.push(`pin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: w.id }, ip: editIp })).status}`, `unpin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: null }, ip: editIp })).status}`);
-          edits.push(`archiveB:${(await call("PATCH", `/api/wheels/${bId}`, { body: { archived: true }, ip: editIp })).status}`);
+          // Archive is DELETE /api/wheels/[id] (no ?hard=1); PATCH has no archive field and ignores one.
+          edits.push(`archiveB:${(await call("DELETE", `/api/wheels/${bId}`, { ip: editIp })).status}`);
           edits.push(`activateA:${(await call("PATCH", `/api/wheels/${w.id}`, { body: { isActive: true }, ip: editIp })).status}`);
         }
       };
@@ -306,22 +307,134 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       if (failedBatches.length) report.warn(`${failedBatches.length} burst batch(es) did not complete: ${failedBatches[0].error}`);
       const fans = await makePasses(fansOnPage, 1), page = [], wins = [], board = [], checkins = [];
       const natIp = [nextIp(), nextIp()];
+      // A fan page's public reads carry its link token in x-fan-token (FanLeaderboard, RecentWinsTicker): one minute on the page is
+      // the load, three recent-wins polls (every 20s) and the leaderboard twice (load + the refetch after a spin), all at the origin (no CDN here).
+      const fanRead = (fan, i, path, series) => timed(series, () => call("GET", path, { ip: natIp[i % 2], headers: { "x-fan-token": fan.token } }));
+      // The page load is timed (as before); the follow-up polls come after it, inside the same one-minute windows.
       const loads = await parallel(fans, fansOnPage, (fan, i) => Promise.all([
         timed(page, () => call("GET", `/spin/${encodeURIComponent(fan.token)}`, { ip: natIp[i % 2] })),
-        timed(wins, () => call("GET", "/api/recent-wins/acc-you", { ip: natIp[i % 2] })),
-        timed(board, () => call("GET", "/api/leaderboard/acc-you", { ip: natIp[i % 2] })),
+        fanRead(fan, i, "/api/recent-wins/acc-you?k=0", wins).then(v => [v]),
+        fanRead(fan, i, "/api/leaderboard/acc-you?k=0", board).then(v => [v]),
         timed(checkins, () => call("POST", "/api/fan/checkin", { body: { token: fan.token }, ip: natIp[i % 2] })),
       ]));
-      const per = k => tally(loads.map(r => ({ ok: true, value: r.value[k] })), v => String(v.status));
-      report.number("fan_page_statuses", per(0)); report.number("recent_wins_statuses", per(1)); report.number("leaderboard_statuses", per(2)); report.number("checkin_statuses", per(3));
+      const followUps = [];
+      await parallel(fans, 50, async (fan, i) => {
+        const l = loads[i].value;
+        l[1].push(await fanRead(fan, i, "/api/recent-wins/acc-you?k=1", followUps), await fanRead(fan, i, "/api/recent-wins/acc-you?k=2", followUps));
+        l[2].push(await fanRead(fan, i, "/api/leaderboard/acc-you?k=1", followUps));
+      });
+      const per = (k, many = false) => tally(loads.flatMap(r => (many ? r.value[k] : [r.value[k]]).map(value => ({ ok: true, value }))), v => String(v.status));
+      report.number("fan_page_statuses", per(0)); report.number("recent_wins_statuses", per(1, true)); report.number("leaderboard_statuses", per(2, true)); report.number("checkin_statuses", per(3));
       report.check(loads.every(r => r.value[0].status === 200), `${fansOnPage} fan pages all render (SSR, no limiter)`);
-      // 120/min/IP on recent wins and 60/min/IP on the leaderboard: fans behind one address beyond that see 429 (documented NAT false positive, A22).
-      const natFalsePositives = loads.filter(r => r.value[1].status === 429 || r.value[2].status === 429).length;
-      report.number("nat_429_fans", natFalsePositives);
-      report.check(loads.every(r => [200, 429].includes(r.value[1].status) && [200, 429].includes(r.value[2].status)), "shared-address fans get 200 or a clean 429 on the polled public reads (never 5xx)");
+      // A22 NAT false positive: per-address windows alone (60/min leaderboard, 120/min recent wins) refused legitimate fans
+      // behind one address. The shared-read limiter keys each fan by address + link token under a looser per-address ceiling.
+      const refusedFans = k => loads.filter(r => r.value[k].some(v => v.status === 429)).length;
+      const natFalsePositives = loads.filter(r => r.value[1].some(v => v.status === 429) || r.value[2].some(v => v.status === 429) || r.value[3].status === 429).length;
+      report.number("nat_429_fans", { any: natFalsePositives, leaderboard: refusedFans(2), recent_wins: refusedFans(1), checkin: loads.filter(r => r.value[3].status === 429).length });
+      report.check(natFalsePositives === 0, `0 of ${fansOnPage} legitimate fans behind two shared addresses get a 429 on the leaderboard, recent wins or check-in`, natFalsePositives);
+      report.check(loads.every(r => r.value[1].every(v => v.status === 200) && r.value[2].every(v => v.status === 200) && [200, 404].includes(r.value[3].status)), "every polled public read answers 200 (check-in 200, or 404 for a demo link it does not track)", { wins: per(1, true), board: per(2, true), checkin: per(3) });
       report.check(serverErrorsSince(mark).length === 0, "no 5xx", serverErrorsSince(mark).slice(0, 2));
       const budget = Math.max(HTTP_THRESHOLDS.fanPage, HTTP_THRESHOLDS.perPageLoad * fansOnPage);
       report.latency(`GET /spin/[token] (SSR, ${fansOnPage} concurrent)`, page, budget); report.latency("GET /api/recent-wins (during the page load)", wins, budget); report.latency("GET /api/leaderboard (during the page load)", board, budget); report.latency("POST /api/fan/checkin (during the page load)", checkins, budget);
+      // The abuse side of the same limiter (H1/H2 style, each from a fresh address): one address + token, an address rotating
+      // forged tokens, and an address sending no token are all still capped; a neighbour's token on the flooded address is not.
+      const flood = async (path, n, headersFor) => { const from = nextIp(); const rs = await parallel(Array.from({ length: n }), 50, (_, i) => call("GET", path, { ip: from, headers: headersFor(i) })); return { from, ok: rs.filter(r => r.value.status === 200).length, limited: rs.filter(r => r.value.status === 429).length, other: rs.filter(r => ![200, 429].includes(r.value.status)).length }; };
+      const capped = {};
+      for (const [name, path, perClient, perAddress] of [["leaderboard", "/api/leaderboard/acc-you", 60, 300], ["recent_wins", "/api/recent-wins/acc-you", 120, 600]]) {
+        const token = randomUUID().replaceAll("-", ""), one = await flood(path, perClient + 40, () => ({ "x-fan-token": token }));
+        const neighbour = await call("GET", path, { ip: one.from, headers: { "x-fan-token": randomUUID().replaceAll("-", "") } });
+        const rotating = await flood(path, perAddress + 100, () => ({ "x-fan-token": randomUUID().replaceAll("-", "") }));
+        const anonymous = await flood(path, perClient + 40, () => ({}));
+        capped[name] = { one_token: one, neighbour: neighbour.status, rotating_tokens: rotating, no_token: anonymous };
+        report.check(one.ok === perClient && one.limited === 40 && one.other === 0, `${name}: a flood from one address + token is capped at ${perClient}/min`, one);
+        report.check(neighbour.status === 200, `${name}: another fan's token on the flooded address is still served`, neighbour.status);
+        report.check(rotating.ok === perAddress && rotating.limited === 100 && rotating.other === 0, `${name}: an address rotating forged tokens is capped at the ${perAddress}/min per-address ceiling`, rotating);
+        report.check(anonymous.ok === perClient && anonymous.limited === 40 && anonymous.other === 0, `${name}: requests without a token share one ${perClient}/min window per address (unchanged)`, anonymous);
+      }
+      report.number("abuse_caps", capped);
+      report.finish();
+    }
+    // ============================================================ H11 Focus/Chase over HTTP (the D9 flow through the dashboard and fan routes)
+    if (want("H11")) {
+      const n = scale(40), rounds = 8, editIp = nextIp(), mark = stats.serverErrors.length;
+      report.scenario("H11", `${n} fans spin ${rounds} rounds while the creator grants (some double-submitted), cancels Focus/Chase packs, edits the Focus prize's stock and archives its game`);
+      const enable = await call("POST", "/api/debug/focus-fixture", { body: { chaseEnabled: true }, ip: editIp });
+      report.check(enable.status === 200 && enable.json?.chaseEnabled === true, "Chase enabled on the demo store (debug fixture)", enable.status);
+      const pack = async kind => { const r = await call("POST", "/api/campaign-packs", { body: { label: `H11 ${kind}`, spins: 6, amountCents: 0, packKind: kind, focusMultiplier: 3, focusSpins: 5, chaseWithin: 5 }, ip: editIp }); if (r.status !== 200) throw Error(`pack ${kind}: ${r.status} ${r.text.slice(0, 80)}`); return r.json.pack.id; };
+      const packs = { focus: await pack("focus"), chase: await pack("chase") };
+      const previous = await wheel();
+      const created = await call("POST", "/api/wheels", { body: { name: "H11 Focus game" }, ip: editIp });
+      const F = { ...created.json.wheel, prizes: [
+        { id: "h11-common", label: "Common", rarity: "common", weight: 20, stock: null, boostable: false },
+        { id: "h11-focus", label: "Focus target", rarity: "common", weight: 2, stock: 30, boostable: true },
+        { id: "h11-chase", label: "Chase target", rarity: "rare", weight: 1, stock: 12, boostable: true },
+        { id: "h11-rare", label: "Rare", rarity: "rare", weight: 1, stock: null, boostable: false },
+      ] };
+      const savedF = await call("PUT", "/api/wheel", { body: { wheel: F, expectedStock: {} }, ip: editIp });
+      const activated = await call("PATCH", `/api/wheels/${F.id}`, { body: { isActive: true }, ip: editIp });
+      report.check(created.status === 200 && savedF.status === 200 && activated.status === 200, "the creator sets up and activates a 4-prize Focus game", [created.status, savedF.status, activated.status]);
+      const live = (await wheel()).prizes, idOf = label => live.find(p => p.label === label)?.id;
+      const target = { focus: idOf("Focus target"), chase: idOf("Chase target") };
+      const fans = await makePasses(n, 4), series = [], grants = [], groups = [], cancels = [], edits = [];
+      for (const fan of fans) { const r = await call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }); fan.passId = r.json?.passes?.[0]?.id; }
+      report.check(fans.every(f => f.passId), "every fan's pass is visible to the creator's focus panel");
+      let playing = true, archived = false;
+      const fanLoop = async fan => { const out = []; for (let i = 0; i < rounds; i++) { const r = await spin(fan, { series }); out.push(r); if (r.status !== 200) break; await sleep(40); } return out; };
+      const grantOnce = async (fan, kind, copies) => {
+        const body = { requestId: randomUUID(), packId: packs[kind], prizeId: target[kind], passId: fan.passId };
+        const rs = await parallel(Array.from({ length: copies }), copies, () => call("POST", `/api/fans/${fan.fanId}/focus`, { body, ip: nextIp() }));
+        const out = rs.map(r => r.value); grants.push(...out.map(r => r.status === 200 ? "granted" : `${r.status}:${r.json?.error}`));
+        if (copies > 1) groups.push(out);
+        if (out.some(r => r.status === 200)) fan.packs = (fan.packs ?? 0) + 1;
+      };
+      const creator = async worker => {
+        for (let i = worker; playing; i += 2) {
+          const fan = fans[(i % 3 === 2 ? i - 1 : i) % n];
+          if (archived) { await sleep(20); continue; }
+          // Every third step cancels the promise just granted to the previous fan (if it was).
+          if (i % 3 === 2) { const r = await call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }); if (r.json?.focusId) { const c = await call("DELETE", `/api/fans/${fan.fanId}/focus`, { body: { focusId: r.json.focusId }, ip: nextIp() }); cancels.push(c.status === 200 ? `released:${c.json?.released}` : `${c.status}:${c.json?.error}`); continue; } }
+          await grantOnce(fan, i % 2 ? "chase" : "focus", i % 5 === 0 ? 3 : 1);
+          await sleep(10);
+        }
+      };
+      const editor = async () => {
+        const stale = await wheel(); const staleStock = Object.fromEntries(stale.prizes.map(p => [p.id, p.stock ?? null]));
+        for (let i = 0; i < 6 && playing; i++) {
+          await sleep(60);
+          const w = i % 3 === 2 ? stale : await wheel(); const expectedStock = i % 3 === 2 ? staleStock : Object.fromEntries(w.prizes.map(p => [p.id, p.stock ?? null]));
+          const prizes = w.prizes.map(p => p.id === target.focus && i % 3 !== 2 ? { ...p, stock: (p.stock ?? 0) + (i % 2 ? -1 : 3) } : p);
+          const r = await call("PUT", "/api/wheel", { body: { wheel: { ...w, prizes }, expectedStock }, ip: editIp }); edits.push(`${i % 3 === 2 ? "stale" : "save"}:${r.status}`);
+        }
+        while (playing && fans.filter(f => f.done).length < n / 2) await sleep(20);
+        const a = await call("DELETE", `/api/wheels/${F.id}`, { ip: editIp }); edits.push(`archive:${a.status}`);
+        const back = await call("PATCH", `/api/wheels/${previous.id}`, { body: { isActive: true }, ip: editIp }); edits.push(`activate previous:${back.status}`);
+        archived = true;
+      };
+      const [plays] = await Promise.all([parallel(fans, n, fan => fanLoop(fan).finally(() => { fan.done = true; })).finally(() => { playing = false; }), creator(0), creator(1), editor()]);
+      const flat = plays.flatMap(r => r.value); report.number("spin_statuses", codes(flat.map(v => ({ ok: true, value: v }))));
+      report.number("grants", tally(grants.map(v => ({ ok: true, value: v })), v => v)); report.number("cancels", tally(cancels.map(v => ({ ok: true, value: v })), v => v)); report.number("editor", edits);
+      const won = flat.filter(r => r.status === 200).map(r => r.json);
+      report.number("modifiers", { focusConsumed: won.filter(r => r.focusConsumed).length, chaseConsumed: won.filter(r => r.chaseConsumed).length, chaseCompleted: won.filter(r => r.chaseCompleted).length, chaseAwarded: won.filter(r => r.chaseAwarded).length, pityAwarded: won.filter(r => r.pityAwarded).length });
+      report.check(serverErrorsSince(mark).length === 0, "no 5xx", serverErrorsSince(mark).slice(0, 2));
+      report.check(flat.every(r => r.status === 200 || (r.status === 409 && r.json?.error === "no_spins")), "every spin answers 200 until the fan's credits run out", codes(flat.map(v => ({ ok: true, value: v }))));
+      report.check(grants.every(g => g === "granted" || /^409:(focus_exists|sold_out|invalid_target|rejected|unavailable)$/.test(g)), "every purchase is granted or a clean 409 refusal", grants.filter(g => g !== "granted" && !/^409:/.test(g)).slice(0, 3));
+      report.check(groups.every(g => { const ok = g.filter(r => r.status === 200); return ok.length === 0 ? new Set(g.map(r => r.status)).size === 1 : ok.length === g.length && new Set(ok.map(r => r.json.grantId)).size === 1 && ok.filter(r => r.json.replayed === false).length === 1; }), `${groups.length} double-submitted purchases apply once (one grant, the copies replayed)`);
+      report.check(cancels.every(c => /^released:(true|false)$/.test(c)), "every cancel answers 200", cancels.filter(c => !/^released:/.test(c)).slice(0, 3));
+      report.check(won.filter(r => r.chaseAwarded).every(r => r.prize?.id === target.chase && r.chaseCompleted), "every forced Chase award is the Chase target and completes the promise");
+      report.check(edits.every(e => /:(200|409)$/.test(e)) && edits.includes("archive:200"), "every stock save is 200 or a clean stock_changed 409, and the game is archived mid-play", edits);
+      const spun = new Map(fans.map(f => [f, plays[fans.indexOf(f)].value.filter(r => r.status === 200).length]));
+      const panels = await parallel(fans, 8, fan => call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }));
+      const balanceOff = fans.filter((fan, i) => panels[i].value.json?.passes?.[0]?.spinsRemaining !== 4 + 6 * (fan.packs ?? 0) - spun.get(fan));
+      report.check(balanceOff.length === 0, "each fan's balance is 4 + 6 per granted pack - spins played (the ledger, double-submits counted once)", balanceOff.slice(0, 2).map(f => ({ packs: f.packs, spun: spun.get(f), panel: panels[fans.indexOf(f)].value.json?.passes?.[0]?.spinsRemaining })));
+      report.check(panels.every(r => r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase)), "no promise survives on the archived game's prizes", panels.filter(r => !(r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase))).slice(0, 2).map(r => ({ status: r.value.status, focus: r.value.json?.focus })));
+      const fAfter = await call("GET", `/api/wheels/${F.id}`, { ip: editIp }), chaseLeft = fAfter.json?.wheel?.prizes?.find(p => p.id === target.chase)?.stock;
+      const chaseWins = won.filter(r => r.prize?.id === target.chase).length;
+      report.number("chase_stock", { left: chaseLeft ?? null, won: chaseWins, read: fAfter.status });
+      report.check(fAfter.status === 200 && typeof chaseLeft === "number" && chaseLeft >= 0, "the archived game's Chase prize stock is readable and never negative", { status: fAfter.status, chaseLeft });
+      // The demo store's saveWheel ignores expectedStock (SQL save_wheel_prizes applies the editor's delta, D3/D9), so a
+      // save that races a win puts the won unit back: demo-only, documented in STRESS_RESULTS.md.
+      report.known("DEMO_SAVE_IGNORES_EXPECTED_STOCK", chaseLeft + chaseWins === 12, "Chase stock conserved over HTTP: 12 = left + won (held units returned on archive)", { chaseLeft, chaseWins });
+      report.latency("spin during focus/chase grants", series, HTTP_THRESHOLDS.spinContended);
       report.finish();
     }
     // ============================================================ H8 cron, fan deletion and account reset while activity continues (last: it clears the store)

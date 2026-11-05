@@ -1,7 +1,8 @@
 // DB-level load scenarios (A26) on the disposable local PostgreSQL: the real
 // SQL gateways (prepare/commit_spin_attempt, create_pass_grant, grant_pass_spins,
 // edit_pass_grant, import_fans_durable, save_wheel_prizes, add_reward_codes,
-// save_game_wheel, run_retention_cleanup, reserve_self_account_deletion) driven
+// save_game_wheel, run_retention_cleanup, reserve_self_account_deletion,
+// grant_focus_pack, cancel_fan_focus, archive_wheel) driven
 // by hundreds of concurrent sessions through the pool. Every scenario ends with
 // the ledger invariants from docs/handoff/COMPLETENESS_AUDIT_2.md. Fixtures
 // follow scripts/db/interplayProbe.mjs; no Supabase credential is read.
@@ -26,6 +27,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const DB_THRESHOLDS = { commit: 400, perContender: 10, prepare: 250, grant: 400, save: 600, import500: 4000, retention: 3000, invariants: 5000, cascade: 15000 };
 /** D4: deadlock retries allowed between commit_spin_attempt and a campaign pin flip (0 since 0070; a small bound keeps a regression from hiding behind one stray retry). */
 export const D4_DEADLOCK_BOUND = 0;
+/** D9: deadlock retries allowed between plays, Focus/Chase grants and cancels, stock saves and archive_wheel (hard bound). */
+export const D9_DEADLOCK_BOUND = 0;
 
 export async function runDbScenarios(report, { sql, quick = false, pool, only = null }) {
   const N = quick ? 0.3 : 1;
@@ -409,6 +412,189 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.check(victims.every(r => !r.ok ? /fan|pass|not found|violat/i.test(r.error) : ["committed", "unavailable", "declined", "conflict"].includes(r.value.status)), "the deleted fan's in-flight plays end committed-before or cleanly unavailable", victims.filter(r => !r.ok).map(r => r.error).slice(0, 2));
       report.latency("commit during maintenance", series, DB_THRESHOLDS.commit * 2); report.latency("run_retention_cleanup", ret, DB_THRESHOLDS.retention); report.latency(`creator deletion cascade (${fansN} fans, ${fansN * rounds} spins)`, cascade, DB_THRESHOLDS.cascade);
       await invariants(live, "maintenance"); await ledger("after deletion"); report.finish();
+    }
+    // ============================================================ D9 Focus/Chase under contention
+    if (want("D9")) {
+      const n = scale(60), rounds = quick ? 10 : 16, CHASE_STOCK = 20, CODES = 10, FOCUS_STOCK = 30;
+      report.scenario("D9", `${n} fans play up to ${rounds} rounds while Focus/Chase packs are granted, replayed and cancelled, the creator edits the Focus prize's stock and archives its game`);
+      const c = await addCreator();
+      await sql(`insert into public.focus_creator_config(creator_id,chase_enabled) values(${quote(c)},true);`);
+      // Every game keeps >= 2 prizes (0069). F is the live game; G takes over when F is archived.
+      const F = await addWheel(c, { title: "Focus game", prizes: [{ label: "Common", weight: 20 }, { label: "FocusTarget", weight: 2, stock: FOCUS_STOCK }, { label: "ChaseTarget", weight: 1, stock: CHASE_STOCK, rarity: "rare" }, { label: "ChaseCode", weight: 1, rarity: "rare" }, { label: "Rare", weight: 1, rarity: "rare" }] });
+      const G = await addWheel(c, { title: "Fallback game", active: false, prizes: [{ label: "GCommon", weight: 4 }, { label: "GRare", weight: 1, rarity: "rare" }] });
+      await sql(`update public.prizes set boostable=true where id in(${[F.prizes.FocusTarget, F.prizes.ChaseTarget, F.prizes.ChaseCode, G.prizes.GRare].map(quote).join(",")});`);
+      await rpc("add_reward_codes", [quote(F.prizes.ChaseCode), quote(c), json(Array.from({ length: CODES }, (_, i) => ({ cipher: `d9-${i}`, iv: `iv-${i}`, key_version: 1, hint: `h${i}`, fingerprint: hash(`d9-${c}-${i}`) })))]);
+      const makePack = async kind => { const id = uid(); await sql(`insert into public.campaign_packs(id,creator_id,label,spins,pack_kind,focus_spins,chase_within,focus_multiplier) values(${quote(id)},${quote(c)},'d9 ${kind}',6,${quote(kind)},5,5,3);`); return id; };
+      const packs = { focus: await makePack("focus"), chase: await makePack("chase") };
+      const fans = await grantFans(c, null, n, 6);
+      const series = [], prepSeries = [], grantSeries = [], cancelSeries = [], editSeries = [], archiveSeries = [];
+      const forged = { pity: 0, chase: 0, early: 0 }, refused = {}, forgeUnexpected = [], grantsOut = [], replayGroups = [], cancelsOut = [], edits = [], deltas = [];
+      let wheelGen = null, forgeTick = 0, completed = 0, rateLimited = 0, playing = true, archived = false;
+      const codeRow = async id => JSON.parse((await scalar(`select jsonb_build_object('delivery','codes','codeId',id,'cipher',cipher,'iv',iv,'keyVersion',key_version) from public.prize_reward_codes where id=${quote(id)} and spin_id is null;`)) || "null");
+      const rare = p => ["rare", "epic", "legendary"].includes(p.rarity);
+      // The service's body (commitSpinAttempt), drawn by the real engine through the bridge.
+      const focusBody = async (a, excluded, used) => {
+        wheelGen ??= bridge("scripts/stress/wheelProofFixture.ts");
+        const ctx = a.context, g = await wheelGen({ context: ctx, excluded, clientSeed: "stress-d9" }), d = g.draw, p = ctx.prizes.find(x => x.id === d.prize.id);
+        const held = ctx.reservation?.prize_id === p.id && g.snapshot.modifiers.chase?.eligible === true;
+        const expected = p.delivery === "codes" ? (held ? await codeRow(ctx.reservation.code_id) : await freeCode(p.id, used) ?? await freeCode(p.id, [])) ?? { delivery: "codes", codeId: randomUUID(), cipher: "", iv: "", keyVersion: 1 } : { delivery: p.delivery ?? "manual" };
+        const spin = { id: a.id, fan_id: ctx.fanId, fan_pass_id: ctx.passId, creator_id: ctx.creatorId, wheel_id: ctx.wheelId, campaign_id: ctx.campaignId, prize_id: p.id, prize_label: p.label, prize_rarity: p.rarity, prize_image_url: p.image_url,
+          server_seed: ctx.serverSeed, server_seed_hash: ctx.serverSeedHash, nonce: ctx.nonce, client_seed: g.clientSeed, fair_version: 3, pool_snapshot: g.snapshot, pool_hash: g.poolHash, fair_trace: g.trace,
+          next_pity_counter: d.nextPityCounter, focus_consumed: d.focusConsumed ?? false, chase_consumed: d.chaseConsumed ?? false, chase_completed: d.chaseCompleted ?? false, next_focus_spins_left: d.nextFocusSpinsLeft ?? null, next_chase_counter: d.nextChaseCounter ?? null,
+          response_prize: { id: p.id, label: p.label, rarity: p.rarity, weight: p.weight }, response_prize_index: Math.max(0, g.prizeIndex), response_show_stock: ctx.wheel.show_stock };
+        return { ctx: { contextHash: ctx.contextHash }, spin, expected, next: nextSeed(), prizeId: p.id, codeId: expected.codeId, g };
+      };
+      // A client that claims an outcome it is not entitled to: a common prize while a guarantee is due, or an early Chase completion.
+      const forge = (body, a) => {
+        const s = structuredClone(body), ctx = a.context, g = body.g, common = ctx.prizes.find(p => !rare(p) && p.stock == null);
+        const asWin = p => Object.assign(s.spin, { prize_id: p.id, prize_label: p.label, prize_rarity: p.rarity, prize_image_url: p.image_url, fair_trace: { ...s.spin.fair_trace, won: p.id }, response_prize: { id: p.id, label: p.label, rarity: p.rarity, weight: p.weight }, next_pity_counter: rare(p) ? 0 : ctx.pityCounter + 1 });
+        if (g.chaseForced) { asWin(common); s.spin.chase_completed = false; return { kind: "chase", body: s, expect: /chase guarantee violated/ }; }
+        if (g.pityForced) { asWin(common); return { kind: "pity", body: s, expect: /pity guarantee violated/ }; }
+        const chase = g.snapshot.modifiers.chase;
+        if (chase?.eligible && s.spin.prize_id !== chase.prizeId) { s.spin.chase_completed = true; return { kind: "early", body: s, expect: /counter transition mismatch/ }; }
+        return null;
+      };
+      const focusPlay = async who => {
+        let a = await prep(who, undefined, prepSeries), forgeTried = false; const excluded = [], used = [];
+        for (let round = 0; round < 16; round++) {
+          if (a.status !== "ready") return { status: a.status, error: a.error ?? null };
+          const body = await focusBody(a, excluded, used);
+          const f = forgeTried ? null : forge(body, a); forgeTried = true;
+          if (f && ++forgeTick % 2 === 0) {
+            forged[f.kind]++;
+            try { const r = await commit(who, a, f.body); if (r.status === "committed") forgeUnexpected.push(`${f.kind}: committed`); else refused[`${f.kind}:${r.status}`] = (refused[`${f.kind}:${r.status}`] ?? 0) + 1; }
+            catch (e) { if (e.code === "40P01") deadlocks.push(e.detail ?? e.message); const k = `${f.kind}:${e.code}:${f.expect.test(e.message) ? "refused" : e.message}`; refused[k] = (refused[k] ?? 0) + 1; }
+          }
+          let r;
+          try { r = await timed(series, () => commit(who, a, body)); } catch (e) { if (e.code !== "40P01") throw e; deadlocks.push(e.detail ?? e.message); continue; }
+          if (r.status === "committed") return { status: "committed", prizeId: body.prizeId };
+          if (r.status === "sold_out") { excluded.push(body.prizeId); continue; }
+          if (r.status === "changed" && body.codeId) used.push(body.codeId);
+          if (r.status === "retry_context" || r.status === "changed") { a = await prep(who, a.id); excluded.length = 0; continue; }
+          return { status: r.status, error: r.error ?? null };
+        }
+        await cancel(who, a).catch(() => {});
+        return { status: "exhausted" };
+      };
+      // A fan keeps playing until the credits run out. The 8-per-10s fan window is real: a declined play ages the window (the pause a person would take) and plays again.
+      const fanLoop = async who => {
+        const out = [];
+        for (let i = 0; i < rounds; i++) {
+          let r = await focusPlay(who);
+          if (r.status === "declined" && r.error === "rate_limited") { rateLimited++; await sql(`update public.fans set rl_window_start=now()-interval '11 seconds' where id=${quote(who.fan)};`); r = await focusPlay(who); }
+          out.push(r); completed++;
+          if (r.status !== "committed") break;
+        }
+        return out;
+      };
+      const guard = (promise, out) => promise.catch(e => { if (e.code === "40P01") deadlocks.push(e.detail ?? e.message); return { status: `error:${e.code ?? "?"}`, error: e.message }; }).then(v => { out?.push(v.status); return v; });
+      const creatorLoop = async () => {
+        for (let i = 0; playing; i += 4) {
+          await parallel([0, 1, 2, 3], 4, async j => {
+            const k = (i + j) % n, who = fans[k];
+            const live = await scalar(`select coalesce((select id::text from public.fan_focus where fan_id=${quote(who.fan)} and status in('active','paused')),'none');`);
+            if (live !== "none" && (i / 4 + j) % 3 === 0) return guard(timed(cancelSeries, () => rpc("cancel_fan_focus", [quote(c), quote(who.fan), quote(live)])), cancelsOut);
+            const kind = (i / 4 + k) % 2 ? "chase" : "focus";
+            const prize = archived ? G.prizes.GRare : kind === "focus" ? F.prizes.FocusTarget : k % 4 < 2 ? F.prizes.ChaseCode : F.prizes.ChaseTarget;
+            const args = [quote(randomUUID()), quote(c), quote(who.fan), quote(who.pass), quote(packs[kind]), quote(prize)];
+            // Every fifth purchase is a double-submit: three copies of one requestId at once.
+            const copies = k % 5 === 0 ? 3 : 1;
+            const rs = await Promise.all(Array.from({ length: copies }, () => guard(timed(grantSeries, () => rpc("grant_focus_pack", args)), grantsOut)));
+            if (copies > 1) replayGroups.push({ request: args[0], rs });
+          });
+          await sleep(5);
+        }
+      };
+      const prizeRows = async () => (await sql(`select coalesce(json_agg(json_build_object('id',id,'label',label,'rarity',rarity,'weight',weight,'emoji',emoji,'boostable',boostable,'stock',stock) order by sort_order),'[]') from public.prizes where wheel_id=${quote(F.id)};`)).trim();
+      const editor = async () => {
+        const stale = JSON.parse(await prizeRows());
+        for (let i = 0; playing && !archived && i < 14; i++) {
+          await sleep(40);
+          const fresh = JSON.parse(await prizeRows()), staleSave = i % 4 === 3;
+          let delta = [3, -2, 4, 0, -1, 2][i % 6];
+          // A cut is only made with room to spare so the save never clamps at 0 (the conservation check below is exact).
+          if (delta < 0 && (fresh.find(r => r.id === F.prizes.FocusTarget).stock ?? 0) < 15) delta = 2;
+          const rows = (staleSave ? stale : fresh).map(r => ({ ...r, expected_stock: r.stock }));
+          // The stale editor re-saves what it loaded at the start: a zero delta, it must never restock.
+          if (staleSave) delta = 0; else rows.find(r => r.id === F.prizes.FocusTarget).stock += delta;
+          await timed(editSeries, () => rpc("save_wheel_prizes", [quote(F.id), quote(c), json(rows)])).then(() => { deltas.push(delta); edits.push(`${staleSave ? "stale" : "save"}${delta >= 0 ? "+" : ""}${delta}`); }, e => { if (e.code === "40P01") deadlocks.push(e.detail ?? e.message); edits.push(`save:${e.code}`); });
+        }
+      };
+      // Archive the Focus game through the dashboard's RPC (it locks the game's Focus/Chase fans before the wheel) once the base credits are about spent, then switch to G.
+      const archiver = async () => {
+        while (playing && completed < n * 6) await sleep(20);
+        const r = await guard(timed(archiveSeries, () => sql(`begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(c)},true);select public.archive_wheel(${quote(F.id)});commit;`).then(v => ({ status: v.trim().split("\n").at(-1) }))));
+        await sql(`update public.wheels set is_active=true where id=${quote(G.id)};`);
+        archived = true; edits.push(`archive:${r.status}`);
+      };
+      const t0 = Date.now();
+      const [loops] = await Promise.all([parallel(fans, n, fanLoop).finally(() => { playing = false; }), creatorLoop(), editor(), archiver()]);
+      const results = loops.flatMap(r => r.ok ? r.value.map(v => ({ ok: true, value: v })) : [r]);
+      const dl = deadlocks.splice(0);
+      report.number("wall_ms", Date.now() - t0); report.number("plays", outcomes(results)); report.number("rate_limit_pauses", rateLimited);
+      report.number("grants", tally(grantsOut.map(s => ({ ok: true, value: s })), s => s)); report.number("cancels", tally(cancelsOut.map(s => ({ ok: true, value: s })), s => s)); report.number("editor", edits);
+      report.number("forged", forged); report.number("forged_outcomes", refused); report.number("deadlocks_retried", dl.length);
+      report.check(dl.length <= D9_DEADLOCK_BOUND, `at most ${D9_DEADLOCK_BOUND} deadlock(s) between plays, Focus/Chase grants/cancels, stock saves and archive_wheel`, dl.length ? `${dl.length}; ${await named(dl[0])}` : 0);
+      await noErrors(results, "focus/chase plays");
+      report.check(results.every(r => r.ok && (r.value.status === "committed" || (r.value.status === "declined" && r.value.error === "no_spins"))), "every play commits until the fan's credits run out", outcomes(results));
+      const grantOk = ["granted", "focus_exists", "sold_out", "invalid_target", "rejected"];
+      report.check(grantsOut.every(s => grantOk.includes(s)), "every Focus/Chase purchase is granted or cleanly refused (focus_exists, sold_out, invalid_target; a replayed refusal answers rejected)", grantsOut.filter(s => !grantOk.includes(s)).slice(0, 3));
+      report.check(cancelsOut.every(s => s === "released" || s === "absent"), "every cancel releases or finds the promise already gone", cancelsOut.filter(s => s !== "released" && s !== "absent").slice(0, 3));
+      const replayOk = [];
+      for (const g of replayGroups) {
+        const granted = g.rs.filter(r => r.status === "granted"), rows = Number(await scalar(`select count(*) from public.grants where id=${g.request};`));
+        // A refused purchase is journalled: its copies answer `rejected` with the original refusal.
+        const first = g.rs.filter(r => r.status !== "rejected");
+        replayOk.push(granted.length === 0 ? rows === 0 && first.length === 1 && g.rs.filter(r => r.status === "rejected").every(r => r.error === first[0].status) : granted.length === 3 && granted.filter(r => r.replayed === false).length === 1 && new Set(granted.map(r => r.focus?.id)).size === 1 && rows === 1);
+      }
+      report.check(replayOk.every(Boolean), `${replayGroups.length} double-submitted purchases (3 copies of one requestId) apply once: one grant row, one promise, two replays`, replayOk.filter(v => !v).length);
+      report.check(forgeUnexpected.length === 0 && Object.keys(refused).every(k => /:22023:refused$/.test(k) || /:(retry_context|changed|sold_out|declined)$/.test(k)), "every forged outcome (a common prize while pity or Chase is due, an early Chase completion) is refused with 22023 (or meets a changed context first) and never commits", { refused, forgeUnexpected });
+      const v = JSON.parse(await scalar(`with s as (select s.*,a.result from public.spins s join public.spin_attempts a on a.spin_id=s.id where s.creator_id=${quote(c)} and s.kind='play'),
+        snap as (select s.*,s.pool_snapshot->'modifiers' m,coalesce(s.fair_trace->'excluded','[]'::jsonb) ex from s)
+        select jsonb_build_object(
+        'focusMismatch',(select count(*) from public.fans f where f.creator_id=${quote(c)} and coalesce((select sum(z.total_spins-z.spins_left) from public.fan_focus z where z.fan_id=f.id and z.kind='focus'),0)<>(select count(*) from s where s.fan_id=f.id and (s.result->>'focusConsumed')::boolean)),
+        'chaseMismatch',(select count(*) from public.fans f where f.creator_id=${quote(c)} and coalesce((select sum(z.chase_counter) from public.fan_focus z where z.fan_id=f.id and z.kind='chase'),0)<>(select count(*) from s where s.fan_id=f.id and (s.result->>'chaseConsumed')::boolean)),
+        'focusRange',(select count(*) from public.fan_focus where creator_id=${quote(c)} and (spins_left<0 or spins_left>total_spins or chase_counter<0 or chase_counter>total_spins)),
+        'liveOnArchived',(select count(*) from public.fan_focus where creator_id=${quote(c)} and wheel_id=${quote(F.id)} and status in('active','paused')),
+        'heldOnArchived',(select count(*) from public.chase_reservations where creator_id=${quote(c)} and state='held' and prize_id in(${[F.prizes.ChaseTarget, F.prizes.ChaseCode].map(quote).join(",")})),
+        'doubleConsumed',(select count(*) from (select consumed_spin_id from public.chase_reservations where creator_id=${quote(c)} and consumed_spin_id is not null group by 1 having count(*)>1) d),
+        'consumedMismatch',(select count(*) from public.chase_reservations r join public.fan_focus z on z.id=r.focus_id left join public.spins x on x.id=r.consumed_spin_id where r.creator_id=${quote(c)} and r.state='consumed' and (x.id is null or x.prize_id<>r.prize_id or x.fan_id<>z.fan_id)),
+        'consumedVsCompleted',(select count(*) from public.chase_reservations where creator_id=${quote(c)} and state='consumed')-(select count(*) from s where (s.result->>'chaseCompleted')::boolean),
+        'heldCodes',(select count(*) from public.prize_reward_codes where prize_id=${quote(F.prizes.ChaseCode)} and reserved_focus_id is not null),
+        'grantLedger',(select count(*) from public.fan_passes p where p.creator_id=${quote(c)} and p.spins_granted_total<>(select coalesce(sum(g.spins),0) from public.grants g where g.fan_pass_id=p.id)),
+        'balanceLedger',(select count(*) from public.fan_passes p where p.creator_id=${quote(c)} and p.spins_remaining<>p.spins_granted_total-(select count(*) from public.spins x where x.fan_pass_id=p.id and x.kind='play')),
+        'pityUnentitled',(select count(*) from snap where (result->>'pityAwarded')::boolean and not((m#>>'{pity,counter}')::int+1>=(m#>>'{pity,threshold}')::int and prize_rarity in('rare','epic','legendary'))),
+        'chaseUnentitled',(select count(*) from snap where (result->>'chaseAwarded')::boolean and not(m->'chase' is not null and m->'chase'<>'null'::jsonb and (m#>>'{chase,eligible}')::boolean and (m#>>'{chase,counter}')::int+1>=(m#>>'{chase,within}')::int and prize_id::text=m#>>'{chase,prizeId}')),
+        'chaseMissed',(select count(*) from snap where m->'chase'<>'null'::jsonb and (m#>>'{chase,eligible}')::boolean and (m#>>'{chase,counter}')::int+1>=(m#>>'{chase,within}')::int and prize_id::text<>m#>>'{chase,prizeId}'),
+        'pityMissed',(select count(*) from snap where (m#>>'{pity,counter}')::int+1>=(m#>>'{pity,threshold}')::int and prize_rarity not in('rare','epic','legendary')
+          and not(m->'chase'<>'null'::jsonb and (m#>>'{chase,eligible}')::boolean and (m#>>'{chase,counter}')::int+1>=(m#>>'{chase,within}')::int)
+          and exists(select 1 from jsonb_array_elements(pool_snapshot->'prizes') x where x->>'rarity' in('rare','epic','legendary') and not(ex ? (x->>'id')))),
+        'pityAwarded',(select count(*) from s where (result->>'pityAwarded')::boolean),'chaseAwarded',(select count(*) from s where (result->>'chaseAwarded')::boolean),
+        'focusConsumed',(select count(*) from s where (result->>'focusConsumed')::boolean),'chaseCompleted',(select count(*) from s where (result->>'chaseCompleted')::boolean),
+        'focusPaused',(select count(*) from snap where m->'focus'<>'null'::jsonb and not (m#>>'{focus,applied}')::boolean),
+        'spinsOnF',(select count(*) from s where wheel_id=${quote(F.id)}),'spinsOnG',(select count(*) from s where wheel_id=${quote(G.id)}),
+        'focusStatuses',(select jsonb_object_agg(k,v) from (select kind||':'||status k,count(*) v from public.fan_focus where creator_id=${quote(c)} group by 1) q));`));
+      report.number("ledger", v);
+      report.check(v.focusMismatch === 0 && v.chaseMismatch === 0, "no double consumption: every Focus spin used and every Chase step counted is exactly one committed play", `${v.focusMismatch}/${v.chaseMismatch}`);
+      report.check(v.doubleConsumed === 0 && v.consumedMismatch === 0 && v.consumedVsCompleted === 0, "every consumed Chase unit belongs to exactly one win of its own prize by its own fan", v);
+      report.check(v.focusRange === 0, "every promise's counters stay within 0..length");
+      report.check(v.grantLedger === 0 && v.balanceLedger === 0, "each pass's balance equals its grant ledger minus its plays (Focus/Chase packs included)", `${v.grantLedger}/${v.balanceLedger}`);
+      report.check(v.pityUnentitled === 0 && v.chaseUnentitled === 0, "a forced outcome (pity or Chase) appears only when the counters entitled it", `${v.pityUnentitled}/${v.chaseUnentitled}`);
+      report.check(v.pityMissed === 0 && v.chaseMissed === 0, "every due guarantee was honoured (a rare at pity, the target at the Chase deadline)", `${v.pityMissed}/${v.chaseMissed}`);
+      if (quick) { if (!v.pityAwarded || !v.chaseAwarded) report.warn(`quick run: pity forced ${v.pityAwarded}, Chase forced ${v.chaseAwarded}`); }
+      else report.check(v.pityAwarded > 0 && v.chaseAwarded > 0 && forged.pity > 0 && forged.chase > 0, "pity and Chase forcing both kicked in under contention (and were each probed with a forged outcome)", { pity: v.pityAwarded, chase: v.chaseAwarded, forged });
+      report.check(v.liveOnArchived === 0 && v.heldOnArchived === 0 && v.heldCodes === 0, "archiving the Focus game released every promise on it and returned every held unit and code", v);
+      report.check(edits.includes("archive:ok") && v.spinsOnG > 0, "the game was archived mid-play and play carried on on the fallback game", { edits: edits.at(-1), spinsOnG: v.spinsOnG });
+      const [chaseWins] = await awarded(F.prizes.ChaseTarget), [codeWins] = await awarded(F.prizes.ChaseCode), [focusWins] = await awarded(F.prizes.FocusTarget);
+      const chaseStock = await stockOf(F.prizes.ChaseTarget), focusStock = await stockOf(F.prizes.FocusTarget), sumDelta = deltas.reduce((t, d) => t + d, 0);
+      report.check(chaseStock >= 0 && chaseStock + chaseWins === CHASE_STOCK, `Chase stock conserved: ${CHASE_STOCK} = ${chaseStock} left + ${chaseWins} won (no unit held after the archive)`);
+      const codes = (await scalar(`select count(*)||','||count(spin_id)||','||count(*) filter(where spin_id is null and reserved_focus_id is null) from public.prize_reward_codes where prize_id=${quote(F.prizes.ChaseCode)};`)).split(",").map(Number);
+      report.check(codes[0] === CODES && codes[1] === codeWins && codes[2] === await stockOf(F.prizes.ChaseCode), `Chase codes conserved: ${CODES} = ${codes[2]} free + ${codes[1]} assigned to ${codeWins} wins`, codes);
+      report.check(focusStock >= 0 && focusStock === FOCUS_STOCK + sumDelta - focusWins, `Focus prize stock = ${FOCUS_STOCK} + creator edits (${sumDelta >= 0 ? "+" : ""}${sumDelta}) - ${focusWins} won; stale re-saves never restock`, focusStock);
+      report.latency("commit (every fan on one game's prize rows)", series, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("prepare", prepSeries, DB_THRESHOLDS.prepare + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2));
+      report.latency("grant_focus_pack (beside the plays)", grantSeries, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("cancel_fan_focus", cancelSeries, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2));
+      report.latency("save_wheel_prizes (Focus prize stock)", editSeries, DB_THRESHOLDS.save + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("archive_wheel", archiveSeries, DB_THRESHOLDS.retention);
+      await invariants(c, "focus/chase"); await ledger("focus/chase"); report.finish();
     }
   } finally {
     for (const b of bridges) { try { b.stdin.end(); b.kill(); } catch { /* already gone */ } }

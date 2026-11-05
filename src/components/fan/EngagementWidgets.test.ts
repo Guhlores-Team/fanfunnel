@@ -32,8 +32,9 @@ mock.module("@/lib/sound", { namedExports: {
 } });
 // The actual widgets remain in the test. Their shared transport hook records
 // which public reads a mount would admit, without sending any network request.
-mock.module("@/lib/hooks/useFetch", { namedExports: { useFetch: (url: string) => {
-  reads.push(url);
+const readHeaders: (Record<string, string> | undefined)[] = [];
+mock.module("@/lib/hooks/useFetch", { namedExports: { useFetch: (url: string, opts?: { headers?: Record<string, string> }) => {
+  reads.push(url); readHeaders.push(opts?.headers);
   return { data: url.startsWith("/api/leaderboard/")
     ? { enabled: true, creatorTitle: "Creator", entries: [] } : [],
   loading: false, error: null, reload: async () => {}, setData() {} };
@@ -65,7 +66,7 @@ async function main() {
     focus: { kind: "focus", prizeId: prize.id, prizeLabel: prize.label, multiplier: 3, totalSpins: 10,
       spinsLeft: 7, chaseWithin: 10, chaseCounter: 0, status: "active", pauseReason: null } };
   for (const state of ["eligible", "blocked", "paused", "break", "resumed", "board-off", "missing-creator"] as const) {
-    paused = state === "paused"; onBreak = state === "break"; reads.length = 0;
+    paused = state === "paused"; onBreak = state === "break"; reads.length = 0; readHeaders.length = 0;
     const current = { ...pass, blocked: state === "blocked", leaderboardEnabled: state !== "board-off",
       creatorId: state === "missing-creator" ? undefined : pass.creatorId };
     const tree = elements(Client({ pass: current }));
@@ -81,6 +82,8 @@ async function main() {
     check(`${state}: only eligible widget mounts admit public reads`, eligible
       ? reads.length === 2 && reads.some(url => url.startsWith("/api/leaderboard/creator"))
         && reads.some(url => url.startsWith("/api/recent-wins/creator")) : reads.length === 0);
+    // A22: both reads carry the fan's own link token so the shared-address limiter keys them per fan.
+    if (eligible) check(`${state}: both public reads send the fan's link token as x-fan-token`, readHeaders.length === 2 && readHeaders.every(h => h?.["x-fan-token"] === pass.token));
     const book = tree.find(element => element.type === PrizeBook);
     const gallery = tree.find(element => element.type === WinsGallery);
     check(`${state}: purchased focus progress remains readable`, (book?.props.focus as { spinsLeft?: number })?.spinsLeft === 7);
