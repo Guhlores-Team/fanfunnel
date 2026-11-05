@@ -12435,6 +12435,7 @@ grant execute on function public.schema_version() to service_role;
 comment on function public.schema_version() is 'Migration level of this database (0070). Every migration redefines it with its own number; the app flags a database behind its expected level.';
 
 
+
 -- Migration0071: 0071: ledger guards, seat consent, profile hygiene and lock order (security
 -- 0071: ledger guards, seat consent, profile hygiene and lock order (security
 -- audit 3 and the DB concurrency audit on orch/fixes 829a288). Additive and
@@ -12476,7 +12477,10 @@ comment on function public.schema_version() is 'Migration level of this database
 --   (i) L7  Invitation acceptance and the invitee read policy use the
 --           confirmed sign-in address (auth.users.email_confirmed_at).
 --   (j) I1  Future tables: no TRUNCATE for API roles, nothing for anon.
---   (k) I8  No actor context for an inactive or unapproved account.
+--   (k) I8  Not adopted: an unapproved or suspended account still mints an
+--           actor context, because the gateways must answer it with a durable
+--           refusal and let it reconcile or cancel its own requests (0056,
+--           0062); the gateways, not the mint, refuse the economic effect.
 --  Lock order (fan -> pass -> wheel -> prize kept everywhere):
 --   (l) F1  commit/cancel_spin_attempt lock fan -> pass before the attempt.
 --   (m) F2  self_exclude_pass: the fan's link pause locks fan -> pass.
@@ -12910,42 +12914,6 @@ grant execute on function public.org_invite_respond(uuid, boolean) to authentica
 alter default privileges for role postgres in schema public revoke truncate on tables from anon, authenticated;
 alter default privileges for role postgres in schema public revoke all on tables from anon;
 alter default privileges for role postgres in schema public revoke all on sequences from anon;
-
--- ── (k) I8: actor contexts for eligible accounts only ───────────────────────
--- (issue_creator_actor_context: 0062_account_security_lifecycle.sql's definition, edited)
-create or replace function public.issue_creator_actor_context(p_creator uuid,p_permission text)
-returns uuid language plpgsql security definer set search_path=public as $$
-declare actor uuid:=auth.uid(); claims jsonb:=auth.jwt(); sid uuid; deadline timestamptz; issued timestamptz; context_id uuid;
-begin
- if actor is null or claims->>'sub' is distinct from actor::text or claims->>'role' is distinct from 'authenticated'
-  or p_permission not in('grant','edit_wheel','reconcile','system_health') or p_permission is null
-  or (p_permission<>'reconcile' and p_creator is null)
-  or coalesce(claims->>'session_id','') !~* '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
-  or coalesce(claims->>'exp','') !~ '^[0-9]{1,12}$'
-  or claims->>'aal' not in('aal1','aal2') or claims->>'aal' is null then
-  raise exception 'authenticated session required' using errcode='42501';
- end if;
- if p_permission='system_health' and (p_creator is distinct from actor or claims->>'aal'<>'aal2' or not public.is_admin()) then raise exception 'admin step-up required' using errcode='42501'; end if;
- sid:=(claims->>'session_id')::uuid;
- -- Independent issuance namespace: no profile/fan/inventory/admin locks nest.
- perform pg_advisory_xact_lock(hashtextextended('fanfunnel-actor-context:'||actor::text,62));
- issued:=clock_timestamp();
- select least(issued+interval '60 seconds',to_timestamp((claims->>'exp')::double precision),coalesce(s.not_after,'infinity'::timestamptz))
-  into deadline from auth.sessions s where s.id=sid and s.user_id=actor;
- -- 0071 (I8): only an active, approved account (or an admin) gets a context.
- if deadline is null or deadline<=issued or not exists(select 1 from public.profiles where id=actor and is_active and (approval_status='approved' or role='admin')) then
-  raise exception 'authenticated session required' using errcode='42501';
- end if;
- delete from public.creator_actor_contexts where actor_id=actor and expires_at<=issued;
- if (select count(*) from public.creator_actor_contexts where actor_id=actor)>=32 then
-  raise exception 'actor context limit' using errcode='54000';
- end if;
- insert into public.creator_actor_contexts(actor_id,session_id,creator_id,permission,aal,created_at,expires_at)
-  values(actor,sid,p_creator,p_permission,claims->>'aal',issued,deadline) returning id into context_id;
- return context_id;
-end $$;
-revoke execute on function public.issue_creator_actor_context(uuid, text) from public, anon;
-grant execute on function public.issue_creator_actor_context(uuid, text) to authenticated;
 
 -- ── (l) F1 + (q) F6: a play locks profile -> fan -> pass -> attempt ──────────
 -- (commit_spin_attempt: 0070_resolve_spin_game_once.sql's definition, edited)

@@ -1104,7 +1104,7 @@ function probeLedger0071(db) {
     console.log(`FAIL  ${db}: 0071 ledger guards, consent and profile hygiene`);
     for (const message of bad) console.log(`  - ${message}`);
   } else {
-    console.log(`PASS  ${db}: 0071 ${checks} checks: a game with history is never deleted (seat, owner, service role) but the account cascade and the owner's own reset still remove it; sessions cannot write grants or delete links or campaigns; a chosen game keeps 2 prizes; no e-mail display names (sign-up, writes, masked stats); seats only by invitation, one agency per owner, org_leave; MFA own-row reads; slug/tagline/name validated; confirmed invitee only; future tables closed to anon; no context for pending or suspended accounts`);
+    console.log(`PASS  ${db}: 0071 ${checks} checks: a game with history is never deleted (seat, owner, service role) but the account cascade and the owner's own reset still remove it; sessions cannot write grants or delete links or campaigns; a chosen game keeps 2 prizes; no e-mail display names (sign-up, writes, masked stats); seats only by invitation, one agency per owner, org_leave; MFA own-row reads; slug/tagline/name validated; confirmed invitee only; future tables closed to anon`);
   }
 }
 

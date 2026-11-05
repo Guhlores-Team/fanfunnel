@@ -1,5 +1,5 @@
 // @ts-check
-// 0071 security probe (security audit 3: H1, M1, M2, L1, L2, L7, I1, I8). Run
+// 0071 security probe (security audit 3: H1, M1, M2, L1, L2, L7, I1). Run
 // by schema-drift-check.mjs on every build path against a throwaway local
 // Postgres, acting as real `authenticated`, `anon` and `service_role` sessions
 // through the live grants, policies, triggers and RPCs (the stub carries
@@ -237,10 +237,6 @@ export function probeLedgerGuards(db, psql) {
     create table public.probe_0071_future (id int);
     select 'i1:' || has_table_privilege('anon', 'public.probe_0071_future', 'SELECT') || ',' || has_table_privilege('authenticated', 'public.probe_0071_future', 'TRUNCATE') || ',' || has_table_privilege('service_role', 'public.probe_0071_future', 'TRUNCATE') || ',' || has_table_privilege('authenticated', 'public.probe_0071_future', 'SELECT');`,
     ["i1:false,false,true,true"]);
-
-  // --- (k) I8: actor contexts for eligible accounts only ----------------------
-  refused("I8 a pending account mints an actor context", as("P", `select public.issue_creator_actor_context('${uid("P")}', 'edit_wheel');`), /authenticated session required/);
-  refused("I8 a suspended account mints an actor context", `update public.profiles set is_active = false where id = '${uid("S")}'; ${as("S", `select public.issue_creator_actor_context('${uid("S")}', 'edit_wheel');`)}`, /authenticated session required/);
 
   return { bad, checks };
 }
