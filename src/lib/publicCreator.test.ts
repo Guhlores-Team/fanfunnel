@@ -56,4 +56,8 @@ for (const f of ["src/lib/data/publicProfile.ts", "src/lib/data/boosts.ts"]) {
   check(`${f} reads public creators through readPublicCreator`, readFileSync(f, "utf8").includes("readPublicCreator("));
 }
 
+// L5: suspending (or reactivating) an account drops the ISR'd /c/<slug> pages.
+check("the admin account route revalidates public pages on an is_active change",
+  /typeof body\.isActive === "boolean"\) \{[\s\S]*?revalidatePath\("\/c\/\[slug\]", "page"\)/.test(readFileSync("src/app/api/admin/account/route.ts", "utf8")));
+
 console.log(`publicCreator: ${passed} checks passed`);
