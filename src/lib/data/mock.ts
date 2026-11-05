@@ -885,6 +885,12 @@ function mockSavedStock(prize: Prize, existing: WheelConfig | undefined, expecte
   return Math.max(0, live + (next - loaded));
 }
 
+/** Make `target` hold exactly `source`'s fields, keeping its identity. */
+function replaceFields<T extends object>(target: T, source: T): T {
+  for (const key of Object.keys(target)) if (!Object.hasOwn(source, key)) delete (target as Record<string, unknown>)[key];
+  return Object.assign(target, source);
+}
+
 export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Record<string, number | null>> = {}): WheelConfig {
   // Save by id into the wheels map. If the id matches no existing wheel, treat
   // the save as targeting the active wheel (preserving its stable id).
@@ -921,15 +927,22 @@ export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Recor
     activeUntil: config.activeUntil ?? existing?.activeUntil ?? null,
     archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
   };
-  store.wheels.set(targetId, saved);
+  // Keep the stored wheel and prize objects, updated in place. A spin, a
+  // Chase grant or a cancel in flight holds them across an await and takes or
+  // returns a unit on them afterwards (a spin re-checks only non-stock fields);
+  // on replaced objects that unit was lost, so won units came back.
+  const kept = new Map(existing?.prizes.map((prize) => [prize.id, prize]) ?? []);
+  saved.prizes = saved.prizes.map((prize) => { const live = kept.get(prize.id); return live ? replaceFields(live, prize) : prize; });
+  const stored = existing ? replaceFields(existing, saved) : saved;
+  store.wheels.set(targetId, stored);
   // #26: delivery comes from the reward store, never the editor; a code
   // prize's stock is its unused-code count.
-  syncMockWheelRewards(saved);
+  syncMockWheelRewards(stored);
   const meta = wheelMeta.get(targetId);
   const now = new Date().toISOString();
   if (meta) meta.updatedAt = now;
   else wheelMeta.set(targetId, { createdAt: now, updatedAt: now });
-  return structuredClone(saved);
+  return structuredClone(stored);
 }
 
 // --- Wheel management (multi-wheel) ----------------------------------------

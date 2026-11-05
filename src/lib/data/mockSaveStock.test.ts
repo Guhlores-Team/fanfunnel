@@ -84,6 +84,28 @@ async function main() {
   saved = await saveWheel({ ...editor(), prizes: [...editor().prizes, { id: "stock-new", label: "New", rarity: "common", weight: 0, stock: 2 }] }, { expectedStock: { [LIMITED]: 8, "stock-new": 99 } });
   check("a prize the store does not have yet takes its edited stock", "wheel" in saved && stockOf("stock-new") === 2);
 
+  // A save landing while a spin is between its draw snapshot and its stock
+  // take (the hashes in between are awaits) must not lose the take: the store
+  // keeps its prize objects, so the in-flight spin decrements the live one.
+  mockSaveWheel(withStock(editor(), LIMITED, 20));
+  for (let round = 0; round < 10; round++) {
+    const fan = mockCreatePass(`Race fan ${round}`, 1);
+    mockAckFan(fan.token);
+    let settled = false;
+    const spin = mockSpin(fan.token).finally(() => { settled = true; });
+    let saves = 0;
+    while (!settled) {
+      const current = editor();
+      mockSaveWheel(current, { [LIMITED]: current.prizes.find((p) => p.id === LIMITED)!.stock ?? null });
+      saves++;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const result = await spin;
+    assert.ok(!("error" in result) && result.prize.id === LIMITED && saves > 1, "the spin won the limited prize with saves landing mid-flight");
+  }
+  check("10 wins with unchanged saves landing mid-spin: 20 - 10 = 10 left", stockOf(LIMITED) === 10);
+  mockSaveWheel(withStock(editor(), LIMITED, 8));
+
   // Through PUT /api/wheel, the editor's route.
   loaded = editor();
   await win();
