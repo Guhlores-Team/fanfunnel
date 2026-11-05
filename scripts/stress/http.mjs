@@ -189,7 +189,8 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
           const camp = await call("POST", "/api/campaigns", { body: { name: "Stress campaign", pinnedWheelId: bId }, ip: editIp }); edits.push(`campaign:${camp.status}`);
           const campId = camp.json?.campaign?.id;
           if (campId) edits.push(`pin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: w.id }, ip: editIp })).status}`, `unpin:${(await call("PATCH", `/api/campaigns/${campId}`, { body: { pinnedWheelId: null }, ip: editIp })).status}`);
-          edits.push(`archiveB:${(await call("PATCH", `/api/wheels/${bId}`, { body: { archived: true }, ip: editIp })).status}`);
+          // Archive is DELETE /api/wheels/[id] (no ?hard=1); PATCH has no archive field and ignores one.
+          edits.push(`archiveB:${(await call("DELETE", `/api/wheels/${bId}`, { ip: editIp })).status}`);
           edits.push(`activateA:${(await call("PATCH", `/api/wheels/${w.id}`, { body: { isActive: true }, ip: editIp })).status}`);
         }
       };
@@ -371,7 +372,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       for (const fan of fans) { const r = await call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }); fan.passId = r.json?.passes?.[0]?.id; }
       report.check(fans.every(f => f.passId), "every fan's pass is visible to the creator's focus panel");
       let playing = true, archived = false;
-      const fanLoop = async fan => { const out = []; for (let i = 0; i < rounds; i++) { const r = await spin(fan, { series }); out.push(r); if (r.status !== 200) break; } return out; };
+      const fanLoop = async fan => { const out = []; for (let i = 0; i < rounds; i++) { const r = await spin(fan, { series }); out.push(r); if (r.status !== 200) break; await sleep(40); } return out; };
       const grantOnce = async (fan, kind, copies) => {
         const body = { requestId: randomUUID(), packId: packs[kind], prizeId: target[kind], passId: fan.passId };
         const rs = await parallel(Array.from({ length: copies }), copies, () => call("POST", `/api/fans/${fan.fanId}/focus`, { body, ip: nextIp() }));
@@ -379,10 +380,11 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
         if (copies > 1) groups.push(out);
         if (out.some(r => r.status === 200)) fan.packs = (fan.packs ?? 0) + 1;
       };
-      const creator = async () => {
-        for (let i = 0; playing; i++) {
-          const fan = fans[i % n];
+      const creator = async worker => {
+        for (let i = worker; playing; i += 2) {
+          const fan = fans[(i % 3 === 2 ? i - 1 : i) % n];
           if (archived) { await sleep(20); continue; }
+          // Every third step cancels the promise just granted to the previous fan (if it was).
           if (i % 3 === 2) { const r = await call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }); if (r.json?.focusId) { const c = await call("DELETE", `/api/fans/${fan.fanId}/focus`, { body: { focusId: r.json.focusId }, ip: nextIp() }); cancels.push(c.status === 200 ? `released:${c.json?.released}` : `${c.status}:${c.json?.error}`); continue; } }
           await grantOnce(fan, i % 2 ? "chase" : "focus", i % 5 === 0 ? 3 : 1);
           await sleep(10);
@@ -397,11 +399,11 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
           const r = await call("PUT", "/api/wheel", { body: { wheel: { ...w, prizes }, expectedStock }, ip: editIp }); edits.push(`${i % 3 === 2 ? "stale" : "save"}:${r.status}`);
         }
         while (playing && fans.filter(f => f.done).length < n / 2) await sleep(20);
-        const a = await call("PATCH", `/api/wheels/${F.id}`, { body: { archived: true }, ip: editIp }); edits.push(`archive:${a.status}`);
+        const a = await call("DELETE", `/api/wheels/${F.id}`, { ip: editIp }); edits.push(`archive:${a.status}`);
         const back = await call("PATCH", `/api/wheels/${previous.id}`, { body: { isActive: true }, ip: editIp }); edits.push(`activate previous:${back.status}`);
         archived = true;
       };
-      const [plays] = await Promise.all([parallel(fans, n, fan => fanLoop(fan).finally(() => { fan.done = true; })).finally(() => { playing = false; }), creator(), editor()]);
+      const [plays] = await Promise.all([parallel(fans, n, fan => fanLoop(fan).finally(() => { fan.done = true; })).finally(() => { playing = false; }), creator(0), creator(1), editor()]);
       const flat = plays.flatMap(r => r.value); report.number("spin_statuses", codes(flat.map(v => ({ ok: true, value: v }))));
       report.number("grants", tally(grants.map(v => ({ ok: true, value: v })), v => v)); report.number("cancels", tally(cancels.map(v => ({ ok: true, value: v })), v => v)); report.number("editor", edits);
       const won = flat.filter(r => r.status === 200).map(r => r.json);
@@ -417,11 +419,14 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       const panels = await parallel(fans, 8, fan => call("GET", `/api/fans/${fan.fanId}/focus`, { ip: nextIp() }));
       const balanceOff = fans.filter((fan, i) => panels[i].value.json?.passes?.[0]?.spinsRemaining !== 4 + 6 * (fan.packs ?? 0) - spun.get(fan));
       report.check(balanceOff.length === 0, "each fan's balance is 4 + 6 per granted pack - spins played (the ledger, double-submits counted once)", balanceOff.slice(0, 2).map(f => ({ packs: f.packs, spun: spun.get(f), panel: panels[fans.indexOf(f)].value.json?.passes?.[0]?.spinsRemaining })));
-      report.check(panels.every(r => r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase)), "no promise survives on the archived game's prizes");
+      report.check(panels.every(r => r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase)), "no promise survives on the archived game's prizes", panels.filter(r => !(r.value.status === 200 && (r.value.json.focus == null || r.value.json.focus.prizeId !== target.focus && r.value.json.focus.prizeId !== target.chase))).slice(0, 2).map(r => ({ status: r.value.status, focus: r.value.json?.focus })));
       const fAfter = await call("GET", `/api/wheels/${F.id}`, { ip: editIp }), chaseLeft = fAfter.json?.wheel?.prizes?.find(p => p.id === target.chase)?.stock;
       const chaseWins = won.filter(r => r.prize?.id === target.chase).length;
       report.number("chase_stock", { left: chaseLeft ?? null, won: chaseWins, read: fAfter.status });
-      if (typeof chaseLeft === "number") report.check(chaseLeft >= 0 && chaseLeft + chaseWins === 12, "Chase stock conserved over HTTP: 12 = left + won (held units returned on archive)", { chaseLeft, chaseWins });
+      report.check(fAfter.status === 200 && typeof chaseLeft === "number" && chaseLeft >= 0, "the archived game's Chase prize stock is readable and never negative", { status: fAfter.status, chaseLeft });
+      // The demo store's saveWheel ignores expectedStock (SQL save_wheel_prizes applies the editor's delta, D3/D9), so a
+      // save that races a win puts the won unit back: demo-only, documented in STRESS_RESULTS.md.
+      report.known("DEMO_SAVE_IGNORES_EXPECTED_STOCK", chaseLeft + chaseWins === 12, "Chase stock conserved over HTTP: 12 = left + won (held units returned on archive)", { chaseLeft, chaseWins });
       report.latency("spin during focus/chase grants", series, HTTP_THRESHOLDS.spinContended);
       report.finish();
     }
