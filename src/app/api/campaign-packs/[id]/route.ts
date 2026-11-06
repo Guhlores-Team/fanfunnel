@@ -1,15 +1,19 @@
+import type { FocusPackTerms } from "@/lib/data/focusPacks";
 import { NextResponse } from "next/server";
 import { updateCampaignPack, deleteCampaignPack } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { limitRoute } from "@/lib/api/limit";
 
 // Patch a spin pack's fields.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "campaign-packs/[id]:PATCH");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
 
-  const body = await parseJsonBody<Partial<{
+  const body = await parseJsonBody<Partial<FocusPackTerms & {
     campaignId: string | null;
     label: string;
     spins: number;
@@ -19,7 +23,7 @@ export async function PATCH(
   }>>(req);
   if (body === BAD_REQUEST) return badRequest();
 
-  const patch: Partial<{
+  const patch: Partial<FocusPackTerms & {
     campaignId: string | null;
     label: string;
     spins: number;
@@ -65,6 +69,9 @@ export async function PATCH(
     patch.sortOrder = sortOrder;
   }
 
+  for (const key of ["packKind", "focusMultiplier", "focusSpins", "chaseWithin"] as const) {
+    if (key in body) Object.assign(patch, { [key]: body[key] });
+  }
   const result = await updateCampaignPack(id, patch);
   if ("error" in result) return errorResponse(result.error);
   return NextResponse.json({ ok: true });
@@ -72,9 +79,11 @@ export async function PATCH(
 
 // Delete a spin pack.
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimited = await limitRoute(req, "campaign-packs/[id]:DELETE");
+  if (rateLimited) return rateLimited;
   const { id } = await params;
   const result = await deleteCampaignPack(id);
   if ("error" in result) return errorResponse(result.error);

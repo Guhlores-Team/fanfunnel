@@ -6,7 +6,8 @@ name: E2E (real Supabase — login UI)
 # to confirm the session reaches a working dashboard.
 #
 # Separate from the headless e2e-supabase workflow because it needs a build +
-# running app + Chromium. Self-skips (exit 0) when the secrets are absent. Use a
+# running app + Chromium. A25: missing secrets FAIL the login-ui job
+# (scripts/ci/supabase-secrets-gate.mjs); only a fork PR skips, visibly. Use a
 # DEDICATED test project (it creates and deletes users).
 
 on:
@@ -14,6 +15,28 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "Optional: immutable FanFunnel Preview URL for the separate hosted LCP measurement"
+        required: false
+        type: string
+        default: ""
+      expected_sha:
+        description: "Full checked dashboard-redesign commit SHA for that immutable Preview"
+        required: false
+        type: string
+        default: ""
+
+      preview_smoke_url:
+        description: "Optional immutable Preview URL for the separate real Focus/Scratch/Bingo browser smoke"
+        required: false
+        type: string
+        default: ""
+      preview_smoke_expected_sha:
+        description: "Full checked dashboard-redesign SHA for that immutable feature-smoke Preview"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   login-ui:
@@ -21,28 +44,53 @@ jobs:
     env:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
+      # A25: fail when the TEST secrets are missing; skip (visibly) only on a
+      # fork PR. Only presence booleans reach the gate, never secret values.
+      - name: Require TEST Supabase secrets (fork PRs skip visibly)
+        id: supabase-secrets
+        env:
+          GATE_JOB: Login-UI E2E
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
+          BASE_REF: ${{ github.base_ref }}
+          ACTOR: ${{ github.actor }}
+          HAS_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL != '' }}
+          HAS_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY != '' }}
+          HAS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: node scripts/ci/supabase-secrets-gate.mjs
+
       - name: Install dependencies
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npm ci
 
       # NEXT_PUBLIC_* are inlined here so the browser client points at the
-      # test project. (Falls back to mock build if secrets are unset; the test
-      # then skips.)
+      # test project.
       - name: Build
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npm run build
 
+      # ubuntu-latest is 26.04: needs playwright >= 1.61 (first release supporting it).
       - name: Install Playwright browser
+        if: steps.supabase-secrets.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
 
-      - name: Login-UI E2E (skips if secrets unset)
+      - name: Login-UI E2E
+        if: steps.supabase-secrets.outputs.run == 'true'
+        env:
+          # Only the Next runtime and login fixture need the private key.
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # This localhost auth server must not report shared deployment health.
+          FANFUNNEL_CI_LOCAL_SERVER: "1"
         run: |
           npx next start -p 3000 &
           SERVER_PID=$!
@@ -56,8 +104,113 @@ jobs:
 
       - name: Upload login-UI artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: login-ui-artifacts
           path: e2e/artifacts/
           if-no-files-found: ignore
+
+  preview-lcp:
+    # Existing PR/push/login-ui behavior is unchanged. A requested measurement
+    # fails closed if credentials or exact Preview/source checks are missing.
+    if: github.event_name == 'workflow_dispatch' && inputs.preview_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: fanfunnel-preview-lcp
+      cancel-in-progress: false
+    env:
+      PREVIEW_PERF_URL: ${{ inputs.preview_url }}
+      PREVIEW_EXPECTED_SHA: ${{ inputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify manual source, authenticated Preview metadata and TEST-only configuration
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-lcp.mjs --preflight
+
+      - name: Install existing dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Measure real immutable Preview before and after creator theming
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-lcp.mjs
+
+      - name: Upload numeric Preview LCP report and anonymous public screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-lcp-${{ github.sha }}
+          path: e2e/artifacts/preview-lcp/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  preview-feature-smoke:
+    # Explicit manual opt-in only; existing login-ui and preview-lcp are unchanged.
+    if: github.event_name == 'workflow_dispatch' && inputs.preview_smoke_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: fanfunnel-preview-feature-smoke
+      cancel-in-progress: false
+    env:
+      PREVIEW_FEATURE_URL: ${{ inputs.preview_smoke_url }}
+      PREVIEW_EXPECTED_SHA: ${{ inputs.preview_smoke_expected_sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify exact source, immutable Preview metadata and TEST-only configuration
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-feature-smoke.mjs --preflight
+
+      - name: Install existing dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Click actual Preview login, terms, Focus, Scratch and bounded Bingo flows
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node e2e/preview-feature-smoke.mjs
+
+      - name: Upload only sanitized feature-smoke provenance, counts and cleanup result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-feature-smoke-${{ github.sha }}
+          path: e2e/artifacts/preview-feature-smoke/
+          if-no-files-found: ignore
+          retention-days: 7

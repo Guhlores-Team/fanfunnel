@@ -1,0 +1,41 @@
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { FakeSupabase } from "./fakeSupabase";
+const owner = "00000000-0000-0000-0000-000000000060";
+const db = new FakeSupabase(owner);
+db.tables.profiles = []; db.tables.prizes = []; db.tables.wheel_templates = [];
+db.seed("profiles", { id: owner, features: { scratch: false, bingo: false } });
+mock.module("@/lib/supabase/server", { namedExports: { isSupabaseConfigured: () => true, createClient: async () => db.client(), createServiceClient: () => db.client() } });
+let passed = 0;
+function check(label: string, value: unknown) { assert.ok(value, label); passed++; }
+const writes = () => db.statements.filter(statement => statement.op !== "select").length;
+async function main() {
+  const { createWheel, duplicateWheel, saveWheel, getWheelById } = await import("./wheels");
+  const { createWheelTemplate } = await import("./templates");
+  const empty = writes();
+  await assert.rejects(() => createWheel({ gameKind: "scratch" }), /feature_disabled/); passed++;
+  await assert.rejects(() => createWheel({ gameKind: "bingo", gameConfig: { size: 3, linePrizeId: "target" } }), /feature_disabled/); passed++;
+  check("refused creator game creation writes no wheel or prizes", writes() === empty);
+  const prizes = [{ id: "00000000-0000-0000-0000-000000000001", label: "A", rarity: "common", weight: 1 }, { id: "00000000-0000-0000-0000-000000000002", label: "B", rarity: "rare", weight: 1 }];
+  const source = db.seed("wheels", { creator_id: owner, title: "Scratch source", game_kind: "scratch", game_config: { style: "classic" }, game_ready: true, prizes });
+  const before = writes();
+  await assert.rejects(() => duplicateWheel(String(source.id)), /feature_disabled/); passed++;
+  await assert.rejects(() => createWheelTemplate({ name: "Unauthorized copy", fromWheelId: String(source.id) }), /feature_disabled/); passed++;
+  const tpl = db.seed("wheel_templates", { creator_id: owner, title: "Scratch template", game_kind: "scratch", game_config: { style: "classic" }, prizes: [] });
+  await assert.rejects(() => createWheel({ fromTemplateId: String(tpl.id) }), /feature_disabled/); passed++;
+  check("duplicate and both template paths cannot bypass profile feature", writes() === before);
+  const ordinary = db.seed("wheels", { creator_id: owner, title: "Ordinary", game_kind: "wheel", game_config: {}, game_ready: true, prizes });
+  const config = (await getWheelById(String(ordinary.id)))!;
+  const denied = await saveWheel({ ...config, gameKind: "scratch", gameConfig: { style: "classic" } });
+  check("conversion refuses before a metadata/prize write", "error" in denied && denied.error === "feature_disabled" && writes() === before);
+  db.row("profiles",owner).features = { scratch: true };
+  db.seed("spins", { creator_id: owner, wheel_id: ordinary.id, game_kind: "wheel" });
+  const locked = (await getWheelById(String(ordinary.id)))!;
+  const forged = await saveWheel({ ...locked, gameKind: "scratch", gameConfig: { style: "classic" }, gameKindLocked: false });
+  check("real history locks kind despite forged client flag", locked.gameKindLocked && "error" in forged && forged.error === "game_kind_locked" && writes() === before);
+  check("foreign creator cannot load a source game for copying", await getWheelById(String(db.seed("wheels",{ creator_id:"foreign",title:"Foreign",game_kind:"scratch",prizes }).id)) === null);
+  const granted = await createWheel({ gameKind: "scratch" });
+  check("server-approved capability creates scratch with authoritative metadata", granted.wheel.gameKind === "scratch" && granted.wheel.gameKindLocked === false);
+  console.log(`configured game feature gates: ${passed} checks passed`);
+}
+main().catch(error => { console.error(error); process.exit(1); });

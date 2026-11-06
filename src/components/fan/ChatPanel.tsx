@@ -1,7 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FAB_AVOID_SELECTOR, shouldStepAside } from "./fabOverlap";
 import type { ChatMessage } from "@/lib/data/types";
+import { startPoll } from "@/lib/poll";
+import { blockedFanMessage } from "./blockedFan";
+import { FAN_STORAGE_PREFIXES, fanStorageKey } from "./fanStorage";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
+
+/** The thread read is a POST (0068): the link token stays out of URLs and logs. */
+const fetchThread = (token: string) =>
+  fetch("/api/messages/fan/thread", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+    cache: "no-store",
+  });
 
 /** A locally-tracked optimistic outbound message awaiting / failing its send. */
 interface PendingMessage {
@@ -28,15 +42,26 @@ export default function ChatPanel({
 }) {
   const [open, setOpenState] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // Remember whether the fan had the chat open, per token, so a refresh doesn't
+  // Remember whether the fan had the chat open, per link, so a refresh doesn't
   // collapse the conversation (it stays visible like the creator's inbox does).
-  const openKey = `ff_chat_open_${token}`;
+  // Storage keys are hashed from the token (0068): the raw bearer credential
+  // never lands in localStorage. Nothing is persisted until the keys exist.
+  const [keys, setKeys] = useState<{ open: string; seen: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.all([fanStorageKey(FAN_STORAGE_PREFIXES.chatOpen, token), fanStorageKey(FAN_STORAGE_PREFIXES.chatSeen, token)])
+      .then(([open, seen]) => { if (live) setKeys({ open, seen }); })
+      .catch(() => { /* no SubtleCrypto: the panel works without persistence */ });
+    return () => { live = false; };
+  }, [token]);
+  const openKey = keys?.open ?? null;
+  const seenKey = keys?.seen ?? null;
   const setOpen = useCallback(
     (next: boolean | ((o: boolean) => boolean)) => {
       setOpenState((prev) => {
         const value = typeof next === "function" ? next(prev) : next;
         try {
-          window.localStorage.setItem(openKey, value ? "1" : "0");
+          if (openKey) window.localStorage.setItem(openKey, value ? "1" : "0");
         } catch {
           /* storage unavailable */
         }
@@ -46,8 +71,9 @@ export default function ChatPanel({
     [openKey]
   );
   useEffect(() => {
+    if (!openKey) return;
     try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted open state on mount
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted open state once the key is known
       if (window.localStorage.getItem(openKey) === "1") setOpenState(true);
     } catch {
       /* ignore */
@@ -57,15 +83,30 @@ export default function ChatPanel({
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   const [hasUnread, setHasUnread] = useState(false);
+  // A4: set when the server says the creator blocked this fan mid-session.
+  const [blockedNote, setBlockedNote] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const fabRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Opened from the floating button: a modal dialog (focus moves in, Tab is
+  // trapped, Escape closes, focus returns to the button). A panel restored
+  // open after a reload is not modal: it never steals focus from the page,
+  // and in particular never from the age gate on top of it.
+  const [modal, setModal] = useState(false);
+  const closeChat = useCallback(() => {
+    setModal(false);
+    setOpen(false);
+    requestAnimationFrame(() => fabRef.current?.focus());
+  }, [setOpen]);
+  const dialogRef = useFocusTrap<HTMLDivElement>({ active: open && modal, onEscape: closeChat, initialFocus: unlocked ? inputRef : undefined, restoreFocus: false });
+  const [stepAside, setStepAside] = useState(false);
   // Guard so the auto-intro is only requested once per mount.
   const introRequested = useRef(false);
 
-  // "Last seen" creator-message timestamp, persisted per token so the unread
+  // "Last seen" creator-message timestamp, persisted per link so the unread
   // dot survives reloads. Read lazily (client-only) to stay SSR-safe.
-  const seenKey = `ff_chat_seen_${token}`;
   const readSeen = useCallback((): string => {
-    if (typeof window === "undefined") return "";
+    if (typeof window === "undefined" || !seenKey) return "";
     try {
       return window.localStorage.getItem(seenKey) ?? "";
     } catch {
@@ -74,7 +115,7 @@ export default function ChatPanel({
   }, [seenKey]);
   const writeSeen = useCallback(
     (at: string) => {
-      if (typeof window === "undefined") return;
+      if (typeof window === "undefined" || !seenKey) return;
       try {
         window.localStorage.setItem(seenKey, at);
       } catch {
@@ -96,41 +137,39 @@ export default function ChatPanel({
   // Monotonic request id: overlapping loads (poll tick + refocus + post-send)
   // can resolve out of order; only the newest response may write state.
   const loadReq = useRef(0);
-  const load = useCallback(async () => {
+  // Resolves false on a failed request so the poll can back off.
+  const load = useCallback(async (): Promise<boolean> => {
     const id = ++loadReq.current;
     try {
-      const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
-        cache: "no-store",
-      });
-      if (res.ok) {
-        const d = await res.json();
-        if (id !== loadReq.current) return; // superseded by a newer load
-        const list: ChatMessage[] = d.messages ?? [];
-        setMessages(list);
-        // While the panel is open the fan is "seeing" everything; mark read.
-        const latest = latestCreatorAt(list);
-        if (latest) writeSeen(latest);
-        setHasUnread(false);
-      }
+      const res = await fetchThread(token);
+      if (!res.ok) return false;
+      const d = await res.json();
+      if (id !== loadReq.current) return true; // superseded by a newer load
+      const list: ChatMessage[] = d.messages ?? [];
+      setMessages(list);
+      // While the panel is open the fan is "seeing" everything; mark read.
+      const latest = latestCreatorAt(list);
+      if (latest) writeSeen(latest);
+      setHasUnread(false);
+      return true;
     } catch {
-      /* transient */
+      return false;
     }
   }, [token, writeSeen]);
 
   // Lightweight closed-panel poll: just detect whether a creator message newer
   // than the fan's last view exists, and toggle the unread dot.
-  const checkUnread = useCallback(async () => {
+  const checkUnread = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/messages/fan?token=${encodeURIComponent(token)}`, {
-        cache: "no-store",
-      });
-      if (!res.ok) return;
+      const res = await fetchThread(token);
+      if (!res.ok) return false;
       const d = await res.json();
       const list: ChatMessage[] = d.messages ?? [];
       const latest = latestCreatorAt(list);
       setHasUnread(latest !== "" && latest > readSeen());
+      return true;
     } catch {
-      /* transient */
+      return false;
     }
   }, [token, readSeen]);
 
@@ -162,42 +201,22 @@ export default function ChatPanel({
     };
     let retry: ReturnType<typeof setTimeout> | null = null;
     run();
-    // Poll while open, but only when the tab is visible — a backgrounded tab
-    // shouldn't keep hitting the endpoint. Re-sync immediately on refocus.
-    const tick = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    const id = setInterval(tick, 10000);
-    const onVisible = () => {
-      if (live && document.visibilityState === "visible") void load();
-    };
-    document.addEventListener("visibilitychange", onVisible);
+    // Poll while open: paused on a hidden tab, re-synced on refocus, backed off
+    // on errors. run() above does the first load.
+    const poll = startPoll({ intervalMs: 10000, task: load });
     return () => {
       live = false;
-      clearInterval(id);
+      poll.stop();
       if (retry) clearTimeout(retry);
-      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [open, unlocked, load, token]);
 
-  // While the panel is CLOSED (and unlocked): poll slowly (30s) for unread.
+  // While the panel is CLOSED (and unlocked): poll slowly (30s) for unread,
+  // with the same hidden-tab pause, refocus re-check and error backoff.
   useEffect(() => {
     if (open || !unlocked) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- poll for unread, then poll
-    checkUnread();
-    // Slow background poll, paused while the tab is hidden; re-check on refocus.
-    const tick = () => {
-      if (document.visibilityState === "visible") void checkUnread();
-    };
-    const id = setInterval(tick, 30000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void checkUnread();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    const poll = startPoll({ intervalMs: 30000, immediate: true, task: checkUnread });
+    return () => poll.stop();
   }, [open, unlocked, checkUnread]);
 
   useEffect(() => {
@@ -220,6 +239,14 @@ export default function ChatPanel({
           await load();
           setPending((p) => p.filter((m) => m.localId !== localId));
           return true;
+        }
+        if (res.status === 403) {
+          const note = blockedFanMessage((await res.json().catch(() => null))?.error);
+          if (note) {
+            setBlockedNote(note);
+            setPending((p) => p.filter((m) => m.localId !== localId));
+            return false;
+          }
         }
       } catch {
         /* fall through to failed */
@@ -253,11 +280,42 @@ export default function ChatPanel({
     await deliver(m.body, m.localId);
   };
 
+  // Step aside while the floating button would cover a play control (see fabOverlap.ts).
+  useEffect(() => {
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const fab = fabRef.current;
+      const controls = Array.from(document.querySelectorAll(FAB_AVOID_SELECTOR), (el) => el.getBoundingClientRect());
+      const inUse = open || (!!fab && document.activeElement === fab);
+      setStepAside(shouldStepAside(fab?.getBoundingClientRect() ?? null, controls, inUse));
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    measure();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
+    observer?.observe(document.body);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      observer?.disconnect();
+    };
+  }, [open]);
+
   return (
     <>
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)]"
+        ref={fabRef}
+        onClick={() => {
+          if (open) { closeChat(); return; }
+          setModal(true);
+          setOpen(true);
+        }}
+        data-testid="chat-fab"
+        data-step-aside={stepAside ? "true" : undefined}
+        className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)] ${stepAside ? "invisible opacity-0" : ""}`}
         aria-label="Message creator"
       >
         💬 Message
@@ -272,16 +330,19 @@ export default function ChatPanel({
 
       {open && (
         <div
+          ref={dialogRef}
           role="dialog"
-          aria-modal="true"
+          aria-modal={modal ? "true" : undefined}
           aria-label={`Chat with ${creatorTitle}`}
+          data-testid="chat-panel"
           className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[80vh] w-full max-w-md flex-col rounded-t-3xl border border-line bg-surface p-4 shadow-2xl sm:bottom-4 sm:right-4 sm:left-auto sm:mx-0 sm:max-h-[28rem] sm:rounded-3xl"
           style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
         >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-bold text-ink">{creatorTitle}</p>
             <button
-              onClick={() => setOpen(false)}
+              type="button"
+              onClick={closeChat}
               className="text-muted transition hover:text-ink"
               aria-label="Close chat"
             >
@@ -350,8 +411,14 @@ export default function ChatPanel({
                 ))}
                 <div ref={endRef} />
               </div>
+              {blockedNote ? (
+                <p role="alert" className="mt-2 text-center text-xs text-muted">
+                  {blockedNote}
+                </p>
+              ) : (
               <div className="mt-2 flex items-center gap-2">
                 <input
+                  ref={inputRef}
                   aria-label={`Message ${creatorTitle}`}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
@@ -375,6 +442,7 @@ export default function ChatPanel({
                   Send
                 </button>
               </div>
+              )}
             </>
           )}
         </div>

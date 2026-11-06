@@ -4,16 +4,19 @@
 // must supply its own <html>/<body> and can't rely on the layout's fonts. Keeps
 // the brand surface (imports globals.css) and offers a retry. Reassures fans
 // that their spins/balance are safe — server state is authoritative, this is a
-// render-time hiccup only.
+// render-time hiccup only. The error is reported to error monitoring.
 import "./globals.css";
 import { brandVars, DEFAULT_BRAND } from "@/lib/theme";
+import { useReportBoundaryError } from "@/components/monitoring/useReportBoundaryError";
 
 export default function GlobalError({
+  error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useReportBoundaryError(error);
   return (
     <html lang="en">
       <body className="min-h-[100dvh] flex flex-col bg-base text-ink antialiased">

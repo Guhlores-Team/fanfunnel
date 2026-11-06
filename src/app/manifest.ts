@@ -1,19 +1,10 @@
 import type { MetadataRoute } from "next";
+import { buildRootManifest } from "@/lib/pwa/manifest";
 
-// PWA manifest so fans can add the spin page to their home screen and it feels
-// like an app. Brand-neutral at the app level; the per-creator brand color
-// drives the in-page experience.
+// Site-wide manifest, linked from every page except a fan's /spin/<token> page
+// (which links its own per-link manifest). It is the creator dashboard app:
+// start_url /dashboard (sign-in first when signed out), PNG icons. Web push
+// reuses it, since iPhones only allow push for apps on the home screen.
 export default function manifest(): MetadataRoute.Manifest {
-  return {
-    name: "FanFunnel",
-    short_name: "FanFunnel",
-    description: "Spin to win — every spin wins a prize.",
-    start_url: "/",
-    display: "standalone",
-    background_color: "#0c0a0e",
-    theme_color: "#0c0a0e",
-    icons: [
-      { src: "/favicon.ico", sizes: "any", type: "image/x-icon" },
-    ],
-  };
+  return buildRootManifest();
 }

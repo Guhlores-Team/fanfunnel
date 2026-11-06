@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { Prize } from "@/lib/games/wheel/types";
+import type { PublicPrize } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { WishlistItem } from "@/lib/data/types";
+import { blockedFanMessage } from "./blockedFan";
 
 /**
  * Lets a fan flag prizes they're chasing. The creator sees aggregate demand.
@@ -15,13 +16,14 @@ export default function WishlistSection({
   initial,
 }: {
   token: string;
-  prizes: Prize[];
+  prizes: PublicPrize[];
   initial: WishlistItem[];
 }) {
   const [wanted, setWanted] = useState<Set<string>>(
     () => new Set(initial.map((w) => w.prizeLabel))
   );
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [note, setNote] = useState<string | null>(null);
 
   const toggle = async (label: string) => {
     if (pending.has(label)) return;
@@ -40,7 +42,11 @@ export default function WishlistSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, prizeLabel: label }),
       });
-      if (!res.ok) throw new Error("failed");
+      if (!res.ok) {
+        // A4: tell a blocked fan why, instead of silently undoing the tap.
+        if (res.status === 403) setNote(blockedFanMessage((await res.json().catch(() => null))?.error));
+        throw new Error("failed");
+      }
     } catch {
       // Roll back on failure.
       setWanted((w) => {
@@ -88,6 +94,11 @@ export default function WishlistSection({
           );
         })}
       </div>
+      {note && (
+        <p role="alert" className="mt-2 text-center text-xs text-muted">
+          {note}
+        </p>
+      )}
     </div>
   );
 }

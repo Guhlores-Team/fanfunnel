@@ -191,7 +191,8 @@ export default function DebugConsole() {
   return (
     // Bottom-LEFT so the launcher never sits on top of the app's bottom-right
     // fixed UI (e.g. the fan chat FAB).
-    <div className="fixed bottom-3 left-3 z-[100] font-sans">
+    // Lifted above the phone dashboard tab bar when present (globals.css).
+    <div className="fixed bottom-[calc(0.75rem+var(--ff-bottom-offset,0px))] left-3 z-[100] font-sans">
       {!open ? (
         <button
           onClick={() => setOpen(true)}

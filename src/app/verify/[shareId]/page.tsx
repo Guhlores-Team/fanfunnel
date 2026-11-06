@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import { getSpinVerification } from "@/lib/data";
-import { brandVars } from "@/lib/theme";
+import { COMMITMENT_COPY, verdictColor } from "./commitmentCopy";
+import { brandVars, readableInk } from "@/lib/theme";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { replayV3 } from "@/lib/games/wheel/fairnessV3";
+import { OddsUsed } from "./OddsUsed";
+import { GameProof, gameOddsReplay } from "./GameProof";
+import { replayGameV3 } from "@/lib/games/core/replay";
+import { V3_FORMULA } from "./oddsCopy";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +56,55 @@ export default async function VerifyPage({
     );
   }
 
+  if(v.parent) {
+    const parent=await getSpinVerification(v.parent.shareId);
+    const replay=parent?.fairVersion===3&&parent.v3&&!parent.parent?await replayGameV3({serverSeed:parent.serverSeed,clientSeed:parent.clientSeed??null,nonce:parent.nonce,
+      snapshot:parent.v3.poolSnapshot,poolHash:parent.v3.poolHash,trace:parent.v3.fairTrace,prizeId:parent.v3.prizeId,prizeLabel:parent.prizeLabel,presentation:parent.v3.presentation}):null;
+    const award=replay?.draw?.bonuses.find(bonus=>bonus.line===v.parent!.line);
+    const verified=!!parent?.hashOk&&!!replay?.ok&&!!award&&award.prize.label===v.prizeLabel&&(v.parent.prizeId===null||award.prize.id===v.parent.prizeId);
+    return <main className="grain brand-glow relative flex min-h-[100dvh] items-center justify-center px-5 py-10" style={brandVars(RARITY_COLORS[v.rarity])}>
+      <section className="card relative z-[1] w-full max-w-md rounded-[1.75rem] p-8">
+        <h1 className="text-xl font-extrabold text-ink">{verified?"Bingo line bonus verified":"Unable to verify this bonus"}</h1>
+        <p className="mt-3 break-words text-sm text-ink">{v.prizeLabel} · Line {v.parent.line+1}</p>
+        <p className="mt-3 text-sm text-muted">This extra reward comes from the parent game&apos;s committed random stream. It uses no extra play credit and has no separate seed commitment.</p>
+        <a className="mt-4 inline-flex min-h-11 items-center font-semibold text-[var(--brand-text)] underline underline-offset-4" href={`/verify/${encodeURIComponent(v.parent.shareId)}`}>View the parent game&apos;s full fairness proof</a>
+      </section>
+    </main>;
+  }
+
   const color = RARITY_COLORS[v.rarity];
+  const commitment = COMMITMENT_COPY[v.commitment ?? "unknown"];
+  // fair_version selects the check: a v3 spin is replayed end to end from its
+  // recorded odds; v1/v2 (and untracked) spins are verified by their seed
+  // hash exactly as before.
+  const snapshot = v.v3?.poolSnapshot;
+  const gameRecord = typeof snapshot === "object" && snapshot !== null &&
+    ("gameRules" in snapshot || ("game" in snapshot && (snapshot.game === "scratch" || snapshot.game === "bingo")));
+  // An absent/forged stored presentation fails game replay instead of falling
+  // back to the historical wheel-only check.
+  const gameReplay = v.fairVersion === 3 && v.v3 && gameRecord
+    ? await replayGameV3({
+        serverSeed: v.serverSeed, clientSeed: v.clientSeed ?? null, nonce: v.nonce,
+        snapshot, poolHash: v.v3.poolHash, trace: v.v3.fairTrace,
+        prizeId: v.v3.prizeId, prizeLabel: v.prizeLabel,
+        presentation: (v.v3 as typeof v.v3 & { presentation?: unknown }).presentation,
+      })
+    : null;
+  const replay = gameReplay ? gameOddsReplay(gameReplay) :
+    v.fairVersion === 3 && v.v3
+      ? await replayV3({
+          serverSeed: v.serverSeed,
+          clientSeed: v.clientSeed ?? null,
+          nonce: v.nonce,
+          snapshot: v.v3.poolSnapshot,
+          poolHash: v.v3.poolHash,
+          trace: v.v3.fairTrace,
+          prizeId: v.v3.prizeId,
+          prizeLabel: v.prizeLabel,
+        })
+      : null;
+  const oddsOk = replay ? replay.ok : true;
+  const verdict = verdictColor(v.hashOk && oddsOk, v.commitment);
 
   return (
     <main
@@ -70,8 +124,8 @@ export default async function VerifyPage({
 
           <div className="mt-4 text-center">
             <span
-              className="inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white"
-              style={{ backgroundColor: color }}
+              className="inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+              style={{ backgroundColor: color, color: readableInk(color) }}
             >
               {RARITY_LABEL[v.rarity] ?? v.rarity}
             </span>
@@ -87,26 +141,33 @@ export default async function VerifyPage({
           <div
             className="mt-6 rounded-xl border p-4 text-center"
             style={{
-              borderColor: v.hashOk
-                ? "color-mix(in oklab, #22c55e 55%, transparent)"
-                : "color-mix(in oklab, #ef4444 55%, transparent)",
-              backgroundColor: v.hashOk
-                ? "color-mix(in oklab, #22c55e 12%, transparent)"
-                : "color-mix(in oklab, #ef4444 12%, transparent)",
+              borderColor: `color-mix(in oklab, ${verdict} 55%, transparent)`,
+              backgroundColor: `color-mix(in oklab, ${verdict} 12%, transparent)`,
             }}
           >
             <p className="text-sm font-bold text-ink">
-              {v.hashOk ? "✓ Hash matches" : "✗ Mismatch"}
+              {!v.hashOk ? "✗ Mismatch" : oddsOk ? "✓ Hash matches" : "✗ Odds don't replay"}
             </p>
             <p className="mt-1 text-xs text-muted text-pretty">
-              {v.hashOk
-                ? "This result was committed before it was revealed — the server seed wasn't swapped after the spin."
-                : "The revealed seed does not hash to the committed value. This commitment can't be trusted."}
+              {!v.hashOk
+                ? "The revealed seed does not hash to the committed value. This commitment can't be trusted."
+                : oddsOk
+                  ? commitment.verdict
+                  : "The seed hash matches, but replaying the recorded odds doesn't reproduce this result, so this spin can't be trusted."}
             </p>
           </div>
 
-          {/* The committed hash + revealed seed + nonce. */}
+          {replay ? <OddsUsed replay={replay} poolHash={v.v3?.poolHash ?? null} game={!!gameReplay} /> : null}
+          {gameReplay ? <GameProof replay={gameReplay} /> : null}
+
+          {/* The commitment's provenance + hash + revealed seed + nonce. */}
           <dl className="mt-6 space-y-4 text-sm">
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted">
+                Commitment
+              </dt>
+              <dd className="mt-1 text-xs text-ink">{commitment.label}</dd>
+            </div>
             <div>
               <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted">
                 Committed hash (SHA-256)
@@ -141,21 +202,41 @@ export default async function VerifyPage({
             </div>
           </dl>
 
+          {replay ? (
+            <p className="mt-6 text-[11px] leading-relaxed text-muted/80 text-pretty">
+              How it works: for a committed spin the server fixes the random seed
+              <strong className="text-ink"> before</strong> you spin, by publishing
+              its SHA-256 hash on your spin page. Your browser contributes its own
+              seed, so neither side can dictate the outcome alone. When the spin
+              runs, the exact odds are recorded and fingerprinted, and the result
+              is drawn from{" "}
+              <code className="font-mono text-[10px] text-ink">{V3_FORMULA}</code>
+              , where <code className="font-mono text-[10px] text-ink">poolHash</code>{" "}
+              is the odds fingerprint. This page re-hashes the seed and the odds,
+              rebuilds every random number and replays the draw; it passes only
+              when the replay lands on the prize you won.{gameReplay ? " The fingerprint also includes game settings, the safe pre-play card and bonus pools. The same stream must reproduce the entire ticket or card and all line bonuses." : ""} The
+              &ldquo;Commitment&rdquo; line above says whether the seed was fixed
+              before you spun.
+            </p>
+          ) : (
           <p className="mt-6 text-[11px] leading-relaxed text-muted/80 text-pretty">
-            How it works: the server committed to this spin&rsquo;s random seed
-            <strong className="text-ink"> before</strong> you spun, by publishing
-            its SHA-256 hash on your spin page. Your browser contributed its own
-            seed, so neither side could dictate the outcome alone. The result was
+            How it works: for a committed spin the server fixes the random seed
+            <strong className="text-ink"> before</strong> you spin, by publishing
+            its SHA-256 hash on your spin page. Your browser contributes its own
+            seed, so neither side can dictate the outcome alone. The result is
             drawn from{" "}
             <code className="font-mono text-[10px] text-ink">
               SHA-256(serverSeed:clientSeed:nonce:block)
             </code>
-            . After the spin the seed was revealed; because re-hashing it
-            reproduces the committed hash, the outcome couldn&rsquo;t have been
-            changed after the fact. This verifies the
+            . After the spin the seed is revealed; when re-hashing it reproduces
+            a hash you saw <strong className="text-ink">before</strong>{" "}
+            spinning, the outcome couldn&rsquo;t have been changed after the fact. The
+            &ldquo;Commitment&rdquo; line above says whether that applies to this
+            spin. This verifies the
             <strong className="text-ink"> commitment&rsquo;s integrity</strong>;
             it does not re-simulate the full prize pool.
           </p>
+          )}
         </div>
       </div>
       <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">

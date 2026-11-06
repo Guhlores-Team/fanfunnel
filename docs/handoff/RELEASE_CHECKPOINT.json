@@ -1,0 +1,265 @@
+{
+  "kind": "VERIFIED_TEST_APPLICATION_RELEASE",
+  "recordedAt": "2026-10-29T01:32:54.386908+00:00",
+  "applicationReleaseSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+  "branch": "dashboard-redesign",
+  "pullRequest": "https://github.com/Guhlores-Team/fanfunnel/pull/78",
+  "testProject": "snmcrmhgevfqggxdiomu",
+  "migration": "0059",
+  "localFullRounds": [
+    {
+      "sourceSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+      "branch": "dashboard-redesign",
+      "stage": "focus-0059-privacy-repaired",
+      "round": 1,
+      "checks": [
+        "install",
+        "lint",
+        "typecheck",
+        "drift",
+        "drift-public",
+        "syntax",
+        "test",
+        "build",
+        "e2e",
+        "a11y"
+      ],
+      "allPassed": true,
+      "sameFreshBrowserServer": true,
+      "serverPid": 1113672,
+      "worktreeClean": true,
+      "completedAt": "2026-10-29T00:40:19.432745+00:00",
+      "unitFiles": 206,
+      "browserSteps": 163,
+      "browserSignals": 0,
+      "axeStates": 103,
+      "blockingViolations": 0,
+      "mjsSyntaxFiles": 43,
+      "extensionsCatalogEntries": 1340,
+      "publicCatalogEntries": 1376
+    },
+    {
+      "sourceSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+      "branch": "dashboard-redesign",
+      "stage": "focus-0059-privacy-repaired",
+      "round": 2,
+      "checks": [
+        "install",
+        "lint",
+        "typecheck",
+        "drift",
+        "drift-public",
+        "syntax",
+        "test",
+        "build",
+        "e2e",
+        "a11y"
+      ],
+      "allPassed": true,
+      "sameFreshBrowserServer": true,
+      "serverPid": 1138907,
+      "worktreeClean": true,
+      "completedAt": "2026-10-29T00:57:31.870790+00:00",
+      "unitFiles": 206,
+      "browserSteps": 163,
+      "browserSignals": 0,
+      "axeStates": 103,
+      "blockingViolations": 0,
+      "mjsSyntaxFiles": 43,
+      "extensionsCatalogEntries": 1340,
+      "publicCatalogEntries": 1376
+    }
+  ],
+  "ci": [
+    {
+      "name": "Supabase migrations",
+      "runId": 40797440837,
+      "url": "https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440837",
+      "headSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "E2E (real Supabase \u2014 login UI)",
+      "runId": 40797440864,
+      "url": "https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440864",
+      "headSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "E2E (real Supabase)",
+      "runId": 40797440838,
+      "url": "https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440838",
+      "headSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "CI",
+      "runId": 40797440851,
+      "url": "https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440851",
+      "headSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "hostedCorrection": {
+    "sourceSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+    "runId": 40797440837,
+    "runUrl": "https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440837",
+    "project": "snmcrmhgevfqggxdiomu",
+    "actualReadback": {
+      "status": "verified",
+      "extensionSchema": "extensions",
+      "verifiedFunctions": 15,
+      "oldConfigFunctions": 0,
+      "targetConfigFunctions": 15,
+      "configurationVerified": true,
+      "correctionSubmitted": true,
+      "definitionAclOwnerPreserved": true
+    },
+    "historyAndGeneratedTypesWorkflow": "success"
+  },
+  "hostedRuntimeAndLogin": {
+    "E2E (real Supabase)": {
+      "runId": 40797440838,
+      "url": "https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440838",
+      "actualResults": [
+        [
+          20,
+          20
+        ],
+        [
+          8,
+          8
+        ]
+      ],
+      "completionMarkerVerified": true
+    },
+    "E2E (real Supabase \u2014 login UI)": {
+      "runId": 40797440864,
+      "url": "https://github.com/Guhlores-Team/fanfunnel/actions/runs/40797440864",
+      "actualResults": [
+        [
+          6,
+          6
+        ]
+      ],
+      "completionMarkerVerified": true
+    }
+  },
+  "preview": {
+    "applicationReleaseSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+    "stableUrl": "https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app",
+    "candidateUrl": "https://fanfunnel-nn6d8msjd-easy-simple-sites.vercel.app",
+    "candidateId": "dpl_H7vbgELEePxdAg9spTfK8RLkxK9e",
+    "stableAliasVerified": true,
+    "stableLandingHttpStatus": 200,
+    "stablePublicScriptIdentityMatchesCandidate": true,
+    "productionAliasId": "dpl_D5nQpT4e5qVXhTqHWEae2gCyzR1W",
+    "productionAliasUnchanged": true,
+    "remoteBranchShaAfterPromotion": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+    "promotedAt": "2026-10-29T01:29:51.737628+00:00"
+  },
+  "publicHttpChecks": {
+    "sourceSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+    "candidateUrl": "https://fanfunnel-nn6d8msjd-easy-simple-sites.vercel.app",
+    "checks": [
+      {
+        "name": "landing",
+        "path": "/",
+        "actualStatus": 200,
+        "expectedStatus": 200,
+        "passed": true
+      },
+      {
+        "name": "terms",
+        "path": "/terms",
+        "actualStatus": 200,
+        "expectedStatus": 200,
+        "passed": true
+      },
+      {
+        "name": "privacy",
+        "path": "/privacy",
+        "actualStatus": 200,
+        "expectedStatus": 200,
+        "passed": true
+      },
+      {
+        "name": "push-config",
+        "path": "/api/push/config",
+        "actualStatus": 200,
+        "expectedStatus": 200,
+        "passed": true
+      },
+      {
+        "name": "account-export-negative",
+        "path": "/api/account/export",
+        "actualStatus": 401,
+        "expectedStatus": 401,
+        "passed": true
+      },
+      {
+        "name": "withdraw-malformed-token-negative",
+        "path": "/api/leaderboard/opt-in",
+        "actualStatus": 404,
+        "expectedStatus": 404,
+        "passed": true
+      },
+      {
+        "name": "consent-string-boolean-negative",
+        "path": "/api/leaderboard/opt-in",
+        "actualStatus": 400,
+        "expectedStatus": 400,
+        "passed": true
+      }
+    ],
+    "allPassed": true,
+    "credentialsUsed": false,
+    "TLS": "curl default verification retained",
+    "authenticatedPositiveFeatureChecks": false
+  },
+  "publicBrowserChecks": {
+    "sourceSha": "5f72680e4bf621cf205867b94975eb2c2f3fc428",
+    "candidateUrl": "https://fanfunnel-nn6d8msjd-easy-simple-sites.vercel.app",
+    "checks": [
+      "Mobile landing-to-Terms click",
+      "Mobile Privacy rendering",
+      "Mobile real login form renders; no credentials entered",
+      "Hydrated login/sign-up mode toggles work; no form submitted"
+    ],
+    "pageErrors": 0,
+    "requestFailures": 0,
+    "prefetchCancellations": 0,
+    "unexpectedHttpErrors": 0,
+    "scannedPublicChunks": 12,
+    "publicTestUrlFound": true,
+    "productionUrlFound": false,
+    "serverCredentialPatternFound": false,
+    "authenticatedFeatureChecks": false,
+    "connection": "Managed session proxy, functional checks with ignoreHTTPSErrors; not a TLS audit",
+    "readiness": "Document load plus actual hydrated React19 handler, visible controls and mode toggles; Next16 background prefetch cancellation recorded separately",
+    "scope": "Public landing/login chunks only; comprehensive final bundle/security audit remains pending"
+  },
+  "verificationLimits": {
+    "authenticatedPositiveFeatureChecksOnHostedPreview": false,
+    "realInstalledPhonePushTest": false,
+    "browserTLSAudit": false,
+    "curlTLSVerificationRetained": true,
+    "ownerAcceptance": false,
+    "remainingFeaturesReleased": false,
+    "finalTwoFreshSecurityAuditsComplete": false
+  },
+  "previewProbeDiagnostics": {
+    "initialNetworkIdleProbe": "timed out; diagnostic200document/assets withproductionNextprefetch; not counted as pass",
+    "prematureSignupClick": "SSRbuttonclickedbeforehydration; not counted as pass",
+    "finalProbe": "documentload+actualReact19handlerready, thenrealDOMnavigationandmodetoggles; all4checksPASS; repoapp/testsunchanged"
+  },
+  "nextPhase": "0060 scratch; retire only exact one-time0059 TEST workflow invocation before first verification; keep helper and tests",
+  "handoffOnlyFollowup": "Immediate followup commit changes documentation/artifacts only. Compare all non-doc Git paths/modes to applicationReleaseSha. Stable deployment remains this exact verified application SHA.",
+  "productionMigrationJob": "skipped",
+  "productionWrites": false,
+  "applicationSourceChangedByHandoffFollowup": false
+}

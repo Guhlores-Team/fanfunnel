@@ -30,9 +30,19 @@
   --brand: #ec4899;
   /* Companions derived by brandVars() (src/lib/theme.ts). Defaults match the pink
      brand; pages that use brandVars override these per-creator so text stays
-     readable on ANY chosen color. */
-  --brand-ink: #ffffff; /* readable text ON the brand fill (e.g. button labels) */
+     readable on ANY chosen color. --brand-ink defaults to the dark ink readableInk()
+     computes for the default pink (white-on-pink is the tracked 3.52:1 defect). */
+  --brand-ink: #160d12; /* readable text ON the brand fill (e.g. button labels) */
   --brand-text: var(--brand); /* brand color, legibility-adjusted, used AS text */
+
+  /* --- Elevation system (redesign command-center) -------------------------
+     Surfaces read as RAISED via an inset top-highlight + soft drop shadow, not
+     a flat fill. Primary cards use --s1 + --lift; nested wells use --s2 (no
+     shadow). --hair is the card hairline; inputs sit on the --color-base well. */
+  --s1: linear-gradient(180deg, #1c1825, #16131d); /* raised card */
+  --s2: #100d16; /* recessed well / nested block */
+  --hair: #241f2e; /* card hairline border */
+  --lift: 0 1px 0 rgba(255, 255, 255, 0.045) inset, 0 14px 34px -26px rgba(0, 0, 0, 0.9);
 }
 
 body {
@@ -45,6 +55,19 @@ body {
      zoomed-out render on phones. `clip` (not `hidden`) keeps sticky/fixed
      positioning intact and never creates a scroll container. */
   overflow-x: clip;
+}
+
+/* Phone dashboard tab bar (MobileTabBar, below `lg`). While it is on the page,
+   bottom-fixed UI (toasts, the debug launcher, the wheel editor's sticky save
+   bar) sits above it: --ff-bottom-offset is the bar's full height including the
+   home-indicator inset; 0 everywhere else. 60px mirrors the bar's h-[60px]. */
+:root {
+  --ff-bottom-offset: 0px;
+}
+@media (width < 64rem) {
+  body:has([data-ff-tabbar]) {
+    --ff-bottom-offset: calc(60px + env(safe-area-inset-bottom));
+  }
 }
 
 /* Tabular figures for any metric/number so big values don't wobble. */
@@ -61,6 +84,13 @@ body {
   z-index: 0;
   pointer-events: none;
   opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* "Grain noir" (per-creator theming): a second, heavier grain layer. Its
+   opacity comes from NOIR_GRAIN_ALPHA (creatorTheme/tokens.ts), which the
+   contrast maths accounts for. */
+.theme-noise {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
@@ -87,7 +117,31 @@ body {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, transparent);
 }
+.ff-input[aria-invalid="true"],
+.ff-input[aria-invalid="true"]:focus {
+  border-color: #f87171;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #f87171 22%, transparent);
+}
 .ff-input option { color: #000; }
+/* A native <select> drawn as a rarity pill (wheel editor). Stays a real select
+   so it is keyboard/screen-reader operable and e2e can selectOption() on it;
+   the tint comes from an inline style. `.ff-input` is unlayered, so its box
+   styles beat Tailwind utilities — override them here, not with classes. */
+.ff-input.ff-pill {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.3rem 1.5rem 0.3rem 0.7rem;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-transform: capitalize;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a09aa8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  cursor: pointer;
+}
 /* Native pickers (date/time) should render their popovers + indicator icons in
    dark mode to match the app — otherwise the calendar is near-invisible. */
 input[type="datetime-local"],
@@ -124,6 +178,28 @@ input[type="time"] {
   box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.7);
 }
 
+/* Redesign elevation helpers. Primary cards read as RAISED (inset top-highlight
+   + soft drop shadow over the brand-tinted gradient); nested blocks are RECESSED
+   wells with no shadow. The redesign's panels migrate onto these in later phases;
+   .card stays for not-yet-ported surfaces. */
+.surface-raised {
+  background: var(--s1);
+  border: 1px solid var(--hair);
+  box-shadow: var(--lift);
+}
+.surface-recessed {
+  background: var(--s2);
+  border: 1px solid var(--hair);
+}
+
+/* Keyboard-only focus ring (pointer clicks don't trigger :focus-visible). The
+   outline follows each element's border-radius in modern browsers. Brand-tinted
+   so it's visible on every surface. */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 /* ---------------------------------------------------------------------------
    Motion layer — transform/opacity only, ease-out (no bounce). One
    orchestrated page-load with staggered reveals (delays set inline), plus
@@ -150,9 +226,55 @@ input[type="time"] {
 }
 
 .reveal { animation: ff-rise 0.62s cubic-bezier(0.16, 1, 0.3, 1) both; }
+/* Dashboard entrance: transform-only, so content is never stuck invisible if
+   the animation doesn't run (base opacity stays 1). */
+@keyframes ff-lift {
+  from { transform: translateY(10px); }
+  to { transform: none; }
+}
+.lift-in { animation: ff-lift 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+/* Drawer / sheet entrance (README: slide in .34s, backdrop fade .2s). Keyframe
+   animations run on mount, so a conditionally-mounted panel still animates.
+   Transform-only for the panel; the backdrop fade is a dim layer, not content. */
+@keyframes ff-slide {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+@keyframes ff-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+@keyframes ff-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* Below `lg` the fan drawer is a bottom sheet that slides up; from `lg` it slides
+   in from the right. */
+.drawer-in { animation: ff-sheet-up 0.34s cubic-bezier(0.16, 1, 0.3, 1); }
+@media (min-width: 64rem) {
+  .drawer-in { animation-name: ff-slide; }
+}
+.fade-in { animation: ff-fade 0.2s ease; }
+/* Centered modals: a bottom sheet below `lg`, a lifted card from `lg`. */
+.modal-in { animation: ff-sheet-up 0.34s cubic-bezier(0.16, 1, 0.3, 1); }
+@media (min-width: 64rem) {
+  .modal-in { animation: ff-lift 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+}
 .reveal-scale { animation: ff-scale-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .ambient-glow { animation: ff-glow-pulse 6s ease-in-out infinite; }
 .ambient-float { animation: ff-float 7s ease-in-out infinite; }
+
+/* RM-3 visit glow: a static ring in the creator's brand colour, brighter the
+   more days the fan stopped by in the last week. No animation, no countdown. */
+.visit-glow-1 { box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 35%, transparent); }
+.visit-glow-2 {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 60%, transparent),
+    0 0 14px 2px color-mix(in oklab, var(--brand) 35%, transparent);
+}
+.visit-glow-3 {
+  box-shadow: 0 0 0 2px var(--brand),
+    0 0 22px 5px color-mix(in oklab, var(--brand) 55%, transparent);
+}
 
 /* Recent-wins ticker: continuous horizontal scroll (loops via duplicated list).
    The global reduced-motion guard above pauses it; the component also wraps. */

@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { setMyNotificationPrefs } from "@/lib/data";
+import { limitRoute } from "@/lib/api/limit";
 
 // Persist the creator's notification preferences (per account). Each flag is
 // coerced to a boolean; the data layer uses a narrow SECURITY DEFINER RPC.
 export async function PUT(req: Request) {
-  let body: { newSpin?: unknown; lowBalance?: unknown; messages?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const rateLimited = await limitRoute(req, "account/notifications:PUT");
+  if (rateLimited) return rateLimited;
+  const body = await parseJsonBody<{ newSpin?: unknown; lowBalance?: unknown; messages?: unknown }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const prefs = {
     newSpin: body.newSpin !== false,

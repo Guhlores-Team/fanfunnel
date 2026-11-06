@@ -1,4 +1,5 @@
 import { type Prize, type Rarity, RARITY_ORDER } from "@/lib/games/wheel/types";
+import { toIntegerWeights } from "@/lib/games/wheel/weights";
 
 // Pure (no React) helpers for the wheel editor. Kept framework-agnostic and
 // deterministic so they can be unit-tested in isolation.
@@ -112,6 +113,8 @@ export function duplicatePrize(p: Prize): Prize {
  *  - Within a tier, the target total is split proportionally to each prize's
  *    existing weight. If every prize in a tier has weight 0 (no signal), the
  *    total is split evenly so we never produce all-zero weights.
+ *  - The result is whole tickets summing to BALANCED_WEIGHT_TOTAL (10000), every
+ *    prize ≥ 1, with the ratios above kept within rounding.
  *  - Length and order are preserved; each returned prize keeps all other fields.
  */
 export function balanceOdds(prizes: Prize[]): Prize[] {
@@ -143,5 +146,9 @@ export function balanceOdds(prizes: Prize[]): Prize[] {
     }
   }
 
-  return prizes.map((p, i) => ({ ...p, weight: weights[i] }));
+  // Weights are stored as integers, so scale to a fixed total of whole tickets
+  // (ratios kept within rounding, every prize ≥ 1) instead of fractions the
+  // int4 column would truncate to 0.
+  const ints = toIntegerWeights(weights);
+  return prizes.map((p, i) => ({ ...p, weight: ints[i] }));
 }

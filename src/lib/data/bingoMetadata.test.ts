@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { FakeSupabase,type Row } from "./fakeSupabase";
+const owner="00000000-0000-0000-0000-000000000061",db=new FakeSupabase(owner);db.tables.profiles=[];db.tables.prizes=[];db.tables.wheel_templates=[];
+db.seed("profiles",{id:owner,features:{bingo:true,scratch:true}});
+const wheel=db.seed("wheels",{creator_id:owner,title:"Before",game_kind:"wheel",game_config:{},game_ready:true,prizes:[]});
+let fail=false;const captures:Row[]=[];
+const session=()=>db.client(),service=()=>({...db.client(),rpc:async(name:string,args:unknown)=>{
+ if(name!=="save_game_wheel")return db.client().rpc(name,args);
+ const input=args as Row;captures.push(structuredClone(input));
+ if(fail)return {data:null,error:{code:"P0001",message:"bingo_active_card"}};
+ const target=db.row("wheels",String(input.p_wheel)),config=input.p_config as Row,prizes=input.p_prizes as Row[];
+ Object.assign(target,config,{game_ready:true,prizes:prizes.map(prize=>({...prize,delivery:"manual"}))});return {data:{status:"saved"},error:null};
+}});
+mock.module("@/lib/supabase/server",{namedExports:{isSupabaseConfigured:()=>true,createClient:async()=>session(),createServiceClient:service}});
+let passed=0;function check(label:string,value:unknown){assert.ok(value,label);passed++;}
+async function main(){const{getWheelById,saveWheel,createWheel,duplicateWheel}=await import("./wheels"),{createWheelTemplate}=await import("./templates");
+ const cells=Array.from({length:9},(_,i)=>({id:`temporary-${i}`,label:`Cell ${i}`,rarity:i===0?"rare" as const:"common" as const,weight:1,stock:null}));
+ const base=(await getWheelById(String(wheel.id)))!,ready={...base,title:"After",gameKind:"bingo" as const,gameConfig:{size:3 as const,linePrizeId:cells[0].id},prizes:cells};
+ const bad=await saveWheel({...ready,prizes:cells.slice(0,8)});check("incomplete ready save refuses before any metadata mutation", "error"in bad&&bad.error==="bingo_needs_cells"&&db.row("wheels",String(wheel.id)).title==="Before"&&captures.length===0);
+ fail=true;const failed=await saveWheel(ready);check("controlled transaction refusal leaves all metadata and prizes intact","error"in failed&&failed.error==="bingo_active_card"&&db.row("wheels",String(wheel.id)).game_kind==="wheel"&&db.row("wheels",String(wheel.id)).title==="Before");
+ fail=false;const saved=await saveWheel({...ready,gameReady:false,gameKindLocked:false});assert.ok("wheel"in saved);
+ check("one actor-bound RPC publishes complete config, prizes and readiness",saved.wheel.gameKind==="bingo"&&saved.wheel.gameReady===true&&captures.at(-1)?.p_actor===owner);
+ const payload=captures.at(-1)!,metadata=payload.p_config as Row,prizes=payload.p_prizes as Row[];
+ check("temporary IDs are remapped consistently before atomic publication",prizes.every(prize=>/^[a-f0-9-]{36}$/i.test(String(prize.id)))&&prizes.some(prize=>prize.id===(metadata.game_config as Row).linePrizeId)&&!(metadata.game_config as Row).linePrizeId?.toString().startsWith("temporary"));
+ check("read-only client hints never enter the privileged metadata payload",!Object.hasOwn(metadata,"gameReady")&&!Object.hasOwn(metadata,"gameKindLocked")&&!Object.hasOwn(metadata,"actorId"));
+ check("no separate metadata update can escape the inventory transaction",!db.statements.some(statement=>statement.table==="wheels"&&statement.op==="update"));
+ const draft=(await createWheel({gameKind:"bingo"})).wheel;
+ check("new Bingo inserts an inactive null-target draft",draft.gameReady===false&&draft.gameConfig&&"linePrizeId"in draft.gameConfig&&draft.gameConfig.linePrizeId===null&&db.row("wheels",draft.id).is_active===false);
+ db.row("profiles",owner).features={bingo:false};
+ const beforePublication=captures.length;const refusedDraft=await saveWheel({...ready,id:draft.id});
+ check("capability removed after drafting cannot publish a new game", "error"in refusedDraft&&refusedDraft.error==="feature_disabled"&&captures.length===beforePublication&&db.row("wheels",draft.id).game_ready===false);
+ await assert.rejects(()=>duplicateWheel(saved.wheel.id),/feature_disabled/);passed++;
+ const existing=await saveWheel({...saved.wheel,title:"Safe retained edit"});check("removed feature permits safe same-kind edits to an existing game","wheel"in existing&&existing.wheel.title==="Safe retained edit");
+ db.row("profiles",owner).features={bingo:true};
+ const template=await createWheelTemplate({name:"Saved Bingo",fromWheelId:saved.wheel.id});
+ check("Bingo templates retain an internal selected-prize reference",template.gameKind==="bingo"&&template.prizes.some(prize=>(prize as Partial<{id:string}>).id===(template.gameConfig as {linePrizeId:string}).linePrizeId));
+ const copied=await createWheel({fromTemplateId:template.id});
+ check("template copy remaps the line prize to its own new inventory",copied.wheel.gameKind==="bingo"&&copied.wheel.gameReady&&copied.wheel.prizes.some(prize=>prize.id===(copied.wheel.gameConfig as {linePrizeId:string}).linePrizeId)&&!saved.wheel.prizes.some(prize=>prize.id===(copied.wheel.gameConfig as {linePrizeId:string}).linePrizeId));
+ const duplicated=await duplicateWheel(saved.wheel.id);
+ check("duplicate publishes only its own remapped prize IDs",duplicated.wheel.gameReady&&duplicated.wheel.prizes.every(prize=>!saved.wheel.prizes.some(source=>source.id===prize.id))&&duplicated.wheel.gameKindLocked===false);
+ console.log(`Bingo metadata/save: ${passed} causal checks passed`);
+}
+main().catch(error=>{console.error(error);process.exit(1);});

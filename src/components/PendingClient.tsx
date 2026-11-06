@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import TermsCheckbox from "@/components/TermsCheckbox";
+import { LEGAL } from "@/lib/legal";
 
 /**
  * Shown to signed-in creators who aren't approved yet. Pending users can submit
@@ -20,6 +22,7 @@ export default function PendingClient({
   const [country, setCountry] = useState("");
   const [referral, setReferral] = useState("");
   const [note, setNote] = useState("");
+  const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,11 +32,16 @@ export default function PendingClient({
     displayName.trim().length > 1 &&
     socials.trim().length > 3 &&
     platform.trim().length > 0 &&
-    audienceSize.trim().length > 0;
+    audienceSize.trim().length > 0 &&
+    agreed;
 
   const submit = async () => {
     if (!ready) {
-      setError("Please fill in your name, main platform, links, and audience size.");
+      setError(
+        agreed
+          ? "Please fill in your name, main platform, links, and audience size."
+          : "Please fill in the required fields and agree to the Terms of Service and Privacy Policy."
+      );
       return;
     }
     setBusy(true);
@@ -51,7 +59,7 @@ export default function PendingClient({
       const res = await fetch("/api/creator-application", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ displayName, socials, audienceSize, note: composedNote }),
+        body: JSON.stringify({ displayName, socials, audienceSize, note: composedNote, acceptTerms: agreed }),
       });
       if (!res.ok) throw new Error();
       setSent(true);
@@ -71,7 +79,11 @@ export default function PendingClient({
         </h1>
         <p className="mt-2 text-sm text-muted text-pretty">
           Your request for a FanFunnel creator account wasn&rsquo;t approved. If you
-          think this is a mistake, reach out to support.
+          think this is a mistake, email{" "}
+          <a href={`mailto:${LEGAL.contactEmail}`} className="text-ink underline underline-offset-2">
+            {LEGAL.contactEmail}
+          </a>
+          .
         </p>
         <form action="/auth/signout" method="post" className="mt-6">
           <button className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-muted transition hover:text-ink">
@@ -93,6 +105,9 @@ export default function PendingClient({
           Thanks! We&rsquo;ll review your details and email{" "}
           <span className="text-ink">{email}</span> when your account is approved.
         </p>
+        <p className="mt-2 text-xs text-muted text-pretty">
+          Added to an agency as staff? Your seat starts working once you&rsquo;re approved.
+        </p>
         <form action="/auth/signout" method="post" className="mt-6">
           <button className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-muted transition hover:text-ink">
             Sign out
@@ -110,8 +125,13 @@ export default function PendingClient({
           Request creator access
         </h1>
         <p className="mt-2 text-sm text-muted text-pretty">
-          FanFunnel creator accounts are approved by hand. Tell us about you and
-          we&rsquo;ll review it shortly.
+          FanFunnel creator accounts are approved by hand, and they&rsquo;re free
+          for now. Tell us about you and we&rsquo;ll review it shortly.
+        </p>
+        <p data-testid="pending-seat-note" className="mt-2 text-xs text-muted text-pretty">
+          Joining an agency as staff (chatter, fulfiller, manager)? Request access here
+          too. Your agency seat starts working once this account is approved; then
+          you&rsquo;ll find it under Agency in your dashboard.
         </p>
       </div>
 
@@ -154,7 +174,7 @@ export default function PendingClient({
             className="ff-input w-full"
             value={country}
             onChange={(e) => setCountry(e.target.value)}
-            placeholder="For payouts & compliance"
+            placeholder="Helps us review your request"
           />
         </Field>
         <Field label="How did you hear about us?">
@@ -174,6 +194,7 @@ export default function PendingClient({
             placeholder="Tell us why FanFunnel's a fit"
           />
         </Field>
+        <TermsCheckbox checked={agreed} onChange={setAgreed} disabled={busy} />
         <p className="text-[11px] text-muted">* required</p>
       </div>
 

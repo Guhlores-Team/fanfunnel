@@ -15,7 +15,7 @@
 import type { CSSProperties } from "react";
 
 /** App's darkest surface (globals.css --color-base) — what brand-as-text sits on. */
-const APP_BASE = "#0c0a0e";
+export const APP_BASE = "#0c0a0e";
 /** Fallback brand if a creator's value is missing/invalid (globals.css default). */
 export const DEFAULT_BRAND = "#ec4899";
 
@@ -25,8 +25,11 @@ export interface RGB {
   b: number;
 }
 
-const BLACK: RGB = { r: 17, g: 17, b: 17 }; // #111
 const WHITE: RGB = { r: 255, g: 255, b: 255 };
+/** Dark ink for text/icons on a brand fill (design token #160d12). Chosen over
+ *  pure black so the ink carries a faint plum warmth matching the app surface. */
+export const DARK_INK = "#160d12";
+const DARK_INK_RGB: RGB = { r: 0x16, g: 0x0d, b: 0x12 };
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
@@ -45,7 +48,7 @@ export function parseHex(input: string | null | undefined): RGB | null {
   };
 }
 
-function toHex({ r, g, b }: RGB): string {
+export function toHex({ r, g, b }: RGB): string {
   const h = (n: number) => Math.round(clamp(n, 0, 255)).toString(16).padStart(2, "0");
   return `#${h(r)}${h(g)}${h(b)}`;
 }
@@ -68,20 +71,23 @@ export function contrastRatio(a: RGB, b: RGB): number {
 }
 
 /**
- * #fff or #111 — whichever is readable as text ON the given fill color.
+ * `#ffffff` or {@link DARK_INK} (`#160d12`) — whichever has the HIGHER WCAG
+ * contrast as text/icons ON the given brand fill.
  *
- * --brand-ink labels large, bold text on the brand fill (buttons), so AA-large
- * (3:1) is the bar. We prefer white (the established brand look) whenever it
- * clears that bar, and only fall back to dark text when white would be too faint
- * (e.g. a light-yellow brand). This keeps the default pink button white while
- * fixing the genuinely unreadable cases.
+ * `--brand` is creator-customizable, so a fixed white foreground fails WCAG on
+ * light brand colors — this is the tracked 3.52:1 white-on-brand defect (the
+ * default pink `#ec4899` is exactly that case). Picking the max-contrast ink
+ * flips pink to dark `#160d12` (~6:1, passes AA for normal text), while deep
+ * brand colors still resolve to white. Ties prefer white (the brand look).
+ *
+ * Use this for ALL text/icons on a `--brand` fill (buttons, badges, pills,
+ * toggles); it backs the `--brand-ink` CSS var via {@link brandVars}.
  */
 export function readableInk(color: string): string {
   const rgb = parseHex(color) ?? parseHex(DEFAULT_BRAND)!;
-  const cWhite = contrastRatio(rgb, WHITE);
-  const cBlack = contrastRatio(rgb, BLACK);
-  if (cWhite >= 3) return "#ffffff";
-  return cBlack > cWhite ? "#111111" : "#ffffff";
+  return contrastRatio(rgb, WHITE) >= contrastRatio(rgb, DARK_INK_RGB)
+    ? "#ffffff"
+    : DARK_INK;
 }
 
 /**
@@ -89,10 +95,11 @@ export function readableInk(color: string): string {
  * Returns it unchanged when it already meets `min` contrast on --color-base;
  * otherwise mixes it toward white (preserving hue) until it does. This is what
  * fixes brand-colored accent text (odds, weights, ×multiplier) going invisible
- * when a creator picks a dark brand color.
+ * when a creator picks a dark brand color. `surface` defaults to the app base;
+ * a themed page passes its lightest background colour (creatorTheme/tokens.ts).
  */
-export function brandText(color: string, min = 4.5): string {
-  const base = parseHex(APP_BASE)!;
+export function brandText(color: string, min = 4.5, surface: string = APP_BASE): string {
+  const base = parseHex(surface) ?? parseHex(APP_BASE)!;
   const rgb = parseHex(color) ?? parseHex(DEFAULT_BRAND)!;
   if (contrastRatio(rgb, base) >= min) return toHex(rgb);
   for (let t = 0.1; t <= 1.0001; t += 0.1) {
@@ -112,11 +119,11 @@ export function brandText(color: string, min = 4.5): string {
  *
  *   <div style={brandVars(creator.brandColor)}>…</div>
  */
-export function brandVars(color: string | null | undefined): CSSProperties {
+export function brandVars(color: string | null | undefined, surface?: string): CSSProperties {
   const safe = parseHex(color) ? (color as string) : DEFAULT_BRAND;
   return {
     ["--brand"]: safe,
     ["--brand-ink"]: readableInk(safe),
-    ["--brand-text"]: brandText(safe),
+    ["--brand-text"]: brandText(safe, 4.5, surface),
   } as CSSProperties;
 }

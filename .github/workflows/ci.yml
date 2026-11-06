@@ -18,9 +18,9 @@ jobs:
     env:
       NEXT_PUBLIC_ENABLE_DEBUG: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -37,14 +37,31 @@ jobs:
       - name: Test (unit + RLS security lint)
         run: npm test
 
+      # Workflow guards and pure script tests under scripts/ (npm test covers
+      # src/ only): A25 secrets gate, A39 DB-before-code check, A38 carry-over
+      # refusals and planner, TEST maintenance guards, A26 stress-harness plumbing.
+      # No network, no secrets.
+      - name: Script and workflow-guard tests
+        run: |
+          node scripts/test/ci-secrets-gate.test.mjs
+          node scripts/test/db-before-code.test.mjs
+          node scripts/golive/carry-over.test.mjs
+          node scripts/ops/test-maintenance.test.mjs
+          node --test scripts/stress/harness.test.mjs
+
       - name: Build
         run: npm run build
 
+      # ubuntu-latest is 26.04: needs playwright >= 1.61 (first release supporting it).
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
       - name: E2E + a11y (mock mode)
         run: |
+          # Throwaway VAPID keys, generated per run and never stored, so the web
+          # push journey runs end to end against the demo's simulated push
+          # service (e2e/push.mjs). Without them it covers the push-off state.
+          eval "$(node -e 'const k=require("web-push").generateVAPIDKeys();console.log(`export VAPID_PUBLIC_KEY=${k.publicKey} VAPID_PRIVATE_KEY=${k.privateKey} VAPID_SUBJECT=mailto:ci@example.invalid`)')"
           npx next start -p 3000 &
           SERVER_PID=$!
           for i in $(seq 1 30); do
@@ -61,8 +78,51 @@ jobs:
 
       - name: Upload E2E artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-artifacts
           path: e2e/artifacts/
           if-no-files-found: ignore
+
+  # DEBT-7: the three hand-maintained SQL build artifacts must build the same DB.
+  # Uses the PostgreSQL 16 binaries preinstalled on the runner image; the full
+  # history is needed because the reference build starts from the original
+  # schema.sql (see scripts/db/README.md).
+  schema-drift:
+    # Pinned for its preinstalled PostgreSQL 16 binaries (the drift check builds
+    # throwaway clusters with initdb/pg_ctl), not for Playwright.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # The 0062 creator-route probe and the Bingo proof fixture run app modules
+      # through tsx (scripts/test-preload.mjs mocks `server-only`), so the drift
+      # check needs the project's dependencies, not just Node.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: schema.sql / migrations_combined.sql / migrations build the same DB
+        run: node scripts/db/schema-drift-check.mjs
+
+      # A38: the go-live carry-over tool against two disposable local databases
+      # built from supabase/schema.sql. Never touches a hosted project.
+      - name: Go-live carry-over against disposable Postgres
+        run: node scripts/golive/carry-over.db.test.mjs
+
+      # TEST maintenance scheduler SQL contract (scripts/ops) on disposable
+      # Postgres; e2e-supabase.yml only runs its pure guard test.
+      - name: TEST maintenance SQL contract against disposable Postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          export PG_BIN
+          "$PG_BIN/postgres" --version
+          node scripts/ops/test-maintenance-db.test.mjs

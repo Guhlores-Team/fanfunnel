@@ -1,11 +1,27 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getPublicProfileBySlug } from "@/lib/data";
-import { brandVars } from "@/lib/theme";
+import { themeStyle } from "@/lib/creatorTheme/tokens";
+import { themeFontFamily } from "@/lib/creatorTheme/fonts";
+import ThemeBackdrop from "@/components/theme/ThemeBackdrop";
+import PhotoGallery from "@/components/theme/PhotoGallery";
+import ReportPhoto from "@/components/theme/ReportPhoto";
 import { externalUrl } from "@/lib/format";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
+import { hasStockToShow, stockLabel } from "@/components/fan/stockDisplay";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 
-export const dynamic = "force-dynamic";
+// ISR: public, viewer-independent data (service-client read, no cookies or
+// headers), so each slug renders on first visit and is re-generated at most
+// once a minute; profile/wheel edits show up within that window.
+export const revalidate = 60;
+
+// No slugs prerendered at build; returning [] (rather than omitting this) is
+// what lets the route be cached at runtime instead of rendered per request.
+export function generateStaticParams() {
+  return [];
+}
 
 export async function generateMetadata({
   params,
@@ -15,9 +31,9 @@ export async function generateMetadata({
   const { slug } = await params;
   const data = await getPublicProfileBySlug(slug);
   if (!data) return { title: "FanFunnel" };
-  const title = `${data.profile.creatorTitle} · Prize Wheel`;
-  const description =
-    data.profile.tagline ?? "Spin to win — every spin wins a prize. 🎡";
+  const copy = publicGameCopy(data.profile.gameKind);
+  const title = `${data.profile.creatorTitle} · ${copy.titleSuffix}`;
+  const description = data.profile.tagline ?? copy.metaDescription;
   return {
     title,
     description,
@@ -37,12 +53,18 @@ export default async function PublicProfilePage({
   const data = await getPublicProfileBySlug(slug);
   if (!data) notFound();
   const { profile, tipUrl } = data;
+  const { look } = profile;
+  const copy = publicGameCopy(profile.gameKind);
+  const { style, plan } = themeStyle(look.theme, profile.brandColor, themeFontFamily(look.theme.font));
 
   return (
     <main
-      className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-12"
-      style={brandVars(profile.brandColor)}
+      className="relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-12"
+      style={style}
+      data-theme-font={look.theme.font}
+      data-theme-background={look.theme.background}
     >
+      <ThemeBackdrop bgUrl={look.bgUrl} heavyGrain={plan.grains.length > 1} />
       <div className="relative z-[1] w-full max-w-md text-center">
         {profile.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- remote creator avatar
@@ -59,14 +81,14 @@ export default async function PublicProfilePage({
               background: `radial-gradient(circle, color-mix(in oklab, var(--brand) 40%, transparent), transparent 70%)`,
             }}
           >
-            🎡
+            {copy.emoji}
           </div>
         )}
         <h1 className="font-[family-name:var(--font-display)] text-3xl font-extrabold text-ink">
           {profile.creatorTitle}
         </h1>
         <p className="mx-auto mt-2 max-w-sm text-sm text-muted text-pretty">
-          {profile.tagline ?? "Spin my wheel — every spin wins a prize. 🎁"}
+          {profile.tagline ?? copy.defaultTagline}
         </p>
 
         {profile.prizes.length > 0 && (
@@ -77,16 +99,27 @@ export default async function PublicProfilePage({
             <div className="mt-3 flex flex-wrap justify-center gap-2">
               {profile.prizes.map((p) => {
                 const c = RARITY_COLORS[p.rarity];
+                // RM-2: the real count (only when the wheel shows stock), or
+                // the sold-out wording; sold out reads muted, not faded.
+                const gone = !isPublicPrizeAvailable(p);
                 return (
                   <span
                     key={p.label}
-                    className="rounded-full px-3 py-1 text-xs font-semibold text-ink"
-                    style={{
-                      backgroundColor: `color-mix(in oklab, ${c} 16%, transparent)`,
-                      border: `1px solid color-mix(in oklab, ${c} 50%, transparent)`,
-                    }}
+                    data-testid="teaser-prize"
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${gone ? "border border-line text-muted" : "text-ink"}`}
+                    style={
+                      gone
+                        ? undefined
+                        : {
+                            backgroundColor: `color-mix(in oklab, ${c} 16%, transparent)`,
+                            border: `1px solid color-mix(in oklab, ${c} 50%, transparent)`,
+                          }
+                    }
                   >
                     {p.emoji ?? "🎁"} {p.label}
+                    {hasStockToShow(p) && (
+                      <span className="tnum font-normal"> · {stockLabel(p)}</span>
+                    )}
                   </span>
                 );
               })}
@@ -101,18 +134,24 @@ export default async function PublicProfilePage({
             rel="noopener noreferrer"
             className="btn-brand mt-8 inline-block w-full rounded-2xl py-4 text-lg font-extrabold"
           >
-            Get your spins →
+            {copy.cta}
           </a>
         ) : (
           <p className="mt-8 text-sm text-muted">
-            DM {profile.creatorTitle} to get your personal spin link.
+            {copy.dmLine(profile.creatorTitle)}
           </p>
         )}
-        <p className="mt-3 text-xs text-muted/70">
-          Every spin wins · rare drops keep it exciting
+        <p className="mt-3 text-xs text-muted">
+          {copy.everyPlayWins}
         </p>
+        {look.media.length > 0 && (
+          <div className="mt-8">
+            <PhotoGallery media={look.media} creatorTitle={profile.creatorTitle} />
+            <ReportPhoto slug={slug} media={look.media} />
+          </div>
+        )}
       </div>
-      <footer className="relative z-[1] mt-10 text-[11px] tracking-wide text-muted/70">
+      <footer className="relative z-[1] mt-10 text-[11px] tracking-wide text-muted">
         Powered by FanFunnel
       </footer>
     </main>

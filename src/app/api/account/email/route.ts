@@ -1,3 +1,5 @@
+import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
+import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { NextResponse } from "next/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
@@ -28,15 +30,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const step = await creatorMfaStepUpResponse(sb, user);
+  if (step) return step;
+
   const limited = await rateLimitOr429("emailchange:" + user.id, 5, 60 * 60 * 1000);
   if (limited) return limited;
 
-  let body: { email?: unknown; currentPassword?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const body = await parseJsonBody<{ email?: unknown; currentPassword?: unknown }>(req);
+  if (body === BAD_REQUEST) return badRequest();
 
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const currentPassword =
@@ -63,7 +64,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "wrong_password" }, { status: 403 });
   }
 
-  const { error } = await sb.auth.updateUser({ email });
+  // Send the confirm links back to THIS deployment; without it Supabase falls
+  // back to the project's Site URL (localhost:3000 on the test project).
+  const emailRedirectTo = `${new URL(req.url).origin}/auth/callback?next=/dashboard`;
+  const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo });
   if (error) {
     return NextResponse.json({ error: "update_failed" }, { status: 400 });
   }

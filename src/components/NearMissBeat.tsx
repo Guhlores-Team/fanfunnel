@@ -13,8 +13,9 @@ export { detectNearMiss, type NearMiss } from "@/components/fan/nearMiss";
 
 /**
  * Brief, tasteful "So close!" beat. Plays after the win reveal and settles on
- * its own. Non-blocking (pointer-events: none) so the fan keeps seeing their
- * actual win. Transform/opacity only — no layout shift. Respects
+ * its own, in RewardReveal's banner row above the card (never over it).
+ * Non-blocking (pointer-events: none) so the fan keeps seeing their actual
+ * win. Transform/opacity only — no layout shift. Respects
  * prefers-reduced-motion (skips the motion, keeps the text).
  */
 export default function NearMissBeat({
@@ -41,7 +42,8 @@ export default function NearMissBeat({
     <AnimatePresence onExitComplete={onDone}>
       {show && (
         <div
-          className="pointer-events-none fixed inset-x-0 top-[14%] z-[60] flex justify-center px-5"
+          className="pointer-events-none flex w-full justify-center"
+          data-testid="near-miss-beat"
           aria-live="polite"
         >
           <motion.div

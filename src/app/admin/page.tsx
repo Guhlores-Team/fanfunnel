@@ -1,38 +1,31 @@
 import { redirect } from "next/navigation";
-import AdminClient from "@/components/admin/AdminClient";
 import AdminClaim from "@/components/admin/AdminClaim";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
+import { checkAdmin } from "@/lib/auth/admin";
 
-// Admin-only, cross-account control panel. Open in demo mode; role-gated in
-// production (middleware ensures a session; this checks the admin role).
+// Admin is a section inside the dashboard shell ("Account › Admin"). /admin
+// stays as the deep link: gated here on is_admin() (role AND is_active) via
+// the shared checkAdmin(), then sent into the shell's Admin section. In demo
+// mode (no Supabase) the panel is open, as before.
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   if (isSupabaseConfigured()) {
-    const sb = await createClient();
-    const {
-      data: { user },
-    } = await sb.auth.getUser();
-    if (!user) redirect("/login?next=/admin");
-    const { data: profile } = await sb
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (profile?.role !== "admin") {
+    const access = await checkAdmin(await createClient());
+    if (access.status === "anonymous") redirect("/login?next=/admin");
+    // An admin whose session hasn't done two-factor: enrol or enter a code first.
+    if (access.status === "mfa_required") redirect("/mfa?reason=admin&next=/admin");
+    // Not an ACTIVE admin (a suspended admin lands here too, never in the panel).
+    if (access.status !== "admin") {
       // Not admin yet — offer the env-guarded one-time bootstrap instead of a
       // dead redirect, so the owner can claim admin without touching the DB.
       return (
-        <main className="grid min-h-screen place-items-center bg-gradient-to-b from-zinc-950 via-zinc-900 to-black px-5">
+        <main className="grid min-h-[100dvh] place-items-center overflow-x-clip bg-base px-4">
           <AdminClaim />
         </main>
       );
     }
   }
 
-  return (
-    <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black">
-      <AdminClient />
-    </main>
-  );
+  redirect("/dashboard?section=admin");
 }

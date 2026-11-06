@@ -94,6 +94,14 @@ export default function Home() {
           </div>
         </div>
       </section>
+      <footer className="relative z-[1] mx-auto flex max-w-6xl gap-5 px-5 pb-8 text-sm text-muted">
+        <Link href="/terms" className="underline underline-offset-4 hover:text-ink">
+          Terms
+        </Link>
+        <Link href="/privacy" className="underline underline-offset-4 hover:text-ink">
+          Privacy
+        </Link>
+      </footer>
     </main>
   );
 }
