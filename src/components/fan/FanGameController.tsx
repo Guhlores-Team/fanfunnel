@@ -56,7 +56,7 @@ import BreatherCard from "./BreatherCard";
 import { useFanBreak, useLinkPause } from "./LinkPauseProvider";
 import { useVisitGlow } from "./useVisitGlow";
 import { GlowMilestoneToast, GlowTag, glowClass } from "./VisitGlow";
-import { spinControl } from "./linkPause";
+import { PAUSED_STATUS, spinControl } from "./linkPause";
 import { ackReminder, breakStatus, formatBreakEnd, reminderAcked } from "./yourPlay";
 import { fanEngagementAllowed, reminderDue } from "@/lib/play/playGuard";
 import type { DeliveredReward } from "@/lib/rewards/config";
@@ -606,7 +606,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
         {paused && (
           <p role="status" className="text-center text-sm text-muted">
-            Your link is paused. Ask your creator for a new link to play again.
+            {PAUSED_STATUS}
           </p>
         )}
         {onBreak && !paused && (

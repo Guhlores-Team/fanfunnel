@@ -40,6 +40,7 @@ import { storedWeight } from "@/lib/games/wheel/weights";
 import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
 import { LEGAL, fanNeedsAck } from "@/lib/legal";
+import { toWinDelivery, type WinDelivery } from "@/lib/fan/delivery";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import type { FanAppInfo } from "@/lib/pwa/manifest";
 import { countPlay, fanEngagementAllowed, isOnBreak, lengthenBreak, reminderDue } from "@/lib/play/playGuard";
@@ -287,6 +288,8 @@ interface MockRedemption extends RedemptionItem {
   shareId?: string;
   /** 0067 parity: the finite unit this win took ("held") or gave back on cancel ("returned"). */
   stockUnit?: { prizeId: string; state: "held" | "returned" };
+  /** redemptions.fulfilled_at parity: set when delivered, cleared otherwise. */
+  fulfilledAt?: string | null;
 }
 
 /** 0067 parity: a manual prize with a finite count holds the unit its win took. */
@@ -1195,7 +1198,7 @@ export async function mockGetFanPass(
     wheel: applyFocusStock(toPublicWheel(wheel), modifierDisplay.stock),
     spinsRemaining: pass?.spinsRemaining ?? fan.spinsRemaining,
     recentWins: fan.wins.slice(0, 50).map(win => ({ label: win.label, rarity: win.rarity, emoji: win.emoji, color: win.color,
-      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}) })),
+      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}), ...mockWinDelivery(win.shareId) })),
     wishlist: wishlistFor(fan.id),
     happyHour: mockGetActiveHappyHour(wheel.id),
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
@@ -2409,6 +2412,7 @@ export function mockSetRedemptionStatus(id: string, status: RedemptionStatus): {
       } else r.stockUnit = undefined;
     }
   }
+  if (r.status !== status) r.fulfilledAt = status === "fulfilled" ? new Date().toISOString() : null;
   r.status = status;
   return stock ? { ok: true, stock } : { ok: true };
 }
@@ -3146,6 +3150,27 @@ export function mockSelfExclude(token: string): { ok: true } | { error: string }
   fan.selfExcludedAt = new Date().toISOString();
   mockCancelFanFocus(fan.id);
   return { ok: true };
+}
+
+/** T3: the read-only wins view of a paused link (parity with getPausedFanWins). */
+export function mockGetPausedFanWins(token: string): import("./pausedLink").PausedFanWins | null {
+  const fan = fanForToken(token);
+  if (!fan || !fan.selfExcludedAt) return null;
+  const deliveries = rewardState().deliveries;
+  const wins = fan.wins.slice(0, 50).map((win) => {
+    const d = win.shareId ? deliveries.get(win.shareId) : undefined;
+    const shown = d && d.fanId === fan.id && !fan.blockedAt && d.views >= 1 && rewardReviewAllowed(d.at) ? { kind: d.kind, value: d.value } : null;
+    return {
+      label: win.label,
+      rarity: win.rarity,
+      at: win.at,
+      shareId: win.shareId ?? null,
+      ...mockWinDelivery(win.shareId),
+      reward: shown,
+      rewardHidden: !!d && !shown,
+    };
+  });
+  return structuredClone({ creatorTitle: CREATOR_TITLE, pausedAt: fan.selfExcludedAt, leaderboardOptIn: fan.leaderboardOptIn === true, wins });
 }
 
 /** A fan reports the creator behind their token (demo: store it, validate reason). */
@@ -4373,6 +4398,13 @@ export function mockGetFanReward(
   d.views += 1;
   d.lastViewedAt = new Date().toISOString();
   return { reward: { kind: d.kind, value: d.value }, views: d.views };
+}
+
+/** T5: a mock win's delivery state, from its redemption (parity with getFanPass). */
+function mockWinDelivery(shareId: string | undefined): { delivery?: WinDelivery } {
+  const r = shareId ? store.redemptions.find((x) => x.shareId === shareId) : undefined;
+  const delivery = r ? toWinDelivery(r.status, r.fulfilledAt ?? (r.status === "fulfilled" ? r.at : null)) : undefined;
+  return delivery ? { delivery } : {};
 }
 
 /** Fulfilment's "Auto" tag for a mock redemption (never the value). */

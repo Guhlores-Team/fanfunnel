@@ -5,7 +5,7 @@ import { deleteAccountAndTombstoneLinks } from "@/lib/account/deleteAccount";
 import { recordAudit } from "@/lib/data";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, parseJsonBody } from "@/lib/api/handler";
-import { CLOSE_ACCOUNT_PHRASE, LIMITS } from "@/lib/privacy/config";
+import { CLOSE_ACCOUNT_PHRASE, LIMITS, OWED_PRIZE_STATUSES } from "@/lib/privacy/config";
 import { privateError, privateJson } from "@/lib/privacy/respond";
 
 /**
@@ -21,7 +21,11 @@ import { privateError, privateJson } from "@/lib/privacy/respond";
  *   5. the last-admin guard: reserve_self_account_deletion refuses the last
  *      admin and otherwise demotes an admin first (atomic, like the admin
  *      delete's admin_reserve_account_deletion);
- *   6. (0068) the database refuses a suspended account ('suspended') and one
+ *   6. (T4) no prize is still owed: while any of the caller's redemptions is
+ *      pending or in progress the close is refused with 409 'prizes_owed'
+ *      (and the count), so fans' wins are not deleted out from under them. A
+ *      failed read fails closed. An admin delete is unaffected;
+ *   7. (0068) the database refuses a suspended account ('suspended') and one
  *      with an open safety report ('reports_open'): closing would otherwise
  *      cascade the evidence away. An admin delete is unaffected, and reports
  *      survive any deletion with a non-PII snapshot of the account.
@@ -55,6 +59,10 @@ export async function POST(req: Request) {
   if (!(await verifyCurrentPassword(email, password))) return privateError("wrong_password", 403);
 
   const svc = createServiceClient();
+  const owed = await owedPrizeCount(svc, userId);
+  if (owed === null) return privateError("db_error", 500);
+  if (owed > 0) return privateJson({ error: "prizes_owed", owed }, 409);
+
   const { data: profile } = await svc.from("profiles").select("role").eq("id", userId).maybeSingle();
   const wasAdmin = (profile as { role?: string } | null)?.role === "admin";
 
@@ -77,4 +85,15 @@ export async function POST(req: Request) {
     // The refresh token was already revoked with the user; nothing to undo.
   }
   return privateJson({ ok: true });
+}
+
+/** T4: the caller's own redemptions still waiting or in progress (null on a failed read). */
+async function owedPrizeCount(svc: ReturnType<typeof createServiceClient>, userId: string): Promise<number | null> {
+  const { count, error } = await svc
+    .from("redemptions")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_id", userId)
+    .in("status", OWED_PRIZE_STATUSES);
+  if (error) return null;
+  return typeof count === "number" ? count : null;
 }

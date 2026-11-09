@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import LegalPage, { ContactEmail, type LegalSection } from "@/components/LegalPage";
 import { LEGAL } from "@/lib/legal";
-import { RETENTION_DAYS } from "@/lib/privacy/retention";
+import { DECLINED_ACCESS_REQUEST_DAYS, RETENTION_DAYS } from "@/lib/privacy/retention";
 
 export const metadata: Metadata = {
   title: "Privacy Policy · FanFunnel",
@@ -476,9 +476,11 @@ const SECTIONS: LegalSection[] = [
           from when they were sent. Pending and accepted invitations remain until another deletion rule applies.
         </li>
         <li>
-          <strong>Access requests and reports:</strong> for as long as the related creator account exists, so
-          decisions can be reviewed, including the review outcome and note. If the fan who sent a report is
-          deleted, the report stays without a link to them.
+          <strong>Access requests:</strong> for as long as the related creator account exists, so decisions
+          can be reviewed, or {DECLINED_ACCESS_REQUEST_DAYS} days after a request is declined. An
+          applicant can delete a pending or declined request, and the account behind it, from the waiting
+          page. <strong>Safety reports:</strong> see above. If the fan who sent a report is deleted, the
+          report stays without a link to them.
         </li>
         <li>
           <strong>Rate-limit counters:</strong> expire automatically, within an hour at most.
@@ -598,11 +600,26 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We will post any update here and change the “Last updated” date. If a change is material, we will
-        post it here, marked as upcoming, at least {LEGAL.changeNoticeDays} days before it takes effect. When
+        tell creators by e-mail and show a notice on the spin page at least {LEGAL.changeNoticeDays} days
+        before it takes effect. When
         it takes effect, the app asks creators (in the dashboard) and fans (on their spin page) to agree to
         the new version before they continue. A change required by law, or needed to keep the Service
         secure, may take effect sooner.
       </p>
+    ),
+  },
+  {
+    id: "report-abuse",
+    title: "Report abuse or a safety concern",
+    body: (
+      <>
+        <p>
+          To report a creator, use Safety &amp; privacy on the spin page. To report anything else (abuse, a
+          prize that was never delivered, content involving someone under {LEGAL.minimumAge}, or a security
+          problem), email <ContactEmail />. Reports involving a minor are handled first. The same address
+          answers requests from the police and other authorities.
+        </p>
+      </>
     ),
   },
   {

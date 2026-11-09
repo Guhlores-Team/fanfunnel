@@ -1,8 +1,10 @@
 import { cache } from "react";
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
-import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass } from "@/lib/data";
+import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass, getPausedFanWins } from "@/lib/data";
 import LinkGone from "@/components/fan/LinkGone";
+import PausedWins from "@/components/fan/PausedWins";
+import LegalLinks from "@/components/LegalLinks";
 import { fanAppName, fanAppPaths, iconVersion } from "@/lib/pwa/manifest";
 import SpinClient from "@/components/SpinClient";
 import SafetyMenu from "@/components/fan/SafetyMenu";
@@ -55,9 +57,13 @@ export default async function SpinPage({
   const { token } = await params;
   const pass = await getFanPass(token);
   if (!pass) {
+    // T3: a link the fan paused is permanent, but keeps a read-only list of
+    // its wins (no SPIN, no chat) instead of a 404.
+    const paused = await getPausedFanWins(token);
+    if (paused) return <PausedWins token={token} view={paused} />;
     // A link whose creator left, or whose fan deleted their data, says so.
-    // Anything else (paused, switched off, unknown) is the 404, which still
-    // offers the fan's data controls (./not-found.tsx).
+    // Anything else (switched off, blocked by a suspension, unknown) is the
+    // 404, which still offers the fan's data controls (./not-found.tsx).
     const status = await getFanLinkStatus(token);
     if (!status) notFound();
     return <LinkGone status={status} />;
@@ -96,8 +102,9 @@ export default async function SpinPage({
           className="relative z-40 mt-10 flex flex-col items-center gap-2 rounded-2xl px-3 py-1.5 text-center text-[11px] tracking-wide text-muted"
           style={{ backgroundColor: "var(--theme-bg)" }}
         >
-          <span>Powered by FanFunnel · every spin wins</span>
+          <span>Powered by FanFunnel · every spin lands on a prize</span>
           <SafetyMenu token={token} />
+          <LegalLinks />
         </footer>
       </LinkPauseProvider>
     </main>

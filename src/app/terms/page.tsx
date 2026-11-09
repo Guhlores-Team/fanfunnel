@@ -144,7 +144,8 @@ const SECTIONS: LegalSection[] = [
         <p>
           Fans do not need an account. Your spin link is the key to your spins, wins and messages with that
           creator. Anyone who has your link can use it, so do not share it. You can pause your link at any
-          time from the spin page, and the creator can send you a new one.
+          time from the spin page. Pausing is permanent for that link and its records: it can no longer play
+          or chat, though you can still see your wins on it.
         </p>
       </>
     ),
@@ -293,10 +294,11 @@ const SECTIONS: LegalSection[] = [
             and offer a fair substitute.
           </li>
           <li>
-            <strong>Your public photos are safe for work.</strong> Gallery photos, avatars and prize images
+            <strong>Your public content is safe for work.</strong> Gallery photos, avatars and prize images
             appear on public pages, so they must not contain nudity or sexual content, and you confirm this for
-            each gallery photo you upload. We may remove any photo that breaks this rule, including after a fan
-            reports it.
+            each gallery photo you upload. The same rule covers all public text: prize names and descriptions,
+            your tagline, your note to fans and leaderboard names. We may remove any photo or text that breaks
+            this rule, including after a fan reports it.
           </li>
           <li>
             <strong>You only deal with adults.</strong> Never send a spin link to anyone you know or suspect
@@ -402,8 +404,8 @@ const SECTIONS: LegalSection[] = [
           account. Reports about a minor, illegal content or inappropriate photos are treated as urgent.
         </li>
         <li>
-          Fans can pause their own link at any time. A paused link stops working, and the creator can send a
-          new one if the fan asks.
+          Fans can pause their own link at any time. Pausing is permanent for that link and its records:
+          the link stops playing and chatting for good, and keeps a read-only list of the fan’s wins.
         </li>
         <li>
           Creators can block a fan. A blocked fan’s link no longer spins, and the fan can no longer chat with
@@ -523,8 +525,8 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We may update these Terms. When we do, we will post the new version here and change the “Last
-        updated” date. If a change is material, we will post it here, marked as upcoming, at least{" "}
-        {LEGAL.changeNoticeDays} days before it takes effect. When it takes effect, the app asks creators (in
+        updated” date. If a change is material, we will tell creators by e-mail and show a notice on the spin page at
+        least {LEGAL.changeNoticeDays} days before it takes effect. When it takes effect, the app asks creators (in
         the dashboard) and fans (on their spin page) to agree to the new version before they continue. A
         change required by law, or needed to keep the Service secure, may take effect sooner. If you keep using the Service after a change
         takes effect, the updated Terms apply. If you do not agree, stop using the Service.

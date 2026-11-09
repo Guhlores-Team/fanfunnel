@@ -1,6 +1,7 @@
 export type DataReadStatus = "complete" | "partial" | "unavailable";
 import type { Prize, PublicWheelConfig, Rarity, WheelConfig } from "@/lib/games/wheel/types";
 import type { FanGlow } from "@/lib/glow/glow";
+import type { WinDelivery } from "@/lib/fan/delivery";
 
 // Generated Supabase schema types (`npm run gen:types`; CI fails on drift).
 // Use Tables<"name"> / Enums<"name"> for row shapes in new data-layer code.
@@ -19,6 +20,8 @@ export interface WonPrize {
   imageUrl?: string | null;
   /** #26: this win delivered an instant reward the fan can reopen (never the value). */
   instant?: boolean;
+  /** T5: the prize's delivery state from its redemption (status and time only). */
+  delivery?: WinDelivery;
 }
 
 /** Phase 3: a render-ready shareable win card. */

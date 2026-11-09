@@ -14,6 +14,9 @@ export const ADMIN_MFA_REQUIRED = true;
 /** The phrase a creator types to close their account (plus their password). */
 export const CLOSE_ACCOUNT_PHRASE = "DELETE MY ACCOUNT";
 
+/** T4: redemption states that mean a fan is still owed a prize; self-close waits for them. */
+export const OWED_PRIZE_STATUSES = ["pending", "in_progress"] as const;
+
 /** The word a fan types to confirm deleting their data. */
 export const FAN_DELETE_PHRASE = "DELETE";
 

@@ -27,6 +27,7 @@ import { runAfterResponse } from "@/lib/afterResponse";
 import { readPlayState } from "./playGuard";
 import { readFanGlow } from "./checkins";
 import { fanNeedsAck } from "@/lib/legal";
+import { firstEmbedded, toWinDelivery, type WinDelivery } from "@/lib/fan/delivery";
 import { notifyCreator } from "@/lib/push/notify";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 
@@ -141,7 +142,8 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     sb
       .from("spins")
       // #26: `reward` only says the win was instant (its kind), never the value.
-      .select("prize_label, prize_rarity, prize_image_url, share_id, created_at, reward:spin_rewards(kind)")
+      // T5: the win's redemption status and delivery time (never notes or due dates).
+      .select("prize_label, prize_rarity, prize_image_url, share_id, created_at, reward:spin_rewards(kind), redemption:redemptions(status, fulfilled_at)")
       .eq("fan_id", pass.fan.id)
       .order("created_at", { ascending: false })
       .limit(50),
@@ -168,6 +170,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
     created_at: string;
     // One-to-one embed: PostgREST sends an object (or null); tolerate an array.
     reward?: { kind: string } | { kind: string }[] | null;
+    redemption?: RedemptionEmbed | RedemptionEmbed[] | null;
   }[];
 
   const wishlist: WishlistItem[] = (
@@ -207,6 +210,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       shareId: w.share_id ?? undefined,
       imageUrl: w.prize_image_url ?? null,
       ...(hasEmbeddedRow(w.reward) ? { instant: true } : {}),
+      ...winDelivery(w.redemption),
     })),
     wishlist,
     happyHour,
@@ -256,6 +260,15 @@ export async function spin(token: string, rawClientSeed?: unknown, requestId = c
 
 export async function getSpinAttemptStatus(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
   return isSupabaseConfigured() ? readSpinAttempt(token, intent) : mockReadSpinAttempt(token, intent);
+}
+
+type RedemptionEmbed = { status: string; fulfilled_at: string | null };
+
+/** T5: the fan-facing delivery state of a win, when it has a redemption row. */
+function winDelivery(embed: RedemptionEmbed | RedemptionEmbed[] | null | undefined): { delivery?: WinDelivery } {
+  const row = firstEmbedded(embed);
+  const delivery = row ? toWinDelivery(row.status, row.fulfilled_at) : undefined;
+  return delivery ? { delivery } : {};
 }
 
 /** A one-to-one embed that holds a row (PostgREST returns an object; arrays tolerated). */

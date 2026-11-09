@@ -10,6 +10,7 @@ import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { readableInk } from "@/lib/theme";
 import InstantReward from "./InstantReward";
 import InstantRewardHistory from "./InstantRewardHistory";
+import WinDeliveryList from "./WinDeliveryList";
 import { groupWonPrizes, parseDeliveredReward, rewardViewError, type InstantWinRef } from "./instantReward";
 
 // Relative time for a win; older than a week falls back to an absolute date.
@@ -173,6 +174,7 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
           );
         })}
       </div>
+      <WinDeliveryList history={history} />
       {token && <InstantRewardHistory token={token} onView={(win, label) => void openReward(win, label)} />}
       {view && (
         <RewardDialog
