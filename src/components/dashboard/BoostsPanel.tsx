@@ -1,11 +1,9 @@
 "use client";
 
 import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
-import CreatorMfaRecovery from "@/components/auth/CreatorMfaRecovery";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useRouter } from "next/navigation";
 import type { HappyHour, Webhook, WheelSummary, WishlistDemand } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import { useToast } from "@/components/ui/Toast";
@@ -14,15 +12,15 @@ import { useOrigin } from "@/lib/hooks/useOrigin";
 import { demandPct, formatWindow, happyHourGames, happyHourStatus, type HappyHourStatus } from "./boostsHelpers";
 import { gameOptionLabel, liveExplanation } from "./gameAssignment";
 import { LoadError } from "./analyticsUi";
+import { loadJson } from "@/lib/hooks/loadJson";
+import LoadFailed from "./LoadFailed";
+import { useCreatorDraft } from "./CreatorDrafts";
 
 /** A list read: loading, loaded, or failed (never shown as an empty list). */
 type ListLoad = "loading" | "ok" | "failed";
 
-async function getJson<T>(url: string): Promise<T> {
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(String(r.status));
-  return (await r.json()) as T;
-}
+// The shared read (C2): 401 → sign in, 429 → "Too many requests", else an error.
+const getJson = <T,>(url: string): Promise<T> => loadJson<T>(url);
 
 interface ReferralStats {
   referredCount: number;
@@ -240,29 +238,28 @@ export default function BoostsPanel({
   onNavigate?: (tab: string) => void;
 }) {
   const [profile, setProfile] = useState<PublicProfile | null>(null);
+  const [profileError, setProfileError] = useState<unknown>(null);
+  const [profileAttempt, setProfileAttempt] = useState(0);
 
-  // One fetch shared by the link-in-bio card and the leaderboard links.
+  // One fetch shared by the link-in-bio card and the leaderboard links. A
+  // failed read says so; it is never "no public page yet" (C2).
   useEffect(() => {
     let live = true;
-    fetch("/api/public-profile", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
+    getJson<{ slug?: string | null; tipUrl?: string | null; tagline?: string | null }>("/api/public-profile")
       .then((d) => {
         if (!live) return;
-        setProfile(
-          d
-            ? { slug: d.slug ?? null, tipUrl: d.tipUrl ?? null, tagline: d.tagline ?? null }
-            : { slug: null, tipUrl: null, tagline: null },
-        );
+        setProfileError(null);
+        setProfile({ slug: d.slug ?? null, tipUrl: d.tipUrl ?? null, tagline: d.tagline ?? null });
       })
-      .catch(() => live && setProfile({ slug: null, tipUrl: null, tagline: null }));
+      .catch((e) => live && setProfileError(e));
     return () => {
       live = false;
     };
-  }, []);
+  }, [profileAttempt]);
 
   return (
     <div className="flex max-w-[880px] flex-col gap-[18px]">
-      <LinkInBioCard profile={profile} onNavigate={onNavigate} />
+      <LinkInBioCard profile={profile} error={profileError} onRetry={() => { setProfileError(null); setProfileAttempt((n) => n + 1); }} onNavigate={onNavigate} />
       <LeaderboardToggle enabled={leaderboardEnabled} onChange={onLeaderboardChange} slug={profile?.slug ?? null} />
       <HappyHourScheduler />
       <div className="grid gap-[18px] sm:grid-cols-2">
@@ -270,7 +267,6 @@ export default function BoostsPanel({
         <ReferralStatsCard />
       </div>
       <WebhooksCard />
-      <DangerZone />
     </div>
   );
 }
@@ -281,9 +277,13 @@ export default function BoostsPanel({
 
 function LinkInBioCard({
   profile,
+  error = null,
+  onRetry,
   onNavigate,
 }: {
   profile: PublicProfile | null;
+  error?: unknown;
+  onRetry?: () => void;
   onNavigate?: (tab: string) => void;
 }) {
   const toast = useToast();
@@ -317,7 +317,9 @@ function LinkInBioCard({
         ) : undefined
       }
     >
-      {profile === null ? (
+      {profile === null && error != null ? (
+        <LoadFailed compact error={error} what="your public page" onRetry={onRetry} testId="boosts-profile-load-failed" />
+      ) : profile === null ? (
         <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Loading your public page">
           <div className="skeleton h-12 rounded-xl" />
           <div className="skeleton h-12 rounded-xl" />
@@ -520,6 +522,7 @@ function HappyHourScheduler() {
   // Whether the lists have ever loaded: a failed refresh keeps the last good
   // lists (and Schedule) and only says the refresh failed.
   const [loaded, setLoaded] = useState(false);
+  const [failure, setFailure] = useState<unknown>(null);
   const toast = useToast();
 
   // A15: a failed read is an error with a retry, never "no happy hours yet"
@@ -537,7 +540,8 @@ function HappyHourScheduler() {
       setWheelId((current) => current && happyHourGames(list).some((g) => g.id === current) ? current : liveExplanation(happyHourGames(list), new Date())?.game.id ?? happyHourGames(list)[0]?.id ?? "");
       setLoaded(true);
       setState("ok");
-    } catch {
+    } catch (e) {
+      setFailure(e);
       setState("failed");
     }
   }, []);
@@ -666,7 +670,7 @@ function HappyHourScheduler() {
 
       {state === "failed" && (
         <div data-testid="happy-hours-load-error" className="mt-3">
-          <LoadError what={loaded ? "the latest happy hours" : "your happy hours and wheels"} onRetry={() => void load()} />
+          <LoadError what={loaded ? "the latest happy hours" : "your happy hours and wheels"} error={failure} onRetry={() => void load()} />
         </div>
       )}
       {!loaded ? (
@@ -719,6 +723,7 @@ function HappyHourScheduler() {
 function WishlistDemandCard() {
   const [demand, setDemand] = useState<WishlistDemand[]>([]);
   const [state, setState] = useState<ListLoad>("loading");
+  const [failure, setFailure] = useState<unknown>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -729,7 +734,7 @@ function WishlistDemandCard() {
         setDemand(d.demand ?? []);
         setState("ok");
       })
-      .catch(() => live && setState("failed"));
+      .catch((e) => { if (live) { setFailure(e); setState("failed"); } });
     return () => {
       live = false;
     };
@@ -742,6 +747,7 @@ function WishlistDemandCard() {
       {state === "failed" ? (
         <LoadError
           what="wishlist demand"
+          error={failure}
           onRetry={() => {
             setState("loading");
             setAttempt((n) => n + 1);
@@ -779,30 +785,37 @@ function WishlistDemandCard() {
 
 function ReferralStatsCard() {
   const [stats, setStats] = useState<ReferralStats | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
 
+  // A failed read is not "0 referred" (C2).
   useEffect(() => {
     let live = true;
-    fetch("/api/referrals/stats", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => live && d && setStats(d))
-      .catch(() => {});
+    getJson<ReferralStats>("/api/referrals/stats")
+      .then((d) => { if (live) { setStats(d); setFailure(null); } })
+      .catch((e) => live && setFailure(e));
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
 
   return (
     <Card id="boosts-referrals" icon={P.fans} title="Referrals" hint="Fans who bring friends earn bonus spins.">
       <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-[var(--hair)] bg-[var(--hair)]">
-        <Stat label="Referred" value={stats?.referredCount ?? 0} />
-        <Stat label="Credited" value={stats?.creditedCount ?? 0} />
-        <Stat label="Bonus spins" value={stats?.bonusAwarded ?? 0} />
+        <Stat label="Referred" value={stats ? stats.referredCount : "—"} />
+        <Stat label="Credited" value={stats ? stats.creditedCount : "—"} />
+        <Stat label="Bonus spins" value={stats ? stats.bonusAwarded : "—"} />
       </dl>
+      {failure != null && (
+        <div className="mt-3">
+          <LoadError what="referral numbers" error={failure} onRetry={() => setAttempt((n) => n + 1)} />
+        </div>
+      )}
     </Card>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="flex min-w-0 flex-col-reverse px-3 py-3 [background:var(--s2)]">
       <dt className="mt-0.5 truncate text-[10px] uppercase tracking-[0.04em] text-muted">{label}</dt>
@@ -835,8 +848,11 @@ function WebhooksCard() {
   const [event, setEvent] = useState("all");
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState<ListLoad>("loading");
+  const [failure, setFailure] = useState<unknown>(null);
   const [attempt, setAttempt] = useState(0);
   const toast = useToast();
+  // C14: a typed webhook URL is unsaved work.
+  useCreatorDraft("webhooks", "a webhook you were adding", url.trim().length > 0, busy);
 
   // A15: until the list has loaded, Add stays off: a creator who can't see
   // their hooks must not be invited to add the same one again.
@@ -848,7 +864,7 @@ function WebhooksCard() {
         setHooks(d.webhooks ?? []);
         setState("ok");
       })
-      .catch(() => live && setState("failed"));
+      .catch((e) => { if (live) { setFailure(e); setState("failed"); } });
     return () => {
       live = false;
     };
@@ -951,6 +967,7 @@ function WebhooksCard() {
         <div data-testid="webhooks-load-error" className="mt-3">
           <LoadError
             what="your webhooks"
+            error={failure}
             onRetry={() => {
               setState("loading");
               setAttempt((n) => n + 1);
@@ -1057,107 +1074,5 @@ function WebhookSecret() {
         <p className="text-xs text-muted">The old secret stops working at once; receivers checking it will reject new deliveries until updated.</p>
       )}
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------------ */
-/* Danger zone                                                               */
-/* ------------------------------------------------------------------------ */
-
-/** Destructive account reset — wipes all wheels/fans/spins/campaigns. */
-function DangerZone() {
-  const toast = useToast();
-  const router = useRouter();
-  const [confirming, setConfirming] = useState(false);
-  const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [mfaRequired, setMfaRequired] = useState(false);
-
-  async function reset() {
-    setBusy(true);
-    try {
-      const res = await fetch("/api/account/reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm: typed }),
-      });
-      if (res.ok) {
-        toast("Account reset — starting fresh.", { tone: "success" });
-        // #9: re-run the server components to reflect the wipe instead of a
-        // hard page reload. A short delay lets the toast register first.
-        setTimeout(() => router.refresh(), 700);
-      } else {
-        const body = await res.json().catch(() => null);
-        if (body?.error === "mfa_required") {
-          setMfaRequired(true);
-          setTyped("");
-          return;
-        }
-        toast("Couldn't reset. Are you signed in?", { tone: "error" });
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Card
-      id="boosts-danger"
-      icon={P.warn}
-      title="Danger zone"
-      tone="danger"
-      hint={
-        <>
-          Clear all data — wheels, prizes, fans, links, spins, grants, campaigns, and metrics — and start fresh.
-          This <strong className="text-ink">cannot be undone</strong>.
-        </>
-      }
-    >
-      <CreatorMfaRecovery required={mfaRequired} destination="reset" />
-      {!confirming ? (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          className="inline-flex min-h-9 items-center rounded-[9px] border border-[#ef4444]/55 px-3.5 text-[13px] font-semibold text-[#f87171] transition-colors hover:bg-[#ef4444]/10"
-        >
-          Clear all data
-        </button>
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          <label className="flex flex-col gap-1.5 text-sm text-ink">
-            <span>
-              Type <strong>RESET</strong> to confirm:
-            </span>
-            <input
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              className="ff-input w-full sm:max-w-xs"
-              placeholder="RESET"
-              autoComplete="off"
-            />
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={reset}
-              disabled={busy || typed !== "RESET"}
-              className="inline-flex min-h-9 items-center rounded-[9px] bg-[#ef4444] px-3.5 text-[13px] font-bold text-white transition hover:brightness-110 disabled:opacity-40"
-            >
-              {busy ? "Clearing…" : "Permanently clear everything"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setConfirming(false);
-                setTyped("");
-              }}
-              className={secondaryBtn}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </Card>
   );
 }

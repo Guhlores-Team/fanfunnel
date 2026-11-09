@@ -12,6 +12,7 @@ import LookAndFeelCard from "./LookAndFeelCard";
 import ThemedProfilePreview from "./ThemedProfilePreview";
 import type { ThemePreviewValue } from "./lookAndFeel";
 import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecurityCards";
+import ClearDataCard from "./ClearDataCard";
 import PushNotificationsCard from "./PushNotificationsCard";
 import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profileErrors";
 
@@ -146,11 +147,12 @@ export default function SettingsPanel({
         <GroupHeader
           id="settings-data"
           title="Your data"
-          hint="Take a copy of everything your account holds, or close the account for good."
+          hint="Take a copy of everything your account holds, clear it and start fresh, or close the account for good."
         />
         <div className="max-w-[680px] space-y-[18px]">
           <DataExportCard />
           <CloseAccountCard />
+          <ClearDataCard />
         </div>
       </section>
     </div>

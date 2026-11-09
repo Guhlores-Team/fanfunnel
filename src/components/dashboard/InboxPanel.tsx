@@ -239,6 +239,7 @@ export default function InboxPanel({
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state is set after the read resolves
     loadThreads();
 
     // Real Supabase Realtime for the authed creator (RLS passes on messages).
