@@ -11,6 +11,7 @@ import { sendApplicationAlert } from "@/lib/account/applicationNotice";
 import { sendAgencyInviteEmail } from "@/lib/agency/inviteEmail";
 import { displayNameInputError } from "@/lib/profileErrors";
 import { runAfterResponse } from "@/lib/afterResponse";
+import { reportAccountMail } from "@/lib/monitoring/opsAlerts";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
 import { NEUTRAL_CREATOR_TITLE, publicCreatorName } from "@/lib/publicCreator";
 
@@ -366,7 +367,7 @@ async function withInviteEmail(
   if (after && after !== before) {
     const { data: org } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
     const orgName = (org as { name: string } | null)?.name ?? "";
-    runAfterResponse(() => sendAgencyInviteEmail(address, orgName, role));
+    runAfterResponse(async () => reportAccountMail("agency_invite", await sendAgencyInviteEmail(address, orgName, role)));
   }
   return result;
 }
@@ -515,7 +516,7 @@ export async function submitCreatorApplication(input: ApplicationInput): Promise
     status: "pending",
   });
   if (error) return { error: error.code === "23505" ? "already_submitted" : "db_error" };
-  runAfterResponse(() => sendApplicationAlert());
+  runAfterResponse(async () => reportAccountMail("application_alert", await sendApplicationAlert()));
   return { ok: true };
 }
 
@@ -703,7 +704,7 @@ export async function decideCreatorApplication(
     await copyApplicationName(sb, profileId);
     const svc = createServiceClient();
     await leaveApprovalNotice(svc, profileId);
-    runAfterResponse(() => sendApprovalEmail(svc, profileId));
+    runAfterResponse(async () => reportAccountMail("approval", await sendApprovalEmail(svc, profileId)));
   }
   return { ok: true };
 }

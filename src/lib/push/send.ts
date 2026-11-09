@@ -12,6 +12,7 @@ import { createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server
 import { mockDeliverPush, mockRecordPushOutcome } from "@/lib/data/mockPush";
 import { isAllowedPushEndpoint, PUSH_TIMEOUT_MS, PUSH_TTL_SECONDS } from "./config";
 import { vapidKeys } from "./keys";
+import { reportPushFailure } from "@/lib/monitoring/opsAlerts";
 import type { PushPayload } from "./payload";
 
 export interface PushTarget {
@@ -56,6 +57,7 @@ export async function deliverPush(target: PushTarget, payload: PushPayload): Pro
     if (status === 404 || status === 410) return "gone";
     // Never log the endpoint (a bearer capability for that device) or keys.
     console.error("push: delivery failed", { status: typeof status === "number" ? status : "network" });
+    reportPushFailure();
     return "failed";
   }
 }

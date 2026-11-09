@@ -8,6 +8,7 @@
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { mockListAudit, mockRecordAudit } from "./mock";
+import { reportAuditNotWritten } from "@/lib/monitoring/opsAlerts";
 
 export type AuditAction =
   | "account.create"
@@ -95,9 +96,13 @@ export async function recordAudit(entry: AuditInput): Promise<void> {
   }
   try {
     const { error } = await createServiceClient().from("admin_audit_log").insert(row);
-    if (error) console.error("recordAudit: insert failed", { action: entry.action, error: error.message });
+    if (error) {
+      console.error("recordAudit: insert failed", { action: entry.action, error: error.message });
+      reportAuditNotWritten(entry.action);
+    }
   } catch (e) {
     console.error("recordAudit: insert threw", { action: entry.action, error: String(e) });
+    reportAuditNotWritten(entry.action);
   }
 }
 
