@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { rateLimitOr429 } from "@/lib/api/limit";
-import { readCappedText } from "@/lib/monitoring/report";
+import { BAD_REQUEST, parseJsonBody } from "@/lib/api/handler";
 import { recordAudit } from "@/lib/data/audit";
 import { lookupWin, parseWinReference } from "@/lib/data/adminLookup";
 import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
@@ -22,12 +22,9 @@ export async function POST(req: Request) {
     limited.headers.set("Cache-Control", "no-store");
     return limited;
   }
-  const raw = await readCappedText(req, 1024);
-  if (raw === "too_large") return json({ error: "bad_request" }, 400);
-  let body: unknown;
-  try { body = JSON.parse(raw); } catch { return json({ error: "bad_request" }, 400); }
-  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((k) => k !== "query")) return json({ error: "bad_request" }, 400);
-  const shareId = parseWinReference((body as { query?: unknown }).query);
+  const body = await parseJsonBody<{ query?: unknown }>(req);
+  if (body === BAD_REQUEST || Object.keys(body).some((k) => k !== "query")) return json({ error: "bad_request" }, 400);
+  const shareId = parseWinReference(body.query);
   if (!shareId) return json({ error: "invalid_reference" }, 400);
   const result = await lookupWin(shareId);
   if (result === "error") return json({ error: "lookup_failed" }, 503);
