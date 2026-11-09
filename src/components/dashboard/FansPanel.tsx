@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { loadJson } from "@/lib/hooks/loadJson";
+import LoadFailed from "./LoadFailed";
+import { shareOrCopy } from "./shareLink";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { CampaignPack, DmTemplate, FanAccountSummary, WheelSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
@@ -23,6 +27,9 @@ import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import { GameName } from "./GameChoice";
 import { linkGame, mintPlaysReason } from "./gameAssignment";
+
+// Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
+const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -52,6 +59,10 @@ export default function FansPanel({
   onOpenCampaigns?: () => void;
 }) {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
+  const [accountsError, setAccountsError] = useState<unknown>(null);
+  // C12: the link just minted, shown as a card with Copy / Share / QR.
+  const [minted, setMinted] = useState<{ fanId: string; name: string; url: string } | null>(null);
+  const mintedRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState("");
   const [spins, setSpins] = useState(3);
   // Price the creator types is PER SPIN; it's its own state so typing isn't
@@ -152,10 +163,18 @@ export default function FansPanel({
     });
   }, [focusMintNonce]);
 
-  const load = useCallback(async () => {
-    const res = await fetch("/api/fans", { cache: "no-store" });
-    if (res.ok) setAccounts((await res.json()).fans ?? []);
-    else setAccounts([]);
+  // A failed load is an error state, never "No fans yet" (C2). Resolves false
+  // on failure so a caller can say the list did not refresh.
+  const load = useCallback(async (): Promise<boolean> => {
+    try {
+      const d = await loadJson<{ fans?: FanAccountSummary[] }>("/api/fans");
+      setAccounts(d.fans ?? []);
+      setAccountsError(null);
+      return true;
+    } catch (e) {
+      setAccountsError(e);
+      return false;
+    }
   }, []);
   const loadCampaigns = useCallback(async () => {
     const res = await fetch("/api/campaigns", { cache: "no-store" });
@@ -238,7 +257,7 @@ export default function FansPanel({
     try { requestId = await creatorIntent(scope, body, pin); }
     catch (error) {
       const pending = error instanceof Error && error.message === "intent_pending";
-      toast(pending ? "An earlier request still needs checking. Restore its original details and retry before starting a different grant." : "Couldn't save the request safely in this browser. No grant was sent. Allow session storage and retry.", { tone: "error" });
+      toast(pending ? "An earlier request still needs checking. Put back its original details and try again before adding different spins." : "This browser couldn't keep a safe copy of the request, so no spins were added. Check that this site may store data (private browsing can block it) and try again.", { tone: "error" });
       // Do not lock changed fields: the creator may need to restore the original
       // request after reloading. The durable helper still refuses a new intent.
       return null;
@@ -255,7 +274,7 @@ export default function FansPanel({
       toast(
         data.error === "no_wheel"
           ? "Create and save a wheel first, then generate fan links."
-          : "The server couldn't confirm this grant. Keep the selection and retry the same request.",
+          : "We couldn't confirm the spins were added. Keep these details and try the same request again.",
         { tone: "error" }
       );
       throw new Error("grant_unconfirmed");
@@ -268,7 +287,7 @@ export default function FansPanel({
     creatorIntentComplete(scope, requestId);
     return { ...(data as { token: string; fanId: string }), pinWheelId: receiptPin };
     } catch {
-      toast(committed ? "The grant was confirmed, but the browser couldn't clear its receipt. Retry the same selection to check it safely." : "The grant couldn't be confirmed. Keep the selection and retry the same request to check its result.", { tone: "error" });
+      toast(committed ? "The spins were added, but this browser couldn't finish tidying up. Try the same details again to check it safely." : "We couldn't confirm the spins were added. Keep these details and try the same request again to check.", { tone: "error" });
       throw new Error("grant_unconfirmed");
     }
   }
@@ -288,10 +307,13 @@ export default function FansPanel({
       });
       setNewFanUncertain(false);
       if (data) {
+        const fanName = name.trim();
         setName("");
         setPerSpin("");
         setPackId(null);
-        await load().catch(() => toast("Grant confirmed. Refresh the fan list to see it.", { tone: "error" }));
+        setMinted({ fanId: data.fanId, name: fanName, url: `${origin}/spin/${data.token}` });
+        toast(`Link ready for ${fanName}. Copy it or share it below.`, { tone: "success" });
+        if (!(await load())) toast("The link was created. Refresh the fan list to see it.", { tone: "error" });
       }
     } catch { setNewFanUncertain(true);
     } finally {
@@ -321,7 +343,7 @@ export default function FansPanel({
       ...(packId ? { packId, packUnits: units } : {}),
     }, pinWheelId);
     if (!data) throw new Error("grant_rejected");
-    await load().catch(() => toast("Top-up confirmed. Refresh the fan list to see it.", { tone: "error" }));
+    if (!(await load())) toast("Top-up confirmed. Refresh the fan list to see it.", { tone: "error" });
     return { token: data.token, pinWheelId: data.pinWheelId };
   }
 
@@ -433,6 +455,14 @@ export default function FansPanel({
           >
             {creating ? "Checking…" : newFanUncertain ? "Check this link again" : "Create"}
           </button>
+        {minted && (
+          <MintedLinkCard
+            ref={mintedRef}
+            name={minted.name}
+            url={minted.url}
+            onDismiss={() => setMinted(null)}
+          />
+        )}
         {mintPlays && (
           <p data-testid="mint-plays" className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12.5px] text-muted text-pretty">
             <span className="font-semibold text-ink">This link will play:</span>
@@ -553,7 +583,10 @@ export default function FansPanel({
         />
       )}
 
-      {accounts === null && (
+      {accountsError != null && (
+        <LoadFailed error={accountsError} what="your fans" onRetry={load} stale={accounts !== null} testId="fans-load-failed" />
+      )}
+      {accounts === null && accountsError == null && (
         <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading fans">
           {[0, 1, 2].map((i) => (
             <div key={i} className="skeleton h-[66px] rounded-[13px]" />
@@ -578,6 +611,7 @@ export default function FansPanel({
             <FanRow
               key={acc.fanId}
               account={acc}
+              fresh={minted?.fanId === acc.fanId}
               onOpen={() => openFanId && openFanId !== acc.fanId ? leave(() => openFan(acc.fanId), { scope: [`fan-focus:${openFanId}`, `fan-topup:${openFanId}`, `fan-edit:${openFanId}`, `fan-message:${openFanId}`] }) : openFan(acc.fanId)}
               onCopy={() => copyLink(acc)}
             />
@@ -621,6 +655,51 @@ export default function FansPanel({
   );
 }
 
+/** C12/C13: the link just minted, with Copy, Share and QR. A /spin link holds
+ *  one fan's paid balance, so it is said plainly that it is for that fan only. */
+const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
+  name: string;
+  url: string;
+  onDismiss: () => void;
+  ref?: React.Ref<HTMLDivElement>;
+}) {
+  const toast = useToast();
+  const copy = async () => {
+    if (await copyToClipboard(url)) toast("Link copied", { tone: "success" });
+    else toast("Couldn't copy the link. Select it and copy it by hand.", { tone: "error" });
+  };
+  const share = async () => {
+    const outcome = await shareOrCopy({ title: `Spin link for ${name}`, text: `Your personal link, ${name}:`, url });
+    if (outcome === "copied") toast("Sharing isn't available here, so the link was copied instead.", { tone: "success" });
+    else if (outcome === "failed") toast("Couldn't share or copy the link. Select it and copy it by hand.", { tone: "error" });
+  };
+  return (
+    <div ref={ref} data-testid="minted-link" role="status" className="mt-3 rounded-xl border border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] p-3.5 [background:color-mix(in_oklab,var(--brand)_7%,transparent)]">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-bold text-ink">Link ready for {name}</p>
+          <p className="mt-0.5 text-[12.5px] text-muted text-pretty">
+            This is a personal link for this fan only: it carries their spins. Send it to them directly; don&rsquo;t post it publicly.
+          </p>
+        </div>
+        <CloseButton onClick={onDismiss} />
+      </div>
+      <input
+        readOnly
+        aria-label={`Spin link for ${name}`}
+        value={url}
+        onFocus={(e) => e.currentTarget.select()}
+        className="ff-input tnum mt-2.5 w-full text-[12.5px]"
+      />
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        <button type="button" onClick={copy} className={ghostBtn}>Copy</button>
+        <button type="button" onClick={share} className={ghostBtn}>Share</button>
+        <QrButton url={url} label={`${name} spin link`} className={ghostBtn} />
+      </div>
+    </div>
+  );
+};
+
 function FansEmpty({ title, body }: { title: string; body: string }) {
   return (
     <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-8 py-12 text-center">
@@ -643,14 +722,24 @@ function FanRow({
   account,
   onOpen,
   onCopy,
+  fresh = false,
 }: {
   account: FanAccountSummary;
   onOpen: () => void;
   onCopy: () => void;
+  /** Just minted: scrolled into view and outlined once. */
+  fresh?: boolean;
 }) {
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (fresh) ref.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "nearest" });
+  }, [fresh]);
   return (
     <li
-      className={`relative flex flex-wrap items-center gap-3 rounded-[13px] px-3.5 py-[13px] transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] sm:gap-3.5 sm:px-4 ${raised}`}
+      ref={ref}
+      id={`fan-row-${account.fanId}`}
+      data-fresh={fresh ? "true" : undefined}
+      className={`relative ${fresh ? "ring-2 ring-[var(--brand)] " : ""} flex flex-wrap items-center gap-3 rounded-[13px] px-3.5 py-[13px] transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] sm:gap-3.5 sm:px-4 ${raised}`}
     >
       <span
         aria-hidden="true"

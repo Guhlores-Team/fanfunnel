@@ -5,10 +5,11 @@ import type { ReactNode } from "react";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import type { ConversionFunnel, CreatorMetricsExtra, CreatorOverview } from "@/lib/data/types";
 import { formatCents } from "@/lib/format";
-import { useFetch } from "@/lib/hooks/useFetch";
+import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import Sparkline from "@/components/dashboard/Sparkline";
 import Funnel from "@/components/dashboard/Funnel";
 import { EmptyState } from "./ui";
+import LoadFailed from "./LoadFailed";
 import type { Tab } from "@/components/dashboard/DashboardShell";
 import { summarizeWins } from "./analyticsHelpers";
 import { CardHeader, ICON, LoadError, StatCell, hairGrid, raised } from "./analyticsUi";
@@ -39,11 +40,16 @@ export interface ConversionState {
 export default function MetricsPanel({
   overview,
   loading,
+  error = null,
+  onRetry,
   onGoTo,
   renderDeep,
 }: {
   overview: CreatorOverview | null;
   loading: boolean;
+  /** The shared overview's last load failure (C2): never shown as zeros. */
+  error?: unknown;
+  onRetry?: () => void | Promise<unknown>;
   onGoTo: (t: Tab) => void;
   renderDeep?: () => ReactNode;
 }) {
@@ -73,6 +79,7 @@ export default function MetricsPanel({
   // `deep` always sits at the same child position, so the overview finishing
   // its first load doesn't remount (and refetch) the profit/CRM/cohort cards.
   if (loading) return <Stack top={<MetricsSkeleton />} deep={deep} />;
+  if (!overview && error) return <Stack top={<LoadFailed error={error} what="your numbers" onRetry={onRetry} testId="analytics-load-failed" />} deep={deep} />;
 
   if (totalWins === 0 && (m?.fans ?? 0) === 0) {
     return (
@@ -91,7 +98,7 @@ export default function MetricsPanel({
 
   const trendBody = (chart: ReactNode) =>
     extraFailed ? (
-      <LoadError what="this trend" onRetry={() => void reload()} />
+      <LoadError what="this trend" error={extraError} onRetry={() => void reload()} />
     ) : extraLoading || !extra ? (
       <div className="skeleton h-14 w-full rounded" />
     ) : (

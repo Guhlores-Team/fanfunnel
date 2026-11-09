@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useToast } from "@/components/ui/Toast";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
-import { useFetch } from "@/lib/hooks/useFetch";
+import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import { formatCents } from "@/lib/format";
 import type { CreatorMetricsExtra, CreatorOverview } from "@/lib/data/types";
 import {
@@ -22,6 +22,8 @@ import {
   type Trend,
 } from "./todayHelpers";
 import { requestWinbackQueue } from "./winbackIntent";
+import { loadJson } from "@/lib/hooks/loadJson";
+import LoadFailed from "./LoadFailed";
 
 interface Action {
   kind: string;
@@ -201,34 +203,39 @@ function PulseCard({
 export default function TodayPanel({
   onNavigate,
   overview,
+  overviewError = null,
+  onRetryOverview,
   firstSteps = null,
   firstRun = false,
 }: {
   onNavigate: (tab: string) => void;
   /** Shared, polled overview from DashboardClient (pending count + queue). */
   overview: CreatorOverview | null;
+  /** Its last load failure: the tiles say so instead of "all clear" (C2). */
+  overviewError?: unknown;
+  onRetryOverview?: () => void | Promise<unknown>;
   /** "Your first steps" (RD-5), owned by DashboardClient; null once hidden. */
   firstSteps?: ReactNode;
   /** Brand-new account (no fans, no spins): muted chips + first-run notes. */
   firstRun?: boolean;
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
+  const [cardsError, setCardsError] = useState<unknown>(null);
   const [autopilotDemo, setAutopilotDemo] = useState(false);
   const toast = useToast();
   const origin = useOrigin();
   // Daily series are UTC buckets ending today; the last point is "today".
-  const { data: extra } = useFetch<CreatorMetricsExtra>("/api/metrics?days=14", { pollMs: 12000 });
+  const { data: extra, error: extraError, reload: reloadExtra } = useFetch<CreatorMetricsExtra>("/api/metrics?days=14", { pollMs: 12000 });
 
+  // A failed read is an error with Retry, never "You're all caught up" (C2).
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/autopilot", { cache: "no-store" });
-      if (res.ok) {
-        const body = (await res.json()) as { cards?: Card[]; demo?: boolean };
-        setAutopilotDemo(body.demo === true);
-        setCards(body.cards ?? []);
-      } else setCards([]);
-    } catch {
-      setCards([]);
+      const body = await loadJson<{ cards?: Card[]; demo?: boolean }>("/api/autopilot");
+      setAutopilotDemo(body.demo === true);
+      setCards(body.cards ?? []);
+      setCardsError(null);
+    } catch (e) {
+      setCardsError(e);
     }
   }, []);
 
@@ -289,6 +296,9 @@ export default function TodayPanel({
   };
 
   const m = overview?.metrics;
+  const overviewFailed = !overview && overviewError != null;
+  const extraFailed = !extra && extraError != null;
+  const tilesError = overviewFailed ? overviewError : extraFailed ? extraError : null;
   const spins = spinSeries(extra?.trend);
   const cents = centSeries(extra?.revenueTrend);
   const pending = m?.pending ?? 0;
@@ -323,7 +333,7 @@ export default function TodayPanel({
           label="Revenue today (UTC)"
           value={extra ? formatCents(lastValue(cents)) : dash}
           chip={firstRun ? muted : <TrendChip trend={trendVsAvg(cents)} />}
-          note={firstRun ? "get spinning" : "vs 14-day avg"}
+          note={extraFailed ? "couldn't load" : firstRun ? "get spinning" : "vs 14-day avg"}
           spark={sparkPoints(cents)}
           sparkColor="#22c55e"
         />
@@ -332,7 +342,7 @@ export default function TodayPanel({
           label="Spins today (UTC)"
           value={extra ? lastValue(spins) : dash}
           chip={firstRun ? muted : <TrendChip trend={trendVsYesterday(spins)} />}
-          note={firstRun ? "no spins yet" : "vs yesterday"}
+          note={extraFailed ? "couldn't load" : firstRun ? "no spins yet" : "vs yesterday"}
           spark={sparkPoints(spins)}
         />
         <PulseCard
@@ -348,20 +358,29 @@ export default function TodayPanel({
               />
             )
           }
-          note={firstRun ? "invite fans" : m ? `vs last week · ${m.fans} total` : "vs last week"}
+          note={extraFailed ? "couldn't load" : firstRun ? "invite fans" : m ? `vs last week · ${m.fans} total` : "vs last week"}
         />
         <PulseCard
           icon={P.gift}
           label="To fulfil"
           value={m ? pending : dash}
           chip={<TrendChip trend={waiting} />}
-          note={pending > 0 ? "oldest waiting" : "all clear"}
+          note={overviewFailed ? "couldn't load" : !m ? "" : pending > 0 ? "oldest waiting" : "all clear"}
           // Replaces the old every-section "N prizes waiting… Open →" banner
           // (P4): the server's pending count plus a jump to Fulfilment, one tap
           // away even when the autopilot fulfil card is dismissed.
           action={pending > 0 ? { label: "Open", ariaLabel: "Open the fulfilment queue", onClick: () => onNavigate("prizes") } : undefined}
         />
       </section>
+
+      {tilesError != null && (
+        <LoadFailed
+          error={tilesError}
+          what="today's numbers"
+          testId="today-load-failed"
+          onRetry={async () => { await Promise.all([overviewFailed ? onRetryOverview?.() : null, extraFailed ? reloadExtra() : null]); }}
+        />
+      )}
 
       {firstSteps}
 
@@ -377,7 +396,9 @@ export default function TodayPanel({
           )}
         </div>
 
-        {cards === null ? (
+        {cardsError != null ? (
+          <LoadFailed error={cardsError} what="what needs you" onRetry={load} testId="today-cards-load-failed" />
+        ) : cards === null ? (
           <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Loading your day">
             {[0, 1, 2].map((i) => (
               <div key={i} className="skeleton h-[76px] rounded-2xl" />

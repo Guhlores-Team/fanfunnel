@@ -9,6 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 import { startPoll } from "@/lib/poll";
+import { loadJson } from "./loadJson";
 
 export interface FetchState<T> {
   /** Latest successfully-parsed payload, or null before the first success. */
@@ -45,6 +46,11 @@ export interface UseFetchOptions<T> {
   enabled?: boolean;
   /** Extra request headers (compared by value, so an inline object is fine). */
   headers?: Record<string, string>;
+  /**
+   * A 401 sends the viewer to /login?next=<here> (once; see loadJson). On for
+   * the creator dashboard (`useCreatorFetch`); off for fan pages.
+   */
+  authRedirect?: boolean;
 }
 
 /**
@@ -61,7 +67,7 @@ export function useFetch<T>(
   url: string | null,
   opts: UseFetchOptions<T> = {}
 ): FetchState<T> {
-  const { pollMs = 0, refreshOnVisible = true, select, enabled = true, headers } = opts;
+  const { pollMs = 0, refreshOnVisible = true, select, enabled = true, headers, authRedirect = false } = opts;
   // Callers pass headers inline; key on the value so a re-render is not a refetch.
   const headerKey = headers ? JSON.stringify(headers) : "";
 
@@ -91,9 +97,10 @@ export function useFetch<T>(
     if (!active || typeof window === "undefined") return true;
     const id = ++reqId.current;
     try {
-      const res = await fetch(url as string, { cache: "no-store", ...(headerKey ? { headers: JSON.parse(headerKey) as Record<string, string> } : {}) });
-      if (!res.ok) throw new Error(`Request failed (${res.status})`);
-      const raw: unknown = await res.json();
+      const raw = await loadJson<unknown>(url as string, {
+        authRedirect,
+        ...(headerKey ? { headers: JSON.parse(headerKey) as Record<string, string> } : {}),
+      });
       const value = selectRef.current ? selectRef.current(raw) : (raw as T);
       if (!mounted.current || id !== reqId.current) return true;
       setData(value);
@@ -106,7 +113,7 @@ export function useFetch<T>(
     } finally {
       if (mounted.current && id === reqId.current) setLoading(false);
     }
-  }, [url, active, headerKey]);
+  }, [url, active, headerKey, authRedirect]);
 
   const load = useCallback(async () => {
     await fetchOnce();
@@ -152,4 +159,9 @@ export function useFetch<T>(
   }, [load, fetchOnce, active, pollMs, refreshOnVisible]);
 
   return { data, loading, error, reload: load, setData };
+}
+
+/** The dashboard's reads: like useFetch, and a 401 sends the creator to sign in. */
+export function useCreatorFetch<T>(url: string | null, opts: UseFetchOptions<T> = {}): FetchState<T> {
+  return useFetch<T>(url, { authRedirect: true, ...opts });
 }

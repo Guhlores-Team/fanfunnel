@@ -296,6 +296,9 @@ export interface RedemptionItem {
   focusKind?: "focus" | "chase";
   chaseAwarded?: boolean;
   id: string;
+  /** The fan who won (C18: Fulfilment links to their drawer and thread). Set
+   *  on the overview's window; the older-wins RPC does not return it yet. */
+  fanId?: string | null;
   fanName: string;
   prizeLabel: string;
   rarity: Rarity;

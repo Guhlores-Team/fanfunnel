@@ -1,5 +1,6 @@
 "use client";
 
+import LoadFailed from "./LoadFailed";
 import { useEffect, useId, useRef, useState } from "react";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import type { CreatorOverview, RedemptionItem, RedemptionStatus } from "@/lib/data/types";
@@ -66,12 +67,21 @@ function patchErrorMessage(error: string): string {
 export default function PrizesPanel({
   data,
   loading,
+  error = null,
   refresh,
   setData,
+  onOpenFan,
+  onMessageFan,
 }: {
   data: CreatorOverview | null;
   loading: boolean;
-  refresh: () => void;
+  /** The overview's last load failure: an error, never "All clear" (C2). */
+  error?: unknown;
+  refresh: () => void | Promise<unknown>;
+  /** C18: the fan's name opens their drawer in Fans. */
+  onOpenFan?: (fanId: string) => void;
+  /** C18: Message opens the fan's Inbox thread. */
+  onMessageFan?: (fanId: string) => void;
   setData: React.Dispatch<React.SetStateAction<CreatorOverview | null>>;
 }) {
   const [filter, setFilter] = useState<RedemptionStatus | "all">("pending");
@@ -257,7 +267,11 @@ export default function PrizesPanel({
         </div>
       )}
 
-      {!loading && shown.length === 0 && (
+      {!loading && !data && error != null && (
+        <LoadFailed error={error} what="the fulfilment queue" onRetry={refresh} testId="prizes-load-failed" />
+      )}
+
+      {!loading && (data || error == null) && shown.length === 0 && (
         <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-8 py-12 text-center">
           <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
             <Glyph d={P.check} size={22} />
@@ -270,7 +284,7 @@ export default function PrizesPanel({
       {shown.length > 0 && (
         <ul className="flex flex-col gap-2">
           {shown.map((r) => (
-            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} />
+            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} />
           ))}
         </ul>
       )}
@@ -348,11 +362,16 @@ function RedemptionRow({
   r,
   onSet,
   onPatch,
+  onOpenFan,
+  onMessageFan,
 }: {
   r: RedemptionItem;
   onSet: (id: string, status: RedemptionStatus) => void;
   onPatch: (id: string, patch: Patch) => void;
+  onOpenFan?: (fanId: string) => void;
+  onMessageFan?: (fanId: string) => void;
 }) {
+  const fanId = r.fanId ?? null;
   const color = RARITY_COLORS[r.rarity];
   const [notes, setNotes] = useState(r.notes ?? "");
   // Keep the local draft in sync when the row is refreshed from the server.
@@ -407,7 +426,21 @@ function RedemptionRow({
               <span style={{ color: `color-mix(in oklab, ${color} 62%, white)` }}>
                 {RARITY_LABEL[r.rarity]}
               </span>{" "}
-              · {r.fanName} ·{" "}
+              ·{" "}
+              {fanId && onOpenFan ? (
+                <button
+                  type="button"
+                  data-testid="redemption-fan"
+                  onClick={() => onOpenFan(fanId)}
+                  aria-label={`Open ${r.fanName}'s fan details`}
+                  className="font-semibold text-ink underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                >
+                  {r.fanName}
+                </button>
+              ) : (
+                r.fanName
+              )}{" "}
+              ·{" "}
               <time dateTime={r.at} className="tnum">
                 {new Date(r.at).toLocaleString()}
               </time>
@@ -442,6 +475,17 @@ function RedemptionRow({
           >
             {STATUS_CTA[r.status]}
           </button>
+          )}
+          {fanId && onMessageFan && (
+            <button
+              type="button"
+              data-testid="redemption-message"
+              onClick={() => onMessageFan(fanId)}
+              aria-label={`Message ${r.fanName}`}
+              className={ghostBtn}
+            >
+              Message
+            </button>
           )}
           {canCancel && !confirmingCancel && (
             <button

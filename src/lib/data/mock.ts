@@ -2168,9 +2168,10 @@ export function mockGetOverview(): CreatorOverview {
   // the window's last row skips or repeats them.
   const redemptions = [...store.redemptions].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
   const revenue = store.grants.reduce((s, g) => s + g.amountCents, 0);
-  // Map internal redemptions back to plain RedemptionItem (drop fanId/campaignId).
+  // Map internal redemptions back to plain RedemptionItem (drop campaignId).
   const items: RedemptionItem[] = redemptions.slice(0, 200).map((r) => ({
     id: r.id,
+    fanId: r.fanId,
     fanName: r.fanName,
     prizeLabel: r.prizeLabel,
     rarity: r.rarity,
