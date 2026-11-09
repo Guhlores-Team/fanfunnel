@@ -15,3 +15,9 @@ export function copyTitle(title: string, existing: Iterable<string>): string {
     if (!taken.has(candidate.toLowerCase())) return candidate;
   }
 }
+
+const NEW_GAME_TITLE = { wheel: "New wheel", scratch: "New scratch card", bingo: "New bingo card" } as const;
+/** C15: a blank game is named for its kind, not "New wheel" for every game. */
+export function newGameTitle(kind: unknown): string {
+  return typeof kind === "string" && Object.hasOwn(NEW_GAME_TITLE, kind) ? NEW_GAME_TITLE[kind as keyof typeof NEW_GAME_TITLE] : NEW_GAME_TITLE.wheel;
+}

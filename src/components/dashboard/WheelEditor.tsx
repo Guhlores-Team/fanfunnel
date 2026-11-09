@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import GamePreview from "./GamePreview";
 import GameSettingsEditor from "./GameSettingsEditor";
-import { gameSaveFeatureAllowed, editableGamePayload, gameDraftError, gameRefusalMessage, type CreatorGameWheel } from "./gameEditor";
+import { gameSaveFeatureAllowed, editableGamePayload, gameDraftIssues, gameRefusalMessage, type CreatorGameWheel } from "./gameEditor";
 import { useGameFeatures } from "./useGameFeatures";
 import { useCreatorDraft } from "./CreatorDrafts";
 import { prizeOdds } from "@/lib/games/wheel/engine";
@@ -238,8 +238,7 @@ export default function WheelEditor({
   // the saved snapshot), so the guard holds while another section is open.
   const validation = useMemo(() => {
     const base = validateWheelDraft(wheel);
-    const gameError = gameDraftError(wheel as CreatorGameWheel);
-    return { ...base, issues: [...(gameError ? [{ key: "gameSettings", message: gameError }] : []), ...base.issues] };
+    return { ...base, issues: gameDraftIssues(wheel as CreatorGameWheel, base.issues) };
   }, [wheel]);
   // Errors show for a field once it has been left (blur) or after a save
   // attempt, so a half-typed hex isn't flagged mid-keystroke.

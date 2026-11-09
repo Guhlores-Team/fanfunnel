@@ -73,6 +73,24 @@ export function gameDraftError(wheel: CreatorGameWheel): string | null {
   return null;
 }
 
+/**
+ * C15: the editor's "N things to fix" list, one entry per thing to do. Each
+ * missing bingo piece is its own issue (the count matches the list shown),
+ * and bingo's nine squares already cover the base "at least 2 prizes" rule,
+ * so that one is not counted twice.
+ */
+export function gameDraftIssues<T extends { key: string; message: string }>(wheel: CreatorGameWheel, base: readonly T[]): { key: string; message: string }[] {
+  if (creatorGameKind(wheel) === "bingo") {
+    const missing = bingoMissing(wheel);
+    if (missing.length) {
+      const own = missing.map((item) => ({ key: "gameSettings", message: `Bingo still needs ${item}.` }));
+      return [...own, ...base.filter((issue) => !(issue.key === "prizeCount" && missing.some((item) => /card-square/.test(item))))];
+    }
+  }
+  const error = gameDraftError(wheel);
+  return [...(error ? [{ key: "gameSettings", message: error }] : []), ...base];
+}
+
 const REFUSALS: Record<string, string> = {
   game_unavailable: "This game type is not available yet. Your current game and draft are kept.",
   game_not_ready: "Finish and save this game before making it available to fans.",
