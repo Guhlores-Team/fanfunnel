@@ -1,3 +1,4 @@
+import { auditActionMatches } from "@/components/admin/auditLabels";
 import { bingoReadyError } from "./bingo";
 import { mockBingoStore,currentMockBingo,mockBingoEditError,commitMockBingo,eraseMockBingo,clearMockBingo } from "./mockBingo";
 import { gameProposal,addBonusFailure } from "./gameProposal";
@@ -3914,15 +3915,19 @@ const privacy: MockPrivacyStore = (gPrivacy.__ffPrivacy ??= {
 });
 
 export function mockRecordAudit(row: Omit<MockAuditRow, "id" | "created_at">): void {
-  privacy.audit.unshift({ ...row, id: crypto.randomUUID(), created_at: new Date().toISOString() });
+  // Strictly newer than the previous entry, like the database's microsecond
+  // timestamps, so the Activity "Load older" cursor never skips a same-ms row.
+  const last = privacy.audit[0] ? Date.parse(privacy.audit[0].created_at) : 0;
+  privacy.audit.unshift({ ...row, id: crypto.randomUUID(), created_at: new Date(Math.max(Date.now(), last + 1)).toISOString() });
   privacy.audit.length = Math.min(privacy.audit.length, 500);
 }
 
-export function mockListAudit(limit: number) {
+export function mockListAudit(limit: number, opts: { action?: string; before?: string } = {}) {
   const label = (id: string | null) =>
     id ? store.accounts.find((a) => a.id === id)?.email ?? null : null;
+  const rows = privacy.audit.filter((r) => (!opts.action || auditActionMatches(r.action, opts.action)) && (!opts.before || r.created_at < opts.before));
   return structuredClone(
-    privacy.audit.slice(0, limit).map((r) => ({
+    rows.slice(0, limit).map((r) => ({
       id: r.id,
       actorId: r.actor_id,
       action: r.action,

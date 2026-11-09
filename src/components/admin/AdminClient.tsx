@@ -14,6 +14,7 @@ import SystemHealthCard from "./SystemHealthCard";
 import StuckDeletions from "./StuckDeletions";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
+import AdminLookup from "./AdminLookup";
 import AdminReports from "./AdminReports";
 import { pendingAgeLabel, pendingAgeOverdue } from "./pendingAge";
 import { useNow } from "@/lib/hooks/useNow";
@@ -354,6 +355,7 @@ export default function AdminClient() {
         </section>
 
         <SystemHealthCard />
+        <AdminLookup />
         <StuckDeletions />
         <AdminErrors />
         <AdminActivity />

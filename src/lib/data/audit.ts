@@ -9,6 +9,7 @@ import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/s
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { mockListAudit, mockRecordAudit } from "./mock";
 import { reportAuditNotWritten } from "@/lib/monitoring/opsAlerts";
+import { auditActionsMatching } from "@/components/admin/auditLabels";
 
 export type AuditAction =
   | "account.create"
@@ -108,15 +109,27 @@ export async function recordAudit(entry: AuditInput): Promise<void> {
 }
 
 /** The newest entries for the admin Activity view (admins on aal2 only). */
-export async function listAuditLog(limit = 200): Promise<AuditEntry[] | null> {
+/** OPS-04: `action` filters by code or readable label (AUDIT_FILTER-checked by
+ *  the route); `before` is the createdAt of the last entry already shown. */
+export async function listAuditLog(limit = 200, opts: { action?: string; before?: string } = {}): Promise<AuditEntry[] | null> {
   const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), 500);
-  if (!isSupabaseConfigured()) return mockListAudit(n);
+  if (!isSupabaseConfigured()) return mockListAudit(n, opts);
 
   const sb = await createClient();
   if (!(await isActiveAdmin(sb))) return null;
-  const { data, error } = await sb
+  let query = sb
     .from("admin_audit_log")
-    .select("id, actor_id, action, target_type, target_id, details, created_at")
+    .select("id, actor_id, action, target_type, target_id, details, created_at");
+  const text = opts.action?.trim().toLowerCase();
+  if (text) {
+    const codes = auditActionsMatching(text);
+    // A code-shaped filter also matches codes this build has no label for.
+    if (/^[a-z0-9_.]+$/.test(text)) query = query.or([`action.ilike.*${text}*`, ...(codes.length ? [`action.in.(${codes.join(",")})`] : [])].join(","));
+    else if (codes.length) query = query.in("action", codes);
+    else return [];
+  }
+  if (opts.before) query = query.lt("created_at", opts.before);
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(n);
   if (error) return null;
