@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { markAccountSuspended, SUSPENDED_MESSAGE, SUSPENDED_TITLE } from "@/lib/account/suspended";
+import { markAccountSuspended, SUSPENDED_MESSAGE, SUSPENDED_TITLE } from "@/lib/onboarding/suspended";
 
 /** C11: shown above every dashboard section while the account is suspended. */
 export default function SuspendedBanner({ suspended }: { suspended: boolean }) {

@@ -398,14 +398,14 @@ function ConfirmRemove({
   onCancel: () => void;
 }) {
   return (
-    <div role="group" aria-label="Confirm removal" className="mt-3 w-full rounded-xl border border-red-400/35 bg-red-400/10 p-3 text-sm text-red-100">
+    <div role="group" aria-label="Confirm removal" className="mt-3 w-full rounded-xl border border-red-400/35 bg-red-400/10 p-3 text-sm text-ink">
       <p className="text-pretty">{text}</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={onConfirm}
           disabled={busy}
-          className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-400 disabled:opacity-50"
+          className="rounded-md border border-red-400/60 bg-red-500/25 px-3 py-1.5 text-xs font-bold text-ink hover:bg-red-500/35 disabled:opacity-50"
         >
           {busy ? "Removing…" : cta}
         </button>

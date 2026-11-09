@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { getMyApprovalStatus, getMyCreatorApplication, getMyRejectionReason } from "@/lib/data";
 import { canSendAccountEmail } from "@/lib/account/accountMail";
-import { rejectionReasonText } from "@/lib/account/rejectionReasons";
+import { rejectionReasonText } from "@/lib/onboarding/rejectionReasons";
 import { brandVars } from "@/lib/theme";
 import PendingClient from "@/components/PendingClient";
 

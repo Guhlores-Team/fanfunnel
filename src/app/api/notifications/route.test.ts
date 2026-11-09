@@ -140,7 +140,11 @@ async function main() {
       const scoped = c.ops.some(
         ([op, args]) =>
           (op === "eq" && (args[0] === "creator_id" || (c.table === "profiles" && args[0] === "id")) && args[1] === "creator-1") ||
-          (c.table === "prizes" && op === "in" && args[0] === "wheel_id" && JSON.stringify(args[1]) === JSON.stringify(["w1"]))
+          (c.table === "prizes" && op === "in" && args[0] === "wheel_id" && JSON.stringify(args[1]) === JSON.stringify(["w1"])) ||
+          // C6: the admin bell's request source reads OTHER accounts' pending
+          // requests; RLS returns them to an active aal2 admin only, and the
+          // caller's own row is excluded.
+          (c.table === "creator_applications" && op === "neq" && args[0] === "profile_id" && args[1] === "creator-1")
       );
       check(`${c.table} read is scoped to the signed-in creator`, scoped);
       check(`${c.table} read never writes`, !c.ops.some(([op]) => ["update", "insert", "upsert", "delete"].includes(op)));

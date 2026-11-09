@@ -3,7 +3,7 @@
 import { useState } from "react";
 import TermsCheckbox from "@/components/TermsCheckbox";
 import { LEGAL } from "@/lib/legal";
-import { composeApplicationNote, parseApplicationNote } from "@/lib/account/applicationNote";
+import { composeApplicationNote, parseApplicationNote } from "@/lib/onboarding/applicationNote";
 
 /** The stored request, as the server read it (C21). */
 export interface PendingApplication {

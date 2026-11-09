@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/privacy/deletionResult";
 import { FEATURES } from "@/lib/features";
-import { REJECTION_REASONS, type RejectionReason } from "@/lib/account/rejectionReasons";
+import { REJECTION_REASONS, type RejectionReason } from "@/lib/onboarding/rejectionReasons";
 import { useToast } from "@/components/ui/Toast";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 import Modal from "@/components/ui/Modal";

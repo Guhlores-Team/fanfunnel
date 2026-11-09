@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { withSuspendedReason } from "@/lib/account/suspended";
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
 
 type Tone = "info" | "error" | "success";
 

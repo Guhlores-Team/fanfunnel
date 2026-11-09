@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { safeNext } from "./safeNext";
 
 // Every e-mail link lands here, through /auth/confirm or /auth/callback.
@@ -36,6 +36,8 @@ export async function completeAuthLink(req: Request): Promise<NextResponse> {
   const tokenHash = searchParams.get("token_hash");
   const code = searchParams.get("code");
   const failed = NextResponse.redirect(`${origin}/login?error=auth_link`);
+  // The demo has no accounts: nothing to verify (and no client to build).
+  if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`);
 
   if (tokenHash !== null) {
     if (!tokenHash || !TOKEN_HASH.test(tokenHash) || !type || !OTP_TYPES.has(type)) return failed;

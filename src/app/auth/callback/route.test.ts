@@ -18,6 +18,7 @@ let verifyOk = true;
 const verified: { type: string; token_hash: string }[] = [];
 mock.module("@/lib/supabase/server", {
   namedExports: {
+    isSupabaseConfigured: () => true,
     createClient: async () => ({
       auth: {
         exchangeCodeForSession: async () => ({ error: exchangeOk ? null : { message: "bad" } }),

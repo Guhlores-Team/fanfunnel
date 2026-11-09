@@ -3,7 +3,7 @@ import { listCreatorApplications, decideCreatorApplication, recordAudit } from "
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
-import { isRejectionReason } from "@/lib/account/rejectionReasons";
+import { isRejectionReason } from "@/lib/onboarding/rejectionReasons";
 
 // Admin: list creator applications.
 export async function GET() {
