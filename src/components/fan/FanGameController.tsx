@@ -500,7 +500,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
   return (
     <div data-testid="fan-game" data-game-kind={activeGameKind ?? "unknown"} className="flex w-full max-w-md flex-col items-center gap-7">
-      <header className="reveal text-center" style={{ animationDelay: "0.05s" }}>
+      <header className="reveal w-full min-w-0 text-center" style={{ animationDelay: "0.05s" }}>
         {pass.fanName && (
           <p className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted break-words [overflow-wrap:anywhere]">
             {pass.creatorTitle} · for {pass.fanName}
