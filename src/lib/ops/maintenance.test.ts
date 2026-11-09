@@ -54,9 +54,10 @@ async function main() {
   check("off: the write passes", res.status !== 503);
 
   const { GET, POST } = await import("../../app/api/maintenance/route");
-  check("off: /api/maintenance is a 404", (await GET()).status === 404);
+  const mreq = () => new Request("https://fanfunnel.test/api/maintenance", { method: "POST" });
+  check("off: /api/maintenance is a 404", (await GET(mreq())).status === 404);
   process.env.FF_MAINTENANCE = "1";
-  const r = await POST();
+  const r = await POST(mreq());
   check("on: /api/maintenance → 503 {error:maintenance} + Retry-After", r.status === 503 && (await r.json()).error === "maintenance" && r.headers.get("retry-after") === "300");
   console.log(`maintenance: ${passed} checks passed`);
 }

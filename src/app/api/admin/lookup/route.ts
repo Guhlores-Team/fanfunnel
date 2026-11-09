@@ -15,10 +15,8 @@ const json = (value: unknown, status = 200) => NextResponse.json(value, { status
 
 export async function POST(req: Request) {
   const admin = await requireAdminRoute();
-  if (!admin.ok) {
-    admin.response.headers.set("Cache-Control", "no-store");
-    return admin.response;
-  }
+  if (!admin.ok) admin.response.headers.set("Cache-Control", "no-store");
+  if (!admin.ok) return admin.response;
   const limited = await rateLimitOr429(`admin-lookup:${admin.userId ?? "demo"}`, 30, 60_000);
   if (limited) {
     limited.headers.set("Cache-Control", "no-store");
