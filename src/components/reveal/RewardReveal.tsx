@@ -50,7 +50,8 @@ export default function RewardReveal({
   /** Confetti pieces; defaults to the tier's (0 when static). */
   confetti?: number;
   /** FD-12: who won and when, shown on the card a fan screenshots to claim. */
-  claim?: { fanName: string | null; at: string | null };
+  /** `code`: the server's claim code for this win (C4, src/lib/rewards/claimCode.ts). */
+  claim?: { fanName: string | null; at: string | null; code?: string | null };
   onClose: () => void;
 }) {
   const [reduced] = useState(() => prefersReducedMotion());
@@ -215,7 +216,7 @@ export default function RewardReveal({
               ? "Your reward is delivered. You can reopen it from Your wins."
               : "Screenshot this and send it to your creator to claim your prize!"}
           </p>
-          {!instant && claim && <WinProof fanName={claim.fanName} at={claim.at} shareId={shareId} />}
+          {!instant && claim && <WinProof fanName={claim.fanName} at={claim.at} code={claim.code ?? null} />}
           {instant && shareId && <p className="mt-2 text-xs text-muted">Your reward stays private when you share your win.</p>}
           {shareBtn}
           {manualUrl && (
@@ -254,18 +255,13 @@ export default function RewardReveal({
   );
 }
 
-/** The last six characters of a share id, as the fan's claim code. */
-export function claimCode(shareId: string | null): string | null {
-  const clean = (shareId ?? "").replace(/[^A-Za-z0-9]/g, "");
-  return clean.length >= 4 ? clean.slice(-6).toUpperCase() : null;
-}
-
 /** FD-12: the facts that make a claim screenshot checkable: name, time, code. */
-function WinProof({ fanName, at, shareId }: { fanName: string | null; at: string | null; shareId: string | null }) {
+// C4: the code is a server-side HMAC of the share id, not part of it, so a
+// public share link cannot be turned into a claim screenshot.
+function WinProof({ fanName, at, code }: { fanName: string | null; at: string | null; code: string | null }) {
   const when = at && Number.isFinite(Date.parse(at))
     ? new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
     : null;
-  const code = claimCode(shareId);
   if (!fanName && !when && !code) return null;
   return (
     <p data-testid="win-proof" className="mt-2 text-xs text-muted [overflow-wrap:anywhere]">

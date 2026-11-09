@@ -111,6 +111,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const [result, setResult] = useState<WheelResult | null>(null);
   const [won, setWon] = useState<PublicPrize | null>(null);
   const [wonShareId, setWonShareId] = useState<string | null>(null);
+  const [wonClaimCode, setWonClaimCode] = useState<string | null>(null);
   // Private values live only in this reveal's memory, never in win history.
   const [wonReward, setWonReward] = useState<DeliveredReward | null>(null);
   const [wonInstant, setWonInstant] = useState(false);
@@ -310,6 +311,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     setResult({ index: data.prizeIndex, nonce: Date.now() });
     setWon(data.prize);
     setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
+    setWonClaimCode(typeof data.claimCode === "string" && /^[0-9A-Z]{6}$/.test(data.claimCode) ? data.claimCode : null);
     setWonReward(parseDeliveredReward(data.reward));
     setWonInstant(data.reward !== undefined && data.reward !== null);
     setOddsChanged(changed);
@@ -753,7 +755,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           tier={rv.tier}
           shareId={wonShareId}
           instant={wonInstant}
-          claim={{ fanName: pass.fanName ?? null, at: wonAt }}
+          claim={{ fanName: pass.fanName ?? null, at: wonAt, code: wonClaimCode }}
           extra={<>
             {wonScarcity && <p data-testid="win-last-of" className="mt-2 text-sm font-bold text-ink">{wonScarcity}</p>}
             {oddsChanged && (

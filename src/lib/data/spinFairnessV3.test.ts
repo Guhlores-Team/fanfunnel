@@ -106,6 +106,8 @@ async function renderVerify(row: Record<string, unknown> | null, opts: { pre0047
       if (opts.pre0047 && /fair_version/.test(sel)) return fail('column spins.fair_version does not exist');
       return ok(row);
     },
+    // Batch 6 N2: /verify reads the creator through readPublicCreator (active, approved).
+    profiles: () => ok({ id: "creator-1", display_name: null, is_active: true, approval_status: "approved", role: "creator" }),
   });
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { default: VerifyPage } = await import("@/app/verify/[shareId]/page");
@@ -133,6 +135,7 @@ async function main() {
   check("spin response carries no cost", !/cost/.test(JSON.stringify(res)));
 
   const stored = {
+    creator_id: "creator-1",
     prize_label: row.prize_label, prize_rarity: row.prize_rarity, server_seed: row.server_seed,
     server_seed_hash: row.server_seed_hash, nonce: row.nonce, client_seed: row.client_seed,
     created_at: "2026-10-27T12:00:00.000Z", seed_commitment: row.seed_commitment, prize_id: row.prize_id,
@@ -170,7 +173,7 @@ async function main() {
   // --- older spins verify exactly as before -------------------------------------------------
   const legacySeed = "a".repeat(64);
   const legacy = {
-    prize_label: "Alpha", prize_rarity: "rare", server_seed: legacySeed, server_seed_hash: await sha256Hex(legacySeed),
+    creator_id: "creator-1", prize_label: "Alpha", prize_rarity: "rare", server_seed: legacySeed, server_seed_hash: await sha256Hex(legacySeed),
     nonce: 3, client_seed: "cs", created_at: "2026-01-01T00:00:00.000Z", seed_commitment: "published",
     prize_id: "prize-a", fair_version: null, pool_snapshot: null, pool_hash: null, fair_trace: null,
   };

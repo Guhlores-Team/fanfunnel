@@ -199,7 +199,7 @@ export async function getSpinVerification(
 
   const sb = createServiceClient();
   const SELECT =
-    "prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at";
+    "creator_id, prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at";
   let res = await sb
     .from("spins")
     .select(`${SELECT}, seed_commitment, prize_id, fair_version, pool_snapshot, pool_hash, fair_trace, presentation, kind, parent_spin_id, bingo_line`)
@@ -214,6 +214,7 @@ export async function getSpinVerification(
   if (res.error) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
 
   const row = res.data as {
+    creator_id: string;
     prize_label: string;
     prize_rarity: Rarity;
     server_seed: string | null;
@@ -232,7 +233,10 @@ export async function getSpinVerification(
     parent_spin_id?: string | null;
     bingo_line?: number | null;
   } | null;
-  if(row?.kind === "bonus") {
+  // L5 / batch 6 N2: like the share card, a suspended, pending or rejected
+  // creator's spins are not verifiable in public (the page then 404s).
+  if (!row || !(await readPublicCreator(sb, row.creator_id, { by: "id" }))) return null;
+  if(row.kind === "bonus") {
     if(!row.parent_spin_id || !Number.isInteger(row.bingo_line) || row.bingo_line!<0 || row.bingo_line!>7)return null;
     const {data:parent,error}=await sb.from("spins").select("share_id,kind").eq("id",row.parent_spin_id).maybeSingle();
     if(error||!parent?.share_id||parent.kind!=="play")return null;
