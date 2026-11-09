@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
-import { getMyApprovalStatus } from "@/lib/data";
+import { getMyApprovalStatus, getMyCreatorApplication, getMyRejectionReason } from "@/lib/data";
+import { canSendAccountEmail } from "@/lib/account/accountMail";
+import { rejectionReasonText } from "@/lib/account/rejectionReasons";
 import { brandVars } from "@/lib/theme";
 import PendingClient from "@/components/PendingClient";
 
@@ -19,6 +21,11 @@ export default async function PendingPage() {
 
   const status = await getMyApprovalStatus();
   if (status === "approved") redirect("/dashboard");
+  const rejected = status === "rejected";
+  const [application, reasonCode] = await Promise.all([
+    rejected ? null : getMyCreatorApplication(),
+    rejected ? getMyRejectionReason() : null,
+  ]);
 
   return (
     <main
@@ -27,8 +34,21 @@ export default async function PendingPage() {
     >
       <div className="relative z-[1] w-full max-w-md">
         <PendingClient
-          status={status === "rejected" ? "rejected" : "pending"}
+          status={rejected ? "rejected" : "pending"}
           email={user.email ?? ""}
+          application={
+            application && application.status === "pending"
+              ? {
+                  displayName: application.displayName,
+                  socials: application.socials,
+                  audienceSize: application.audienceSize,
+                  note: application.note,
+                  createdAt: application.createdAt,
+                }
+              : null
+          }
+          canEmail={canSendAccountEmail()}
+          rejectionReason={rejectionReasonText(reasonCode)}
         />
       </div>
     </main>
