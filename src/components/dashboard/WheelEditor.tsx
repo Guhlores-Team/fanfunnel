@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadError, loadJson } from "@/lib/hooks/loadJson";
+import { STALE_GAME_MESSAGE, staleGameCheck } from "./staleGame";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import GamePreview from "./GamePreview";
@@ -178,6 +180,9 @@ export default function WheelEditor({
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  // C16: the game changed elsewhere since this editor loaded it.
+  const [stale, setStale] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const capabilities = useGameFeatures();
   const gameWheel = wheel as CreatorGameWheel;
   const featureBlocked = !gameSaveFeatureAllowed(gameWheel, savedJson, capabilities.features);
@@ -300,11 +305,58 @@ export default function WheelEditor({
       return Object.fromEntries(saved.prizes.map((p) => [p.id, p.stock ?? null]));
     } catch { return {}; }
   }
+  /** The game as saved now, or null when it has no saved copy (404). */
+  async function readSavedGame(id: string): Promise<WheelConfig | null> {
+    try {
+      return (await loadJson<{ wheel?: WheelConfig }>(`/api/wheels/${encodeURIComponent(id)}`)).wheel ?? null;
+    } catch (e) {
+      if (e instanceof LoadError && e.status === 404) return null;
+      throw e;
+    }
+  }
+  // C16: replace this editor's copy with the latest saved game (drops the edits here).
+  async function reloadLatest() {
+    if (reloading || !wheel.id) return;
+    setReloading(true);
+    try {
+      const latest = await readSavedGame(wheel.id);
+      if (!latest) { setSaveError("This game no longer exists. Pick another game."); return; }
+      setWheel(latest);
+      setSavedJson(JSON.stringify(latest));
+      setStale(false);
+      setSaveError("");
+      setSubmitted(false);
+      setTouched({});
+      toast("Loaded the latest version of this game.", { tone: "success" });
+    } catch {
+      setSaveError("Couldn't load the latest version. Check your connection and try Reload again.");
+    } finally {
+      setReloading(false);
+    }
+  }
   async function save() {
     setSaving(true);
     setSaveError("");
     setJustSaved(false);
     try {
+      // C16: never overwrite changes made in another tab or by a team member.
+      // Re-read the saved game and compare it with what this editor loaded.
+      // (Not atomic with the save below; the database check is a follow-up.)
+      if (wheel.id) {
+        let current: WheelConfig | null;
+        try {
+          current = await readSavedGame(wheel.id);
+        } catch {
+          setSaveError("Couldn't check whether this game was changed elsewhere, so nothing was saved. Your edits are still here; try Save again.");
+          return;
+        }
+        if (current && staleGameCheck(savedJson, current) === "changed") {
+          setStale(true);
+          setSaveError(STALE_GAME_MESSAGE);
+          toast(STALE_GAME_MESSAGE, { tone: "error" });
+          return;
+        }
+      }
       const res = await fetch("/api/wheel", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -635,7 +687,22 @@ export default function WheelEditor({
           {saving ? "Saving…" : "Save game"}
         </button>
         <div id={SAVE_SUMMARY_ID} role="alert" className="w-full empty:hidden">
-          {saveError && <p className="text-sm text-amber-200">{saveError}</p>}
+          {saveError && (
+            <p data-testid="game-save-error" className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-amber-200">
+              <span>{saveError}</span>
+              {stale && saveError === STALE_GAME_MESSAGE && (
+                <button
+                  type="button"
+                  data-testid="game-reload-latest"
+                  onClick={() => void reloadLatest()}
+                  disabled={reloading}
+                  className="font-semibold text-ink underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                >
+                  {reloading ? "Reloading…" : "Reload (discards the edits here)"}
+                </button>
+              )}
+            </p>
+          )}
           {showErrors && (
             <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] text-[#fca5a5]">
               <span>
