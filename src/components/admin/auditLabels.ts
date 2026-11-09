@@ -15,6 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
   "account.storage_retry": "retried account cleanup",
   "account.self_close": "closed their own account",
   "admin.bootstrap": "claimed the first admin",
+  "admin.lookup": "looked up a win",
   "error.resolve": "resolved an error report",
   "error.reopen": "reopened an error report",
   "report.resolve": "resolved a safety report",

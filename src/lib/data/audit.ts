@@ -24,6 +24,7 @@ export type AuditAction =
   | "account.storage_retry"
   | "account.self_close"
   | "admin.bootstrap"
+  | "admin.lookup"
   | "error.resolve"
   | "error.reopen"
   | "report.resolve"
@@ -36,7 +37,7 @@ export type AuditAction =
 export interface AuditInput {
   actorId: string | null;
   action: AuditAction;
-  targetType?: "profile" | "factor" | "error" | "report" | null;
+  targetType?: "profile" | "factor" | "error" | "report" | "spin" | null;
   targetId?: string | null;
   /** Small, PII-free facts (role names, feature keys, counts, booleans). */
   details?: Record<string, string | number | boolean | null | Record<string, boolean>>;

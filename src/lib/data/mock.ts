@@ -3007,6 +3007,21 @@ export function mockGetShareCard(shareId: string): ShareCardData | null {
   return null;
 }
 
+/** OPS-04: the admin "Look up a win" view of one spin (demo store). Never a fan token or name. */
+export function mockAdminLookupWin(shareId: string): import("./adminLookup").AdminWinLookup | null {
+  let win: MockWin | undefined, fanDeleted = false;
+  for (const fan of store.fans.values()) { win = fan.wins.find((w) => w.shareId === shareId); if (win) break; }
+  if (!win) { win = mockFocusState().anonymousWins?.get(shareId); fanDeleted = !!win; }
+  if (!win) return null;
+  const r = store.redemptions.find((x) => x.shareId === shareId);
+  return structuredClone({
+    shareId, at: win.at, prize: win.label, rarity: win.rarity, gameKind: win.gameKind ?? "wheel", kind: win.kind ?? "play",
+    creator: { id: null, title: CREATOR_TITLE, status: "active" },
+    redemption: r ? { status: r.status, createdAt: r.at, fulfilledAt: r.fulfilledAt ?? null } : null,
+    fanDeleted: fanDeleted || (r ? r.fanId === null : false),
+  });
+}
+
 // --- Phase 5b: Provably-fair verification (#23) -----------------------------
 
 /** Resolve the fairness data for a spin by its shareId, across all fans. */
