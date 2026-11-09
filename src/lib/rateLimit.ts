@@ -116,6 +116,30 @@ function storeKey(key: string): string {
   return `rl:${process.env.VERCEL_ENV || "local"}:${digestKey(key)}`;
 }
 
+/**
+ * OPS-10: how long one shared-store call may take before the in-memory limiter
+ * answers instead. Upstash normally replies in tens of milliseconds; a fan's
+ * shared read makes two calls in a row, so an outage costs at most twice this.
+ */
+export const RATE_LIMIT_STORE_TIMEOUT_MS = 800;
+/** At most one alertable capture per instance per window while the store fails. */
+export const RATE_LIMIT_FALLBACK_ALERT_WINDOW_MS = 60 * 60 * 1000;
+
+const fallbackState = globalThis as unknown as { __ffRateLimitFallbackAt?: number };
+
+/** When this instance last fell back from the shared store (ISO), or null. Shown in System health. */
+export function rateLimitStoreLastFallbackAt(): string | null {
+  const at = fallbackState.__ffRateLimitFallbackAt;
+  return typeof at === "number" ? new Date(at).toISOString() : null;
+}
+
+function noteStoreFallback(): void {
+  fallbackState.__ffRateLimitFallbackAt = Date.now();
+  if (!rateLimit("ops-alert:rate-limit-fallback", 1, RATE_LIMIT_FALLBACK_ALERT_WINDOW_MS).ok) return;
+  // Imported lazily: the capture pipeline itself uses this module.
+  void import("@/lib/monitoring/opsAlerts").then(({ reportRateLimitFallback }) => reportRateLimitFallback()).catch(() => undefined);
+}
+
 async function rateLimitUpstash(
   env: { url: string; token: string },
   key: string,
@@ -136,7 +160,7 @@ async function rateLimitUpstash(
       ["PTTL", key],
     ]),
     cache: "no-store",
-    signal: AbortSignal.timeout(3000),
+    signal: AbortSignal.timeout(RATE_LIMIT_STORE_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`upstash ${res.status}`);
   const out = (await res.json()) as { result?: unknown; error?: unknown }[];
@@ -167,7 +191,8 @@ export async function rateLimitShared(
     try {
       return await rateLimitUpstash(env, storeKey(key), limit, windowMs);
     } catch {
-      // fall through to the in-memory limiter below
+      // fall through to the in-memory limiter below, visibly (OPS-10)
+      noteStoreFallback();
     }
   }
   return rateLimit(key, limit, windowMs);
