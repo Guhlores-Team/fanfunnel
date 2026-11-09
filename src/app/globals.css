@@ -123,6 +123,11 @@ body {
   box-shadow: 0 0 0 3px color-mix(in oklab, #f87171 22%, transparent);
 }
 .ff-input option { color: #000; }
+/* FD-9: iOS Safari zooms the page into any field under 16px and leaves it
+   zoomed, so on phones and touch screens fields are at least 16px. */
+@media (pointer: coarse), (max-width: 639px) {
+  .ff-input { font-size: max(1rem, 16px); }
+}
 /* A native <select> drawn as a rarity pill (wheel editor). Stays a real select
    so it is keyboard/screen-reader operable and e2e can selectOption() on it;
    the tint comes from an inline style. `.ff-input` is unlayered, so its box

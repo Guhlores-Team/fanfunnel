@@ -13,7 +13,6 @@ import { playWin, playBuildUp, unlockAudio, haptic, prefersReducedMotion } from 
 import { detectNearMiss, type NearMiss } from "./nearMiss";
 import { lastOfLine, oddsChangedSinceShown } from "./stockDisplay";
 import { spinErrorInfo, ackErrorMessage } from "../spinErrors";
-import RewardReveal from "../reveal/RewardReveal";
 import {
   REVEAL_IDLE,
   SKIP_ON_BACKDROP_TAP,
@@ -39,6 +38,14 @@ const WheelAura = dynamic(
   () => import("../reveal/RevealTheater").then((m) => m.WheelAura),
   { ssr: false }
 );
+// The win card and its bonus rows only render after a play, and the scratch
+// and bingo stages only for those games: keep them off a wheel fan's first
+// load. The win card's chunk is fetched when SPIN is tapped (preloadWinCard),
+// long before the wheel stops.
+const loadWinCard = () => import("../reveal/RewardReveal");
+const RewardReveal = dynamic(loadWinCard);
+const BonusWins = dynamic(() => import("./BonusWins"));
+const FanGameStage = dynamic(() => import("./FanGameStage"));
 import HappyHourBanner from "./HappyHourBanner";
 import WishlistSection from "./WishlistSection";
 import { BLOCKED_FAN_MESSAGE } from "./blockedFan";
@@ -68,8 +75,6 @@ import { useSpinRecovery } from "./useSpinRecovery";
 import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
 import { readCommittedGame, readGameCard, currentGameCard, readCardSource, readPassGameKind, type CommittedGameView } from "./gameOutcome";
 import type { BingoState } from "@/lib/games/bingo/engine";
-import FanGameStage from "./FanGameStage";
-import BonusWins from "./BonusWins";
 import OpenInBrowser from "./OpenInBrowser";
 import { currentInAppBrowser } from "./inAppBrowser";
 
@@ -269,6 +274,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const onCommitted = useCallback((data: SpinResult, options: { present: boolean; recovered: boolean }) => {
     const game = readCommittedGame(data, passGameKind ?? "wheel");
     if (!game) throw new Error("Unconfirmed game outcome");
+    if (options.present) void loadWinCard().catch(() => {});
     focusRevision.current++;
     const baseline = tapPoolHash.current !== null ? tapPoolHash.current : shownPoolHash.current;
     tapPoolHash.current = null;
@@ -333,6 +339,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const runSpin = useCallback(async () => {
     if (!canSpin || recovery.locked || !canPresentGame) return;
     if (!muted) { unlockAudio(); haptic(12); }
+    void loadWinCard().catch(() => {});
     setError(null);
     setWonReward(null);
     setStage(null);
@@ -904,7 +911,7 @@ function AgeGate({
           </p>
         </div>
 
-        <div className={`mt-6 space-y-3 text-left text-sm${hydrated ? "" : " opacity-60"}`}>
+        <div className="mt-6 space-y-3 text-left text-sm">
           <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3">
             <input
               ref={firstRef}
@@ -943,6 +950,7 @@ function AgeGate({
             Loading… one moment.
           </p>
         )}
+        <NoScriptNote />
         {error && (
           <p role="alert" className="mt-4 text-center text-sm text-amber-300">
             {error}
@@ -962,5 +970,16 @@ function AgeGate({
         @keyframes ff-fade { from { opacity: 0 } to { opacity: 1 } }
       `}</style>
     </div>
+  );
+}
+
+/** FD-15: with JavaScript off nothing here can respond, so say so. */
+export function NoScriptNote() {
+  return (
+    <noscript>
+      <p className="mt-4 rounded-xl border border-line p-3 text-center text-sm text-ink">
+        This game needs JavaScript. Turn it on in your browser settings, or open this link in Safari or Chrome.
+      </p>
+    </noscript>
   );
 }

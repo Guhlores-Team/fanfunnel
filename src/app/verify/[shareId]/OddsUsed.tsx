@@ -86,7 +86,7 @@ export function OddsUsed({ replay, poolHash, game = false }: { replay: V3Replay;
                     </th>
                     <td className="tnum break-all py-2 pr-2 text-right align-top">
                       {prize.w}
-                      {prize.baseW !== undefined && <span className="mt-0.5 block text-[10px] font-normal text-muted">Base {prize.baseW}</span>}
+                      {prize.baseW !== undefined && <span className="mt-0.5 block whitespace-nowrap text-[10px] font-normal text-muted">Base {prize.baseW}</span>}
                     </td>
                     <td className="tnum py-2 text-right align-top">{formatChance(chance)}</td>
                   </tr>

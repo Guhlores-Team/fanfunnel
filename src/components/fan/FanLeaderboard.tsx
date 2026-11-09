@@ -353,7 +353,7 @@ function LeaderboardOptIn({
               onChange={(e) => setDraft(e.target.value)}
               placeholder="2–40 letters, numbers, _ . -"
               autoComplete="nickname"
-              className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink"
+              className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-base text-ink sm:text-sm"
             />
             <button
               type="button"
