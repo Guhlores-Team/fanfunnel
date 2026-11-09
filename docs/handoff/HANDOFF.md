@@ -122,7 +122,8 @@ database, invite expiry, last-active-admin, private rate-limit keys).
   remind them to click both "Confirm your new email" links.
 - Email: Resend on `easysimplesites.org` (DMARC `p=none` added), Supabase SMTP configured in both
   projects, branded templates in `supabase/templates/` pasted into both projects. TEST Supabase
-  Site URL is still `http://localhost:3000` (owner step 11 sets it to the Preview URL).
+  Site URL should be the Preview URL `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`
+  (OWNER_STEPS 11, `docs/GO_LIVE.md` §3); inspect the actual value before changing it.
 
 ### Env vars the owner must set in Vercel (names only)
 | Var | For | Notes |

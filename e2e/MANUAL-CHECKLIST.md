@@ -368,7 +368,7 @@ engineering release gates in addition to these visible manual checks.
 
 ## 17. System health, backups, scheduling and alerts
 
-Follow [OWNER_STEPS §4–5](../docs/handoff/OWNER_STEPS.md#4-back-up-the-reward-keys-before-any-real-inventory)
+Follow [OWNER_STEPS Stage 5](../docs/handoff/OWNER_STEPS.md#stage-5--keys--alerts-after-the-monitoring-feature-lands) and [GO_LIVE_KEYS step 3](../docs/handoff/GO_LIVE_KEYS.md#step-3-the-two-reward-keys-production-sensitive-back-up-first)
 only after the engineer confirms this operations UI is deployed on the verified
 TEST Preview. Exact UI: [TEST Admin](https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app/admin)
 → **System health** → **Refresh status** / **Run checks now**. Initialization is
@@ -384,7 +384,7 @@ never replace an existing protection record to hide a mismatch.
 **NOT VERIFIED by this document:** scheduler (known inactive), older Preview
 retirement (needs concrete approved plan), both-key/version backup, TEST restore,
 second-admin recovery, real alert delivery, real iPhone/Android push and controlled
-themed Preview LCP. See [the operations ledger](../docs/handoff/OWNER_STEPS.md#7-open-operational-checks--all-not-verified-here).
+themed Preview LCP. See [the open operational checks](../docs/handoff/OWNER_STEPS.md#stage-9--open-operational-checks-and-questions).
 
 ## 18. Safety reports, blocked fans, webhooks (audit #2, Preview on the TEST database)
 

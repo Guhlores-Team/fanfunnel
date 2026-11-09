@@ -84,7 +84,10 @@ Development = TEST.
 | `REWARD_ENCRYPTION_KEY` | 32 random bytes, base64 (Sensitive) | separate key (Sensitive) | Encrypts instant-delivery codes, links and texts (#26, `src/lib/rewards/crypto.ts`). Generate with `openssl rand -base64 32`. **Never rotate or replace it** without re-encrypting stored rewards: old codes become unreadable. Back up the original securely. Unset: instant-delivery prizes can't be saved or delivered. |
 | `REWARD_ENCRYPTION_KEY_VERSION` | optional, integer | optional | The key version stamped on new ciphertexts (default `1`). Only changes as part of a planned re-encryption. |
 | `REWARD_CODE_FINGERPRINT_KEY` | 32 random bytes, base64 (Sensitive) | separate key (Sensitive) | Keeps reward codes unique across pastes (keyed fingerprint). Generate with `openssl rand -base64 32`, independent of the encryption key. **Never rotate it**: erased codes could be pasted and handed out again. |
-| `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM`, `ALERT_ENVIRONMENTS` | see Monitoring | optional | Error alerts and urgent safety-report alerts. Details under **Monitoring** below. |
+| `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM`, `ALERT_ENVIRONMENTS` | **required**: `RESEND_API_KEY` + `ALERT_EMAIL_TO` (see Monitoring) | optional | Error alerts, urgent safety-report alerts and creator account mail (approval, invitations, new-request notes). Without the key on Production, no creator gets the "you're approved" e-mail and System health shows **Alert e-mails: OFF** in red. Details under **Monitoring** below. |
+| `HEARTBEAT_URL` | recommended: a heartbeat monitor's `https://` ping URL | unset | After each successful daily maintenance run the cron sends one GET (3 s timeout; a failure is logged, never fatal). When pings stop, the monitor e-mails you, even if our database or e-mail is down. Never logged or shown; System health only says whether it is set. |
+| `FF_MAINTENANCE` | unset; `1` pauses the site | unset | Maintenance mode (`src/lib/ops/maintenance.ts`). Redeploy after changing it. Fans see a "back soon, nothing was spent" page, API writes answer 503, and `/dashboard`, `/admin`, `/login`, `/api/admin/*` and `/api/health` stay reachable. See `docs/RUNBOOK.md`. |
+| `NEXT_PUBLIC_COMMIT_SHA` | unset | set only by CLI archive deploys | Short commit shown on the Preview badge when `VERCEL_GIT_COMMIT_SHA` is absent (`docs/PREVIEW_DEPLOY.md`). |
 
 Add the TEST trio as GitHub secrets too (same names), so the `E2E (real Supabase)` workflow and
 `scripts/security/rls-runtime-test.mjs` run instead of skipping.
@@ -106,10 +109,24 @@ production domain is public.
 First run on a fresh LIVE project: sign up at `/login`, confirm the email, then open `/admin`
 and use **Claim admin** (works only for an `ADMIN_EMAILS` address). No SQL is needed.
 
-**Rollback:** revert the merge commit on `main`. Vercel redeploys the previous build. Migrations
-are not rolled back automatically. They are written to be backward-compatible (additive,
-idempotent), so the previous code keeps running on the newer schema. Check that is still true for
-any migration that renames or drops something before relying on a plain revert.
+### Rollback
+
+Incident steps for the owner are in [`docs/RUNBOOK.md`](docs/RUNBOOK.md) § Roll back a deploy. In order:
+
+1. **Instant Rollback first.** Vercel → Deployments → the previous Production deployment →
+   **Instant Rollback**. Traffic moves back within seconds, with no build and no migration job. It
+   bypasses the `db-migrations-production` Deployment Check on purpose: the database is not changed.
+2. **Then a revert PR.** Revert the bad merge on a branch, open a PR, wait for CI to go green, and
+   merge it. The merge re-runs `db-migrations-production`, which needs the reviewer's approval. It is
+   a verified no-op when no migration changed. This makes `main` match what is serving, so the next
+   deploy does not bring the bad code back. Do not revert directly on `main`.
+3. **Old code, new schema check.** Migrations are not rolled back. Before relying on the rollback,
+   check that every migration in the bad release is expand-only (additive and idempotent). For each
+   one, look for a dropped or renamed column, table or function, a narrowed `check`, or an RPC whose
+   arguments or return shape changed, because the older code may still call the old shape. Then open
+   Admin › System health: the schema line must say "newer than this release expects", not "behind".
+   If a migration is not expand-only, do not just roll back: pause the site (`FF_MAINTENANCE=1`, see
+   the runbook) and plan the fix. Never reverse a migration by hand.
 
 ## Monitoring (errors + e-mail alerts)
 
@@ -142,11 +159,12 @@ alerts). All are server-only: never prefix them with `NEXT_PUBLIC_`.
 |---|---|---|
 | `RESEND_API_KEY` | your Resend API key | Required for alerts. |
 | `ALERT_EMAIL_TO` | `you@example.com,ops@example.com` | Required for alerts. Comma list, up to 10. |
-| `ALERT_EMAIL_FROM` | optional | Defaults to `FanFunnel Alerts <alerts@easysimplesites.org>` (domain verified in Resend). |
+| `ALERT_EMAIL_FROM` | optional | Defaults to `FanFunnel <alerts@easysimplesites.org>` (domain verified in Resend; `src/lib/monitoring/config.ts`). |
 | `ALERT_ENVIRONMENTS` | optional, e.g. `production,preview` | Defaults to `production`. |
 
 If `RESEND_API_KEY` or `ALERT_EMAIL_TO` is missing, errors are still recorded and
-alerts are silently off (the server logs that once). An alert goes out only for
+alerts are off (the server logs that once, and Admin › System health shows
+**Alert e-mails: OFF**, in red on Production). An alert goes out only for
 the **first** occurrence of a new error or when a resolved one comes back, at
 most **10 per hour** across all servers (`ALERT_MAX_PER_HOUR` in
 `src/lib/monitoring/config.ts`). Errors held back by that limit are summed up in
