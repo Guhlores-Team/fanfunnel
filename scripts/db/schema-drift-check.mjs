@@ -42,6 +42,10 @@
 // Campaign writes for another creator need 'manage' (A28 residual).
 // And the 0071 probes: ledgerGuardsProbe.mjs (security audit 3 negatives) and
 // lockOrderProbe.mjs (the concurrency audit's deadlocks, staged deterministically).
+// And the 0072 advisor-hardening probe (advisorHardeningProbe.mjs): browser
+// roles execute only the reviewed SECURITY DEFINER functions, the helpers
+// still work inside policies, the 32 wrapped policies equal their 0071 text,
+// every foreign key is indexed and every function pins its search_path.
 // And the spin-resolution probe (0070, spinResolutionProbe.mjs): a play
 // resolves its game exactly once per prepare and per commit, every lock and
 // the context use that one game, and a campaign pin flipping right after the
@@ -82,6 +86,7 @@ import { probeIntegration } from "./integrationProbe.mjs";
 import { probeSpinResolution } from "./spinResolutionProbe.mjs";
 import { probeLedgerGuards } from "./ledgerGuardsProbe.mjs";
 import { probeLockOrder } from "./lockOrderProbe.mjs";
+import { probeAdvisorHardening } from "./advisorHardeningProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -304,8 +309,10 @@ function diff(labelA, a, labelB, b) {
 
 // ------------------------------------------------- runtime grant probe ---
 // 0044: the signed-in-only RPCs must refuse anon and still work for
-// authenticated, on every build path. The RLS helper functions must stay
-// callable by anon, or anon reads that evaluate those policies would error.
+// authenticated, on every build path. 0072: the RLS helper functions are
+// signed-in only too. anon holds no table privilege (0068), so it never
+// evaluates a policy; authenticated must keep them, since policies run as the
+// querying role.
 const SIGNED_IN_ONLY = [
   "set_onboarding_dismissed(boolean)",
   "set_leaderboard_enabled(boolean)",
@@ -318,7 +325,6 @@ const SIGNED_IN_ONLY = [
   "set_pwa_icon_mode(text)",
   "set_creator_theme(jsonb)",
   "admin_account_stats()",
-  "admin_reserve_account_deletion(uuid)",
   "org_account_stats(uuid)",
   "org_create(text)",
   "org_invite_creator(uuid, text)",
@@ -354,7 +360,10 @@ function probeGrants(db) {
     const retired=psql(db,["-c",`begin;set local role ${role};select public.import_fans('[]'::jsonb);rollback;`],{allowFail:true});
     if(!/permission denied for function import_fans\b/.test(retired.stderr||""))bad.push(`${role} reached retired import_fans`);
   }
-  for (const sig of RLS_HELPERS) if (!priv("anon", sig)) bad.push(`anon lost EXECUTE on RLS helper ${sig}`);
+  for (const sig of RLS_HELPERS) {
+    if (priv("anon", sig)) bad.push(`anon can EXECUTE RLS helper ${sig} (0072 revoked it)`);
+    if (!priv("authenticated", sig)) bad.push(`authenticated lost EXECUTE on RLS helper ${sig} (every policy calling it would fail)`);
+  }
 
   // A real call as anon must fail with "permission denied for function".
   for (const sig of SIGNED_IN_ONLY) {
@@ -468,7 +477,7 @@ function probeGrants(db) {
     console.log(`FAIL  ${db}: signed-in-only RPC grants / RM-6 break guard`);
     for (const b of bad) console.log(`  - ${b}`);
   } else {
-    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; legacy import denied to PUBLIC/all API roles; authenticated setters persist; set_pwa_icon_mode is own-row only; record_terms_acceptance is service-only; RLS helpers still anon-callable; RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only; creator theme/media are owner-scoped and allowlisted`);
+    console.log(`PASS  ${db}: anon refused on ${SIGNED_IN_ONLY.length} signed-in-only RPCs; legacy import denied to PUBLIC/all API roles; authenticated setters persist; set_pwa_icon_mode is own-row only; record_terms_acceptance is service-only; RLS helpers signed-in only (anon refused, authenticated kept); RM-6 breaks only lengthen, block spins and stay fan-only; fan_outreach is tenant-isolated and append-only; creator theme/media are owner-scoped and allowlisted`);
   }
 }
 
@@ -869,6 +878,11 @@ const PS_SETUP = `
 const asJwt = (uid, aal) =>
   `set local role authenticated; select set_config('request.jwt.claim.sub', '${uid}', true); ` +
   `select set_config('request.jwt.claims', '{"sub":"${uid}","role":"authenticated","aal":"${aal}"}', true);`;
+// 0072: admin_reserve_account_deletion has no app caller and is service-only;
+// its own admin check still reads the caller's claims.
+const asServiceJwt = (uid, aal) =>
+  `set local role service_role; select set_config('request.jwt.claim.sub', '${uid}', true); ` +
+  `select set_config('request.jwt.claims', '{"sub":"${uid}","role":"authenticated","aal":"${aal}"}', true);`;
 
 function probePrivacy(db) {
   const bad = [];
@@ -889,7 +903,7 @@ function probePrivacy(db) {
     ${asJwt(PS.ADM, "aal2")} select 'adm2-isadmin:' || public.is_admin(); select 'adm2-audit:' || count(*) from public.admin_audit_log; reset role;
     ${asJwt(PS.A, "aal2")} select 'a-isadmin:' || public.is_admin(); select 'a-audit:' || count(*) from public.admin_audit_log; select 'a-notices:' || count(*) from public.creator_notices; reset role;
     ${asJwt(PS.B, "aal1")} select 'b-notices:' || count(*) from public.creator_notices where creator_id = '${PS.A}'; reset role;
-    ${asJwt(PS.ADM, "aal1")} select 'adm1-reserve:' || public.admin_reserve_account_deletion('${PS.B}'); reset role;
+    ${asServiceJwt(PS.ADM, "aal1")} select 'adm1-reserve:' || public.admin_reserve_account_deletion('${PS.B}'); reset role;
   `, ["adm1-isadmin:false", "adm1-audit:0", "adm2-isadmin:true", "adm2-audit:1", "a-isadmin:false", "a-audit:0", "a-notices:1", "b-notices:0", "adm1-reserve:forbidden"]);
 
   // Writes and server-only functions are refused to anon and authenticated.
@@ -898,6 +912,7 @@ function probePrivacy(db) {
   expectError("aal2 admin inserts an audit entry", `${asJwt(PS.ADM, "aal2")} insert into public.admin_audit_log (action) values ('x.forged');`, denied);
   expectError("aal2 admin deletes audit entries", `${asJwt(PS.ADM, "aal2")} delete from public.admin_audit_log;`, denied);
   expectError("anon reads the audit log", `set local role anon; select count(*) from public.admin_audit_log;`, denied);
+  expectError("aal2 admin session calls admin_reserve_account_deletion (service-only since 0072)", `${asJwt(PS.ADM, "aal2")} select public.admin_reserve_account_deletion('${PS.B}');`, /permission denied for function admin_reserve_account_deletion/);
   expectError("creator inserts a notice", `${asJwt(PS.A, "aal2")} insert into public.creator_notices (creator_id, kind) values ('${PS.A}', 'fan_deleted_data');`, denied);
   expectError("creator reads tombstones", `${asJwt(PS.A, "aal2")} select count(*) from public.link_tombstones;`, denied);
   expectError("anon reads tombstones", `set local role anon; select count(*) from public.link_tombstones;`, denied);
@@ -1105,6 +1120,19 @@ function probeLedger0071(db) {
     for (const message of bad) console.log(`  - ${message}`);
   } else {
     console.log(`PASS  ${db}: 0071 ${checks} checks: a game with history is never deleted (seat, owner, service role) but the account cascade and the owner's own reset still remove it; sessions cannot write grants or delete links or campaigns; a chosen game keeps 2 prizes; no e-mail display names (sign-up, writes, masked stats); seats only by invitation, one agency per owner, org_leave; MFA own-row reads; slug/tagline/name validated; confirmed invitee only; future tables closed to anon`);
+  }
+}
+
+// 0072 (Supabase advisors on TEST): function privileges, wrapped policies,
+// foreign-key indexes, search_path.
+function probeAdvisor0072(db) {
+  const { bad, checks } = probeAdvisorHardening(db, psql);
+  if (bad.length) {
+    failures++;
+    console.log(`FAIL  ${db}: 0072 advisor hardening`);
+    for (const message of bad) console.log(`  - ${message}`);
+  } else {
+    console.log(`PASS  ${db}: 0072 ${checks} checks: anon executes no SECURITY DEFINER function, authenticated exactly the reviewed list; triggers and service-only functions refused to sessions but still fire; a creator still reads its own rows through the helper policies and never another tenant's; 32 policies equal their 0071 text with auth.uid()/auth.role() wrapped; every foreign key indexed; every function pins search_path`);
   }
 }
 
@@ -1490,6 +1518,7 @@ try {
     probeTenantBoundaries(db);
     probeBatch4Integration(db);
     probeLedger0071(db);
+    probeAdvisor0072(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");
