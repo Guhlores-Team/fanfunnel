@@ -226,6 +226,17 @@ shim covers the exact instant the harness can no longer hit by timing.
   or a decline first). Over HTTP (H11) the same flow answers no 5xx,
   double-submitted purchases apply once and each fan's balance equals its
   grants minus its plays.
+- **`D9_STOCK_CLAMP_MISCOUNT` (harness only, ~1 run in 60). Fixed on
+  `gaps/b6-d9`.** The D9 Focus-stock conservation summed the editor's
+  requested deltas. A cut whose save waited on its locks while wins drained
+  the stock landed on `save_wheel_prizes`' floor (`greatest(0, current +
+  delta)`), applying 0 where the harness counted -1, so the check read one
+  unit high (caught with a stock audit: save of -1 read 17, applied 0 -> 0
+  after 17 commits each took exactly one unit). The DB was right. D9 now
+  reads each save's applied change back from a test-only audit row in the
+  save's own transaction, checks it against the CAS rule (delta on the stock
+  found, floored at 0; a stale re-save changes nothing) and conserves on
+  the applied sum.
 - **`DEMO_SAVE_IGNORES_EXPECTED_STOCK` (demo store only). Fixed on
   `gaps/b5-follow`.** The in-memory `mockSaveWheel` ignored `expectedStock`,
   so a `PUT /api/wheel` that raced a win (or a stale editor) wrote back the
