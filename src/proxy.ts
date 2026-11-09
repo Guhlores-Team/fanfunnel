@@ -3,6 +3,7 @@ import { needsSessionRefresh, updateSession } from "@/lib/supabase/middleware";
 import { buildCsp, createNonce, usesStrictCsp } from "@/lib/security/csp";
 import { isCrossOriginWrite } from "@/lib/security/sameOrigin";
 import { limitRoute } from "@/lib/api/limit";
+import { MAINTENANCE_HEADERS, maintenanceBlocksWrite, maintenanceOn } from "@/lib/ops/maintenance";
 
 // Next 16 renamed the `middleware` file convention to `proxy` (same behavior).
 // This refreshes the Supabase session before the auth pages render. It runs
@@ -27,6 +28,12 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   // cookie-carrying /api requests reach here (matcher); they never refresh
   // the session here, so a slow Supabase can't delay the API.
   if (path.startsWith("/api/")) {
+    // OPS-12: while paused, a signed-in API write is refused here; reads
+    // (dashboard polls) and /api/admin/* pass. Cookieless calls and pages are
+    // rewritten by next.config.ts (src/lib/ops/maintenance.ts explains why).
+    if (maintenanceOn() && maintenanceBlocksWrite(path, request.method)) {
+      return NextResponse.json({ error: "maintenance" }, { status: 503, headers: MAINTENANCE_HEADERS });
+    }
     if (isCrossOriginWrite({ method: request.method, path, headers: request.headers, allowedOrigins: [process.env.NEXT_PUBLIC_SITE_URL] })) {
       return NextResponse.json({ error: "forbidden" }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }

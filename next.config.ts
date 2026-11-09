@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import { buildCsp } from "./src/lib/security/csp";
 import { indexingHeaders } from "./src/lib/security/indexing";
+import { maintenanceRewrites } from "./src/lib/ops/maintenance";
 
 // Security response headers applied to every route. Rationale:
 // - Referrer-Policy: strict-origin-when-cross-origin — never send the full URL
@@ -54,6 +55,11 @@ const nextConfig: NextConfig = {
   // bundled (notably keeps the motion lib from bloating the fan spin page).
   experimental: {
     optimizePackageImports: ["motion", "@supabase/supabase-js"],
+  },
+  // OPS-12: FF_MAINTENANCE=1 at build time pauses the public site (see
+  // src/lib/ops/maintenance.ts). Off: no rewrites at all.
+  async rewrites() {
+    return { beforeFiles: maintenanceRewrites(process.env), afterFiles: [], fallback: [] };
   },
   async headers() {
     return [
