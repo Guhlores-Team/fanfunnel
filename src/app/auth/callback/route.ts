@@ -1,27 +1,8 @@
-import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { completeAuthLink } from "@/lib/auth/authLink";
 
-// Auth redirect target for email links (password recovery, email change, and
-// any future confirm/magic-link). Supabase appends `?code=...` (PKCE); we
-// exchange it for a session — the code-verifier cookie set when the email was
-// requested travels here, so the exchange completes server-side — then send
-// the user on to `next` (e.g. /reset-password) now that they're authenticated.
+// Auth redirect target the app passes as `redirectTo`/`emailRedirectTo`
+// (password recovery, sign-up confirmation, e-mail change, admin invites).
+// Handles both the PKCE `code` and the `token_hash` links; see authLink.ts.
 export async function GET(req: Request) {
-  const { searchParams, origin } = new URL(req.url);
-  const code = searchParams.get("code");
-  // Only allow same-origin relative paths as `next` to avoid open-redirects.
-  const nextParam = searchParams.get("next") || "/dashboard";
-  const next = nextParam.startsWith("/") ? nextParam : "/dashboard";
-
-  if (code) {
-    const supabase = await createClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error) return NextResponse.redirect(`${origin}${next}`);
-  }
-
-  // Secure email change: the first of the two confirm links carries no code,
-  // only Supabase's "now confirm the link sent to the other address" message.
-  if (searchParams.get("message")) return NextResponse.redirect(`${origin}${next}`);
-
-  return NextResponse.redirect(`${origin}/login?error=auth_link`);
+  return completeAuthLink(req);
 }
