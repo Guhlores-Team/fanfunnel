@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { formatCents } from "@/lib/format";
 import { useToast } from "@/components/ui/Toast";
-import { useFetch } from "@/lib/hooks/useFetch";
+import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { DEFAULT_WINBACK_TEMPLATE, WINBACK_MODE, WINBACK_QUIET_DAYS, WINBACK_RESULTS_WINDOW_DAYS } from "@/lib/winback/config";

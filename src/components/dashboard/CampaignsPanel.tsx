@@ -1,5 +1,8 @@
 "use client";
 
+import { LoadError, loadJson } from "@/lib/hooks/loadJson";
+import LoadFailed from "./LoadFailed";
+import { useCreatorDraft } from "./CreatorDrafts";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { Campaign, CampaignStats, WheelSummary } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -147,6 +150,8 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
   const [seatList, setSeatList] = useState<Campaign[] | null>(null);
   const [uncat, setUncat] = useState<{ revenue: number; spinsBought: number; spinsPlayed: number; fans: number } | null>(null);
   const [wheels, setWheels] = useState<WheelSummary[]>([]);
+  // C2: a failed list read is an error with Retry, never "No campaigns yet".
+  const [listError, setListError] = useState<unknown>(null);
   // The game choice defaults to the live game, so wait for the list before
   // letting a campaign be created (it would silently follow the live game).
   const [wheelsLoaded, setWheelsLoaded] = useState(false);
@@ -156,22 +161,22 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
   const [newGameId, setNewGameId] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const newGameSelectId = useId();
+  // C14: a typed campaign name is unsaved work.
+  useCreatorDraft(`campaign-new:${seat?.creatorId ?? "me"}`, "a campaign you were creating", name.trim().length > 0, creating);
   const newGameHelpId = useId();
 
   const load = useCallback(async () => {
     if (seat) {
       // One request: that creator's campaigns plus their games for the picker.
       try {
-        const res = await fetch(seatPath("/api/campaigns", seat.creatorId), { cache: "no-store" });
-        if (!res.ok) {
-          setSeatList([]);
-          toast(res.status === 403 ? `Your agency seat can't manage ${seat.displayName}'s campaigns.` : "Couldn't load campaigns. Try again.", { tone: "error" });
-          return;
-        }
-        const d = (await res.json()) as { campaigns?: Campaign[]; games?: WheelSummary[] };
+        const d = await loadJson<{ campaigns?: Campaign[]; games?: WheelSummary[] }>(seatPath("/api/campaigns", seat.creatorId));
         setSeatList(d.campaigns ?? []);
         setWheels(d.games ?? []);
         setNow(new Date());
+        setListError(null);
+      } catch (e) {
+        setListError(e);
+        if (e instanceof LoadError && e.status === 403) toast(`Your agency seat can't manage ${seat.displayName}'s campaigns.`, { tone: "error" });
       } finally {
         setWheelsLoaded(true);
       }
@@ -180,12 +185,14 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
     // Stats already carry the campaign rows (newest first), so one fetch covers
     // the whole comparison list. /api/campaigns stays available for callers that
     // only need the bare list.
-    const res = await fetch("/api/campaigns/stats", { cache: "no-store" });
-    if (res.ok) {
-      const d = await res.json();
-      setStats((d.stats ?? []) as CampaignStats[]);
+    try {
+      const d = await loadJson<{ stats?: CampaignStats[]; uncategorized?: typeof uncat }>("/api/campaigns/stats");
+      setStats(d.stats ?? []);
       setUncat(d.uncategorized ?? null);
-    } else setStats([]);
+      setListError(null);
+    } catch (e) {
+      setListError(e);
+    }
   }, [seat, toast]);
 
   // Fetch the creator's wheels once so each campaign can offer a pin selector.
@@ -334,7 +341,10 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
       )}
 
       {/* Comparison list */}
-      {rows === null ? (
+      {listError != null && (
+        <LoadFailed error={listError} what={seat ? `${seat.displayName}'s campaigns` : "your campaigns"} onRetry={load} stale={rows !== null} testId="campaigns-load-failed" />
+      )}
+      {listError != null && rows === null ? null : rows === null ? (
         <div className="flex flex-col gap-[18px]" aria-busy="true" aria-label="Loading campaigns">
           {Array.from({ length: 2 }).map((_, i) => (
             <div key={i} className="skeleton h-52 rounded-2xl" />

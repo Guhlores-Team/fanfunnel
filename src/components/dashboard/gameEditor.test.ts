@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { bingoMissing, bingoSquareCount, gameSaveFeatureAllowed, canCreateGame, creatorGameSettings, editableGamePayload, gameDraftError, gameRefusalMessage, readGameFeatures, type CreatorGameWheel } from "./gameEditor";
+import { bingoMissing, bingoSquareCount, gameSaveFeatureAllowed, canCreateGame, creatorGameSettings, editableGamePayload, gameDraftError, gameDraftIssues, gameRefusalMessage, readGameFeatures, type CreatorGameWheel } from "./gameEditor";
 import { FEATURES, defaultFeatures } from "@/lib/features";
 
 for (const raw of [null, undefined, [], {}, { features: null }, { features: [] }]) assert.equal(readGameFeatures(raw), null);
@@ -59,3 +59,20 @@ assert.equal(gameSaveFeatureAllowed(scratch, JSON.stringify({ ...scratch, id: "d
 assert.equal(gameSaveFeatureAllowed(scratch, "{bad", denied), false, "unknown saved metadata stays closed");
 
 assert.equal(gameSaveFeatureAllowed({...wheel,gameReady:false},JSON.stringify({...wheel,gameReady:false}),denied),false,"an unpublished Bingo draft cannot borrow a removed capability");
+
+// C15: "N things to fix" counts exactly the list shown.
+{
+
+  const onePrize: CreatorGameWheel = { ...wheel, gameReady: false, gameConfig: { size: 3, linePrizeId: null }, prizes: [{ id: "x", label: "New prize", rarity: "uncommon", weight: 25, stock: null }] };
+  const base = [{ key: "prizeCount", message: "Add at least 1 more prize." }, { key: "prize:x:label", message: "Name it." }];
+  const issues = gameDraftIssues(onePrize, base);
+  assert.equal(issues.filter((i) => i.key === "gameSettings").length, bingoMissing(onePrize).length, "one issue per missing bingo piece");
+  assert.equal(bingoMissing(onePrize).length, 3, "squares, fallback and line prize");
+  assert.ok(!issues.some((i) => i.key === "prizeCount"), "the nine-squares item covers the 2-prize rule; never counted twice");
+  assert.ok(issues.some((i) => i.key === "prize:x:label"), "other prize issues stay");
+  assert.equal(issues.length, 4);
+  assert.ok(issues.every((i) => i.message.endsWith(".")));
+  assert.deepEqual(gameDraftIssues(wheel, base), base, "a ready bingo adds nothing");
+  const scratch = { ...wheel, gameKind: "scratch", gameConfig: { style: "classic" } } as CreatorGameWheel;
+  assert.deepEqual(gameDraftIssues(scratch, base), base, "other kinds keep the base rules, including the 2-prize rule");
+}

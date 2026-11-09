@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { useFetch } from "@/lib/hooks/useFetch";
+import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import { timeAgo } from "@/lib/format";
 import type {
   NotificationFeed,

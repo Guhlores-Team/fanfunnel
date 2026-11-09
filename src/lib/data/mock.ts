@@ -126,7 +126,7 @@ import {
 } from "@/lib/privacy/exportTypes";
 import { EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
 import { NEUTRAL_CREATOR_TITLE } from "@/lib/publicCreator";
-import { copyTitle } from "@/lib/games/copyTitle";
+import { copyTitle, newGameTitle } from "@/lib/games/copyTitle";
 import {
   FEED_LIMIT,
   LOW_STOCK_THRESHOLD,
@@ -995,7 +995,7 @@ export function mockCreateWheel(opts?: {
   } else {
     // #7: a blank "New wheel" starts EMPTY (no prizes) → editor shows the empty
     // state + "Add your first prize". Templates still seed their prizes above.
-    title = "New wheel";
+    title = newGameTitle(gameSettings(opts?.gameKind, opts?.gameConfig, true).gameKind);
     subtitle = undefined;
     brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
     prizes = [];
@@ -2186,9 +2186,10 @@ export function mockGetOverview(): CreatorOverview {
   // the window's last row skips or repeats them.
   const redemptions = [...store.redemptions].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
   const revenue = store.grants.reduce((s, g) => s + g.amountCents, 0);
-  // Map internal redemptions back to plain RedemptionItem (drop fanId/campaignId).
+  // Map internal redemptions back to plain RedemptionItem (drop campaignId).
   const items: RedemptionItem[] = redemptions.slice(0, 200).map((r) => ({
     id: r.id,
+    fanId: r.fanId,
     fanName: r.fanName,
     prizeLabel: r.prizeLabel,
     rarity: r.rarity,

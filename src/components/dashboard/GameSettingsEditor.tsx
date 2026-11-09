@@ -28,7 +28,7 @@ export default function GameSettingsEditor({ wheel, features, disabled, onChange
       <p id="bingo-settings-note" className="text-xs text-muted text-pretty">Each fan&rsquo;s card has {BINGO_CELL_COUNT} squares, one different prize each ({Math.min(bingoSquareCount(wheel), BINGO_CELL_COUNT)} of {BINGO_CELL_COUNT} ready). A prize can be a square when its stock is unlimited, it has more than 0 tickets and it isn&rsquo;t a code list. Completing a line awards the line prize; if that prize is sold out, the fan gets a rare-or-better prize instead, so keep one unlimited rare, epic or legendary prize with tickets ({fallback.length ? "you have one" : "missing"}).</p>
       {missing.length > 0 ? (
         <div id="bingo-missing" data-testid="bingo-missing" className="text-xs text-amber-200">
-          <p className="font-semibold">To save this bingo game, add:</p>
+          <p className="font-semibold">Not ready yet. Before this bingo game can be saved, add:</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">{missing.map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
       ) : error ? <p className="text-xs text-amber-200">{error}</p> : null}

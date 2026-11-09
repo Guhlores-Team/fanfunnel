@@ -3,7 +3,7 @@
 import type { CohortRow, CostBasis, EngagementHeatmap, PrizeRoiRow } from "@/lib/data/types";
 import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
 import { formatCents } from "@/lib/format";
-import { useFetch } from "@/lib/hooks/useFetch";
+import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import CrmPanel from "@/components/dashboard/CrmPanel";
 import { heatmapIndex, heatmapStrength, shareOfRevenue } from "./analyticsHelpers";
 import { CardHeader, Glyph, ICON, LoadError, StatCell, TickHeader, hairGrid, raised } from "./analyticsUi";
@@ -103,7 +103,7 @@ function HeatmapCard() {
       />
       <div className="mt-4">
         {error && !data ? (
-          <LoadError what="the heatmap" onRetry={() => void reload()} />
+          <LoadError what="the heatmap" error={error} onRetry={() => void reload()} />
         ) : loading && !data ? (
           <div className="skeleton h-40 w-full rounded-xl" />
         ) : (
@@ -190,7 +190,7 @@ function ProfitSection() {
 
       {prof.error && !prof.data ? (
         <div className={`rounded-2xl p-5 ${raised}`}>
-          <LoadError what="profit" onRetry={() => void prof.reload()} />
+          <LoadError what="profit" error={prof.error} onRetry={() => void prof.reload()} />
         </div>
       ) : prof.loading && !prof.data ? (
         <div className={`${hairGrid} grid-cols-2 sm:grid-cols-4`} aria-busy="true" aria-label="Loading profit">
@@ -230,7 +230,7 @@ function ProfitSection() {
         </div>
         {roi.error && !roi.data ? (
           <div className="px-5 pb-5">
-            <LoadError what="prize costs" onRetry={() => void roi.reload()} />
+            <LoadError what="prize costs" error={roi.error} onRetry={() => void roi.reload()} />
           </div>
         ) : roi.loading && !roi.data ? (
           <div className="space-y-2.5 px-5 pb-5">
@@ -303,7 +303,7 @@ function CohortCard() {
       </div>
       {error && !data ? (
         <div className="px-5 pb-5">
-          <LoadError what="cohorts" onRetry={() => void reload()} />
+          <LoadError what="cohorts" error={error} onRetry={() => void reload()} />
         </div>
       ) : loading && !data ? (
         <div className="space-y-2.5 px-5 pb-5">

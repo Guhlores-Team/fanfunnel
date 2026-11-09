@@ -7,7 +7,7 @@ import { isStarterWheel } from "@/lib/games/wheel/sample";
 import type { WheelConfig } from "@/lib/games/wheel/types";
 import type { CreatorOverview } from "@/lib/data/types";
 import { ToastProvider } from "@/components/ui/Toast";
-import { useFetch } from "@/lib/hooks/useFetch";
+import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import { REPORTS_CHANGED_EVENT } from "@/lib/reports/config";
 import TodayPanel from "@/components/dashboard/TodayPanel";
 import PrizesPanel from "@/components/dashboard/PrizesPanel";
@@ -19,10 +19,11 @@ import GetStartedChecklist from "@/components/dashboard/GetStartedChecklist";
 import DiscardChangesDialog from "@/components/dashboard/DiscardChangesDialog";
 import NotificationBell from "@/components/dashboard/NotificationBell";
 import TermsPrompt from "@/components/dashboard/TermsPrompt";
-import { resolveSection, sectionFromSearch, sectionHref } from "@/components/dashboard/dashboardSection";
+import { fanHref, resolveSection, sectionFromSearch, sectionHref } from "@/components/dashboard/dashboardSection";
 import { deliveryLeaveDecision, type DeliveryNavigationState } from "@/components/dashboard/deliveryNavigation";
 import { CreatorDraftProvider, type CreatorDraftScope, type CreatorDraftState, type CreatorLeaveOptions } from "./CreatorDrafts";
 import { creatorNavigationState, creatorScopeIncludes } from "./creatorNavigation";
+import { sessionDraftDescriptions, useSessionDraftsHeld } from "./sessionDrafts";
 import {
   Sidebar,
   SetupChecklistButton,
@@ -68,11 +69,13 @@ const AdminClient = dynamic(() => import("@/components/admin/AdminClient"), {
 // Shared overview, polled (12s) + refreshed on tab focus so metrics + the
 // pending badge stay live. `setData` is exposed for optimistic account edits.
 function useOverview() {
-  const { data, loading, reload, setData } = useFetch<CreatorOverview>(
+  const { data, loading, error, reload, setData } = useFetch<CreatorOverview>(
     "/api/overview",
     { pollMs: 12000 }
   );
-  return { data, loading, refresh: reload, setData };
+  // `known`: real numbers are on screen. A failed first load is not "zero"
+  // (C2), so nothing that reads the counts (first steps, tiles) may treat it so.
+  return { data, loading, error, known: !loading && data !== null, refresh: reload, setData };
 }
 
 // A Sign out from the phone More sheet arrives detached (the sheet closed to
@@ -162,8 +165,11 @@ export default function DashboardClient({
   // reload/close can only get the browser's own beforeunload prompt. Lives
   // here, not in the editor, so it holds while another section is open.
   const leavingRef = useRef(false);
+  // Inbox replies and Public page text outlive section switches (sessionDrafts)
+  // but not a reload or sign-out, so those ask first.
+  const sessionDraftsHeld = useSessionDraftsHeld();
   useEffect(() => {
-    if (!wheelDirty && !creatorNavigation.dirty && !creatorNavigation.pending) return;
+    if (!wheelDirty && !creatorNavigation.dirty && !creatorNavigation.pending && !sessionDraftsHeld) return;
     const warn = (e: BeforeUnloadEvent) => {
       if (!leavingRef.current) {
         e.preventDefault();
@@ -172,11 +178,13 @@ export default function DashboardClient({
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [wheelDirty, creatorNavigation.dirty, creatorNavigation.pending]);
+  }, [wheelDirty, creatorNavigation.dirty, creatorNavigation.pending, sessionDraftsHeld]);
   const requestLeave = useCallback((action: () => void, intent: "section" | "signout", options?: CreatorLeaveOptions) => {
     // A later push message must not replace a choice already being reviewed.
     if (leaveRequestRef.current) return;
-    const state = creatorNavigationState(creatorDraftsRef.current, deliveryState.current, options?.scope);
+    const navigation = creatorNavigationState(creatorDraftsRef.current, deliveryState.current, options?.scope);
+    const kept = intent === "signout" ? sessionDraftDescriptions() : [];
+    const state = { ...navigation, dirty: navigation.dirty || kept.length > 0, descriptions: [...navigation.descriptions, ...kept] };
     const decision = deliveryLeaveDecision(state, wheelDirty, intent);
     if (decision === "wait") {
       blockedScopeRef.current = options?.scope;
@@ -262,12 +270,12 @@ export default function DashboardClient({
   // it stays hidden permanently regardless of later data changes.
   const persistedDoneRef = useRef(false);
   useEffect(() => {
-    if (overview.loading) return;
+    if (!overview.known) return;
     if (onboardingAllDone && !onboardingDismissed && !persistedDoneRef.current) {
       persistedDoneRef.current = true;
       setOnboardingHidden(true);
     }
-  }, [overview.loading, onboardingAllDone, onboardingDismissed, setOnboardingHidden]);
+  }, [overview.known, onboardingAllDone, onboardingDismissed, setOnboardingHidden]);
 
   // Brand-new creators land on Today, where "Your first steps" guides them
   // (RD-5) — no auto-switch to the Wheel editor any more.
@@ -323,11 +331,15 @@ export default function DashboardClient({
   const [gameRequest, setGameRequest] = useState<{ id: string; nonce: number } | null>(null);
   const openGameEditor = (id: string) => goToSection("editor", () => setGameRequest((s) => ({ id, nonce: (s?.nonce ?? 0) + 1 })));
   const openCampaigns = () => goToSection("campaigns");
+  // C18: a fulfilment row's fan name opens that fan's drawer. FansPanel opens
+  // the drawer named in the URL when it mounts (fanFromSearch).
+  const openFanDrawer = (fanId: string) =>
+    goToSection("fans", () => window.history.replaceState({ ffFan: fanId }, "", fanHref(fanId, window.location.pathname)));
 
   // "Your first steps" lives inside Today (replacing the old every-section
   // checklist). Rendered here so its signals + dismissal stay owned by the
   // dashboard; TodayPanel only places it.
-  const checklistVisible = !overview.loading && !onboardingDismissed && !onboardingAllDone;
+  const checklistVisible = overview.known && !onboardingDismissed && !onboardingAllDone;
   const firstSteps = checklistVisible ? (
     <div ref={checklistRef} className="scroll-mt-24">
       <GetStartedChecklist
@@ -361,7 +373,7 @@ export default function DashboardClient({
     }, "signout");
   };
   const onSignOut = (e: React.FormEvent<HTMLFormElement>) => guardSignOut(e, e.currentTarget);
-  const setupOffered = !overview.loading && onboardingDismissed && !onboardingAllDone;
+  const setupOffered = overview.known && onboardingDismissed && !onboardingAllDone;
   const reopenSetup = () => {
     // The checklist lives on Today: open it there and bring it into view.
     goTab("today", () => {
@@ -506,16 +518,21 @@ export default function DashboardClient({
           <TodayPanel
             onNavigate={(t) => goTab(t as Tab)}
             overview={overview.data}
+            overviewError={overview.error}
+            onRetryOverview={overview.refresh}
             firstSteps={firstSteps}
-            firstRun={!overview.loading && isFirstRun(firstStepSignals)}
+            firstRun={overview.known && isFirstRun(firstStepSignals)}
           />
         )}
         {tab === "prizes" && (
           <PrizesPanel
             data={overview.data}
             loading={overview.loading}
+            error={overview.error}
             refresh={overview.refresh}
             setData={overview.setData}
+            onOpenFan={openFanDrawer}
+            onMessageFan={(fanId) => goToSection("inbox", () => setInboxFocus((s) => ({ fanId, nonce: s.nonce + 1 })))}
           />
         )}
         {tab === "fans" && (
@@ -554,6 +571,8 @@ export default function DashboardClient({
           <MetricsPanel
             overview={overview.data}
             loading={overview.loading}
+            error={overview.error}
+            onRetry={overview.refresh}
             onGoTo={goTab}
             renderDeep={() => <AnalyticsPanel />}
           />

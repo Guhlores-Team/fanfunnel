@@ -28,7 +28,7 @@ import {
 import { WHEEL_SELECT, clampInt, isUuid, toWheelConfig } from "./shared";
 import type { Json } from "./db.types";
 import type { AnyClient, DbWheelRow } from "./shared";
-import { copyTitle } from "@/lib/games/copyTitle";
+import { copyTitle, newGameTitle } from "@/lib/games/copyTitle";
 
 // ---------------------------------------------------------------------------
 // Wheel resolution (Model C hybrid). Decides WHICH wheel a fan link points at
@@ -515,11 +515,11 @@ export async function createWheel(opts?: {
   const isFirst = (existing ?? 0) === 0;
 
   // Seed: a template snapshot, else a blank wheel with NO prizes (#7).
-  let title = "New wheel";
+  let settings = gameSettings(opts?.gameKind, opts?.gameConfig,true);
+  let title = newGameTitle(settings.gameKind);
   let subtitle: string | null = null;
   let brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
   let seedPrizes: Omit<Prize, "id">[] = [];
-  let settings = gameSettings(opts?.gameKind, opts?.gameConfig,true);
 
   if (opts?.fromTemplateId) {
     const { data: tpl } = await sb

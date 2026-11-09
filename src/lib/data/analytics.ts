@@ -64,7 +64,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       .from("redemptions")
       .select(
         `id, status, created_at, notes, due_at,
-       spin:spins(pool_snapshot, fair_trace, prize_label, prize_rarity, fan:fans(display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
+       spin:spins(pool_snapshot, fair_trace, prize_label, prize_rarity, fan:fans(id, display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
       )
       .eq("creator_id", user.id)
       // Same (created_at, id) order as creator_redemption_queue's keyset, so
@@ -122,7 +122,7 @@ export async function getOverview(): Promise<CreatorOverview> {
       fair_trace?: unknown;
       prize_label: string;
       prize_rarity: RedemptionItem["rarity"];
-      fan: { display_name: string | null; handle: string | null } | null;
+      fan: { id?: string; display_name: string | null; handle: string | null } | null;
       // #26 (0057): set when the win was auto-delivered (never the value).
       reward?: AutoRow | AutoRow[] | null;
     } | null;
@@ -130,6 +130,7 @@ export async function getOverview(): Promise<CreatorOverview> {
 
   const redemptions: RedemptionItem[] = rows.map((r) => ({
     id: r.id,
+    ...(r.spin?.fan?.id ? { fanId: r.spin.fan.id } : {}),
     fanName: r.spin?.fan?.display_name ?? r.spin?.fan?.handle ?? "Fan",
     prizeLabel: r.spin?.prize_label ?? "Prize",
     rarity: r.spin?.prize_rarity ?? "common",

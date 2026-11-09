@@ -1,0 +1,22 @@
+import assert from "node:assert";
+import { clearSessionDrafts, readSessionDraft, sessionDraftDescriptions, subscribeSessionDrafts, writeSessionDraft } from "./sessionDrafts";
+
+let calls = 0;
+const stop = subscribeSessionDrafts(() => { calls++; });
+writeSessionDraft("inbox-reply:a", "Half-typed reply", "an unsent reply");
+writeSessionDraft("inbox-reply:b", "Another", "an unsent reply");
+writeSessionDraft("public-page:tagline", "My tagline", "your Public page text");
+assert.equal(readSessionDraft("inbox-reply:a"), "Half-typed reply", "each thread keeps its own draft");
+assert.equal(readSessionDraft("inbox-reply:b"), "Another");
+assert.deepEqual(sessionDraftDescriptions(), ["an unsent reply", "your Public page text"], "descriptions once each");
+assert.equal(calls, 3);
+writeSessionDraft("inbox-reply:a", "Half-typed reply", "an unsent reply");
+assert.equal(calls, 3, "an unchanged write notifies nobody");
+writeSessionDraft("inbox-reply:a", null);
+assert.equal(readSessionDraft("inbox-reply:a"), undefined, "a sent reply forgets its draft");
+writeSessionDraft("missing", null);
+assert.equal(calls, 4, "forgetting nothing notifies nobody");
+clearSessionDrafts();
+assert.deepEqual(sessionDraftDescriptions(), [], "sign-out discards every draft");
+stop();
+console.log("sessionDrafts: all checks passed");

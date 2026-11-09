@@ -24,7 +24,14 @@ mock.module("@/lib/supabase/server", {
     createServiceClient: () => { throw new Error("/pending must not use the service role"); },
   },
 });
-mock.module("@/lib/data", { namedExports: { getMyApprovalStatus: async () => status } });
+mock.module("@/lib/data", {
+  namedExports: {
+    getMyApprovalStatus: async () => status,
+    // The stored request and the admin's reason (C21/C7) are not under test here.
+    getMyCreatorApplication: async () => null,
+    getMyRejectionReason: async () => null,
+  },
+});
 
 const CONTROL = "Delete my request and account";
 

@@ -14,7 +14,7 @@ import PackPresets from "@/components/dashboard/PackPresets";
 import { useToast } from "@/components/ui/Toast";
 import { GLOW_WINDOW_DAYS } from "@/lib/glow/config";
 import { copyLinkToken, noLinkMessage } from "./fansHelpers";
-import { useFetch } from "@/lib/hooks/useFetch";
+import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import { fillTemplate } from "@/lib/winback/template";
 import FocusPackPanel from "./FocusPackPanel";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";

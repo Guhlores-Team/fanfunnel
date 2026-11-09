@@ -1,5 +1,9 @@
 "use client";
 
+import { loadJson } from "@/lib/hooks/loadJson";
+import LoadFailed from "./LoadFailed";
+import { useSessionDraft } from "./sessionDrafts";
+import { useCreatorDraft } from "./CreatorDrafts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatSettings, FanThread } from "@/lib/data/types";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -85,6 +89,9 @@ export default function InboxPanel({
   const toast = useToast();
   const [threads, setThreads] = useState<FanThread[]>([]);
   const [loading, setLoading] = useState(true);
+  // C2: a failed read is an error state, never "No conversations yet".
+  const [threadsError, setThreadsError] = useState<unknown>(null);
+  const [threadsLoaded, setThreadsLoaded] = useState(false);
   // A13: the inbox is read a page at a time (newest activity first). Older
   // pages stay listed while the first page's last thread is unchanged; if new
   // activity shifts it, they are dropped (and reloadable), so no thread can
@@ -182,11 +189,12 @@ export default function InboxPanel({
   // Resolves whether the load succeeded so the poll fallback can back off.
   const loadThreads = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch("/api/messages/inbox", { cache: "no-store" });
-      if (!res.ok) return false;
-      applyFirstPage(await res.json());
+      applyFirstPage(await loadJson<{ threads?: FanThread[]; next?: string | null }>("/api/messages/inbox"));
+      setThreadsError(null);
+      setThreadsLoaded(true);
       return true;
-    } catch {
+    } catch (e) {
+      setThreadsError(e);
       return false;
     } finally {
       setLoading(false);
@@ -232,6 +240,7 @@ export default function InboxPanel({
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state is set after the read resolves
     loadThreads();
 
     // Real Supabase Realtime for the authed creator (RLS passes on messages).
@@ -305,12 +314,18 @@ export default function InboxPanel({
 
     const pollDemo = async (): Promise<boolean> => {
       try {
-        const res = await fetch("/api/messages/inbox", { cache: "no-store" });
-        if (!res.ok) return false;
-        const body = (await res.json()) as { threads?: FanThread[]; next?: string | null };
+        let body: { threads?: FanThread[]; next?: string | null };
+        try {
+          body = await loadJson<{ threads?: FanThread[]; next?: string | null }>("/api/messages/inbox");
+        } catch (e) {
+          if (!cancelled) setThreadsError(e);
+          return false;
+        }
         const next: FanThread[] = body.threads ?? [];
         if (cancelled) return true;
         applyFirstPage(body);
+        setThreadsError(null);
+        setThreadsLoaded(true);
 
         if (seeded) {
           for (const t of next) {
@@ -373,7 +388,10 @@ export default function InboxPanel({
         )}
       </div>
 
-      {loading && threads.length === 0 ? (
+      {threadsError != null && (
+        <LoadFailed error={threadsError} what="your conversations" onRetry={loadThreads} stale={threadsLoaded} testId="inbox-load-failed" />
+      )}
+      {threadsError != null && !threadsLoaded ? null : loading && threads.length === 0 ? (
         <div
           className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]"
           aria-busy="true"
@@ -521,7 +539,10 @@ function AutoMessagesCard() {
   const [open, setOpen] = useState(false);
   const [intro, setIntro] = useState("");
   const [outro, setOutro] = useState("");
+  const [saved, setSaved] = useState<{ intro: string; outro: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  // C14: edited auto-messages are unsaved work.
+  useCreatorDraft("auto-messages", "your auto-messages", !!saved && (intro !== saved.intro || outro !== saved.outro), saving);
 
   const load = useCallback(async () => {
     try {
@@ -531,6 +552,7 @@ function AutoMessagesCard() {
         const s: ChatSettings = d.settings ?? { intro: null, outro: null };
         setIntro(s.intro ?? "");
         setOutro(s.outro ?? "");
+        setSaved({ intro: s.intro ?? "", outro: s.outro ?? "" });
       }
     } catch {
       /* transient */
@@ -551,8 +573,10 @@ function AutoMessagesCard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ intro, outro }),
       });
-      if (res.ok) toast("Auto-messages saved", { tone: "success" });
-      else toast("Couldn't save auto-messages", { tone: "error" });
+      if (res.ok) {
+        setSaved({ intro, outro });
+        toast("Auto-messages saved", { tone: "success" });
+      } else toast("Couldn't save auto-messages", { tone: "error" });
     } catch {
       toast("Couldn't save auto-messages", { tone: "error" });
     } finally {
@@ -649,7 +673,9 @@ function Thread({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState<PendingMessage[]>([]);
-  const [draft, setDraft] = useState("");
+  // C14: the half-typed reply is kept per thread for this tab, so switching
+  // threads or sections never loses it; a reload asks first (DashboardClient).
+  const [draft, setDraft, clearDraft] = useSessionDraft(`inbox-reply:${fan.fanId}`, "", "an unsent reply");
   const [sending, setSending] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -739,7 +765,7 @@ function Thread({
     setSending(true);
     const localId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     setPending((p) => [...p, { localId, body, status: "pending" }]);
-    setDraft("");
+    clearDraft();
     try {
       await deliver(body, localId);
     } finally {

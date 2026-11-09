@@ -26,7 +26,8 @@
       "dependabot/**": false,
       "gaps/b6-fan": false,
       "gaps/b6-onboard": false,
-      "gaps/b6-trust": false
+      "gaps/b6-trust": false,
+      "gaps/b6-dash": false
     }
   },
   "crons": [

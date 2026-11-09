@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadError as LoadFailure } from "@/lib/hooks/loadJson";
+import LoadFailed from "./LoadFailed";
 import type { ReactNode } from "react";
 
 // Command Center primitives shared by the Analytics section (MetricsPanel,
@@ -101,7 +103,9 @@ export function CardHeader({
 /**
  * A failed read renders fixed copy (never the raw error text) plus a retry.
  */
-export function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
+export function LoadError({ what, onRetry, error }: { what: string; onRetry: () => void; error?: unknown }) {
+  const kind = error instanceof LoadFailure ? error.kind : null;
+  if (kind === "auth" || kind === "rate") return <LoadFailed compact error={error} what={what} onRetry={onRetry} />;
   return (
     <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted">
       <span className="flex items-center gap-2">
