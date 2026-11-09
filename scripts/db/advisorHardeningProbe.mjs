@@ -18,7 +18,8 @@
 //    auth.role() wrapped in a scalar subquery (advisor-0072-policies.json), and
 //    no policy in public calls auth.uid()/auth.role()/auth.jwt() per row.
 //  - Every foreign key in public has a covering index; every public function
-//    pins its search_path.
+//    pins its search_path (extension members, e.g. pgcrypto installed in
+//    public by the --crypto-schema public fixture, are the extension's own).
 // Against the 0071 schema the privilege, wrapping, index and search_path
 // checks fail.
 
@@ -212,7 +213,8 @@ export function probeAdvisorHardening(db, psql) {
         and (i.indkey::int2[])[0:array_length(c.conkey, 1) - 1] <@ c.conkey)`);
   same("every public foreign key has a covering index", unindexed, "");
   same("every public function pins its search_path", q(`select string_agg(p.oid::regprocedure::text, ', ') from pg_proc p
-    where p.pronamespace = 'public'::regnamespace and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')`), "");
+    where p.pronamespace = 'public'::regnamespace and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')
+      and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`), "");
   same("schema_version() and _org_invite_email pin public, pg_temp", q(`select string_agg(p.proname || '=' || array_to_string(p.proconfig, ','), ';' order by p.proname) from pg_proc p
     where p.pronamespace = 'public'::regnamespace and p.proname in ('schema_version', '_org_invite_email')`),
     "_org_invite_email=search_path=public, pg_temp;schema_version=search_path=public, pg_temp");
