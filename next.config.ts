@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { buildCsp } from "./src/lib/security/csp";
+import { indexingHeaders } from "./src/lib/security/indexing";
 
 // Security response headers applied to every route. Rationale:
 // - Referrer-Policy: strict-origin-when-cross-origin — never send the full URL
@@ -32,9 +33,14 @@ const securityHeaders = [
     }),
   },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  // SUP-9: every non-Production deployment (Preview branch aliases included)
+  // tells crawlers not to index it. Read at build time, like VERCEL_ENV.
+  ...indexingHeaders(process.env.VERCEL_ENV),
 ];
 
 const nextConfig: NextConfig = {
+  // SUP-13: no `X-Powered-By: Next.js` banner.
+  poweredByHeader: false,
   // Resolve metadata before the document is sent, for every user agent. With
   // streamed metadata, the <title> lives inside a Suspense boundary that a
   // router.refresh() (the fan page refreshes after every reward close)
