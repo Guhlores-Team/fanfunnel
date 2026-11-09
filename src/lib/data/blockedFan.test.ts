@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { mock } from "node:test";
+import { LEGAL } from "@/lib/legal";
 
 // A4: blocking a fan really stops them reaching the creator. A blocked fan's
 // chat sends and thread reads (I7), auto intro/outro, wishlist edits and leaderboard opt-in are
@@ -125,7 +126,8 @@ async function main() {
   useSupabase = true;
   const blockedPass = {
     creator_id: "c1", campaign_id: null, wheel_id: "w1", fan_id: "f1",
-    fan: { id: "f1", spins_remaining: 2, spins_granted_total: 3, blocked_at: "2026-10-29T00:00:00Z" },
+    fan: { id: "f1", spins_remaining: 2, spins_granted_total: 3, blocked_at: "2026-10-29T00:00:00Z" as string | null,
+      acked_at: "2026-10-29T00:00:00Z", acked_terms_version: LEGAL.version },
   };
   PASS = blockedPass;
   writes.length = 0;

@@ -7,9 +7,32 @@
 import { rateLimitShared } from "@/lib/rateLimit";
 import { adminErrorsUrl, alertConfig, sendAlertEmail, type AlertConfig, type AlertMail } from "@/lib/monitoring/alert";
 import { currentEnvironment } from "@/lib/monitoring/config";
-import { REPORT_ALERTS_PER_HOUR, isUrgentReportReason } from "./config";
+import { CHILD_SAFETY_ALERTS_PER_HOUR, REPORT_ALERTS_PER_HOUR, isChildSafetyReportReason, isUrgentReportReason } from "./config";
 
 const HOUR = 60 * 60 * 1000;
+
+/** Throttle keys: the shared urgent budget, child safety's own (T6), and the once-an-hour summary. */
+export const URGENT_ALERT_KEY = "alerts:urgent-report";
+export const CHILD_SAFETY_ALERT_KEY = "alerts:urgent-report:child-safety";
+export const SUPPRESSED_SUMMARY_KEY = "alerts:urgent-report:suppressed-summary";
+
+/** The budget a report's alert draws on. */
+export function alertBudgetFor(reason: string): { key: string; perHour: number } {
+  return isChildSafetyReportReason(reason)
+    ? { key: CHILD_SAFETY_ALERT_KEY, perHour: CHILD_SAFETY_ALERTS_PER_HOUR }
+    : { key: URGENT_ALERT_KEY, perHour: REPORT_ALERTS_PER_HOUR };
+}
+
+// Alerts held back in this process, per hourly window (for the summary's count).
+const suppressed = { windowStart: 0, count: 0 };
+function countSuppressed(now: number): number {
+  const windowStart = now - (now % HOUR);
+  if (suppressed.windowStart !== windowStart) {
+    suppressed.windowStart = windowStart;
+    suppressed.count = 0;
+  }
+  return ++suppressed.count;
+}
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -56,8 +79,39 @@ ${button}
 }
 
 /**
- * Send the alert for one new report when its reason is urgent and the hourly
- * budget allows. Never throws; resolves whether an e-mail was accepted.
+ * T6: the one e-mail an hour that says alerts are being held back, so a spent
+ * budget is never silent. Pure; carries counts and links only.
+ */
+export function buildSuppressedSummaryEmail(
+  summary: { suppressed: number; perHour: number; childSafety: boolean },
+  environment: string,
+  link: string | null,
+): AlertMail {
+  const n = Math.max(1, Math.floor(summary.suppressed));
+  const what = summary.childSafety ? "child-safety report alerts" : "urgent report alerts";
+  const subject = `[FanFunnel ${environment}] ${n} ${n === 1 ? "alert" : "alerts"} suppressed this hour`;
+  const where = link ? `Review every report in Admin › Reports: ${link}` : "Review every report in the dashboard › Admin › Reports.";
+  const text = [
+    `The hourly limit of ${summary.perHour} ${what} was reached on FanFunnel (${environment}).`,
+    `${n} ${n === 1 ? "alert has" : "alerts have"} been suppressed so far this hour, and more may follow until the hour resets.`,
+    "Every report is still saved. Nothing was lost; only the e-mails were held back.",
+    "",
+    where,
+  ].join("\n");
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>FanFunnel</title></head>
+<body style="margin:0;padding:24px;background:#0c0a0e;color:#f4f1f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<h1 style="margin:0 0 12px 0;font-size:20px;">${esc(`${n} ${n === 1 ? "alert" : "alerts"} suppressed this hour`)}</h1>
+<p style="margin:0 0 8px 0;color:#c9c3cf;">${esc(`The hourly limit of ${summary.perHour} ${what} was reached. Every report is still saved; only the e-mails were held back.`)}</p>
+${link ? `<p style="margin:20px 0 0 0;"><a href="${esc(link)}" style="display:inline-block;background:#ec4899;color:#0c0a0e;font-weight:700;text-decoration:none;padding:12px 20px;border-radius:10px;">Open Admin &rsaquo; Reports</a></p>` : `<p style="margin:20px 0 0 0;">Open the dashboard &rsaquo; Admin &rsaquo; Reports.</p>`}
+</body></html>`;
+  return { subject, html, text };
+}
+
+/**
+ * Send the alert for one new report when its reason is urgent and its hourly
+ * budget allows (child-safety reasons have their own, T6). When a budget is
+ * spent, one summary e-mail an hour says alerts are being held back. Never
+ * throws; resolves whether the report's own e-mail was accepted.
  */
 export async function alertUrgentReport(
   report: { reason: string; at: string },
@@ -65,6 +119,7 @@ export async function alertUrgentReport(
     cfg?: AlertConfig;
     send?: (cfg: AlertConfig, mail: AlertMail) => Promise<boolean>;
     limit?: (key: string, limit: number, windowMs: number) => Promise<{ ok: boolean }>;
+    now?: () => number;
   } = {},
 ): Promise<boolean> {
   try {
@@ -73,8 +128,19 @@ export async function alertUrgentReport(
     const environment = currentEnvironment();
     if (!cfg.enabled || !cfg.environments.includes(environment)) return false;
     const limit = deps.limit ?? rateLimitShared;
-    if (!(await limit("alerts:urgent-report", REPORT_ALERTS_PER_HOUR, HOUR)).ok) return false;
     const send = deps.send ?? ((c: AlertConfig, m: AlertMail) => sendAlertEmail(c, m));
+    const budget = alertBudgetFor(report.reason);
+    if (!(await limit(budget.key, budget.perHour, HOUR)).ok) {
+      const count = countSuppressed(deps.now?.() ?? Date.now());
+      if ((await limit(SUPPRESSED_SUMMARY_KEY, 1, HOUR)).ok) {
+        await send(cfg, buildSuppressedSummaryEmail(
+          { suppressed: count, perHour: budget.perHour, childSafety: budget.key === CHILD_SAFETY_ALERT_KEY },
+          environment,
+          adminReportsUrl(),
+        ));
+      }
+      return false;
+    }
     return await send(cfg, buildReportAlertEmail(report, environment, adminReportsUrl()));
   } catch {
     return false;

@@ -13,7 +13,7 @@ check("scratch and bingo are kept", publicGameKind("scratch") === "scratch" && p
 
 const wheel = publicGameCopy("wheel");
 check("the wheel keeps its established copy", wheel.titleSuffix === "Prize Wheel" && wheel.cta === "Get your spins →" && wheel.emoji === "🎡"
-  && wheel.wonOn("Ava") === "Won on Ava’s prize wheel — every spin wins." && wheel.dropOn("Rare", "Ava") === "A Rare drop on Ava's wheel.");
+  && wheel.wonOn("Ava") === "Won on Ava’s prize wheel — every spin lands on a prize." && wheel.dropOn("Rare", "Ava") === "A Rare drop on Ava's wheel.");
 
 for (const kind of ["scratch", "bingo"] as const) {
   const copy = publicGameCopy(kind);
@@ -35,7 +35,7 @@ check("bingo copy names bingo", /bingo/i.test(publicGameCopy("bingo").titleSuffi
 for (const file of ["src/app/c/[slug]/page.tsx", "src/app/share/[shareId]/page.tsx", "src/app/share/[shareId]/opengraph-image.tsx", "src/components/dashboard/ThemedProfilePreview.tsx"]) {
   const source = readFileSync(join(process.cwd(), file), "utf8");
   check(`${file} uses publicGameCopy`, source.includes("publicGameCopy("));
-  check(`${file} has no hard-coded wheel copy`, !/Prize Wheel|prize wheel|Get your spins|personal spin link|every spin wins|Every spin wins|'s wheel|🎡/.test(source));
+  check(`${file} has no hard-coded wheel copy`, !/Prize Wheel|prize wheel|Get your spins|personal spin link|every spin wins|Every spin wins|every spin lands|'s wheel|🎡/.test(source));
 }
 
 console.log(`publicCopy.test: ${passed} checks passed`);

@@ -22,7 +22,7 @@ FanFunnel's core loop appears to have all three:
 |---|---|
 | Prize | Every spin lands on a creator-supplied prize, tiered common → legendary (`prizes` table, `supabase/schema.sql:78`). |
 | Chance | Weighted random draw on the server (`src/lib/games/wheel/engine.ts`, `fairnessV3.ts`). "Every spin wins" does not remove chance: prizes differ in value, and the rare ones are the draw. |
-| Consideration | Fans get spins after tipping. `PRODUCT.md:9`: "They tip the creator, get spins". The out-of-spins prompt says **"Tip {creator} to unlock more spins"** (`src/components/fan/TopUpMoment.tsx:69`) and teases the best prize the fan hasn't won yet (same file, line 12). The settings field is labelled **"Tip / buy-spins link (where fans go to pay)"** (`SettingsPanel.tsx:862`, `BoostsPanel.tsx:327`). Creators define priced **spin packs** (`campaign_packs.amount_cents`, `schema.sql:418`) and record an amount against each grant (`grants.amount_cents`, `schema.sql:367`). |
+| Consideration | Fans get spins after tipping. `PRODUCT.md:9`: "They tip the creator, get spins". The out-of-spins prompt said **"Tip {creator} to unlock more spins"** and the settings field **"Tip / buy-spins link (where fans go to pay)"**; batch 6 softened both to **"Visit {creator}'s page →"** (`src/components/fan/TopUpMoment.tsx`) and **"Your tip or support link (shown to fans)"** (`SettingsPanel.tsx`, `BoostsPanel.tsx`), pending the lawyer's answer to Q1. The prompt still teases the best prize the fan hasn't won yet. Creators define priced **spin packs** (`campaign_packs.amount_cents`, `schema.sql:418`) and record an amount against each grant (`grants.amount_cents`, `schema.sql:367`). |
 
 The money never flows through FanFunnel, and the Terms say so and make creators responsible
 for their promotions. That helps, but it may not be enough: a platform that is built
@@ -52,8 +52,9 @@ as promoting or facilitating them. Questions for the lawyer:
 - **Cap or restrict prizes.** Consider banning cash and cash-equivalent prizes (gift cards,
   crypto). The Terms already say spins have no cash value and FanFunnel never pays out.
 - **Geo-restrict** places where the structure cannot be made lawful.
-- **Disclose odds before the spin.** Today the odds a spin used are shown only afterwards,
-  on its verify page. The spin page itself shows prizes and rarity, not percentages.
+- **Disclose odds before the spin.** The spin page's prize book names every prize next to its
+  current odds for the fan's next spin, the link-in-bio page (`/c`) lists each prize's base odds,
+  and each spin's verify page shows the odds that spin used.
 
 **Features that make it look more like gambling**, which regulators and consumer-protection
 bodies (FTC "dark patterns", EU Unfair Commercial Practices Directive) tend to examine:
@@ -200,6 +201,9 @@ once their thresholds are met.
    time, so the process for a material change is: (1) email creators the new text and its start
    date at least 30 days ahead, and post a notice on the pages; (2) on the start date, publish the
    new text and set `LEGAL.effectiveDate` and `LEGAL.version` to that date in the same deploy.
+   Do not bump `LEGAL.version` until the SQL version literal is centralised (T1): the spin
+   functions compare the fan's accepted version with a literal, so a bump alone locks every fan
+   out of spinning.
    Ask the lawyer whether that is enough, and whether fans (who have no email on file) need more
    than the re-shown gate.
 10. **Fans who agreed before 0055.** Fans who ticked the gate before this change have a time but no

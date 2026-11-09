@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useLinkPause } from "./LinkPauseProvider";
-import { PAUSED_CONFIRMATION, pauseErrorMessage } from "./linkPause";
+import { PAUSED_CONFIRMATION, PAUSE_WARNING, pauseErrorMessage } from "./linkPause";
+import LegalLinks from "@/components/LegalLinks";
 import { FAN_DELETED_CONFIRMATION, FanDataInline, FanDeleteFlow, downloadFanData, fanDataNeedsInline, fetchFanData, type FanDataFile } from "./FanDataControls";
 import { REPORT_REASONS } from "@/lib/reports/config";
 
@@ -13,7 +14,7 @@ import { REPORT_REASONS } from "@/lib/reports/config";
  * delete it. NOT a spend limit — a way out, a way to flag abuse, and the fan's
  * privacy rights.
  */
-export default function SafetyMenu({ token }: { token: string }) {
+export default function SafetyMenu({ token, paused = false }: { token: string; paused?: boolean }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<null | "report" | "exclude" | "delete">(null);
   // After "Delete my data" the link is dead: closing the dialog reloads the
@@ -152,15 +153,17 @@ export default function SafetyMenu({ token }: { token: string }) {
                     Predatory behaviour, scams, or breaking the rules.
                   </span>
                 </button>
-                <button
-                  onClick={() => setMode("exclude")}
-                  className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)]"
-                >
-                  ⏸️ Pause my link
-                  <span className="mt-0.5 block text-xs text-muted">
-                    Stop this link from working for you.
-                  </span>
-                </button>
+                {!paused && (
+                  <button
+                    onClick={() => setMode("exclude")}
+                    className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)]"
+                  >
+                    ⏸️ Pause my link
+                    <span className="mt-0.5 block text-xs text-muted">
+                      Stop this link for good. This can&rsquo;t be undone.
+                    </span>
+                  </button>
+                )}
                 <button
                   onClick={exportOrShow}
                   disabled={busy}
@@ -168,7 +171,7 @@ export default function SafetyMenu({ token }: { token: string }) {
                 >
                   ⬇️ {busy ? "Preparing your data…" : "Download my data"}
                   <span className="mt-0.5 block text-xs text-muted">
-                    A copy of everything stored about you here.
+                    A copy of your records with this creator. Private creator notes and won codes are not included.
                   </span>
                 </button>
                 <button
@@ -191,6 +194,7 @@ export default function SafetyMenu({ token }: { token: string }) {
                 >
                   Cancel
                 </button>
+                <LegalLinks className="mt-3" />
               </>
             ) : mode === "delete" ? (
               <FanDeleteFlow
@@ -236,8 +240,7 @@ export default function SafetyMenu({ token }: { token: string }) {
               <>
                 <p className="text-sm font-bold text-ink">Pause my link?</p>
                 <p className="mt-2 text-sm text-muted">
-                  This stops your spin link from working. You&rsquo;ll need to ask the
-                  creator for a new link to play again.
+                  {PAUSE_WARNING}
                 </p>
                 <button
                   onClick={exclude}

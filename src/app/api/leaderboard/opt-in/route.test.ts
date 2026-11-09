@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { POST } from "./route";
-import { mockCreatePass, mockGetFanPass, mockSetLeaderboardEnabled, mockGetLeaderboard } from "@/lib/data/mock";
+import { mockAckFan, mockCreatePass, mockGetFanPass, mockSetLeaderboardEnabled, mockGetLeaderboard } from "@/lib/data/mock";
 
 // The leaderboard opt-in is the fan's consent switch for a PUBLIC page, and fans
 // are never authenticated — the only thing standing between a stranger and
@@ -100,6 +100,13 @@ async function main() {
     "a non-boolean optIn flips nothing",
     (await mockGetFanPass(fanD.token))?.leaderboardOptIn === false
   );
+
+  // --- T2: the age gate comes first --------------------------------------
+  const gated = await post({ token: fan.token, optIn: true, handle: "gail" });
+  check("an un-acknowledged fan cannot opt in (403)", gated.status === 403);
+  check("…and the answer says needs_ack", ((await gated.json()) as { error?: string }).error === "needs_ack");
+  check("…and nothing flipped", (await mockGetFanPass(fan.token))?.leaderboardOptIn === false);
+  mockAckFan(fan.token);
 
   // --- the happy path, with a real token ---------------------------------
   const ok = await post({ token: fan.token, optIn: true, handle: "gail" });

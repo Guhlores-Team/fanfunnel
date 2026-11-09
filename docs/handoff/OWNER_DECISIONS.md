@@ -42,6 +42,19 @@ but the owner can make. Nothing below blocks the TEST push; the "go" can come wi
 7. **The Vercel Toolbar under the enforced CSP**: `script-src` allows only the app's own (nonced) scripts and
    `frame-src` is `'none'`, so the Toolbar's `vercel.live` script and iframe are blocked on every page.
    Keep it blocked (recommended for Production), or allow `https://vercel.live` on Preview only?
+8. **Pausing a fan link is permanent** (batch 6, T3). Default taken: pause stays permanent; the
+   pause dialog, confirmation, fan page and Terms say so plainly and warn to copy codes first, and a
+   paused link shows a read-only "Your wins" view (prize, date, delivery state, an already revealed
+   reward, verify link, Safety menu) instead of a 404. Reversing it needs a fan-consented new link
+   and a migration that clears `self_excluded_at`.
+9. **Self-close is blocked while prizes are owed** (batch 6, T4). Default taken: `POST
+   /api/account/close` refuses with 409 `prizes_owed` while any of the creator's redemptions is
+   pending or in progress; Settings › Close my account says why and links to Fulfilment. An admin
+   delete is unaffected. The alternative is an explicit "I accept I still owe these" acknowledgement.
+10. **Fans see each win's delivery status** (batch 6, T5). Default taken: the fan page, the paused
+   view and the fan export show waiting / in progress / delivered (with its time) / cancelled from
+   the existing redemption status. There is no cancel timestamp (no new columns), so a cancelled
+   win shows when it was won. Reversing it hides the list; nothing is stored differently.
 
 ## Backlog decisions
 - a: server enforces wheel rules (≥2 prizes, non-empty names, ≥1 prize with tickets > 0).

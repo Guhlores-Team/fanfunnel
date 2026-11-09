@@ -40,6 +40,7 @@ import { storedWeight } from "@/lib/games/wheel/weights";
 import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
 import { LEGAL, fanNeedsAck } from "@/lib/legal";
+import { exportDelivery, toWinDelivery, type WinDelivery } from "@/lib/fan/delivery";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import type { FanAppInfo } from "@/lib/pwa/manifest";
 import { countPlay, fanEngagementAllowed, isOnBreak, lengthenBreak, reminderDue } from "@/lib/play/playGuard";
@@ -287,6 +288,8 @@ interface MockRedemption extends RedemptionItem {
   shareId?: string;
   /** 0067 parity: the finite unit this win took ("held") or gave back on cancel ("returned"). */
   stockUnit?: { prizeId: string; state: "held" | "returned" };
+  /** redemptions.fulfilled_at parity: set when delivered, cleared otherwise. */
+  fulfilledAt?: string | null;
 }
 
 /** 0067 parity: a manual prize with a finite count holds the unit its win took. */
@@ -1208,7 +1211,7 @@ export async function mockGetFanPass(
     wheel: applyFocusStock(toPublicWheel(wheel), modifierDisplay.stock),
     spinsRemaining: pass?.spinsRemaining ?? fan.spinsRemaining,
     recentWins: fan.wins.slice(0, 50).map(win => ({ label: win.label, rarity: win.rarity, emoji: win.emoji, color: win.color,
-      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}) })),
+      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}), ...mockWinDelivery(win.shareId) })),
     wishlist: wishlistFor(fan.id),
     happyHour: mockGetActiveHappyHour(wheel.id),
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
@@ -2424,6 +2427,7 @@ export function mockSetRedemptionStatus(id: string, status: RedemptionStatus): {
       } else r.stockUnit = undefined;
     }
   }
+  if (r.status !== status) r.fulfilledAt = status === "fulfilled" ? new Date().toISOString() : null;
   r.status = status;
   return stock ? { ok: true, stock } : { ok: true };
 }
@@ -2860,6 +2864,7 @@ export function mockGetAdminOverview(): AdminOverview {
     you.fans = store.fans.size;
     you.spins = store.redemptions.filter(row=>row.kind!=="bonus").length;
     you.pending = store.redemptions.filter((r) => r.status === "pending").length;
+    you.oldestPendingAt = store.redemptions.filter((r) => r.status === "pending").map((r) => r.at).sort()[0] ?? null;
   }
 
   // Show ALL accounts — admins included (an account can be promoted to admin
@@ -3163,6 +3168,27 @@ export function mockSelfExclude(token: string): { ok: true } | { error: string }
   return { ok: true };
 }
 
+/** T3: the read-only wins view of a paused link (parity with getPausedFanWins). */
+export function mockGetPausedFanWins(token: string): import("@/lib/fan/pausedTypes").PausedFanWins | null {
+  const fan = fanForToken(token);
+  if (!fan || !fan.selfExcludedAt) return null;
+  const deliveries = rewardState().deliveries;
+  const wins = fan.wins.slice(0, 50).map((win) => {
+    const d = win.shareId ? deliveries.get(win.shareId) : undefined;
+    const shown = d && d.fanId === fan.id && !fan.blockedAt && d.views >= 1 && rewardReviewAllowed(d.at) ? { kind: d.kind, value: d.value } : null;
+    return {
+      label: win.label,
+      rarity: win.rarity,
+      at: win.at,
+      shareId: win.shareId ?? null,
+      ...mockWinDelivery(win.shareId),
+      reward: shown,
+      rewardHidden: !!d && !shown,
+    };
+  });
+  return structuredClone({ creatorTitle: CREATOR_TITLE, pausedAt: fan.selfExcludedAt, leaderboardOptIn: fan.leaderboardOptIn === true, wins });
+}
+
 /** A fan reports the creator behind their token (demo: store it, validate reason). */
 export function mockReportCreator(
   token: string,
@@ -3207,6 +3233,7 @@ export function mockAddWishlist(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const label = prizeLabel.trim();
   if (!label) return { error: "invalid_label" };
 
@@ -3239,6 +3266,7 @@ export function mockRemoveWishlist(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const label = prizeLabel.trim();
   store.wishlists = store.wishlists.filter(
     (w) => !(w.fanId === fan.id && w.prizeLabel === label)
@@ -3394,6 +3422,7 @@ export function mockSetFanLeaderboardOptIn(
   const fan = fanForToken(token);
   if (!fan || (optIn && fan.selfExcludedAt)) return { error: "not_found" };
   if (optIn && fan.blockedAt) return { error: "blocked" }; // A4: opting out always works
+  if (optIn && fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
   fan.leaderboardOptIn = !!optIn;
   if (optIn && handle !== undefined) {
     const trimmed = handle.trim();
@@ -3478,10 +3507,11 @@ export function mockGetReferralStats(): {
 export function mockSendFanMessage(
   token: string,
   body: string
-): { ok: true } | { error: "not_found" | "blocked" | "locked" | "empty" } {
+): { ok: true } | { error: "not_found" | "blocked" | "needs_ack" | "locked" | "empty" } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   if (!chatUnlockedFor(fan)) return { error: "locked" };
   const text = body.trim();
   if (text.length < 1 || text.length > 2000) return { error: "empty" };
@@ -3497,10 +3527,11 @@ export function mockSendFanMessage(
 }
 
 /** A fan's full thread (oldest first); marks creator→fan messages read. */
-export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blocked" } {
+export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blocked" | "needs_ack" } {
   const fan = fanForToken(token);
   if (!fan) return [];
   if (fan.blockedAt) return { error: "blocked" }; // I7: parity with getFanMessages
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
   const now = new Date().toISOString();
   const rows = store.messages
     .filter((m) => m.fanId === fan.id)
@@ -3619,6 +3650,7 @@ export function mockEnsureChatIntro(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const intro = (store.chatIntro ?? "").trim();
   if (!intro) return { ok: true };
   const hasAny = store.messages.some((m) => m.fanId === fan.id);
@@ -3645,6 +3677,7 @@ export function mockSendChatOutro(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const outro = (store.chatOutro ?? "").trim();
   if (!outro) return { ok: true };
   const mine = store.messages
@@ -3978,7 +4011,10 @@ export function mockExportFanData(token: string): FanDataExport | null {
     })),
     prizes: store.redemptions
       .filter((r) => r.fanId === fan.id)
-      .map((r) => ({ spinId: null, prize: r.prizeLabel, status: r.status, wonAt: r.at, fulfilledAt: null })),
+      .map((r) => {
+        const fulfilledAt = r.status === "fulfilled" ? r.fulfilledAt ?? r.at : null;
+        return { spinId: null, prize: r.prizeLabel, status: r.status, delivery: exportDelivery(r.status, fulfilledAt), wonAt: r.at, fulfilledAt };
+      }),
     instantReceipts: deliveries.sort(([a], [b]) => a.localeCompare(b)).map(([spinId, delivery]) => ({ spinId, kind: delivery.kind, views: delivery.views, lastViewedAt: delivery.lastViewedAt, createdAt: delivery.at, erasedAt: null })),
     bingoCards:[...mockBingoStore().cards.values()].filter(card=>card.fanId===fan.id).map(card=>({id:card.id,wheelId:card.wheelId,cells:structuredClone(card.state.cells) as unknown as Json,markedMask:card.state.markedMask,awardedLinesMask:card.state.awardedLinesMask,version:card.state.version,status:card.completedAt?"completed":"active",createdAt:card.createdAt,completedAt:card.completedAt})),
     bingoLineAwards:[...mockBingoStore().awards.values()].filter(award=>award.fanId===fan.id).map(award=>({cardId:award.cardId,line:award.line,primarySpinId:award.parentShareId,bonusSpinId:award.bonusShareId,at:award.at})),
@@ -3994,6 +4030,9 @@ export function mockExportFanData(token: string): FanDataExport | null {
     messagesYouSent: store.messages
       .filter((m) => m.fanId === fan.id && m.sender === "fan")
       .map((m) => ({ at: m.at, body: m.body })),
+    messagesYouReceived: store.messages
+      .filter((m) => m.fanId === fan.id && m.sender === "creator")
+      .map((m) => ({ at: m.at, body: m.body, readAt: m.readAt })),
   };
   for (const [name, value] of Object.entries(out)) {
     if (Array.isArray(value) && !["failed", "truncated", "excluded"].includes(name) && value.length > EXPORT_ROW_CAP) {
@@ -4381,6 +4420,13 @@ export function mockGetFanReward(
   d.views += 1;
   d.lastViewedAt = new Date().toISOString();
   return { reward: { kind: d.kind, value: d.value }, views: d.views };
+}
+
+/** T5: a mock win's delivery state, from its redemption (parity with getFanPass). */
+function mockWinDelivery(shareId: string | undefined): { delivery?: WinDelivery } {
+  const r = shareId ? store.redemptions.find((x) => x.shareId === shareId) : undefined;
+  const delivery = r ? toWinDelivery(r.status, r.fulfilledAt ?? (r.status === "fulfilled" ? r.at : null)) : undefined;
+  return delivery ? { delivery } : {};
 }
 
 /** Fulfilment's "Auto" tag for a mock redemption (never the value). */

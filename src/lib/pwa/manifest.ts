@@ -115,7 +115,7 @@ export function buildFanManifest(token: string, info: FanAppInfo): MetadataRoute
     name,
     short_name: shortName(name),
     // Neutral on purpose: no creator name here either.
-    description: "Your prize wheel. Every spin wins.",
+    description: "Your prize wheel. Every spin lands on a prize.",
     start_url: p.startUrl,
     scope: p.scope,
     display: "standalone",
@@ -136,7 +136,7 @@ export function buildRootManifest(): MetadataRoute.Manifest {
     id: DASHBOARD_APP_PATH,
     name: "FanFunnel",
     short_name: "FanFunnel",
-    description: "Spin to win — every spin wins a prize.",
+    description: "Every fan gets their own prize wheel. Every spin lands on a prize.",
     start_url: DASHBOARD_APP_PATH,
     scope: "/",
     display: "standalone",

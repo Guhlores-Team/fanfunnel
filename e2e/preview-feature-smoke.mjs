@@ -135,7 +135,7 @@ async function openFan(browser, config, state, fixture) {
   await goto(page, config, `/spin/${encodeURIComponent(fixture.token)}`);
   const gate = page.getByRole("dialog", { name: "Before you spin" });
   await gate.waitFor({ timeout: 15_000 });
-  await gate.getByRole("checkbox", { name: "I am 18 years of age or older." }).check();
+  await gate.getByRole("checkbox", { name: "I am 18 or older, and an adult where I live." }).check();
   await gate.getByRole("checkbox", { name: /I agree to the Terms of Service/ }).check();
   const ack = page.waitForResponse(response => new URL(response.url()).pathname === "/api/fans/ack" && response.request().method() === "POST");
   ack.catch(() => {});

@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { mock } from "node:test";
 import { FakeTables, eqValue, on } from "@/lib/privacy/fakeTables";
+import { LEGAL } from "@/lib/legal";
 
 // Execute the real data layer with only its Supabase transport replaced. The
 // returned token pair is deliberately adversarial in the cross-creator case.
 const creator = "creator-a", otherCreator = "creator-b";
 const fan = { id: "fan-a", creator_id: creator, display_name: "Private Name", handle: "chosen_handle",
   leaderboard_opt_in: true, blocked_at: null as string | null, break_until: null as string | null,
-  spins_remaining: 7, spins_granted_total: 10, created_at: "2026-01-01T00:00:00Z" };
+  spins_remaining: 7, spins_granted_total: 10, created_at: "2026-01-01T00:00:00Z",
+  // Joining needs the age/terms gate confirmed (T2); withdrawing never does.
+  acked_at: "2026-01-01T00:00:00Z" as string | null, acked_terms_version: LEGAL.version as string | null };
 const other = { id: "fan-b", creator_id: otherCreator, handle: "other_handle", leaderboard_opt_in: true, spins_remaining: 11, created_at: "2026-01-01T00:00:00Z" };
 const pass = { token: "withdraw-token", fan_id: fan.id, creator_id: creator, campaign_id: null,
   wheel_id: "wheel-a", is_active: true, self_excluded_at: null as string | null, spins_remaining: 7 };
@@ -22,7 +25,14 @@ const svc = new FakeTables({
 let inconsistentRead = false;
 const runQuery = svc.run.bind(svc);
 svc.run = (statement, options) => {
-  const result = runQuery(statement, options);
+  let result = runQuery(statement, options);
+  // FakeTables leaves embeds out; the join path reads the fan's gate state
+  // through `fan:fans(...)` (T2), so model that one to-one embed here.
+  if (statement.table === "fan_passes" && statement.op === "select" && statement.columns?.includes("fan:fans(") && result.data && !Array.isArray(result.data)) {
+    const row = result.data as Record<string, unknown>;
+    const owner = [fan, other].find(candidate => candidate.id === pass.fan_id && row.fan_id === pass.fan_id);
+    result = { ...result, data: { ...row, fan: owner ? { blocked_at: fan.blocked_at, acked_at: fan.acked_at, acked_terms_version: fan.acked_terms_version } : null } };
+  }
   return inconsistentRead && statement.table === "fan_passes" && statement.op === "select"
     ? { ...result, error: { message: "inconsistent read" } } : result;
 };
@@ -108,6 +118,10 @@ async function main() {
   const archivedJoin = await setFanLeaderboardOptIn(pass.token, true, "join_name");
   check("all-archived creator still cannot opt IN through a privacy bypass", "error" in archivedJoin && archivedJoin.error === "not_found" && Object.is(fan.leaderboard_opt_in, false));
   wheel.archived_at = null;
+  fan.acked_at = null;
+  const unackedJoin = await setFanLeaderboardOptIn(pass.token, true, "join_name");
+  check("T2: a fan who has not confirmed the age gate cannot opt IN", "error" in unackedJoin && unackedJoin.error === "needs_ack" && Object.is(fan.leaderboard_opt_in, false));
+  fan.acked_at = "2026-01-01T00:00:00Z";
   check("ordinary eligible joining remains available", "ok" in await setFanLeaderboardOptIn(pass.token, true, "join_name") && fan.leaderboard_opt_in === true && fan.handle === "join_name");
   // A deleted token no longer resolves, even if a caller remembers its value.
   svc.tables.fan_passes = [];
@@ -118,6 +132,7 @@ async function main() {
   demo.mockSetLeaderboardEnabled(true);
   for (const state of ["normal", "break", "blocked", "paused"] as const) {
     const created = demo.mockCreatePass(`Privacy ${state}`, 2);
+    demo.mockAckFan(created.token);
     demo.mockSetFanLeaderboardOptIn(created.token, true, `mock_${state}`);
     if (state === "break") demo.mockTakeBreak(created.token, 60 * 60 * 1000);
     if (state === "blocked") demo.mockSetFanBlocked(created.fanId, true);
@@ -138,6 +153,7 @@ async function main() {
   // this fixture before every wheel is archived below.
   const deleteFan = demo.mockCreatePass("Deleted Privacy", 2);
   const archiveFan = demo.mockCreatePass("Archived Privacy", 2);
+  demo.mockAckFan(archiveFan.token);
   demo.mockSetFanLeaderboardOptIn(archiveFan.token, true, "mock_archived");
   for (const row of demo.mockListWheels(true)) demo.mockArchiveWheel(row.id);
   const archivedMock = await setFanLeaderboardOptIn(archiveFan.token, false);

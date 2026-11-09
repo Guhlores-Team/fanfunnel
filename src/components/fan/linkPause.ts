@@ -54,6 +54,13 @@ export function pauseErrorMessage(code: string | undefined): string {
   }
 }
 
+/** The pause dialog's warning (T3): pausing is permanent and the wins page goes read-only. */
+export const PAUSE_WARNING =
+  "This permanently stops your link with this creator. You can still see your wins on this link, but it can't play or chat again, so copy any codes you won first. This can't be undone.";
+
 /** Confirmation shown right after a successful pause. */
 export const PAUSED_CONFIRMATION =
-  "Your link is paused. SPIN is now off — ask your creator for a new link to play again.";
+  "Your link is paused for good. SPIN and chat are now off. Your wins stay on this link to look back on.";
+
+/** The fan page's note under a paused SPIN button. */
+export const PAUSED_STATUS = "Your link is paused for good. It can't play again.";

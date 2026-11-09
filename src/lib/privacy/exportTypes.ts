@@ -82,7 +82,8 @@ export interface FanDataExport extends ExportStatus {
       trace: Json | null;
     };
   }[];
-  prizes: { spinId: string | null; prize: string; status: string; wonAt: string; fulfilledAt: string | null }[];
+  /** T9: each won prize's redemption status, plus the same words the fan page shows. */
+  prizes: { spinId: string | null; prize: string; status: string; delivery: string | null; wonAt: string; fulfilledAt: string | null }[];
   /** Delivery metadata only; downloaded files never contain redeemable values. */
   instantReceipts: { spinId: string; kind: string; views: number; lastViewedAt: string | null; createdAt: string; erasedAt: string | null }[];
   bingoCards: {id:string;wheelId:string;cells:Json;markedMask:number;awardedLinesMask:number;version:number;status:string;createdAt:string|null;completedAt:string|null}[];
@@ -91,6 +92,8 @@ export interface FanDataExport extends ExportStatus {
   spinAttempts: { status: string; error: string | null; at: string | null; finishedAt: string | null }[];
   wishlist: { prize: string; rarity: string; addedAt: string }[];
   messagesYouSent: { at: string; body: string }[];
+  /** T9: messages the creator (or their team) sent you, and when you read them. */
+  messagesYouReceived: { at: string; body: string; readAt: string | null }[];
   play: { breakUntil: string | null; reminderDaily: number | null; reminderUpdatedAt: string | null };
   checkIns: { day: string; recordedAt: string | null }[];
   outreach: { at: string; contactedAt: string | null }[];
@@ -124,7 +127,7 @@ export const CREATOR_EXPORT_EXCLUDED = [
 ];
 export const FAN_EXPORT_ABOUT =
   "Your records with this creator: profile, links and balances, spent-spin fairness proofs, " +
-  "prizes, instant delivery and view metadata, personal bingo cards and line awards, wishlist, messages you sent, consents, play settings, check-ins, outreach history " +
+  "prizes and their delivery status, instant delivery and view metadata, personal bingo cards and line awards, wishlist, messages you sent and received, consents, play settings, check-ins, outreach history " +
   "and reports you submitted. Read complete, failed and truncated before relying on this file. " +
   "Listed exclusions protect private fields and credentials. Records are read while the file is prepared.";
 export const CREATOR_EXPORT_ABOUT =

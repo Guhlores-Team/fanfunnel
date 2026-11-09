@@ -1,4 +1,6 @@
 import type { FanLinkStatus } from "@/lib/data";
+import { LEGAL } from "@/lib/legal";
+import LegalLinks from "@/components/LegalLinks";
 
 /**
  * What a fan link shows when it stopped working for a reason the fan should
@@ -8,7 +10,7 @@ import type { FanLinkStatus } from "@/lib/data";
 const COPY: Record<FanLinkStatus, { title: string; body: string }> = {
   creator_closed: {
     title: "This creator has left FanFunnel",
-    body: "They closed their account, so this link doesn't work any more and the data behind it has been deleted. Thanks for playing.",
+    body: "They closed their account, so this link doesn't work any more and the data behind it has been deleted.",
   },
   fan_deleted: {
     title: "This link was deleted",
@@ -26,8 +28,18 @@ export default function LinkGone({ status }: { status: FanLinkStatus }) {
         </span>
         <h1 className="mt-3 text-lg font-bold text-ink">{copy.title}</h1>
         <p className="mt-2 text-sm text-muted">{copy.body}</p>
+        {status === "creator_closed" && (
+          <p className="mt-2 text-sm text-muted" data-testid="unpaid-prize-note">
+            If they still owed you a prize, report it to us at{" "}
+            <a href={`mailto:${LEGAL.contactEmail}`} className="text-ink underline underline-offset-2">
+              {LEGAL.contactEmail}
+            </a>
+            .
+          </p>
+        )}
       </div>
       <p className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">Powered by FanFunnel</p>
+      <LegalLinks className="relative z-[1] mt-2" />
     </main>
   );
 }

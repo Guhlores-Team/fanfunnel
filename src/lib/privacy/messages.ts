@@ -1,6 +1,11 @@
 import { CLOSE_ACCOUNT_PHRASE, FAN_DELETE_PHRASE } from "./config";
 
+/** T4: why the account can't close yet; the card links to Fulfilment next to it. */
+export const PRIZES_OWED_MESSAGE =
+  "Fans are still waiting for prizes they won. Deliver or cancel every pending prize in Fulfilment first, then close your account.";
+
 /** Server error code → the sentence the creator sees (Close my account). */
+
 export function closeAccountErrorMessage(code: unknown): string {
   switch (code) {
     case "wrong_password":
@@ -13,6 +18,8 @@ export function closeAccountErrorMessage(code: unknown): string {
       return "This account is suspended, so it can't be closed from here. Contact us to close it.";
     case "reports_open":
       return "A safety report about this account is still under review. It can be closed once the review is done.";
+    case "prizes_owed":
+      return PRIZES_OWED_MESSAGE;
     case "mfa_required":
       return "Sign in with your two-factor code first, then try again.";
     case "rate_limited":

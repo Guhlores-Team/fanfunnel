@@ -5,6 +5,7 @@ import { canSendAccountEmail } from "@/lib/account/accountMail";
 import { rejectionReasonText } from "@/lib/onboarding/rejectionReasons";
 import { brandVars } from "@/lib/theme";
 import PendingClient from "@/components/PendingClient";
+import { pendingSelfDeleteAllowed } from "@/lib/account/pendingSelfDelete";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,7 @@ export default async function PendingPage() {
           }
           canEmail={canSendAccountEmail()}
           rejectionReason={rejectionReasonText(reasonCode)}
+          canSelfDelete={pendingSelfDeleteAllowed(status)}
         />
       </div>
     </main>

@@ -15,6 +15,8 @@ import StuckDeletions from "./StuckDeletions";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
 import AdminReports from "./AdminReports";
+import { pendingAgeLabel, pendingAgeOverdue } from "./pendingAge";
+import { useNow } from "@/lib/hooks/useNow";
 
 interface PendingApp {
   id: string;
@@ -417,6 +419,10 @@ function AccountRow({
     }
   }
 
+  // T4: how long the oldest owed prize has waited (blank until hydrated).
+  const now = useNow(60_000);
+  const pendingAge = account.pending > 0 ? pendingAgeLabel(account.oldestPendingAt, now) : null;
+  const pendingOverdue = account.pending > 0 && pendingAgeOverdue(account.oldestPendingAt, now);
   const stats: [string, string, string, number][] = [
     [P.wheel, "wheel", "wheels", account.wheels],
     [P.users, "fan", "fans", account.fans],
@@ -456,6 +462,15 @@ function AccountRow({
                 {value === 1 ? one : many}
               </span>
             ))}
+            {pendingAge && (
+              <span
+                data-testid="admin-oldest-pending"
+                title="Age of this creator's oldest prize still waiting for delivery"
+                className={`tnum inline-flex items-center text-xs ${pendingOverdue ? "font-semibold text-[#fcd34d]" : "text-muted"}`}
+              >
+                oldest {pendingAge}
+              </span>
+            )}
           </p>
         </div>
         <span

@@ -5,6 +5,12 @@ import { PHOTO_REPORT_REASON } from "@/lib/creatorTheme/config";
 /** Reported content that may involve someone under 18. Always urgent. */
 export const CHILD_SAFETY_REPORT_REASON = "Involves someone under 18";
 export const ILLEGAL_REPORT_REASON = "Illegal content or activity";
+/**
+ * T15: the Terms' safe-for-work rule covers all public text (prize names,
+ * tagline, creator note, board names), so a fan can report it. Not urgent:
+ * it reaches Admin › Reports without an alert e-mail.
+ */
+export const PUBLIC_TEXT_REPORT_REASON = "Adult or offensive public text";
 
 /** The reasons a fan can pick, in menu order. */
 export const REPORT_REASONS = [
@@ -14,6 +20,7 @@ export const REPORT_REASONS = [
   CHILD_SAFETY_REPORT_REASON,
   ILLEGAL_REPORT_REASON,
   PHOTO_REPORT_REASON,
+  PUBLIC_TEXT_REPORT_REASON,
   "Other",
 ] as const;
 
@@ -33,6 +40,20 @@ export function isUrgentReportReason(reason: string): boolean {
 
 /** Urgent-report alert e-mails per rolling hour, across instances when Upstash is set. */
 export const REPORT_ALERTS_PER_HOUR = 10;
+
+/**
+ * T6: reasons about a child's safety. Their alerts have their OWN hourly
+ * budget, so a flood of anonymous public photo reports can never use up the
+ * budget a real "under 18" report needs.
+ */
+export const CHILD_SAFETY_REPORT_REASONS: readonly string[] = [CHILD_SAFETY_REPORT_REASON];
+
+export function isChildSafetyReportReason(reason: string): boolean {
+  return CHILD_SAFETY_REPORT_REASONS.includes(reason);
+}
+
+/** Child-safety alert e-mails per rolling hour (separate from the shared budget). */
+export const CHILD_SAFETY_ALERTS_PER_HOUR = 30;
 
 /** Longest admin resolution note (the 0064 CHECK matches). */
 export const REPORT_NOTE_MAX = 1000;

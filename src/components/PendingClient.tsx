@@ -4,6 +4,7 @@ import { useState } from "react";
 import TermsCheckbox from "@/components/TermsCheckbox";
 import { LEGAL } from "@/lib/legal";
 import { composeApplicationNote, parseApplicationNote } from "@/lib/onboarding/applicationNote";
+import PendingSelfDelete from "@/components/PendingSelfDelete";
 
 /** The stored request, as the server read it (C21). */
 export interface PendingApplication {
@@ -34,12 +35,15 @@ export default function PendingClient({
   application,
   canEmail,
   rejectionReason,
+  canSelfDelete = false,
 }: {
   status: "pending" | "rejected";
   email: string;
   application?: PendingApplication | null;
   canEmail?: boolean;
   rejectionReason?: string | null;
+  /** T7: offer "Delete my request and account" (only ever true on /pending). */
+  canSelfDelete?: boolean;
 }) {
   const extras = parseApplicationNote(application?.note);
   const [stored, setStored] = useState<PendingApplication | null>(application ?? null);
@@ -136,6 +140,7 @@ export default function PendingClient({
             Sign out
           </button>
         </form>
+        {canSelfDelete && <PendingSelfDelete status="rejected" />}
       </div>
     );
   }
@@ -203,6 +208,7 @@ export default function PendingClient({
         <form action="/auth/signout" method="post" className="mt-3 text-center">
           <button className="text-xs font-semibold text-muted transition hover:text-ink">Sign out</button>
         </form>
+        {canSelfDelete && <PendingSelfDelete status="pending" />}
       </div>
     );
   }
@@ -326,6 +332,7 @@ export default function PendingClient({
           Sign out
         </button>
       </form>
+      {canSelfDelete && <PendingSelfDelete status="pending" />}
     </div>
   );
 }

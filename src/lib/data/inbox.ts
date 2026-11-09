@@ -20,6 +20,7 @@ import {
   mockFanIdForToken,
 } from "./mock";
 import { resolveFanByToken } from "./fans";
+import { fanNeedsAck } from "@/lib/legal";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { notifyCreator } from "@/lib/push/notify";
 
@@ -132,7 +133,7 @@ const MESSAGE_SELECT = "id, sender, body, created_at, read_at";
 export async function sendFanMessage(
   token: string,
   body: string
-): Promise<{ ok: true } | { error: "not_found" | "blocked" | "locked" | "empty" | "db_error" }> {
+): Promise<{ ok: true } | { error: "not_found" | "blocked" | "needs_ack" | "locked" | "empty" | "db_error" }> {
   if (!isSupabaseConfigured()) {
     const res = mockSendFanMessage(token, body);
     if ("ok" in res) {
@@ -142,7 +143,7 @@ export async function sendFanMessage(
     }
     // The mock may use its own validation code ("invalid_body"); normalize any
     // unknown error to the contract's "empty".
-    const known = ["not_found", "blocked", "locked", "empty", "db_error"] as const;
+    const known = ["not_found", "blocked", "needs_ack", "locked", "empty", "db_error"] as const;
     type Known = (typeof known)[number];
     const code = (known as readonly string[]).includes(res.error)
       ? (res.error as Known)
@@ -153,7 +154,7 @@ export async function sendFanMessage(
   const sb = createServiceClient();
   const { data: passData } = await sb
     .from("fan_passes")
-    .select("creator_id, fan:fans(id, spins_remaining, spins_granted_total, blocked_at)")
+    .select("creator_id, fan:fans(id, spins_remaining, spins_granted_total, blocked_at, acked_at, acked_terms_version)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -164,11 +165,15 @@ export async function sendFanMessage(
       spins_remaining: number;
       spins_granted_total: number;
       blocked_at?: string | null;
+      acked_at?: string | null;
+      acked_terms_version?: string | null;
     } | null;
   } | null;
   if (!pass || !pass.fan) return { error: "not_found" };
   // A4: a fan the creator blocked can no longer message them.
   if (pass.fan.blocked_at) return { error: "blocked" };
+  // T2: chat is behind the same age/terms gate as the spin.
+  if (fanNeedsAck(pass.fan.acked_at, pass.fan.acked_terms_version)) return { error: "needs_ack" };
 
   // GATE: chat unlocks while the fan holds spins OR has ever been granted any.
   if (!(pass.fan.spins_remaining > 0 || pass.fan.spins_granted_total > 0))
@@ -196,19 +201,21 @@ export async function sendFanMessage(
  * The fan's own thread. I7: a fan the creator blocked can no longer read it
  * (403 blocked, the same answer as sending), and nothing is marked read.
  */
-export async function getFanMessages(token: string): Promise<ChatMessage[] | { error: "blocked" }> {
+export async function getFanMessages(token: string): Promise<ChatMessage[] | { error: "blocked" | "needs_ack" }> {
   if (!isSupabaseConfigured()) return mockGetFanMessages(token);
 
   const sb = createServiceClient();
   const { data: passData } = await sb
     .from("fan_passes")
-    .select("creator_id, fan_id, fan:fans(blocked_at)")
+    .select("creator_id, fan_id, fan:fans(blocked_at, acked_at, acked_terms_version)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
-  const pass = passData as unknown as { creator_id: string; fan_id: string; fan?: { blocked_at: string | null } | null } | null;
+  const pass = passData as unknown as { creator_id: string; fan_id: string; fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null } | null;
   if (!pass) return [];
   if (pass.fan?.blocked_at) return { error: "blocked" };
+  // T2: nothing is read (or marked read) before the age/terms gate.
+  if (fanNeedsAck(pass.fan?.acked_at, pass.fan?.acked_terms_version)) return { error: "needs_ack" };
 
   const { data } = await sb
     .from("messages")
@@ -514,6 +521,7 @@ export async function ensureChatIntro(
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
   if (resolved.blocked) return { error: "blocked" };
+  if (resolved.needsAck) return { error: "needs_ack" };
 
   const { data: profile } = await sb
     .from("profiles")
@@ -553,6 +561,7 @@ export async function sendChatOutro(
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
   if (resolved.blocked) return { error: "blocked" };
+  if (resolved.needsAck) return { error: "needs_ack" };
 
   const { data: profile } = await sb
     .from("profiles")

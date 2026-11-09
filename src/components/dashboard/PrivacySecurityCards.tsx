@@ -11,6 +11,7 @@ import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/pr
 import { CLOSE_ACCOUNT_PHRASE } from "@/lib/privacy/config";
 import { closeAccountErrorMessage } from "@/lib/privacy/messages";
 import { Field } from "./ui";
+import { sectionHref } from "./dashboardSection";
 
 /**
  * Settings cards for the privacy & safety pack:
@@ -331,6 +332,8 @@ export function CloseAccountCard() {
   const [phrase, setPhrase] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // T4: the server refused because fans are still owed prizes; show the way to Fulfilment.
+  const [owed, setOwed] = useState(false);
   const titleId = useId();
   const panelId = useId();
   const errId = useId();
@@ -339,6 +342,7 @@ export function CloseAccountCard() {
   async function close() {
     setBusy(true);
     setError(null);
+    setOwed(false);
     try {
       const res = await fetch("/api/account/close", {
         method: "POST",
@@ -352,6 +356,7 @@ export function CloseAccountCard() {
         return;
       }
       if (state !== "complete") {
+        setOwed(d.error === "prizes_owed");
         setError(closeAccountErrorMessage(d.error));
         return;
       }
@@ -389,6 +394,10 @@ export function CloseAccountCard() {
             <li>Your wheels, prizes, fans, spins, redemptions, campaigns, messages and settings are deleted.</li>
             <li>Every fan link stops working and shows that you&rsquo;ve left FanFunnel.</li>
             <li>You&rsquo;re signed out everywhere. The email can sign up again later as a new account.</li>
+            <li>
+              You can&rsquo;t close while fans are still owed prizes. Deliver or cancel every pending prize in{" "}
+              <a href={sectionHref("prizes")} className="text-ink underline underline-offset-2">Fulfilment</a> first.
+            </li>
           </ul>
           <div className="grid gap-3.5 sm:grid-cols-2">
             <Field label="Current password">
@@ -414,8 +423,14 @@ export function CloseAccountCard() {
             </Field>
           </div>
           {error && (
-            <p id={errId} role="alert" className="text-[13px] text-[#fcd34d]">
+            <p id={errId} role="alert" data-testid="close-account-error" className="text-[13px] text-[#fcd34d]">
               {error}
+              {owed && (
+                <>
+                  {" "}
+                  <a href={sectionHref("prizes")} className="font-semibold underline underline-offset-2">Open Fulfilment</a>
+                </>
+              )}
             </p>
           )}
           <div className="flex flex-wrap gap-2">

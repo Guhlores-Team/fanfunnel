@@ -164,6 +164,8 @@ export { recordOutreach, ageFanActivityForDemo } from "./outreach";
 export { recordAudit, listAuditLog } from "./audit";
 export { exportFanData, deleteFanData, getFanLinkStatus, exportCreatorData, isPlausibleToken } from "./privacy";
 export type { FanLinkStatus } from "./privacy";
+export { getPausedFanWins, PAUSED_WINS_LIMIT } from "./pausedLink";
+export type { PausedFanWins, PausedWin } from "./pausedLink";
 export { getMyTermsStatus, acceptMyTerms } from "./terms";
 
 export {

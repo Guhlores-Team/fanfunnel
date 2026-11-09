@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import LegalLinks from "@/components/LegalLinks";
 import { getLeaderboard } from "@/lib/data";
 import { brandVars } from "@/lib/theme";
 
@@ -66,6 +67,7 @@ export default async function LeaderboardPage({
       <footer className="relative z-[1] mt-10 text-[11px] tracking-wide text-muted/70">
         Powered by FanFunnel
       </footer>
+      <LegalLinks className="relative z-[1] mt-2" />
     </main>
   );
 }

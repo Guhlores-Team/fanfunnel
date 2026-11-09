@@ -10,7 +10,8 @@ import { FakeStorageWork } from "@/lib/storage/fakeWork";
 // account would break the run). Negative cases, each of which must delete
 // NOTHING: demo mode, signed out, wrong or missing confirm phrase, a two-factor
 // user on a password-only (aal1) session, a wrong password, the last admin, a
-// body that names someone else's id. Then the success path: only the caller's
+// body that names someone else's id, a creator who still owes fans prizes
+// (T4). Then the success path: only the caller's
 // own id is reserved and deleted, every fan link is tombstoned (hash only), an
 // activity entry is recorded, the browser is signed out; and a failed delete
 // restores an admin's role.
@@ -46,6 +47,7 @@ const svcTables = new FakeTables({
     { id: "p3", creator_id: OTHER, token: "otherCCCC333" },
   ],
   link_tombstones: [],
+  redemptions: [],
 });
 const work = new FakeStorageWork(svcTables, {
   reserve: () => reserveAnswer,
@@ -153,6 +155,28 @@ async function main() {
   check("the last admin is not deleted", deletedUsers.length === 0 && svcTables.rows("link_tombstones").length === 0);
   reserveAnswer = "ok";
   rpcCalls.length = 0;
+
+  // T4: a creator who still owes fans prizes cannot close (pending or in progress).
+  for (const status of ["pending", "in_progress"]) {
+    svcTables.tables.redemptions = [
+      { id: "r-owed", creator_id: ME, status },
+      { id: "r-done", creator_id: ME, status: "fulfilled" },
+    ];
+    res = await close(GOOD);
+    const body = await res.json();
+    check(`a ${status} prize → 409 prizes_owed`, res.status === 409 && body.error === "prizes_owed" && body.owed === 1);
+    check(`…nothing deleted while a ${status} prize is owed`, nothingDeleted());
+  }
+  // Only the caller's own owed prizes count; delivered/cancelled ones never block.
+  svcTables.tables.redemptions = [
+    { id: "r-other", creator_id: OTHER, status: "pending" },
+    { id: "r-done", creator_id: ME, status: "fulfilled" },
+    { id: "r-cancel", creator_id: ME, status: "cancelled" },
+  ];
+  svcTables.failWhen = (statement) => statement.table === "redemptions" ? "read failed" : null;
+  res = await close(GOOD);
+  check("a failed owed-prize read fails closed (500), deleting nothing", res.status === 500 && (await res.json()).error === "db_error" && nothingDeleted());
+  svcTables.failWhen = null;
 
   storage.removeFailures = 3;
   res = await close(GOOD);

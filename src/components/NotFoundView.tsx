@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { brandVars, DEFAULT_BRAND } from "@/lib/theme";
+import { LEGAL } from "@/lib/legal";
 
 // The branded 404 view (src/app/not-found.tsx, and src/app/spin/[token]/not-found.tsx
 // with the fan data controls as `children`). Leads with a decorative,
@@ -54,9 +55,15 @@ export default function NotFoundView({ children }: { children?: ReactNode }) {
             This link isn&rsquo;t active
           </h1>
           <p className="mt-3 text-sm text-muted text-pretty">
-            The page or prize link you followed has expired or doesn&rsquo;t
-            exist. Ask your creator for a fresh link &mdash; your spins are safe
-            on your account.
+            This link isn&rsquo;t working. It may be switched off or mistyped.
+            {children ? " You can still download or delete your data below, or contact the creator." : " Check the address, or contact the creator who sent it."}
+          </p>
+          <p className="mt-2 text-xs text-muted text-pretty" data-testid="unpaid-prize-note">
+            If a creator still owes you a prize, report it to us at{" "}
+            <a href={`mailto:${LEGAL.contactEmail}`} className="text-ink underline underline-offset-2">
+              {LEGAL.contactEmail}
+            </a>
+            .
           </p>
           <Link
             href="/"

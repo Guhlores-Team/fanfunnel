@@ -56,7 +56,15 @@ const terms = renderToStaticMarkup(createElement(TermsPage))
 assert.ok(!/We do not own, check, store, ship/.test(terms), "the Terms must not deny storing instant-delivery prize codes");
 assert.match(terms, /store the link, text or one-time codes.*encrypted/, "stored prize codes are disclosed");
 assert.match(terms, /Focus.*Chase/, "Focus and Chase odds changes are disclosed");
-assert.match(terms, /public photos are safe for work/i, "the SFW-only photo rule is stated");
+assert.match(terms, /public content is safe for work.*photos.*nudity or sexual content/i, "the SFW-only photo rule is stated");
+// T15: the same rule covers all public text.
+assert.match(terms, /same rule covers all public text: prize names and descriptions, your tagline, your note to fans and leaderboard names/, "the SFW rule covers public text");
+// T3: pausing is permanent, and the Terms no longer promise a new link.
+assert.ok(!/creator can send (you )?a new one/.test(terms), "the Terms must not promise a new link after a pause");
+assert.match(terms, /Pausing is permanent for that link and its records/, "the Terms say pausing is permanent");
+// T19 + T13 (COPY_FIXES 12): an abuse contact and the declined-request period.
+assert.match(text, /Report abuse or a safety concern.*email support@easysimplesites\.org/, "the Privacy Policy names the abuse contact");
+assert.match(text, /Access requests:.*90 days after a request is declined.*Safety reports: see above/, "declined access requests have a stated period");
 assert.match(terms, /blocked fan’s link no longer spins.*chat.*wishlist.*leaderboard/, "what blocking stops is stated");
 // A7 follow-up: the Terms describe the games a spin can play.
 assert.match(terms, /scratch ticket.*decided on our server.*Reveal all/, "scratch tickets are described");
