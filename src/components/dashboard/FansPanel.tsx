@@ -29,7 +29,12 @@ import { GameName } from "./GameChoice";
 import { linkGame, mintPlaysReason } from "./gameAssignment";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
-const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
+// Reserve the button's footprint while the code splits in, so the minted card
+// above the list keeps its height and the fresh row's scroll stays put.
+const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), {
+  ssr: false,
+  loading: () => <span aria-hidden="true" className="inline-flex min-h-9 min-w-[4.5rem] rounded-[9px] border border-transparent" />,
+});
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const ghostBtn =
@@ -732,7 +737,10 @@ function FanRow({
 }) {
   const ref = useRef<HTMLLIElement>(null);
   useEffect(() => {
-    if (fresh) ref.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "nearest" });
+    // Centre rather than "nearest": the minted card above the list grows a
+    // little after the mint (game line, QR button), and a row parked on the
+    // viewport's bottom edge would slip out of view again.
+    if (fresh) ref.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
   }, [fresh]);
   return (
     <li

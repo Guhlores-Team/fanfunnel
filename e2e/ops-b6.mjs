@@ -68,11 +68,21 @@ export async function opsB6Journey(browser, { step, assert }, sink, ctx) {
       assert(text.includes(spin.prize.label), "shows the prize");
       assert(/Kept \(the fan has not deleted it\)/.test(text), "shows the fan kept their data");
       assert(!text.includes(pass.token) && !text.includes("Ops Lookup Fan"), "the page never shows the token or name");
+    } finally {
+      await page.close();
+    }
+    // The bad-input path answers 400 on purpose, so it runs on a page with no
+    // error sink (the 400 and the browser's "failed to load resource" line are
+    // the point of the check, not a signal).
+    const quiet = await ctx.newPage();
+    try {
+      await goto(quiet, "/admin", 600);
+      const panel = quiet.getByRole("region", { name: "Look up a win", exact: true });
       await panel.getByLabel("Verify link or share id").fill("not a link at all");
       await panel.getByRole("button", { name: "Look up" }).click();
       await panel.getByText("That doesn't look like a verify link or share id.", { exact: false }).waitFor({ timeout: 5000 });
     } finally {
-      await page.close();
+      await quiet.close();
     }
   });
 
