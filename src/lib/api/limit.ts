@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { rateLimitShared } from "@/lib/rateLimit";
 import { clientIp } from "@/lib/api/clientIp";
 import { FAN_CLIENT_HEADER } from "@/lib/api/fanClientHeader";
+import { isSupabaseConfigured } from "@/lib/supabase/configured";
 
 /**
  * Apply a fixed-window rate limit. Returns a ready-to-send 429 response when the
@@ -40,14 +41,34 @@ export type RouteTier = keyof typeof ROUTE_TIERS;
 
 /**
  * Rate-limit one route handler call per client IP and route scope. Returns a
- * ready-to-send 429, or null when the request may proceed:
+ * ready-to-send 429, or null when the request may proceed.
+ *
+ * The `account` tier is the signed-in dashboard's (batch 6 N1): with Supabase
+ * configured, a request that carries no Supabase session cookie at all answers
+ * 401 here, before any work, instead of 200 with empty data, so clients and
+ * monitoring can tell "signed out" from "no data". This is a fast path only:
+ * a cookie that is present but invalid still reaches the route, whose
+ * session/RLS check stays the authority. The demo (no Supabase) is unchanged.
  *
  *   const limited = await limitRoute(req, "campaigns:list");
  *   if (limited) return limited;
  */
-export function limitRoute(req: Request, scope: string, tier: RouteTier = "account"): Promise<NextResponse | null> {
+export async function limitRoute(req: Request, scope: string, tier: RouteTier = "account"): Promise<NextResponse | null> {
+  if (tier === "account" && isSupabaseConfigured() && !hasSessionCookie(req)) return unauthorized();
   const { limit, windowMs } = ROUTE_TIERS[tier];
   return rateLimitOr429(`route:${scope}:${clientIp(req)}`, limit, windowMs);
+}
+
+// @supabase/ssr's default storage key: sb-<project ref>-auth-token, chunked as .0, .1, …
+const SESSION_COOKIE = /(?:^|;\s*)sb-[A-Za-z0-9_-]+-auth-token(?:\.\d+)?=[^;\s]/;
+
+/** Whether the request carries a (possibly chunked) Supabase session cookie. */
+export function hasSessionCookie(req: Request): boolean {
+  return SESSION_COOKIE.test(req.headers.get("cookie") ?? "");
+}
+
+function unauthorized(): NextResponse {
+  return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 }
 
 const FAN_CLIENT_TOKEN = /^[A-Za-z0-9_-]{16,256}$/;

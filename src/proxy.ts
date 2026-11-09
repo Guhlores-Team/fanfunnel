@@ -27,7 +27,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   // cookie-carrying /api requests reach here (matcher); they never refresh
   // the session here, so a slow Supabase can't delay the API.
   if (path.startsWith("/api/")) {
-    if (isCrossOriginWrite({ method: request.method, path, headers: request.headers, allowedOrigins: [process.env.NEXT_PUBLIC_SITE_URL] })) {
+    if (isCrossOriginWrite({ method: request.method, path, headers: request.headers, allowedOrigins: [process.env.NEXT_PUBLIC_SITE_URL], onVercel: process.env.VERCEL === "1" })) {
       return NextResponse.json({ error: "forbidden" }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }
     return NextResponse.next();

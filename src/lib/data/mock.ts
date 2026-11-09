@@ -16,6 +16,7 @@ import { mockFocusState, withMockFanLock, eraseMockFocusIdentity, clearMockFocus
 import { toFanFocusView } from "./focusView";
 import type { SpinIntent, SpinAttemptStatus } from "./spinAttempts";
 import { randomBytes } from "node:crypto";
+import { reportTokenMatches, storedReportToken } from "@/lib/reports/reportToken";
 import { demoCodeFingerprint } from "@/lib/rewards/demoFingerprint";
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
 import { mockGetTheme, mockListMedia } from "./mockTheme";
@@ -3202,7 +3203,7 @@ export function mockReportCreator(
   addMockReport({
     creatorId: MOCK_REPORTED_CREATOR,
     fanId: fan.id,
-    token,
+    token: storedReportToken(token),
     reason: reason.slice(0, 120),
     detail: detail?.slice(0, 2000) ?? null,
   });
@@ -4027,7 +4028,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
     play: { breakUntil: fan.breakUntil ?? null, reminderDaily: fan.playReminderDaily ?? null, reminderUpdatedAt: null },
     checkIns: [...checkinDays(fan.id)].sort().map((day) => ({ day, recordedAt: null })),
     outreach: outreachLog().filter((row) => row.fanId === fan.id).map((row) => ({ at: row.createdAt, contactedAt: row.contactedAt })),
-    reportsYouSent: mockReportStore().filter((row) => (fan.passes ?? []).some((pass) => pass.token === row.token)).map((row) => ({ at: row.createdAt, reason: row.reason, detail: row.detail })),
+    reportsYouSent: mockReportStore().filter((row) => (fan.passes ?? []).some((pass) => reportTokenMatches(row.token, pass.token))).map((row) => ({ at: row.createdAt, reason: row.reason, detail: row.detail })),
     messagesYouSent: store.messages
       .filter((m) => m.fanId === fan.id && m.sender === "fan")
       .map((m) => ({ at: m.at, body: m.body })),

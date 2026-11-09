@@ -25,7 +25,11 @@ check("same-origin fetch (Sec-Fetch-Site) is allowed", !write({ "sec-fetch-site"
 check("same-origin with a matching Origin is allowed", !write({ "sec-fetch-site": "same-origin", origin: "http://localhost:3299", host: "localhost:3299" }));
 check("no Sec-Fetch-Site, Origin = localhost host, is allowed", !write({ origin: "http://localhost:3299", host: "localhost:3299" }));
 check("a Vercel Preview origin on its own host is allowed", !write({ origin: `https://${PREVIEW}`, host: PREVIEW }));
-check("x-forwarded-host (Vercel) naming the Origin is allowed", !write({ origin: `https://${PREVIEW}`, host: "internal:3000", "x-forwarded-host": PREVIEW }));
+const VERCEL_SET = { "x-vercel-id": "fra1::abc", "x-vercel-deployment-url": PREVIEW };
+check("x-forwarded-host (Vercel) naming the Origin is allowed", !write({ origin: `https://${PREVIEW}`, host: "internal:3000", "x-forwarded-host": PREVIEW, ...VERCEL_SET }, { onVercel: true }));
+// Batch 6 N5: off Vercel, or without Vercel's header set, X-Forwarded-Host is client input.
+check("x-forwarded-host without Vercel's header set is not trusted", write({ origin: "https://evil.example", host: "internal:3000", "x-forwarded-host": "evil.example" }, { onVercel: true }));
+check("x-forwarded-host off Vercel is not trusted, even with spoofed x-vercel-* headers", write({ origin: "https://evil.example", host: "localhost:3299", "x-forwarded-host": "evil.example", ...VERCEL_SET }));
 check("the configured site URL is allowed", !write({ origin: "https://fanfunnel.app", host: "internal:3000" }, { allowedOrigins: ["https://fanfunnel.app/"] }));
 check("host comparison ignores case", !write({ origin: "https://FanFunnel.App", host: "fanfunnel.app" }));
 check("a non-browser client (no Origin, no Sec-Fetch-Site) is allowed", !write({ host: "localhost:3299" }));
