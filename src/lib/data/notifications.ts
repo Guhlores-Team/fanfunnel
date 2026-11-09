@@ -68,13 +68,15 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
  * (creator_apps_select) shows other accounts' requests to an active admin on
  * aal2 only; anyone else reads at most their own row, which is excluded here,
  * so no separate admin check is needed for the read. Never fails the bell.
+ * B1 (batch 6): "waiting" is the account's profiles.approval_status (admin-only
+ * UPDATE), not the request row's own `status`, which the applicant can write.
  */
 async function loadPendingApplications(sb: AnyClient, uid: string): Promise<NonNullable<NotificationSources["applications"]>> {
   try {
     const { data, error } = await sb
       .from("creator_applications")
-      .select("id, display_name, created_at")
-      .eq("status", "pending")
+      .select("id, display_name, created_at, profiles!inner(approval_status)")
+      .eq("profiles.approval_status", "pending")
       .neq("profile_id", uid)
       .order("created_at", { ascending: false })
       .limit(FEED_LIMIT);

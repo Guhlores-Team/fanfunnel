@@ -8,7 +8,7 @@ import { inviteCreatorUser } from "./creatorAccount";
 import { recordAudit } from "./audit";
 import { leaveApprovalNotice, sendApprovalEmail } from "@/lib/account/approvalNotice";
 import { sendApplicationAlert } from "@/lib/account/applicationNotice";
-import { sendAgencyInviteEmail } from "@/lib/agency/inviteEmail";
+import { deliverAgencyInviteEmail } from "@/lib/agency/inviteEmail";
 import { displayNameInputError } from "@/lib/profileErrors";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { reportAccountMail } from "@/lib/monitoring/opsAlerts";
@@ -333,9 +333,11 @@ const inviteAddress = (email: string) => {
 
 /**
  * C10: run an invite RPC, then e-mail the address only when the RPC created a
- * NEW pending invitation (its id differs from the one pending before). A
- * repeat for a still-pending invite, the owner's own address or a refusal
- * sends nothing. Both reads use the owner's session client: RLS shows a
+ * NEW pending invitation where none was pending before. A repeat for a
+ * still-pending invite, a role switch on one (B2: the RPC replaces it, which
+ * would otherwise mail the same person again), the owner's own address or a
+ * refusal sends nothing. deliverAgencyInviteEmail then mails only an existing
+ * account, at most 3 times a day per address (B2). Both reads use the owner's session client: RLS shows a
  * pending invitation only to its org's owner. The answer never depends on the
  * e-mail (the RPC answers "ok" for any address).
  */
@@ -355,6 +357,7 @@ async function withInviteEmail(
       .eq("org_id", orgId)
       .eq("email", address)
       .eq("status", "pending")
+      .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -364,10 +367,15 @@ async function withInviteEmail(
   const result = await rpc();
   if ("error" in result) return result;
   const after = await pendingId();
-  if (after && after !== before) {
+  if (after && before === null) {
     const { data: org } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
     const orgName = (org as { name: string } | null)?.name ?? "";
-    runAfterResponse(async () => reportAccountMail("agency_invite", await sendAgencyInviteEmail(address, orgName, role)));
+    // B2 decides whether to send (existing account, per-address cap, first
+    // invite only); OPS-05 reports a refused send so it reaches Admin › Errors.
+    runAfterResponse(async () => {
+      const outcome = await deliverAgencyInviteEmail(address, orgName, role);
+      if (outcome === "failed") reportAccountMail("agency_invite", "failed");
+    });
   }
   return result;
 }
@@ -616,7 +624,45 @@ export interface CreatorApplication {
   createdAt: string;
 }
 
-/** Admin: the pending (and recently-decided) creator applications. */
+const APPLICATIONS_LIMIT = 200;
+const clip = (v: string | null, n: number) => (typeof v === "string" ? v.slice(0, n) : null);
+
+/**
+ * B1 (batch 6): the e-mail an access request is shown under. An applicant can
+ * write their own creator_applications row straight through PostgREST (the
+ * insert policy only pins profile_id), so the row's `email` is never shown:
+ * this reads the sign-in address of the auth user (service role, server only;
+ * module-private: its only caller checked isActiveAdmin first).
+ */
+async function authEmailsFor(ids: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (ids.length === 0) return out;
+  const svc = createServiceClient();
+  for (let i = 0; i < ids.length; i += 10) {
+    await Promise.all(
+      ids.slice(i, i + 10).map(async (id) => {
+        try {
+          const { data, error } = await svc.auth.admin.getUserById(id);
+          out.set(id, error ? null : (data?.user?.email ?? null));
+        } catch {
+          out.set(id, null);
+        }
+      })
+    );
+  }
+  return out;
+}
+
+/**
+ * Admin: the pending (and recently-decided) creator applications.
+ *
+ * B1 (batch 6): everything the applicant can write on their row is display
+ * text only. The address comes from the auth user, the status from
+ * `profiles.approval_status` (admin-only UPDATE, the server-controlled gate),
+ * and the date is clamped to the account's own creation (a request cannot
+ * predate its account or lie in the future). The row's `status`/`decided_*`
+ * columns decide nothing.
+ */
 export async function listCreatorApplications(): Promise<CreatorApplication[]> {
   if (!isSupabaseConfigured()) return [];
   const sb = await createClient();
@@ -624,32 +670,46 @@ export async function listCreatorApplications(): Promise<CreatorApplication[]> {
 
   const { data } = await sb
     .from("creator_applications")
-    .select(
-      "id, profile_id, email, display_name, socials, audience_size, note, status, created_at"
-    )
-    .order("created_at", { ascending: false });
-
-  return ((data ?? []) as {
+    .select("id, profile_id, display_name, socials, audience_size, note, created_at")
+    .order("created_at", { ascending: false })
+    .limit(APPLICATIONS_LIMIT);
+  const rows = (data ?? []) as {
     id: string;
     profile_id: string;
-    email: string | null;
     display_name: string | null;
     socials: string | null;
     audience_size: string | null;
     note: string | null;
-    status: ApprovalStatus;
     created_at: string;
-  }[]).map((r) => ({
-    id: r.id,
-    profileId: r.profile_id,
-    email: r.email,
-    displayName: r.display_name,
-    socials: r.socials,
-    audienceSize: r.audience_size,
-    note: r.note,
-    status: r.status,
-    createdAt: r.created_at,
-  }));
+  }[];
+  if (rows.length === 0) return [];
+
+  const ids = [...new Set(rows.map((r) => r.profile_id))];
+  const { data: profs } = await sb.from("profiles").select("id, approval_status, created_at").in("id", ids);
+  const byId = new Map(
+    ((profs ?? []) as { id: string; approval_status: ApprovalStatus; created_at: string }[]).map((p) => [p.id, p])
+  );
+  const emails = await authEmailsFor(ids);
+  const now = Date.now();
+
+  return rows.flatMap((r) => {
+    const prof = byId.get(r.profile_id);
+    if (!prof) return [];
+    const at = Math.min(now, Math.max(Date.parse(r.created_at) || 0, Date.parse(prof.created_at) || 0));
+    return [
+      {
+        id: r.id,
+        profileId: r.profile_id,
+        email: emails.get(r.profile_id) ?? null,
+        displayName: clip(r.display_name, 120),
+        socials: clip(r.socials, 600),
+        audienceSize: clip(r.audience_size, 120),
+        note: clip(r.note, 1000),
+        status: prof.approval_status,
+        createdAt: new Date(at).toISOString(),
+      },
+    ];
+  });
 }
 
 /** Admin: approve or reject a creator application (flips the profile gate too). */
@@ -682,11 +742,19 @@ export async function decideCreatorApplication(
     return aErr ? { error: "db_error" } : { ok: true };
   }
 
-  const { error: aErr } = await sb
-    .from("creator_applications")
-    .update({ status: decision, decided_at: now })
-    .eq("profile_id", profileId);
-  if (aErr) return { error: "db_error" };
+  // B1 (batch 6): the decision follows the profile (server-controlled), never
+  // the applicant-writable request row. Approve only an account that is still
+  // waiting (pending, or rejected: the C7 undo); an approved one is a no-op,
+  // and a missing profile is refused before anything is written.
+  const { data: prof, error: rpErr } = await sb
+    .from("profiles")
+    .select("approval_status")
+    .eq("id", profileId)
+    .maybeSingle();
+  if (rpErr) return { error: "db_error" };
+  const state = (prof as { approval_status?: ApprovalStatus } | null)?.approval_status;
+  if (state === "approved") return { ok: true };
+  if (state !== "pending" && state !== "rejected") return { error: "not_found" };
 
   // A30: only a real transition to approved leaves a notice and an e-mail, so
   // re-approving (or two admins approving at once) never notifies twice: the
@@ -701,6 +769,12 @@ export async function decideCreatorApplication(
     .maybeSingle();
   if (pErr) return { error: "db_error" };
   if (updated) {
+    // Display only: mirrors the decision onto the request row.
+    const { error: aErr } = await sb
+      .from("creator_applications")
+      .update({ status: decision, decided_at: now })
+      .eq("profile_id", profileId);
+    if (aErr) console.error("approval: marking the request decided failed", aErr.code ?? "error");
     await copyApplicationName(sb, profileId);
     const svc = createServiceClient();
     await leaveApprovalNotice(svc, profileId);

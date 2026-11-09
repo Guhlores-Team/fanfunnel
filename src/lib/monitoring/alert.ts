@@ -179,7 +179,11 @@ export function buildErrorEmail(
 ): AlertMail {
   const what = e.reopened ? "Resolved error is back" : "New error";
   const short = e.message.length > 90 ? e.message.slice(0, 89) + "…" : e.message;
-  const subject = `[FanFunnel ${e.environment}] ${what}: ${short}`.replace(/[\r\n]+/g, " ");
+  // C3 (batch 6): a browser report's text is whatever an anonymous caller
+  // posted, so it never reaches the subject or preheader (a phishing line in
+  // the owner's inbox); it appears only in the body, scrubbed and escaped.
+  const headline = e.source === "client" ? `${what} (browser)` : `${what}: ${short}`;
+  const subject = `[FanFunnel ${e.environment}] ${headline}`.replace(/[\r\n]+/g, " ");
   const first = new Date(e.firstSeen);
   const firstSeen = Number.isNaN(first.getTime()) ? e.firstSeen : first.toISOString().replace("T", " ").slice(0, 19) + " UTC";
   const more =
@@ -209,7 +213,7 @@ ${row("First seen", firstSeen)}
     "",
     opts.link ? `Admin › Errors: ${opts.link}` : "Open the dashboard › Admin › Errors.",
   ].join("\n");
-  return { subject, html: shell(`${what}: ${short}`, what, body, opts.link), text };
+  return { subject, html: shell(headline, what, body, opts.link), text };
 }
 
 /** The catch-up e-mail for errors that were throttled earlier. */

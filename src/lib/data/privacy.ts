@@ -9,6 +9,7 @@
 // + RLS) AND filters every table to rows the creator owns, so an agency member
 // whose RLS view spans other creators still only exports their own account.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import { reportTokenForms } from "@/lib/reports/reportToken";
 import { sha256Hex } from "@/lib/games/wheel/fairness";
 import { exportCreatorTheme } from "@/lib/privacy/themeExport";
 import type { Json } from "./db.types";
@@ -301,7 +302,7 @@ export async function deleteFanData(
         hashes.map((h) => ({ token_hash: h, reason: "fan_deleted" })),
         { onConflict: "token_hash", ignoreDuplicates: true }
       ),
-    svc.from("creator_reports").update({ token: null }).in("token", tokens),
+    svc.from("creator_reports").update({ token: null }).in("token", tokens.flatMap(reportTokenForms)),
     svc.from("creator_notices").insert({
       creator_id: creatorId,
       kind: "fan_deleted_data",

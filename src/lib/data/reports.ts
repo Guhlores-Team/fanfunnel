@@ -16,12 +16,14 @@ import {
   type ReportStatus,
 } from "@/lib/reports/config";
 import { mockReportStore, reviewMockReport, type MockReport } from "./mockReports";
+import { reportTokenHint } from "@/lib/reports/reportToken";
 import { mockReportParties } from "./mock";
 
 import type { AdminReport, ReportFilter, ReportPage } from "@/lib/reports/types";
 export type { AdminReport, ReportFilter, ReportPage };
 
-const hint = (token: string | null): string | null => (token ? `…${token.slice(-4)}` : null);
+// N4: reports store a digest + hint (reportToken.ts); legacy rows the raw token.
+const hint = reportTokenHint;
 
 // Keyset cursor: "<created_at>|<id>".
 export function encodeReportCursor(r: { createdAt: string; id: string }): string {

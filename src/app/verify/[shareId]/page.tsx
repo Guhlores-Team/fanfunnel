@@ -10,6 +10,13 @@ import { GameProof, gameOddsReplay } from "./GameProof";
 import { replayGameV3 } from "@/lib/games/core/replay";
 import { V3_FORMULA } from "./oddsCopy";
 import LocalTime from "./LocalTime";
+import ClaimCheck, { type ClaimCheckState } from "./ClaimCheck";
+import { notFound } from "next/navigation";
+import { headers } from "next/headers";
+import { clientIpFromHeaders } from "@/lib/api/clientIp";
+import { ROUTE_TIERS } from "@/lib/api/limit";
+import { rateLimitShared } from "@/lib/rateLimit";
+import { claimCodeFor, verifyClaimCode } from "@/lib/rewards/claimCode";
 
 export const dynamic = "force-dynamic";
 
@@ -23,41 +30,31 @@ const RARITY_LABEL: Record<string, string> = {
 
 export const metadata: Metadata = { title: "Verify fairness · FanFunnel" };
 
+/** C4: check a claim code a creator typed, per address at the `costly` tier. */
+async function checkClaim(shareId: string, raw: string | string[] | undefined): Promise<{ state: ClaimCheckState; value: string }> {
+  const value = typeof raw === "string" ? raw.slice(0, 12) : "";
+  if (!value.trim()) return { state: "none", value: "" };
+  if (!claimCodeFor(shareId)) return { state: "unavailable", value };
+  const { limit, windowMs } = ROUTE_TIERS.costly;
+  const ip = clientIpFromHeaders(await headers());
+  if (!(await rateLimitShared(`verify-claim:${ip}`, limit, windowMs)).ok) return { state: "limited", value };
+  return { state: verifyClaimCode(shareId, value) ? "match" : "mismatch", value };
+}
+
 export default async function VerifyPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ shareId: string }>;
+  searchParams?: Promise<{ code?: string | string[] }>;
 }) {
   const { shareId } = await params;
   const v = await getSpinVerification(shareId);
 
-  // Nothing to verify: unknown share id, or a spin with no committed seed.
-  if (!v) {
-    return (
-      <main
-        className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10"
-        style={brandVars("#6366f1")}
-      >
-        <div className="relative z-[1] w-full max-w-md">
-          <div className="card rounded-[1.75rem] p-8 text-center">
-            <div className="text-5xl">🔍</div>
-            <h1 className="mt-4 font-[family-name:var(--font-display)] text-xl font-extrabold text-ink">
-              Nothing to verify
-            </h1>
-            <p className="mt-3 text-sm text-muted text-pretty">
-              We couldn&rsquo;t find a verifiable spin for this link. It may be an
-              older spin recorded before fairness commitments, or the link is
-              invalid.
-            </p>
-          </div>
-        </div>
-        <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
-          Powered by FanFunnel · provably-fair spins
-        </footer>
-        <LegalLinks className="relative z-[1] mt-2" />
-      </main>
-    );
-  }
+  // Nothing to verify (unknown share id, a spin with no committed seed, or a
+  // creator who may not be shown publicly): a real 404 (batch 6 N2), with the
+  // explanation in ./not-found.tsx.
+  if (!v) notFound();
 
   if(v.parent) {
     const parent=await getSpinVerification(v.parent.shareId);
@@ -75,6 +72,7 @@ export default async function VerifyPage({
     </main>;
   }
 
+  const claim = await checkClaim(shareId, (await searchParams)?.code);
   const color = RARITY_COLORS[v.rarity];
   const commitment = COMMITMENT_COPY[v.commitment ?? "unknown"];
   // fair_version selects the check: a v3 spin is replayed end to end from its
@@ -240,6 +238,7 @@ export default async function VerifyPage({
             it does not re-simulate the full prize pool.
           </p>
           )}
+          <ClaimCheck {...claim} />
         </div>
       </div>
       <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">

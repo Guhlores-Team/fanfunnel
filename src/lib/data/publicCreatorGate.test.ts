@@ -25,7 +25,8 @@ const db = new FakeTables({
   happy_hours: [],
   creator_media: [],
   spins: [{ id: "s1", share_id: "share-1", creator_id: C, fan_id: "f1", prize_label: "Signed photo", prize_rarity: "rare", prize_image_url: null,
-    created_at: "2026-01-01T00:00:00Z", game_kind: "wheel", kind: "play" }],
+    created_at: "2026-01-01T00:00:00Z", game_kind: "wheel", kind: "play", server_seed: "abc", nonce: 1, client_seed: null,
+    server_seed_hash: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }],
   fans: [{ id: "f1", creator_id: C, handle: "top_fan", leaderboard_opt_in: true, created_at: "2026-01-01T00:00:00Z" }],
 });
 mock.module("@/lib/supabase/server", { namedExports: {
@@ -46,7 +47,7 @@ const STATES = [
 
 async function main() {
   const { getPublicWheelTeaser, getPublicProfileBySlug } = await import("./publicProfile");
-  const { getShareCard, getLeaderboard, getRecentWins } = await import("./boosts");
+  const { getShareCard, getLeaderboard, getRecentWins, getSpinVerification } = await import("./boosts");
   const { GET: boardApi } = await import("@/app/api/leaderboard/[creatorId]/route");
   const { GET: teaserApi } = await import("@/app/api/public/wheel/[creatorId]/route");
   const { GET: shareApi } = await import("@/app/api/share-cards/[shareId]/route");
@@ -56,6 +57,7 @@ async function main() {
     teaser: await getPublicWheelTeaser(C),
     page: await getPublicProfileBySlug("bella"),
     card: await getShareCard("share-1"),
+    verify: await getSpinVerification("share-1"),
     board: await getLeaderboard(C),
     boardBySlug: await getLeaderboard("bella"),
     wins: await getRecentWins(C),
@@ -69,6 +71,7 @@ async function main() {
   check("active: the teaser names the creator", s.teaser?.creatorTitle === "Bella");
   check("active: the link-in-bio page names the creator", s.page?.profile.creatorTitle === "Bella" && s.page.tipUrl === profile.tip_url);
   check("active: the share card names the creator", s.card?.creatorTitle === "Bella");
+  check("active: the spin is verifiable (/verify)", s.verify?.hashOk === true);
   check("active: the open board names the creator, by id and by slug", s.board?.enabled === true && s.board.creatorTitle === "Bella" && s.boardBySlug?.creatorTitle === "Bella");
   check("active: the board lists the opted-in fan", s.board?.entries.length === 1 && s.board.entries[0].handle === "top_fan");
   check("active: recent wins are served", s.wins.length === 1);
@@ -97,6 +100,7 @@ async function main() {
     Object.assign(profile, patch);
     s = await surfaces();
     check(`${label}: no teaser, no page, no share card`, s.teaser === null && s.page === null && s.card === null);
+    check(`${label}: no public verification (batch 6 N2)`, s.verify === null);
     check(`${label}: no leaderboard (by id or slug) and no recent wins`, s.board === null && s.boardBySlug === null && s.wins.length === 0);
     check(`${label}: the public APIs answer 404`, s.boardApi === 404 && s.teaserApi === 404 && s.shareApi === 404);
     check(`${label}: nothing names the creator or the tip link`, !JSON.stringify(s).includes("Bella") && !JSON.stringify(s).includes("tips.example"));

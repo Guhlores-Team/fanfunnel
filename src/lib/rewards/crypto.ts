@@ -114,3 +114,13 @@ function fingerprintKey(): Buffer | null {
   return currentKeyVersion() === 1 ? loadKey() : null;
 }
 export function rewardCodeFingerprintReady(): boolean { return fingerprintKey() !== null; }
+
+/**
+ * C4 (batch 6): the key behind a win's claim code (claimCode.ts), derived
+ * from the fingerprint key so no new secret is needed and the code never
+ * collides with a coupon fingerprint. Null when no key is configured.
+ */
+export function claimCodeKey(): Buffer | null {
+  const key = fingerprintKey();
+  return key ? createHmac("sha256", key).update("fanfunnel-claim-code-key-v1").digest() : null;
+}

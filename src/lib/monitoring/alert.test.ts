@@ -77,7 +77,11 @@ async function main() {
     },
     { pending: 2, link: "https://ff.example/dashboard?section=admin#errors" },
   );
-  check("subject names the environment and that it is new", mail.subject.startsWith("[FanFunnel production] New error: TypeError"));
+  check("subject names the environment and that it is new", mail.subject.startsWith("[FanFunnel production] New error"));
+  // C3: a browser report's text is anonymous input: fixed subject, text in the body only.
+  check("a browser error has a fixed subject (no client text)", mail.subject === "[FanFunnel production] New error (browser)");
+  check("…and no client text in the HTML title/preheader", mail.html.includes("New error (browser)") && !mail.html.includes("New error: TypeError"));
+  check("…the message is still in the body", mail.text.includes("Message: TypeError"));
   check("HTML escapes the message", !mail.html.includes("<script>alert(1)</script>") && mail.html.includes("&lt;script&gt;"));
   for (const [label, needle] of [
     ["environment", "production"],
@@ -97,6 +101,7 @@ async function main() {
     { pending: 0, link: null },
   );
   check("reopened alert says so", back.subject.includes("Resolved error is back") && /happened again/.test(back.html));
+  check("a server error keeps its message in the subject", back.subject === "[FanFunnel production] Resolved error is back: boom");
   check("without a link it points to Admin › Errors", back.text.includes("Admin › Errors") && !back.html.includes("href="));
   const digest = buildDigestEmail(4, "production", null);
   check("digest subject: 'N more new errors'", digest.subject === "[FanFunnel production] 4 more new errors");

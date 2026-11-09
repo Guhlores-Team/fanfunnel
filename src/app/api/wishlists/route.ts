@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withFanMissLimit } from "@/lib/api/fanMiss";
 import { addWishlist, removeWishlist } from "@/lib/data";
 import { clientIp } from "@/lib/api/clientIp";
 import { rateLimitOr429 } from "@/lib/api/limit";
@@ -7,11 +8,11 @@ import { ValidationError, str } from "@/lib/api/validate";
 
 // A fan flags / un-flags a prize they're chasing. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
-  return mutate(req, addWishlist);
+  return withFanMissLimit(req, () => mutate(req, addWishlist));
 }
 
 export async function DELETE(req: Request) {
-  return mutate(req, removeWishlist);
+  return withFanMissLimit(req, () => mutate(req, removeWishlist));
 }
 
 async function mutate(

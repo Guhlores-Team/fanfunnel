@@ -108,8 +108,8 @@ export default function LoginForm() {
             // M1: the name is shown on public pages, so a blank one stays
             // blank (never the e-mail); the creator can set it in Settings.
             data: displayName.trim() ? { display_name: displayName.trim() } : {},
-            // Confirm link returns to THIS deployment (else Supabase uses the
-            // project's Site URL), signed in, on the access-request page.
+            // Only the legacy {{ .ConfirmationURL }} link uses this; the current
+            // templates link to the Site URL's /auth/confirm?next=/pending.
             emailRedirectTo: `${window.location.origin}/auth/callback?next=/pending`,
           },
         });

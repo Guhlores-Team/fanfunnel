@@ -107,11 +107,13 @@ These account settings finish it. Do them in this order; none of them needs a co
 
 ## 3. Verify Auth and recovery on TEST; prepare LIVE separately
 
-Auth email links must return to the correct site's `/auth/callback?next=…` through
-an allowed URL (or, when Supabase has no allowed redirect, to the Site URL's
-`/auth/confirm?next=…`). Prepared templates are not proof of delivery or correct redirects.
+Auth email links are built from the project's **Site URL** only
+(`{{ .SiteURL }}/auth/confirm?token_hash=…&type=…&next=<fixed page>`), never from the
+requester-chosen `.RedirectTo` (batch 6, A1). So the Site URL must be the exact site the
+e-mails should open, and the Redirect URL allow-list holds exact team-owned origins only
+(no `*` in a host). Prepared templates are not proof of delivery or correct redirects.
 
-- [ ] **OWNER + AGENT**: Review [TEST URL configuration](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/url-configuration). Its intended Site URL is `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`; inspect the actual value and review existing Preview/local redirect allowances before changing them. Never substitute the LIVE ref.
+- [ ] **OWNER + AGENT**: Review [TEST URL configuration](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/url-configuration). Its intended Site URL is `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` (the Preview alias: every e-mail link opens there); inspect the actual value, and cut the Redirect URLs to exact origins the team owns (remove any entry with `*` in the host, e.g. `https://*.vercel.app/**`). Never substitute the LIVE ref.
 - [ ] **OWNER**: Review email confirmation and leaked-password protection; record unavailable plan features without purchasing anything. Keep confirmation ON.
 - [ ] **OWNER**: Verify configured SMTP and the five [link templates](../supabase/templates/README.md): recovery, confirmation, magic link, invite and email change; review password/email security notices too. Do not blindly replace working settings merely because files exist.
 - [ ] **OWNER**: Paste the five updated link templates (recovery, confirmation, magic link, invite, email change; batch 6, C1) into TEST **now** and into LIVE **at go-live** (Authentication → Emails → Templates). They link with `{{ .TokenHash }}`, verified by `/auth/callback` or `/auth/confirm`, so a link opened on another device or in a mail/Instagram in-app browser works. Until they are pasted, the old `{{ .ConfirmationURL }}` (PKCE) links keep working in the browser that asked for them, and a link opened elsewhere lands on `/login` with an explanation and a "new link" action. Admin "New account" invites need the updated `invite.html`. Then check on TEST: request a reset on one device and open the link on another; it must reach the new-password page.

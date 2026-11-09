@@ -76,10 +76,15 @@ const errLabel = (e: string) =>
     demo_only: "Demo only: agencies need a connected database, so nothing was saved.",
   })[e] ?? "Couldn't complete that — please try again.";
 
+const INVITE_SENT =
+  "Invitation saved. If that address already has a FanFunnel account, they'll get an e-mail; otherwise they'll see it when they sign up with that address.";
+
 export default function AgencyClient() {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
+  // B2: the same neutral line whether or not the address has an account.
+  const [sent, setSent] = useState<string | null>(null);
   // Stable keys for in-flight destructive actions so each button can disable
   // itself while its request is pending (prevents double-submits).
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
@@ -102,11 +107,13 @@ export default function AgencyClient() {
 
   const run = async (body: Record<string, unknown>) => {
     setMsg(null);
+    setSent(null);
     const err = await manage(body);
     if (err) {
       setMsg(errLabel(err));
       return false;
     }
+    if (body.action === "add_creator" || body.action === "add_member") setSent(INVITE_SENT);
     await refresh();
     return true;
   };
@@ -175,6 +182,11 @@ export default function AgencyClient() {
       {msg && (
         <p className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
           {msg}
+        </p>
+      )}
+      {sent && !msg && (
+        <p role="status" data-testid="invite-sent" className="mt-4 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-muted">
+          {sent}
         </p>
       )}
 

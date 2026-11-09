@@ -48,6 +48,22 @@ export interface OriginCheckInput {
   headers: Headers;
   /** Extra allowed origins (the deployment's configured site URL). */
   allowedOrigins?: readonly (string | undefined)[];
+  /** The server runs on Vercel (`VERCEL=1`); see forwardedHost. */
+  onVercel?: boolean;
+}
+
+/**
+ * Batch 6 N5: `X-Forwarded-Host` is only a proxy's word for the host. On
+ * Vercel the edge overwrites it (with its own `x-vercel-id` and
+ * `x-vercel-deployment-url`), so there it is the host the browser used. Off
+ * Vercel (a self-hosted `next start`) nothing overwrites it, so a client could
+ * name any host and pass the comparison. Rule: trust it only when the server
+ * runs on Vercel AND Vercel's header set is on the request; otherwise compare
+ * with `Host` and the configured site URL only.
+ */
+function forwardedHost(headers: Headers, onVercel: boolean): string | null {
+  if (!onVercel || !headers.get("x-vercel-id") || !headers.get("x-vercel-deployment-url")) return null;
+  return headers.get("x-forwarded-host")?.split(",")[0]?.trim() || null;
 }
 
 function originOf(value: string | undefined | null): string | null {
@@ -67,11 +83,12 @@ function originOf(value: string | undefined | null): string | null {
  *     session to ride on);
  *   - `Sec-Fetch-Site` present: only `same-origin` passes;
  *   - otherwise `Origin` present: it must name this host (the Host the
- *     browser connected to, or a configured site URL); `null` never passes;
+ *     browser connected to, X-Forwarded-Host only under forwardedHost's rule,
+ *     or a configured site URL); `null` never passes;
  *   - neither header: not a browser (curl, server-side fetch, the e2e
  *     harness), which cannot hold a victim's cookies, so it passes.
  */
-export function isCrossOriginWrite({ method, path, headers, allowedOrigins = [] }: OriginCheckInput): boolean {
+export function isCrossOriginWrite({ method, path, headers, allowedOrigins = [], onVercel = false }: OriginCheckInput): boolean {
   if (SAFE_METHODS.has(method.toUpperCase())) return false;
   if (!path.startsWith("/api/") || isOriginExemptApi(path)) return false;
   if (!headers.get("cookie")) return false;
@@ -84,7 +101,7 @@ export function isCrossOriginWrite({ method, path, headers, allowedOrigins = [] 
   const sent = originOf(origin);
   if (!sent) return true;
   const sentHost = new URL(sent).host.toLowerCase();
-  const hosts = [headers.get("x-forwarded-host")?.split(",")[0]?.trim(), headers.get("host")?.trim()]
+  const hosts = [forwardedHost(headers, onVercel), headers.get("host")?.trim()]
     .filter((h): h is string => !!h)
     .map((h) => h.toLowerCase());
   if (hosts.includes(sentHost)) return false;

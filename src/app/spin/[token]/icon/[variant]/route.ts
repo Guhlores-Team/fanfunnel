@@ -1,4 +1,5 @@
 import { getFanAppInfo } from "@/lib/data";
+import { withFanMissLimit } from "@/lib/api/fanMiss";
 import { isValidFanToken, parseIconVariant, usesAvatarIcon } from "@/lib/pwa/manifest";
 import { loadAvatarDataUrl, renderAppIcon } from "@/lib/pwa/icon";
 import { fanAppHeaders, fanAppNotFound, fanAppRateLimit } from "@/lib/pwa/fanAppRoute";
@@ -10,16 +11,18 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ token: string; variant: string }> }
 ) {
-  const limited = await fanAppRateLimit(req);
-  if (limited) return limited;
+  return withFanMissLimit(req, async () => {
+    const limited = await fanAppRateLimit(req);
+    if (limited) return limited;
 
-  const { token, variant } = await params;
-  const spec = parseIconVariant(variant);
-  if (!spec || !isValidFanToken(token)) return fanAppNotFound();
-  const info = await getFanAppInfo(token);
-  if (!info) return fanAppNotFound();
+    const { token, variant } = await params;
+    const spec = parseIconVariant(variant);
+    if (!spec || !isValidFanToken(token)) return fanAppNotFound();
+    const info = await getFanAppInfo(token);
+    if (!info) return fanAppNotFound();
 
-  const avatar = usesAvatarIcon(info) ? await loadAvatarDataUrl(info.avatarUrl!) : null;
-  const png = await renderAppIcon({ ...spec, brand: info.brandColor, avatar });
-  return new Response(png, { headers: fanAppHeaders("image/png") });
+    const avatar = usesAvatarIcon(info) ? await loadAvatarDataUrl(info.avatarUrl!) : null;
+    const png = await renderAppIcon({ ...spec, brand: info.brandColor, avatar });
+    return new Response(png, { headers: fanAppHeaders("image/png") });
+  });
 }

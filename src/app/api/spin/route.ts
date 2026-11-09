@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { spin } from "@/lib/data";
 import { withFanToken } from "@/lib/api/fanToken";
 import { validSpinIntent } from "@/lib/data/spinAttempts";
+import { withClaimCode } from "@/lib/rewards/claimCode";
 
 export async function POST(req: Request) {
   const response = await withFanToken<{ token?: unknown; requestId?: unknown; clientSeed?: unknown; publishedSeedHash?: unknown }>(req,
@@ -15,7 +16,7 @@ export async function POST(req: Request) {
           : result.error === "blocked" || result.error === "needs_ack" || result.error === "on_break" ? 403 : 409;
         return NextResponse.json({ error: result.error }, { status });
       }
-      return NextResponse.json(result);
+      return NextResponse.json(withClaimCode(result));
     });
   response.headers.set("Cache-Control", "no-store");
   return response;

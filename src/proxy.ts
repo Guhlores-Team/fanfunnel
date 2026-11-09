@@ -34,7 +34,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     if (maintenanceOn() && maintenanceBlocksWrite(path, request.method)) {
       return NextResponse.json({ error: "maintenance" }, { status: 503, headers: MAINTENANCE_HEADERS });
     }
-    if (isCrossOriginWrite({ method: request.method, path, headers: request.headers, allowedOrigins: [process.env.NEXT_PUBLIC_SITE_URL] })) {
+    if (isCrossOriginWrite({ method: request.method, path, headers: request.headers, allowedOrigins: [process.env.NEXT_PUBLIC_SITE_URL], onVercel: process.env.VERCEL === "1" })) {
       return NextResponse.json({ error: "forbidden" }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }
     return NextResponse.next();

@@ -4,9 +4,11 @@
 // (server errors). Nothing here throws: a monitoring failure must never break
 // the request that hit the error.
 import { runAfterResponse } from "@/lib/afterResponse";
-import { rateLimit } from "@/lib/rateLimit";
-import { claimAppErrorAlert, recordAppError, releaseAppErrorAlert, type AlertClaim } from "@/lib/data/appErrors";
+import { rateLimit, rateLimitShared } from "@/lib/rateLimit";
+import { claimAppErrorAlert, clientRowAllowed, recordAppError, releaseAppErrorAlert, type AlertClaim } from "@/lib/data/appErrors";
 import {
+  CLIENT_ALERT_MAX_PER_HOUR,
+  CLIENT_OPEN_ROWS_MAX,
   DIGEST_CHECK_INTERVAL_MS,
   MAX_MESSAGE,
   MAX_STACK,
@@ -67,10 +69,14 @@ export function cleanError(input: CaptureInput): CleanError | null {
   };
 }
 
-/** Upsert one cleaned occurrence. Null on any failure. */
+/**
+ * Upsert one cleaned occurrence. Null on any failure, and (C3) for a NEW
+ * browser fingerprint once the open client rows reach CLIENT_OPEN_ROWS_MAX.
+ */
 export async function storeError(e: CleanError): Promise<RecordOutcome | null> {
   try {
     const fp = await fingerprint({ message: e.message, stack: e.stack, source: e.source });
+    if (e.source === "client" && !(await clientRowAllowed({ environment: e.environment, fingerprint: fp }, CLIENT_OPEN_ROWS_MAX))) return null;
     return await recordAppError({ fingerprint: fp, ...e });
   } catch {
     return null;
@@ -102,7 +108,12 @@ export async function alertFor(e: CleanError, outcome: RecordOutcome): Promise<v
       return;
     }
     const link = adminErrorsUrl();
+    // C3: browser reports draw on their own small hourly share first, so they
+    // can never use up the alert budget that server errors depend on.
+    const clientShare = async () =>
+      e.source !== "client" || (await rateLimitShared("monitoring:client-alerts", CLIENT_ALERT_MAX_PER_HOUR, 60 * 60 * 1000)).ok;
     if (shouldAlert(outcome, e.environment, cfg)) {
+      if (!(await clientShare())) return;
       const claim = await claimAppErrorAlert(cfg.maxPerHour, outcome.id);
       if (!claim.send) return;
       await sendClaimed(
@@ -125,6 +136,7 @@ export async function alertFor(e: CleanError, outcome: RecordOutcome): Promise<v
     }
     if (!cfg.environments.includes(e.environment)) return;
     if (!rateLimit("monitoring:digest-check", 1, DIGEST_CHECK_INTERVAL_MS).ok) return;
+    if (!(await clientShare())) return;
     const digest = await claimAppErrorAlert(cfg.maxPerHour);
     if (digest.send && digest.pending > 0) {
       await sendClaimed(digest, cfg, buildDigestEmail(digest.pending, e.environment, link));

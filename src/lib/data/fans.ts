@@ -1,4 +1,5 @@
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
+import { storedReportToken } from "@/lib/reports/reportToken";
 import { CompleteReadError, readScopedRows } from "./readPages";
 // Data layer — fans and grants: creator CRM, fan detail, grant edits, fan
 // moderation, and the token-scoped fan actions (ack, self-exclude, report).
@@ -647,7 +648,8 @@ export async function reportCreator(
   const { error } = await sb.from("creator_reports").insert({
     creator_id: pass.creator_id,
     fan_id: pass.fan_id,
-    token,
+    // N4: a digest and a 4-character hint, never the bearer token itself.
+    token: storedReportToken(token),
     reason: reason.slice(0, 120),
     detail: detail?.slice(0, 2000) ?? null,
   });

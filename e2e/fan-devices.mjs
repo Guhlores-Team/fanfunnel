@@ -288,7 +288,9 @@ export async function fanDevicesJourney(browser, { step, assert }, sink, ctx) {
         const proof = page.getByTestId("win-proof");
         await proof.waitFor({ timeout: 15000 });
         const text = await proof.innerText();
-        const code = String(result.shareId).replace(/[^A-Za-z0-9]/g, "").slice(-6).toUpperCase();
+        // C4 (batch 6): the code is the server's HMAC of the share id, sent only to the winner.
+        const code = String(result.claimCode);
+        assert(/^[0-9A-Z]{6}$/.test(code) && !String(result.shareId).toUpperCase().endsWith(code), `the spin response carries a server claim code (${code})`);
         assert(text.includes(name) && text.includes(code), `the card shows the fan's name and claim code ${code} (${text})`);
         assert(/\d{1,2}:\d{2}/.test(text), "and the time of the win");
         await page.getByRole("button", { name: "Awesome!" }).click();

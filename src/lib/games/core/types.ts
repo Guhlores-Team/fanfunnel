@@ -163,6 +163,8 @@ export interface SpinResult {
   pityAwarded?: boolean;
   /** Phase 3: opaque id for a shareable card generated from this win. */
   shareId?: string;
+  /** C4: the server's claim code for this win (shown on the win card). */
+  claimCode?: string;
   /** Commit-reveal: sha256 of the NEXT spin's pre-committed server seed. */
   nextSpinHash?: string;
   /** Fairness v3: set when this spin's odds are inside its commitment. */

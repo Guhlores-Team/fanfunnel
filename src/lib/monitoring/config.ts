@@ -32,6 +32,17 @@ export const ERROR_REPORT_WINDOW_MS = 60_000;
 /** POST /api/errors: reports accepted from everyone together per window. */
 export const ERROR_REPORT_GLOBAL = 300;
 
+/** C3: browser (client) reports have their own budgets, so an anonymous flood
+ *  can neither use up the alert e-mails nor push server errors out of
+ *  Admin › Errors. Of ALERT_MAX_PER_HOUR, client reports may take at most
+ *  this many per hour (shared limiter, across instances). */
+export const CLIENT_ALERT_MAX_PER_HOUR = 3;
+
+/** C3: open client rows kept per environment. Past it, a NEW client
+ *  fingerprint is dropped (a known one still counts), so client rows can never
+ *  fill the APP_ERRORS_MAX_ROWS table and make the prune evict server rows. */
+export const CLIENT_OPEN_ROWS_MAX = 200;
+
 /** Server-side capture: errors recorded per instance per window (a hot loop
  *  must not turn into a database write storm). */
 export const SERVER_CAPTURE_PER_WINDOW = 60;

@@ -62,10 +62,12 @@ async function main() {
   check("a prune is not captured", captured.length === 1);
 
   const admin = readFileSync("src/lib/data/admin.ts", "utf8");
-  for (const kind of ["approval", "agency_invite", "application_alert"]) {
+  for (const kind of ["approval", "application_alert"]) {
     check(`OPS-05: the ${kind} send reports its result`, new RegExp(`runAfterResponse\\(async \\(\\) => reportAccountMail\\("${kind}", await send`).test(admin));
   }
-  check("OPS-05: no account mail result is discarded", !/runAfterResponse\(\(\) => send(Approval|AgencyInvite|Application)/.test(admin));
+  // B2 decides whether the agency invite is sent at all; a refused send still reports.
+  check("OPS-05: the agency_invite send reports its result", /await deliverAgencyInviteEmail\([^)]*\);\s*if \(outcome === "failed"\) reportAccountMail\("agency_invite", "failed"\)/.test(admin));
+  check("OPS-05: no account mail result is discarded", !/runAfterResponse\(\(\) => (send(Approval|AgencyInvite|Application)|deliverAgencyInviteEmail)/.test(admin));
   console.log(`opsAlerts: ${passed} checks passed`);
 }
 main().catch((e) => { console.error(e); process.exitCode = 1; });

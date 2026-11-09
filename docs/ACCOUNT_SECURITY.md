@@ -89,3 +89,20 @@ empty-inventory bootstrap remains its separate server-only maintenance path.
 
 Invitation acceptance and decline recheck current activity, approval and verified-factor MFA after acquiring the recipient profile lock. A suspension, approval withdrawal or factor verification committed during that wait leaves both membership and invitation status unchanged.
 The invitation sender also rechecks current owner/MFA/approval authority after its existing recipient and invitation lock waits, before creating or reusing an invitation. This adds no lock and preserves the existing recipient-before-invitation ordering.
+
+## Batch 6 attack-audit rules
+
+- **Cross-origin writes (N5):** a cookie-carrying `/api` write passes the origin check when
+  `Sec-Fetch-Site` is `same-origin`, or its `Origin` names `Host` or `NEXT_PUBLIC_SITE_URL`.
+  `X-Forwarded-Host` counts only when the server runs on Vercel (`VERCEL=1`) **and** the request
+  carries Vercel's own `x-vercel-id` and `x-vercel-deployment-url` (the edge overwrites all three);
+  anywhere else it is client input (`src/lib/security/sameOrigin.ts`).
+- **Signed-out dashboard calls (N1):** with Supabase configured, an `account`-tier route answers
+  401 when the request has no Supabase session cookie (`limitRoute`, `src/lib/api/limit.ts`); the
+  route's session/RLS check stays the authority for a cookie that is present.
+- **Win claim codes (C4):** the 6-character code on a win card is an HMAC of the share id under a
+  key derived from `REWARD_CODE_FINGERPRINT_KEY` (`src/lib/rewards/claimCode.ts`), sent only in the
+  winner's spin response. A creator checks it on `/verify/<share id>`. It proves the sender holds
+  the fan's win page (or was given the code), not who they are.
+- **Report tokens (N4):** a fan report stores `t1:<last 4>:<sha256>` of the link token, never the
+  token (`src/lib/reports/reportToken.ts`).

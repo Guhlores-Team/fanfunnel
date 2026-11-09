@@ -182,6 +182,13 @@ async function main() {
   createsInvite = false;
   res = await data.inviteOrgCreator(ORG, "new@example.com");
   check("a repeat for a still-pending invitation sends nothing", "ok" in res && after.length === 0);
+  // B2: a role switch replaces the pending invitation (new id); that must not
+  // mail the same person again.
+  reset();
+  createsInvite = true;
+  res = await data.addOrgMember(ORG, "new@example.com", "manager");
+  check("a role switch on a still-pending invitation sends nothing (B2)", "ok" in res && after.length === 0);
+  check("…the earlier invite is only counted while unexpired", calls.some((c) => c.table === "org_invites" && op(c, "gt").some((o) => o.args[0] === "expires_at")));
   reset();
   createsInvite = true;
   rpcAnswer = "not_owner";
