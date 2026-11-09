@@ -625,9 +625,10 @@ const clip = (v: string | null, n: number) => (typeof v === "string" ? v.slice(0
  * B1 (batch 6): the e-mail an access request is shown under. An applicant can
  * write their own creator_applications row straight through PostgREST (the
  * insert policy only pins profile_id), so the row's `email` is never shown:
- * this reads the sign-in address of the auth user (service role, server only).
+ * this reads the sign-in address of the auth user (service role, server only;
+ * module-private: its only caller checked isActiveAdmin first).
  */
-export async function authEmailsFor(ids: string[]): Promise<Map<string, string | null>> {
+async function authEmailsFor(ids: string[]): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   if (ids.length === 0) return out;
   const svc = createServiceClient();
