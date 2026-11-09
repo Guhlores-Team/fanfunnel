@@ -8,7 +8,7 @@ import { inviteCreatorUser } from "./creatorAccount";
 import { recordAudit } from "./audit";
 import { leaveApprovalNotice, sendApprovalEmail } from "@/lib/account/approvalNotice";
 import { sendApplicationAlert } from "@/lib/account/applicationNotice";
-import { sendAgencyInviteEmail } from "@/lib/agency/inviteEmail";
+import { deliverAgencyInviteEmail } from "@/lib/agency/inviteEmail";
 import { displayNameInputError } from "@/lib/profileErrors";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
@@ -332,9 +332,11 @@ const inviteAddress = (email: string) => {
 
 /**
  * C10: run an invite RPC, then e-mail the address only when the RPC created a
- * NEW pending invitation (its id differs from the one pending before). A
- * repeat for a still-pending invite, the owner's own address or a refusal
- * sends nothing. Both reads use the owner's session client: RLS shows a
+ * NEW pending invitation where none was pending before. A repeat for a
+ * still-pending invite, a role switch on one (B2: the RPC replaces it, which
+ * would otherwise mail the same person again), the owner's own address or a
+ * refusal sends nothing. deliverAgencyInviteEmail then mails only an existing
+ * account, at most 3 times a day per address (B2). Both reads use the owner's session client: RLS shows a
  * pending invitation only to its org's owner. The answer never depends on the
  * e-mail (the RPC answers "ok" for any address).
  */
@@ -354,6 +356,7 @@ async function withInviteEmail(
       .eq("org_id", orgId)
       .eq("email", address)
       .eq("status", "pending")
+      .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -363,10 +366,10 @@ async function withInviteEmail(
   const result = await rpc();
   if ("error" in result) return result;
   const after = await pendingId();
-  if (after && after !== before) {
+  if (after && before === null) {
     const { data: org } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
     const orgName = (org as { name: string } | null)?.name ?? "";
-    runAfterResponse(() => sendAgencyInviteEmail(address, orgName, role));
+    runAfterResponse(() => deliverAgencyInviteEmail(address, orgName, role));
   }
   return result;
 }
