@@ -33,6 +33,7 @@ import {
 
 import { EXPORT_PAGE_SIZE, EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
 import { publicCreatorName } from "@/lib/publicCreator";
+import { exportDelivery } from "@/lib/fan/delivery";
 
 type Svc = ReturnType<typeof createServiceClient>;
 export type FanLinkStatus = "creator_closed" | "fan_deleted";
@@ -175,13 +176,14 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     if (result.truncated) truncated.push(name);
     return result.rows;
   };
-  const [fanRes, creatorRes, linksRead, grantsRead, wishesRead, messagesRead, spinsRead, checkinsRead, outreachRead, reportsRead, reminderRes, refRes, focusRead, attemptsRead, cardsRead, awardsRead] = await Promise.all([
+  const [fanRes, creatorRes, linksRead, grantsRead, wishesRead, messagesRead, receivedRead, spinsRead, checkinsRead, outreachRead, reportsRead, reminderRes, refRes, focusRead, attemptsRead, cardsRead, awardsRead] = await Promise.all([
     svc.from("fans").select("display_name, handle, created_at, spins_remaining, spins_granted_total, last_spin_at, referral_code, referred_by_fan_id, acked_at, acked_terms_version, leaderboard_opt_in, break_until").eq("id", fanId).eq("creator_id", creatorId).maybeSingle(),
     svc.from("profiles").select("display_name").eq("id", creatorId).maybeSingle(),
     readRows(svc, "fan_passes", "id, token, created_at, is_active, self_excluded_at, spins_remaining, spins_granted_total, last_spin_at, wheel:wheels!fan_passes_wheel_id_fkey(title)", own),
     readRows(svc, "grants", "id, created_at, spins, bonus_spins", own),
     readRows(svc, "wishlists", "id, prize_label, prize_rarity, created_at", own),
     readRows(svc, "messages", "id, body, created_at", [...own, ["sender", "fan"]]),
+    readRows(svc, "messages", "id, body, created_at, read_at", [...own, ["sender", "creator"]]),
     readRows(svc, "spins", "id, created_at, prize_label, prize_rarity, share_id, server_seed, server_seed_hash, client_seed, nonce, seed_commitment, fair_version, pool_hash, pool_snapshot, fair_trace, game_kind, presentation, kind, parent_spin_id, bingo_line, wheel:wheels(title)", own),
     readRows(svc, "fan_checkins", "day, created_at", own, ["day"]),
     readRows(svc, "fan_outreach", "id, created_at, contacted_at", own),
@@ -200,6 +202,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
   if (refRes.error) failed.push("profile.referrals");
   const links = remember("links", linksRead), grants = remember("topUps", grantsRead);
   const wishes = remember("wishlist", wishesRead), messages = remember("messagesYouSent", messagesRead);
+  const received = remember("messagesYouReceived", receivedRead);
   const spins = remember("spins", spinsRead), checkins = remember("checkIns", checkinsRead);
   const outreach = remember("outreach", outreachRead), reports = remember("reportsYouSent", reportsRead);
   const reminder = reminderRes.data as { daily: number; updated_at: string } | null;
@@ -209,7 +212,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
   const ids = [...bySpin.keys()];
   for (let at = 0; at < ids.length; at += 200) {
     const batch = await readRows(svc, "redemptions", "id, spin_id, status, created_at, fulfilled_at", [["creator_id", creatorId]], ["id"], ["spin_id", ids.slice(at, at + 200)], EXPORT_ROW_CAP - prizes.length);
-    for (const row of remember("prizes", batch)) prizes.push({ spinId: String(row.spin_id), prize: str(bySpin.get(String(row.spin_id))?.prize_label) ?? "Prize", status: str(row.status) ?? "unknown", wonAt: str(row.created_at) ?? "", fulfilledAt: str(row.fulfilled_at) });
+    for (const row of remember("prizes", batch)) prizes.push({ spinId: String(row.spin_id), prize: str(bySpin.get(String(row.spin_id))?.prize_label) ?? "Prize", status: str(row.status) ?? "unknown", delivery: exportDelivery(row.status, row.fulfilled_at), wonAt: str(row.created_at) ?? "", fulfilledAt: str(row.fulfilled_at) });
     if (batch.failed || batch.truncated) break;
   }
   const instantReceipts: FanDataExport["instantReceipts"] = [];
@@ -238,6 +241,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     spinAttempts: spinAttempts.map(row => ({ status: str(row.state) ?? "unknown", error: str(row.error), at: str(row.created_at), finishedAt: str(row.finished_at) })),
     wishlist: wishes.map((row) => ({ prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", addedAt: str(row.created_at) ?? "" })),
     messagesYouSent: messages.map((row) => ({ at: str(row.created_at) ?? "", body: str(row.body) ?? "" })),
+    messagesYouReceived: received.map((row) => ({ at: str(row.created_at) ?? "", body: str(row.body) ?? "", readAt: str(row.read_at) })),
     play: { breakUntil: str(fan.break_until), reminderDaily: reminder?.daily ?? null, reminderUpdatedAt: reminder?.updated_at ?? null },
     checkIns: checkins.map((row) => ({ day: String(row.day), recordedAt: str(row.created_at) })),
     outreach: outreach.map((row) => ({ at: str(row.created_at) ?? "", contactedAt: str(row.contacted_at) })),

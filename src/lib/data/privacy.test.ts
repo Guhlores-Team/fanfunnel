@@ -146,13 +146,15 @@ async function main() {
   check("no full token anywhere in the file", !text.includes("tokA1aaaaaaa") && !text.includes("tokA2bbbbbbb"));
   check("only this fan's spins, with fairness data", exp!.spins.length === 1 && exp!.spins[0].fairness.serverSeed === "used-seed" && exp!.spins[0].fairness.version === 3);
   check("prize status for this fan's spin only", exp!.prizes.length === 1 && exp!.prizes[0].spinId === "s1");
-  check("only messages the fan SENT", exp!.messagesYouSent.length === 1 && exp!.messagesYouSent[0].body === "hi from Alice");
+  check("only messages the fan SENT under messagesYouSent", exp!.messagesYouSent.length === 1 && exp!.messagesYouSent[0].body === "hi from Alice");
+  // T9: the creator's messages TO this fan are the fan's data too.
+  check("the creator's messages to this fan are under messagesYouReceived", exp!.messagesYouReceived.length === 1 && exp!.messagesYouReceived[0].body === "creator reply");
   check("wishlist is this fan's", exp!.wishlist.length === 1 && exp!.wishlist[0].prize === "Video");
   check("consents carried", exp!.consents.ageAndTermsAcceptedAt === "2026-01-02" && exp!.consents.leaderboardOptIn === true);
   check("the export preserves the accepted Terms version rather than substituting today's", exp!.consents.termsVersion === "2026-01-02");
   check("top-ups without amounts", exp!.topUps.length === 1 && !("amount" in exp!.topUps[0]) && !text.includes("999"));
   check("friends referred is a count, no ids", exp!.profile.friendsReferred === 1 && !text.includes("fanA2"));
-  for (const secret of ["VIP whale", "whale", "ship to his flat", "2026-02-01", "NEXT-SEED-SECRET", "Other fan", "hi from someone else", "B's notes", "hi from B's Alice", "creator reply"]) {
+  for (const secret of ["VIP whale", "whale", "ship to his flat", "2026-02-01", "NEXT-SEED-SECRET", "Other fan", "hi from someone else", "B's notes", "hi from B's Alice"]) {
     check(`the fan export never contains "${secret}"`, !text.includes(secret));
   }
   // Every fan-scoped read was pinned to fan A + creator A.

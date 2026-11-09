@@ -81,7 +81,10 @@ async function main() {
   check("only the fan's own check-ins and contacts are exported", fan.checkIns.length === 1 && fan.outreach.length === 1 && fan.outreach[0].contactedAt === at);
   check("the fan gets only its own submitted safety report", fan.reportsYouSent.length === 1 && fan.reportsYouSent[0].detail === "My report");
   const fanText = JSON.stringify(fan);
-  for (const secret of [TOKEN, "FOREIGN-TOKEN", "NEXT-SEED-SECRET", "PRIVATE-NOTES", "PRIVATE-TAGS", "982341", "SNAPSHOT-PRIVATE", "CIPHER-SECRET", "PRIVATE-DELIVERY-NOTES", "PRIVATE-DUE-DATE", "PRIVATE-SNOOZE", "PRIVATE-TEMPLATE", "UNRELATED-MESSAGE", "CREATOR-REPLY", "UNRELATED-CONTACT", "UNRELATED-REPORT", "FOREIGN-RECEIPT", "FOREIGN-TENANT-RECEIPT", ...Object.values(material)]) check(`fan export excludes ${secret}`, !fanText.includes(secret));
+  // T9: the creator's own messages to this fan are exported, under their own heading.
+  check("the creator's message to this fan is exported as received", fan.messagesYouReceived.length === 1 && fan.messagesYouReceived[0].body === "CREATOR-REPLY" && !fan.messagesYouSent.some((m) => m.body === "CREATOR-REPLY"));
+  check("another fan's message is never in either list", ![...fan.messagesYouSent, ...fan.messagesYouReceived].some((m) => m.body === "UNRELATED-MESSAGE"));
+  for (const secret of [TOKEN, "FOREIGN-TOKEN", "NEXT-SEED-SECRET", "PRIVATE-NOTES", "PRIVATE-TAGS", "982341", "SNAPSHOT-PRIVATE", "CIPHER-SECRET", "PRIVATE-DELIVERY-NOTES", "PRIVATE-DUE-DATE", "PRIVATE-SNOOZE", "PRIVATE-TEMPLATE", "UNRELATED-MESSAGE", "UNRELATED-CONTACT", "UNRELATED-REPORT", "FOREIGN-RECEIPT", "FOREIGN-TENANT-RECEIPT", ...Object.values(material)]) check(`fan export excludes ${secret}`, !fanText.includes(secret));
   for (const statement of svc.statements.filter((row) => ["grants", "messages", "wishlists", "spins", "fan_checkins", "fan_outreach", "creator_reports"].includes(row.table))) check(`${statement.table} is doubly scoped and stably ordered`, eqValue(statement, "fan_id") === FAN && eqValue(statement, "creator_id") === CA && !!statement.orders?.length);
 
   svc.rowLimit = 137;

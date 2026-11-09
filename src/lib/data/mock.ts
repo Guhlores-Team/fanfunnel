@@ -40,7 +40,7 @@ import { storedWeight } from "@/lib/games/wheel/weights";
 import { hasLimitedPrize, showsStock, toPublicPrize, toPublicStockMap, toPublicWheel } from "@/lib/games/wheel/publicView";
 import { defaultFeatures } from "@/lib/features";
 import { LEGAL, fanNeedsAck } from "@/lib/legal";
-import { toWinDelivery, type WinDelivery } from "@/lib/fan/delivery";
+import { exportDelivery, toWinDelivery, type WinDelivery } from "@/lib/fan/delivery";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import type { FanAppInfo } from "@/lib/pwa/manifest";
 import { countPlay, fanEngagementAllowed, isOnBreak, lengthenBreak, reminderDue } from "@/lib/play/playGuard";
@@ -3996,7 +3996,10 @@ export function mockExportFanData(token: string): FanDataExport | null {
     })),
     prizes: store.redemptions
       .filter((r) => r.fanId === fan.id)
-      .map((r) => ({ spinId: null, prize: r.prizeLabel, status: r.status, wonAt: r.at, fulfilledAt: null })),
+      .map((r) => {
+        const fulfilledAt = r.status === "fulfilled" ? r.fulfilledAt ?? r.at : null;
+        return { spinId: null, prize: r.prizeLabel, status: r.status, delivery: exportDelivery(r.status, fulfilledAt), wonAt: r.at, fulfilledAt };
+      }),
     instantReceipts: deliveries.sort(([a], [b]) => a.localeCompare(b)).map(([spinId, delivery]) => ({ spinId, kind: delivery.kind, views: delivery.views, lastViewedAt: delivery.lastViewedAt, createdAt: delivery.at, erasedAt: null })),
     bingoCards:[...mockBingoStore().cards.values()].filter(card=>card.fanId===fan.id).map(card=>({id:card.id,wheelId:card.wheelId,cells:structuredClone(card.state.cells) as unknown as Json,markedMask:card.state.markedMask,awardedLinesMask:card.state.awardedLinesMask,version:card.state.version,status:card.completedAt?"completed":"active",createdAt:card.createdAt,completedAt:card.completedAt})),
     bingoLineAwards:[...mockBingoStore().awards.values()].filter(award=>award.fanId===fan.id).map(award=>({cardId:award.cardId,line:award.line,primarySpinId:award.parentShareId,bonusSpinId:award.bonusShareId,at:award.at})),
@@ -4012,6 +4015,9 @@ export function mockExportFanData(token: string): FanDataExport | null {
     messagesYouSent: store.messages
       .filter((m) => m.fanId === fan.id && m.sender === "fan")
       .map((m) => ({ at: m.at, body: m.body })),
+    messagesYouReceived: store.messages
+      .filter((m) => m.fanId === fan.id && m.sender === "creator")
+      .map((m) => ({ at: m.at, body: m.body, readAt: m.readAt })),
   };
   for (const [name, value] of Object.entries(out)) {
     if (Array.isArray(value) && !["failed", "truncated", "excluded"].includes(name) && value.length > EXPORT_ROW_CAP) {

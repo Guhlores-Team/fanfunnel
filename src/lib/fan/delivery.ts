@@ -62,3 +62,9 @@ export function deliveryLabel(delivery: WinDelivery): string {
       return "Cancelled by the creator";
   }
 }
+
+/** T9: the export's fan-readable delivery words for a redemptions row (null when unknown). */
+export function exportDelivery(status: unknown, fulfilledAt: unknown): string | null {
+  const delivery = toWinDelivery(status, fulfilledAt);
+  return delivery ? deliveryLabel(delivery) : null;
+}

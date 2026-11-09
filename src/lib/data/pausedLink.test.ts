@@ -97,6 +97,12 @@ async function main() {
   const delivered = after!.wins.find((w) => w.shareId === manualShare)!;
   check("demo: a later delivery shows with its time", delivered.delivery?.status === "delivered" && !!delivered.delivery.at);
 
+  // T9: the export carries each prize's delivery words and the creator's messages.
+  await (await import("./index")).sendCreatorMessage(fan.fanId, "your prize is on its way");
+  const exported = m.mockExportFanData(fan.token)!;
+  check("demo (T9): exported prizes say how delivery stands", exported.prizes.some((p) => p.prize === "Shout-out" && p.status === "fulfilled" && /^Delivered /.test(p.delivery ?? "") && !!p.fulfilledAt));
+  check("demo (T9): the creator's messages are exported as received", exported.messagesYouReceived.some((msg) => msg.body === "your prize is on its way"));
+
   m.mockSetFanBlocked(fan.fanId, true);
   const blocked = await getPausedFanWins(fan.token);
   const blockedLink = blocked!.wins.find((w) => w.shareId === shareId)!;
