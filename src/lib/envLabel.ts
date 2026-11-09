@@ -21,3 +21,13 @@ export function envLabel(url: string | undefined): EnvLabel {
   if (name === "LIVE") return { text: "PREVIEW · ⚠ LIVE DATABASE ⚠", tone: "danger" };
   return { text: `PREVIEW · unknown database (${ref ?? "unrecognised URL"})`, tone: "danger" };
 }
+
+/**
+ * OPS-13: the short commit this build came from, so a "tested on Preview"
+ * sign-off names a commit. Vercel Git deploys set VERCEL_GIT_COMMIT_SHA; CLI
+ * archive deploys pass NEXT_PUBLIC_COMMIT_SHA (docs/PREVIEW_DEPLOY.md).
+ */
+export function shortCommit(env: Record<string, string | undefined> = process.env): string {
+  const raw = (env.VERCEL_GIT_COMMIT_SHA || env.NEXT_PUBLIC_COMMIT_SHA || "").trim();
+  return /^[0-9a-f]{7,40}$/i.test(raw) ? raw.slice(0, 7).toLowerCase() : "unknown";
+}
