@@ -21,10 +21,10 @@ export interface VapidKeys {
 
 const B64URL = /^[A-Za-z0-9_-]+$/;
 
-export function vapidKeys(): VapidKeys | null {
-  const publicKey = (process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "").trim();
-  const privateKey = (process.env.VAPID_PRIVATE_KEY || "").trim();
-  const subject = (process.env.VAPID_SUBJECT || "").trim();
+export function vapidKeys(env: Record<string, string | undefined> = process.env): VapidKeys | null {
+  const publicKey = (env.VAPID_PUBLIC_KEY || env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "").trim();
+  const privateKey = (env.VAPID_PRIVATE_KEY || "").trim();
+  const subject = (env.VAPID_SUBJECT || "").trim();
   // P-256: an 87-char public key (65 bytes) and a 43-char private key (32 bytes).
   if (!B64URL.test(publicKey) || publicKey.length !== 87) return null;
   if (!B64URL.test(privateKey) || privateKey.length !== 43) return null;

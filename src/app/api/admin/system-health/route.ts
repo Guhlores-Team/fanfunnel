@@ -9,20 +9,31 @@ import { rateLimitOr429 } from "@/lib/api/limit";
 import { recordAudit } from "@/lib/data/audit";
 import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
 import { hasSharedRateLimitStore } from "@/lib/rateLimit";
+import { lastRateLimitFallbackAt, maintenanceStatus, operationalFlags } from "@/lib/operations/opsStatus";
+import { reportMaintenanceStale } from "@/lib/monitoring/opsAlerts";
+import { currentEnvironment } from "@/lib/monitoring/config";
 
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: NO_STORE_HEADERS });
 export async function GET() {
   const admin = await requireAdminRoute();
   if (!admin.ok) admin.response.headers.set("Cache-Control", "no-store");
   if (!admin.ok) return admin.response;
-  if (!isSupabaseConfigured()) return json({ demo: true, canary: { status: "demo" }, summary: null });
+  const environment = currentEnvironment();
+  // OPS-08/09/10: configured yes/no by NAME only, the maintenance job's age and
+  // the last rate-limit store fallback. Never a value.
+  const ops = (lastMaintenanceAt: string | null | undefined, fallbackAt: string | null) => ({
+    environment, config: operationalFlags(), maintenance: maintenanceStatus(lastMaintenanceAt, environment), rateLimitLastFallbackAt: fallbackAt,
+  });
+  if (!isSupabaseConfigured()) return json({ demo: true, canary: { status: "demo" }, summary: null, ...ops(null, await lastRateLimitFallbackAt(null)) });
   const limited = await rateLimitOr429(`system-health:read:${admin.userId}`, 20, 60_000);
   if (limited) { limited.headers.set("Cache-Control", "no-store"); return limited; }
   let svc: ReturnType<typeof createServiceClient>;
   try { svc = createServiceClient(); }
   catch { return json({ demo: false, canary: { status: "unavailable" }, summary: null }, 503); }
-  const [canary, summary, schema] = await Promise.all([readCanary(svc), readHealthSummary(svc), readSchemaVersion(svc)]);
-  return json({ demo: false, canary, summary, schema, rateLimitStore: hasSharedRateLimitStore() ? "shared" : "per_instance" });
+  const [canary, summary, schema, fallbackAt] = await Promise.all([readCanary(svc), readHealthSummary(svc), readSchemaVersion(svc), lastRateLimitFallbackAt(svc, environment)]);
+  const status = ops(summary?.lastMaintenanceAt, fallbackAt);
+  if (status.maintenance.stale) reportMaintenanceStale();
+  return json({ demo: false, canary, summary, schema, rateLimitStore: hasSharedRateLimitStore() ? "shared" : "per_instance", ...status });
 }
 export async function POST(req: Request) {
   const admin = await requireAdminRoute();
