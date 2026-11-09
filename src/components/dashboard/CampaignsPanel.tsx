@@ -2,6 +2,7 @@
 
 import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
+import { useCreatorDraft } from "./CreatorDrafts";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { Campaign, CampaignStats, WheelSummary } from "@/lib/data/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -160,6 +161,8 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
   const [newGameId, setNewGameId] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const newGameSelectId = useId();
+  // C14: a typed campaign name is unsaved work.
+  useCreatorDraft(`campaign-new:${seat?.creatorId ?? "me"}`, "a campaign you were creating", name.trim().length > 0, creating);
   const newGameHelpId = useId();
 
   const load = useCallback(async () => {

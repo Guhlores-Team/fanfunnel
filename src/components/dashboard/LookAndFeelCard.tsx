@@ -1,5 +1,6 @@
 "use client";
 
+import { useCreatorDraft } from "./CreatorDrafts";
 import { useEffect, useId, useRef, useState, type DragEvent, type FormEvent } from "react";
 import {
   BACKGROUND_LABELS,
@@ -104,6 +105,7 @@ export default function LookAndFeelCard({
 
   const dirty = !!view && (draft.font !== view.theme.font || draft.background !== view.theme.background || draft.bgMediaId !== view.theme.bgMediaId);
   const locked = loading || loadFailed || busy !== null || !view;
+  useCreatorDraft("settings-look", "look & feel changes", dirty || !!file || caption.trim() !== "", busy === "Saving appearance…" || busy === "Uploading photo…");
   const name = displayName.trim() || "Your name";
 
   async function action(label: string, task: () => Promise<void>) {

@@ -524,6 +524,8 @@ function HappyHourScheduler() {
   const [loaded, setLoaded] = useState(false);
   const [failure, setFailure] = useState<unknown>(null);
   const toast = useToast();
+  // C14: a half-set happy hour is unsaved work.
+  useCreatorDraft("happy-hour", "a happy hour you were scheduling", startsAt !== "" || endsAt !== "", busy);
 
   // A15: a failed read is an error with a retry, never "no happy hours yet"
   // (which would invite a duplicate). The last good lists stay on screen.

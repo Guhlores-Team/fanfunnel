@@ -3,6 +3,7 @@
 import { loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
 import { useSessionDraft } from "./sessionDrafts";
+import { useCreatorDraft } from "./CreatorDrafts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatSettings, FanThread } from "@/lib/data/types";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -538,7 +539,10 @@ function AutoMessagesCard() {
   const [open, setOpen] = useState(false);
   const [intro, setIntro] = useState("");
   const [outro, setOutro] = useState("");
+  const [saved, setSaved] = useState<{ intro: string; outro: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  // C14: edited auto-messages are unsaved work.
+  useCreatorDraft("auto-messages", "your auto-messages", !!saved && (intro !== saved.intro || outro !== saved.outro), saving);
 
   const load = useCallback(async () => {
     try {
@@ -548,6 +552,7 @@ function AutoMessagesCard() {
         const s: ChatSettings = d.settings ?? { intro: null, outro: null };
         setIntro(s.intro ?? "");
         setOutro(s.outro ?? "");
+        setSaved({ intro: s.intro ?? "", outro: s.outro ?? "" });
       }
     } catch {
       /* transient */
@@ -568,8 +573,10 @@ function AutoMessagesCard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ intro, outro }),
       });
-      if (res.ok) toast("Auto-messages saved", { tone: "success" });
-      else toast("Couldn't save auto-messages", { tone: "error" });
+      if (res.ok) {
+        setSaved({ intro, outro });
+        toast("Auto-messages saved", { tone: "success" });
+      } else toast("Couldn't save auto-messages", { tone: "error" });
     } catch {
       toast("Couldn't save auto-messages", { tone: "error" });
     } finally {

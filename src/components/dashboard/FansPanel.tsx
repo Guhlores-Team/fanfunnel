@@ -826,9 +826,13 @@ function ManageMessages({
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const toast = useToast();
+  // C14: a half-written template is unsaved work; closing asks first.
+  useCreatorDraft("dm-templates", "a message template you were writing", !!title.trim() || !!body.trim(), saving);
+  const leave = useCreatorLeave();
+  const close = () => leave(onClose, { scope: "dm-templates", consequence: "Closing discards the template you were writing." });
   // Focus-trap the dialog: focus in on open, cycle Tab, Escape to close, restore
   // focus on close.
-  const dialogRef = useFocusTrap<HTMLDivElement>({ active: true, onEscape: onClose });
+  const dialogRef = useFocusTrap<HTMLDivElement>({ active: true, onEscape: close });
 
   async function add() {
     if (!title.trim() || !body.trim()) return;
@@ -864,7 +868,7 @@ function ManageMessages({
 
   return (
     <div className="fixed inset-0 z-50 lg:flex lg:items-center lg:justify-center lg:p-4">
-      <div className="fade-in absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+      <div className="fade-in absolute inset-0 bg-black/60" onClick={close} aria-hidden="true" />
       <div
         ref={dialogRef}
         role="dialog"
@@ -887,7 +891,7 @@ function ManageMessages({
               .
             </p>
           </div>
-          <CloseButton onClick={onClose} />
+          <CloseButton onClick={close} />
         </div>
 
         <div className="space-y-5 px-5 py-5">

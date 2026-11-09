@@ -1,5 +1,7 @@
 "use client";
 
+import { useCreatorDraft } from "./CreatorDrafts";
+import { readSessionDraft, writeSessionDraft } from "./sessionDrafts";
 import { publicGameCopy } from "@/lib/games/publicCopy";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -44,6 +46,9 @@ export default function SettingsPanel({
   const [profile, setProfile] = useState<ProfileFields>(EMPTY_PROFILE);
   // Last server-confirmed profile; "dirty" and per-card saves compare against it.
   const [savedProfile, setSavedProfile] = useState<ProfileFields>(EMPTY_PROFILE);
+  // C14: only once the saved profile is in can unsaved Public page text be
+  // told apart from it (and kept for this tab across section switches).
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -80,8 +85,9 @@ export default function SettingsPanel({
           note: p.note ?? "",
           avatarUrl: p.avatarUrl ?? "",
         };
-        setProfile(next);
+        setProfile({ ...next, ...readPublicDraft() });
         setSavedProfile(next);
+        setProfileLoaded(true);
       })
       .catch(() => {});
     return () => {
@@ -134,6 +140,7 @@ export default function SettingsPanel({
           hint="A clean, safe-for-work link-in-bio you can post in your Instagram/TikTok bio — your game teaser plus a way in. No explicit content."
         />
         <PublicPageSection
+          loaded={profileLoaded}
           profile={profile}
           savedProfile={savedProfile}
           displayName={account.displayName}
@@ -313,6 +320,7 @@ function ProfileCard({
   const nameDirty = displayName.trim() !== savedName.trim();
   const avatarDirty = profile.avatarUrl !== savedAvatar;
   const dirty = nameDirty || avatarDirty;
+  useCreatorDraft("settings-profile", "your profile changes", loaded && dirty, busy);
 
   // One "Save profile": the name goes to /api/account/profile, the avatar lives
   // on the public profile so it goes to /api/public-profile (avatarUrl only —
@@ -460,6 +468,7 @@ function EmailBlock({
   const [busy, setBusy] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  useCreatorDraft("settings-email", "an e-mail change", email.trim() !== "" || current !== "", busy);
 
   async function save() {
     const next = email.trim().toLowerCase();
@@ -577,6 +586,7 @@ function SecurityCard() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
+  useCreatorDraft("settings-password", "a password change", current !== "" || next !== "" || confirm !== "", busy);
 
   async function save() {
     if (next.length < 8) {
@@ -698,6 +708,7 @@ function NotificationsCard({
     value.newSpin !== saved.newSpin ||
     value.lowBalance !== saved.lowBalance ||
     value.messages !== saved.messages;
+  useCreatorDraft("settings-notifications", "notification settings", loaded && dirty, busy);
 
   async function save() {
     setBusy(true);
@@ -775,7 +786,24 @@ const noSubscribe = () => () => {};
 const browserOrigin = () => window.location.origin;
 const serverOrigin = () => "";
 
+const PUBLIC_DRAFT_KEY = "public-page";
+type PublicDraft = Pick<ProfileFields, "slug" | "tipUrl" | "tagline" | "note">;
+/** The unsaved Public page text held for this tab, if any (sessionDrafts). */
+function readPublicDraft(): Partial<PublicDraft> {
+  const held = readSessionDraft(PUBLIC_DRAFT_KEY);
+  if (!held) return {};
+  try {
+    const v = JSON.parse(held) as Record<string, unknown>;
+    const out: Partial<PublicDraft> = {};
+    for (const k of ["slug", "tipUrl", "tagline", "note"] as const) if (typeof v[k] === "string") out[k] = v[k] as string;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function PublicPageSection({
+  loaded,
   profile,
   savedProfile,
   displayName,
@@ -783,6 +811,7 @@ function PublicPageSection({
   markSaved,
   onBrandColorChange,
 }: {
+  loaded: boolean;
   profile: ProfileFields;
   savedProfile: ProfileFields;
   displayName: string;
@@ -810,6 +839,13 @@ function PublicPageSection({
     tipUrl !== savedProfile.tipUrl ||
     tagline !== savedProfile.tagline ||
     note !== savedProfile.note;
+  // C14: the tagline / note / links typed here survive leaving Settings and
+  // coming back (this tab only); a reload or sign-out asks first.
+  useEffect(() => {
+    if (!loaded) return;
+    writeSessionDraft(PUBLIC_DRAFT_KEY, linkDirty ? JSON.stringify({ slug, tipUrl, tagline, note }) : null, "your Public page text");
+  }, [loaded, linkDirty, slug, tipUrl, tagline, note]);
+  useCreatorDraft("settings-brand", "your brand color", brandColor !== savedBrand, savingBrand);
 
   useEffect(() => {
     let live = true;
