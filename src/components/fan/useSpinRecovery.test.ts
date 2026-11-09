@@ -88,6 +88,77 @@ async function main() {
         }
       } finally { cleanups.forEach(cleanup => cleanup?.()); }
     }
+    // FD-3/FD-13: run one scenario against the real hook with scripted replies.
+    const scenario = async (replies: Record<string, { ok: boolean; body: unknown }>, act: (hook: ReturnType<typeof useSpinRecovery>) => Promise<void>) => {
+      effects = []; states = []; memory.clear(); memory.set(key, JSON.stringify(saved));
+      const requests: string[] = [], refusals: unknown[] = [];
+      Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true,
+        value: async (path: string) => { requests.push(path); const reply = replies[path]; return { ok: reply.ok, json: async () => reply.body }; } });
+      const hook = RecoveryHarness({ token, canRetry: true, onCommitted() {}, onRefusal: code => { refusals.push(code); } });
+      const cleanups = effects.map(effect => effect());
+      try {
+        for (let i = 0; i < 30 && (requests.length === 0 || states[0] === "loading"); i++) await tick(1);
+        await act(hook);
+      } finally { cleanups.forEach(cleanup => cleanup?.()); }
+      return { requests, refusals };
+    };
+    {
+      const run = await scenario({ "/api/spin/status": { ok: true, body: { status: "absent" } } }, async () => {});
+      check("absent status offers the same request again (absent flag set)", states[0] === "pending" && states[2] === true && run.requests.join() === "/api/spin/status");
+    }
+    {
+      const run = await scenario({ "/api/spin/status": { ok: true, body: { status: "pending" } } }, async () => {});
+      check("a request still being checked is not offered as a retry", states[0] === "pending" && states[2] === false && run.requests.length === 1);
+    }
+    {
+      const run = await scenario({ "/api/spin/status": { ok: true, body: { status: "absent" } },
+        "/api/spin": { ok: false, body: { error: "blocked" } } }, async hook => { await hook.retry(); });
+      check("FD-3: a blocked refusal releases the saved request instead of looping", !memory.has(key) && states[0] === "ready");
+      check("FD-3: the fan is told the link isn't active", typeof states[1] === "string" && /isn't active/.test(states[1] as string));
+      check("FD-3: the page is asked to refresh via the refusal", run.refusals.includes("blocked"));
+    }
+    {
+      await scenario({ "/api/spin/status": { ok: true, body: { status: "absent" } },
+        "/api/spin": { ok: false, body: { error: "spin_pending" } } }, async hook => { await hook.retry(); });
+      check("an uncertain refusal still keeps the saved request", memory.get(key) === JSON.stringify(saved) && states[0] === "pending");
+    }
+    {
+      // FD-4: no Web Locks API. The page still starts, saves the request and sends it.
+      Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1" } });
+      const session = new Map<string, string>();
+      Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: { localStorage: storage,
+        sessionStorage: { getItem: (k: string) => session.get(k) ?? null, setItem: (k: string, v: string) => { session.set(k, v); }, removeItem: (k: string) => { session.delete(k); } },
+        addEventListener() {}, removeEventListener() {} } });
+      effects = []; states = []; memory.clear();
+      const requests: string[] = [];
+      Object.defineProperty(globalThis, "fetch", { configurable: true, writable: true,
+        value: async (path: string, init: RequestInit) => { requests.push(path);
+          return { ok: true, json: async () => ({ ...valid, attemptId: JSON.parse(String(init.body)).requestId }) }; } });
+      const hook = RecoveryHarness({ token, canRetry: true, onCommitted() {}, onRefusal() {} });
+      const cleanups = effects.map(effect => effect());
+      try {
+        for (let i = 0; i < 30 && states[0] === "loading"; i++) await tick(1);
+        check("FD-4: without navigator.locks the page is ready, not a storage error", states[0] === "ready");
+        await hook.begin("seed", null);
+        check("FD-4: the spin is saved and sent once", requests.join() === "/api/spin" && memory.has(key));
+        check("FD-4: no storage advice for a Locks problem", states[1] === null && states[0] === "revealing");
+        check("FD-4: the same-tab lease is released after use", session.size === 0);
+      } finally { cleanups.forEach(cleanup => cleanup?.()); }
+    }
+    {
+      // FD-5: storage blocked inside Instagram's browser points at the phone's browser.
+      Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 307.0.0.34.111" } });
+      Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: {
+        get localStorage() { throw new DOMException("blocked", "SecurityError"); }, addEventListener() {}, removeEventListener() {} } });
+      effects = []; states = [];
+      const cleanups = effects.map(effect => effect());
+      RecoveryHarness({ token, canRetry: true, onCommitted() {}, onRefusal() {} });
+      const later = effects.map(effect => effect());
+      try {
+        for (let i = 0; i < 30 && states[0] === "loading"; i++) await tick(1);
+        check("FD-5: blocked storage in an in-app browser says to open the phone's browser", states[0] === "storage" && /Safari or Chrome/.test(String(states[1])) && !/settings/.test(String(states[1])));
+      } finally { [...cleanups, ...later].forEach(cleanup => cleanup?.()); }
+    }
   } finally {
     for (const [name, descriptor] of originals) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);

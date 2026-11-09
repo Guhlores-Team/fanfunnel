@@ -5,6 +5,10 @@ import type { SpinResult } from "@/lib/games/wheel/types";
 import { spinErrorInfo } from "../spinErrors";
 import { browserSpinIntentStore, classifySpinStatus, finishBrowserSpinIntent, persistBrowserSpinIntent, readBrowserSpinIntent,
   spinIntentBody, SPIN_RECOVERY_COPY, type BrowserSpinIntent, type SpinIntentStore } from "./spinIntent";
+import { currentInAppBrowser } from "./inAppBrowser";
+
+/** FD-5: inside an app's browser there are no site settings to point at. */
+const storageMessage = () => currentInAppBrowser() ? SPIN_RECOVERY_COPY.storageInApp : SPIN_RECOVERY_COPY.storage;
 
 
 async function postIntent(path: string, token: string, intent: BrowserSpinIntent) {
@@ -28,6 +32,9 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, valid
 }) {
   const [phase, setPhase] = useState<"loading" | "ready" | "sending" | "pending" | "revealing" | "storage">("loading");
   const [message, setMessage] = useState<string | null>(null);
+  // FD-13: the server said it has never seen this request, so the one useful
+  // action is to send the same request again (it can only count once).
+  const [absent, setAbsent] = useState(false);
   const store = useRef<SpinIntentStore | null>(null);
   const intent = useRef<BrowserSpinIntent | null>(null);
   const running = useRef(false);
@@ -44,6 +51,7 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, valid
     presented.current.add(id);
     setPhase("revealing");
     setMessage(null);
+    setAbsent(false);
   }, []);
 
   const check = useCallback(async () => {
@@ -59,15 +67,18 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, valid
         if (!cleared) throw new Error("Another saved request exists");
         intent.current = null;
         setPhase("ready");
+        setAbsent(false);
         setMessage(spinErrorInfo(outcome.error).message);
         handlers.current.onRefusal(outcome.error);
       } else {
         setPhase("pending");
+        setAbsent(outcome.kind === "keep" && outcome.absent);
         setMessage(outcome.kind === "keep" ? outcome.message : SPIN_RECOVERY_COPY.unavailable);
         if (data.error) handlers.current.onRefusal(data.error);
       }
     } catch {
       setPhase("pending");
+      setAbsent(false);
       setMessage(SPIN_RECOVERY_COPY.unavailable);
     } finally { running.current = false; }
   }, [apply, token]);
@@ -84,7 +95,7 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, valid
         setMessage(SPIN_RECOVERY_COPY.pending);
         await check();
       } else if (!intent.current) { setPhase("ready"); setMessage(null); }
-    } catch { setPhase("storage"); setMessage(SPIN_RECOVERY_COPY.storage); }
+    } catch { setPhase("storage"); setMessage(storageMessage()); }
   }, [check, token]);
 
   useEffect(() => {
@@ -114,12 +125,21 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, valid
     try {
       const { response, data } = await postIntent("/api/spin", token, saved);
       if (response.ok) apply(data, saved.requestId, false);
-      else {
+      else if (data?.error === "blocked" && store.current && await finishBrowserSpinIntent(store.current, saved.requestId)) {
+        // FD-3: the link or its creator is no longer active. The server opened
+        // nothing for this request, so it is released, not left "being checked".
+        intent.current = null;
+        setPhase("ready");
+        setAbsent(false);
+        setMessage(spinErrorInfo("blocked").message);
+        handlers.current.onRefusal("blocked");
+      } else {
         handlers.current.onRefusal(data.error);
         setPhase("pending");
+        setAbsent(false);
         setMessage(spinErrorInfo(data.error).message + " Check this spin before playing again.");
       }
-    } catch { setPhase("pending"); setMessage(SPIN_RECOVERY_COPY.pending); }
+    } catch { setPhase("pending"); setAbsent(false); setMessage(SPIN_RECOVERY_COPY.pending); }
     finally { running.current = false; }
   }, [apply, token]);
 
@@ -135,7 +155,7 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, valid
         ...(publishedSeedHash ? { publishedSeedHash } : {}) });
       intent.current = saved;
     } catch {
-      setPhase("storage"); setMessage(SPIN_RECOVERY_COPY.storage);
+      setPhase("storage"); setMessage(storageMessage());
       running.current = false;
       return;
     }
@@ -153,8 +173,8 @@ export function useSpinRecovery({ token, canRetry, onCommitted, onRefusal, valid
       setPhase("ready"); setMessage(null);
     } catch {
       if (intent.current) presented.current.delete(intent.current.requestId);
-      setPhase("storage"); setMessage(SPIN_RECOVERY_COPY.storage);
+      setPhase("storage"); setMessage(storageMessage());
     }
   }, []);
-  return { phase, message, locked: phase !== "ready", sending: phase === "sending", check, retry, begin, acknowledge, initialize };
+  return { phase, message, absent: phase === "pending" && absent, locked: phase !== "ready", sending: phase === "sending", check, retry, begin, acknowledge, initialize };
 }

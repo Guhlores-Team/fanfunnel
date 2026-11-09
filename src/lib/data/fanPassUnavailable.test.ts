@@ -59,7 +59,7 @@ async function main() {
     id: "pass-1", creator_id: "creator-1", campaign_id: null, wheel_id: "wheel-1", fan_id: "fan-1", is_active: true,
     spins_remaining: 0, next_server_seed_hash: null,
     fan: { id: "fan-1", display_name: "Sam", handle: null, spins_remaining: 18, spins_granted_total: 18, referral_code: "ABC", acked_at: null, acked_terms_version: null, leaderboard_opt_in: false, blocked_at: null },
-    creator: { display_name: "Creator", tip_url: null, leaderboard_enabled: false, creator_note: null, avatar_url: null },
+    creator: { display_name: "Creator", tip_url: null, leaderboard_enabled: false, creator_note: null, avatar_url: null, is_active: true, approval_status: "approved", role: "creator" },
   }, error: null });
   commitRead = () => ({ data: null, error: { message: "connection reset" } });
   thrown = null;

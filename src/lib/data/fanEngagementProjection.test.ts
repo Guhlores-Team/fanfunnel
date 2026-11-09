@@ -9,7 +9,7 @@ const row = () => ({ id: "pass", creator_id: "creator", campaign_id: null, wheel
   spins_remaining: 3, next_server_seed_hash: "a".repeat(64),
   fan: { id: "own-fan", display_name: "Fan", handle: null, spins_remaining: 3, spins_granted_total: 3, referral_code: "REF",
     acked_at: "2026-10-28T00:00:00Z", acked_terms_version: LEGAL.version, blocked_at: blockedAt },
-  creator: { display_name: "Creator" } });
+  creator: { display_name: "Creator", is_active: true, approval_status: "approved", role: "creator" } });
 function client() {
   return { from(table: string) {
     const result = () => ({ data: table === "fan_passes" ? row() : table === "wheels"

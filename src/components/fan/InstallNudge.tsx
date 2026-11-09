@@ -4,6 +4,7 @@ import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { fanEngagementAllowed } from "@/lib/play/playGuard";
 import { useFanBreak, useLinkPause } from "./LinkPauseProvider";
 import { installNudgeSnoozed, isIosDevice, snoozeInstallNudge } from "./installNudge";
+import { currentInAppBrowser } from "./inAppBrowser";
 
 /** Chrome's install event (not in the DOM lib types). */
 interface BeforeInstallPromptEvent extends Event {
@@ -27,6 +28,8 @@ function isStandalone(): boolean {
 const noSubscribe = () => () => {};
 const iosSnapshot = () => isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
 const serverFalse = () => false;
+// FD-6: Instagram, TikTok, X… have no Share › Add to Home Screen of their own.
+const inAppSnapshot = () => currentInAppBrowser() !== null;
 
 /** The installed app's name, from the page's own apple-mobile-web-app-title. */
 function appName(): string {
@@ -47,6 +50,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
   const { breakUntil, now } = useFanBreak();
   const standalone = useSyncExternalStore(subscribeStandalone, isStandalone, serverFalse);
   const ios = useSyncExternalStore(noSubscribe, iosSnapshot, serverFalse);
+  const inApp = useSyncExternalStore(noSubscribe, inAppSnapshot, serverFalse);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [shown, setShown] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -144,7 +148,25 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
           Not now
         </button>
       </div>
-      {!deferred && guideOpen && (
+      {!deferred && guideOpen && inApp && (
+        <ol id={guideId} data-testid="install-guide-in-app" className="mt-3 space-y-2 text-sm text-ink">
+          <li className="flex items-center gap-3">
+            <StepBadge n={1} />
+            <span className="min-w-0">
+              Open this link in <span className="font-semibold">Safari</span> first: tap <span className="font-semibold">•••</span>{" "}
+              (or <ShareGlyph />), then <span className="font-semibold">Open in browser</span>.
+            </span>
+          </li>
+          <li className="flex items-center gap-3">
+            <StepBadge n={2} />
+            <span className="min-w-0">
+              In Safari, tap <ShareGlyph /> <span className="font-semibold">Share</span>, then{" "}
+              <PlusGlyph /> <span className="font-semibold">Add to Home Screen</span>.
+            </span>
+          </li>
+        </ol>
+      )}
+      {!deferred && guideOpen && !inApp && (
         <ol id={guideId} className="mt-3 space-y-2 text-sm text-ink">
           <li className="flex items-center gap-3">
             <StepBadge n={1} />
