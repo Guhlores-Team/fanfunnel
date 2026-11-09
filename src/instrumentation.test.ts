@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
-import { mock } from "node:test";
 
 // OPS-14: register() must return without waiting for the operational checks
-// (Next holds the first request until it resolves).
+// (Next holds the first request until it resolves). The check starter is
+// swapped through the module's seam, not a module mock.
 let started = 0;
-mock.module("@/lib/operations/startup", {
-  namedExports: { registerOperationalChecks: () => { started++; return new Promise<void>(() => { /* never settles */ }); } },
-});
 
 async function main() {
   process.env.NEXT_RUNTIME = "nodejs";
   delete process.env.NEXT_PHASE;
-  const { register } = await import("./instrumentation");
+  const { register, startupChecks } = await import("./instrumentation");
+  startupChecks.start = () => { started++; return new Promise<void>(() => { /* never settles */ }); };
   const outcome = await Promise.race([
     register().then(() => "returned"),
     new Promise<string>((resolve) => setTimeout(() => resolve("blocked"), 500).unref()),

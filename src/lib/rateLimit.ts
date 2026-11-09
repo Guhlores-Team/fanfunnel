@@ -133,11 +133,19 @@ export function rateLimitStoreLastFallbackAt(): string | null {
   return typeof at === "number" ? new Date(at).toISOString() : null;
 }
 
+/**
+ * Raises the alertable capture. Imported lazily because the capture pipeline
+ * itself uses this module; an object so rateLimitFallback.test.ts can swap
+ * it without module mocking (a lazily imported module is not reliably mockable).
+ */
+export const fallbackReporter = {
+  report: async (): Promise<void> => (await import("@/lib/monitoring/opsAlerts")).reportRateLimitFallback(),
+};
+
 function noteStoreFallback(): void {
   fallbackState.__ffRateLimitFallbackAt = Date.now();
   if (!rateLimit("ops-alert:rate-limit-fallback", 1, RATE_LIMIT_FALLBACK_ALERT_WINDOW_MS).ok) return;
-  // Imported lazily: the capture pipeline itself uses this module.
-  void import("@/lib/monitoring/opsAlerts").then(({ reportRateLimitFallback }) => reportRateLimitFallback()).catch(() => undefined);
+  void fallbackReporter.report().catch(() => undefined);
 }
 
 async function rateLimitUpstash(

@@ -5,10 +5,15 @@ import type { Instrumentation } from "next";
 // OPS-14: Next waits for register() before serving the first request, so the
 // check is started, not awaited: a slow database must not hold up the first
 // fan on a fresh instance. Its own deadline still bounds the work.
+// The starter is an object so instrumentation.test.ts can swap it without
+// module mocking (a lazily imported module is not reliably mockable).
+export const startupChecks = {
+  start: async () => (await import("@/lib/operations/startup")).registerOperationalChecks(),
+};
+
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs" || process.env.NEXT_PHASE === "phase-production-build") return;
-  const { registerOperationalChecks } = await import("@/lib/operations/startup");
-  void registerOperationalChecks().catch(() => undefined);
+  void startupChecks.start().catch(() => undefined);
 }
 
 // Server errors (route handlers, server components, server actions, proxy)
