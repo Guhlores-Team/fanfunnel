@@ -33,6 +33,7 @@ export default function RewardReveal({
   bannerSpace = false,
   entrance,
   confetti,
+  claim,
   onClose,
 }: {
   prize: PublicPrize;
@@ -48,6 +49,8 @@ export default function RewardReveal({
   entrance?: "animated" | "static";
   /** Confetti pieces; defaults to the tier's (0 when static). */
   confetti?: number;
+  /** FD-12: who won and when, shown on the card a fan screenshots to claim. */
+  claim?: { fanName: string | null; at: string | null };
   onClose: () => void;
 }) {
   const [reduced] = useState(() => prefersReducedMotion());
@@ -212,6 +215,7 @@ export default function RewardReveal({
               ? "Your reward is delivered. You can reopen it from Your wins."
               : "Screenshot this and send it to your creator to claim your prize!"}
           </p>
+          {!instant && claim && <WinProof fanName={claim.fanName} at={claim.at} shareId={shareId} />}
           {instant && shareId && <p className="mt-2 text-xs text-muted">Your reward stays private when you share your win.</p>}
           {shareBtn}
           {manualUrl && (
@@ -247,6 +251,27 @@ export default function RewardReveal({
         @keyframes ff-pop { from { transform: translateY(12px) scale(0.94) } to { transform: none } }
       `}</style>
     </div>
+  );
+}
+
+/** The last six characters of a share id, as the fan's claim code. */
+export function claimCode(shareId: string | null): string | null {
+  const clean = (shareId ?? "").replace(/[^A-Za-z0-9]/g, "");
+  return clean.length >= 4 ? clean.slice(-6).toUpperCase() : null;
+}
+
+/** FD-12: the facts that make a claim screenshot checkable: name, time, code. */
+function WinProof({ fanName, at, shareId }: { fanName: string | null; at: string | null; shareId: string | null }) {
+  const when = at && Number.isFinite(Date.parse(at))
+    ? new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : null;
+  const code = claimCode(shareId);
+  if (!fanName && !when && !code) return null;
+  return (
+    <p data-testid="win-proof" className="mt-2 text-xs text-muted [overflow-wrap:anywhere]">
+      {[fanName, when].filter(Boolean).join(" · ")}
+      {code && <>{fanName || when ? " · " : ""}Code <span className="font-mono font-semibold text-ink">{code}</span></>}
+    </p>
   );
 }
 

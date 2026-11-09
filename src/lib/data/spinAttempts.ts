@@ -161,6 +161,10 @@ export async function commitSpinAttempt(token:string,intent:SpinIntent,sb=create
     if(!prepared)return {error:"spin_pending"};
     if(prepared.status==="committed"){try{return await refreshReceipt(token,{...prepared,replayed:true} as Receipt,intent.requestId,sb);}catch{return {error:"spin_pending"};}}
     if(prepared.status==="declined")return spinError(prepared.error);
+    // FD-3: the link, the fan or the creator is not active (0071 prepare). No
+    // attempt was opened for this request, so it is a clear refusal, not a
+    // "still being checked" loop.
+    if(prepared.status==="unavailable")return {error:"blocked"};
     if(prepared.status!=="ready")return {error:"spin_pending"};
     const ctx=prepared.context as Context,config=toWheelConfig({...ctx.wheel,prizes:ctx.prizes}),kind=config.gameKind??"wheel",focus=toFanFocusView(ctx.focus);
     if(config.gameReady===false)return declineAttempt(sb,token,intent);

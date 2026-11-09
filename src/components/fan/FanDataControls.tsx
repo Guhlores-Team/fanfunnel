@@ -4,7 +4,9 @@ import { useId, useState } from "react";
 import { FAN_DELETE_PHRASE } from "@/lib/privacy/config";
 import { fanDataErrorMessage } from "@/lib/privacy/messages";
 import { exportDownloadWarning } from "@/lib/privacy/exportRecords";
+import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { clearFanStorage } from "./fanStorage";
+import { detectInAppBrowser } from "./inAppBrowser";
 
 /**
  * A fan's own privacy controls: "Download my data" and "Delete my data". The
@@ -13,8 +15,11 @@ import { clearFanStorage } from "./fanStorage";
  * privacy menu and on the "this link isn't active" page.
  */
 
-/** Ask the server for this fan's export and save it as a file. */
-export async function downloadFanData(token: string): Promise<{ ok: true } | { error: string }> {
+/** The fan's export as text, ready to save or show. */
+export interface FanDataFile { name: string; text: string; warning: string | null }
+
+/** Ask the server for this fan's export. */
+export async function fetchFanData(token: string): Promise<FanDataFile | { error: string }> {
   try {
     const res = await fetch("/api/fan-data/export", {
       method: "POST",
@@ -26,22 +31,84 @@ export async function downloadFanData(token: string): Promise<{ ok: true } | { e
       const d = await res.json().catch(() => ({}));
       return { error: fanDataErrorMessage(d.error, "export") };
     }
-    const blob = await res.blob();
+    const text = await res.text();
     const name =
       /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "fanfunnel-my-data.json";
-    const url = URL.createObjectURL(blob);
+    return { name, text, warning: exportDownloadWarning(JSON.parse(text)) };
+  } catch {
+    return { error: fanDataErrorMessage(undefined, "export") };
+  }
+}
+
+/**
+ * FD-7: whether this browser can't start a file download from the page. An
+ * app's built-in browser (Instagram, TikTok, X…) silently drops blob
+ * downloads, and a browser without the download attribute navigates instead.
+ */
+export function fanDataNeedsInline(
+  userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent,
+  supportsDownload = typeof document !== "undefined" && "download" in document.createElement("a"),
+): boolean {
+  return detectInAppBrowser(userAgent) !== null || !supportsDownload;
+}
+
+/** Ask the server for this fan's export and save it as a file. */
+export async function downloadFanData(token: string): Promise<{ ok: true } | { error: string }> {
+  const file = await fetchFanData(token);
+  if ("error" in file) return file;
+  try {
+    const url = URL.createObjectURL(new Blob([file.text], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = name;
+    a.download = file.name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    const warning = exportDownloadWarning(JSON.parse(await blob.text()));
-    return warning ? { error: warning } : { ok: true };
+    return file.warning ? { error: file.warning } : { ok: true };
   } catch {
     return { error: fanDataErrorMessage(undefined, "export") };
   }
+}
+
+/**
+ * FD-7: where a download can't start, the export is shown on the page instead:
+ * open it in a new tab, copy it, or read it here. Nothing claims a download.
+ */
+export function FanDataInline({ file, onBack }: { file: FanDataFile; onBack?: () => void }) {
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const areaId = useId();
+  const openTab = () => {
+    const url = URL.createObjectURL(new Blob([file.text], { type: "application/json" }));
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+  return (
+    <div data-testid="fan-data-inline" className="text-left">
+      <p className="text-sm font-bold text-ink">Your data</p>
+      <p className="mt-2 text-sm text-muted text-pretty">
+        This browser can&rsquo;t save files, so your data is shown here. Open it in a new tab or copy it. To save it as a
+        file, open this link in Safari or Chrome.
+      </p>
+      {file.warning && <p role="alert" className="mt-2 text-xs text-amber-300">{file.warning}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" onClick={openTab} data-testid="fan-data-open"
+          className="btn-brand min-h-11 rounded-xl px-4 text-sm font-bold">Open in a new tab</button>
+        <button type="button" data-testid="fan-data-copy"
+          onClick={async () => setCopied(await copyToClipboard(file.text))}
+          className="min-h-11 rounded-xl border border-line px-4 text-sm font-semibold text-ink">{copied ? "Copied" : "Copy"}</button>
+      </div>
+      <p role="status" className="mt-1 text-xs text-muted">{copied === false ? "Couldn't copy automatically. Select the text below and copy it." : ""}</p>
+      <label htmlFor={areaId} className="mt-2 block text-xs font-semibold text-ink">{file.name}</label>
+      <textarea id={areaId} readOnly value={file.text} rows={8}
+        className="ff-input mt-1 w-full font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
+      {onBack && (
+        <button type="button" onClick={onBack} className="mt-2 w-full text-center text-xs text-muted hover:text-ink">
+          Back
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** The confirm step of "Delete my data": what happens, a typed word, the button. */
@@ -143,6 +210,7 @@ export function FanDataActions({ token }: { token: string }) {
   const [mode, setMode] = useState<"idle" | "delete" | "done">("idle");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [inline, setInline] = useState<FanDataFile | null>(null);
 
   if (mode === "done") {
     return (
@@ -151,6 +219,7 @@ export function FanDataActions({ token }: { token: string }) {
       </p>
     );
   }
+  if (inline) return <FanDataInline file={inline} onBack={() => setInline(null)} />;
   if (mode === "delete") {
     return <FanDeleteFlow token={token} onBack={() => setMode("idle")} onDeleted={() => setMode("done")} />;
   }
@@ -161,8 +230,13 @@ export function FanDataActions({ token }: { token: string }) {
         disabled={busy}
         onClick={async () => {
           setBusy(true);
-          const r = await downloadFanData(token);
-          setNote("error" in r ? r.error : "Your data is downloading.");
+          if (fanDataNeedsInline()) {
+            const file = await fetchFanData(token);
+            if ("error" in file) setNote(file.error); else setInline(file);
+          } else {
+            const r = await downloadFanData(token);
+            setNote("error" in r ? r.error : "Your data is downloading.");
+          }
           setBusy(false);
         }}
         className="w-full rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-[var(--brand)] disabled:opacity-50"

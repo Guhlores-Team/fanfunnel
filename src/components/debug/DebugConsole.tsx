@@ -9,7 +9,7 @@ import {
   subscribe,
   type CapturedError,
 } from "./debug";
-import { isSupabaseConfigured } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/supabase/configured";
 
 const KIND_LABEL: Record<CapturedError["kind"], string> = {
   error: "Error",

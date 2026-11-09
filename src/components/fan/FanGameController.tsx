@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Wheel, { type WheelResult } from "../Wheel";
@@ -13,7 +13,6 @@ import { playWin, playBuildUp, unlockAudio, haptic, prefersReducedMotion } from 
 import { detectNearMiss, type NearMiss } from "./nearMiss";
 import { lastOfLine, oddsChangedSinceShown } from "./stockDisplay";
 import { spinErrorInfo, ackErrorMessage } from "../spinErrors";
-import RewardReveal from "../reveal/RewardReveal";
 import {
   REVEAL_IDLE,
   SKIP_ON_BACKDROP_TAP,
@@ -39,6 +38,14 @@ const WheelAura = dynamic(
   () => import("../reveal/RevealTheater").then((m) => m.WheelAura),
   { ssr: false }
 );
+// The win card and its bonus rows only render after a play, and the scratch
+// and bingo stages only for those games: keep them off a wheel fan's first
+// load. The win card's chunk is fetched when SPIN is tapped (preloadWinCard),
+// long before the wheel stops.
+const loadWinCard = () => import("../reveal/RewardReveal");
+const RewardReveal = dynamic(loadWinCard);
+const BonusWins = dynamic(() => import("./BonusWins"));
+const FanGameStage = dynamic(() => import("./FanGameStage"));
 import HappyHourBanner from "./HappyHourBanner";
 import WishlistSection from "./WishlistSection";
 import { BLOCKED_FAN_MESSAGE } from "./blockedFan";
@@ -68,8 +75,11 @@ import { useSpinRecovery } from "./useSpinRecovery";
 import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
 import { readCommittedGame, readGameCard, currentGameCard, readCardSource, readPassGameKind, type CommittedGameView } from "./gameOutcome";
 import type { BingoState } from "@/lib/games/bingo/engine";
-import FanGameStage from "./FanGameStage";
-import BonusWins from "./BonusWins";
+import OpenInBrowser from "./OpenInBrowser";
+import { currentInAppBrowser } from "./inAppBrowser";
+
+const noSubscribe = () => () => {};
+const recoveryPrimary = "btn-brand min-h-12 w-full rounded-2xl px-4 py-3 font-extrabold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -122,6 +132,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const recoveredWin = useRef(false);
   const [recoveredPresentation, setRecoveredPresentation] = useState(false);
   const awardedAt = useRef<string | null>(null);
+  // FD-12: when this win was recorded, for the "screenshot to claim" card.
+  const [wonAt, setWonAt] = useState<string | null>(null);
   const [rewardHistoryNonce, setRewardHistoryNonce] = useState(0);
   const [busy, setBusy] = useState(false);
   // RM-1: the reveal runs as a small state machine (revealTiers.ts). It only
@@ -262,6 +274,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const onCommitted = useCallback((data: SpinResult, options: { present: boolean; recovered: boolean }) => {
     const game = readCommittedGame(data, passGameKind ?? "wheel");
     if (!game) throw new Error("Unconfirmed game outcome");
+    if (options.present) void loadWinCard().catch(() => {});
     focusRevision.current++;
     const baseline = tapPoolHash.current !== null ? tapPoolHash.current : shownPoolHash.current;
     tapPoolHash.current = null;
@@ -285,6 +298,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     recoveredWin.current = options.recovered;
     setRecoveredPresentation(options.recovered);
     awardedAt.current = typeof data.awardedAt === "string" && Number.isFinite(Date.parse(data.awardedAt)) ? data.awardedAt : null;
+    setWonAt(awardedAt.current ?? new Date().toISOString());
     if (options.recovered) router.refresh();
     setChaseComplete(!options.recovered && data.chaseCompleted === true);
     setNearMiss(null); setPity(null); setBeatRow(false);
@@ -312,7 +326,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     tapPoolHash.current = null;
     const info = spinErrorInfo(code);
     if (info.reopenAgeGate) setNeedsAck(true);
-    if (info.refreshPlay) router.refresh();
+    if (info.refreshPlay || code === "blocked") router.refresh();
     setBusy(false);
   }, [router]);
   const recovery = useSpinRecovery({ token: pass.token, canRetry: !paused && !onBreak && !needsAck && canPresentGame,
@@ -325,6 +339,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const runSpin = useCallback(async () => {
     if (!canSpin || recovery.locked || !canPresentGame) return;
     if (!muted) { unlockAudio(); haptic(12); }
+    void loadWinCard().catch(() => {});
     setError(null);
     setWonReward(null);
     setStage(null);
@@ -472,6 +487,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     if (button && !button.disabled) { button.focus(); refocusPlay.current = false; }
   }, []);
   useEffect(() => { tryRefocusPlay(); }, [playDisabled, tryRefocusPlay]);
+  // FD-13: while a spin is unresolved the recovery action replaces the play button.
+  const recoveryFirst = recovery.phase === "pending" || recovery.phase === "storage";
+  const storageInApp = recovery.phase === "storage" ? currentInAppBrowser() : null;
   const stagePresentation = gameOutcome?.presentation ?? stage?.presentation ?? null;
   const stageKey = receiptKey ?? (gameOutcome ? null : stage?.key ?? null);
   const theaterOn = activeGameKind === "wheel" && theaterVisible(rv);
@@ -482,13 +500,13 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
   return (
     <div data-testid="fan-game" data-game-kind={activeGameKind ?? "unknown"} className="flex w-full max-w-md flex-col items-center gap-7">
-      <header className="reveal text-center" style={{ animationDelay: "0.05s" }}>
+      <header className="reveal w-full min-w-0 text-center" style={{ animationDelay: "0.05s" }}>
         {pass.fanName && (
-          <p className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted">
+          <p className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted break-words [overflow-wrap:anywhere]">
             {pass.creatorTitle} · for {pass.fanName}
           </p>
         )}
-        <h1 style={{ fontFamily: "var(--theme-display, var(--font-display))" }} className="font-[family-name:var(--font-display)] text-[2.1rem] font-extrabold leading-[1.05] tracking-tight text-ink text-balance">
+        <h1 style={{ fontFamily: "var(--theme-display, var(--font-display))" }} className="font-[family-name:var(--font-display)] text-[2.1rem] font-extrabold leading-[1.05] tracking-tight text-ink text-balance break-words [overflow-wrap:anywhere]">
           {pass.wheel.title}
         </h1>
         {pass.wheel.subtitle && (
@@ -599,7 +617,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           data-fab-avoid
           onClick={handleSpin}
           disabled={playDisabled}
-          className="btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+          className={`btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]${recoveryFirst ? " hidden" : ""}`}
         >
           {activeGameKind === "wheel" ? spinLabel : spinLabel === "SPIN" ? "PLAY" : spinLabel === "Spinning…" ? activeGameKind === "scratch" && gameOutcome?.presentation ? "Reveal your ticket" : "Playing…" : spinLabel}
         </button>
@@ -621,14 +639,22 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           </p>
         )}
         {recovery.message && <p role="status" data-testid="spin-recovery-status" className="text-center text-sm text-muted">{recovery.message}</p>}
-        {recovery.phase === "pending" && <div className="flex w-full flex-wrap justify-center gap-3" data-testid="spin-recovery-controls">
-          <button type="button" onClick={() => void recovery.check()} data-testid="spin-recovery-check"
-            className="min-h-11 rounded-xl border border-line px-4 py-2 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-text)]">Check this spin</button>
-          <button type="button" onClick={() => void recovery.retry()} disabled={paused || onBreak || needsAck}
-            data-testid="spin-recovery-retry" className="min-h-11 rounded-xl border border-line px-4 py-2 font-semibold text-ink disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-text)]">Retry this same spin</button>
+        {/* FD-13: one action at a time. Until the server has answered, the
+            fan checks the spin; once it says it never saw the request, the
+            same request is sent again (it can only count once). */}
+        {recovery.phase === "pending" && <div className="flex w-full flex-col items-center gap-2" data-testid="spin-recovery-controls">
+          {recovery.absent
+            ? <button type="button" onClick={() => void recovery.retry()} disabled={paused || onBreak || needsAck}
+                data-testid="spin-recovery-retry" className={recoveryPrimary}>Try this spin again</button>
+            : <button type="button" onClick={() => void recovery.check()} data-testid="spin-recovery-check"
+                className={recoveryPrimary}>Check this spin</button>}
         </div>}
-        {recovery.phase === "storage" && <button type="button" onClick={() => void recovery.initialize()}
-          data-testid="spin-storage-check" className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink">Check browser storage</button>}
+        {recovery.phase === "storage" && (storageInApp ? <>
+          <OpenInBrowser inApp={storageInApp} />
+          <button type="button" onClick={() => void recovery.initialize()} data-testid="spin-storage-check"
+            className="min-h-11 rounded-xl px-4 py-2 text-sm font-semibold text-muted underline underline-offset-4">Check again</button>
+        </> : <button type="button" onClick={() => void recovery.initialize()}
+          data-testid="spin-storage-check" className={recoveryPrimary}>Check browser storage</button>)}
         {nextSpinHash && (
           <p
             className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 text-center text-[10px] tracking-wide text-muted"
@@ -725,6 +751,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           tier={rv.tier}
           shareId={wonShareId}
           instant={wonInstant}
+          claim={{ fanName: pass.fanName ?? null, at: wonAt }}
           extra={<>
             {wonScarcity && <p data-testid="win-last-of" className="mt-2 text-sm font-bold text-ink">{wonScarcity}</p>}
             {oddsChanged && (
@@ -821,14 +848,17 @@ function AgeGate({
   const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ready = adult && terms && !busy;
+  // FD-8: server-rendered checkboxes would accept ticks that hydration then
+  // wipes, so they stay disabled (and say so) until the page can respond.
+  const hydrated = useSyncExternalStore(noSubscribe, () => true, () => false);
+  const ready = adult && terms && !busy && hydrated;
   const firstRef = useRef<HTMLInputElement>(null);
 
   // A11y: this gate is blocking, so move focus into it on open and trap Tab so
   // keyboard users can't step *past* it onto the page behind (which would let
   // them bypass age verification). Intentionally non-dismissable: no
   // Escape-to-close, so the gate can't be bypassed.
-  const dialogRef = useFocusTrap<HTMLDivElement>({ active: true, initialFocus: firstRef });
+  const dialogRef = useFocusTrap<HTMLDivElement>({ active: hydrated, initialFocus: firstRef });
 
   const confirm = async () => {
     if (!ready) return;
@@ -858,13 +888,15 @@ function AgeGate({
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex overflow-y-auto overscroll-contain bg-black/85 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby="agegate-title"
       style={{ animation: "ff-fade 0.2s ease-out" }}
     >
-      <div className="card relative w-full max-w-sm rounded-[1.75rem] p-8">
+      {/* m-auto centres the card when it fits and lets it scroll from the top
+          when it doesn't (large text, landscape), as RewardReveal does. */}
+      <div className="card relative m-auto w-full max-w-sm rounded-[1.75rem] p-6 [overflow-wrap:anywhere] sm:p-8" aria-busy={!hydrated}>
         <div className="text-center">
           <div className="text-4xl">🔞</div>
           <h2
@@ -885,6 +917,7 @@ function AgeGate({
               ref={firstRef}
               type="checkbox"
               checked={adult}
+              disabled={!hydrated}
               onChange={(e) => setAdult(e.target.checked)}
               className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
             />
@@ -894,6 +927,7 @@ function AgeGate({
             <input
               type="checkbox"
               checked={terms}
+              disabled={!hydrated}
               onChange={(e) => setTerms(e.target.checked)}
               className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
             />
@@ -911,6 +945,12 @@ function AgeGate({
           </label>
         </div>
 
+        {!hydrated && (
+          <p data-testid="agegate-loading" className="mt-4 text-center text-xs text-muted">
+            Loading… one moment.
+          </p>
+        )}
+        <NoScriptNote />
         {error && (
           <p role="alert" className="mt-4 text-center text-sm text-amber-300">
             {error}
@@ -918,6 +958,7 @@ function AgeGate({
         )}
 
         <button
+          data-testid="agegate-enter"
           onClick={confirm}
           disabled={!ready}
           className="btn-brand mt-6 w-full rounded-2xl py-3.5 font-extrabold tracking-wide disabled:opacity-40"
@@ -929,5 +970,16 @@ function AgeGate({
         @keyframes ff-fade { from { opacity: 0 } to { opacity: 1 } }
       `}</style>
     </div>
+  );
+}
+
+/** FD-15: with JavaScript off nothing here can respond, so say so. */
+export function NoScriptNote() {
+  return (
+    <noscript>
+      <p className="mt-4 rounded-xl border border-line p-3 text-center text-sm text-ink">
+        This game needs JavaScript. Turn it on in your browser settings, or open this link in Safari or Chrome.
+      </p>
+    </noscript>
   );
 }

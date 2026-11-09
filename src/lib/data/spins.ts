@@ -29,6 +29,7 @@ import { readFanGlow } from "./checkins";
 import { fanNeedsAck } from "@/lib/legal";
 import { notifyCreator } from "@/lib/push/notify";
 import { publicCreatorTitle } from "@/lib/publicCreator";
+import { creatorCanHostPlay } from "./creatorPlayable";
 
 // ---------------------------------------------------------------------------
 // Public API. Transparently uses the in-memory mock store when Supabase isn't
@@ -53,7 +54,7 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
 
   const sb = createServiceClient();
   const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in, blocked_at)`;
-  const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url)`;
+  const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url, is_active, approval_status, role)`;
   // The per-pass balance (0020) and the commit-reveal hash (0022) are part
   // of every deployed schema: a failing select is a transient fault, never a
   // missing column. Surfacing it (the error boundary offers a retry) beats
@@ -94,10 +95,17 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
       leaderboard_enabled: boolean | null;
       creator_note: string | null;
       avatar_url: string | null;
+      is_active?: boolean | null;
+      approval_status?: string | null;
+      role?: string | null;
     } | null;
   } | null;
 
   if (!pass || !pass.fan) return null;
+  // FD-3: a suspended, deactivated or unapproved creator's links are not
+  // playable (prepare_spin_attempt answers `unavailable` for them), so the
+  // page is the "link not active" one: no wheel, balance or tip link.
+  if (!creatorCanHostPlay(pass.creator)) return null;
 
   // A41: everything below depends only on the pass, so the reads run
   // together instead of one after another (this is every fan page load).

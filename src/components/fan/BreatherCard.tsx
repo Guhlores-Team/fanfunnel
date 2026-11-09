@@ -38,14 +38,16 @@ export default function BreatherCard({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center">
+    // FD-2: the card scrolls inside the screen when it is taller (large text,
+    // landscape) instead of being clipped; mt-auto keeps it a bottom sheet.
+    <div className="fixed inset-0 z-50 flex overflow-y-auto overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid="breather-card"
-        className="card lift-in w-full max-w-sm rounded-[1.5rem] p-6"
+        className="card lift-in mx-auto mt-auto w-full max-w-sm rounded-[1.5rem] p-6 sm:mb-auto"
       >
         <h2 id={titleId} className="font-[family-name:var(--font-display)] text-lg font-extrabold text-ink text-balance">
           {breatherTitle(today)} <span aria-hidden="true">💖</span>
@@ -55,7 +57,7 @@ export default function BreatherCard({
           {picking ? (
             <BreakPicker token={token} onTaken={onBreakTaken} onCancel={() => step(false)} />
           ) : (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button type="button" onClick={onKeepPlaying} className={equalBtn}>
                 Keep playing
               </button>

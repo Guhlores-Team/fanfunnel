@@ -8,6 +8,7 @@ import { OddsUsed } from "./OddsUsed";
 import { GameProof, gameOddsReplay } from "./GameProof";
 import { replayGameV3 } from "@/lib/games/core/replay";
 import { V3_FORMULA } from "./oddsCopy";
+import LocalTime from "./LocalTime";
 
 export const dynamic = "force-dynamic";
 
@@ -113,7 +114,7 @@ export default async function VerifyPage({
     >
       <div className="relative z-[1] w-full max-w-md">
         <div
-          className="card rounded-[1.75rem] p-8"
+          className="card rounded-[1.75rem] p-5 min-[360px]:p-8"
           style={{
             borderColor: `color-mix(in oklab, ${color} 45%, transparent)`,
           }}
@@ -133,7 +134,7 @@ export default async function VerifyPage({
               {v.prizeLabel}
             </h1>
             <p className="mt-1 text-xs text-muted">
-              {new Date(v.at).toLocaleString()}
+              <LocalTime iso={v.at} />
             </p>
           </div>
 
@@ -210,7 +211,7 @@ export default async function VerifyPage({
               seed, so neither side can dictate the outcome alone. When the spin
               runs, the exact odds are recorded and fingerprinted, and the result
               is drawn from{" "}
-              <code className="font-mono text-[10px] text-ink">{V3_FORMULA}</code>
+              <code className="font-mono text-[10px] text-ink break-all">{V3_FORMULA}</code>
               , where <code className="font-mono text-[10px] text-ink">poolHash</code>{" "}
               is the odds fingerprint. This page re-hashes the seed and the odds,
               rebuilds every random number and replays the draw; it passes only
@@ -225,7 +226,7 @@ export default async function VerifyPage({
             its SHA-256 hash on your spin page. Your browser contributes its own
             seed, so neither side can dictate the outcome alone. The result is
             drawn from{" "}
-            <code className="font-mono text-[10px] text-ink">
+            <code className="font-mono text-[10px] text-ink break-all">
               SHA-256(serverSeed:clientSeed:nonce:block)
             </code>
             . After the spin the seed is revealed; when re-hashing it reproduces

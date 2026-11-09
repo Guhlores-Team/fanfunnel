@@ -432,7 +432,7 @@ export default function ChatPanel({
                   }}
                   maxLength={2000}
                   placeholder="Message…"
-                  className="flex-1 rounded-full border border-line bg-base px-4 py-2 text-sm text-ink outline-none focus:border-[var(--brand)]"
+                  className="min-w-0 flex-1 rounded-full border border-line bg-base px-4 py-2 text-base text-ink outline-none focus:border-[var(--brand)] sm:text-sm"
                 />
                 <button
                   onClick={send}

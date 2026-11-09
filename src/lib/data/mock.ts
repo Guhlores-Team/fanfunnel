@@ -1158,11 +1158,24 @@ function wishlistFor(fanId: string): WishlistItem[] {
     .map((w) => ({ id: w.id, prizeLabel: w.prizeLabel, rarity: w.prizeRarity, at: w.at }));
 }
 
+// FD-3: the demo creator's account standing, so e2e can suspend it (debug
+// route only). Pinned to globalThis so pages and route handlers share it.
+const gCreator = globalThis as unknown as { __ffDemoCreatorActive?: boolean };
+export function mockDemoCreatorActive(): boolean {
+  return gCreator.__ffDemoCreatorActive !== false;
+}
+export function mockSetDemoCreatorActive(active: boolean): { active: boolean } {
+  gCreator.__ffDemoCreatorActive = active;
+  return { active };
+}
+
 export async function mockGetFanPass(
   token: string
 ): Promise<FanPassView | null> {
   const fan = fanForToken(token);
   if (!fan) return null;
+  // Parity with getFanPass (FD-3): a suspended creator's links don't open.
+  if (!mockDemoCreatorActive()) return null;
   // Parity with Supabase: self-exclusion deactivates the link entirely (the
   // real path filters is_active=true), so the paused page 404s, not just spins.
   if (fan.selfExcludedAt) return null;
@@ -1264,6 +1277,8 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
   requestId = requestId.toLowerCase();
   const found = passForToken(token);
   if (!found) return { error: "not_found" as const };
+  // Parity with prepare_spin_attempt `unavailable` (FD-3): no attempt opens.
+  if (!mockDemoCreatorActive()) return { error: "blocked" as const };
   // Hash inside the lock: async digests can finish out of order, and the lock
   // must be taken in call order so a simultaneous retry is the replay.
   return withMockFanLock(found.fan.id, async () => {
@@ -1291,7 +1306,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
 export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
   const found = passForToken(token);
   if (!found) return { status: "unavailable" };
-  if (found.fan.blockedAt || found.fan.selfExcludedAt) return { status: "unavailable" };
+  if (found.fan.blockedAt || found.fan.selfExcludedAt || !mockDemoCreatorActive()) return { status: "unavailable" };
   const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", normalizeClientSeed(intent.clientSeed), intent.publishedSeedHash?.toLowerCase() ?? null]));
   const attempt = mockFocusState().attempts.get(intent.requestId.toLowerCase());
   if (!attempt) return { status: "absent" };
@@ -3699,7 +3714,7 @@ export function mockSetMyPwaIconMode(mode: PwaIconMode): { ok: true } {
  *  unknown or paused link gets nothing. The demo creator has no avatar. */
 export function mockGetFanAppInfo(token: string): FanAppInfo | null {
   const fan = fanForToken(token);
-  if (!fan || fan.selfExcludedAt) return null;
+  if (!fan || fan.selfExcludedAt || !mockDemoCreatorActive()) return null;
   ensurePasses(fan);
   const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
   const wheelId = pass?.wheelId ?? mockResolveWheelId({ campaignId: campaignForFan(fan) });

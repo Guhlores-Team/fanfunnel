@@ -26,7 +26,7 @@ export default function CreatorNote({
   // The avatar's own brand ring is a box-shadow too, so the glow sits on a wrapper.
   const ring = glowClass(glowLevel);
   return (
-    <div className="reveal flex items-center gap-3 rounded-2xl border border-line bg-surface/60 px-4 py-3" style={{ animationDelay: "0.08s" }}>
+    <div className="reveal flex max-w-full items-center gap-3 rounded-2xl border border-line bg-surface/60 px-4 py-3" style={{ animationDelay: "0.08s" }}>
       <span data-testid="creator-avatar" data-glow-level={glowLevel ?? 0} className={`shrink-0 rounded-full${ring}`}>
         {avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -44,7 +44,7 @@ export default function CreatorNote({
           </span>
         )}
       </span>
-      <p className="min-w-0 text-sm text-ink text-pretty">
+      <p className="min-w-0 text-sm text-ink text-pretty [overflow-wrap:anywhere]">
         {note || `Hey${fanName ? ` ${fanName}` : ""}, spin away! — ${creatorTitle}`}
       </p>
     </div>

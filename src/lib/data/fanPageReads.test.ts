@@ -33,7 +33,7 @@ const PASS = {
   id: "pass-1", creator_id: "creator-1", campaign_id: null, wheel_id: "wheel-1", fan_id: "fan-1", is_active: true,
   spins_remaining: 3, next_server_seed_hash: null,
   fan: { id: "fan-1", display_name: "Sam", handle: null, spins_remaining: 3, spins_granted_total: 3, referral_code: "R", acked_at: "2026-01-01T00:00:00Z", acked_terms_version: LEGAL.version, leaderboard_opt_in: false, blocked_at: null },
-  creator: { display_name: "Creator", tip_url: null, leaderboard_enabled: false, creator_note: null, avatar_url: null },
+  creator: { display_name: "Creator", tip_url: null, leaderboard_enabled: false, creator_note: null, avatar_url: null, is_active: true, approval_status: "approved", role: "creator" },
 };
 const WHEEL = { id: "wheel-1", title: "W", subtitle: null, brand_color: "#ec4899", label_color: null, label_size: null, show_stock: true, is_active: true, active_from: null, active_until: null, archived_at: null, game_ready: true, game_kind: "wheel", prizes: PRIZES };
 

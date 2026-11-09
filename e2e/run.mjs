@@ -48,6 +48,7 @@ import { safetyJourney } from "./safety.mjs";
 import { accountExtrasJourney } from "./account-extras.mjs";
 import { qaB5Journey } from "./qa-b5.mjs";
 import { agencyLeaveJourney } from "./agency-leave.mjs";
+import { fanDevicesJourney } from "./fan-devices.mjs";
 
 let server = null;
 let browser = null;
@@ -97,6 +98,7 @@ try {
     await accountExtrasJourney(page, runner, ctx); // A37/A36: DM templates, referrals, autopilot, close guard, demo-only states
     await qaB5Journey(browser, runner, sink, ctx); // QA b5: scratch reveal beat, chat and age-gate focus, truthful top-up, URL sections, CSV import, start a chat
     await agencyLeaveJourney(browser, runner, sink, ctx); // b6: Leave agency (confirm, error, pending, owner negative) and the 0071 display-name refusal
+    await fanDevicesJourney(browser, runner, sink, ctx); // b6: large text/landscape gate and Safety sheet, suspended creator, no Web Locks, in-app browsers, Slow 3G gate, claim card, verify zone
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

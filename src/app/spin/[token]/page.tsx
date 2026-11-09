@@ -11,6 +11,7 @@ import { themeStyle } from "@/lib/creatorTheme/tokens";
 import { themeFontFamily } from "@/lib/creatorTheme/fonts";
 import ThemeBackdrop from "@/components/theme/ThemeBackdrop";
 import PhotoGallery from "@/components/theme/PhotoGallery";
+import { NoScriptNote } from "@/components/fan/FanGameController";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
 export const dynamic = "force-dynamic";
@@ -78,6 +79,7 @@ export default async function SpinPage({
       data-theme-background={look.theme.background}
     >
       <ThemeBackdrop bgUrl={look.bgUrl} heavyGrain={plan.grains.length > 1} />
+      <div className="relative z-40 w-full max-w-md"><NoScriptNote /></div>
       <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null}>
         {/* z-40: the fan UI (and every fixed overlay inside it: reward reveal,
             saved-reward and break dialogs) paints above the backdrop and above

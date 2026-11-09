@@ -17,6 +17,7 @@ import {
 } from "@/lib/pwa/manifest";
 import { mockGetFanAppInfo, mockGetMyPwaIconMode, mockSetMyPwaIconMode } from "./mock";
 import { resolveWheelId } from "./wheels";
+import { creatorCanHostPlay } from "./creatorPlayable";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 
 type PassRow = {
@@ -29,6 +30,9 @@ type PassRow = {
     display_name: string | null;
     avatar_url: string | null;
     pwa_icon_mode?: string | null;
+    is_active?: boolean | null;
+    approval_status?: string | null;
+    role?: string | null;
   } | null;
 };
 
@@ -49,11 +53,13 @@ export async function getFanAppInfo(token: string): Promise<FanAppInfo | null> {
       .eq("token", token)
       .eq("is_active", true)
       .maybeSingle();
-  let res = await select("display_name, avatar_url, pwa_icon_mode");
+  let res = await select("display_name, avatar_url, pwa_icon_mode, is_active, approval_status, role");
   // A database without 0046 yet: serve the neutral default rather than 404.
-  if (res.error) res = await select("display_name, avatar_url");
+  if (res.error) res = await select("display_name, avatar_url, is_active, approval_status, role");
   const pass = res.data as unknown as PassRow | null;
   if (!pass || !pass.fan) return null;
+  // FD-3: the links getFanPass refuses for a creator who can't host play.
+  if (!creatorCanHostPlay(pass.creator)) return null;
 
   const wheelId = await resolveWheelId(sb, pass, new Date());
   if (!wheelId) return null;

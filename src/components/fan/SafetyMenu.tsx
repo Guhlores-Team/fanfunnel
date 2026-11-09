@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { useLinkPause } from "./LinkPauseProvider";
 import { PAUSED_CONFIRMATION, pauseErrorMessage } from "./linkPause";
-import { FAN_DELETED_CONFIRMATION, FanDeleteFlow, downloadFanData } from "./FanDataControls";
+import { FAN_DELETED_CONFIRMATION, FanDataInline, FanDeleteFlow, downloadFanData, fanDataNeedsInline, fetchFanData, type FanDataFile } from "./FanDataControls";
 import { REPORT_REASONS } from "@/lib/reports/config";
 
 /**
@@ -20,6 +20,8 @@ export default function SafetyMenu({ token }: { token: string }) {
   // page, which then explains that the data was deleted.
   const [deleted, setDeleted] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
+  // FD-7: an export shown on the page where a download can't start.
+  const [inlineData, setInlineData] = useState<FanDataFile | null>(null);
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
   const [done, setDone] = useState<string | null>(null);
@@ -43,6 +45,18 @@ export default function SafetyMenu({ token }: { token: string }) {
     setBusy(false);
     if ("error" in r) setExportNote(r.error);
     else setDone("Your data is downloading. It's a JSON file you can open in any text editor.");
+  };
+
+  // FD-7: in an app's browser a blob download silently does nothing, so the
+  // data is shown instead of claiming a download that never starts.
+  const exportOrShow = async () => {
+    if (!fanDataNeedsInline()) return exportData();
+    setBusy(true);
+    setExportNote(null);
+    const file = await fetchFanData(token);
+    setBusy(false);
+    if ("error" in file) setExportNote(file.error);
+    else setInlineData(file);
   };
 
   const report = async () => {
@@ -94,6 +108,7 @@ export default function SafetyMenu({ token }: { token: string }) {
           setDone(null);
           setPauseError(null);
           setExportNote(null);
+          setInlineData(null);
         }}
         className="text-[11px] text-muted underline-offset-4 transition hover:text-muted hover:underline"
       >
@@ -102,7 +117,7 @@ export default function SafetyMenu({ token }: { token: string }) {
 
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center"
+          className="fixed inset-0 z-50 flex overflow-y-auto overscroll-contain bg-black/70 p-4 backdrop-blur-sm"
           onClick={close}
         >
           <div
@@ -110,7 +125,7 @@ export default function SafetyMenu({ token }: { token: string }) {
             role="dialog"
             aria-modal="true"
             aria-label="Safety and privacy"
-            className="card w-full max-w-sm rounded-2xl p-6"
+            className="card mx-auto mt-auto w-full max-w-sm rounded-2xl p-6 [overflow-wrap:anywhere] sm:mb-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {done ? (
@@ -123,6 +138,8 @@ export default function SafetyMenu({ token }: { token: string }) {
                   Close
                 </button>
               </div>
+            ) : inlineData ? (
+              <FanDataInline file={inlineData} onBack={() => setInlineData(null)} />
             ) : mode === null ? (
               <>
                 <p className="text-sm font-bold text-ink">Safety &amp; privacy</p>
@@ -145,7 +162,7 @@ export default function SafetyMenu({ token }: { token: string }) {
                   </span>
                 </button>
                 <button
-                  onClick={exportData}
+                  onClick={exportOrShow}
                   disabled={busy}
                   className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)] disabled:opacity-50"
                 >
