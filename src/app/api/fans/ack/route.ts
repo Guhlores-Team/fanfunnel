@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withFanMissLimit } from "@/lib/api/fanMiss";
 import { ackFan } from "@/lib/data";
 import { clientIp } from "@/lib/api/clientIp";
 import { rateLimitOr429 } from "@/lib/api/limit";
@@ -6,15 +7,17 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 
 // A fan acknowledges the age-gate / ToS. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
-  const limited = await rateLimitOr429("ack:" + clientIp(req), 20, 60_000);
-  if (limited) return limited;
+  return withFanMissLimit(req, async () => {
+    const limited = await rateLimitOr429("ack:" + clientIp(req), 20, 60_000);
+    if (limited) return limited;
 
-  const body = await parseJsonBody<{ token?: string }>(req);
-  if (body === BAD_REQUEST) return badRequest();
-  if (typeof body.token !== "string" || !body.token) {
-    return badRequest();
-  }
-  const result = await ackFan(body.token);
-  if ("error" in result) return errorResponse(result.error);
-  return NextResponse.json(result);
+    const body = await parseJsonBody<{ token?: string }>(req);
+    if (body === BAD_REQUEST) return badRequest();
+    if (typeof body.token !== "string" || !body.token) {
+      return badRequest();
+    }
+    const result = await ackFan(body.token);
+    if ("error" in result) return errorResponse(result.error);
+    return NextResponse.json(result);
+  });
 }

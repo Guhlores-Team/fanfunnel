@@ -39,7 +39,11 @@ function lastEntry(value: string | null): string | null {
 }
 
 export function clientIp(req: Request): string {
-  const h = req.headers;
+  return clientIpFromHeaders(req.headers);
+}
+
+/** The same derivation for a server component, from `await headers()`. */
+export function clientIpFromHeaders(h: Headers): string {
   return (
     firstEntry(h.get("x-real-ip")) ??
     firstEntry(h.get("x-vercel-forwarded-for")) ??

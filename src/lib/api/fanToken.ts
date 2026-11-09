@@ -2,6 +2,7 @@ import type { NextResponse } from "next/server";
 import { clientIp } from "@/lib/api/clientIp";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
+import { withFanMissLimit } from "@/lib/api/fanMiss";
 
 /** Longest link token a fan route accepts (minted tokens are far shorter). */
 export const FAN_TOKEN_MAX = 256;
@@ -12,7 +13,8 @@ export const FAN_TOKEN_MAX = 256;
  *
  *   1. parse the JSON body (400 on a bad body or a missing / oversized token);
  *   2. rate-limit per scope, client IP and token (429);
- *   3. hand the token and body to `fn`.
+ *   3. hand the token and body to `fn`, under the per-address budget for
+ *      lookups that miss (C2, fanMiss.ts: a 404 counts, a hit never does).
  *
  * `fn` calls a data-layer function that resolves the fan behind the token on
  * the service client, server-side only, and refuses an unknown, inactive,
@@ -28,7 +30,9 @@ export async function withFanToken<B extends { token?: unknown }>(
   if (body === BAD_REQUEST || !body || typeof body !== "object") return badRequest();
   const token = body.token;
   if (typeof token !== "string" || !token || token.length > FAN_TOKEN_MAX) return badRequest();
-  const limited = await rateLimitOr429(`${opts.scope}:${clientIp(req)}:${token}`, opts.limit, opts.windowMs);
-  if (limited) return limited;
-  return fn(token, body);
+  return withFanMissLimit(req, async () => {
+    const limited = await rateLimitOr429(`${opts.scope}:${clientIp(req)}:${token}`, opts.limit, opts.windowMs);
+    if (limited) return limited;
+    return fn(token, body);
+  });
 }

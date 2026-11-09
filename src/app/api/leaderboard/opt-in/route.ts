@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withFanMissLimit } from "@/lib/api/fanMiss";
 import { setFanLeaderboardOptIn } from "@/lib/data";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -27,32 +28,34 @@ function validateHandle(
 // A fan opts in/out of the public leaderboard and (when opting in) sets their
 // board name. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
-  const body = await parseJsonBody<{ token?: unknown; optIn?: unknown; handle?: unknown }>(req);
-  // `null`, arrays and scalars parse as valid JSON but aren't a request body.
-  if (body === BAD_REQUEST || typeof body !== "object" || body === null || Array.isArray(body)) {
-    return badRequest();
-  }
-  if (typeof body.token !== "string" || !body.token) {
-    return badRequest();
-  }
-  // Only a literal boolean counts; the string "false" is truthy and must never
-  // read as consent.
-  if (typeof body.optIn !== "boolean") return badRequest();
-  const optIn = body.optIn === true;
+  return withFanMissLimit(req, async () => {
+    const body = await parseJsonBody<{ token?: unknown; optIn?: unknown; handle?: unknown }>(req);
+    // `null`, arrays and scalars parse as valid JSON but aren't a request body.
+    if (body === BAD_REQUEST || typeof body !== "object" || body === null || Array.isArray(body)) {
+      return badRequest();
+    }
+    if (typeof body.token !== "string" || !body.token) {
+      return badRequest();
+    }
+    // Only a literal boolean counts; the string "false" is truthy and must never
+    // read as consent.
+    if (typeof body.optIn !== "boolean") return badRequest();
+    const optIn = body.optIn === true;
 
-  const limited = await rateLimitOr429("lb-optin:" + body.token, 10, 60_000);
-  if (limited) return limited;
+    const limited = await rateLimitOr429("lb-optin:" + body.token, 10, 60_000);
+    if (limited) return limited;
 
-  // Opting IN requires a board name: without one the only thing the public
-  // board could show is the fan's real name, which it must never do. Opting
-  // OUT needs nothing and changes nothing else.
-  let handle: string | undefined;
-  if (optIn) {
-    const v = validateHandle(body.handle);
-    if ("error" in v) return badRequest(v.error);
-    handle = v.handle;
-  }
-  const result = await setFanLeaderboardOptIn(body.token, optIn, handle);
-  if ("error" in result) return errorResponse(result.error);
-  return NextResponse.json(result);
+    // Opting IN requires a board name: without one the only thing the public
+    // board could show is the fan's real name, which it must never do. Opting
+    // OUT needs nothing and changes nothing else.
+    let handle: string | undefined;
+    if (optIn) {
+      const v = validateHandle(body.handle);
+      if ("error" in v) return badRequest(v.error);
+      handle = v.handle;
+    }
+    const result = await setFanLeaderboardOptIn(body.token, optIn, handle);
+    if ("error" in result) return errorResponse(result.error);
+    return NextResponse.json(result);
+  });
 }
