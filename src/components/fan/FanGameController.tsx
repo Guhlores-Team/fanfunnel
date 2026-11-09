@@ -660,7 +660,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
       <PrizeBook prizes={prizes} history={history} focus={focus} odds={pass.blocked || paused ? undefined : odds} />
 
-      {engaged && pass.leaderboardEnabled && pass.creatorId && (
+      {/* T2: chat, wishlist and the board stay unmounted until the age gate is
+          confirmed; the server refuses them with needs_ack as well. */}
+      {engaged && !needsAck && pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard
           key={`board:${pass.token}:${pass.leaderboardOptIn === true}`}
           onWithdrawn={() => router.refresh()}
@@ -683,7 +685,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         <p role="note" data-testid="fan-blocked-note" className="max-w-sm text-center text-xs text-muted">
           {BLOCKED_FAN_MESSAGE}
         </p>
-      ) : (
+      ) : needsAck ? null : (
         <>
           <WishlistSection
             token={pass.token}

@@ -3192,6 +3192,7 @@ export function mockAddWishlist(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const label = prizeLabel.trim();
   if (!label) return { error: "invalid_label" };
 
@@ -3224,6 +3225,7 @@ export function mockRemoveWishlist(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const label = prizeLabel.trim();
   store.wishlists = store.wishlists.filter(
     (w) => !(w.fanId === fan.id && w.prizeLabel === label)
@@ -3379,6 +3381,7 @@ export function mockSetFanLeaderboardOptIn(
   const fan = fanForToken(token);
   if (!fan || (optIn && fan.selfExcludedAt)) return { error: "not_found" };
   if (optIn && fan.blockedAt) return { error: "blocked" }; // A4: opting out always works
+  if (optIn && fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
   fan.leaderboardOptIn = !!optIn;
   if (optIn && handle !== undefined) {
     const trimmed = handle.trim();
@@ -3463,10 +3466,11 @@ export function mockGetReferralStats(): {
 export function mockSendFanMessage(
   token: string,
   body: string
-): { ok: true } | { error: "not_found" | "blocked" | "locked" | "empty" } {
+): { ok: true } | { error: "not_found" | "blocked" | "needs_ack" | "locked" | "empty" } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   if (!chatUnlockedFor(fan)) return { error: "locked" };
   const text = body.trim();
   if (text.length < 1 || text.length > 2000) return { error: "empty" };
@@ -3482,10 +3486,11 @@ export function mockSendFanMessage(
 }
 
 /** A fan's full thread (oldest first); marks creator→fan messages read. */
-export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blocked" } {
+export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blocked" | "needs_ack" } {
   const fan = fanForToken(token);
   if (!fan) return [];
   if (fan.blockedAt) return { error: "blocked" }; // I7: parity with getFanMessages
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
   const now = new Date().toISOString();
   const rows = store.messages
     .filter((m) => m.fanId === fan.id)
@@ -3604,6 +3609,7 @@ export function mockEnsureChatIntro(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const intro = (store.chatIntro ?? "").trim();
   if (!intro) return { ok: true };
   const hasAny = store.messages.some((m) => m.fanId === fan.id);
@@ -3630,6 +3636,7 @@ export function mockSendChatOutro(
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
+  if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const outro = (store.chatOutro ?? "").trim();
   if (!outro) return { ok: true };
   const mine = store.messages

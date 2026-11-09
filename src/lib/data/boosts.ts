@@ -278,6 +278,7 @@ export async function addWishlist(
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
   if (resolved.blocked) return { error: "blocked" };
+  if (resolved.needsAck) return { error: "needs_ack" };
 
   // The label must exist on the fan's resolved wheel; snapshot its rarity.
   const { data: prize } = await sb
@@ -314,6 +315,7 @@ export async function removeWishlist(
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
   if (resolved.blocked) return { error: "blocked" };
+  if (resolved.needsAck) return { error: "needs_ack" };
 
   const { error } = await sb
     .from("wishlists")
@@ -400,6 +402,7 @@ export async function setFanLeaderboardOptIn(
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
   if (resolved.blocked) return { error: "blocked" };
+  if (resolved.needsAck) return { error: "needs_ack" };
 
   const upd: Record<string, unknown> = { leaderboard_opt_in: optIn };
   if (handle !== undefined) upd.handle = handle;

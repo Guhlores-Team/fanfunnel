@@ -26,7 +26,7 @@ import { fanVisitsLast7, visitsByFan } from "./checkins";
 import { contactToken, fanEngagementAllowed } from "@/lib/engagement";
 import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
 import { listRecentOutreach } from "./outreach";
-import { LEGAL } from "@/lib/legal";
+import { LEGAL, fanNeedsAck } from "@/lib/legal";
 
 /** Service-only atomic economic writes. A transport retry reuses the same
  * request payload; it never subtracts credits after an ambiguous response. */
@@ -735,10 +735,11 @@ export async function resolveFanByToken(
   campaignId: string | null;
   wheelId: string;
   blocked: boolean;
+  needsAck: boolean;
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select("creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, fan:fans(blocked_at)")
+    .select("creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, fan:fans(blocked_at, acked_at, acked_terms_version)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -748,7 +749,7 @@ export async function resolveFanByToken(
     wheel_id: string;
     pinned_wheel_id?: string | null;
     fan_id: string;
-    fan?: { blocked_at: string | null } | null;
+    fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null;
   } | null;
   if (!pass) return null;
   const wheelId = await resolveWheelId(sb, pass, new Date());
@@ -759,5 +760,8 @@ export async function resolveFanByToken(
     campaignId: pass.campaign_id,
     wheelId,
     blocked: !!pass.fan?.blocked_at,
+    // T2: the same age/terms check the spin uses; callers that let a fan reach
+    // the creator refuse with needs_ack until it is confirmed.
+    needsAck: fanNeedsAck(pass.fan?.acked_at, pass.fan?.acked_terms_version),
   };
 }
