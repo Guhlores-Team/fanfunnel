@@ -206,7 +206,7 @@ export function probeLedgerGuards(db, psql) {
   const l1 = (tag, aal) => as("E", `select '${tag}:' || (select count(*) from public.spins where creator_id = '${uid("E")}') || ',' || (select count(*) from public.creator_request_journal where actor_id = '${uid("E")}') || ',' || (select count(*) from public.actor_request_cancellations where actor_id = '${uid("E")}') || ',' || (select count(*) from public.creator_applications where profile_id = '${uid("E")}');`, aal);
   expect("L1 an enrolled creator reads its own spins, journal, cancellations and application at aal2 only", `
     ${l1("l1-aal1", "aal1")} ${l1("l1-aal2", "aal2")}
-    select 'l1-storage:' || count(*) from pg_policies where schemaname = 'public' and policyname in ('creator_storage_deletions_read', 'creator_storage_dispatches_read', 'creator_storage_objects_read') and qual ~ '\\(owner_id = auth\\.uid\\(\\)\\) AND can_act_for\\(auth\\.uid\\(\\), ''view''';`,
+    select 'l1-storage:' || count(*) from pg_policies where schemaname = 'public' and policyname in ('creator_storage_deletions_read', 'creator_storage_dispatches_read', 'creator_storage_objects_read') and qual ~ '\\(owner_id = (auth\\.uid\\(\\)|\\( SELECT auth\\.uid\\(\\) AS uid\\))\\) AND can_act_for\\((auth\\.uid\\(\\)|\\( SELECT auth\\.uid\\(\\) AS uid\\)), ''view''';`,
     ["l1-aal1:0,0,0,0", "l1-aal2:1,1,1,1", "l1-storage:3"]);
 
   // --- (h) L2: profile fields -------------------------------------------------

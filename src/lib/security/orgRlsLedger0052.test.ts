@@ -107,8 +107,10 @@ for (const [name, sql] of sources) {
     check(`${name}: ${helper} requires the caller's profile to be active`, /join public\.profiles p on p\.id = [a-z]\.(owner_id|profile_id)[\s\S]*and p\.is_active/.test(fn!));
     check(`${name}: ${helper} is SECURITY DEFINER with a pinned search_path`, /security definer set search_path = public/.test(fn!));
     check(`${name}: ${helper} keys off auth.uid()`, /auth\.uid\(\)/.test(fn!));
-    // RLS helpers stay callable by anon, or anon reads of these tables error.
-    check(`${name}: ${helper} is not revoked`, !new RegExp(`revoke execute on function public\\.${helper}\\b`).test(sql));
+    // Policies run as the querying role, so a signed-in session must keep
+    // EXECUTE. anon lost it in 0072 (anon holds no table privilege since 0068,
+    // so it never evaluates these policies).
+    check(`${name}: ${helper} is never revoked from authenticated`, !new RegExp(`revoke execute on function public\\.${helper}\\b[^;]*\\bauthenticated\\b`).test(sql));
   }
 
   const caf = lastFn(sql, "can_act_for");

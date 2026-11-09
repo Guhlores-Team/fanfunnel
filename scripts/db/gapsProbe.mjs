@@ -111,10 +111,16 @@ export function probeGaps(db, psql) {
     ${as(A, "aal2", `with u as (update public.creator_reports set ${reviewSet} returning 1) select 'creator-updates:' || count(*) from u;`)}
     ${as(ADM, "aal1", `select 'aal1-reads:' || count(*) from public.creator_reports;`)}
     ${as(ADM, "aal1", `with u as (update public.creator_reports set ${reviewSet} returning 1) select 'aal1-updates:' || count(*) from u;`)}
-    ${asAnon(`select 'anon-reads:' || count(*) from public.creator_reports;`)}
     select 'still-open:' || status from public.creator_reports where id = '${REP}';`), [
-    "creator-reads:0", "creator-updates:0", "aal1-reads:0", "aal1-updates:0", "anon-reads:0", "still-open:open",
+    "creator-reads:0", "creator-updates:0", "aal1-reads:0", "aal1-updates:0", "still-open:open",
   ]);
+  // Even with the table granted to anon (this fixture's defence-in-depth
+  // grant), anon reads no report: since 0072 the policy's is_admin() is not
+  // executable by anon, so the read is refused outright instead of empty.
+  const anonReports = run(asAnon(`select 'anon-reads:' || count(*) from public.creator_reports;`));
+  if (!out(anonReports).includes("anon-reads:0") && !/permission denied for (function is_admin|table creator_reports)\b/.test(anonReports.stderr || "")) {
+    bad.push(`anon read creator_reports (${err(anonReports)}; out ${out(anonReports).join(" ")})`);
+  }
 
   expect("an aal2 admin's review is stamped by the database and the report stays immutable", run(`
     ${as(ADM, "aal2", `with u as (update public.creator_reports set ${reviewSet} returning 1) select 'admin-updates:' || count(*) from u;`)}

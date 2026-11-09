@@ -593,15 +593,22 @@ function probeCheckins(db) {
   const reads = run(`
     ${ckAs(CK_A, "select 'a-sees:' || count(*) from public.fan_checkins;")}
     ${ckAs(CK_A, "select 'a-sees-b:' || count(*) from public.fan_checkins where creator_id = '" + CK_B + "';")}
-    ${ckAs(null, "select 'anon-sees:' || count(*) from public.fan_checkins;")}
     ${ckAs(CK_A, "update public.fan_checkins set day = day - 30 where creator_id = '" + CK_B + "';")}
     ${ckAs(CK_A, "delete from public.fan_checkins where creator_id = '" + CK_B + "';")}
     select 'b-rows:' || count(*) from public.fan_checkins where creator_id = '${CK_B}' and day >= current_date - 1;
     update public.profiles set is_active = false where id = '${CK_A}';
     ${ckAs(CK_A, "select 'suspended-a-sees-b:' || count(*) from public.fan_checkins where creator_id = '" + CK_B + "';")}`);
   const out = (reads.stdout || "").split("\n").map((l) => l.trim());
-  for (const want of ["a-sees:1", "a-sees-b:0", "anon-sees:0", "b-rows:2", "suspended-a-sees-b:0"]) {
+  for (const want of ["a-sees:1", "a-sees-b:0", "b-rows:2", "suspended-a-sees-b:0"]) {
     if (!out.includes(want)) bad.push(`expected ${want} (got ${out.filter((l) => /:/.test(l)).join(" ") || "nothing"}; ${(reads.stderr || "").trim().split("\n")[0]})`);
+  }
+  // Even with the table granted to anon (the seed's defence-in-depth grant),
+  // anon sees no check-in: since 0072 the policy's helpers are not executable
+  // by anon, so the read is refused outright instead of returning 0 rows.
+  const anonRead = run(ckAs(null, "select 'anon-sees:' || count(*) from public.fan_checkins;"));
+  if (!(anonRead.stdout || "").split("\n").map((l) => l.trim()).includes("anon-sees:0") &&
+      !/permission denied for (function (current_user_active|can_act_for|is_admin)|table fan_checkins)\b/.test(anonRead.stderr || "")) {
+    bad.push(`anon read fan_checkins (${(anonRead.stderr || anonRead.stdout || "").trim().split("\n")[0]})`);
   }
   for (const [who, uid] of [["creator A", CK_A], ["anon", null]]) {
     const ins = run(ckAs(uid, `insert into public.fan_checkins (fan_id, creator_id, day) values ('${CK_FAN_A}', '${CK_A}', current_date + 1);`));
