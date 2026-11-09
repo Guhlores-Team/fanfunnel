@@ -207,7 +207,18 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       assert((await row.innerText()).includes(name), "the new row is marked");
       fanId = (await row.getAttribute("id"))?.replace("fan-row-", "") ?? null;
       // The row scrolls itself into view with a smooth scroll (reduced motion: instant); wait for it to arrive.
-      await page.waitForFunction((el) => { const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }, await row.elementHandle(), { timeout: 5000 });
+      try {
+        await page.waitForFunction((el) => { const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }, await row.elementHandle(), { timeout: 5000 });
+      } catch (e) {
+        const diag = await row.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          const scrollers = [];
+          for (let sc = el.parentElement; sc; sc = sc.parentElement) { const cs = getComputedStyle(sc); if (/(auto|scroll)/.test(cs.overflowY)) scrollers.push(`${sc.tagName}.${String(sc.className).slice(0, 50)} top=${sc.scrollTop}/${sc.scrollHeight} h=${sc.clientHeight}`); }
+          return { top: Math.round(r.top), bottom: Math.round(r.bottom), innerH: innerHeight, scrollY, docH: document.documentElement.scrollHeight, idx: Array.from(el.parentElement.children).indexOf(el), n: el.parentElement.children.length, scrollers, ls: Object.keys(localStorage), reduced: matchMedia("(prefers-reduced-motion: reduce)").matches, active: document.activeElement?.tagName + "#" + (document.activeElement?.id || document.activeElement?.getAttribute("aria-label") || "") };
+        }).catch((err) => ({ evalError: String(err) }));
+        await page.screenshot({ path: "e2e/artifacts/dbg-mint.png", fullPage: false }).catch(() => {});
+        throw new Error(`row not in view: ${JSON.stringify(diag)} :: ${e.message.split("\n")[0]}`);
+      }
       assert(await row.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }), "the new row is in view");
     } finally {
       await page.close().catch(() => {});
