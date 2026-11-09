@@ -660,9 +660,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
       <PrizeBook prizes={prizes} history={history} focus={focus} odds={pass.blocked || paused ? undefined : odds} />
 
-      {/* T2: chat, wishlist and the board stay unmounted until the age gate is
-          confirmed; the server refuses them with needs_ack as well. */}
-      {engaged && !needsAck && pass.leaderboardEnabled && pass.creatorId && (
+      {/* The public board is shown behind the gate; joining it (like chat and
+          the wishlist below) is refused with needs_ack until the gate is confirmed (T2). */}
+      {engaged && pass.leaderboardEnabled && pass.creatorId && (
         <FanLeaderboard
           key={`board:${pass.token}:${pass.leaderboardOptIn === true}`}
           onWithdrawn={() => router.refresh()}
