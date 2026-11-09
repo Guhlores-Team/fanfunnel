@@ -1,4 +1,6 @@
 import { notFound } from "next/navigation";
+import LegalLinks from "@/components/LegalLinks";
+import { formatChance } from "@/lib/games/wheel/publicOdds";
 import type { Metadata } from "next";
 import { getPublicProfileBySlug } from "@/lib/data";
 import { themeStyle } from "@/lib/creatorTheme/tokens";
@@ -144,6 +146,22 @@ export default async function PublicProfilePage({
         <p className="mt-3 text-xs text-muted">
           {copy.everyPlayWins}
         </p>
+        {profile.odds.length > 0 && (
+          <details className="mx-auto mt-2 max-w-sm text-left text-xs text-muted" data-testid="public-odds">
+            <summary className="mx-auto w-fit min-h-6 cursor-pointer text-center underline underline-offset-4 hover:text-ink">
+              See the odds
+            </summary>
+            <ul className="mt-2 space-y-1">
+              {profile.odds.map((row, i) => (
+                <li key={`${row.label}-${i}`} className="flex justify-between gap-3">
+                  <span className="min-w-0 break-words text-ink">{row.label}</span>
+                  <span className="tnum shrink-0">{formatChance(row.chance)}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2">Base odds for a new play. Your page shows your exact odds before each spin.</p>
+          </details>
+        )}
         {look.media.length > 0 && (
           <div className="mt-8">
             <PhotoGallery media={look.media} creatorTitle={profile.creatorTitle} />
@@ -154,6 +172,7 @@ export default async function PublicProfilePage({
       <footer className="relative z-[1] mt-10 text-[11px] tracking-wide text-muted">
         Powered by FanFunnel
       </footer>
+      <LegalLinks className="relative z-[1] mt-2" />
     </main>
   );
 }

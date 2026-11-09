@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import LegalLinks from "@/components/LegalLinks";
 import type { Metadata } from "next";
 import { getShareCard } from "@/lib/data";
 import { brandVars, readableInk } from "@/lib/theme";
@@ -92,6 +93,7 @@ export default async function SharePage({
       <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
         {copy.shareFooter}
       </footer>
+      <LegalLinks className="relative z-[1] mt-2" />
     </main>
   );
 }

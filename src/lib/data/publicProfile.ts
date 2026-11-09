@@ -1,5 +1,6 @@
 // Data layer — public, unauthenticated reads: the wheel teaser and the
 // link-in-bio profile (plus the creator's editor for it).
+import { publicBaseOdds, type PublicOddsRow } from "@/lib/games/wheel/publicOdds";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { externalUrl } from "@/lib/format";
 import type { PublicPrize, PublicWheelConfig } from "@/lib/games/wheel/types";
@@ -65,6 +66,8 @@ export interface PublicProfile {
   // SFW prize teaser: labels + rarities only (no explicit media), best first.
   // RM-2: plus the fan-safe stock (exact count only when the wheel shows it).
   prizes: TeaserPrize[];
+  /** T12: every prize by name with its base odds (empty for bingo, which plays a card). */
+  odds: PublicOddsRow[];
   hasTipUrl: boolean;
   /** The live game's kind, so the page never calls a scratch or bingo game a wheel. */
   gameKind: GameKind;
@@ -104,6 +107,7 @@ export async function getPublicProfileBySlug(
         brandColor: "#ec4899",
         avatarUrl: saved.avatarUrl || null,
         prizes: teaserPrizes(live?.prizes ?? []),
+        odds: publicGameKind(live?.gameKind) === "bingo" ? [] : publicBaseOdds(live?.prizes ?? []),
         hasTipUrl: true,
         gameKind: publicGameKind(live?.gameKind),
         look: await getCreatorThemeView(null),
@@ -124,6 +128,7 @@ export async function getPublicProfileBySlug(
   const wheelId = await resolveActiveWheelId(sb, p.id, new Date());
   let brandColor = "#ec4899";
   let prizes: TeaserPrize[] = [];
+  let odds: PublicOddsRow[] = [];
   let gameKind: GameKind = "wheel";
   if (wheelId) {
     const { data: wheelData } = await sb
@@ -134,8 +139,10 @@ export async function getPublicProfileBySlug(
     if (wheelData) {
       const cfg = toWheelConfig(wheelData as unknown as DbWheelRow);
       brandColor = cfg.brandColor ?? "#ec4899";
-      prizes = teaserPrizes(toPublicWheel(cfg).prizes);
+      const fanSafe = toPublicWheel(cfg).prizes;
+      prizes = teaserPrizes(fanSafe);
       gameKind = publicGameKind(cfg.gameKind);
+      odds = gameKind === "bingo" ? [] : publicBaseOdds(fanSafe);
     }
   }
 
@@ -146,6 +153,7 @@ export async function getPublicProfileBySlug(
       brandColor,
       avatarUrl: p.avatar_url,
       prizes,
+      odds,
       hasTipUrl: !!p.tip_url,
       gameKind,
       look: await getCreatorThemeView(p.id),

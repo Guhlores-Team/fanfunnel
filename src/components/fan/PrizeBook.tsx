@@ -9,7 +9,8 @@ import { hasStockToShow, stockLabel } from "./stockDisplay";
 import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
 
 /**
- * The fan's "prize book": every prize on the wheel, marked won / not-yet, with
+ * The fan's "prize book": every prize on the wheel by name, with its odds,
+ * marked won / not won yet, with
  * honest stock counts on limited prizes. Collection psychology — "gotta get them
  * all" — without any fake scarcity. Collapsed by default to keep the wheel hero.
  * RM-2: counts appear only when the wheel shows stock; a sold-out prize reads
@@ -81,9 +82,11 @@ export default function PrizeBook({
                   {won ? p.emoji ?? "🎁" : "❔"}
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-ink">
-                    {won || target ? p.label : "Not yet…"}
+                  {/* T12: every prize is named next to its odds, won or not. */}
+                  <p className="break-words text-xs font-semibold text-ink" data-testid="prize-book-name">
+                    {p.label}
                   </p>
+                  {!won && !target && <p className="text-[10px] text-muted">Not won yet</p>}
                   {target && <p className="text-xs font-semibold text-[var(--brand-text)]">{focus?.kind === "chase" ? "Chase target" : "Focus target"}</p>}
                   <p className="tnum text-xs text-muted" data-testid="fan-prize-odds">{typeof chance === "number" && Number.isFinite(chance) && chance >= 0 && chance <= 1 ? `${(chance * 100).toLocaleString(undefined, { maximumFractionDigits: 3 })}% chance` : "Odds unavailable"}</p>
                   {limited && (

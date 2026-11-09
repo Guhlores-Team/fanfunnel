@@ -12,6 +12,7 @@ async function main() {
   resetMockPublicProfile();
   const before = await getPublicProfileBySlug("demo-creator");
   check("the demo starts on its wheel", before?.profile.gameKind === "wheel");
+  check("the wheel's odds cover every prize and sum to 1", !!before && before.profile.odds.length > 0 && Math.abs(before.profile.odds.reduce((s, r) => s + r.chance, 0) - 1) < 1e-9);
   check("an unset demo tagline stays unset so the page uses the game's line", before?.profile.tagline === null);
 
   const account = mockGetAdminOverview().accounts.find((a) => a.id === "acc-you")!;
@@ -19,7 +20,10 @@ async function main() {
   const game = mockCreateWheel({ gameKind: "scratch", name: "Demo scratch" }).wheel;
   mockSaveWheel({ ...game, prizes: [{ id: "s1", label: "Sticker", emoji: "🌟", rarity: "common", weight: 1 }] });
   mockSetActiveWheel(game.id);
-  check("a live scratch game shows on the demo public page", (await getPublicProfileBySlug("demo-creator"))?.profile.gameKind === "scratch");
+  const scratch = await getPublicProfileBySlug("demo-creator");
+  check("a live scratch game shows on the demo public page", scratch?.profile.gameKind === "scratch");
+  // T12: the public page names every prize with its base odds.
+  check("the public page lists each prize's odds by name", scratch?.profile.odds.length === 1 && scratch.profile.odds[0].label === "Sticker" && scratch.profile.odds[0].chance === 1);
 
   const fan = mockCreatePass("Share fan", 2, undefined, undefined, undefined, undefined, undefined, undefined, game.id);
   mockAckFan(fan.token);

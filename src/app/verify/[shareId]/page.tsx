@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import LegalLinks from "@/components/LegalLinks";
 import { getSpinVerification } from "@/lib/data";
 import { COMMITMENT_COPY, verdictColor } from "./commitmentCopy";
 import { brandVars, readableInk } from "@/lib/theme";
@@ -52,6 +53,7 @@ export default async function VerifyPage({
         <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
           Powered by FanFunnel · provably-fair spins
         </footer>
+        <LegalLinks className="relative z-[1] mt-2" />
       </main>
     );
   }
@@ -242,6 +244,7 @@ export default async function VerifyPage({
       <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
         Powered by FanFunnel · provably-fair spins
       </footer>
+      <LegalLinks className="relative z-[1] mt-2" />
     </main>
   );
 }
