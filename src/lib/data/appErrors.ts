@@ -115,6 +115,40 @@ function memRecord(input: RecordInput, maxRows: number): RecordOutcome {
   return { id: row.id, isNew: true, reopened: false, count: 1, firstSeen: now };
 }
 
+/**
+ * C3: whether a client (browser) report may be stored. A fingerprint already
+ * on file always may (it only bumps its count); a new one only while fewer
+ * than `maxOpen` client rows are open in that environment. Service role.
+ * Fails closed (false) on a read error: a browser report is never worth more
+ * than the server rows it could displace.
+ */
+export async function clientRowAllowed(
+  input: { environment: ErrorEnvironment; fingerprint: string },
+  maxOpen: number,
+): Promise<boolean> {
+  if (!isSupabaseConfigured()) {
+    const rows = [...mem().rows.values()];
+    if (rows.some((r) => r.environment === input.environment && r.fingerprint === input.fingerprint)) return true;
+    return rows.filter((r) => r.source === "client" && r.environment === input.environment && !r.resolved).length < maxOpen;
+  }
+  const svc = createServiceClient();
+  const { data: known, error: kErr } = await svc
+    .from("app_errors")
+    .select("id")
+    .eq("environment", input.environment)
+    .eq("fingerprint", input.fingerprint)
+    .maybeSingle();
+  if (kErr) return false;
+  if (known) return true;
+  const { count, error } = await svc
+    .from("app_errors")
+    .select("id", { count: "exact", head: true })
+    .eq("environment", input.environment)
+    .eq("source", "client")
+    .eq("resolved", false);
+  return !error && typeof count === "number" && count < maxOpen;
+}
+
 export interface AlertClaim {
   send: boolean;
   pending: number;
