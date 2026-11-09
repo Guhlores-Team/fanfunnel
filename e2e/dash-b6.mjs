@@ -65,13 +65,13 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       await goto(page, "/dashboard?section=boosts", 600);
       await page.getByText("Couldn’t load referral numbers right now.").or(page.getByText("Couldn't load referral numbers right now.")).waitFor({ timeout: 10000 });
 
-      // Retry recovers once the server answers again.
-      await page.unroute(path("/api/fans"));
+      // Retry recovers once the server answers again (unroute needs the same matcher).
+      await page.unrouteAll();
+      const fansOnly = path("/api/fans");
+      await page.route(fansOnly, answer(500));
       await goto(page, "/dashboard?section=fans", 600);
-      await page.route(path("/api/fans"), answer(500));
-      await page.reload({ waitUntil: "domcontentloaded" });
       await page.getByTestId("fans-load-failed").waitFor({ timeout: 10000 });
-      await page.unroute(path("/api/fans"));
+      await page.unroute(fansOnly);
       await page.getByTestId("fans-load-failed").getByRole("button", { name: "Retry" }).click();
       await page.getByTestId("fans-load-failed").waitFor({ state: "detached", timeout: 10000 });
     } finally {
@@ -99,7 +99,7 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
   await step("b6 C2: a 401 sends the creator to /login?next=<here> once, and never loops", async () => {
     const page = await ctx.newPage();
     const logins = [];
-    page.on("framenavigated", (f) => { if (f === page.mainFrame() && new URL(f.url()).pathname === "/login") logins.push(f.url()); });
+    page.on("request", (r) => { if (r.isNavigationRequest() && r.frame() === page.mainFrame() && new URL(r.url()).pathname === "/login") logins.push(r.url()); });
     try {
       await page.route(path("/api/fans"), answer(401));
       await page.goto(BASE + "/dashboard?section=fans", { waitUntil: "domcontentloaded" });
@@ -115,7 +115,7 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       assert(/signed out/i.test(await failed.innerText()), "it says the creator is signed out");
       const link = failed.getByRole("link", { name: "Sign in" });
       assert(/\/login\?next=%2Fdashboard%3Fsection%3Dfans/.test(await link.getAttribute("href")), "Sign in returns here");
-      assert(logins.length === 1, `exactly one trip to /login (got ${logins.length})`);
+      assert(logins.length === 1, `exactly one trip to /login (got ${logins.length}: ${logins.join(" ")})`);
     } finally {
       await page.close().catch(() => {});
     }
@@ -199,7 +199,7 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       const url = await card.getByRole("textbox").inputValue();
       assert(new RegExp(`^${BASE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/spin/[A-Za-z0-9_-]+$`).test(url), `the card holds the spin link (${url})`);
       for (const label of ["Copy", "Share"]) assert(await card.getByRole("button", { name: label, exact: true }).count() === 1, `${label} is offered`);
-      assert(await card.getByRole("button", { name: /QR/ }).count() >= 1, "QR is offered");
+      await card.getByRole("button", { name: /QR/ }).first().waitFor({ timeout: 8000 }); // QR: code-split, appears once loaded
       await card.getByRole("button", { name: "Copy", exact: true }).click();
       await page.getByText(/Link copied|Couldn.t copy the link/).first().waitFor({ timeout: 4000 });
       const row = page.locator("li[data-fresh='true']");
