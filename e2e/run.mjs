@@ -45,6 +45,7 @@ import { scratchJourney, bingoJourney } from "./games.mjs";
 import { checkSystemHealth, systemHealthJourney } from "./system-health.mjs";
 import { gameSwitchingJourney } from "./game-switching.mjs";
 import { safetyJourney } from "./safety.mjs";
+import { trustJourney } from "./trust.mjs";
 import { accountExtrasJourney } from "./account-extras.mjs";
 import { qaB5Journey } from "./qa-b5.mjs";
 import { agencyLeaveJourney } from "./agency-leave.mjs";
@@ -92,6 +93,7 @@ try {
     await runner.step("System health: demo status never claims connected protection", () => checkSystemHealth(page));
     await systemHealthJourney(page, runner);
     await safetyJourney(page, runner, ctx); // A1 report → Admin › Reports → resolve; A4 blocked fan (own fans)
+    await trustJourney(page, runner, ctx); // b6 trust: age gate on chat/wishlist/opt-in, delivery status, paused wins view, legal links, security.txt
     await urlSafetyJourney(page, runner, ctx); // malformed URL privacy/security-header regression
     await cspJourney(page, runner, ctx); // L3: per-route CSP, nonces on every script, injected script/eval refused
     await accountExtrasJourney(page, runner, ctx); // A37/A36: DM templates, referrals, autopilot, close guard, demo-only states

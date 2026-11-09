@@ -1,6 +1,6 @@
 "use client";
 
-import type { PausedFanWins } from "@/lib/data";
+import type { PausedFanWins } from "@/lib/fan/pausedTypes";
 import { RARITY_LABEL } from "@/lib/games/wheel/types";
 import { deliveryLabel, winDate } from "@/lib/fan/delivery";
 import LegalLinks from "@/components/LegalLinks";

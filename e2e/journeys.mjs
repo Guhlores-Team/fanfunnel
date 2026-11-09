@@ -1415,9 +1415,15 @@ export async function fanExtras(page, { step, assert }, ctx) {
       await page.evaluate(() => window.__ffNoReload === true),
       "the page was not reloaded after pausing"
     );
-    // The now-paused link should 404 (getFanPass returns null). Check via the
-    // request context so this *expected* 404 isn't logged as a page signal.
+    // T3: pausing is permanent, so the reloaded link is a read-only "Your
+    // wins" view (200), never the playable page: no SPIN, no chat.
     const resp = await ctx.request.get(BASE + "/spin/demo");
-    assert(resp.status() === 404, `paused link should 404, got ${resp.status()}`);
+    assert(resp.status() === 200, `paused link shows its wins view, got ${resp.status()}`);
+    await goto(page, "/spin/demo", 800);
+    await page.getByTestId("paused-wins").waitFor({ timeout: 8000 });
+    assert(/Pausing is permanent/.test(await page.locator("main").innerText()), "the paused view says pausing is permanent");
+    assert((await page.getByTestId("paused-win").count()) > 0, "the fan's wins are still listed");
+    assert((await page.getByTestId("fan-spin").count()) === 0, "no SPIN on a paused link");
+    assert((await page.locator("button[aria-label='Message creator']").count()) === 0, "no chat on a paused link");
   });
 }

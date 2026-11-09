@@ -2,7 +2,8 @@ import { isSupabaseConfigured, createServiceClient } from "@/lib/supabase/server
 import type { Rarity } from "@/lib/games/wheel/types";
 import { openReward } from "@/lib/rewards/crypto";
 import { rewardReviewAllowed, type DeliveredReward, type RewardKind } from "@/lib/rewards/config";
-import { firstEmbedded, toWinDelivery, type WinDelivery } from "@/lib/fan/delivery";
+import { firstEmbedded, toWinDelivery } from "@/lib/fan/delivery";
+import type { PausedFanWins, PausedWin } from "@/lib/fan/pausedTypes";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 import { isPlausibleToken } from "./privacy";
 import { mockGetPausedFanWins } from "./mock";
@@ -16,25 +17,7 @@ import { mockGetPausedFanWins } from "./mock";
  * self_excluded_at is null) and this read does not try them. A blocked fan
  * gets the list without values, like the live page's reveal refusal.
  */
-export interface PausedWin {
-  label: string;
-  rarity: Rarity;
-  at: string;
-  shareId: string | null;
-  delivery?: WinDelivery;
-  /** The already-revealed instant reward, or null when there is none to show. */
-  reward: DeliveredReward | null;
-  /** The win delivered an instant reward the fan can no longer view here. */
-  rewardHidden: boolean;
-}
-
-export interface PausedFanWins {
-  creatorTitle: string;
-  pausedAt: string;
-  /** Whether the fan is still on the public board, so they can leave it here. */
-  leaderboardOptIn: boolean;
-  wins: PausedWin[];
-}
+export type { PausedFanWins, PausedWin };
 
 /** How many wins the paused view lists (newest first), like the live page. */
 export const PAUSED_WINS_LIMIT = 50;

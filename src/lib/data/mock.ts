@@ -3154,7 +3154,7 @@ export function mockSelfExclude(token: string): { ok: true } | { error: string }
 }
 
 /** T3: the read-only wins view of a paused link (parity with getPausedFanWins). */
-export function mockGetPausedFanWins(token: string): import("./pausedLink").PausedFanWins | null {
+export function mockGetPausedFanWins(token: string): import("@/lib/fan/pausedTypes").PausedFanWins | null {
   const fan = fanForToken(token);
   if (!fan || !fan.selfExcludedAt) return null;
   const deliveries = rewardState().deliveries;
