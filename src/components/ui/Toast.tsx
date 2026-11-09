@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { withSuspendedReason } from "@/lib/account/suspended";
 
 type Tone = "info" | "error" | "success";
 
@@ -47,9 +48,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       const id = nextId.current++;
       const tone = opts?.tone ?? "info";
       const duration = opts?.duration ?? 3500;
+      // C11: a failed action while the account is suspended says why.
+      const text = tone === "error" ? withSuspendedReason(message) : message;
       setToasts((prev) => [
         ...prev,
-        { id, message, tone, action: opts?.action },
+        { id, message: text, tone, action: opts?.action },
       ]);
       if (duration > 0) {
         window.setTimeout(() => dismiss(id), duration);

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { TotpChallenge, TotpEnrol } from "./totp";
+import { LEGAL } from "@/lib/legal";
 
 /**
  * The /mfa page body. "challenge": the account has an authenticator, so the
@@ -55,7 +56,13 @@ export default function MfaClient({
             Not now: go to my dashboard
           </Link>
         ) : (
-          <span>Lost your authenticator? Ask a FanFunnel admin to reset it.</span>
+          <span>
+            Lost your authenticator? Email{" "}
+            <a href={`mailto:${LEGAL.contactEmail}`} className="underline underline-offset-4 hover:text-ink">
+              {LEGAL.contactEmail}
+            </a>{" "}
+            from your account&rsquo;s address and an admin will reset it.
+          </span>
         )}
         <form action="/auth/signout" method="post">
           <button type="submit" className="underline underline-offset-4 hover:text-ink">

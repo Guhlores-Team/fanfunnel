@@ -23,6 +23,8 @@ interface Member {
   email: string;
   displayName: string;
   role: string;
+  /** C10: the creators this seat may act for (owner view). */
+  creatorIds?: string[];
 }
 interface Invite {
   /** null: a creator invitation; otherwise the seat role offered (0068). */
@@ -82,6 +84,8 @@ export default function AgencyClient() {
   // itself while its request is pending (prevents double-submits).
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   const [left, setLeft] = useState<LeaveKind | null>(null);
+  // C10: removing a creator or a seat asks first ("creator:<id>" / "member:<id>").
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -237,20 +241,26 @@ export default function AgencyClient() {
               <span className="font-bold text-brand">{formatCents(c.revenue)}</span>
               {isOwner && (
                 <button
-                  onClick={() =>
-                    runGuarded(`creator:${c.id}`, {
-                      action: "remove_creator",
-                      orgId: org.id,
-                      creatorId: c.id,
-                    })
-                  }
+                  onClick={() => setConfirmRemove(`creator:${c.id}`)}
                   disabled={busyKeys.has(`creator:${c.id}`)}
+                  aria-expanded={confirmRemove === `creator:${c.id}`}
                   className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
                 >
                   Remove
                 </button>
               )}
             </div>
+            {isOwner && confirmRemove === `creator:${c.id}` && (
+              <ConfirmRemove
+                text={`Remove ${c.displayName} from ${org.name}? Your owner, managers and staff lose access to their games, fans, inbox and fulfilment right away. Their account and data stay theirs; you'd need a new invitation to add them back.`}
+                cta="Yes, remove creator"
+                busy={busyKeys.has(`creator:${c.id}`)}
+                onCancel={() => setConfirmRemove(null)}
+                onConfirm={async () => {
+                  if (await runGuarded(`creator:${c.id}`, { action: "remove_creator", orgId: org.id, creatorId: c.id })) setConfirmRemove(null);
+                }}
+              />
+            )}
           </div>
         ))}
         {data.creators.length === 0 && (
@@ -293,10 +303,9 @@ export default function AgencyClient() {
                 </span>
                 {isOwner && (
                   <button
-                    onClick={() =>
-                      runGuarded(`member:${m.id}`, { action: "remove_member", memberId: m.id })
-                    }
+                    onClick={() => setConfirmRemove(`member:${m.id}`)}
                     disabled={busyKeys.has(`member:${m.id}`)}
+                    aria-expanded={confirmRemove === `member:${m.id}`}
                     className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
                   >
                     Remove
@@ -304,21 +313,45 @@ export default function AgencyClient() {
                 )}
               </div>
             </div>
-            {/* Manager seats act for every creator; others are scoped per-creator. */}
+            {isOwner && confirmRemove === `member:${m.id}` && (
+              <ConfirmRemove
+                text={`Remove ${m.displayName}'s ${m.role} seat? They lose access to every creator in ${org.name} right away. Their own account stays.`}
+                cta="Yes, remove seat"
+                busy={busyKeys.has(`member:${m.id}`)}
+                onCancel={() => setConfirmRemove(null)}
+                onConfirm={async () => {
+                  if (await runGuarded(`member:${m.id}`, { action: "remove_member", memberId: m.id })) setConfirmRemove(null);
+                }}
+              />
+            )}
+            {/* Manager seats act for every creator; others are scoped per-creator (C10: toggles with state). */}
             {isOwner && m.role !== "manager" && data.creators.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3" role="group" aria-label={`Creators ${m.displayName} can act for`}>
                 <span className="text-xs text-muted">Can act for:</span>
-                {data.creators.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() =>
-                      run({ action: "scope_creator", memberId: m.id, creatorId: c.id, on: true })
-                    }
-                    className="rounded-full border border-line px-2.5 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-ink"
-                  >
-                    + {c.displayName}
-                  </button>
-                ))}
+                {data.creators.map((c) => {
+                  const on = (m.creatorIds ?? []).includes(c.id);
+                  const key = `scope:${m.id}:${c.id}`;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={`${m.displayName} can act for ${c.displayName}`}
+                      disabled={busyKeys.has(key)}
+                      onClick={() => runGuarded(key, { action: "scope_creator", memberId: m.id, creatorId: c.id, on: !on })}
+                      className={`inline-flex min-h-7 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs disabled:opacity-50 ${
+                        on ? "border-brand/50 bg-surface-2 font-semibold text-ink" : "border-line text-muted hover:bg-surface-2 hover:text-ink"
+                      }`}
+                    >
+                      <span aria-hidden="true">{on ? "✓" : "+"}</span>
+                      {c.displayName}
+                    </button>
+                  );
+                })}
+                {(m.creatorIds ?? []).length === 0 && (
+                  <span className="text-xs text-amber-300/80">None yet: this seat can&apos;t do anything until you tick a creator.</span>
+                )}
               </div>
             )}
           </div>
@@ -347,6 +380,39 @@ export default function AgencyClient() {
       </div>
 
       {canLeave === "staff" && <LeaveAgency kind="staff" orgId={org.id} orgName={org.name} onLeft={() => setLeft("staff")} />}
+    </div>
+  );
+}
+
+function ConfirmRemove({
+  text,
+  cta,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  text: string;
+  cta: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div role="group" aria-label="Confirm removal" className="mt-3 w-full rounded-xl border border-red-400/35 bg-red-400/10 p-3 text-sm text-red-100">
+      <p className="text-pretty">{text}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy}
+          className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-400 disabled:opacity-50"
+        >
+          {busy ? "Removing…" : cta}
+        </button>
+        <button type="button" onClick={onCancel} disabled={busy} className="rounded-md border border-line px-3 py-1.5 text-xs text-muted hover:text-ink">
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

@@ -136,6 +136,10 @@ export interface MyAccount {
   email: string | null;
   displayName: string | null;
   notifications: NotificationPrefs;
+  /** C11: false while an admin has suspended the account (absent in the demo). */
+  isActive?: boolean;
+  /** C9: the public link's handle (/c/<handle>), null until set (absent in the demo). */
+  publicSlug?: string | null;
 }
 
 const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
@@ -156,10 +160,12 @@ export async function getMyAccount(): Promise<MyAccount> {
   }
   const { data } = await sb
     .from("profiles")
-    .select("display_name, features, notify_new_spin, notify_low_balance, notify_messages")
+    .select("display_name, features, notify_new_spin, notify_low_balance, notify_messages, is_active, public_slug")
     .eq("id", user.id)
     .maybeSingle();
   const row = data as {
+    is_active?: boolean | null;
+    public_slug?: string | null;
     display_name: string | null;
     features?: unknown;
     notify_new_spin: boolean | null;
@@ -175,6 +181,7 @@ export async function getMyAccount(): Promise<MyAccount> {
       lowBalance: row?.notify_low_balance ?? true,
       messages: row?.notify_messages ?? true,
     },
+    ...(row ? { isActive: row.is_active !== false, publicSlug: row.public_slug ?? null } : {}),
   };
 }
 

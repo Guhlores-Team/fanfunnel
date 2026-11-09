@@ -33,7 +33,8 @@ import {
 } from "@/components/dashboard/DashboardShell";
 import MobileTabBar from "@/components/dashboard/MobileTabBar";
 import { prefersReducedMotion } from "@/lib/sound";
-import { firstStepsAllDone, isFirstRun } from "@/components/dashboard/firstSteps";
+import { firstStepsAllDone, isFirstRun, profileStepDone } from "@/components/dashboard/firstSteps";
+import SuspendedBanner from "@/components/account/SuspendedBanner";
 
 // Code-split the tab-gated panels so the initial dashboard bundle doesn't
 // carry every tab a creator may never open. (QrButton is split in FansPanel.)
@@ -233,7 +234,11 @@ export default function DashboardClient({
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     initialOnboardingDismissed
   );
+  // Display name for the sidebar workspace pill (no polling — it rarely changes);
+  // also the profile step (C9) and the suspended banner (C11).
+  const account = useFetch<{ displayName: string | null; publicSlug?: string | null; isActive?: boolean }>(email ? "/api/account" : null);
   const firstStepSignals = {
+    profileSet: !email || profileStepDone(account.data),
     wheelSaved,
     fans: metricsFans,
     spins: metricsSpins,
@@ -334,8 +339,6 @@ export default function DashboardClient({
     </div>
   ) : null;
 
-  // Display name for the sidebar workspace pill (no polling — it rarely changes).
-  const account = useFetch<{ displayName: string | null }>(email ? "/api/account" : null);
   const accountName =
     account.data?.displayName?.trim() || (email ? email.split("@")[0] : "Demo creator");
   const accountSub = email ?? "Demo workspace — connect Supabase to go live";
@@ -489,6 +492,7 @@ export default function DashboardClient({
         />
 
         <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
+      <SuspendedBanner suspended={account.data?.isActive === false} />
       {email && <InvitesBanner />}
 
       <div
