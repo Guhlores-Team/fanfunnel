@@ -217,6 +217,7 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
           return { top: Math.round(r.top), bottom: Math.round(r.bottom), innerH: innerHeight, scrollY, docH: document.documentElement.scrollHeight, idx: Array.from(el.parentElement.children).indexOf(el), n: el.parentElement.children.length, scrollers, ls: Object.keys(localStorage), reduced: matchMedia("(prefers-reduced-motion: reduce)").matches, active: document.activeElement?.tagName + "#" + (document.activeElement?.id || document.activeElement?.getAttribute("aria-label") || "") };
         }).catch((err) => ({ evalError: String(err) }));
         await page.screenshot({ path: "e2e/artifacts/dbg-mint.png", fullPage: false }).catch(() => {});
+        await import("node:fs").then((fs) => fs.writeFileSync("e2e/artifacts/dbg-mint.json", JSON.stringify(diag, null, 2))).catch(() => {});
         throw new Error(`row not in view: ${JSON.stringify(diag)} :: ${e.message.split("\n")[0]}`);
       }
       assert(await row.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }), "the new row is in view");

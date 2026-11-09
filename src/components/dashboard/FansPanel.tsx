@@ -737,10 +737,22 @@ function FanRow({
 }) {
   const ref = useRef<HTMLLIElement>(null);
   useEffect(() => {
-    // Centre rather than "nearest": the minted card above the list grows a
-    // little after the mint (game line, QR button), and a row parked on the
-    // viewport's bottom edge would slip out of view again.
-    if (fresh) ref.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+    // Bring the new row into view, and check again shortly after: the minted
+    // card above the list grows after the mint (game line, QR button) and the
+    // list re-sorts as it reloads, either of which can undo a one-shot scroll.
+    // Centre rather than "nearest" so a little growth above cannot hide it.
+    if (!fresh) return;
+    const el = ref.current;
+    if (!el) return;
+    const ensure = () => {
+      const r = el.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > window.innerHeight) {
+        el.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+      }
+    };
+    ensure();
+    const again = [setTimeout(ensure, 700), setTimeout(ensure, 1600)];
+    return () => again.forEach(clearTimeout);
   }, [fresh]);
   return (
     <li
