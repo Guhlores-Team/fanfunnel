@@ -19,6 +19,8 @@ export const LEGAL = {
    * The Terms/Privacy version people agree to (YYYY-MM-DD). Recorded with every
    * acceptance (profiles.terms_version, fans.acked_terms_version); bumping it
    * asks every creator and fan to agree again. Bump it for material changes.
+   * The database reads the same value from public.legal_terms_version() (0072):
+   * bump it there in a new migration too (legalTermsVersion.test.ts checks).
    */
   version: "2026-10-27",
   /** Advance notice before a material change to either document, or a creator fee, takes effect. */

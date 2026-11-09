@@ -609,7 +609,8 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     assert(await row.count(), "found the in-progress row");
     assert(await row.locator("input[placeholder^='Add a note']").count(), "the note field is inline on the row");
     assert(await row.locator("input[type='date']").count(), "the due date is inline on the row");
-    assert((await row.getByRole("button", { name: /details/i }).count()) === 0, "no Details disclosure hides them");
+    // A disclosure named "Details" (not the "Open …'s fan details" link, which opens the fan drawer).
+    assert((await row.getByRole("button", { name: /^details$/i }).count()) === 0, "no Details disclosure hides them");
     await row.getByRole("button", { name: /^Cancel prize:/ }).click();
     const confirm = row.getByRole("group", { name: /confirm cancelling/i });
     await confirm.waitFor({ timeout: 4000 });

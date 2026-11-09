@@ -12,7 +12,7 @@
  * wins, per role) and asserts the effective state, checks schema.sql and
  * migrations_combined.sql carry the same statements, and asserts that every
  * RPC the app calls through a session client is either signed-in-only, an RLS
- * helper anon must keep, or server-only. A new self-service RPC that forgets
+ * helper (signed-in only since 0072), or server-only. A new self-service RPC that forgets
  * the revoke fails here. The runtime half (a real anon call is refused, an
  * authenticated call still persists) is in scripts/db/schema-drift-check.mjs.
  */
@@ -49,7 +49,6 @@ const SIGNED_IN_ONLY = [
   "set_pwa_icon_mode",
   "set_creator_theme",
   "admin_account_stats",
-  "admin_reserve_account_deletion",
   "org_account_stats",
   "org_create",
   "org_invite_creator",
@@ -82,9 +81,20 @@ const SIGNED_IN_ONLY = [
   "creator_link_pass",
   "wipe_my_spin_attempts",
 ];
-// RLS policies call these, so anon must keep EXECUTE (an anon read that
-// evaluates a policy would otherwise error instead of returning no rows).
-const RLS_HELPERS = ["is_admin", "can_act_for", "current_user_active", "_owns_org"];
+// RLS policies call these. 0044 left them anon-callable so an anon read that
+// evaluated a policy returned no rows instead of an error; since 0068 anon
+// holds no table privilege and never evaluates a policy, so 0072 makes them
+// signed-in only. authenticated must keep them: policies run as the querying
+// role, and a revoke there would break every policy that calls one.
+const RLS_HELPERS = ["is_admin", "can_act_for", "current_user_active", "_owns_org", "_owns_org_seat", "_is_org_member", "_my_confirmed_email"];
+// 0072: no app caller (the admin delete runs on the service gateway; the
+// legacy org_add_creator bypassed consent), so service-role only.
+const SERVICE_ONLY_0072 = ["admin_reserve_account_deletion", "org_add_creator"];
+// 0072: trigger functions need no EXECUTE for any browser role.
+const TRIGGERS_0072 = [
+  "attach_spin_reward", "erase_fan_reward_values", "guard_delivered_redemption", "handle_new_user",
+  "sync_code_prize_stock", "sync_fan_spin_aggregate", "guard_fan_break", "admin_audit_log_immutable",
+];
 
 type Acl = { anon: boolean; authenticated: boolean; service: boolean };
 
@@ -128,6 +138,9 @@ check("0044 originally kept authenticated import access", effectiveAcl(mig0044).
 for (const fn of RLS_HELPERS) {
   check(`0044 leaves RLS helper ${fn} alone`, !new RegExp(`public\\.${fn}\\s*\\(`).test(mig0044));
 }
+const mig0072 = norm(readFileSync(join(SUPA, "migrations", "0072_advisor_hardening.sql"), "utf8"));
+check("0072 never revokes an RLS helper from authenticated", RLS_HELPERS.every((fn) =>
+  !new RegExp(`revoke execute on function public\\.${fn}\\([^)]*\\) from [^;]*\\bauthenticated\\b`).test(mig0072)));
 
 for (const [name, sql] of [
   ["migrations/", migSql],
@@ -158,8 +171,14 @@ for (const [name, sql] of [
     /revoke execute on function public\.issue_creator_actor_context\(uuid,\s*text\) from public,\s*anon,\s*service_role;/.test(sql));
   for (const fn of RLS_HELPERS) {
     const a = acl.get(fn) ?? { anon: true, authenticated: true, service: true };
-    check(`${name}: anon keeps EXECUTE on RLS helper ${fn}`, a.anon);
+    check(`${name}: anon cannot execute RLS helper ${fn}`, !a.anon);
+    check(`${name}: authenticated keeps EXECUTE on RLS helper ${fn} (policies run as the querying role)`, a.authenticated);
   }
+  for (const fn of [...SERVICE_ONLY_0072, ...TRIGGERS_0072]) {
+    const a = acl.get(fn) ?? { anon: true, authenticated: true, service: true };
+    check(`${name}: neither browser role can execute ${fn}`, !a.anon && !a.authenticated);
+  }
+  for (const fn of SERVICE_ONLY_0072) check(`${name}: service_role keeps ${fn}`, acl.get(fn)?.service === true);
 }
 
 const importRoute = readFileSync(join(ROOT, "src/app/api/fans/import/route.ts"), "utf8");

@@ -13,7 +13,8 @@ const SUPABASE = join(import.meta.dirname, "../../../supabase");
 const files = readdirSync(join(SUPABASE, "migrations")).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sort();
 const number = (f: string) => Number(f.slice(0, 4));
 const latest = files.at(-1)!;
-const DEF = /create\s+or\s+replace\s+function\s+public\.schema_version\(\)\s+returns\s+integer\s+language\s+sql\s+immutable\s+as\s+\$\$\s*select\s+(\d+)\s*\$\$\s*;/gi;
+// 0072 pins its search_path (public, pg_temp); earlier definitions had none.
+const DEF = /create\s+or\s+replace\s+function\s+public\.schema_version\(\)\s+returns\s+integer\s+language\s+sql\s+immutable\s+(?:set\s+search_path\s*=\s*public\s*,\s*pg_temp\s+)?as\s+\$\$\s*select\s+(\d+)\s*\$\$\s*;/gi;
 const lastValue = (sql: string) => [...sql.matchAll(DEF)].map((m) => Number(m[1])).at(-1);
 let passed = 0;
 const check = (label: string, value: unknown) => { assert.ok(value, label); passed++; };
@@ -28,5 +29,6 @@ for (const snapshot of ["schema.sql", "migrations_combined.sql"]) {
 }
 const grants = files.map((f) => readFileSync(join(SUPABASE, "migrations", f), "utf8")).join("\n");
 check("schema_version() is revoked from public, anon and authenticated", /revoke execute on function public\.schema_version\(\) from public, anon, authenticated;/.test(grants));
+check("the newest schema_version() pins its search_path", /function public\.schema_version\(\)\s+returns\s+integer\s+language\s+sql\s+immutable\s+set\s+search_path\s*=\s*public\s*,\s*pg_temp\s+as/i.test(readFileSync(join(SUPABASE, "migrations", latest), "utf8")));
 check("schema_version() is granted to the service role only", /grant execute on function public\.schema_version\(\) to service_role;/.test(grants) && !/grant execute on function public\.schema_version\(\) to [^;]*(anon|authenticated)/.test(grants));
 console.log(`schema version guard: ${passed} checks passed`);

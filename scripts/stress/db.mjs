@@ -435,12 +435,18 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       const F = await addWheel(c, { title: "Focus game", prizes: [{ label: "Common", weight: 20 }, { label: "FocusTarget", weight: 2, stock: FOCUS_STOCK }, { label: "ChaseTarget", weight: 1, stock: CHASE_STOCK, rarity: "rare" }, { label: "ChaseCode", weight: 1, rarity: "rare" }, { label: "Rare", weight: 1, rarity: "rare" }] });
       const G = await addWheel(c, { title: "Fallback game", active: false, prizes: [{ label: "GCommon", weight: 4 }, { label: "GRare", weight: 1, rarity: "rare" }] });
       await sql(`update public.prizes set boostable=true where id in(${[F.prizes.FocusTarget, F.prizes.ChaseTarget, F.prizes.ChaseCode, G.prizes.GRare].map(quote).join(",")});`);
+      // A test-only observer of the Focus prize's stock (old -> new on every update, by transaction): a save reads its own
+      // row back, so the conservation check below uses what each save applied, and checks that against the CAS rule.
+      await sql(`create schema if not exists stress_audit;
+        create table stress_audit.focus_stock(id bigserial primary key, tx xid8 not null default pg_current_xact_id(), old_stock integer, new_stock integer);
+        create function stress_audit.record_focus_stock() returns trigger language plpgsql security definer set search_path=pg_catalog as $a$begin insert into stress_audit.focus_stock(old_stock,new_stock) values(old.stock,new.stock); return null; end$a$;
+        create trigger stress_audit_focus_stock after update of stock on public.prizes for each row when (old.id=${quote(F.prizes.FocusTarget)}) execute function stress_audit.record_focus_stock();`);
       await rpc("add_reward_codes", [quote(F.prizes.ChaseCode), quote(c), json(Array.from({ length: CODES }, (_, i) => ({ cipher: `d9-${i}`, iv: `iv-${i}`, key_version: 1, hint: `h${i}`, fingerprint: hash(`d9-${c}-${i}`) })))]);
       const makePack = async kind => { const id = uid(); await sql(`insert into public.campaign_packs(id,creator_id,label,spins,pack_kind,focus_spins,chase_within,focus_multiplier) values(${quote(id)},${quote(c)},'d9 ${kind}',6,${quote(kind)},5,5,3);`); return id; };
       const packs = { focus: await makePack("focus"), chase: await makePack("chase") };
       const fans = await grantFans(c, null, n, 6);
       const series = [], prepSeries = [], grantSeries = [], cancelSeries = [], editSeries = [], archiveSeries = [];
-      const forged = { pity: 0, chase: 0, early: 0 }, refused = {}, forgeUnexpected = [], grantsOut = [], replayGroups = [], cancelsOut = [], edits = [], deltas = [];
+      const forged = { pity: 0, chase: 0, early: 0 }, refused = {}, forgeUnexpected = [], grantsOut = [], replayGroups = [], cancelsOut = [], edits = [], applied = [], casMisses = [];
       let wheelGen = null, forgeTick = 0, completed = 0, rateLimited = 0, playing = true, archived = false;
       const codeRow = async id => JSON.parse((await scalar(`select jsonb_build_object('delivery','codes','codeId',id,'cipher',cipher,'iv',iv,'keyVersion',key_version) from public.prize_reward_codes where id=${quote(id)} and spin_id is null;`)) || "null");
       const rare = p => ["rare", "epic", "legendary"].includes(p.rarity);
@@ -524,12 +530,21 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
           await sleep(40);
           const fresh = JSON.parse(await prizeRows()), staleSave = i % 4 === 3;
           let delta = [3, -2, 4, 0, -1, 2][i % 6];
-          // A cut is only made with room to spare so the save never clamps at 0 (the conservation check below is exact).
+          // Cuts are made with room to spare, but a save can still wait on its locks while wins drain the stock and then
+          // clamp at 0 (greatest(0, current + delta)); the audit row it reads back carries what it really applied.
           if (delta < 0 && (fresh.find(r => r.id === F.prizes.FocusTarget).stock ?? 0) < 15) delta = 2;
           const rows = (staleSave ? stale : fresh).map(r => ({ ...r, expected_stock: r.stock }));
           // The stale editor re-saves what it loaded at the start: a zero delta, it must never restock.
           if (staleSave) delta = 0; else rows.find(r => r.id === F.prizes.FocusTarget).stock += delta;
-          await timed(editSeries, () => rpc("save_wheel_prizes", [quote(F.id), quote(c), json(rows)])).then(() => { deltas.push(delta); edits.push(`${staleSave ? "stale" : "save"}${delta >= 0 ? "+" : ""}${delta}`); }, e => { if (e.code === "40P01") deadlocks.push(e.detail ?? e.message); edits.push(`save:${e.code}`); });
+          const save = () => sql(`begin;set local role service_role;select public.save_wheel_prizes(${quote(F.id)},${quote(c)},${json(rows)});reset role;
+            select coalesce(json_agg(json_build_array(old_stock,new_stock) order by id),'[]') from stress_audit.focus_stock where tx=pg_current_xact_id();commit;`).then(v => JSON.parse(v.trim().split("\n").at(-1)));
+          await timed(editSeries, save).then(audit => {
+            // A save writes the Focus row exactly once; the CAS lands the creator's delta on the stock it found, floored at 0.
+            const [before, after] = audit.length === 1 ? audit[0] : [null, null];
+            if (audit.length !== 1 || after !== Math.max(0, before + delta)) casMisses.push({ edit: i, staleSave, delta, audit });
+            if (audit.length === 1) applied.push(after - before);
+            edits.push(`${staleSave ? "stale" : "save"}${delta >= 0 ? "+" : ""}${delta}${audit.length === 1 && after - before !== delta ? `(applied ${after - before >= 0 ? "+" : ""}${after - before})` : ""}`);
+          }, e => { if (e.code === "40P01") deadlocks.push(e.detail ?? e.message); edits.push(`save:${e.code}`); });
         }
       };
       // Archive the Focus game through the dashboard's RPC (it locks the game's Focus/Chase fans before the wheel) once the base credits are about spent, then switch to G.
@@ -598,14 +613,16 @@ export async function runDbScenarios(report, { sql, quick = false, pool, only = 
       report.check(v.liveOnArchived === 0 && v.heldOnArchived === 0 && v.heldCodes === 0, "archiving the Focus game released every promise on it and returned every held unit and code", v);
       report.check(edits.includes("archive:ok") && v.spinsOnG > 0, "the game was archived mid-play and play carried on on the fallback game", { edits: edits.at(-1), spinsOnG: v.spinsOnG });
       const [chaseWins] = await awarded(F.prizes.ChaseTarget), [codeWins] = await awarded(F.prizes.ChaseCode), [focusWins] = await awarded(F.prizes.FocusTarget);
-      const chaseStock = await stockOf(F.prizes.ChaseTarget), focusStock = await stockOf(F.prizes.FocusTarget), sumDelta = deltas.reduce((t, d) => t + d, 0);
+      const chaseStock = await stockOf(F.prizes.ChaseTarget), focusStock = await stockOf(F.prizes.FocusTarget), sumDelta = applied.reduce((t, d) => t + d, 0);
       report.check(chaseStock >= 0 && chaseStock + chaseWins === CHASE_STOCK, `Chase stock conserved: ${CHASE_STOCK} = ${chaseStock} left + ${chaseWins} won (no unit held after the archive)`);
       const codes = (await scalar(`select count(*)||','||count(spin_id)||','||count(*) filter(where spin_id is null and reserved_focus_id is null) from public.prize_reward_codes where prize_id=${quote(F.prizes.ChaseCode)};`)).split(",").map(Number);
       report.check(codes[0] === CODES && codes[1] === codeWins && codes[2] === await stockOf(F.prizes.ChaseCode), `Chase codes conserved: ${CODES} = ${codes[2]} free + ${codes[1]} assigned to ${codeWins} wins`, codes);
-      report.check(focusStock >= 0 && focusStock === FOCUS_STOCK + sumDelta - focusWins, `Focus prize stock = ${FOCUS_STOCK} + creator edits (${sumDelta >= 0 ? "+" : ""}${sumDelta}) - ${focusWins} won; stale re-saves never restock`, focusStock);
+      report.check(casMisses.length === 0 && applied.length === edits.filter(e => /^(save|stale)[+-]\d/.test(e)).length, "every stock save lands the creator's delta on the stock it found (floored at 0); a stale re-save changes nothing", casMisses.slice(0, 3));
+      report.check(focusStock >= 0 && focusStock === FOCUS_STOCK + sumDelta - focusWins, `Focus prize stock = ${FOCUS_STOCK} + creator edits as applied (${sumDelta >= 0 ? "+" : ""}${sumDelta}) - ${focusWins} won; stale re-saves never restock`, focusStock);
       report.latency("commit (every fan on one game's prize rows)", series, DB_THRESHOLDS.commit + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("prepare", prepSeries, DB_THRESHOLDS.prepare + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2));
       report.latency("grant_focus_pack (beside the plays)", grantSeries, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("cancel_fan_focus", cancelSeries, DB_THRESHOLDS.grant + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2));
       report.latency("save_wheel_prizes (Focus prize stock)", editSeries, DB_THRESHOLDS.save + DB_THRESHOLDS.perContender * Math.min(n, pool.size * 2)); report.latency("archive_wheel", archiveSeries, DB_THRESHOLDS.retention);
+      await sql(`drop schema stress_audit cascade;`);
       await invariants(c, "focus/chase"); await ledger("focus/chase"); report.finish();
     }
     // ============================================================ D10 lock-order races (0071)

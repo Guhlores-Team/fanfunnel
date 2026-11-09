@@ -206,6 +206,8 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       await row.waitFor({ timeout: 8000 });
       assert((await row.innerText()).includes(name), "the new row is marked");
       fanId = (await row.getAttribute("id"))?.replace("fan-row-", "") ?? null;
+      // The row scrolls itself into view with a smooth scroll (reduced motion: instant); wait for it to arrive.
+      await page.waitForFunction((el) => { const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }, await row.elementHandle(), { timeout: 5000 });
       assert(await row.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0; }), "the new row is in view");
     } finally {
       await page.close().catch(() => {});

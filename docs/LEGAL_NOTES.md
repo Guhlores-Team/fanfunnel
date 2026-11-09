@@ -201,9 +201,10 @@ once their thresholds are met.
    time, so the process for a material change is: (1) email creators the new text and its start
    date at least 30 days ahead, and post a notice on the pages; (2) on the start date, publish the
    new text and set `LEGAL.effectiveDate` and `LEGAL.version` to that date in the same deploy.
-   Do not bump `LEGAL.version` until the SQL version literal is centralised (T1): the spin
-   functions compare the fan's accepted version with a literal, so a bump alone locks every fan
-   out of spinning.
+   The database gates play on the same version (`public.legal_terms_version()`, 0072): bump it
+   in a new migration applied at that release, right next to the deploy (between the two, a fan
+   who acknowledged under the other version is asked again); `src/lib/legalTermsVersion.test.ts`
+   fails while the two differ.
    Ask the lawyer whether that is enough, and whether fans (who have no email on file) need more
    than the re-shown gate.
 10. **Fans who agreed before 0055.** Fans who ticked the gate before this change have a time but no

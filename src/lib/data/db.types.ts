@@ -3565,6 +3565,7 @@ export type Database = {
         Args: { p_creator: string; p_permission: string }
         Returns: string
       }
+      legal_terms_version: { Args: never; Returns: string }
       my_seat_creators: {
         Args: never
         Returns: {

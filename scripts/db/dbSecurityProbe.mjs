@@ -309,7 +309,9 @@ export function probeDbSecurity(db, psql) {
     ["scope-outside:not_found", "scope-inside:ok", "scoped-rows:0", "chatter-stats:true,true,Creator A", "manager-stats:true,true", `owner-stats:${EMAIL("A")},0`]);
 
   // --- Info: TRUNCATE and anon ---------------------------------------------
-  expect("no browser role may TRUNCATE and anon reaches no table or sequence", `
+  // 0072: anon reaches no table, so it never evaluates a policy, and the RLS
+  // helpers are signed-in only (authenticated keeps them for its policies).
+  expect("no browser role may TRUNCATE and anon reaches no table, sequence or RLS helper", `
     select 'truncate:' || count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
      where n.nspname = 'public' and c.relkind in ('r', 'p')
        and (has_table_privilege('anon', c.oid, 'TRUNCATE') or has_table_privilege('authenticated', c.oid, 'TRUNCATE'));
@@ -318,8 +320,9 @@ export function probeDbSecurity(db, psql) {
        and has_any_column_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, REFERENCES');
     select 'anon-sequences:' || count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
      where n.nspname = 'public' and case when c.relkind = 'S' then has_sequence_privilege('anon', c.oid, 'USAGE, SELECT, UPDATE') else false end;
-    select 'anon-helpers:' || has_function_privilege('anon', 'public.is_admin()', 'execute') || ',' || has_function_privilege('anon', 'public.can_act_for(uuid, text)', 'execute');`,
-    ["truncate:0", "anon-tables:0", "anon-sequences:0", "anon-helpers:true,true"]);
+    select 'anon-helpers:' || has_function_privilege('anon', 'public.is_admin()', 'execute') || ',' || has_function_privilege('anon', 'public.can_act_for(uuid, text)', 'execute');
+    select 'auth-helpers:' || has_function_privilege('authenticated', 'public.is_admin()', 'execute') || ',' || has_function_privilege('authenticated', 'public.can_act_for(uuid, text)', 'execute');`,
+    ["truncate:0", "anon-tables:0", "anon-sequences:0", "anon-helpers:false,false", "auth-helpers:true,true"]);
 
   return bad;
 }

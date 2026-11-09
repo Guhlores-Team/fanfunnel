@@ -45,6 +45,11 @@ import { fixtureCreatorRpc, fixtureActorContext } from "./actor-context-fixture.
  *     reset_creator_content are scoped; an enrolled aal1 session reads no
  *     spins; display names never hold an e-mail; slug/tagline/name are
  *     validated; seats only by invitation, one agency per owner, org_leave
+ *   • 0072: anon executes none of the advisor's functions (RLS helpers,
+ *     triggers, org_add_creator); a creator cannot run the service-only ones
+ *     but still runs its helpers and setters; the wrapped policies still hide
+ *     other tenants; legal_terms_version() is LEGAL.version (T1); deleting a
+ *     fan clears notes and due dates on its wins (T10)
  * Exits non-zero on any leak, seed error, or cleanup failure.
  *
  * Safe to run repeatedly and concurrently against one shared TEST project:
@@ -100,6 +105,9 @@ if (!isLegacyCanaryTestProject(URL_)) {
 
 const admin = createClient(URL_, SERVICE, { auth: { autoRefreshToken: false, persistSession: false } });
 const PW = "RlsTest123!";
+// T1 (0072): fixture fans accept the app's current Terms version, which the
+// database reads from legal_terms_version().
+const LEGAL_VERSION = readFileSync(new URL("../../src/lib/legal.ts", import.meta.url), "utf8").match(/\bversion:\s*"([^"]+)"/)[1];
 // Unique per run so concurrent runs (two PRs at once) never collide on an email
 // or on the unique fan_passes.token.
 const RUN = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
@@ -178,7 +186,7 @@ async function makeCreator(tag) {
   // Seed one wheel + prize + fan + pass + grant + spin for this creator.
   const wheel = must(await admin.from("wheels").insert({ creator_id: id, title: `${tag} wheel` }).select("id").single(), `seed ${tag} wheel`);
   const prize = must(await admin.from("prizes").insert({ wheel_id: wheel.id, label: `${tag} prize`, rarity: "common", weight: 10 }).select("id").single(), `seed ${tag} prize`);
-  const fan = must(await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, acked_at:new Date().toISOString(),acked_terms_version:"2026-10-27" }).select("id").single(), `seed ${tag} fan`);
+  const fan = must(await admin.from("fans").insert({ creator_id: id, display_name: `${tag} fan`, acked_at:new Date().toISOString(),acked_terms_version:LEGAL_VERSION }).select("id").single(), `seed ${tag} fan`);
   const grant=must(await fixtureCreatorRpc(admin,session,"create_pass_grant",{p_request:randomUUID(),p_creator:id,p_fan:fan.id,p_wheel:wheel.id,p_name:`${tag} fan`,p_spins:5,p_bonus:0,p_amount:1000,p_campaign:null}),`seed ${tag} atomic grant`);
   if(grant.status!=="granted")throw Error(`seed ${tag} grant refused: ${grant.status}`);
   const result={id,email,wheelId:wheel.id,prizeId:prize.id,fanId:fan.id,passId:grant.passId,fanName:`${tag} fan`,token:grant.token,requestId:grant.grantId};
@@ -1291,6 +1299,60 @@ async function main() {
     const creatorLeft = await recipientClient.rpc("org_leave", { p_org: org.id });
     check(!creatorLeft.error && creatorLeft.data === "ok", `0071 a member creator leaves its agency (${creatorLeft.data ?? creatorLeft.error?.message})`);
     check(((await admin.from("profiles").select("org_id").eq("id", recipient.id).single()).data?.org_id ?? null) === null, "0071 the creator is independent after leaving");
+
+    // 0072 (Supabase advisors on TEST, and trust & safety T1/T10).
+    console.log("\n0072 advisor hardening, Terms version, fan-deletion scrub:");
+    const deniedCode = (r) => r.error?.code ?? (r.data === undefined ? "none" : "accepted");
+    // Every function the advisor showed anon could execute is refused now.
+    // Trigger functions may be hidden from the API instead (PGRST202); either
+    // way anon cannot run them.
+    const anonRevoked = [
+      ["is_admin", {}], ["can_act_for", { target_creator: A.id, perm: "view" }], ["current_user_active", {}],
+      ["_owns_org", { p_org: org.id }], ["_owns_org_seat", { p_member: A.id }], ["_is_org_member", { p_org: org.id }],
+      ["org_add_creator", { p_org: org.id, p_email: B.email }],
+    ];
+    for (const [fn, args] of anonRevoked) {
+      const r = await anonClient.rpc(fn, args);
+      check(r.error?.code === "42501", `0072 anon cannot execute ${fn} (${deniedCode(r)})`);
+    }
+    for (const fn of ["attach_spin_reward", "erase_fan_reward_values", "guard_delivered_redemption", "handle_new_user", "sync_code_prize_stock", "sync_fan_spin_aggregate"]) {
+      const r = await anonClient.rpc(fn, {});
+      check(r.error?.code === "42501" || r.error?.code === "PGRST202", `0072 anon cannot execute trigger function ${fn} (${deniedCode(r)})`);
+      const s = await a.rpc(fn, {});
+      check(s.error?.code === "42501" || s.error?.code === "PGRST202", `0072 a creator cannot execute trigger function ${fn} (${deniedCode(s)})`);
+    }
+    // Service-only now: a signed-in creator (even an admin would be) is refused.
+    const creatorReserve = await a.rpc("admin_reserve_account_deletion", { p_target: B.id });
+    check(creatorReserve.error?.code === "42501", `0072 a creator cannot execute admin_reserve_account_deletion (${deniedCode(creatorReserve)})`);
+    const creatorAddCreator = await a.rpc("org_add_creator", { p_org: org.id, p_email: A.email });
+    check(creatorAddCreator.error?.code === "42501", `0072 a creator cannot execute org_add_creator (${deniedCode(creatorAddCreator)})`);
+    // The signed-in helpers and self-service RPCs still work for the creator.
+    const ownActive = await a.rpc("current_user_active");
+    check(!ownActive.error && ownActive.data === true, `0072 a creator still calls current_user_active (${ownActive.error?.message ?? ownActive.data})`);
+    const ownView = await a.rpc("can_act_for", { target_creator: A.id, perm: "view" });
+    check(!ownView.error && ownView.data === true, `0072 a creator still calls can_act_for on itself (${ownView.error?.message ?? ownView.data})`);
+    const otherView = await a.rpc("can_act_for", { target_creator: B.id, perm: "view" });
+    check(!otherView.error && otherView.data === false, `0072 can_act_for still refuses another tenant (${otherView.error?.message ?? otherView.data})`);
+    const seen = await a.rpc("set_notifications_seen");
+    check(!seen.error, `0072 a creator still calls a self-service setter (${seen.error?.message ?? "ok"})`);
+    // Cross-tenant reads through the wrapped ((select auth.uid())) policies.
+    check(((await a.from("profiles").select("id").eq("id", A.id)).data?.length ?? 0) === 1, "0072 profiles_select still returns the creator's own row");
+    check(((await a.from("profiles").select("id").eq("id", B.id)).data?.length ?? 0) === 0, "0072 profiles_select (wrapped) still hides another creator");
+    check(((await b.from("spins").select("id").eq("creator_id", A.id)).data?.length ?? 0) === 0, "0072 spins_select (wrapped) still hides A's spins from B");
+    check(((await b.from("push_subscriptions").select("id").eq("user_id", A.id)).data?.length ?? 0) === 0, "0072 push_subscriptions_select (wrapped) still hides A's devices from B");
+    const foreignDevice = await b.from("push_subscriptions").insert({ user_id: A.id, endpoint: `https://push.example.test/${RUN}-0072`, p256dh: "k", auth: "a" }).select("id");
+    check(foreignDevice.error?.code === "42501", `0072 push_subscriptions_insert (wrapped) refuses B registering for A (${code(foreignDevice)})`);
+    // T1: the database's Terms version is the app's.
+    const termsVersion = await anonClient.rpc("legal_terms_version");
+    check(!termsVersion.error && termsVersion.data === LEGAL_VERSION, `0072 legal_terms_version() is LEGAL.version ${LEGAL_VERSION} (${termsVersion.error?.message ?? termsVersion.data})`);
+    // T10: deleting a fan clears the creator's notes and due date on its wins.
+    const T = await makeCreator("t10");
+    const tRedemption = must(await admin.from("redemptions").select("id").eq("creator_id", T.id).limit(1).single(), "0072 T's award");
+    must(await admin.from("redemptions").update({ notes: "private note about the fan", due_at: new Date(Date.now() + 3 * 864e5).toISOString() }).eq("id", tRedemption.id).select("id").single(), "0072 note and due date on T's award");
+    const fanGone = await creatorFixtureClients.get(T.id).from("fans").delete().eq("id", T.fanId).select("id");
+    check(!fanGone.error && fanGone.data?.length === 1, `0072 the creator deletes its fan (${fanGone.error?.message ?? fanGone.data?.length})`);
+    const scrubbed = must(await admin.from("redemptions").select("notes, due_at").eq("id", tRedemption.id).single(), "0072 T's award after the fan deletion");
+    check(scrubbed.notes === null && scrubbed.due_at === null, `0072 a deleted fan's award keeps no notes or due date (notes ${scrubbed.notes === null ? "null" : "kept"}, due ${scrubbed.due_at === null ? "null" : "kept"})`);
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
