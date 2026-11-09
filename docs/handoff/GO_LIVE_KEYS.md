@@ -23,7 +23,7 @@ Golden rules:
 | Key | Production | Preview |
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | ✅ set | ✅ set (TEST) |
-| Upstash rate-limit store (`KV_REST_API_URL`, `KV_REST_API_TOKEN`, `KV_URL`, `REDIS_URL`, `KV_REST_API_READ_ONLY_TOKEN`) | ✅ set | ✅ set |
+| Upstash rate-limit store (`KV_REST_API_URL`, `KV_REST_API_TOKEN`, `KV_URL`, `REDIS_URL`, `KV_REST_API_READ_ONLY_TOKEN`) | ✅ set | ⚠️ set, but the **same** store as Production (step 7) |
 | `NEXT_PUBLIC_ENABLE_DEBUG` | ✅ correctly **absent** | ✅ `1` |
 | `REWARD_ENCRYPTION_KEY`, `REWARD_CODE_FINGERPRINT_KEY` | ❌ **missing** (step 3) | ✅ set |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | ❌ **missing** (step 5) | ✅ set |
@@ -117,7 +117,44 @@ at go-live and we will do it together step by step.
 | `RESEND_API_KEY` | the key from Resend | **yes** |
 | `ALERT_EMAIL_TO` | the e-mail address that should receive alerts | no |
 
-## Step 7: Tell me you're done
+## Step 7: Separate the Preview rate-limit store (Preview + Production)
+
+Today Preview and Production share one Upstash database, so any branch build can change
+Production's spin limits.
+
+1. Open **[Vercel → Storage](https://vercel.com/easy-simple-sites/~/stores)** → **Create Database** →
+   **Upstash for Redis** → name it `fanfunnel-preview` → connect it to project **fanfunnel**, environment
+   **Preview** only (untick Production and Development).
+2. Open **[Environment Variables](https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables)**.
+   For each of the five old store variables (`KV_REST_API_URL`, `KV_REST_API_TOKEN`, `KV_URL`, `REDIS_URL`,
+   `KV_REST_API_READ_ONLY_TOKEN`) that still lists **Preview**: **Edit** → untick **Preview** → **Save**, so
+   the old store is **Production** only and the new one is **Preview** only.
+
+## Step 8: Build settings (one time)
+
+1. **[Build and Deployment](https://vercel.com/easy-simple-sites/fanfunnel/settings/build-and-deployment)** →
+   **Node.js Version** → **22.x** → **Save**. (Leave **Install Command** alone: the repository's `vercel.json`
+   already sets `npm ci`.)
+2. **[Git](https://vercel.com/easy-simple-sites/fanfunnel/settings/git)** → check **Git Fork Protection** is **on**.
+
+## Step 9: GitHub secrets into environments (one time, ~10 minutes)
+
+Full list and order: [`docs/GO_LIVE.md` section 2, "Supply-chain settings"](../GO_LIVE.md#supply-chain-settings-batch-6-audit).
+In short, at **[GitHub → Environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments)**:
+
+1. **`test`** → **Add environment secret** `SUPABASE_TEST_DB_URL`: the TEST **Session pooler** string from
+   **[Supabase TEST → Connect](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu?showConnect=true)**
+   (port 5432) with the TEST database password filled in. Also add `SUPABASE_TEST_PROJECT_REF`,
+   `SUPABASE_TEST_DB_PASSWORD`, `VERCEL_TOKEN`, `FANFUNNEL_TEST_CRON_SECRET` here.
+2. **`production`** → Required reviewers = you; Deployment branches = **Selected** → `main`; add
+   `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`.
+3. Then, at **[Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions)**, delete the
+   repository copies of `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`
+   and `VERCEL_TOKEN`. Keep the three TEST app secrets there.
+4. **[Supabase access tokens](https://supabase.com/dashboard/account/tokens)**: revoke the old CI token and
+   use a fresh one for step 2.
+
+## Step 10: Tell me you're done
 
 Just say **"keys are in"**. Don't send any values. I will then:
 1. Redeploy Production so it picks up the new keys.

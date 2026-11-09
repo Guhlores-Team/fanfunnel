@@ -17,10 +17,14 @@ every other branch on a Preview backed by the TEST project. See
 
 Migrations are applied by CI, not by hand: `.github/workflows/supabase-migrations.yml`
 applies `supabase/migrations/` to **TEST** on every PR (`test` job) and to **LIVE** on merge to
-`main` (`production` job). That workflow needs these GitHub repository secrets:
-`SUPABASE_ACCESS_TOKEN`, `SUPABASE_TEST_PROJECT_REF`, `SUPABASE_TEST_DB_PASSWORD`,
-`SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD`. If a project was set up by pasting SQL
-before the workflow existed, run `docs/auto-migration-reconcile.sql` on it once first.
+`main` (`production` job). That workflow needs `SUPABASE_TEST_PROJECT_REF`,
+`SUPABASE_TEST_DB_PASSWORD`, `SUPABASE_TEST_DB_URL` (the `test` job), and
+`SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN` (the
+`production` job). The PROD values and the account token belong in the **`production`
+environment's** secrets, not the repository's: a repository secret reaches every same-repo PR
+workflow (supply-chain audit SUP-1). Owner steps: [`docs/GO_LIVE.md` section 2](docs/GO_LIVE.md#supply-chain-settings-batch-6-audit).
+If a project was set up by pasting SQL before the workflow existed, run
+`docs/auto-migration-reconcile.sql` on it once first.
 
 Manual paths (a brand-new project, or recovery):
 - **Brand-new project:** run `supabase/schema.sql` in the SQL Editor. It is the complete current

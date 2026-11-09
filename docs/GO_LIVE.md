@@ -40,6 +40,71 @@ References: [binding rules](../AGENTS.md), [current handoff](handoff/HANDOFF.md)
 - [ ] **OWNER**: Review [repository security](https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis): secret scanning, push protection and dependency alerts where supported. Dependabot configuration alone does not prove these settings are enabled.
 - [ ] **OWNER + AGENT**: Confirm required Actions secret names and target identity without exposing values: migration access token, TEST/PROD project refs and database passwords, plus TEST URL/anon/service credentials for real tests. A working Git connection does not prove permission to manage [Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions).
 
+### Supply-chain settings (batch-6 audit)
+
+The repository is **public** and every branch an agent pushes runs CI with its secrets, so the
+code side (SHA-pinned actions, `contents: read` tokens, no secret interpolated into shell, no
+account token in the PR migration job once the TEST URL below exists, `VERCEL_TOKEN` only in
+preflight steps, no Vercel build for `dependabot/**`, `npm ci` on Vercel, robots/noindex on
+Previews) is already on the branch and pinned by `scripts/test/workflow-supply-chain.test.mjs`.
+These account settings finish it. Do them in this order; none of them needs a code change.
+
+- [ ] **OWNER** (SUP-1, first): in [Supabase TEST → Connect](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu?showConnect=true)
+      copy the **Session pooler** connection string (port **5432**, user `postgres.snmcrmhgevfqggxdiomu`),
+      put the TEST database password into it, and save it as secret **`SUPABASE_TEST_DB_URL`** of the
+      **`test`** environment in [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments).
+      A password with `@`, `:`, `/` or `#` must be percent-encoded. The next PR run's
+      `Choose TEST credentials` step must then print `TEST database URL points at snmcrmhgevfqggxdiomu.`
+      and no "Supabase account token used by a PR job" warning. If its type check fails only on
+      blank lines, nothing is wrong; if it fails on a real type, regenerate `src/lib/data/db.types.ts`.
+- [ ] **OWNER** (SUP-1): [GitHub environments](https://github.com/Guhlores-Team/fanfunnel/settings/environments) →
+      **`production`**: Required reviewers = you ("Prevent self-review" off, you are the only owner);
+      Deployment branches and tags = **Selected branches and tags** → add `main`. Then **Add environment
+      secret** for `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD` and `SUPABASE_ACCESS_TOKEN`.
+- [ ] **OWNER** (SUP-1, SUP-5): same page → **`test`**: add environment secrets `SUPABASE_TEST_PROJECT_REF`,
+      `SUPABASE_TEST_DB_PASSWORD`, `VERCEL_TOKEN` and `FANFUNNEL_TEST_CRON_SECRET`. Optionally require your
+      review (SUP-6; PR migration runs then wait for your click).
+- [ ] **OWNER** (SUP-1, SUP-5): only after both environments hold their copies, delete the repository-level
+      `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN` and `VERCEL_TOKEN` in
+      [Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions). Keep the
+      repository-level TEST trio (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+      `SUPABASE_SERVICE_ROLE_KEY`): the `supabase` and `login-ui` jobs use them. Known limit: the manual
+      `test-maintenance` job still needs the account token, and it runs in the `test` environment.
+- [ ] **OWNER** (SUP-1): in [Supabase access tokens](https://supabase.com/dashboard/account/tokens) revoke the
+      token CI used until now and create a new one, stored only in the `production` (and, for
+      `test-maintenance`, `test`) environment secrets.
+- [ ] **OWNER** (SUP-5): in [Vercel tokens](https://vercel.com/account/settings/tokens) replace the CI
+      `VERCEL_TOKEN` with one scoped to the `easy-simple-sites` team with the shortest expiry that covers the
+      planned Preview measurements, stored only as the `test` environment secret.
+- [ ] **OWNER** (SUP-4): [Actions settings](https://github.com/Guhlores-Team/fanfunnel/settings/actions) →
+      Workflow permissions = **Read repository contents and packages permissions**; untick "Allow GitHub
+      Actions to create and approve pull requests"; Fork pull request workflows = **Require approval for
+      all external contributors**; Actions permissions = allow actions by GitHub plus `supabase/setup-cli@*`,
+      and tick **Require actions to be pinned to a full-length commit SHA** (every workflow already is).
+- [ ] **OWNER** (SUP-4): [Rulesets](https://github.com/Guhlores-Team/fanfunnel/settings/rules) → new branch
+      ruleset for `main` (require a pull request, block force pushes and deletions; required checks
+      stay `verify`, `supabase`, `login-ui`) and one for `dashboard-redesign` (block force pushes and deletions).
+- [ ] **OWNER** (SUP-3): [Security analysis](https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis) →
+      enable Dependabot alerts, Dependabot security updates, Secret scanning, Push protection and Private
+      vulnerability reporting.
+- [ ] **OWNER** (SUP-2): give Preview its own rate-limit store. In [Vercel storage](https://vercel.com/easy-simple-sites/~/stores)
+      create a second Upstash Redis database and connect it to `fanfunnel` for **Preview** only; then in
+      [Environment Variables](https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables)
+      set the current store's `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `KV_URL`, `REDIS_URL` and
+      `KV_REST_API_READ_ONLY_TOKEN` to **Production** only. Until then any branch build holds a write token
+      to Production's rate limits.
+- [ ] **OWNER** (SUP-10): [Build and Deployment](https://vercel.com/easy-simple-sites/fanfunnel/settings/build-and-deployment) →
+      Node.js Version = **22.x** (matches `package.json` `engines`, CI and local builds; the project shows 24.x
+      and Vercel already follows `engines` with a build warning). The Install Command needs no dashboard
+      change: `vercel.json` sets `npm ci`, which overrides it.
+- [ ] **OWNER** (SUP-8, Q4): [Git settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/git) → confirm
+      **Git Fork Protection** is on. `vercel.json` already disables builds for `dependabot/**`.
+- [ ] **OWNER** (SUP-9): after real-phone Preview testing, [Deployment Protection](https://vercel.com/easy-simple-sites/fanfunnel/settings/deployment-protection) →
+      Vercel Authentication (Standard Protection) for Previews. Until then Previews serve
+      `X-Robots-Tag: noindex, nofollow` and a disallow-all `robots.txt`.
+- [ ] **OWNER** (Q1): decide whether the repository stays public ([Settings](https://github.com/Guhlores-Team/fanfunnel/settings) → Danger Zone).
+- [ ] **OWNER + AGENT** (SUP-11): treat the first Dependabot PR for `web-push` 4.x as untrusted until its diff is read.
+
 ## 3. Verify Auth and recovery on TEST; prepare LIVE separately
 
 Auth email links must return to the correct site's `/auth/callback?next=…` through
@@ -68,6 +133,8 @@ Variable names by scope (see the checks below for how to verify each):
       `REDIS_URL`, `KV_REST_API_READ_ONLY_TOKEN`) into **both** Production and Preview. Without
       them every route limit would be per serverless instance and the retention cron would report
       the store as `per_instance`; the first LIVE smoke check confirms it reads `shared`.
+      **Open risk (SUP-2):** that one store is shared by Preview and Production, so every branch build
+      holds a write token to Production's limits. Section 2 "Supply-chain settings" splits it.
 - [ ] **OWNER**: **Production** scope, **required**, generated fresh for LIVE (never copied from Preview):
       `CRON_SECRET` (`openssl rand -hex 32`; without it the retention cron refuses to run and
       Admin › Errors alerts), `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY` (each

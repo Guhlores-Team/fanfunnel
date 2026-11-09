@@ -23,7 +23,12 @@ The existing GitHub Actions TEST credentials are used:
   `https://snmcrmhgevfqggxdiomu.supabase.co`.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`.
 
-Authenticated Vercel metadata verification also requires **`VERCEL_TOKEN`**.
+Authenticated Vercel metadata verification also requires **`VERCEL_TOKEN`**,
+in the `--preflight` step only (SUP-5). That step runs before `npm ci`; the
+measurement step refuses to run with the token set and accepts the deployment
+only through the preflight record bound to this Preview, commit and workflow run
+(`checkPreflightRecord` in `e2e/preview-lcp-guards.mjs`). Both jobs run in the
+`test` environment, where the owner keeps `VERCEL_TOKEN` (docs/GO_LIVE.md section 2).
 This change does not create, copy, configure or verify that credential. Secure
 setup is pending the owner's/root's decision: prefer a team/project-scoped
 credential limited to the required metadata reads where the provider supports
