@@ -658,8 +658,13 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         </> : <button type="button" onClick={() => void recovery.initialize()}
           data-testid="spin-storage-check" className={recoveryPrimary}>Check browser storage</button>)}
         {nextSpinHash && (
+          /* Opaque theme-colour backing, like the page footer: this muted line
+             can cross the fixed Preview-only EnvBadge band mid-scroll (small
+             phones, tall bingo cards), and its contrast must hold on the page,
+             not on the badge. */
           <p
-            className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 text-center text-[10px] tracking-wide text-muted"
+            className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 rounded-2xl px-3 py-1 text-center text-[10px] tracking-wide text-muted"
+            style={{ backgroundColor: "var(--theme-bg)" }}
             title="The server committed to your next spin's random seed before you spin — after spinning, the verify page proves the outcome matches this commitment."
           >
             <span className="whitespace-nowrap">🔒 Provably fair · next-spin commitment</span>
