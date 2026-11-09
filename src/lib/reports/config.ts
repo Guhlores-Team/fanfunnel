@@ -34,6 +34,20 @@ export function isUrgentReportReason(reason: string): boolean {
 /** Urgent-report alert e-mails per rolling hour, across instances when Upstash is set. */
 export const REPORT_ALERTS_PER_HOUR = 10;
 
+/**
+ * T6: reasons about a child's safety. Their alerts have their OWN hourly
+ * budget, so a flood of anonymous public photo reports can never use up the
+ * budget a real "under 18" report needs.
+ */
+export const CHILD_SAFETY_REPORT_REASONS: readonly string[] = [CHILD_SAFETY_REPORT_REASON];
+
+export function isChildSafetyReportReason(reason: string): boolean {
+  return CHILD_SAFETY_REPORT_REASONS.includes(reason);
+}
+
+/** Child-safety alert e-mails per rolling hour (separate from the shared budget). */
+export const CHILD_SAFETY_ALERTS_PER_HOUR = 30;
+
 /** Longest admin resolution note (the 0064 CHECK matches). */
 export const REPORT_NOTE_MAX = 1000;
 
