@@ -29,8 +29,16 @@ This procedure does not authorize a production deployment or a merge to `main`.
      --project prj_SYsq2wTEYY2EJuenGcfIRN3D2qPU \
      --scope easy-simple-sites --environment preview --yes \
      --meta verifiedGitBranch=dashboard-redesign \
-     --meta "verifiedCommitSha=$checked_sha"
+     --meta "verifiedCommitSha=$checked_sha" \
+     --build-env "NEXT_PUBLIC_COMMIT_SHA=$checked_sha"
    ```
+
+   An archive deploy has no Git metadata, so Vercel does not set
+   `VERCEL_GIT_COMMIT_SHA`. The `--build-env` line passes the checked SHA
+   instead; the Preview badge at the bottom (top on wide screens) then ends in
+   its first 7 characters (OPS-13). Before signing off "tested on Preview",
+   check that the badge shows the SHA you recorded in step 2. A badge ending in
+   `unknown` means the SHA was not passed: redeploy with the line above.
 
    The staging directory must be outside every Git checkout. Omit recognized
    `githubDeployment`/`githubCommitRef` metadata: a branch-associated deployment

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { auditActionLabel, auditDetailsSummary, shortId } from "./auditLabels";
 
 interface Entry {
@@ -16,35 +16,67 @@ interface Entry {
 }
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
-const PAGE = 25;
 
 /**
  * Admin › Activity: the admin activity log, newest first. Read through
  * GET /api/admin/audit (active admin on a two-factor session only). Entries
  * store ids; the server labels them with the account's current email, which
- * admins already see in the account list.
+ * admins already see in the account list. OPS-04: filter by action (code or
+ * wording) and load older pages from the server, beyond the first page.
  */
 export default function AdminActivity() {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [failed, setFailed] = useState(false);
-  const [shown, setShown] = useState(PAGE);
+  const [more, setMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [filter, setFilter] = useState("");
+
+  const fetchPage = useCallback(async (action: string, before?: string) => {
+    const q = new URLSearchParams();
+    if (action) q.set("action", action);
+    if (before) q.set("before", before);
+    const r = await fetch(`/api/admin/audit${q.size ? `?${q}` : ""}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    return (await r.json()) as { entries?: Entry[]; more?: boolean };
+  }, []);
 
   useEffect(() => {
     let live = true;
-    fetch("/api/admin/audit", { cache: "no-store" })
-      .then(async (r) => {
+    fetchPage(filter)
+      .then((page) => {
         if (!live) return;
-        if (!r.ok) {
-          setFailed(true);
-          return;
-        }
-        setEntries(((await r.json()) as { entries?: Entry[] }).entries ?? []);
+        setFailed(false);
+        setEntries(page.entries ?? []);
+        setMore(page.more === true);
       })
       .catch(() => live && setFailed(true));
     return () => {
       live = false;
     };
-  }, []);
+  }, [fetchPage, filter]);
+
+  async function loadOlder() {
+    if (!entries?.length || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await fetchPage(filter, entries[entries.length - 1].createdAt);
+      setEntries((prev) => [...(prev ?? []), ...(page.entries ?? [])]);
+      setMore(page.more === true);
+    } catch {
+      setFailed(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function applyFilter(event: FormEvent) {
+    event.preventDefault();
+    const next = draft.trim();
+    if (next === filter) return;
+    setEntries(null);
+    setFilter(next);
+  }
 
   return (
     <section aria-labelledby="admin-activity" className={`lift-in overflow-hidden rounded-2xl ${raised}`}>
@@ -55,6 +87,26 @@ export default function AdminActivity() {
         </h2>
         <span className="text-xs text-muted">Who did what in the admin area. Kept 1 year.</span>
       </div>
+      <form role="search" aria-label="Filter activity" onSubmit={applyFilter} className="flex flex-wrap items-end gap-2 border-b border-[#1f1b27] px-4 py-3 sm:px-[18px]">
+        <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs text-muted">
+          Filter by action
+          <input
+            type="search"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            maxLength={40}
+            pattern="[A-Za-z0-9 ._\-]*"
+            placeholder="e.g. suspend, two-factor, lookup"
+            className="rounded-lg border border-[var(--hair)] bg-transparent px-3 py-2 text-[13px] text-ink"
+          />
+        </label>
+        <button type="submit" className="rounded-lg border border-[var(--hair)] px-3 py-2 text-xs font-semibold text-ink">Filter</button>
+        {filter && (
+          <button type="button" onClick={() => { setDraft(""); setEntries(null); setFilter(""); }} className="px-1 py-2 text-xs font-semibold text-ink underline underline-offset-4">
+            Clear
+          </button>
+        )}
+      </form>
       {failed ? (
         <p role="alert" className="px-[18px] py-6 text-center text-[13.5px] text-muted">
           Couldn&rsquo;t load the activity log.
@@ -66,11 +118,11 @@ export default function AdminActivity() {
           ))}
         </div>
       ) : entries.length === 0 ? (
-        <p className="px-[18px] py-6 text-center text-[13.5px] text-muted">No admin activity yet.</p>
+        <p className="px-[18px] py-6 text-center text-[13.5px] text-muted">{filter ? "No activity matches this filter." : "No admin activity yet."}</p>
       ) : (
         <>
           <ol className="divide-y divide-[#1f1b27]">
-            {entries.slice(0, shown).map((e) => {
+            {entries.map((e) => {
               const actor = e.actorLabel ?? (e.actorId ? shortId(e.actorId) : "System");
               const target =
                 e.targetType === "profile" && e.targetId && e.targetId !== e.actorId
@@ -96,14 +148,15 @@ export default function AdminActivity() {
               );
             })}
           </ol>
-          {entries.length > shown && (
+          {more && (
             <div className="border-t border-[#1f1b27] px-4 py-3 text-center">
               <button
                 type="button"
-                onClick={() => setShown((n) => n + PAGE)}
+                onClick={() => void loadOlder()}
+                disabled={loadingMore}
                 className="text-xs font-semibold text-ink underline underline-offset-4"
               >
-                Show older
+                {loadingMore ? "Loading…" : "Load older"}
               </button>
             </div>
           )}

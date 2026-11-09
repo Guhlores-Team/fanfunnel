@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
-import { canaryMessage, initializationMessage, ledgerMessage, parseSystemHealthStatus, rateLimitStoreMessage, schemaMessage, type SystemHealthStatus } from "./systemHealthCopy";
+import { canaryMessage, initializationMessage, ledgerMessage, maintenanceLine, opsFlagLines, parseSystemHealthStatus, rateLimitFallbackLine, rateLimitStoreMessage, schemaMessage, type SystemHealthStatus } from "./systemHealthCopy";
 import { btnGhost, raised, SectionTitle } from "./adminUi";
 
 const date = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Not recorded";
@@ -41,6 +41,13 @@ export default function SystemHealthCard() {
       <SectionTitle id={`${id}-title`}>System health</SectionTitle>
       <div className="space-y-4 p-4 text-sm text-ink sm:p-[18px]">
         <p>{health ? canaryMessage(health.canary.status) : "Loading system health…"}</p>
+        {health && (health.maintenance || health.config) && <div data-testid="ops-status" className="space-y-1">
+          {health.maintenance && <p data-testid="maintenance-line" data-stale={health.maintenance.stale ? "true" : "false"} className={health.maintenance.stale ? "font-semibold text-[#fca5a5]" : undefined}>{maintenanceLine(health.maintenance)}</p>}
+          {health.config && <ul aria-label="Configured services" className="grid gap-0.5 text-xs">
+            {opsFlagLines(health.config, health.environment).map(line => <li key={line.key} data-testid={`ops-flag-${line.key}`} className={line.alarm ? "font-semibold text-[#fca5a5]" : "text-muted"}>{line.text}</li>)}
+          </ul>}
+          {"rateLimitLastFallbackAt" in health && <p className="text-xs text-muted" data-testid="rate-limit-fallback">{rateLimitFallbackLine(health.rateLimitLastFallbackAt)}</p>}
+        </div>}
         {health && !health.demo && <>
           <p>{ledgerMessage(health.summary)}</p>
           {schemaMessage(health.schema) && <p data-testid="schema-version">{schemaMessage(health.schema)}</p>}

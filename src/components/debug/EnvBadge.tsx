@@ -1,4 +1,4 @@
-import { envLabel } from "@/lib/envLabel";
+import { envLabel, shortCommit } from "@/lib/envLabel";
 
 // Preview-only strip naming the database this build uses. Mounted under the same
 // NEXT_PUBLIC_ENABLE_DEBUG gate as the error console, so it never ships to
@@ -7,6 +7,7 @@ import { envLabel } from "@/lib/envLabel";
 // modal overlays so the strip cannot cover a drawer's text or action buttons.
 export default function EnvBadge() {
   const { text, tone } = envLabel(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const commit = shortCommit({ VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA, NEXT_PUBLIC_COMMIT_SHA: process.env.NEXT_PUBLIC_COMMIT_SHA });
   const colors =
     tone === "danger"
       ? "bg-[#dc2626] text-white"
@@ -19,7 +20,7 @@ export default function EnvBadge() {
       data-env-badge={tone}
       className={`pointer-events-none fixed bottom-[var(--ff-bottom-offset,0px)] left-1/2 z-30 -translate-x-1/2 max-w-[calc(100vw-1rem)] truncate rounded-t-md lg:bottom-auto lg:top-0 lg:rounded-b-md lg:rounded-t-none px-2.5 py-0.5 font-sans text-[10px] font-bold uppercase tracking-[0.08em] shadow ${colors}`}
     >
-      {text}
+      {text} · <span data-env-commit>{commit}</span>
     </div>
   );
 }

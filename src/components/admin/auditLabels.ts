@@ -15,6 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
   "account.storage_retry": "retried account cleanup",
   "account.self_close": "closed their own account",
   "admin.bootstrap": "claimed the first admin",
+  "admin.lookup": "looked up a win",
   "error.resolve": "resolved an error report",
   "error.reopen": "reopened an error report",
   "report.resolve": "resolved a safety report",
@@ -27,6 +28,20 @@ const ACTION_LABELS: Record<string, string> = {
 
 export function auditActionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action;
+}
+
+/** OPS-04: the Activity filter: letters, digits, spaces and . _ - only. */
+export const AUDIT_FILTER = /^[A-Za-z0-9 ._-]{1,40}$/;
+/** Known action codes whose code or readable label contains `text` (case-insensitive). */
+export function auditActionsMatching(text: string): string[] {
+  const t = text.trim().toLowerCase();
+  if (!t) return [];
+  return Object.entries(ACTION_LABELS).filter(([code, label]) => code.includes(t) || label.toLowerCase().includes(t)).map(([code]) => code);
+}
+/** Whether one entry's action passes the filter (code or label contains it). */
+export function auditActionMatches(action: string, text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return !t || action.toLowerCase().includes(t) || auditActionLabel(action).toLowerCase().includes(t);
 }
 
 /** "abcd…1234" for an id with no current account behind it. */

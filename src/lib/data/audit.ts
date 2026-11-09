@@ -8,6 +8,8 @@
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { mockListAudit, mockRecordAudit } from "./mock";
+import { reportAuditNotWritten } from "@/lib/monitoring/opsAlerts";
+import { auditActionsMatching } from "@/components/admin/auditLabels";
 
 export type AuditAction =
   | "account.create"
@@ -23,6 +25,7 @@ export type AuditAction =
   | "account.storage_retry"
   | "account.self_close"
   | "admin.bootstrap"
+  | "admin.lookup"
   | "error.resolve"
   | "error.reopen"
   | "report.resolve"
@@ -35,7 +38,7 @@ export type AuditAction =
 export interface AuditInput {
   actorId: string | null;
   action: AuditAction;
-  targetType?: "profile" | "factor" | "error" | "report" | null;
+  targetType?: "profile" | "factor" | "error" | "report" | "spin" | null;
   targetId?: string | null;
   /** Small, PII-free facts (role names, feature keys, counts, booleans). */
   details?: Record<string, string | number | boolean | null | Record<string, boolean>>;
@@ -95,22 +98,38 @@ export async function recordAudit(entry: AuditInput): Promise<void> {
   }
   try {
     const { error } = await createServiceClient().from("admin_audit_log").insert(row);
-    if (error) console.error("recordAudit: insert failed", { action: entry.action, error: error.message });
+    if (error) {
+      console.error("recordAudit: insert failed", { action: entry.action, error: error.message });
+      reportAuditNotWritten(entry.action);
+    }
   } catch (e) {
     console.error("recordAudit: insert threw", { action: entry.action, error: String(e) });
+    reportAuditNotWritten(entry.action);
   }
 }
 
 /** The newest entries for the admin Activity view (admins on aal2 only). */
-export async function listAuditLog(limit = 200): Promise<AuditEntry[] | null> {
+/** OPS-04: `action` filters by code or readable label (AUDIT_FILTER-checked by
+ *  the route); `before` is the createdAt of the last entry already shown. */
+export async function listAuditLog(limit = 200, opts: { action?: string; before?: string } = {}): Promise<AuditEntry[] | null> {
   const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), 500);
-  if (!isSupabaseConfigured()) return mockListAudit(n);
+  if (!isSupabaseConfigured()) return mockListAudit(n, opts);
 
   const sb = await createClient();
   if (!(await isActiveAdmin(sb))) return null;
-  const { data, error } = await sb
+  let query = sb
     .from("admin_audit_log")
-    .select("id, actor_id, action, target_type, target_id, details, created_at")
+    .select("id, actor_id, action, target_type, target_id, details, created_at");
+  const text = opts.action?.trim().toLowerCase();
+  if (text) {
+    const codes = auditActionsMatching(text);
+    // A code-shaped filter also matches codes this build has no label for.
+    if (/^[a-z0-9_.]+$/.test(text)) query = query.or([`action.ilike.*${text}*`, ...(codes.length ? [`action.in.(${codes.join(",")})`] : [])].join(","));
+    else if (codes.length) query = query.in("action", codes);
+    else return [];
+  }
+  if (opts.before) query = query.lt("created_at", opts.before);
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(n);
   if (error) return null;

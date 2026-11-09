@@ -127,6 +127,24 @@ add it there to test these e-mails against the TEST project.
 | `ALERT_EMAIL_TO` | the e-mail address that should receive alerts and new-request notes | no |
 | `ACCOUNT_EMAIL_FROM` | optional; only to send account mail from another verified address | no |
 
+## Step 6b: Uptime monitor and heartbeat (Production, ~5 minutes)
+
+Both are free, and both still warn you when our own database or e-mail is down.
+
+1. **Uptime:** at **[UptimeRobot](https://uptimerobot.com)** → **New monitor** → HTTP(s) →
+   URL `https://<your live domain>/api/health` (not the home page, which is cached) → alert to your
+   e-mail. It answers `200` when the database replies and `503` when it does not.
+2. **Heartbeat:** at **[Healthchecks.io](https://healthchecks.io)** (or an UptimeRobot heartbeat
+   monitor) create a check with a period of **1 day** and a grace of **6 hours**. Copy its ping URL
+   (starts with `https://`) and add it in Vercel:
+
+| Name | Value | Sensitive |
+|---|---|---|
+| `HEARTBEAT_URL` | the ping URL | **yes** |
+
+After each successful nightly maintenance run, the app pings it. If the pings stop, the
+monitor e-mails you.
+
 ## Step 7: Separate the Preview rate-limit store (Preview + Production)
 
 Today Preview and Production share one Upstash database, so any branch build can change
@@ -169,7 +187,9 @@ In short, at **[GitHub → Environments](https://github.com/Guhlores-Team/fanfun
 Just say **"keys are in"**. Don't send any values. I will then:
 1. Redeploy Production so it picks up the new keys.
 2. Check **Admin › System health** is green: reward keys found, schema version current, rate-limit
-   store shared, maintenance job configured.
+   store shared, and the "configured services" list showing **Alert e-mails: ON** and the account
+   e-mail sender, VAPID pair, shared rate limits, `CRON_SECRET` and `HEARTBEAT_URL` as configured.
+   The next day, **Maintenance job: last ran …** must show last night's run (it turns red after 30 h).
 3. Send a safe test alert so you can confirm it arrived in your inbox.
 
 ---

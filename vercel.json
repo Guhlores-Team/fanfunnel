@@ -28,7 +28,8 @@
       "gaps/b6-onboard": false,
       "gaps/b6-trust": false,
       "gaps/b6-dash": false,
-      "gaps/b6-db": false
+      "gaps/b6-db": false,
+      "gaps/b6-ops": false
     }
   },
   "crons": [

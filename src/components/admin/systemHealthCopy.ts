@@ -45,7 +45,54 @@ export function schemaMessage(schema: SchemaCheck | undefined): string | null {
 
 /** A22: whether rate limits are shared across instances (Upstash/KV) or per instance. */
 export type RateLimitStore = "shared" | "per_instance";
-export type SystemHealthStatus = { demo: boolean; canary: { status: CanaryStatus | "demo" }; summary: HealthSummary | null; rateLimitStore?: RateLimitStore; schema?: SchemaCheck };
+/** OPS-09: optional services, configured or not (names only, never values). */
+export const OPS_FLAG_KEYS = ["alertEmail", "accountMail", "push", "sharedRateLimit", "cronSecret", "heartbeat"] as const;
+export type OpsFlagKey = typeof OPS_FLAG_KEYS[number];
+export type OpsFlags = Record<OpsFlagKey, boolean>;
+export const OPS_FLAG_LABELS: Record<OpsFlagKey, string> = {
+  alertEmail: "Alert e-mails (RESEND_API_KEY + ALERT_EMAIL_TO)",
+  accountMail: "Account e-mail sender (RESEND_API_KEY; ACCOUNT_EMAIL_FROM optional)",
+  push: "Push notifications (VAPID key pair)",
+  sharedRateLimit: "Shared rate limits (Upstash or Vercel KV)",
+  cronSecret: "Maintenance job secret (CRON_SECRET)",
+  heartbeat: "Uptime heartbeat (HEARTBEAT_URL)",
+};
+export type OpsEnvironment = "production" | "preview" | "development";
+export type MaintenanceState = { lastRanAt: string | null; stale: boolean };
+export type SystemHealthStatus = { demo: boolean; canary: { status: CanaryStatus | "demo" }; summary: HealthSummary | null; rateLimitStore?: RateLimitStore; schema?: SchemaCheck;
+  environment?: OpsEnvironment; config?: OpsFlags; maintenance?: MaintenanceState; rateLimitLastFallbackAt?: string | null };
+
+const when = (iso: string) => new Date(iso).toLocaleString();
+/** OPS-08: the daily job's last run; red (stale) on Production after 30 h. */
+export function maintenanceLine(m: MaintenanceState): string {
+  const base = m.lastRanAt ? `Maintenance job: last ran ${when(m.lastRanAt)}` : "Maintenance job: no run recorded";
+  return m.stale ? `${base}. Overdue: it should run daily. Check the Vercel cron and CRON_SECRET.` : `${base}.`;
+}
+/** One line per optional service. Alert e-mails read ON/OFF; OFF is red on Production. */
+export function opsFlagLines(flags: OpsFlags, environment: OpsEnvironment | undefined): { key: OpsFlagKey; text: string; alarm: boolean }[] {
+  return OPS_FLAG_KEYS.map((key) => key === "alertEmail"
+    ? { key, text: `Alert e-mails: ${flags.alertEmail ? "ON" : "OFF"}`, alarm: !flags.alertEmail && environment === "production" }
+    : { key, text: `${OPS_FLAG_LABELS[key]}: ${flags[key] ? "configured" : "not set"}`, alarm: false });
+}
+/** OPS-10: when limits last fell back from the shared store. */
+export function rateLimitFallbackLine(at: string | null | undefined): string {
+  return at ? `Rate-limit store: last fallback to per-instance limits ${when(at)}.` : "Rate-limit store: no fallback recorded.";
+}
+const isDate = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
+function parseOps(row: Record<string, unknown>): Pick<SystemHealthStatus, "environment" | "config" | "maintenance" | "rateLimitLastFallbackAt"> {
+  const out: Pick<SystemHealthStatus, "environment" | "config" | "maintenance" | "rateLimitLastFallbackAt"> = {};
+  if (row.environment === "production" || row.environment === "preview" || row.environment === "development") out.environment = row.environment;
+  const c = row.config as Record<string, unknown> | undefined;
+  if (c && typeof c === "object" && !Array.isArray(c) && OPS_FLAG_KEYS.every((k) => typeof c[k] === "boolean")) {
+    out.config = Object.fromEntries(OPS_FLAG_KEYS.map((k) => [k, c[k] as boolean])) as OpsFlags;
+  }
+  const m = row.maintenance as Record<string, unknown> | undefined;
+  if (m && typeof m === "object" && !Array.isArray(m) && typeof m.stale === "boolean" && (m.lastRanAt === null || isDate(m.lastRanAt))) {
+    out.maintenance = { lastRanAt: m.lastRanAt as string | null, stale: m.stale };
+  }
+  if (row.rateLimitLastFallbackAt === null || isDate(row.rateLimitLastFallbackAt)) out.rateLimitLastFallbackAt = row.rateLimitLastFallbackAt as string | null;
+  return out;
+}
 function parseSchema(raw: unknown): SchemaCheck | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const row = raw as Record<string, unknown>;
@@ -70,5 +117,5 @@ export function parseSystemHealthStatus(raw: unknown): SystemHealthStatus | null
   }
   const rateLimitStore = row.rateLimitStore === "shared" || row.rateLimitStore === "per_instance" ? row.rateLimitStore : undefined;
   const schema = parseSchema(row.schema);
-  return { demo: row.demo, canary: {status:canary.status as CanaryStatus | "demo"}, summary: summary as unknown as HealthSummary | null, ...(rateLimitStore ? { rateLimitStore } : {}), ...(schema ? { schema } : {}) };
+  return { demo: row.demo, canary: {status:canary.status as CanaryStatus | "demo"}, summary: summary as unknown as HealthSummary | null, ...(rateLimitStore ? { rateLimitStore } : {}), ...(schema ? { schema } : {}), ...parseOps(row) };
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { envLabel, supabaseRef } from "./envLabel";
+import { envLabel, shortCommit, supabaseRef } from "./envLabel";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -22,4 +22,8 @@ check("an unknown project is flagged", other.tone === "danger" && other.text.inc
 
 check("no URL means demo data", envLabel(undefined).tone === "neutral" && envLabel("").tone === "neutral");
 
+check("OPS-13: Vercel's SHA is shortened", shortCommit({ VERCEL_GIT_COMMIT_SHA: "1617EB4abcdef0123456789abcdef0123456789a" }) === "1617eb4");
+check("OPS-13: an archive deploy's SHA is used", shortCommit({ NEXT_PUBLIC_COMMIT_SHA: "d39c4fa0" }) === "d39c4fa");
+check("OPS-13: Vercel's wins over the passed one", shortCommit({ VERCEL_GIT_COMMIT_SHA: "aaaaaaa", NEXT_PUBLIC_COMMIT_SHA: "bbbbbbb" }) === "aaaaaaa");
+check("OPS-13: unset or junk is 'unknown'", shortCommit({}) === "unknown" && shortCommit({ NEXT_PUBLIC_COMMIT_SHA: "<script>" }) === "unknown");
 console.log(`envLabel.test: ${passed} checks passed`);

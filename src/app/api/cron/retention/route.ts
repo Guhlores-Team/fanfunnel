@@ -10,6 +10,7 @@ import { captureNow, flushAlertDigest } from "@/lib/monitoring/capture";
 import { retryPausedDeletions } from "@/lib/account/deletionRetry";
 import { rateLimitShared, sharedRateLimitStoreMissing } from "@/lib/rateLimit";
 import { limitRoute } from "@/lib/api/limit";
+import { pingHeartbeat } from "@/lib/operations/heartbeat";
 
 // Authenticated maintenance entry point: retention, integrity, storage retry,
 // paused account deletions (A18, with backoff) and the pending error digest (A27).
@@ -105,7 +106,11 @@ export async function GET(req: Request) {
   // After every other alert above, so a digest sent now covers them too.
   const digest = await flushAlertDigest();
   const pending = storage.pending > 0 || storage.accountsPending > 0 || deletions.pending > 0 || deletions.waiting > 0 || deletions.needsAdmin > 0;
+  const status = !health.ok || storage.failed > 0 || deletions.failed > 0 ? 503 : pending ? 202 : 200;
+  // OPS-02: tell the external monitor this run succeeded (work still queued
+  // for the next run is not a failure). Silence there is the alert.
+  if (status < 500) await pingHeartbeat();
   return NextResponse.json({ ok: health.ok && !pending && storage.failed === 0 && deletions.failed === 0, health, pending, storage, deletions, digest, rateLimitStore, deleted, periods: RETENTION_DAYS }, {
-    status: !health.ok || storage.failed > 0 || deletions.failed > 0 ? 503 : pending ? 202 : 200, headers: NO_STORE_HEADERS,
+    status, headers: NO_STORE_HEADERS,
   });
 }

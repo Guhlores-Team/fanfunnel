@@ -70,7 +70,7 @@ Never paste passwords or API keys into chat — put keys straight into the servi
 ## Stage 6 — Legal & decisions
 
 - [ ] 21. Read the new Terms & Privacy on the Preview (/terms, /privacy) and tell me changes.
-- [ ] 22. **Lawyer review** — bring `docs/LEGAL_NOTES.md` (prize-wheel/sweepstakes question, adult-content rules, GDPR).
+- [ ] 22. **Lawyer review** — bring `docs/LEGAL_NOTES.md` (prize-wheel/sweepstakes question, adult-content rules, GDPR) and the open questions in `docs/LAWYER_QUESTIONS.md`.
 - [ ] 23. Optional: form an **LLC** (Massachusetts) — then I swap the operator name in one place.
 - [ ] 24. Walk through the ~15 product decisions with me (a few at a time).
 
@@ -85,7 +85,19 @@ Never paste passwords or API keys into chat — put keys straight into the servi
 - [ ] 28. Me: apply database changes to live → merge `dashboard-redesign` into `main` (only on your explicit "go").
 - [ ] 29. You + me: live smoke test (MANUAL-CHECKLIST §4).
 - [ ] 30. Me: turn the Vercel Preview login back ON. You: confirm you can still reach the Preview while logged in.
-- [ ] 31. Uptime alert (free): https://uptimerobot.com → New monitor → your domain → alert to your email.
+- [ ] 31. Uptime alert (free): https://uptimerobot.com → New monitor → `https://<your domain>/api/health` (not the home page, which is cached) → alert to your email. Plus the nightly heartbeat (`HEARTBEAT_URL`): `docs/handoff/GO_LIVE_KEYS.md` step 6b.
+
+## Stage 9 — Open operational checks and questions
+
+Answer or do each of these before real fans arrive (ops audit, batch 6). Incident steps: `docs/RUNBOOK.md`.
+
+- [ ] 32. **Supabase plan for LIVE:** which plan is it on? Is a daily backup listed under Database → Backups? Do you want Point-in-Time Recovery (PITR)? (Free has no self-serve restore and auto-pauses; see step 16.)
+- [ ] 33. **Upstash plan for Production:** which plan, and what monthly command allowance? (Estimate: one 30-minute event with 200 fans uses roughly 60–90k commands.) When it runs out, rate limits quietly become per-instance; System health shows the last fallback.
+- [ ] 34. **Resend plan and limits:** which plan, what daily/monthly send limit? One account carries alerts, creator account mail and Supabase Auth e-mail (password resets).
+- [ ] 35. **Support mailbox:** `easysimplesites.org` has no MX record, so mail to `support@easysimplesites.org` bounces. Which mailbox should it reach (forwarding or Workspace, step 18), and who watches it during events? Then send it a test e-mail (`docs/GO_LIVE.md` §9).
+- [ ] 36. **Second admin:** who is it? Enrol them with their own two-factor before go-live, so one lost phone cannot lock everyone out (`docs/RUNBOOK.md`, "Creator locked out").
+- [ ] 37. **Vercel team members:** is the team just you? Fan links (`/spin/<token>`) appear in Vercel's request logs, so keep the team to people who may see them, and filter `/spin/*` before adding any log drain.
+- [ ] 38. **Ask the lawyer:** is a privacy contact that bounces acceptable for a soft launch (item 35)? Is deleting declined creator requests by hand every 90 days acceptable until it is automated (`docs/DATA_RETENTION.md`)?
 
 ## Note — agency staff seats (how onboarding works)
 
