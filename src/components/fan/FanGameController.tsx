@@ -792,7 +792,6 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
       {needsAck && (
         <AgeGate
           token={pass.token}
-          creatorTitle={pass.creatorTitle}
           onAck={() => {
             setNeedsAck(false);
             // The gate held focus; hand it to the play button (m6), not <body>.
@@ -805,6 +804,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   );
 }
 
+/** T13 (COPY_FIXES 5): the age box covers a higher local age of majority too. */
+export const AGE_CONFIRMATION = "I am 18 or older, and an adult where I live.";
+
 /**
  * A blocking age + terms gate shown over the whole page until the fan confirms
  * they're 18+ and accepts the terms. On confirm we persist the acknowledgement
@@ -812,11 +814,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
  */
 function AgeGate({
   token,
-  creatorTitle,
   onAck,
 }: {
   token: string;
-  creatorTitle: string;
   onAck: () => void;
 }) {
   const [adult, setAdult] = useState(false);
@@ -876,8 +876,8 @@ function AgeGate({
             Before you spin
           </h2>
           <p className="mt-2 text-sm text-muted text-pretty">
-            {creatorTitle} requires you to confirm your age and agree to the
-            terms before playing.
+            FanFunnel is for adults only. Confirm your age and agree to the
+            terms before you play.
           </p>
         </div>
 
@@ -890,7 +890,7 @@ function AgeGate({
               onChange={(e) => setAdult(e.target.checked)}
               className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
             />
-            <span className="text-ink">I am 18 years of age or older.</span>
+            <span className="text-ink">{AGE_CONFIRMATION}</span>
           </label>
           <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3">
             <input

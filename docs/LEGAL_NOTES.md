@@ -52,8 +52,9 @@ as promoting or facilitating them. Questions for the lawyer:
 - **Cap or restrict prizes.** Consider banning cash and cash-equivalent prizes (gift cards,
   crypto). The Terms already say spins have no cash value and FanFunnel never pays out.
 - **Geo-restrict** places where the structure cannot be made lawful.
-- **Disclose odds before the spin.** Today the odds a spin used are shown only afterwards,
-  on its verify page. The spin page itself shows prizes and rarity, not percentages.
+- **Disclose odds before the spin.** The spin page's prize book names every prize next to its
+  current odds for the fan's next spin, the link-in-bio page (`/c`) lists each prize's base odds,
+  and each spin's verify page shows the odds that spin used.
 
 **Features that make it look more like gambling**, which regulators and consumer-protection
 bodies (FTC "dark patterns", EU Unfair Commercial Practices Directive) tend to examine:
@@ -200,6 +201,9 @@ once their thresholds are met.
    time, so the process for a material change is: (1) email creators the new text and its start
    date at least 30 days ahead, and post a notice on the pages; (2) on the start date, publish the
    new text and set `LEGAL.effectiveDate` and `LEGAL.version` to that date in the same deploy.
+   Do not bump `LEGAL.version` until the SQL version literal is centralised (T1): the spin
+   functions compare the fan's accepted version with a literal, so a bump alone locks every fan
+   out of spinning.
    Ask the lawyer whether that is enough, and whether fans (who have no email on file) need more
    than the re-shown gate.
 10. **Fans who agreed before 0055.** Fans who ticked the gate before this change have a time but no

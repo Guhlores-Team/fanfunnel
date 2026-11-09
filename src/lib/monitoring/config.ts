@@ -7,8 +7,10 @@ export const ALERT_MAX_PER_HOUR = 10;
 /** Environments that e-mail by default (`ALERT_ENVIRONMENTS` overrides). */
 export const DEFAULT_ALERT_ENVIRONMENTS = ["production"] as const;
 
-/** Sender used when `ALERT_EMAIL_FROM` is unset (domain verified in Resend). */
-export const DEFAULT_ALERT_EMAIL_FROM = "FanFunnel Alerts <alerts@easysimplesites.org>";
+/** Sender used when `ALERT_EMAIL_FROM` is unset (domain verified in Resend). The
+ *  display name is plain "FanFunnel" because approval notices go to creators
+ *  (T18); the sending domain is the owner's to change, in Resend and here. */
+export const DEFAULT_ALERT_EMAIL_FROM = "FanFunnel <alerts@easysimplesites.org>";
 
 /** Rows kept in app_errors; a new fingerprint prunes the oldest resolved first. */
 export const APP_ERRORS_MAX_ROWS = 1000;

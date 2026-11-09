@@ -338,7 +338,7 @@ function LinkInBioCard({
             )}
           </Field>
 
-          <Field label="Tip / buy-spins link" note="where fans go to pay">
+          <Field label="Your tip or support link" note="shown to fans">
             {tipUrl ? (
               <div className={`flex items-center gap-2 rounded-[11px] px-3 py-2 ${recessed}`}>
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-ink">{tipUrl}</span>

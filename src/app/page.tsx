@@ -36,9 +36,9 @@ export default function Home() {
             Every fan gets their own wheel.
           </h1>
           <p className="reveal mt-5 max-w-md text-lg leading-relaxed text-muted text-pretty" style={{ animationDelay: "0.2s" }}>
-            Fans tip you on the platform you already use. You grant spins and send
-            a private link. Every spin wins something, and the rare drops are what
-            pull them back.
+            Send each fan a private link and grant them spins whenever you like.
+            Every spin lands on one of your prizes, and the rare ones keep fans
+            coming back.
           </p>
 
           <div className="reveal mt-9 flex flex-wrap items-center gap-3" style={{ animationDelay: "0.28s" }}>
@@ -63,7 +63,7 @@ export default function Home() {
             {[
               ["Private fan links", "Each fan has their own link and their own spin balance."],
               ["You set the odds", "Tune rarity and limited stock so the best prizes feel rare."],
-              ["No gambling, no fees", "Tips happen on-platform; every spin yields a guaranteed reward."],
+              ["Free for creators", "FanFunnel never takes payments. Tips stay on your own platform, and every spin lands on one of your prizes."],
             ].map(([t, d]) => (
               <div key={t} className="bg-base p-5">
                 <dt className="text-sm font-semibold text-ink">{t}</dt>

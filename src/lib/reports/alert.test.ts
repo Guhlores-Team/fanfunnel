@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import type { AlertConfig, AlertMail } from "@/lib/monitoring/alert";
-import { CHILD_SAFETY_ALERTS_PER_HOUR, CHILD_SAFETY_REPORT_REASON, ILLEGAL_REPORT_REASON, REPORT_ALERTS_PER_HOUR, REPORT_REASONS, isChildSafetyReportReason } from "./config";
+import { CHILD_SAFETY_ALERTS_PER_HOUR, CHILD_SAFETY_REPORT_REASON, ILLEGAL_REPORT_REASON, PUBLIC_TEXT_REPORT_REASON, REPORT_ALERTS_PER_HOUR, REPORT_REASONS, isChildSafetyReportReason } from "./config";
 import { PHOTO_REPORT_REASON } from "@/lib/creatorTheme/config";
 import { CHILD_SAFETY_ALERT_KEY, SUPPRESSED_SUMMARY_KEY, URGENT_ALERT_KEY, adminReportsUrl, alertUrgentReport, buildReportAlertEmail, buildSuppressedSummaryEmail } from "./alert";
 
@@ -58,6 +58,7 @@ async function main() {
   }
   check("three urgent reports → three e-mails", sent.length === 3);
   check("an everyday reason does not alert", !(await alertUrgentReport({ reason: "Not delivering won prizes", at }, { cfg, send, limit })) && sent.length === 3);
+  check("T15: a public-text report is listed but not urgent", (REPORT_REASONS as readonly string[]).includes(PUBLIC_TEXT_REPORT_REASON) && !(await alertUrgentReport({ reason: PUBLIC_TEXT_REPORT_REASON, at }, { cfg, send, limit })));
   check("a free-text reason does not alert", !(await alertUrgentReport({ reason: "Other", at }, { cfg, send, limit })));
   check("photo and illegal reports share one throttle key", keys.filter((k) => k !== CHILD_SAFETY_ALERT_KEY).every((k) => k === URGENT_ALERT_KEY));
   check("the child-safety report used its own key", keys[0] === CHILD_SAFETY_ALERT_KEY && isChildSafetyReportReason(CHILD_SAFETY_REPORT_REASON));

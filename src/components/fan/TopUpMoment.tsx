@@ -66,7 +66,7 @@ export default function TopUpMoment({
           rel="noopener noreferrer"
           className="btn-brand mt-4 inline-block w-full rounded-2xl py-3.5 text-base font-extrabold tracking-wide"
         >
-          Tip {creatorTitle} to unlock more spins →
+          Visit {creatorTitle}&rsquo;s page →
         </a>
       ) : (
         // Plain text, not a link look-alike: without a tip link the way to more

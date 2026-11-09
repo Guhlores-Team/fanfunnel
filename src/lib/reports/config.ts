@@ -5,6 +5,12 @@ import { PHOTO_REPORT_REASON } from "@/lib/creatorTheme/config";
 /** Reported content that may involve someone under 18. Always urgent. */
 export const CHILD_SAFETY_REPORT_REASON = "Involves someone under 18";
 export const ILLEGAL_REPORT_REASON = "Illegal content or activity";
+/**
+ * T15: the Terms' safe-for-work rule covers all public text (prize names,
+ * tagline, creator note, board names), so a fan can report it. Not urgent:
+ * it reaches Admin › Reports without an alert e-mail.
+ */
+export const PUBLIC_TEXT_REPORT_REASON = "Adult or offensive public text";
 
 /** The reasons a fan can pick, in menu order. */
 export const REPORT_REASONS = [
@@ -14,6 +20,7 @@ export const REPORT_REASONS = [
   CHILD_SAFETY_REPORT_REASON,
   ILLEGAL_REPORT_REASON,
   PHOTO_REPORT_REASON,
+  PUBLIC_TEXT_REPORT_REASON,
   "Other",
 ] as const;
 

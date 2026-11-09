@@ -904,7 +904,7 @@ function PublicPageSection({
               placeholder={publicGameCopy(gameKind).defaultTagline}
             />
           </Field>
-          <Field label="Tip / buy-spins link (where fans go to pay)">
+          <Field label="Your tip or support link (shown to fans)">
             <input
               value={tipUrl}
               onChange={(e) => patchProfile({ tipUrl: e.target.value })}
