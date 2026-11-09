@@ -4,9 +4,12 @@ import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import type { AdminAccount, AdminOverview, AppRole } from "./types";
-import { provisionCreatorUser } from "./creatorAccount";
+import { inviteCreatorUser } from "./creatorAccount";
 import { recordAudit } from "./audit";
 import { leaveApprovalNotice, sendApprovalEmail } from "@/lib/account/approvalNotice";
+import { sendApplicationAlert } from "@/lib/account/applicationNotice";
+import { sendAgencyInviteEmail } from "@/lib/agency/inviteEmail";
+import { displayNameInputError } from "@/lib/profileErrors";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
 import { NEUTRAL_CREATOR_TITLE, publicCreatorName } from "@/lib/publicCreator";
@@ -130,6 +133,9 @@ export interface OrgMember {
   email: string;
   displayName: string;
   role: OrgRole;
+  /** C10: the creators this (non-manager) seat may act for. Owner view only;
+   *  RLS (omc_rw: the seat's org owner or an admin) returns none to staff. */
+  creatorIds: string[];
 }
 export interface PendingInvite {
   id: string;
@@ -224,7 +230,19 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     email: m.profile?.email ?? "",
     displayName: m.profile?.display_name ?? m.profile?.email ?? "Member",
     role: m.role,
+    creatorIds: [],
   }));
+  if (isOwner && members.length > 0) {
+    const { data: scopeRows } = await sb
+      .from("org_member_creators")
+      .select("member_id, creator_id")
+      .in("member_id", members.map((m) => m.id));
+    const byMember = new Map<string, string[]>();
+    for (const r of (scopeRows ?? []) as { member_id: string; creator_id: string }[]) {
+      byMember.set(r.member_id, [...(byMember.get(r.member_id) ?? []), r.creator_id]);
+    }
+    for (const m of members) m.creatorIds = byMember.get(m.id) ?? [];
+  }
 
   return {
     org,
@@ -275,7 +293,7 @@ async function agencyRpc(call: OrgRpc): Promise<{ ok: true } | { error: string }
 // (0068: no account enumeration); the invitation shows up for that account
 // if and when it exists and is active.
 export const inviteOrgCreator = (orgId: string, email: string) =>
-  agencyRpc({ fn: "org_invite_creator", args: { p_org: orgId, p_email: email } });
+  withInviteEmail(orgId, email, null, () => agencyRpc({ fn: "org_invite_creator", args: { p_org: orgId, p_email: email } }));
 export const revokeOrgInvite = (inviteId: string) =>
   agencyRpc({ fn: "org_invite_revoke", args: { p_invite: inviteId } });
 export const respondToOrgInvite = (inviteId: string, accept: boolean) =>
@@ -283,7 +301,54 @@ export const respondToOrgInvite = (inviteId: string, accept: boolean) =>
 export const removeOrgCreator = (orgId: string, creatorId: string) =>
   agencyRpc({ fn: "org_remove_creator", args: { p_org: orgId, p_creator: creatorId } });
 export const addOrgMember = (orgId: string, email: string, role: OrgRole) =>
-  agencyRpc({ fn: "org_add_member", args: { p_org: orgId, p_email: email, p_role: role } });
+  withInviteEmail(orgId, email, role, () => agencyRpc({ fn: "org_add_member", args: { p_org: orgId, p_email: email, p_role: role } }));
+
+/** The address an invitation is stored under (public._org_invite_email). */
+const inviteAddress = (email: string) => {
+  const v = email.trim().toLowerCase();
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) && v.length <= 254 ? v : null;
+};
+
+/**
+ * C10: run an invite RPC, then e-mail the address only when the RPC created a
+ * NEW pending invitation (its id differs from the one pending before). A
+ * repeat for a still-pending invite, the owner's own address or a refusal
+ * sends nothing. Both reads use the owner's session client: RLS shows a
+ * pending invitation only to its org's owner. The answer never depends on the
+ * e-mail (the RPC answers "ok" for any address).
+ */
+async function withInviteEmail(
+  orgId: string,
+  email: string,
+  role: OrgRole | null,
+  rpc: () => Promise<{ ok: true } | { error: string }>,
+): Promise<{ ok: true } | { error: string }> {
+  const address = inviteAddress(email);
+  if (!isSupabaseConfigured() || !address) return rpc();
+  const sb = await createClient();
+  const pendingId = async () => {
+    const { data } = await sb
+      .from("org_invites")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("email", address)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return (data as { id: string } | null)?.id ?? null;
+  };
+  const before = await pendingId();
+  const result = await rpc();
+  if ("error" in result) return result;
+  const after = await pendingId();
+  if (after && after !== before) {
+    const { data: org } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
+    const orgName = (org as { name: string } | null)?.name ?? "";
+    runAfterResponse(() => sendAgencyInviteEmail(address, orgName, role));
+  }
+  return result;
+}
 export const removeOrgMember = (memberId: string) =>
   agencyRpc({ fn: "org_remove_member", args: { p_member: memberId } });
 export const scopeOrgCreator = (memberId: string, creatorId: string, on: boolean) =>
@@ -349,10 +414,15 @@ export async function updateAccount(
   return data ? { ok: true } : { error: "not_found" };
 }
 
-export async function createCreatorAccount(
+/**
+ * C8: an admin's "New account" e-mails an invite (the creator sets their own
+ * password at /set-password). `redirectTo` is this site's
+ * /auth/callback?next=/set-password, built by the route from its own origin.
+ */
+export async function inviteCreatorAccount(
   email: string,
-  password: string,
-  displayName: string
+  displayName: string,
+  redirectTo: string
 ): Promise<{ ok: true; id?: string } | { error: string }> {
   if (!isSupabaseConfigured()) {
     mockCreateAccount(email, displayName);
@@ -362,8 +432,8 @@ export async function createCreatorAccount(
   const sb = await createClient();
   if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 
-  // Service role is required to create a user without a sign-up flow.
-  return provisionCreatorUser(createServiceClient(), email, password, displayName);
+  // The service role is required to invite a user; only after the admin check.
+  return inviteCreatorUser(createServiceClient(), email, displayName, redirectTo);
 }
 
 // --- Gated signups: request → admin approval queue ---------------------------
@@ -389,13 +459,27 @@ export async function getMyApprovalStatus(): Promise<ApprovalStatus> {
   return row.approval_status;
 }
 
-/** A signed-in pending user submits their creator details for vetting. */
-export async function submitCreatorApplication(input: {
+export interface ApplicationInput {
   displayName?: string;
   socials?: string;
   audienceSize?: string;
   note?: string;
-}): Promise<{ ok: true } | { error: string }> {
+}
+
+const applicationRow = (input: ApplicationInput) => ({
+  display_name: input.displayName?.slice(0, 120) ?? null,
+  socials: input.socials?.slice(0, 600) ?? null,
+  audience_size: input.audienceSize?.slice(0, 120) ?? null,
+  note: input.note?.slice(0, 1000) ?? null,
+});
+
+/**
+ * A signed-in pending user submits their creator details for vetting. One
+ * request per account: a second submit answers "already_submitted" (C21: the
+ * page shows the stored request with an Edit path instead of silently
+ * overwriting it). A new request tells the admins (C6).
+ */
+export async function submitCreatorApplication(input: ApplicationInput): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return { ok: true };
   const sb = await createClient();
   const {
@@ -403,19 +487,99 @@ export async function submitCreatorApplication(input: {
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { error } = await sb.from("creator_applications").upsert(
-    {
-      profile_id: user.id,
-      email: user.email ?? null,
-      display_name: input.displayName?.slice(0, 120) ?? null,
-      socials: input.socials?.slice(0, 600) ?? null,
-      audience_size: input.audienceSize?.slice(0, 120) ?? null,
-      note: input.note?.slice(0, 1000) ?? null,
-      status: "pending",
-    },
-    { onConflict: "profile_id" }
-  );
-  return error ? { error: "db_error" } : { ok: true };
+  const { error } = await sb.from("creator_applications").insert({
+    profile_id: user.id,
+    email: user.email ?? null,
+    ...applicationRow(input),
+    status: "pending",
+  });
+  if (error) return { error: error.code === "23505" ? "already_submitted" : "db_error" };
+  runAfterResponse(() => sendApplicationAlert());
+  return { ok: true };
+}
+
+/**
+ * C21: the applicant edits their still-pending request. Applicants have no
+ * UPDATE policy on creator_applications (admin-only), so the write uses the
+ * service role, pinned to the session user's own row and to status
+ * 'pending': never another account's, never a decided one.
+ */
+export async function updateMyCreatorApplication(input: ApplicationInput): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { ok: true };
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { data, error } = await createServiceClient()
+    .from("creator_applications")
+    .update(applicationRow(input))
+    .eq("profile_id", user.id)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "db_error" };
+  return data ? { ok: true } : { error: "not_found" };
+}
+
+export interface MyApplication {
+  displayName: string | null;
+  socials: string | null;
+  audienceSize: string | null;
+  note: string | null;
+  status: ApprovalStatus;
+  createdAt: string;
+}
+
+/** The signed-in user's own request (RLS: own row), or null. */
+export async function getMyCreatorApplication(): Promise<MyApplication | null> {
+  if (!isSupabaseConfigured()) return null;
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return null;
+  const { data } = await sb
+    .from("creator_applications")
+    .select("display_name, socials, audience_size, note, status, created_at")
+    .eq("profile_id", user.id)
+    .maybeSingle();
+  const r = data as {
+    display_name: string | null;
+    socials: string | null;
+    audience_size: string | null;
+    note: string | null;
+    status: ApprovalStatus;
+    created_at: string;
+  } | null;
+  return r
+    ? { displayName: r.display_name, socials: r.socials, audienceSize: r.audience_size, note: r.note, status: r.status, createdAt: r.created_at }
+    : null;
+}
+
+/**
+ * C7: the reason code an admin gave with the latest rejection of the
+ * signed-in user, from the activity log (admin-only table, so read with the
+ * service role, pinned to the session user's id). Display only.
+ */
+export async function getMyRejectionReason(): Promise<string | null> {
+  if (!isSupabaseConfigured()) return null;
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return null;
+  const { data } = await createServiceClient()
+    .from("admin_audit_log")
+    .select("details")
+    .eq("action", "account.reject")
+    .eq("target_type", "profile")
+    .eq("target_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const reason = (data as { details: { reason?: unknown } | null } | null)?.details?.reason;
+  return typeof reason === "string" ? reason : null;
 }
 
 export interface CreatorApplication {
@@ -476,6 +640,26 @@ export async function decideCreatorApplication(
   if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
 
   const now = new Date().toISOString();
+
+  if (decision === "rejected") {
+    // C7: a reject only applies to an account that is not approved, so a
+    // stale Admin tab can never lock out a live creator (suspend is for that).
+    const { data: rejected, error: rErr } = await sb
+      .from("profiles")
+      .update({ approval_status: "rejected" })
+      .eq("id", profileId)
+      .neq("approval_status", "approved")
+      .select("id")
+      .maybeSingle();
+    if (rErr) return { error: "db_error" };
+    if (!rejected) return { error: "already_approved" };
+    const { error: aErr } = await sb
+      .from("creator_applications")
+      .update({ status: "rejected", decided_at: now })
+      .eq("profile_id", profileId);
+    return aErr ? { error: "db_error" } : { ok: true };
+  }
+
   const { error: aErr } = await sb
     .from("creator_applications")
     .update({ status: decision, decided_at: now })
@@ -486,14 +670,46 @@ export async function decideCreatorApplication(
   // re-approving (or two admins approving at once) never notifies twice: the
   // approve update itself matches only a row that is not approved yet, and
   // only the request whose update changed the row notifies.
-  let update = sb.from("profiles").update({ approval_status: decision }).eq("id", profileId);
-  if (decision === "approved") update = update.neq("approval_status", "approved");
-  const { data: updated, error: pErr } = await update.select("id").maybeSingle();
+  const { data: updated, error: pErr } = await sb
+    .from("profiles")
+    .update({ approval_status: decision })
+    .eq("id", profileId)
+    .neq("approval_status", "approved")
+    .select("id")
+    .maybeSingle();
   if (pErr) return { error: "db_error" };
-  if (decision === "approved" && updated) {
+  if (updated) {
+    await copyApplicationName(sb, profileId);
     const svc = createServiceClient();
     await leaveApprovalNotice(svc, profileId);
     runAfterResponse(() => sendApprovalEmail(svc, profileId));
   }
   return { ok: true };
+}
+
+/**
+ * C9: the name from the request becomes the profile's display name when the
+ * profile has none (fans would otherwise see "Creator"). It goes through the
+ * same rules as Settings (displayNameInputError here; the database's own
+ * check, which also refuses a name containing the account's e-mail, on the
+ * write). A refused or failed copy never undoes the approval.
+ */
+async function copyApplicationName(sb: Awaited<ReturnType<typeof createClient>>, profileId: string): Promise<void> {
+  try {
+    const { data } = await sb
+      .from("creator_applications")
+      .select("display_name")
+      .eq("profile_id", profileId)
+      .maybeSingle();
+    const name = ((data as { display_name: string | null } | null)?.display_name ?? "").trim();
+    if (!name || displayNameInputError(name)) return;
+    const { error } = await sb
+      .from("profiles")
+      .update({ display_name: name })
+      .eq("id", profileId)
+      .or("display_name.is.null,display_name.eq.");
+    if (error) console.error("approval: copying the request's name failed", error.code ?? "error");
+  } catch {
+    /* the approval stands */
+  }
 }

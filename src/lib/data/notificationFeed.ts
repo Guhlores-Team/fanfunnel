@@ -8,11 +8,11 @@
 // when it happened after the creator last opened the bell. No server imports,
 // so the client can share the types.
 
-export type NotificationKind = "win" | "message" | "low_stock" | "out_of_spins" | "fan_deleted" | "approved";
+export type NotificationKind = "win" | "message" | "low_stock" | "out_of_spins" | "fan_deleted" | "approved" | "application";
 
 /** Where an item takes the creator, through the dashboard's in-app navigation. */
 export interface NotificationTarget {
-  section: "prizes" | "inbox" | "editor" | "fans";
+  section: "prizes" | "inbox" | "editor" | "fans" | "admin";
   /** Inbox: open this fan's thread. */
   fanId?: string;
   /** Fans: filter the list to this name. */
@@ -70,6 +70,8 @@ export interface NotificationSources {
   fanDeletions?: { id: string; spinsKept: number; at: string }[];
   /** A30: an admin approved this creator account (creator_notices, 0066). */
   approvals?: { id: string; at: string }[];
+  /** C6: admins only — access requests waiting for review. */
+  applications?: { id: string; name: string | null; at: string }[];
 }
 
 /** A limited prize is "low" at this many units left (0 = out of stock). */
@@ -127,6 +129,7 @@ export interface NotificationSourceFor {
   out_of_spins: NotificationSources["outOfSpins"][number];
   fan_deleted: NonNullable<NotificationSources["fanDeletions"]>[number];
   approved: NonNullable<NotificationSources["approvals"]>[number];
+  application: NonNullable<NotificationSources["applications"]>[number];
 }
 
 /**
@@ -140,6 +143,7 @@ export const KIND_PREF: Record<NotificationKind, keyof FeedPrefs | null> = {
   out_of_spins: "lowBalance",
   fan_deleted: null,
   approved: null,
+  application: null,
 };
 
 export function kindEnabled(kind: NotificationKind, prefs: FeedPrefs): boolean {
@@ -214,6 +218,18 @@ export function toNotificationItem<K extends NotificationKind>(
         target: { section: "editor" },
       };
     }
+    case "application": {
+      const a = source as NotificationSourceFor["application"];
+      const name = a.name?.replace(/\s+/g, " ").trim().slice(0, 60);
+      return {
+        id: `application:${a.id}`,
+        kind: "application",
+        title: "New access request",
+        body: `${name || "Someone"} asked for a creator account. Review it in Admin.`,
+        at: a.at,
+        target: { section: "admin" },
+      };
+    }
     default: {
       const d = source as NotificationSourceFor["fan_deleted"];
       return {
@@ -261,6 +277,8 @@ export function buildNotificationItems(src: NotificationSources, prefs: FeedPref
   for (const d of src.fanDeletions ?? []) items.push(toNotificationItem("fan_deleted", d));
   // The approval notice is an account notice, not an alert: always shown.
   for (const a of src.approvals ?? []) items.push(toNotificationItem("approved", a));
+  // Admin work, not an alert: always shown (only admins ever get the source).
+  for (const a of src.applications ?? []) items.push(toNotificationItem("application", a));
   return items;
 }
 

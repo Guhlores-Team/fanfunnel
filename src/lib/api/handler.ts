@@ -107,6 +107,8 @@ export function statusForError(code: string): number {
     case "last_admin":
     case "account_cleanup_pending":
     case "slug_taken":
+    case "already_submitted":
+    case "already_approved":
       return 409;
     case "expired":
       return 410;

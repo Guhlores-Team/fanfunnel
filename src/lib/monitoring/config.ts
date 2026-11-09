@@ -10,6 +10,13 @@ export const DEFAULT_ALERT_ENVIRONMENTS = ["production"] as const;
 /** Sender used when `ALERT_EMAIL_FROM` is unset (domain verified in Resend). */
 export const DEFAULT_ALERT_EMAIL_FROM = "FanFunnel Alerts <alerts@easysimplesites.org>";
 
+/** Display name of account e-mail (approval, invites) — never "Alerts". */
+export const ACCOUNT_EMAIL_NAME = "FanFunnel";
+
+/** Local part of the account sender when `ACCOUNT_EMAIL_FROM` is unset; the
+ *  domain is the alert sender's (the one verified in Resend). */
+export const ACCOUNT_EMAIL_LOCAL_PART = "account";
+
 /** Rows kept in app_errors; a new fingerprint prunes the oldest resolved first. */
 export const APP_ERRORS_MAX_ROWS = 1000;
 

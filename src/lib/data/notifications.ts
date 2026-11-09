@@ -59,7 +59,37 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
   if (!user) return null;
 
   const { sources, seenAt, prefs } = await loadNotificationSources(sb, user.id);
+  sources.applications = await loadPendingApplications(sb, user.id);
   return buildNotificationFeed(sources, seenAt, prefs);
+}
+
+/**
+ * C6: access requests waiting for review, for the admin's bell. RLS
+ * (creator_apps_select) shows other accounts' requests to an active admin on
+ * aal2 only; anyone else reads at most their own row, which is excluded here,
+ * so no separate admin check is needed for the read. Never fails the bell.
+ */
+async function loadPendingApplications(sb: AnyClient, uid: string): Promise<NonNullable<NotificationSources["applications"]>> {
+  try {
+    const { data, error } = await sb
+      .from("creator_applications")
+      .select("id, display_name, created_at")
+      .eq("status", "pending")
+      .neq("profile_id", uid)
+      .order("created_at", { ascending: false })
+      .limit(FEED_LIMIT);
+    if (error) {
+      console.error("getNotifications: source failed", { what: "applications", error: error.message });
+      return [];
+    }
+    return ((data ?? []) as { id: string; display_name: string | null; created_at: string }[]).map((r) => ({
+      id: r.id,
+      name: r.display_name,
+      at: r.created_at,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export interface LoadedNotificationSources {

@@ -1,11 +1,12 @@
 import assert from "node:assert";
 import { mock } from "node:test";
 
-// POST /api/admin/invite. Owner decision: a taken email is a conflict, so the
-// route answers 409 `{ error: "email_taken" }` (it used to be a 400). The admin
-// gate is the real requireAdminRoute -> checkAdmin -> is_admin() path, driven
-// by a fake cookie client, so the negative cases prove a signed-out caller or a
-// normal creator never reaches account creation.
+// POST /api/admin/invite (C8: an e-mailed invite, no password). Owner
+// decision: a taken email is a conflict, so the route answers 409
+// `{ error: "email_taken" }`. The admin gate is the real requireAdminRoute ->
+// checkAdmin -> is_admin() path, driven by a fake cookie client, so the
+// negative cases prove a signed-out caller or a normal creator never reaches
+// the invite.
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -57,7 +58,7 @@ mock.module("@/lib/supabase/server", {
 
 mock.module("@/lib/data", {
   namedExports: {
-    createCreatorAccount: async (...args: unknown[]) => {
+    inviteCreatorAccount: async (...args: unknown[]) => {
       creates.push(args);
       return nextResult;
     },
@@ -81,7 +82,26 @@ async function main() {
     );
     return { status: res.status, data: (await res.json()) as Record<string, unknown> };
   }
-  const VALID = { email: "new@example.com", password: "abc12345", displayName: "New" };
+  const VALID = { email: "new@example.com", displayName: "New" };
+
+  // --- the invite: no password, set-password redirect on this origin ---------
+  nextResult = { ok: true, id: "11111111-1111-4111-8111-111111111111" };
+  {
+    const r = await invite({ ...VALID, password: "ignored1" });
+    check("invite → 200 without any password", r.status === 200 && r.data.ok === true);
+    const args = creates.at(-1) as unknown[];
+    check("passes email + name + the set-password redirect only", args.length === 3 && args[0] === "new@example.com" && args[1] === "New");
+    check("the redirect stays on this origin and keeps its ?next= query", args[2] === "http://localhost/auth/callback?next=/set-password");
+    check("a password in the body never reaches the invite", !JSON.stringify(args).includes("ignored1"));
+    creates.length = 0;
+    audits.length = 0;
+  }
+  {
+    const r = await invite({ email: "not-an-email" });
+    check("an invalid e-mail → 400 invalid_email, nothing sent", r.status === 400 && r.data.error === "invalid_email" && creates.length === 0);
+    const n = await invite({ email: "a@example.com", displayName: "b@example.com" });
+    check("an e-mail-shaped display name → 400, nothing sent", n.status === 400 && n.data.error === "name_looks_like_email" && creates.length === 0);
+  }
 
   // --- the change: email_taken -> 409, same JSON shape ------------------------
   nextResult = { error: "email_taken" };
@@ -96,7 +116,7 @@ async function main() {
   }
 
   // --- every other code keeps its status --------------------------------------
-  for (const code of ["invalid_email", "weak_password", "create_failed"]) {
+  for (const code of ["invalid_email", "create_failed"]) {
     nextResult = { error: code };
     const r = await invite(VALID);
     check(`${code} → 400`, r.status === 400 && r.data.error === code);
@@ -105,6 +125,12 @@ async function main() {
   {
     const r = await invite(VALID);
     check("data-layer unauthorized → 401", r.status === 401 && r.data.error === "unauthorized");
+  }
+
+  nextResult = { error: "rate_limited" };
+  {
+    const r = await invite(VALID);
+    check("rate_limited → 429", r.status === 429);
   }
 
   check("failed creates are not logged as activity", audits.length === 0);
@@ -135,10 +161,10 @@ async function main() {
       r.status === 403 && r.data.error === "mfa_required" && r.data.step === "enrol"
     );
   }
-  check("an aal1 admin never reached createCreatorAccount", creates.length === 0);
+  check("an aal1 admin never reached the invite", creates.length === 0);
   aal = "aal2";
 
-  // --- negative: only an active admin reaches createCreatorAccount -------------
+  // --- negative: only an active admin reaches the invite -------------
   creates.length = 0;
   isAdmin = false;
   {
@@ -150,7 +176,7 @@ async function main() {
     const r = await invite(VALID);
     check("signed out → 401 unauthorized", r.status === 401 && r.data.error === "unauthorized");
   }
-  check("non-admins never reached createCreatorAccount", creates.length === 0);
+  check("non-admins never reached the invite", creates.length === 0);
 
   console.log(`api/admin/invite route: ${passed} checks passed`);
 }
