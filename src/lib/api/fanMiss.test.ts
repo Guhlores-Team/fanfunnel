@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { withFanToken } from "./fanToken";
 import { FAN_MISS_LIMIT, resetFanMissBlocks, withFanMissLimit } from "./fanMiss";
 import { ROUTE_TIERS } from "./limit";
+import { ROUTE_TIERS as TIERS } from "./routeTiers";
 
 // C2 (batch 6 attack audit): fan routes key their limit on the token, so a
 // fresh random token per request was never limited. Lookups that MISS (404)
@@ -30,7 +31,7 @@ const rnd = () => Math.random().toString(16).slice(2).padEnd(48, "0");
 
 async function main() {
   resetFanMissBlocks();
-  check("the miss budget is the public route tier", FAN_MISS_LIMIT === ROUTE_TIERS.public && FAN_MISS_LIMIT.limit === 120);
+  check("the miss budget is the public route tier", FAN_MISS_LIMIT === ROUTE_TIERS.public && ROUTE_TIERS === TIERS && FAN_MISS_LIMIT.limit === 120);
 
   // Misses from one address: 404 up to the budget, then 429.
   const statuses: number[] = [];

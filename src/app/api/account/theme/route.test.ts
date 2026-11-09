@@ -68,13 +68,16 @@ mock.module("@/lib/supabase/server", {
 });
 mock.module("next/cache", { namedExports: { revalidatePath: () => {} } });
 
+const SESSION_COOKIE = "sb-example-auth-token=base64-x";
+
 async function main() {
   const { GET, PUT } = await import("./route");
   const put = async (body: unknown) => {
     const res = await PUT(
       new Request("http://localhost/api/account/theme", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        // A signed-in browser always carries its session cookie (batch 6 N1).
+        headers: { "Content-Type": "application/json", cookie: SESSION_COOKIE },
         body: typeof body === "string" ? body : JSON.stringify(body),
       })
     );
@@ -85,7 +88,7 @@ async function main() {
   // --- 1. Signed out → 401, nothing read, no RPC ---------------------------------
   user = null;
   {
-    const g = await GET(new Request("http://localhost/"));
+    const g = await GET(new Request("http://localhost/", { headers: { cookie: SESSION_COOKIE } }));
     check("GET signed out → 401", g.status === 401);
     check("GET signed out → no theme leaked", !("theme" in (await g.json())));
     check("GET signed out → no table read", reads.length === 0);
@@ -99,12 +102,12 @@ async function main() {
   // --- 2. Signed in -----------------------------------------------------------------
   user = { id: "creator-a" };
   {
-    const g = await GET(new Request("http://localhost/"));
+    const g = await GET(new Request("http://localhost/", { headers: { cookie: SESSION_COOKIE } }));
     const d = await g.json();
     check("GET → own theme", g.status === 200 && d.theme.font === "syne" && d.theme.background === "noir");
     check("GET → private, no-store", /private/.test(g.headers.get("cache-control") ?? "") && /no-store/.test(g.headers.get("cache-control") ?? ""));
     storedTheme = { font: "<script>", background: "url(x)" };
-    const junk = await (await GET(new Request("http://localhost/"))).json();
+    const junk = await (await GET(new Request("http://localhost/", { headers: { cookie: SESSION_COOKIE } }))).json();
     check("GET normalises a junk stored theme to the defaults", junk.theme.font === "bricolage" && junk.theme.background === "glow");
 
     const refused: [unknown, string][] = [

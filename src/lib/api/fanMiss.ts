@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { rateLimitShared } from "@/lib/rateLimit";
 import { clientIp } from "@/lib/api/clientIp";
-import { ROUTE_TIERS } from "@/lib/api/limit";
+import { ROUTE_TIERS } from "@/lib/api/routeTiers";
 
 /**
  * C2 (batch 6 attack audit): fan routes are keyed on the link token, so a

@@ -127,7 +127,7 @@ check(
 // The helper keys on the shared client-IP derivation and a per-route scope.
 const limitSrc = readFileSync(join(ROOT, "src/lib/api/limit.ts"), "utf8");
 check("limitRoute keys on route scope + clientIp()", /`route:\$\{scope\}:\$\{clientIp\(req\)\}`/.test(limitSrc));
-check("limitRoute goes through the shared (Upstash-capable) limiter", /export function limitRoute[\s\S]*rateLimitOr429\(/.test(limitSrc));
+check("limitRoute goes through the shared (Upstash-capable) limiter", /export (?:async )?function limitRoute[\s\S]*rateLimitOr429\(/.test(limitSrc));
 
 // Runtime: the tier really throttles, per scope and per client.
 async function runtime() {

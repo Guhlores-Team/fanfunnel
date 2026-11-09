@@ -3,6 +3,7 @@ import { rateLimitShared } from "@/lib/rateLimit";
 import { clientIp } from "@/lib/api/clientIp";
 import { FAN_CLIENT_HEADER } from "@/lib/api/fanClientHeader";
 import { isSupabaseConfigured } from "@/lib/supabase/configured";
+import { ROUTE_TIERS, type RouteTier } from "./routeTiers";
 
 /**
  * Apply a fixed-window rate limit. Returns a ready-to-send 429 response when the
@@ -24,20 +25,9 @@ export async function rateLimitOr429(
   );
 }
 
-/**
- * Default per-client ceilings for route handlers (A22). They sit in front of
- * every route that has no stricter limiter of its own; the authoritative
- * guards (auth, RLS, can_act_for, the database's per-fan windows) still apply.
- *   public   unauthenticated reads (teasers, share cards, leaderboards)
- *   account  signed-in dashboard reads/writes (generous: a busy tab polls)
- *   costly   work that fans out or stores bulk input (DNS lookups, pastes)
- */
-export const ROUTE_TIERS = {
-  public: { limit: 120, windowMs: 60_000 },
-  account: { limit: 300, windowMs: 60_000 },
-  costly: { limit: 30, windowMs: 60_000 },
-} as const;
-export type RouteTier = keyof typeof ROUTE_TIERS;
+// The tiers live in ./routeTiers (no imports) so modules that only need the
+// numbers, such as the fan miss budget, do not pull in the limiter.
+export { ROUTE_TIERS, type RouteTier } from "./routeTiers";
 
 /**
  * Rate-limit one route handler call per client IP and route scope. Returns a
