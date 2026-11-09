@@ -8,7 +8,7 @@
 <title>FanFunnel</title>
 </head>
 <body style="margin:0;padding:0;background:#0c0a0e;">
-{{/* The link is verified by /auth/confirm (token_hash), so it works in any browser. Supabase gives .RedirectTo = .SiteURL when the app passed no allowed redirect. */}}{{ $base := .RedirectTo }}{{ if eq .RedirectTo .SiteURL }}{{ $base = printf "%s/auth/confirm?next=/pending" .SiteURL }}{{ end }}{{ $link := printf "%s&token_hash=%s&type=email" $base .TokenHash }}
+{{/* The link is built from the Site URL only, never from the redirect the requester chose: /auth/confirm verifies the token_hash on this site, so it works in any browser. */}}{{ $link := printf "%s/auth/confirm?token_hash=%s&type=email&next=/pending" .SiteURL .TokenHash }}
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">You're one tap away. Confirm your email address to finish creating your FanFunnel account.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0c0a0e;">
   <tr>

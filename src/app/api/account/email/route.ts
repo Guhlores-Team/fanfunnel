@@ -64,8 +64,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "wrong_password" }, { status: 403 });
   }
 
-  // Send the confirm links back to THIS deployment; without it Supabase falls
-  // back to the project's Site URL (localhost:3000 on the test project).
+  // Only the legacy {{ .ConfirmationURL }} link uses this; the current templates
+  // link to the Site URL's /auth/confirm?next=/dashboard (supabase/templates).
   const emailRedirectTo = `${new URL(req.url).origin}/auth/callback?next=/dashboard`;
   const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo });
   if (error) {

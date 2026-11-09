@@ -182,3 +182,15 @@ Just say **"keys are in"**. Don't send any values. I will then:
   release until the database migrations have been confirmed. I'll walk you through it at go-live.
 - **Vercel Toolbar on Previews:** the new security policy blocks it. Turn it off in Vercel
   (Settings → General → Vercel Toolbar) or ignore the "CSP blocked … vercel.live" lines in Admin › Errors.
+- **Supabase Auth URLs and e-mail templates** (both projects, Authentication → URL Configuration
+  and → Emails → Templates; batch 6, A1): every sign-in, reset and invite e-mail now builds its link
+  from the **Site URL** only, never from the redirect the requester chose.
+  - **TEST:** Site URL = the Preview alias
+    `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`.
+  - **LIVE:** Site URL = the production domain (`https://fanfunnel.vercel.app` until a custom domain
+    replaces it).
+  - **Redirect URLs (both):** exact origins the team owns only, such as `https://fanfunnel.vercel.app/**`
+    and the Preview alias. Remove any entry with `*` in the host (`https://*.vercel.app/**`,
+    `https://*-easy-simple-sites.vercel.app/**`): an outsider can register a matching Vercel host.
+  - Then paste the five link templates from `supabase/templates/` (recovery, confirmation, magic link,
+    invite, e-mail change); see `supabase/templates/README.md`. TEST now, LIVE at go-live.

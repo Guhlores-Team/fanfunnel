@@ -5,9 +5,10 @@ import { safeNext } from "./safeNext";
 
 // Every e-mail link lands here, through /auth/confirm or /auth/callback.
 //
-// - `token_hash` + `type` (the current templates, supabase/templates/*.html):
-//   verified server-side with verifyOtp, so the link works in ANY browser or
-//   device, including the in-app browsers of mail and social apps.
+// - `token_hash` + `type` (the current templates, supabase/templates/*.html,
+//   which link to {{ .SiteURL }}/auth/confirm with a fixed `next`): verified
+//   server-side with verifyOtp, so the link works in ANY browser or device,
+//   including the in-app browsers of mail and social apps.
 // - `code` (the PKCE flow, the templates' previous {{ .ConfirmationURL }}
 //   links): exchanged with the code-verifier cookie, which only exists in the
 //   browser that asked for the e-mail. Kept so links already sent, and

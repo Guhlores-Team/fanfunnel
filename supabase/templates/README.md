@@ -28,23 +28,49 @@ buttons in mail it files as spam, and some clients strip styled anchors.
 The five link templates no longer use `{{ .ConfirmationURL }}`. That link ends in
 a PKCE `?code=`, which only the browser that asked for the e-mail can use: a reset
 requested on a laptop failed on the phone, and in-app mail/Instagram browsers
-broke it. Each template now builds its own link:
+broke it. Each template now builds its own link, from the **Site URL only**:
 
-- the app's own redirect (`{{ .RedirectTo }}`, always `…/auth/callback?next=…`)
-  plus `&token_hash={{ .TokenHash }}&type=…`, or
-- when Supabase had no allowed redirect (`.RedirectTo` equals `.SiteURL`, e.g. a
-  reset or invite sent from the Supabase dashboard): `{{ .SiteURL }}/auth/confirm?next=…`
-  plus the same two parameters.
+`{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=<type>&next=<fixed page>`
 
-`/auth/callback` and `/auth/confirm` verify the hash on the server
-(`verifyOtp`), so the link works on any device. They still accept the old
+| Template | `type` | `next` |
+|---|---|---|
+| `confirmation.html` | `email` | `/pending` |
+| `magic_link.html` | `email` | `/dashboard` |
+| `invite.html` | `invite` | `/set-password` |
+| `email_change.html` | `email_change` | `/dashboard` |
+| `recovery.html` | `recovery` | `/reset-password` |
+
+**Never build a link from `{{ .RedirectTo }}`.** That value is the `redirect_to`
+whoever called Supabase's public `/recover` or `/otp` endpoint chose (with the
+public anon key, for any victim's address). If the Redirect URL allow-list ever
+matched a host an outsider can register (for example a `*.vercel.app` wildcard),
+the victim's token hash, a complete one-time sign-in, would go to that host
+(batch 6 attack audit, A1). `src/lib/auth/emailTemplates.test.ts` fails if any
+template references `.RedirectTo`.
+
+What this needs from the project settings (Authentication → URL Configuration):
+
+- **Site URL** = the one origin the e-mails must open: on TEST the Preview alias
+  (`https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app`), on
+  LIVE the production domain (`https://fanfunnel.vercel.app` until a custom domain
+  replaces it). A Preview on another branch receives its links on the alias.
+- **Redirect URLs** = exact origins the team owns only (`https://<origin>/**`), no
+  `*` in the host. They no longer shape the e-mail link; Supabase still checks
+  them for the legacy `?code=` flow.
+
+The app still passes `redirectTo` / `emailRedirectTo` (always
+`<this site>/auth/callback?next=<same page as the table>`). The templates ignore
+it; it only matters for a project whose templates are not pasted yet (the old
+`{{ .ConfirmationURL }}` uses it).
+
+`/auth/confirm` (and `/auth/callback`) verify the hash on the server
+(`verifyOtp`, `src/lib/auth/authLink.ts`) and redirect only within this site
+(`safeNext`), so the link works on any device. They still accept the old
 `?code=` links, so mail already sent, and a project whose templates are not
 pasted yet, keep working (same-browser only) until the owner pastes these.
 A link that fails for any reason lands on `/login?error=auth_link`, which
-explains it and offers a new link. Every `redirectTo` the app passes must keep
-its `?next=…` query (`src/lib/auth/emailTemplates.test.ts` checks), because the
-templates append `&token_hash=…`.
+explains it and offers a new link.
 
-Owner step: paste the five updated link templates into **TEST now** and into
+Owner step: set the Site URL and Redirect URLs as above, then paste the five updated link templates into **TEST now** and into
 **LIVE at go-live** (docs/GO_LIVE.md §3). Admin "New account" invites need the
 updated `invite.html` (the old one could not finish an invite).
