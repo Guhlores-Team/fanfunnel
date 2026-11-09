@@ -3,6 +3,7 @@
 import { useState } from "react";
 import TermsCheckbox from "@/components/TermsCheckbox";
 import { LEGAL } from "@/lib/legal";
+import PendingSelfDelete from "@/components/PendingSelfDelete";
 
 /**
  * Shown to signed-in creators who aren't approved yet. Pending users can submit
@@ -11,9 +12,12 @@ import { LEGAL } from "@/lib/legal";
 export default function PendingClient({
   status,
   email,
+  canSelfDelete = false,
 }: {
   status: "pending" | "rejected";
   email: string;
+  /** T7: offer "Delete my request and account" (only ever true on /pending). */
+  canSelfDelete?: boolean;
 }) {
   const [displayName, setDisplayName] = useState("");
   const [platform, setPlatform] = useState("");
@@ -90,6 +94,7 @@ export default function PendingClient({
             Sign out
           </button>
         </form>
+        {canSelfDelete && <PendingSelfDelete status="rejected" />}
       </div>
     );
   }
@@ -113,6 +118,7 @@ export default function PendingClient({
             Sign out
           </button>
         </form>
+        {canSelfDelete && <PendingSelfDelete status="pending" />}
       </div>
     );
   }
@@ -213,6 +219,7 @@ export default function PendingClient({
           Sign out
         </button>
       </form>
+      {canSelfDelete && <PendingSelfDelete status="pending" />}
     </div>
   );
 }
