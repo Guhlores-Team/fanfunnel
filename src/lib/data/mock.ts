@@ -2849,6 +2849,7 @@ export function mockGetAdminOverview(): AdminOverview {
     you.fans = store.fans.size;
     you.spins = store.redemptions.filter(row=>row.kind!=="bonus").length;
     you.pending = store.redemptions.filter((r) => r.status === "pending").length;
+    you.oldestPendingAt = store.redemptions.filter((r) => r.status === "pending").map((r) => r.at).sort()[0] ?? null;
   }
 
   // Show ALL accounts — admins included (an account can be promoted to admin

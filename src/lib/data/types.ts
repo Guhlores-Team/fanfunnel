@@ -473,6 +473,8 @@ export interface AdminAccount {
   fans: number;
   spins: number;
   pending: number;
+  /** T4: when the oldest still-pending prize was won (null/absent when none or unread). */
+  oldestPendingAt?: string | null;
 }
 
 export interface AdminOverview {

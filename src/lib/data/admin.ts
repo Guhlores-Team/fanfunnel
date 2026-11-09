@@ -65,6 +65,26 @@ export async function claimAdmin(): Promise<{ ok: true } | { error: string }> {
   return { ok: true };
 }
 
+/**
+ * T4: the age of each creator's oldest pending prize, next to the pending
+ * count. Read with the admin's own session (redemptions_select allows
+ * is_admin()), one indexed row per account that has any pending; a failed
+ * read leaves the age unknown rather than failing the panel.
+ */
+async function addOldestPending(sb: Awaited<ReturnType<typeof createClient>>, accounts: AdminAccount[]): Promise<void> {
+  await Promise.all(accounts.filter((a) => a.pending > 0).map(async (a) => {
+    const { data, error } = await sb
+      .from("redemptions")
+      .select("created_at")
+      .eq("creator_id", a.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .limit(1);
+    const row = !error && Array.isArray(data) ? (data[0] as { created_at?: string } | undefined) : undefined;
+    a.oldestPendingAt = row?.created_at ?? null;
+  }));
+}
+
 export async function getAdminOverview(): Promise<AdminOverview | null> {
   if (!isSupabaseConfigured()) return mockGetAdminOverview();
 
@@ -98,6 +118,7 @@ export async function getAdminOverview(): Promise<AdminOverview | null> {
     spins: Number(r.spins),
     pending: Number(r.pending),
   }));
+  await addOldestPending(sb, accounts);
 
   return {
     metrics: {
