@@ -2,15 +2,15 @@
 // never fork its immutable Preview, exact source, project/team or TEST checks.
 import { TEST_ORIGIN, previewPerfEnvironment, refuse } from "./preview-lcp-guards.mjs";
 
-export const SHARED_GUARD_SHA256 = "b5675aa69816b830783f49adeaef4ffb4f444361d4ddd4ba935425a6d0b308e5";
+export const SHARED_GUARD_SHA256 = "6fed22a81a5f7af05b41319661dd7cb53c8018abf497893323aebd798f54afb7";
 export const MAX_BINGO_PLAYS = 36;
 export const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 export const SAFE_SHARE_ID = /^[A-Za-z0-9_-]{12,80}$/;
 export const ensure = (condition, code) => { if (!condition) refuse(code); };
 
-export function previewFeatureEnvironment(env) {
+export function previewFeatureEnvironment(env, options) {
   ensure(typeof env.PREVIEW_FEATURE_URL === "string" && env.PREVIEW_FEATURE_URL.length > 0, "FEATURE_PREVIEW_REQUIRED");
-  return previewPerfEnvironment({ ...env, PREVIEW_PERF_URL: env.PREVIEW_FEATURE_URL });
+  return previewPerfEnvironment({ ...env, PREVIEW_PERF_URL: env.PREVIEW_FEATURE_URL }, options);
 }
 export function featureBrowserUrlAllowed(value, origin) {
   try {

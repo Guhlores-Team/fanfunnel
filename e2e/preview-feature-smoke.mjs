@@ -4,7 +4,7 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
-  TEST_ORIGIN, browserEnvironment, checkCheckoutIdentity, failureCode, verifyPreviewDeployment,
+  TEST_ORIGIN, browserEnvironment, checkCheckoutIdentity, checkPreflightRecord, failureCode, preflightRecord, refuse, verifyPreviewDeployment,
 } from "./preview-lcp-guards.mjs";
 import {
   SHARED_GUARD_SHA256, MAX_BINGO_PLAYS, UUID, SAFE_SHARE_ID, ensure, previewFeatureEnvironment,
@@ -407,14 +407,23 @@ async function main() {
     ensure(process.argv.length <= 3 && (!process.argv[2] || process.argv[2] === "--preflight"), "INVALID_ARGUMENTS");
     preflightOnly = process.argv[2] === "--preflight";
     ensure(createHash("sha256").update(readFileSync(new URL("./preview-lcp-guards.mjs", import.meta.url))).digest("hex") === SHARED_GUARD_SHA256, "SHARED_PREVIEW_GUARD_CHANGED");
-    config = previewFeatureEnvironment(process.env);
+    config = previewFeatureEnvironment(process.env, { preflight: preflightOnly });
     checkCheckoutIdentity(config.expectedSha,
       execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
       execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
-    const provenance = await verifyPreviewDeployment(config);
+    // SUP-5: only the preflight step holds VERCEL_TOKEN and reads Vercel; the
+    // smoke step trusts that step's record from the same workflow run.
+    let provenance;
+    if (preflightOnly) {
+      provenance = await verifyPreviewDeployment(config);
+    } else {
+      let record;
+      try { record = JSON.parse(readFileSync(new URL("preflight.json", OUTPUT), "utf8")); } catch { refuse("PREFLIGHT_NOT_VERIFIED"); }
+      provenance = checkPreflightRecord(config, record);
+    }
     report.sourceSha = config.expectedSha; report.workflowRunId = config.runId;
     report.provenance = { deploymentId: provenance.deploymentId, target: provenance.target, sourceShaMatched: true, projectVerified: true, teamVerified: true };
-    writeReport("preflight.json", { verified: true, ...report.provenance });
+    if (preflightOnly) writeReport("preflight.json", preflightRecord(config, provenance));
     if (preflightOnly) { console.log("Preview feature preflight verified: exact source, immutable Preview, project/team and TEST."); return; }
     const [{ createClient }, { chromium }] = await Promise.all([import("@supabase/supabase-js"), import("playwright")]);
     const testFetch = (input, options) => {

@@ -8,6 +8,10 @@ on:
     branches: [main]
   pull_request:
 
+# SUP-4: least privilege for the job token; a job that needs more says so.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -18,9 +22,11 @@ jobs:
     env:
       NEXT_PUBLIC_ENABLE_DEBUG: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -39,12 +45,14 @@ jobs:
 
       # Workflow guards and pure script tests under scripts/ (npm test covers
       # src/ only): A25 secrets gate, A39 DB-before-code check, A38 carry-over
-      # refusals and planner, TEST maintenance guards, A26 stress-harness plumbing.
+      # refusals and planner, TEST maintenance guards, A26 stress-harness plumbing,
+      # batch-6 supply-chain pins (SHA-pinned actions, token scope, vercel.json).
       # No network, no secrets.
       - name: Script and workflow-guard tests
         run: |
           node scripts/test/ci-secrets-gate.test.mjs
           node scripts/test/db-before-code.test.mjs
+          node scripts/test/workflow-supply-chain.test.mjs
           node scripts/golive/carry-over.test.mjs
           node scripts/ops/test-maintenance.test.mjs
           node --test scripts/stress/harness.test.mjs
@@ -78,7 +86,7 @@ jobs:
 
       - name: Upload E2E artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-artifacts
           path: e2e/artifacts/
@@ -93,11 +101,12 @@ jobs:
     # throwaway clusters with initdb/pg_ctl), not for Playwright.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm

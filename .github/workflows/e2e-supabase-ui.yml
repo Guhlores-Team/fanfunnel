@@ -38,6 +38,10 @@ on:
         type: string
         default: ""
 
+# SUP-4: least privilege for the job token; a job that needs more says so.
+permissions:
+  contents: read
+
 jobs:
   login-ui:
     runs-on: ubuntu-latest
@@ -45,9 +49,11 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -104,7 +110,7 @@ jobs:
 
       - name: Upload login-UI artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: login-ui-artifacts
           path: e2e/artifacts/
@@ -115,6 +121,8 @@ jobs:
     # fails closed if credentials or exact Preview/source checks are missing.
     if: github.event_name == 'workflow_dispatch' && inputs.preview_url != ''
     runs-on: ubuntu-latest
+    # SUP-5: VERCEL_TOKEN belongs in the `test` environment's secrets.
+    environment: test
     timeout-minutes: 20
     permissions:
       contents: read
@@ -125,13 +133,18 @@ jobs:
       PREVIEW_PERF_URL: ${{ inputs.preview_url }}
       PREVIEW_EXPECTED_SHA: ${{ inputs.expected_sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
 
+      # SUP-5: the only step that holds VERCEL_TOKEN. It runs before `npm ci`,
+      # so no dependency code ever sees the token; the later step trusts the
+      # preflight record this step writes (e2e/preview-lcp-guards.mjs).
       - name: Verify manual source, authenticated Preview metadata and TEST-only configuration
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
@@ -151,12 +164,11 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: node e2e/preview-lcp.mjs
 
       - name: Upload numeric Preview LCP report and anonymous public screenshots
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: preview-lcp-${{ github.sha }}
           path: e2e/artifacts/preview-lcp/
@@ -167,6 +179,8 @@ jobs:
     # Explicit manual opt-in only; existing login-ui and preview-lcp are unchanged.
     if: github.event_name == 'workflow_dispatch' && inputs.preview_smoke_url != ''
     runs-on: ubuntu-latest
+    # SUP-5: VERCEL_TOKEN belongs in the `test` environment's secrets.
+    environment: test
     timeout-minutes: 20
     permissions:
       contents: read
@@ -177,13 +191,16 @@ jobs:
       PREVIEW_FEATURE_URL: ${{ inputs.preview_smoke_url }}
       PREVIEW_EXPECTED_SHA: ${{ inputs.preview_smoke_expected_sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
 
+      # SUP-5: the only step that holds VERCEL_TOKEN, before `npm ci`.
       - name: Verify exact source, immutable Preview metadata and TEST-only configuration
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
@@ -203,12 +220,11 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: node e2e/preview-feature-smoke.mjs
 
       - name: Upload only sanitized feature-smoke provenance, counts and cleanup result
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: preview-feature-smoke-${{ github.sha }}
           path: e2e/artifacts/preview-feature-smoke/

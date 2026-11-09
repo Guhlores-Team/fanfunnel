@@ -142,14 +142,18 @@ const mutations = [
   ["check renamed", wf.replace(`    name: ${CHECK_NAME}\n`, "    name: production\n")],
   ["read-back removed", wf.replace("node scripts/ci/verify-migrations-applied.mjs --label PRODUCTION", "echo skipped")],
   ["pipefail removed", wf.replace(/(Verify PRODUCTION[\s\S]*?)set -euo pipefail\n/, "$1")],
-  ["setup-node removed", wf.replace(/(\n  production:[\s\S]*?)      # Node runs the migration-history read-back \(scripts\/ci\/\)\.\n      - uses: actions\/setup-node@v7\n        with:\n          node-version: 22\n/, "$1")],
+  ["setup-node removed", wf.replace(/(\n  production:[\s\S]*?)      # Node runs the migration-history read-back \(scripts\/ci\/\)\.\n      - uses: actions\/setup-node@[0-9a-f]{40} # v[0-9.]+\n        with:\n          node-version: 22\n/, "$1")],
   ["continue-on-error", wf.replace("    environment: production\n", "    environment: production\n    continue-on-error: true\n")],
 ];
 for (const [label, mutated] of mutations) check(`checker rejects mutation: ${label}`, mutated !== wf && auditProductionGate(mutated).length > 0);
 
 const testJob = jobBlock(wf, "test");
 check("TEST job also reads back its history after the push", steps(testJob).findIndex((s) => s.includes("--label TEST")) > steps(testJob).findIndex((s) => s.includes("supabase db push")));
-check("TEST job keeps refusing a non-TEST ref", testJob.includes('test "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" = "snmcrmhgevfqggxdiomu"'));
+// SUP-7: the ref arrives through env, never interpolated into the shell text.
+const testSteps = steps(testJob);
+const refusesNonTestRef = (s) => s.includes("TEST_PROJECT_REF: ${{ secrets.SUPABASE_TEST_PROJECT_REF }}") && s.includes('test "$TEST_PROJECT_REF" = "snmcrmhgevfqggxdiomu"');
+check("TEST job keeps refusing a non-TEST ref before it writes", refusesNonTestRef(testSteps.find((s) => s.includes("supabase db push")) ?? ""));
+check("TEST credential choice refuses a non-TEST ref first", refusesNonTestRef(testSteps.find((s) => s.includes("id: target")) ?? ""));
 check("the existing TEST history step name is kept", testJob.includes("      - name: Confirm TEST migration history\n"));
 const workflows = readdirSync(new URL("../../.github/workflows/", import.meta.url)).filter((f) => f.endsWith(".yml"));
 const uses = workflows.flatMap((f) => [...readWorkflow(f).matchAll(new RegExp(`(?:\\n {4}name: |\\n {2})${CHECK_NAME}:?\\n`, "g"))]);

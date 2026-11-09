@@ -2,10 +2,10 @@
 // response bodies, cookies, storage state, authenticated screenshots or URLs.
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
-  SAMPLE_COUNT, TEST_ORIGIN, browserEnvironment, checkCheckoutIdentity, failureCode, fixturePhotoUrl,
-  previewPerfEnvironment, refuse, summarizeLcp, verifyPreviewDeployment,
+  SAMPLE_COUNT, TEST_ORIGIN, browserEnvironment, checkCheckoutIdentity, checkPreflightRecord, failureCode, fixturePhotoUrl,
+  preflightRecord, previewPerfEnvironment, refuse, summarizeLcp, verifyPreviewDeployment,
 } from "./preview-lcp-guards.mjs";
 
 const OUTPUT = new URL("./artifacts/preview-lcp/", import.meta.url);
@@ -239,14 +239,23 @@ async function main() {
   try {
     if (process.argv.length > 3 || process.argv[2] && process.argv[2] !== "--preflight") refuse("INVALID_ARGUMENTS");
     preflightOnly = process.argv[2] === "--preflight";
-    config = previewPerfEnvironment(process.env);
+    config = previewPerfEnvironment(process.env, { preflight: preflightOnly });
     checkCheckoutIdentity(config.expectedSha,
       execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
       execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
-    const provenance = await verifyPreviewDeployment(config);
+    // SUP-5: the Vercel metadata read happens only in the token-holding
+    // preflight step; the measurement step trusts that step's record.
+    let provenance;
+    if (preflightOnly) {
+      provenance = await verifyPreviewDeployment(config);
+    } else {
+      let record;
+      try { record = JSON.parse(readFileSync(new URL("preflight.json", OUTPUT), "utf8")); } catch { refuse("PREFLIGHT_NOT_VERIFIED"); }
+      provenance = checkPreflightRecord(config, record);
+    }
     report.sourceSha = config.expectedSha; report.workflowRunId = config.runId;
     report.provenance = { deploymentId: provenance.deploymentId, target: provenance.target, sourceShaMatched: true, projectVerified: true, teamVerified: true };
-    writeReport("preflight.json", { verified: true, ...report.provenance });
+    if (preflightOnly) writeReport("preflight.json", preflightRecord(config, provenance));
     if (preflightOnly) { console.log("Preview LCP preflight verified: exact source, immutable Preview, project/team and TEST configuration."); return; }
     stage = "fixture";
     // Protocol/API debug logs can include fill arguments or auth headers.

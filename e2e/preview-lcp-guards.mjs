@@ -1,5 +1,9 @@
 // Dependency-free preflight. No site or fixture request is allowed until both
 // the source identity and authenticated Vercel deployment metadata are checked.
+// SUP-5: only the preflight step (run before `npm ci`) holds VERCEL_TOKEN. The
+// measurement step runs without it and accepts the deployment only through the
+// verified preflight record that step wrote in the same workflow run.
+import { createHash } from "node:crypto";
 export const PREVIEW_PROJECT = "prj_SYsq2wTEYY2EJuenGcfIRN3D2qPU";
 export const PREVIEW_TEAM = "team_nGs11yLViBWNrMoWyy12Xu5W";
 export const TEST_REF = "snmcrmhgevfqggxdiomu";
@@ -28,7 +32,7 @@ export function immutablePreviewOrigin(value) {
   if (url.protocol !== "https:" || !IMMUTABLE_HOST.test(url.hostname) || url.port || url.username || url.password || url.pathname !== "/" || url.search || url.hash) refuse("INVALID_PREVIEW_ORIGIN");
   return url.origin;
 }
-export function previewPerfEnvironment(env) {
+export function previewPerfEnvironment(env, { preflight = true } = {}) {
   if (env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.GITHUB_REF !== "refs/heads/dashboard-redesign" || env.GITHUB_REPOSITORY?.toLowerCase() !== "guhlores-team/fanfunnel") refuse("MANUAL_PREVIEW_BRANCH_REQUIRED");
   const expectedSha = env.PREVIEW_EXPECTED_SHA;
   if (typeof expectedSha !== "string" || !/^[a-f0-9]{40}$/.test(expectedSha) || expectedSha !== env.GITHUB_SHA) refuse("SOURCE_SHA_MISMATCH");
@@ -36,13 +40,30 @@ export function previewPerfEnvironment(env) {
   let database;
   try { database = new URL(env.NEXT_PUBLIC_SUPABASE_URL); } catch { refuse("TEST_PROJECT_REQUIRED"); }
   if (database.origin !== TEST_ORIGIN || database.pathname !== "/" || database.search || database.hash || database.username || database.password) refuse("TEST_PROJECT_REQUIRED");
-  for (const name of ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "VERCEL_TOKEN"]) {
+  for (const name of ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", ...(preflight ? ["VERCEL_TOKEN"] : [])]) {
     if (typeof env[name] !== "string" || !env[name].trim()) refuse("CREDENTIALS_MISSING");
   }
+  // The steps that install and run dependencies must not hold the Vercel token.
+  if (!preflight && env.VERCEL_TOKEN !== undefined) refuse("VERCEL_TOKEN_OUTSIDE_PREFLIGHT");
   if (!/^[0-9]+$/.test(env.GITHUB_RUN_ID ?? "")) refuse("WORKFLOW_RUN_REQUIRED");
   return { origin, host: new URL(origin).hostname, expectedSha, runId: env.GITHUB_RUN_ID,
     databaseOrigin: TEST_ORIGIN, anon: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    service: env.SUPABASE_SERVICE_ROLE_KEY, vercel: env.VERCEL_TOKEN };
+    service: env.SUPABASE_SERVICE_ROLE_KEY, vercel: preflight ? env.VERCEL_TOKEN : null };
+}
+// Ties a preflight record to one immutable Preview, source commit and workflow
+// run without writing the Preview URL into the uploaded report.
+export function preflightBinding(config) {
+  return createHash("sha256").update(`${config.origin}\n${config.expectedSha}\n${config.runId}`).digest("hex");
+}
+export function preflightRecord(config, provenance) {
+  return { verified: true, deploymentId: provenance.deploymentId, target: provenance.target, sourceShaMatched: true,
+    projectVerified: true, teamVerified: true, binding: preflightBinding(config) };
+}
+export function checkPreflightRecord(config, record) {
+  if (!record || typeof record !== "object" || record.verified !== true || record.target !== "preview" || record.sourceShaMatched !== true
+    || record.projectVerified !== true || record.teamVerified !== true || typeof record.deploymentId !== "string" || !record.deploymentId.startsWith("dpl_")
+    || record.binding !== preflightBinding(config)) refuse("PREFLIGHT_NOT_VERIFIED");
+  return { deploymentId: record.deploymentId, target: "preview", sourceSha: config.expectedSha, projectVerified: true, teamVerified: true };
 }
 
 export function checkDeploymentMetadata(config, deployment, project) {

@@ -67,7 +67,12 @@ async function main() {
   const guard = readFileSync(new URL("../../../e2e/preview-lcp-guards.mjs", import.meta.url));
   check("the shared5-path provenance guard is unchanged", createHash("sha256").update(guard).digest("hex") === SHARED_GUARD_SHA256);
   const runner = readFileSync(new URL("../../../e2e/preview-feature-smoke.mjs", import.meta.url), "utf8");
-  check("no fixture is created until source and deployment provenance pass", runner.indexOf("const provenance = await verifyPreviewDeployment(config)") < runner.indexOf("const credentials = await createFixture(admin"));
+  const fixtureAt = runner.indexOf("const credentials = await createFixture(admin");
+  check("no fixture is created until source and deployment provenance pass", fixtureAt > 0 && [
+    "provenance = await verifyPreviewDeployment(config)", "provenance = checkPreflightRecord(config, record)", "checkCheckoutIdentity(config.expectedSha",
+  ].every(anchor => { const at = runner.indexOf(anchor); return at > 0 && at < fixtureAt; }));
+  check("the smoke step reads Vercel only in --preflight and otherwise needs its record (SUP-5)", runner.includes("previewFeatureEnvironment(process.env, { preflight: preflightOnly })")
+    && /if \(preflightOnly\) \{\n\s+provenance = await verifyPreviewDeployment\(config\);/.test(runner));
   check("no authenticated screenshots, trace, HAR or storage-state artifact", !/\.screenshot\s*\(|\.tracing\.|recordHar\s*:|storageState\s*\(/.test(runner));
   check("create fixture confirms email without triggering email delivery", runner.includes("email_confirm: true") && !/signUp\s*\(|inviteUserByEmail|resetPasswordForEmail|signInWithOtp/.test(runner));
   check("server capabilities change only the exact owned fixture profile", runner.includes('features: { wheel: true, scratch: true, bingo: true }') && runner.includes('.eq("id", state.userId).select("id").single()'));
@@ -77,6 +82,13 @@ async function main() {
   check("actual Focus grant, Scratch reveal and Bingo UI controls are clicked", runner.includes('getByTestId("focus-grant").click()') && runner.includes('getByTestId("scratch-reveal-all").focus()') && runner.includes('getByTestId("fan-spin").click()'));
   const workflow = readFileSync(new URL("../../../.github/workflows/e2e-supabase-ui.yml", import.meta.url), "utf8");
   check("feature smoke is a separate explicit manual opt-in", /preview-feature-smoke:[\s\S]*?if: github\.event_name == 'workflow_dispatch' && inputs\.preview_smoke_url != ''/.test(workflow));
+  const smokeJob = workflow.slice(workflow.indexOf("\n  preview-feature-smoke:\n"));
+  const smokeTokenSteps = smokeJob.split(/\n(?= {6}- )/).filter(step => step.includes("VERCEL_TOKEN:"));
+  check("VERCEL_TOKEN reaches only the feature preflight step (SUP-5)", smokeTokenSteps.length === 1 && smokeTokenSteps[0].includes("run: node e2e/preview-feature-smoke.mjs --preflight") && !smokeJob.split("\n    steps:\n")[0].includes("VERCEL_TOKEN:"));
+  check("the feature preflight runs before any dependency is installed", smokeJob.indexOf("preview-feature-smoke.mjs --preflight") < smokeJob.indexOf("run: npm ci"));
+  { const { VERCEL_TOKEN: _token, ...noToken } = env;
+    check("the smoke step needs no Vercel token", previewFeatureEnvironment(noToken, { preflight: false }).vercel === null);
+    refused(() => previewFeatureEnvironment(env, { preflight: false }), "VERCEL_TOKEN_OUTSIDE_PREFLIGHT"); }
   check("feature-specific URL and checked SHA do not reuse performance inputs", workflow.includes("PREVIEW_FEATURE_URL: ${{ inputs.preview_smoke_url }}") && workflow.includes("PREVIEW_EXPECTED_SHA: ${{ inputs.preview_smoke_expected_sha }}"));
   check("existing login and5-sample performance jobs remain", workflow.includes("  login-ui:\n") && workflow.includes("npm run e2e:login") && workflow.includes("  preview-lcp:\n") && workflow.includes("node e2e/preview-lcp.mjs"));
   check("feature artifacts are isolated to sanitized report directory", /name: preview-feature-smoke-\$\{\{ github.sha \}\}[\s\S]*?path: e2e\/artifacts\/preview-feature-smoke\//.test(workflow));

@@ -15,6 +15,9 @@
 #   SUPABASE_ACCESS_TOKEN       (Supabase dashboard -> Account -> Access Tokens)
 #   SUPABASE_TEST_PROJECT_REF   (test project ref — the xxxx in xxxx.supabase.co)
 #   SUPABASE_TEST_DB_PASSWORD   (test project database password)
+#   SUPABASE_TEST_DB_URL        (SUP-1: TEST session-pooler connection string,
+#                                port 5432; once set, PR runs stop using
+#                                SUPABASE_ACCESS_TOKEN. `test` environment secret)
 #   SUPABASE_PROD_PROJECT_REF   (production project ref)
 #   SUPABASE_PROD_DB_PASSWORD   (production project database password)
 #
@@ -46,47 +49,115 @@ concurrency:
   group: supabase-migrate-${{ github.ref }}
   cancel-in-progress: false
 
+# SUP-4: least privilege for the job token; each job restates what it needs.
+permissions:
+  contents: read
+
 jobs:
   test:
     # PRs (and any non-main branch) target the TEST project.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     environment: test
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    permissions:
+      contents: read
+    # SUP-6: one TEST migration run at a time across ALL PRs (the workflow
+    # group above is per ref). Never cancels a run that has started.
+    concurrency:
+      group: supabase-migrate-test
+      cancel-in-progress: false
+    # SUP-1: no job-level credentials. The Supabase ACCOUNT token reaches every
+    # project (PROD included), so it is not given to this PR job once the
+    # TEST-only SUPABASE_TEST_DB_URL secret exists (docs/GO_LIVE.md, SUP-1).
+    # Until then the legacy token path runs with a warning, and the token is
+    # handed only to the steps that call the CLI, never to the actions.
+    # SUP-7: secrets reach shell only through env, quoted as "$VAR".
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Node runs the migration-history read-back (scripts/ci/).
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - uses: supabase/setup-cli@v3
+      - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           # Pinned (not `latest`) so CI is reproducible; bump it deliberately.
           version: 2.122.0
-      - name: Apply migrations to TEST
-        run: |
-          # Refuse to write if the repository secret points at another project.
-          test "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" = "snmcrmhgevfqggxdiomu"
-          supabase link --project-ref "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" \
-            --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
-          supabase db push --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}"
-      - name: Confirm TEST migration history
+      - name: Choose TEST credentials
+        id: target
         shell: bash
+        env:
+          TEST_PROJECT_REF: ${{ secrets.SUPABASE_TEST_PROJECT_REF }}
+          TEST_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
         run: |
           set -euo pipefail
-          supabase migration list --linked --password "${{ secrets.SUPABASE_TEST_DB_PASSWORD }}" | tee "$RUNNER_TEMP/test-migrations.txt"
+          # Refuse to write if the repository secret points at another project.
+          test "$TEST_PROJECT_REF" = "snmcrmhgevfqggxdiomu"
+          if [ -n "$TEST_DB_URL" ]; then
+            node scripts/ci/supabase-test-db-url.mjs
+            echo "mode=db-url" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Supabase account token used by a PR job::SUPABASE_TEST_DB_URL is not set, so this PR job still uses the account-wide SUPABASE_ACCESS_TOKEN. Add the TEST-only database URL (docs/GO_LIVE.md, SUP-1)."
+            echo "mode=token" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Apply migrations to TEST
+        shell: bash
+        env:
+          MODE: ${{ steps.target.outputs.mode }}
+          TEST_PROJECT_REF: ${{ secrets.SUPABASE_TEST_PROJECT_REF }}
+          TEST_DB_PASSWORD: ${{ secrets.SUPABASE_TEST_DB_PASSWORD }}
+          TEST_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ steps.target.outputs.mode == 'token' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || unset SUPABASE_ACCESS_TOKEN
+          test "$TEST_PROJECT_REF" = "snmcrmhgevfqggxdiomu"
+          if [ "$MODE" = "db-url" ]; then
+            supabase db push --db-url "$TEST_DB_URL"
+          else
+            supabase link --project-ref "$TEST_PROJECT_REF" --password "$TEST_DB_PASSWORD"
+            supabase db push --password "$TEST_DB_PASSWORD"
+          fi
+      - name: Confirm TEST migration history
+        shell: bash
+        env:
+          MODE: ${{ steps.target.outputs.mode }}
+          TEST_DB_PASSWORD: ${{ secrets.SUPABASE_TEST_DB_PASSWORD }}
+          TEST_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ steps.target.outputs.mode == 'token' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || unset SUPABASE_ACCESS_TOKEN
+          if [ "$MODE" = "db-url" ]; then
+            supabase migration list --db-url "$TEST_DB_URL" | tee "$RUNNER_TEMP/test-migrations.txt"
+          else
+            supabase migration list --linked --password "$TEST_DB_PASSWORD" | tee "$RUNNER_TEMP/test-migrations.txt"
+          fi
           node scripts/ci/verify-migrations-applied.mjs --label TEST < "$RUNNER_TEMP/test-migrations.txt"
       - name: Check src/lib/data/db.types.ts matches TEST
         # The committed row types must match the schema the migrations just
         # produced. The comparison ignores whitespace only: the file can come
         # from `npm run gen:types` (this CLI) or Supabase's hosted generator,
         # which emit the same types but may differ in blank lines/indentation.
-        # Any change to a name, type or nullability still fails.
+        # Any change to a name, type or nullability still fails. The DB-URL
+        # path generates locally (Docker on the runner) instead of through the
+        # Management API.
         shell: bash
+        env:
+          MODE: ${{ steps.target.outputs.mode }}
+          TEST_PROJECT_REF: ${{ secrets.SUPABASE_TEST_PROJECT_REF }}
+          TEST_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ steps.target.outputs.mode == 'token' && secrets.SUPABASE_ACCESS_TOKEN || '' }}
         run: |
+          set -euo pipefail
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || unset SUPABASE_ACCESS_TOKEN
           generated="$RUNNER_TEMP/db.types.ts"
-          supabase gen types typescript --project-id "${{ secrets.SUPABASE_TEST_PROJECT_REF }}" > "$generated"
+          if [ "$MODE" = "db-url" ]; then
+            supabase gen types typescript --db-url "$TEST_DB_URL" > "$generated"
+          else
+            supabase gen types typescript --project-id "$TEST_PROJECT_REF" > "$generated"
+          fi
           if ! cmp -s <(tr -d '[:space:]' < src/lib/data/db.types.ts) <(tr -d '[:space:]' < "$generated"); then
             echo "::error file=src/lib/data/db.types.ts::src/lib/data/db.types.ts is out of date with the database schema. Run \`npm run gen:types\` (with the CLI linked to a project at this migration) and commit the result."
             diff -u src/lib/data/db.types.ts "$generated" || true
@@ -102,29 +173,40 @@ jobs:
     name: db-migrations-production
     runs-on: ubuntu-latest
     environment: production
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    permissions:
+      contents: read
+    # The account token and PROD secrets reach only the two CLI steps below
+    # (SUP-1, SUP-7), never the third-party setup actions.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Node runs the migration-history read-back (scripts/ci/).
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - uses: supabase/setup-cli@v3
+      - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           # Pinned (not `latest`) so CI is reproducible; bump it deliberately.
           version: 2.122.0
       - name: Apply migrations to PRODUCTION
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROD_PROJECT_REF: ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
+          PROD_DB_PASSWORD: ${{ secrets.SUPABASE_PROD_DB_PASSWORD }}
         run: |
-          supabase link --project-ref "${{ secrets.SUPABASE_PROD_PROJECT_REF }}" \
-            --password "${{ secrets.SUPABASE_PROD_DB_PASSWORD }}"
-          supabase db push --password "${{ secrets.SUPABASE_PROD_DB_PASSWORD }}"
+          supabase link --project-ref "$PROD_PROJECT_REF" \
+            --password "$PROD_DB_PASSWORD"
+          supabase db push --password "$PROD_DB_PASSWORD"
       # Read-back, not trust: the remote history must hold every migration file
       # in this commit and nothing unknown. Failing here keeps Vercel from
       # promoting this commit's Production deployment.
       - name: Verify PRODUCTION migration history matches this commit
         shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROD_DB_PASSWORD: ${{ secrets.SUPABASE_PROD_DB_PASSWORD }}
         run: |
           set -euo pipefail
-          supabase migration list --linked --password "${{ secrets.SUPABASE_PROD_DB_PASSWORD }}" | tee "$RUNNER_TEMP/prod-migrations.txt"
+          supabase migration list --linked --password "$PROD_DB_PASSWORD" | tee "$RUNNER_TEMP/prod-migrations.txt"
           node scripts/ci/verify-migrations-applied.mjs --label PRODUCTION < "$RUNNER_TEMP/prod-migrations.txt"

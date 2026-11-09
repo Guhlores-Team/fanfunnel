@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   PREVIEW_PROJECT, PREVIEW_TEAM, TEST_ORIGIN, PreviewPerfError, browserEnvironment, checkCheckoutIdentity, checkDeploymentMetadata,
-  failureCode, fixturePhotoUrl, immutablePreviewOrigin, previewPerfEnvironment, summarizeLcp, verifyPreviewDeployment,
+  checkPreflightRecord, failureCode, fixturePhotoUrl, immutablePreviewOrigin, preflightBinding, preflightRecord, previewPerfEnvironment,
+  summarizeLcp, verifyPreviewDeployment,
 } from "../../../e2e/preview-lcp-guards.mjs";
 
 async function main() {
@@ -56,6 +57,26 @@ async function main() {
   check("authenticated preflight performs only the two pinned metadata reads", (await verifyPreviewDeployment(config, fetcher)).target === "preview" && calls === 2);
   await assert.rejects(() => verifyPreviewDeployment(config, async () => { throw new Error("private transport detail"); }), error => error instanceof PreviewPerfError && error.code === "VERCEL_METADATA_UNAVAILABLE"); passed++;
   check("unexpected error messages never become report content", failureCode(new Error("private transport detail")) === "MEASUREMENT_FAILED");
+  // SUP-5: the measurement step runs without VERCEL_TOKEN and accepts only the
+  // preflight record bound to this Preview, source commit and workflow run.
+  const { VERCEL_TOKEN: _token, ...noToken } = env;
+  const measure = previewPerfEnvironment(noToken, { preflight: false });
+  check("measurement step needs no Vercel token and never carries one", measure.vercel === null && measure.origin === config.origin);
+  refuse(() => previewPerfEnvironment(env, { preflight: false }), "VERCEL_TOKEN_OUTSIDE_PREFLIGHT");
+  refuse(() => previewPerfEnvironment({ ...noToken, VERCEL_TOKEN: "" }, { preflight: false }), "VERCEL_TOKEN_OUTSIDE_PREFLIGHT");
+  for (const name of ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]) refuse(() => previewPerfEnvironment({ ...noToken, [name]: "" }, { preflight: false }), "CREDENTIALS_MISSING");
+  refuse(() => previewPerfEnvironment({ ...noToken, GITHUB_EVENT_NAME: "pull_request" }, { preflight: false }), "MANUAL_PREVIEW_BRANCH_REQUIRED");
+  const record = preflightRecord(config, checkDeploymentMetadata(config, deployment, project));
+  check("the preflight record holds no URL or credential", !JSON.stringify(record).includes("vercel.app") && !JSON.stringify(record).includes("unit-only"));
+  check("a matching preflight record is accepted", checkPreflightRecord(measure, JSON.parse(JSON.stringify(record))).deploymentId === "dpl_preview");
+  const otherRun = previewPerfEnvironment({ ...noToken, GITHUB_RUN_ID: "987654321" }, { preflight: false });
+  const otherPreview = previewPerfEnvironment({ ...noToken, PREVIEW_PERF_URL: "https://fanfunnel-z9y8x7w6v-easy-simple-sites.vercel.app" }, { preflight: false });
+  check("the binding changes with run and Preview", new Set([preflightBinding(measure), preflightBinding(otherRun), preflightBinding(otherPreview)]).size === 3);
+  refuse(() => checkPreflightRecord(otherRun, record), "PREFLIGHT_NOT_VERIFIED");
+  refuse(() => checkPreflightRecord(otherPreview, record), "PREFLIGHT_NOT_VERIFIED");
+  for (const bad of [null, undefined, "", {}, { ...record, verified: false }, { ...record, target: "production" }, { ...record, deploymentId: "prod" },
+    { ...record, binding: "0".repeat(64) }, { ...record, projectVerified: false }, { ...record, teamVerified: undefined }, { ...record, sourceShaMatched: false },
+    { verified: false, errors: [{ code: "VERCEL_METADATA_UNAVAILABLE" }] }]) refuse(() => checkPreflightRecord(measure, bad), "PREFLIGHT_NOT_VERIFIED");
   const owner = "00000000-0000-4000-8000-000000000001";
   const image = "00000000-0000-4000-8000-000000000002.webp";
   const publicPhoto = `${TEST_ORIGIN}/storage/v1/object/public/creator-media/${owner}/${image}`;
@@ -65,6 +86,13 @@ async function main() {
   for (const values of [[], [1, 2, 3, 4], [1, 2, 3, 4, 5, 6], [1, 2, NaN, 4, 5], [1, 2, Infinity, 4, 5], [0, 2, 3, 4, 5], [-1, 2, 3, 4, 5]]) refuse(() => summarizeLcp(values), "INCOMPLETE_LCP_SAMPLES");
   const workflow = readFileSync(new URL("../../../.github/workflows/e2e-supabase-ui.yml", import.meta.url), "utf8");
   check("new measurement job runs only for an explicit manual URL", /preview-lcp:[\s\S]*?if: github\.event_name == 'workflow_dispatch' && inputs\.preview_url != ''/.test(workflow));
+  const lcpJob = workflow.slice(workflow.indexOf("\n  preview-lcp:\n"), workflow.indexOf("\n  preview-feature-smoke:\n"));
+  const lcpSteps = lcpJob.split(/\n(?= {6}- )/);
+  const TOKEN = "VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}";
+  const tokenSteps = lcpSteps.filter(step => step.includes(TOKEN));
+  check("VERCEL_TOKEN reaches only the preflight step (SUP-5)", tokenSteps.length === 1 && tokenSteps[0].includes("run: node e2e/preview-lcp.mjs --preflight") && !lcpJob.split("\n    steps:\n")[0].includes("VERCEL_TOKEN:"));
+  check("the preflight runs before any dependency is installed", lcpJob.indexOf("e2e/preview-lcp.mjs --preflight") < lcpJob.indexOf("run: npm ci"));
+  check("the measurement step runs without VERCEL_TOKEN", lcpSteps.some(step => step.includes("run: node e2e/preview-lcp.mjs\n") && !step.includes("VERCEL_TOKEN:")));
   check("existing login-ui build, real test and failure artifacts remain", workflow.includes("  login-ui:\n") && workflow.includes("run: npm run build") && workflow.includes("npm run e2e:login") && workflow.includes("name: login-ui-artifacts"));
   console.log(`previewLcpGuards.test: ${passed} checks passed`);
 }
