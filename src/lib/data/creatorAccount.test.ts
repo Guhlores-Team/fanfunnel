@@ -1,10 +1,10 @@
 import assert from "node:assert";
-import { provisionCreatorUser, type CreatorProvisioningClient } from "./creatorAccount";
+import { inviteCreatorUser, type CreatorProvisioningClient } from "./creatorAccount";
 
-// Regression: a failed admin invite used to forward Supabase Auth's raw
-// `createUser` message as the API `error` string. The client got Supabase's own
-// wording (which can echo the submitted email) instead of a stable code it can
-// map to copy. Raw detail now goes to the server log only.
+// C8: "New account" invites by e-mail (inviteUserByEmail) and never takes a
+// password. Regression kept: a failed invite never forwards Supabase Auth's raw
+// message (which can echo the submitted email) as the API `error` string; the
+// client gets a stable code, the raw detail goes to the server log only.
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -14,16 +14,16 @@ function check(label: string, cond: boolean) {
 
 type FakeAuthError = { message: string; code?: string; status?: number };
 
-/** A fake service client: `createUser` resolves to the given result; profile
- *  updates are recorded. */
+/** A fake service client: `inviteUserByEmail` resolves to the given result;
+ *  profile updates are recorded. */
 function fakeClient(result: { user: { id: string } | null; error: FakeAuthError | null }) {
   const updates: Record<string, unknown>[] = [];
   const created: Record<string, unknown>[] = [];
   const client = {
     auth: {
       admin: {
-        createUser: async (args: Record<string, unknown>) => {
-          created.push(args);
+        inviteUserByEmail: async (email: string, options: Record<string, unknown>) => {
+          created.push({ email, ...options });
           return { data: { user: result.user }, error: result.error };
         },
       },
@@ -55,11 +55,12 @@ async function withLoggedErrors<T>(fn: () => Promise<T>): Promise<{ result: T; l
 }
 
 const EMAIL = "taken@example.com";
+const REDIRECT = "https://app.example/auth/callback?next=/set-password";
 
 async function expectCode(label: string, error: FakeAuthError | null, expected: string) {
   const { client, updates } = fakeClient({ user: null, error });
   const { result, logged } = await withLoggedErrors(() =>
-    provisionCreatorUser(client, EMAIL, "abc12345", "Taken")
+    inviteCreatorUser(client, EMAIL, "Taken", REDIRECT)
   );
   check(`${label}: returns { error: "${expected}" }`, "error" in result && result.error === expected);
   if (error) {
@@ -119,23 +120,37 @@ async function main() {
   );
   await expectCode("no error but no user", null, "create_failed");
 
-  // Success: ok, and the profile row is approved with the display name.
+  await expectCode(
+    "e-mail rate limit",
+    { code: "over_email_send_rate_limit", status: 429, message: "email rate limit exceeded" },
+    "rate_limited"
+  );
+
+  // Success: ok, the invite goes out with the set-password redirect, and the
+  // profile row is approved; no password anywhere.
   {
     const { client, updates, created } = fakeClient({ user: { id: "u1" }, error: null });
-    const result = await provisionCreatorUser(client, EMAIL, "abc12345", "");
+    const result = await inviteCreatorUser(client, EMAIL, "", REDIRECT);
     check("success returns { ok: true }", "ok" in result && result.ok === true);
+    check("one invite e-mail to that address, ending on /set-password", created.length === 1 && created[0].email === EMAIL && created[0].redirectTo === REDIRECT);
+    check("no password is set or sent", !created.some((c) => "password" in c));
+    check("the profile is approved", updates.length === 1 && updates[0].approval_status === "approved");
     // M1 negative: the e-mail never becomes the (public) display name.
-    check(
-      "success approves the profile; a missing display name stays null, never the e-mail",
-      updates.length === 1 && updates[0].approval_status === "approved" && updates[0].display_name === null
-    );
+    check("a missing display name is never written (stays empty)", !updates.some((u) => "display_name" in u));
     check("no e-mail is written as the display name anywhere", !JSON.stringify([updates, created]).includes(`"display_name":"${EMAIL}"`));
-    check("the auth user gets no display-name metadata at all", created.length === 1 && !("user_metadata" in created[0]));
+    check("the auth user gets no display-name metadata at all", !("data" in created[0]));
   }
   {
-    const { client, updates } = fakeClient({ user: { id: "u2" }, error: null });
-    await provisionCreatorUser(client, EMAIL, "abc12345", "  Bella  ");
-    check("a given display name is stored trimmed", updates.length === 1 && updates[0].display_name === "Bella");
+    const { client, updates, created } = fakeClient({ user: { id: "u2" }, error: null });
+    await inviteCreatorUser(client, EMAIL, "  Bella  ", REDIRECT);
+    check("a given display name is stored trimmed", updates.some((u) => u.display_name === "Bella"));
+    check("…and on the invite's metadata", (created[0].data as { display_name?: string }).display_name === "Bella");
+    check("the approval is its own write (a refused name cannot undo it)", updates[0].approval_status === "approved" && !("display_name" in updates[0]));
+  }
+  {
+    const { client, updates } = fakeClient({ user: { id: "u3" }, error: null });
+    await inviteCreatorUser(client, EMAIL, "someone@example.com", REDIRECT);
+    check("an e-mail-shaped display name is dropped", !updates.some((u) => "display_name" in u));
   }
 
   console.log(`creatorAccount.test: ${passed} checks passed`);

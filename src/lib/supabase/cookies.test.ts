@@ -27,7 +27,7 @@ const NEEDS_SESSION_COOKIE = [
   "src/app/forgot-password/page.tsx", // resetPasswordForEmail
   "src/components/auth/totp.tsx", // mfa.enroll / challengeAndVerify upgrade the session to aal2
   "src/components/dashboard/PrivacySecurityCards.tsx", // mfa.listFactors / AAL / refresh after removal
-  "src/app/reset-password/page.tsx", // getSession / updateUser on the recovery link
+  "src/components/auth/NewPasswordForm.tsx", // getSession / updateUser on the recovery or invite link
 ];
 
 let passed = 0;

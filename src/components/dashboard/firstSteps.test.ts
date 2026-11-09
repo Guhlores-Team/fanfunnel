@@ -5,6 +5,8 @@ import {
   firstStepsAllDone,
   firstStepsDone,
   isFirstRun,
+  profileStepDone,
+  type FirstStepSignals,
 } from "./firstSteps";
 
 let passed = 0;
@@ -15,30 +17,44 @@ function check(label: string, cond: boolean) {
 
 const fresh = { wheelSaved: false, fans: 0, spins: 0, fulfilled: 0 };
 
+const step = (sig: FirstStepSignals, key: string) => buildFirstSteps(sig).find((x) => x.key === key)!;
+
 // --- shape -------------------------------------------------------------------
 const steps = buildFirstSteps(fresh);
-check("five steps, in the spec's order", steps.map((s) => s.key).join(",") === "account,wheel,fan,share,fulfil");
+check("six steps, in the spec's order", steps.map((s) => s.key).join(",") === "account,profile,wheel,fan,share,fulfil");
 check("FIRST_STEPS_TOTAL matches", steps.length === FIRST_STEPS_TOTAL);
 check("account step is always done and has no CTA", steps[0].done && steps[0].cta === undefined);
 check("every other step has a CTA into a section", steps.slice(1).every((s) => !!s.cta?.label && !!s.cta?.go));
-check("wheel step opens the editor", steps[1].cta?.go === "editor");
-check("mint + share steps open Fans", steps[2].cta?.go === "fans" && steps[3].cta?.go === "fans");
-check("fulfil step opens Fulfilment", steps[4].cta?.go === "prizes");
+check("profile step opens Settings", step(fresh, "profile").cta?.go === "settings");
+check("wheel step opens the editor", step(fresh, "wheel").cta?.go === "editor");
+check("mint + share steps open Fans", step(fresh, "fan").cta?.go === "fans" && step(fresh, "share").cta?.go === "fans");
+check("fulfil step opens Fulfilment", step(fresh, "fulfil").cta?.go === "prizes");
+// C13: a /spin link is one fan's paid balance, never a bio link.
+check("the share step never says to put a spin link in a bio", !/drop it in .*bio/i.test(step(fresh, "share").body) && /never for your bio/.test(step(fresh, "share").body));
+check("the profile step points the bio at /c/", step(fresh, "profile").body.includes("/c/"));
 
 // --- the prior checklist's signals are preserved exactly ----------------------
-check("fresh account: only the account step is done", firstStepsDone(fresh) === 1);
-check("wheel saved ticks the wheel step", buildFirstSteps({ ...fresh, wheelSaved: true })[1].done);
-check("fans > 0 ticks the mint step (prior: 'Add a fan & grant spins')", buildFirstSteps({ ...fresh, fans: 1 })[2].done);
-check("spins > 0 ticks the share step (prior: 'Send them their spin link')", buildFirstSteps({ ...fresh, spins: 1 })[3].done);
-check("fans alone does NOT tick share", !buildFirstSteps({ ...fresh, fans: 3 })[3].done);
-check("fulfilled > 0 ticks the fulfil step", buildFirstSteps({ ...fresh, fulfilled: 1 })[4].done);
-check("pending-only wins do not tick fulfil", !buildFirstSteps({ ...fresh, spins: 2, fans: 1 })[4].done);
+check("fresh account (profile unknown): account + profile done", firstStepsDone(fresh) === 2);
+check("wheel saved ticks the wheel step", step({ ...fresh, wheelSaved: true }, "wheel").done);
+check("fans > 0 ticks the mint step (prior: 'Add a fan & grant spins')", step({ ...fresh, fans: 1 }, "fan").done);
+check("spins > 0 ticks the share step (prior: 'Send them their spin link')", step({ ...fresh, spins: 1 }, "share").done);
+check("fans alone does NOT tick share", !step({ ...fresh, fans: 3 }, "share").done);
+check("fulfilled > 0 ticks the fulfil step", step({ ...fresh, fulfilled: 1 }, "fulfil").done);
+check("pending-only wins do not tick fulfil", !step({ ...fresh, spins: 2, fans: 1 }, "fulfil").done);
+
+// --- C9: name and public link ----------------------------------------------------
+check("profile not set → step open", !step({ ...fresh, profileSet: false }, "profile").done);
+check("profileStepDone: name and handle", profileStepDone({ displayName: "Bella", publicSlug: "bella" }));
+check("profileStepDone: a blank name is not done", !profileStepDone({ displayName: "  ", publicSlug: "bella" }));
+check("profileStepDone: no handle is not done", !profileStepDone({ displayName: "Bella", publicSlug: null }));
+check("profileStepDone: still loading is not done (never persists a premature 'all done')", !profileStepDone(undefined));
 
 // --- completion ---------------------------------------------------------------
-const priorDone = { wheelSaved: true, fans: 1, spins: 1, fulfilled: 0 };
+const priorDone = { wheelSaved: true, fans: 1, spins: 1, fulfilled: 0, profileSet: true };
 check("the prior three steps alone are not 'all done' any more (fulfil remains)", !firstStepsAllDone(priorDone));
-check("4 of 5 done when only fulfil is left", firstStepsDone(priorDone) === 4);
-check("all five done", firstStepsAllDone({ ...priorDone, fulfilled: 1 }));
+check("5 of 6 done when only fulfil is left", firstStepsDone(priorDone) === 5);
+check("all six done", firstStepsAllDone({ ...priorDone, fulfilled: 1 }));
+check("everything but the profile is not all done", !firstStepsAllDone({ ...priorDone, fulfilled: 1, profileSet: false }));
 
 // --- first-run detection -------------------------------------------------------
 check("no fans + no spins is first run", isFirstRun({ fans: 0, spins: 0 }));

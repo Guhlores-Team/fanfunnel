@@ -23,7 +23,7 @@ let user: { email?: string; email_confirmed_at?: string | null } | null = { emai
 const notices: Record<string, unknown>[] = [];
 const userLookups: string[] = [];
 const after: (() => unknown)[] = [];
-const sent: { to: string[]; subject: string; text: string; html: string }[] = [];
+const sent: { from: string; to: string[]; subject: string; text: string; html: string }[] = [];
 const realError = console.error;
 
 function chain(table: string) {
@@ -91,6 +91,8 @@ async function main() {
   await flush();
   check("the e-mail goes to the account's own confirmed address only", sent.length === 1 && sent[0].to.join() === "new.creator@example.com" && userLookups.at(-1) === CREATOR);
   check("…says it is approved and links to the dashboard", /approved/i.test(sent[0].subject) && sent[0].text.includes("https://ff.example/dashboard"));
+  check("…from the account sender, not the alerts one (C5)", sent[0].from === "FanFunnel <account@easysimplesites.org>");
+  check("…in the branded sign-in e-mail look", sent[0].html.includes("linear-gradient(90deg,#ec4899,#a855f7)") && sent[0].html.includes("Open your dashboard"));
   check("…and names nobody (no address or id in the body)", !sent[0].text.includes("new.creator") && !sent[0].html.includes("new.creator") && !sent[0].text.includes(CREATOR));
 
   // A second approve of the same (now approved) row: the guarded update

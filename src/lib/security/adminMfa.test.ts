@@ -66,7 +66,7 @@ mock.module("@/lib/data", {
     recordAudit: reach("recordAudit"),
     listCreatorApplications: reach("listCreatorApplications"),
     decideCreatorApplication: reach("decideCreatorApplication"),
-    createCreatorAccount: reach("createCreatorAccount"),
+    inviteCreatorAccount: reach("inviteCreatorAccount"),
     listAuditLog: reach("listAuditLog"),
     claimAdmin: reach("claimAdmin"),
   },

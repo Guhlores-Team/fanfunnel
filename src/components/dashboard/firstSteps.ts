@@ -7,8 +7,12 @@
 //   share the link → spins > 0
 // Two steps from the Command Center spec frame them: "Create your account"
 // (always done — they're signed in) and "Fulfil your first win" (fulfilled > 0).
+// C9: "Set your name and public link" — fans see "Creator" until the display
+// name is set, and the bio link (/c/<handle>) needs the handle.
 
 export interface FirstStepSignals {
+  /** Display name AND public handle set (profileStepDone). Absent = done. */
+  profileSet?: boolean;
   /** Server-derived (metrics.wheelBuilt) or the local "not the sample" check. */
   wheelSaved: boolean;
   fans: number;
@@ -17,7 +21,7 @@ export interface FirstStepSignals {
 }
 
 export interface FirstStep {
-  key: "account" | "wheel" | "fan" | "share" | "fulfil";
+  key: "account" | "profile" | "wheel" | "fan" | "share" | "fulfil";
   title: string;
   body: string;
   done: boolean;
@@ -32,6 +36,13 @@ export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
       title: "Create your account",
       body: "You're in — welcome to FanFunnel.",
       done: true,
+    },
+    {
+      key: "profile",
+      title: "Set your name and public link",
+      body: "Fans see your display name on every game. Your public link (/c/your-handle) is the one for your bio.",
+      done: s.profileSet !== false,
+      cta: { label: "Open settings", go: "settings" },
     },
     {
       key: "wheel",
@@ -50,7 +61,7 @@ export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
     {
       key: "share",
       title: "Share their spin link",
-      body: "Copy the fan's /spin link and drop it in a DM or your bio. When they spin, you're live.",
+      body: "Copy the fan's personal /spin link and send it to them in a DM: it holds their own paid spins, so it is never for your bio. When they spin, you're live.",
       done: s.spins > 0,
       cta: { label: "Get the link", go: "fans" },
     },
@@ -64,7 +75,16 @@ export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
   ];
 }
 
-export const FIRST_STEPS_TOTAL = 5;
+export const FIRST_STEPS_TOTAL = 6;
+
+/** C9: the profile step's signal from GET /api/account (display name + handle). */
+export function profileStepDone(account: { displayName?: string | null; publicSlug?: string | null } | null | undefined): boolean {
+  if (!account) return false;
+  const named = !!account.displayName?.trim();
+  // An older response without the field: judge by the name alone.
+  const linked = account.publicSlug === undefined || !!account.publicSlug?.trim();
+  return named && linked;
+}
 
 export function firstStepsDone(s: FirstStepSignals): number {
   return buildFirstSteps(s).filter((x) => x.done).length;

@@ -6,6 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { safeNext } from "@/lib/auth/safeNext";
 import TermsCheckbox from "@/components/TermsCheckbox";
+import { isAcceptablePassword, PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
+
+/** /auth/callback and /auth/confirm send a failed e-mail link here. */
+export const AUTH_LINK_MESSAGE =
+  "This link was opened in a different browser than the one that asked for it, or it expired. Request a new one here and open it in the same browser.";
 
 type Mode = "signin" | "signup";
 
@@ -17,7 +22,7 @@ const AUTH_MESSAGES: Record<string, string> = {
   email_not_confirmed: "Confirm your email first — check your inbox for the link.",
   user_already_exists: "An account with that email already exists. Sign in instead.",
   email_exists: "An account with that email already exists. Sign in instead.",
-  weak_password: "Pick a stronger password (at least 6 characters).",
+  weak_password: PASSWORD_RULE_MESSAGE,
   over_request_rate_limit: "Too many attempts — wait a moment and try again.",
   validation_failed: "Check your email and password and try again.",
 };
@@ -50,6 +55,31 @@ export default function LoginForm() {
       : null
   );
   const [error, setError] = useState<string | null>(null);
+  const linkFailed = params.get("error") === "auth_link";
+  const [resent, setResent] = useState(false);
+
+  // A failed confirmation link: send the sign-up confirmation again to the
+  // address typed above (Supabase answers the same whether or not it exists).
+  async function resendConfirmation() {
+    setError(null);
+    if (!email.trim()) {
+      setError("Type your email below, then tap “Resend confirmation email”.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await createClient().auth.resend({
+        type: "signup",
+        email: email.trim(),
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/pending` },
+      });
+    } catch {
+      /* same answer either way: never reveal whether the address has an account */
+    } finally {
+      setBusy(false);
+      setResent(true);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -64,6 +94,11 @@ export default function LoginForm() {
         // disabled without it).
         if (!agreed) {
           setError("Please agree to the Terms of Service and Privacy Policy.");
+          return;
+        }
+        // The same rule as reset, Settings and admin invites (api/password.ts).
+        if (!isAcceptablePassword(password)) {
+          setError(PASSWORD_RULE_MESSAGE);
           return;
         }
         const { data, error } = await supabase.auth.signUp({
@@ -136,6 +171,30 @@ export default function LoginForm() {
           : "Creator accounts are reviewed by hand — sign up, then tell us about you."}
       </p>
 
+      {linkFailed && (
+        <div data-testid="auth-link-error" role="alert" className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
+          <p>{AUTH_LINK_MESSAGE}</p>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+            <Link href="/forgot-password" className="font-semibold text-white underline underline-offset-4">
+              Send a new password reset link
+            </Link>
+            <button
+              type="button"
+              onClick={resendConfirmation}
+              disabled={busy}
+              className="font-semibold text-white underline underline-offset-4 disabled:opacity-50"
+            >
+              Resend confirmation email
+            </button>
+          </div>
+          {resent && (
+            <p role="status" className="mt-2 text-green-300">
+              If that address has an unconfirmed account, a new confirmation link is on its way.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="mt-5 space-y-3">
         {mode === "signup" && (
           <input
@@ -161,13 +220,13 @@ export default function LoginForm() {
         <input
           type="password"
           required
-          minLength={6}
+          minLength={mode === "signup" ? 8 : undefined}
           autoComplete={mode === "signin" ? "current-password" : "new-password"}
           aria-label="Password"
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? "login-error" : undefined}
           className="ff-input w-full"
-          placeholder="Password (min 6 chars)"
+          placeholder={mode === "signup" ? "Password (8+ chars, a letter and a number)" : "Password"}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />

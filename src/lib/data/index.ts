@@ -131,13 +131,16 @@ export {
   leaveOrg,
   getMyInvites,
   updateAccount,
-  createCreatorAccount,
+  inviteCreatorAccount,
   getMyApprovalStatus,
   submitCreatorApplication,
+  updateMyCreatorApplication,
+  getMyCreatorApplication,
+  getMyRejectionReason,
   listCreatorApplications,
   decideCreatorApplication,
 } from "./admin";
-export type { OrgRole } from "./admin";
+export type { OrgRole, MyApplication } from "./admin";
 export {
   clearMyData,
   getOnboardingDismissed,

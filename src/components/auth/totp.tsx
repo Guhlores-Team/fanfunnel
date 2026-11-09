@@ -169,6 +169,7 @@ export function TotpEnrol({
   const [factorId, setFactorId] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
+  const [uri, setUri] = useState<string | null>(null);
   const [showSecret, setShowSecret] = useState(false);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -200,6 +201,7 @@ export function TotpEnrol({
         }
         setFactorId(data.id);
         setSecret(data.totp.secret);
+        if (data.totp.uri.startsWith("otpauth://")) setUri(data.totp.uri);
         setQr(await QRCode.toDataURL(data.totp.uri, { width: 220, margin: 1, errorCorrectionLevel: "M" }));
       } catch (err) {
         setError(mfaErrorMessage(err));
@@ -262,6 +264,12 @@ export function TotpEnrol({
           <p id={secretId} hidden={!showSecret} className="break-all rounded-lg border border-line px-3 py-2 font-mono text-xs text-ink">
             {secret}
           </p>
+          {uri && (
+            // On a phone the QR code is on the same screen: open the app directly.
+            <a href={uri} className="block text-xs font-semibold text-ink underline underline-offset-4">
+              On this phone? Open in your authenticator app
+            </a>
+          )}
           <p className="text-xs text-muted">Keep this key private: anyone with it can make your codes.</p>
         </div>
       </div>

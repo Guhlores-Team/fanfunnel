@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/privacy/deletionResult";
 import { FEATURES } from "@/lib/features";
-import { MIN_PASSWORD_LENGTH } from "@/lib/api/password";
+import { REJECTION_REASONS, type RejectionReason } from "@/lib/onboarding/rejectionReasons";
 import { useToast } from "@/components/ui/Toast";
 import type { AdminAccount, AdminOverview, AppRole } from "@/lib/data/types";
 import Modal from "@/components/ui/Modal";
@@ -88,24 +88,38 @@ export default function AdminClient() {
     void refresh();
   }, [refresh]);
 
-  async function decideApp(profileId: string, decision: "approved" | "rejected") {
-    if (busyApps.has(profileId)) return;
+  // Approve (also the undo of a reject, C7) or reject with an optional reason.
+  async function decideApp(profileId: string, decision: "approved" | "rejected", reason?: RejectionReason | null) {
+    if (busyApps.has(profileId)) return false;
     const snapshot = apps;
     setBusyApps((s) => new Set(s).add(profileId));
-    setApps((list) => list.filter((a) => a.profileId !== profileId));
+    setApps((list) => list.map((a) => (a.profileId === profileId ? { ...a, status: decision } : a)));
     try {
       const res = await fetch("/api/admin/applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profileId, decision }),
+        body: JSON.stringify({ profileId, decision, ...(reason ? { reason } : {}) }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(typeof body?.error === "string" ? body.error : "unknown");
+      }
+      toast(decision === "approved" ? "Approved. They can sign in to their dashboard now." : "Request rejected. You can still approve it under Rejected.", {
+        tone: "success",
+      });
       refresh();
-    } catch {
+      return true;
+    } catch (error) {
       // Restore the row on a transient failure so a real pending request can't
       // silently vanish from the admin UI until a full reload.
       setApps(snapshot);
-      toast("Couldn't update the request — try again.", { tone: "error" });
+      toast(
+        error instanceof Error && error.message === "already_approved"
+          ? "That account is already approved. Suspend it instead if you need to stop it."
+          : "Couldn't update the request — try again.",
+        { tone: "error" }
+      );
+      return false;
     } finally {
       setBusyApps((s) => {
         const next = new Set(s);
@@ -246,6 +260,7 @@ export default function AdminClient() {
     { label: "Prizes pending", value: m?.pending ?? 0 },
   ];
   const pending = apps.filter((a) => a.status === "pending");
+  const rejected = apps.filter((a) => a.status === "rejected");
   const accounts = data?.accounts ?? [];
 
   return (
@@ -280,67 +295,13 @@ export default function AdminClient() {
           </p>
         )}
 
-        {pending.length > 0 && (
-          <section aria-labelledby="admin-requests" className={`lift-in overflow-hidden rounded-2xl ${raised}`}>
-            <SectionTitle
-              id="admin-requests"
-              extra={<span className="tnum text-xs text-muted">{pending.length} waiting</span>}
-            >
-              Access requests
-              <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
-                {pending.length}
-              </span>
-            </SectionTitle>
-            <ul className="flex flex-col gap-2.5 p-3 sm:p-4">
-              {pending.map((a) => {
-                const busy = busyApps.has(a.profileId);
-                const name = a.displayName ?? a.email ?? "Creator";
-                return (
-                  <li
-                    key={a.id}
-                    className={`flex flex-col gap-3 rounded-[13px] px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between ${recessed}`}
-                  >
-                    <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-xs font-bold text-ink">
-                        {initialsOf(a.displayName ?? "", a.email ?? "")}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[14px] font-semibold text-ink">{name}</p>
-                        {a.email && <p className="truncate text-[12.5px] text-muted">{a.email}</p>}
-                        {a.audienceSize && (
-                          <p className="mt-1 text-xs text-muted">Audience: {a.audienceSize}</p>
-                        )}
-                        {a.socials && (
-                          <p className="mt-1 break-words text-xs text-muted">Links: {a.socials}</p>
-                        )}
-                        {a.note && <p className="mt-1 text-xs text-[#8b8494]">“{a.note}”</p>}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 gap-2 pl-12 sm:pl-0">
-                      <button
-                        type="button"
-                        onClick={() => decideApp(a.profileId, "approved")}
-                        disabled={busy}
-                        className="btn-brand inline-flex min-h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
-                      >
-                        <Glyph d={P.check} size={14} />
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => decideApp(a.profileId, "rejected")}
-                        disabled={busy}
-                        className={btnGhost}
-                      >
-                        <Glyph d={P.x} size={14} />
-                        Reject
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
+        {(pending.length > 0 || rejected.length > 0) && (
+          <AccessRequests
+            pending={pending}
+            rejected={rejected}
+            busyApps={busyApps}
+            onDecide={decideApp}
+          />
         )}
 
         <AdminReports />
@@ -399,8 +360,9 @@ export default function AdminClient() {
       {showInvite && (
         <InviteModal
           onClose={() => setShowInvite(false)}
-          onCreated={() => {
+          onCreated={(email) => {
             setShowInvite(false);
+            toast(`Invite sent to ${email}. They'll set their own password from the e-mail.`, { tone: "success" });
             refresh();
           }}
         />
@@ -426,6 +388,9 @@ function AccountRow({
   busy: boolean;
 }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
+  // C11: suspending and making someone an admin each ask first.
+  const [confirming, setConfirming] = useState<null | "suspend" | "admin">(null);
+  const confirmId = useId();
   const [resetting, setResetting] = useState(false);
   const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -505,8 +470,10 @@ function AccountRow({
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={() => onPatch(account.id, { isActive: !account.isActive })}
+            onClick={() => (account.isActive ? setConfirming("suspend") : onPatch(account.id, { isActive: true }))}
             disabled={busy}
+            aria-controls={account.isActive ? confirmId : undefined}
+            aria-expanded={account.isActive ? confirming === "suspend" : undefined}
             className={account.isActive ? btnGhost : `${btnGhost} border-[#10b981]/40 text-[#6ee7b7]`}
           >
             {account.isActive ? "Suspend" : "Reactivate"}
@@ -538,6 +505,41 @@ function AccountRow({
         </div>
       </div>
 
+      {confirming && (
+        <div id={confirmId} role="group" aria-label={confirming === "suspend" ? `Confirm suspending ${account.displayName}` : `Confirm making ${account.displayName} an admin`} className="px-4 pb-3.5 sm:px-[18px]">
+          <div className="rounded-[11px] border border-[#f59e0b]/35 bg-[#f59e0b]/10 p-3.5 text-xs leading-relaxed text-[#fde68a]">
+            {confirming === "suspend" ? (
+              <p>
+                Suspend <strong className="text-ink">{account.displayName}</strong>? They can still sign in and see their
+                dashboard, but can&rsquo;t change anything, and their games stop working for fans until you reactivate them.
+                They&rsquo;ll see a notice with the support address.
+              </p>
+            ) : (
+              <p>
+                Make <strong className="text-ink">{account.displayName}</strong> an admin? Admins see and change every
+                account, approve requests and delete accounts. Only do this for someone who runs FanFunnel with you.
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  onPatch(account.id, confirming === "suspend" ? { isActive: false } : { role: "admin" });
+                  setConfirming(null);
+                }}
+                className={btnDanger}
+              >
+                {confirming === "suspend" ? "Yes, suspend" : "Yes, make admin"}
+              </button>
+              <button type="button" onClick={() => setConfirming(null)} className={btnGhost}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Row disclosure (not drawn in the design): the privileged, rarely-changed
           controls — role and feature flags — plus the delete confirm. */}
       <div id={detailsId} hidden={!open} className="px-4 pb-4 sm:px-[18px]">
@@ -549,7 +551,11 @@ function AccountRow({
                 className="ff-input min-w-32 text-xs disabled:opacity-50"
                 value={account.role}
                 disabled={busy}
-                onChange={(e) => onPatch(account.id, { role: e.target.value as AppRole })}
+                onChange={(e) => {
+                  const role = e.target.value as AppRole;
+                  if (role === "admin") setConfirming("admin");
+                  else onPatch(account.id, { role });
+                }}
               >
                 <option value="creator">Creator</option>
                 <option value="admin">Admin</option>
@@ -696,11 +702,10 @@ function InviteModal({
   onCreated,
 }: {
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (email: string) => void;
 }) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleId = useId();
@@ -713,10 +718,10 @@ function InviteModal({
       const res = await fetch("/api/admin/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, displayName }),
+        body: JSON.stringify({ email, displayName }),
       });
       const data = await res.json().catch(() => null);
-      if (res.ok) onCreated();
+      if (res.ok) onCreated(email.trim());
       else setError(inviteErrorMessage(data?.error));
     } catch {
       setError(inviteErrorMessage(undefined));
@@ -737,14 +742,15 @@ function InviteModal({
           New account
         </h2>
         <p className="mt-1 text-[13.5px] text-muted">
-          You set their login. Share the credentials with the creator.
+          We&rsquo;ll e-mail them an invite. They set their own password from the link, and the account is approved
+          straight away.
         </p>
         <div className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">Display name</span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">Display name (optional)</span>
             <input
               className="ff-input w-full"
-              placeholder="Display name"
+              placeholder="How fans know them"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
             />
@@ -758,21 +764,6 @@ function InviteModal({
               placeholder="creator@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">
-              Temporary password
-            </span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              required
-              minLength={MIN_PASSWORD_LENGTH}
-              className="ff-input w-full"
-              placeholder={`${MIN_PASSWORD_LENGTH}+ chars, a letter and a number`}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
             />
           </label>
         </div>
@@ -795,10 +786,162 @@ function InviteModal({
             disabled={busy}
             className="btn-brand flex-1 rounded-[10px] py-2.5 text-sm font-bold"
           >
-            {busy ? "Creating…" : "Create account"}
+            {busy ? "Sending…" : "Send invite"}
           </button>
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Access requests (C7): Waiting / Rejected, a confirm with an optional
+ *  reason before a reject, and Approve on a rejected request as the undo. */
+function AccessRequests({
+  pending,
+  rejected,
+  busyApps,
+  onDecide,
+}: {
+  pending: PendingApp[];
+  rejected: PendingApp[];
+  busyApps: Set<string>;
+  onDecide: (profileId: string, decision: "approved" | "rejected", reason?: RejectionReason | null) => Promise<boolean>;
+}) {
+  const [view, setView] = useState<"pending" | "rejected">("pending");
+  const [rejecting, setRejecting] = useState<string | null>(null);
+  const [reason, setReason] = useState<RejectionReason | "">("");
+  const list = view === "pending" ? pending : rejected;
+  const tab = (v: "pending" | "rejected", label: string, n: number) => (
+    <button
+      type="button"
+      onClick={() => setView(v)}
+      aria-pressed={view === v}
+      className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
+        view === v
+          ? "bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand)_40%,transparent)]"
+          : "text-muted hover:text-ink"
+      }`}
+    >
+      {label} <span className="tnum">{n}</span>
+    </button>
+  );
+
+  return (
+    <section aria-labelledby="admin-requests" className={`lift-in overflow-hidden rounded-2xl ${raised}`}>
+      <SectionTitle
+        id="admin-requests"
+        extra={
+          <span className="flex items-center gap-1" role="group" aria-label="Show requests">
+            {tab("pending", "Waiting", pending.length)}
+            {tab("rejected", "Rejected", rejected.length)}
+          </span>
+        }
+      >
+        Access requests
+        {pending.length > 0 && (
+          <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
+            {pending.length}
+          </span>
+        )}
+      </SectionTitle>
+      {list.length === 0 ? (
+        <p className="px-[18px] py-6 text-center text-[13px] text-muted">
+          {view === "pending" ? "No requests waiting." : "No rejected requests."}
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2.5 p-3 sm:p-4">
+          {list.map((a) => {
+            const busy = busyApps.has(a.profileId);
+            const name = a.displayName ?? a.email ?? "Creator";
+            const confirmingReject = rejecting === a.profileId;
+            return (
+              <li key={a.id} className={`flex flex-col gap-3 rounded-[13px] px-4 py-3.5 ${recessed}`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-xs font-bold text-ink">
+                      {initialsOf(a.displayName ?? "", a.email ?? "")}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14px] font-semibold text-ink">{name}</p>
+                      {a.email && <p className="truncate text-[12.5px] text-muted">{a.email}</p>}
+                      <p className="mt-1 text-xs text-muted">
+                        Asked {new Date(a.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                      </p>
+                      {a.audienceSize && <p className="mt-1 text-xs text-muted">Audience: {a.audienceSize}</p>}
+                      {a.socials && <p className="mt-1 break-words text-xs text-muted">Links: {a.socials}</p>}
+                      {a.note && <p className="mt-1 whitespace-pre-line text-xs text-[#8b8494]">“{a.note}”</p>}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-2 pl-12 sm:pl-0">
+                    <button
+                      type="button"
+                      onClick={() => onDecide(a.profileId, "approved")}
+                      disabled={busy}
+                      className="btn-brand inline-flex min-h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
+                    >
+                      <Glyph d={P.check} size={14} />
+                      {view === "rejected" ? "Approve instead" : "Approve"}
+                    </button>
+                    {view === "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRejecting(a.profileId);
+                          setReason("");
+                        }}
+                        disabled={busy}
+                        aria-expanded={confirmingReject}
+                        className={btnGhost}
+                      >
+                        <Glyph d={P.x} size={14} />
+                        Reject
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {confirmingReject && (
+                  <div className="rounded-[11px] border border-[#ef4444]/35 bg-[#ef4444]/10 p-3.5" role="group" aria-label={`Confirm rejecting ${name}`}>
+                    <p className="text-xs leading-relaxed text-[#fecaca]">
+                      Reject <strong className="text-ink">{name}</strong>? They&rsquo;ll see &ldquo;not approved&rdquo; when
+                      they sign in, with the reason below if you pick one. You can still approve them later under Rejected.
+                    </p>
+                    <label className="mt-3 flex flex-col gap-1.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted">Reason (optional, shown to them)</span>
+                      <select
+                        className="ff-input w-full text-xs"
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value as RejectionReason | "")}
+                      >
+                        <option value="">No reason</option>
+                        {(Object.keys(REJECTION_REASONS) as RejectionReason[]).map((k) => (
+                          <option key={k} value={k}>
+                            {REJECTION_REASONS[k].label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          if (await onDecide(a.profileId, "rejected", reason || null)) setRejecting(null);
+                        }}
+                        className={btnDanger}
+                      >
+                        Reject request
+                      </button>
+                      <button type="button" onClick={() => setRejecting(null)} className={btnGhost}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }

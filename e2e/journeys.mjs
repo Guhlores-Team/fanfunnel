@@ -1197,9 +1197,10 @@ export async function firstRunJourney(page, { step, assert }, ctx) {
     assert(await list().count(), "'Your first steps' renders inside Today");
     const text = await list().innerText();
     assert(/Your first steps/.test(text), "checklist heading");
-    assert(/1 of 5 done/.test(text), `progress reads '1 of 5 done' (saw: ${text.match(/\d of \d done/)?.[0]})`);
-    assert((await list().locator("li").count()) === 5, "five steps");
-    for (const t of ["Create your account", "Build your first game", "Mint your first fan link", "Share their spin link", "Fulfil your first win"]) {
+    // The demo has no account to name, so the C9 profile step counts as done.
+    assert(/2 of 6 done/.test(text), `progress reads '2 of 6 done' (saw: ${text.match(/\d of \d done/)?.[0]})`);
+    assert((await list().locator("li").count()) === 6, "six steps");
+    for (const t of ["Create your account", "Set your name and public link", "Build your first game", "Mint your first fan link", "Share their spin link", "Fulfil your first win"]) {
       assert(text.includes(t), `step present: ${t}`);
     }
     // Honest first-run framing: no invented numbers, muted chips, no badges.

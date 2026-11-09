@@ -29,7 +29,7 @@ Golden rules:
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | ❌ **missing** (step 5) | ✅ set |
 | `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE` | ❌ **missing** (step 2) | ✅ set |
 | `CRON_SECRET` | ❌ **missing** (step 4) | — not needed |
-| `RESEND_API_KEY`, `ALERT_EMAIL_TO` | ❌ **missing** (step 6) | ❌ missing (optional) |
+| `RESEND_API_KEY`, `ALERT_EMAIL_TO` | ❌ **missing** (step 6, **required**: creator e-mail) | ❌ missing (recommended for testing creator e-mail) |
 
 ---
 
@@ -105,7 +105,16 @@ at go-live and we will do it together step by step.
 | `VAPID_PRIVATE_KEY` | the Private Key | **yes** |
 | `VAPID_SUBJECT` | `mailto:` followed by your e-mail, e.g. `mailto:you@example.com` | no |
 
-## Step 6: E-mail alerts (Production; optional on Preview)
+## Step 6: E-mail: creator account mail and alerts (required on Production)
+
+`RESEND_API_KEY` is **required**, not optional: without it no creator gets the
+"you're approved" e-mail, agency invitees get no invitation e-mail, and admins
+get no "new access request" e-mail (the app then stops promising those e-mails;
+the in-app bell still works). Account e-mail goes out as **"FanFunnel
+<account@easysimplesites.org>"** (the alert sender's domain; set
+`ACCOUNT_EMAIL_FROM` only to use a different verified address). Error alerts and
+the new-request note go to `ALERT_EMAIL_TO`. On Preview the key is optional;
+add it there to test these e-mails against the TEST project.
 
 1. Go to **[resend.com → API Keys](https://resend.com/api-keys)** → **Create API Key** → name it
    `fanfunnel-live` → permission **Sending access** → domain **easysimplesites.org** → create →
@@ -115,7 +124,8 @@ at go-live and we will do it together step by step.
 | Name | Value | Sensitive |
 |---|---|---|
 | `RESEND_API_KEY` | the key from Resend | **yes** |
-| `ALERT_EMAIL_TO` | the e-mail address that should receive alerts | no |
+| `ALERT_EMAIL_TO` | the e-mail address that should receive alerts and new-request notes | no |
+| `ACCOUNT_EMAIL_FROM` | optional; only to send account mail from another verified address | no |
 
 ## Step 7: Separate the Preview rate-limit store (Preview + Production)
 

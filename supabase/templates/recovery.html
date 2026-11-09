@@ -8,6 +8,7 @@
 <title>FanFunnel</title>
 </head>
 <body style="margin:0;padding:0;background:#0c0a0e;">
+{{/* The link is verified by /auth/confirm (token_hash), so it works in any browser. Supabase gives .RedirectTo = .SiteURL when the app passed no allowed redirect. */}}{{ $base := .RedirectTo }}{{ if eq .RedirectTo .SiteURL }}{{ $base = printf "%s/auth/confirm?next=/reset-password" .SiteURL }}{{ end }}{{ $link := printf "%s&token_hash=%s&type=recovery" $base .TokenHash }}
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Someone (hopefully you) asked to reset the password on your FanFunnel account. Tap the button to choose a new one.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0c0a0e;">
   <tr>
@@ -29,7 +30,7 @@
                   <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                     <tr>
                       <td align="center" bgcolor="#ec4899" style="border-radius:12px;background:#ec4899;">
-                        <a href="{{ .ConfirmationURL }}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#160d12;text-decoration:none;border-radius:12px;">Reset password &rarr;</a>
+                        <a href="{{ $link }}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#160d12;text-decoration:none;border-radius:12px;">Reset password &rarr;</a>
                       </td>
                     </tr>
                   </table>
@@ -38,7 +39,8 @@
               <tr>
                 <td style="padding:24px 28px 28px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
                   <p style="margin:0 0 6px 0;font-size:13px;line-height:1.5;color:#a09aa8;">Button not working? Copy this link into your browser:</p>
-                  <p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;word-break:break-all;"><a href="{{ .ConfirmationURL }}" target="_blank" style="color:#f472b6;text-decoration:underline;">{{ .ConfirmationURL }}</a></p>
+                  <p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;word-break:break-all;"><a href="{{ $link }}" target="_blank" style="color:#f472b6;text-decoration:underline;">{{ $link }}</a></p>
+                  <p style="margin:0 0 20px 0;font-size:13px;line-height:1.5;color:#a09aa8;">Open this link on the device you&rsquo;re using to sign in. If it says the link expired, request a new one from the sign-in page.</p>
                   <p style="margin:0;padding-top:16px;border-top:1px solid #2a2533;font-size:13px;line-height:1.5;color:#a09aa8;">This link works once and expires in 1 hour. If you didn't ask for a reset, ignore this email &mdash; your password stays the same.</p>
                 </td>
               </tr>
