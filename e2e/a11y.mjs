@@ -499,7 +499,11 @@ try {
   let blocking = 0;
   let advisories = 0;
   const lines = ["\n================ ACCESSIBILITY (axe wcag2a/aa) ================"];
-  for (const p of PAGES) {
+  // A11Y_ONLY=<substring> scans just the matching states (for reproducing one failure).
+  const only = process.env.A11Y_ONLY;
+  const pages = only ? PAGES.filter((p) => p.name.includes(only)) : PAGES;
+  if (only) log(`A11Y_ONLY="${only}": ${pages.length} of ${PAGES.length} states`);
+  for (const p of pages) {
     // A `context` entry gets its own browser context (user agent, storage).
     const own = p.context ? await browser.newContext({ viewport: p.viewport ?? DESKTOP, ...p.context }) : null;
     const target = own ? await own.newPage() : page;
@@ -516,7 +520,14 @@ try {
     lines.push(
       `  ${mark} ${name}: blocking=${block.length} advisory=${adv.length} moderate=${moderate} minor=${minor}`
     );
-    for (const v of block) lines.push(`        [${v.impact}] ${v.id} (${v.nodes.length}) — ${v.help}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`);
+    for (const v of block) {
+      lines.push(`        [${v.impact}] ${v.id} (${v.nodes.length}) — ${v.help}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`);
+      // The element and axe's measurement (for colour-contrast: fg, bg, ratio, expected), so a failure can be placed without a rerun.
+      for (const n of v.nodes.slice(0, 3)) {
+        const data = n.any?.[0]?.data ?? n.all?.[0]?.data;
+        lines.push(`            ${n.html.replace(/\s+/g, " ").slice(0, 160)}${data ? ` → ${JSON.stringify(data).slice(0, 200)}` : ""}`);
+      }
+    }
     for (const v of adv) lines.push(`        [advisory: ${v.impact}] ${v.id} (${v.nodes.length}) — tracked in ROADMAP`);
   }
   lines.push(`\n================ CSP VIOLATIONS: ${cspViolations.length} ================`);
