@@ -1338,7 +1338,9 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
     const state = mockFocusState();
     const existing = state.attempts.get(requestId);
     if (existing) {
-      if (existing.token !== token || existing.hash !== hash) return { error: "db_error" as const };
+      // Parity with commitSpinAttempt: prepare_spin_attempt answers `conflict` for
+      // the same request id with another intent, which the route reports as unsettled.
+      if (existing.token !== token || existing.hash !== hash) return { error: "spin_pending" as const };
       if (!existing.result) return { error: "spin_pending" as const };
       if("error" in existing.result)return existing.result;
       const response={ ...structuredClone(existing.result), replayed: true, prizes: mockSpinPrizes(found.pass), spinsRemaining: found.pass.spinsRemaining, nextSpinHash: found.pass.nextServerSeedHash!, ...mockFanFocusDisplay(token),
