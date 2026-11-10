@@ -8,6 +8,13 @@ on:
     branches: [main]
   pull_request:
 
+# SC-12: a newer push to the same PR branch cancels the build + e2e queued
+# for the older commit; pushes to main are never cancelled (each one is a
+# release candidate whose checks Vercel may wait on).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # SUP-4: least privilege for the job token; a job that needs more says so.
 permissions:
   contents: read
@@ -15,6 +22,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # SC-06: build + mock e2e + a11y take ~15 min; never the 360 min default.
+    timeout-minutes: 45
     # The in-app debug console is only compiled in when NEXT_PUBLIC_ENABLE_DEBUG=1
     # (N9 keeps it out of prod). The mock e2e drives it to assert zero console
     # errors across the creator flow, so enable it for this test build — otherwise
@@ -46,13 +55,18 @@ jobs:
       # Workflow guards and pure script tests under scripts/ (npm test covers
       # src/ only): A25 secrets gate, A39 DB-before-code check, A38 carry-over
       # refusals and planner, TEST maintenance guards, A26 stress-harness plumbing,
-      # batch-6 supply-chain pins (SHA-pinned actions, token scope, vercel.json).
+      # batch-6 supply-chain pins (SHA-pinned actions, token scope, vercel.json),
+      # batch-7 job timeouts, the SC-07 migration-test gate, the SC-01 LIVE
+      # backup gate and the env-var inventory (.env.example vs src/).
       # No network, no secrets.
       - name: Script and workflow-guard tests
         run: |
           node scripts/test/ci-secrets-gate.test.mjs
           node scripts/test/db-before-code.test.mjs
           node scripts/test/workflow-supply-chain.test.mjs
+          node scripts/test/migration-test-gate.test.mjs
+          node scripts/test/prod-backup-gate.test.mjs
+          node scripts/test/env-inventory.test.mjs
           node scripts/golive/carry-over.test.mjs
           node scripts/ops/test-maintenance.test.mjs
           node --test scripts/stress/harness.test.mjs
@@ -100,6 +114,8 @@ jobs:
     # Pinned for its preinstalled PostgreSQL 16 binaries (the drift check builds
     # throwaway clusters with initdb/pg_ctl), not for Playwright.
     runs-on: ubuntu-24.04
+    # SC-06: three throwaway clusters + probes take ~10 min.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
