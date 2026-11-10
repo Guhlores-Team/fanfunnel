@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { isAcceptablePassword, PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
+import { switchedAccountNotice } from "@/lib/auth/authCopy";
 import AuthShell from "./AuthShell";
 import PasswordField from "./PasswordField";
 import { TotpChallenge } from "./totp";
@@ -13,10 +14,13 @@ import { TotpChallenge } from "./totp";
 // → /auth/confirm/verify, which establishes a session before redirecting here:
 // "reset" from the recovery e-mail (/reset-password), "welcome" from an admin's
 // invite (/set-password). The password is set by POST /api/account/password/reset
-// (WU-06): a session the link opened recently may set it outright; any other
-// signed-in session must give its current password; a two-factor account
-// enters its code first (WU-07). Without a session the link was bad or
-// expired, so we point the user back to request a fresh one.
+// (WU-06): a session an e-mail link opened in the last hour may set it
+// outright; any other signed-in session must give its current password; a
+// two-factor account enters its code first (WU-07). Without a session the
+// link was bad or expired, so we point the user back to request a fresh one.
+// Review A4: when the link switched this browser to another account
+// (`?switched=1`, a flag that only turns the sentence on) the screen names the
+// account, using the e-mail the route read from the session.
 const COPY = {
   reset: {
     checking: "Checking your reset link…",
@@ -53,7 +57,7 @@ export function resetRequirementFromResponse(status: number, body: { error?: unk
 
 /** The sentence for a /api/account/password/reset error code (never the provider's). */
 export function resetErrorMessage(status: number, code: unknown): string {
-  if (status === 429) return "Too many tries. Wait an hour, then open a fresh link.";
+  if (status === 429) return "Too many tries for this account. Wait an hour, then try again.";
   switch (code) {
     case "wrong_password":
       return "Your current password is incorrect.";
@@ -68,7 +72,13 @@ export function resetErrorMessage(status: number, code: unknown): string {
   }
 }
 
-async function postReset(body: Record<string, string>): Promise<{ status: number; body: { error?: unknown; requires?: unknown; othersSignedOut?: unknown } | null }> {
+/** The switched-account sentence, or null: the flag AND the session's own e-mail are both needed. */
+export function switchedNoticeFor(search: string, sessionEmail: unknown): { title: string; body: string } | null {
+  if (new URLSearchParams(search).get("switched") !== "1") return null;
+  return typeof sessionEmail === "string" && sessionEmail.includes("@") ? switchedAccountNotice(sessionEmail) : null;
+}
+
+async function postReset(body: Record<string, string>): Promise<{ status: number; body: { error?: unknown; requires?: unknown; othersSignedOut?: unknown; email?: unknown } | null }> {
   const res = await fetch("/api/account/password/reset", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -91,6 +101,7 @@ export default function NewPasswordForm({ variant }: { variant: keyof typeof COP
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ othersSignedOut: boolean } | null>(null);
+  const [switched, setSwitched] = useState<{ title: string; body: string } | null>(null);
 
   // Ask the route what this session still needs (a probe sets nothing).
   const probe = useCallback(async () => {
@@ -105,6 +116,7 @@ export default function NewPasswordForm({ variant }: { variant: keyof typeof COP
       } else {
         setHasSession(true);
         setRequires(need);
+        setSwitched(switchedNoticeFor(window.location.search, body?.email));
       }
     } catch {
       setHasSession(true);
@@ -143,7 +155,7 @@ export default function NewPasswordForm({ variant }: { variant: keyof typeof COP
       return;
     }
     if (requires === "current_password" && !currentPassword) {
-      setError("Enter your current password too: this browser was already signed in, so the link alone isn't proof enough.");
+      setError("Enter your current password too.");
       return;
     }
     setBusy(true);
@@ -230,11 +242,20 @@ export default function NewPasswordForm({ variant }: { variant: keyof typeof COP
           <form onSubmit={submit}>
             <h1 className="text-lg font-bold">{copy.title}</h1>
             <p className="mt-1 text-sm text-white/50">{copy.intro}</p>
+            {switched && (
+              <p role="status" data-testid="account-switched" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
+                <span className="font-bold text-amber-50">{switched.title}.</span> {switched.body}
+              </p>
+            )}
             {requires === "current_password" && (
               <>
                 <p data-testid="reset-current-required" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-                  This browser is already signed in, so the link alone isn&rsquo;t proof enough: enter your current password too. Forgot it? Sign out,
-                  then open a fresh reset link.
+                  A link from your e-mail lets you choose a new password for one hour after you open it. This sign-in is older than that, or
+                  didn&rsquo;t come from a link, so enter your current password too. Forgot it?{" "}
+                  <Link href="/forgot-password" className="font-semibold text-white underline underline-offset-4">
+                    Send a new reset link
+                  </Link>{" "}
+                  and open it.
                 </p>
                 <PasswordField
                   value={currentPassword}

@@ -7,6 +7,8 @@ import { rejectionReasonText } from "@/lib/onboarding/rejectionReasons";
 import { brandVars } from "@/lib/theme";
 import PendingClient from "@/components/PendingClient";
 import { pendingSelfDeleteAllowed } from "@/lib/account/pendingSelfDelete";
+import SessionNotices from "@/components/auth/SessionNotices";
+import { sessionNoticeQuery, type SessionNoticeParams } from "@/lib/auth/linkNotice";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Your creator request · FanFunnel", robots: { index: false, follow: false } };
@@ -26,8 +28,17 @@ async function readSignupName(sb: Awaited<ReturnType<typeof createClient>>, user
 
 // Where signed-in-but-not-approved creators land. Approved users are bounced to
 // the dashboard; signed-out users to login.
-export default async function PendingPage() {
+export default async function PendingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [K in keyof SessionNoticeParams]?: string | string[] }>;
+}) {
   if (!isSupabaseConfigured()) redirect("/dashboard"); // demo has no gate
+  // A4 / A6: the fixed-text notice flags (see SessionNotices); they follow an
+  // approved account on to the dashboard.
+  const raw = await searchParams;
+  const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : undefined);
+  const notices: SessionNoticeParams = { switched: one(raw.switched), auth_link: one(raw.auth_link), type: one(raw.type) };
 
   const sb = await createClient();
   const {
@@ -36,7 +47,7 @@ export default async function PendingPage() {
   if (!user) redirect("/login?next=/pending");
 
   const status = await getMyApprovalStatus();
-  if (status === "approved") redirect("/dashboard");
+  if (status === "approved") redirect("/dashboard" + sessionNoticeQuery(notices));
   const rejected = status === "rejected";
   const [application, reasonCode, profile] = await Promise.all([
     rejected ? null : getMyCreatorApplication(),
@@ -51,6 +62,7 @@ export default async function PendingPage() {
       style={brandVars("#ec4899")}
     >
       <div className="relative z-[1] w-full max-w-md">
+        <SessionNotices email={user.email ?? null} params={notices} variant="card" dismissHref="/pending" />
         <PendingClient
           status={rejected ? "rejected" : "pending"}
           email={user.email ?? ""}

@@ -7,10 +7,10 @@ import { PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
 // exceeded") never reaches a creator (TS-11, WU-15, WC-04).
 
 export type AuthLinkType = "recovery" | "invite" | "email_change" | "magiclink" | "email" | "signup";
-export type AuthLinkReason = "expired" | "invalid" | "malformed";
+export type AuthLinkReason = "expired" | "invalid" | "malformed" | "banned" | "busy";
 
 /** One next step the failed-link notice offers. */
-export type AuthLinkAction = "resend_confirmation" | "reset_link" | "sign_in" | "contact_admin" | "settings";
+export type AuthLinkAction = "resend_confirmation" | "reset_link" | "sign_in" | "contact_admin" | "contact_support" | "settings";
 
 export interface AuthLinkNoticeCopy {
   title: string;
@@ -28,7 +28,25 @@ const ANY_DEVICE = "Links work once, on any device or browser, for a limited tim
  * `otp_expired`), so "expired" always covers "already used" too.
  */
 export function authLinkNotice(type: string | null, reason: string | null): AuthLinkNoticeCopy {
-  const r: AuthLinkReason = reason === "expired" || reason === "malformed" ? reason : "invalid";
+  const r: AuthLinkReason = reason === "expired" || reason === "malformed" || reason === "banned" || reason === "busy" ? reason : "invalid";
+  // A3: nothing was decided (rate limit, an outage, the network). The link
+  // was not used up, so this must never read "already used or expired".
+  if (r === "busy") {
+    return {
+      title: "We couldn't check your link just now",
+      body: "That was a problem on our side or with the connection, not with your link: it is still good. Wait a few minutes, then open the link from your e-mail again and tap Continue.",
+      actions: [],
+    };
+  }
+  // A3: the token was fine; the account itself is blocked from signing in. A
+  // new link would fail the same way, so none is offered.
+  if (r === "banned") {
+    return {
+      title: "This account can't sign in right now",
+      body: `Your link was fine, but sign-in is blocked for this account, so a new link won't help. If you think that's a mistake, write to ${LEGAL.contactEmail}.`,
+      actions: ["contact_support"],
+    };
+  }
   if (r === "malformed") {
     return {
       title: "This link is incomplete",
@@ -79,6 +97,83 @@ export function authLinkNotice(type: string | null, reason: string | null): Auth
 
 export const SUPPORT_EMAIL = LEGAL.contactEmail;
 
+/**
+ * Review A4: the fixed sentences around an e-mail link that changes which
+ * account this browser is signed in to. The e-mail is always the one the Auth
+ * server returned for the session (getUser), never a query parameter.
+ */
+export function switchedAccountNotice(email: string): { title: string; body: string } {
+  return {
+    title: `You're now signed in as ${email}`,
+    body: "The link you opened belongs to this account, so this browser was switched to it. The account that was signed in here before has been signed out of this browser.",
+  };
+}
+
+/** Review A4: on the Continue page, when this browser already has a session. */
+export function alreadySignedInNotice(email: string): string {
+  return `You're signed in as ${email}. Continuing will switch this browser to the account this link belongs to.`;
+}
+
+/**
+ * Review A6: what a visitor who is ALREADY signed in is told when an e-mail
+ * link failed (they never see the sign-in page's notice: the proxy sends a
+ * signed-in visitor on). Shown above the dashboard or the request page; the
+ * query flags only choose among these fixed sentences.
+ */
+export function signedInLinkNotice(type: string | null, reason: string | null): { title: string; body: string } {
+  if (reason === "busy") {
+    return {
+      title: "We couldn't check your link just now",
+      body: "That was a problem on our side or with the connection, not with your link: it is still good. Wait a few minutes, then open it from your e-mail again. Nothing was changed.",
+    };
+  }
+  if (reason === "malformed") {
+    return {
+      title: "That link was incomplete",
+      body: "Part of the link was missing, so nothing was changed. A mail app may have cut it: copy the whole link from the e-mail and open it again.",
+    };
+  }
+  if (reason === "banned") {
+    return {
+      title: "That link's account can't sign in right now",
+      body: `Sign-in is blocked for the account the link belongs to, so nothing was changed here. If you think that's a mistake, write to ${LEGAL.contactEmail}.`,
+    };
+  }
+  switch (type) {
+    case "email_change":
+      return {
+        title: "That e-mail change link was already used or has expired",
+        body: "Nothing was changed by it. Check the address in Settings › Account: if it isn't the new one, start the change again there.",
+      };
+    case "recovery":
+      return {
+        title: "That password reset link was already used or has expired",
+        body: "Your password wasn't changed by it. You can change it in Settings › Security, or request a new reset link from the sign-in page.",
+      };
+    case "invite":
+      return {
+        title: "That invitation link was already used or has expired",
+        body: "Nothing was changed by it. If it was for this account, you're already in; to choose a password, use Settings › Security.",
+      };
+    case "signup":
+    case "email":
+      return {
+        title: "That confirmation link was already used or has expired",
+        body: "Nothing was changed by it. If it was for this account, your e-mail is already confirmed and there is nothing more to do.",
+      };
+    case "magiclink":
+      return {
+        title: "That sign-in link was already used or has expired",
+        body: "Nothing was changed by it; you're still signed in.",
+      };
+    default:
+      return {
+        title: "That link didn't work",
+        body: "It was already used or has expired, so nothing was changed; you're still signed in.",
+      };
+  }
+}
+
 /** A 429 from Supabase Auth: the wait, when the response says how long. */
 export function retryAfterMinutes(err: unknown): number {
   const headers = (err as { headers?: unknown } | null)?.headers;
@@ -103,6 +198,54 @@ export function isRateLimited(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   const status = (err as { status?: unknown } | null)?.status;
   return code === "over_email_send_rate_limit" || code === "over_request_rate_limit" || status === 429;
+}
+
+/**
+ * Review A7 / A8: what the forgot-password form and "Resend confirmation"
+ * show for a request that sends an e-mail to a typed address.
+ *
+ * The answer must not tell an account apart from no account. Supabase sends
+ * nothing for an unknown address and answers 200, so every refusal that only
+ * an actual send can trigger is an oracle if the page words it differently:
+ * the per-address 60 second cooldown and the project's hourly e-mail cap both
+ * answer 429 `over_email_send_rate_limit`, and only for an address that
+ * exists. Those get the SAME sentence as a send ("…is on its way. You can ask
+ * again in a minute."), which is also true for the cooldown: an e-mail went
+ * out less than a minute ago.
+ *
+ * Honest wording stays where the refusal does not depend on the address: a
+ * per-network request limit (`over_request_rate_limit`), and a failure to
+ * reach or get an answer from the server at all (offline, a 5xx, a thrown
+ * error), where "check your inbox" would simply be untrue (A8).
+ *
+ * What the app cannot change: the same oracle exists at the Supabase endpoint
+ * itself for anyone holding the public anon key (docs/ACCOUNT_SECURITY.md).
+ */
+export const EMAIL_REQUEST_ANSWER = "If an account exists for that address, an e-mail is on its way. You can ask again in a minute.";
+export const EMAIL_REQUEST_FAILED = "We couldn't send that just now. Check your connection and try again.";
+
+export type EmailRequestOutcome = { kind: "sent" } | { kind: "error"; message: string };
+
+export function emailRequestOutcome(err: unknown): EmailRequestOutcome {
+  if (!err) return { kind: "sent" };
+  const code = (err as { code?: unknown }).code;
+  const status = (err as { status?: unknown }).status;
+  const name = (err as { name?: unknown }).name;
+  const message = String((err as { message?: unknown }).message ?? "");
+  // Only a real send can hit these, so they must look like one.
+  if (code === "over_email_send_rate_limit" || /only request this after|e-?mail rate limit/i.test(message)) return { kind: "sent" };
+  if (code === "over_request_rate_limit" || status === 429) {
+    const minutes = retryAfterMinutes(err);
+    const wait = minutes > 0 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : "a few minutes";
+    return { kind: "error", message: `Too many requests from this network just now. Wait ${wait}, then try again.` };
+  }
+  if (code === "email_address_invalid" || code === "validation_failed") return { kind: "error", message: COMMON.email_address_invalid };
+  // Not an answer from the Auth server at all, or one that says it failed.
+  if (name === "AuthRetryableFetchError" || name === "AuthUnknownError" || typeof status !== "number" || status === 0 || status >= 500) {
+    return { kind: "error", message: EMAIL_REQUEST_FAILED };
+  }
+  // Any other refusal: never more specific than a send.
+  return { kind: "sent" };
 }
 
 export type AuthContext = "signin" | "signup" | "password";

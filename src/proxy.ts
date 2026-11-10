@@ -96,5 +96,6 @@ export const config = {
     "/login",
     "/signup",
     "/mfa",
+    "/auth/confirm",
   ],
 };

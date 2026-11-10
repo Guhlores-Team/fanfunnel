@@ -10,6 +10,8 @@ import { getWheel, getMyApprovalStatus, getOnboardingDismissed } from "@/lib/dat
 import { showAgencyLink } from "@/lib/data/seatScope";
 import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import AdminMfaBanner from "@/components/auth/AdminMfaBanner";
+import SessionNotices from "@/components/auth/SessionNotices";
+import { sessionNoticeQuery, type SessionNoticeParams } from "@/lib/auth/linkNotice";
 
 // Creator/admin dashboard. With Supabase configured the middleware guards this
 // route and we resolve the signed-in user; otherwise it's an open demo.
@@ -18,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string | string[] }>;
+  searchParams: Promise<{ section?: string | string[] } & { [K in keyof SessionNoticeParams]?: string | string[] }>;
 }) {
   // The shell's Admin section is decided here, on the server, and nowhere else:
   // an ACTIVE admin per is_admin() (via checkAdmin), or demo mode (no Supabase,
@@ -27,6 +29,10 @@ export default async function DashboardPage({
   let adminNeedsMfa = false;
   let email: string | null = null;
   const params = await searchParams;
+  // A4 / A6: fixed-text notice flags (an e-mail link switched the account, or
+  // failed while signed in). Only known flags with known values are kept.
+  const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : undefined);
+  const notices: SessionNoticeParams = { switched: one(params.switched), auth_link: one(params.auth_link), type: one(params.type) };
 
   if (isSupabaseConfigured()) {
     const sb = await createClient();
@@ -51,7 +57,9 @@ export default async function DashboardPage({
     // Gate: only approved creators (and admins) reach the dashboard. Pending /
     // rejected requesters are sent to the review-status page.
     const status = await getMyApprovalStatus();
-    if (status !== "approved") redirect("/pending");
+    // The notice flags travel along, so an account that is not approved still
+    // learns why an e-mail link changed nothing (or whose session this is).
+    if (status !== "approved") redirect("/pending" + sessionNoticeQuery(notices));
   }
 
   // A45: the Agency link shows only for an agency owner, a staff seat or a
@@ -71,6 +79,7 @@ export default async function DashboardPage({
       style={brandVars(initialWheel.brandColor)}
     >
       {adminNeedsMfa && <AdminMfaBanner />}
+      <SessionNotices email={email} params={notices} variant="bar" dismissHref="/dashboard" />
       <DashboardClient
         isAdmin={isAdmin}
         showAgency={showAgency}

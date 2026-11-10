@@ -3,14 +3,16 @@ import { NextResponse, type NextRequest } from "next/server";
 import { supabaseUrl } from "./url";
 import { serverRequestProtocol, sessionCookieOptions } from "./cookies";
 import { aalFromAccessToken, hasVerifiedFactor } from "@/lib/auth/assurance";
+import { signedInLinkFailurePath } from "@/lib/auth/linkNotice";
 
 /**
  * Pages that need the Supabase session refreshed here, before they render.
  * Server Components can read the session but can't write cookies, so a token
  * refreshed during render would be lost (and the rotated refresh token
  * burned): every server-rendered page that calls `auth.getUser()` belongs here.
- * Route Handlers (`/api/*`, `/auth/*`) write their own refreshed cookies and
- * client pages use the browser client, so neither needs the proxy.
+ * Route Handlers (`/api/*`, `/auth/callback`, `/auth/confirm/verify`,
+ * `/auth/signout`) write their own refreshed cookies and client pages use the
+ * browser client, so neither needs the proxy.
  *
  * The auth matchers in src/proxy.ts cover these paths (src/proxy.test.ts).
  * A separate percent-path matcher validates encoding, then skips this session
@@ -24,7 +26,9 @@ export function needsSessionRefresh(path: string): boolean {
     path === "/pending" ||
     path === "/login" ||
     path === "/signup" ||
-    path === "/mfa"
+    path === "/mfa" ||
+    // The e-mail link landing page names the signed-in account (review A4).
+    path === "/auth/confirm"
   );
 }
 
@@ -32,6 +36,17 @@ export function needsSessionRefresh(path: string): boolean {
  *  session (after entering a code); everything else about them is unchanged. */
 export function needsTwoFactorStep(path: string): boolean {
   return ["/dashboard", "/admin", "/agency"].some((p) => path === p || path.startsWith(p + "/"));
+}
+
+/**
+ * A redirect for a signed-in visitor must carry the cookies getUser() may
+ * just have refreshed (they were written to `from`, the pass-through
+ * response); dropping them would leave the browser with a rotated-away
+ * refresh token on its next request.
+ */
+function withSessionCookies(to: NextResponse, from: NextResponse): NextResponse {
+  for (const cookie of from.cookies.getAll()) to.cookies.set(cookie);
+  return to;
 }
 
 // Refreshes the Supabase auth session and guards the dashboard. When Supabase
@@ -118,17 +133,27 @@ export async function updateSession(request: NextRequest) {
       redirect.pathname = "/mfa";
       redirect.search = "";
       redirect.searchParams.set("next", path + request.nextUrl.search);
-      return NextResponse.redirect(redirect);
+      return withSessionCookies(NextResponse.redirect(redirect), response);
     }
   }
 
   // Already signed in? Skip the auth pages (a suspended creator too: the
-  // dashboard is where the notice is).
+  // dashboard is where the notice is). Review A6: a failed e-mail link sends
+  // everyone to /login?error=auth_link&type=…&reason=…; a signed-in visitor
+  // used to be passed on to a bare /dashboard and never learned why nothing
+  // changed. signedInLinkFailurePath keeps the explanation: the dashboard
+  // shows it as a fixed-text notice (and forwards it to /pending for an
+  // account that is not approved), and a used reset or invitation link goes
+  // to its new-password page. None of the targets redirects back here, so a
+  // suspended or unapproved account cannot loop.
   if (user && (path === "/login" || path === "/signup")) {
+    const query = request.nextUrl.searchParams;
+    const to = path === "/login" && query.get("error") === "auth_link" ? signedInLinkFailurePath(query.get("type"), query.get("reason")) : "/dashboard";
+    const [pathname, search = ""] = to.split("?", 2);
     const redirect = request.nextUrl.clone();
-    redirect.pathname = "/dashboard";
-    redirect.search = "";
-    return NextResponse.redirect(redirect);
+    redirect.pathname = pathname;
+    redirect.search = search;
+    return withSessionCookies(NextResponse.redirect(redirect), response);
   }
 
   return response;

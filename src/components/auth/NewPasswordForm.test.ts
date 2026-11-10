@@ -16,7 +16,13 @@ mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {}, 
 mock.module("@/lib/supabase/client", { namedExports: { createClient: () => { throw new Error("no client in SSR"); }, isSupabaseConfigured: () => false } });
 
 async function main() {
-  const { default: NewPasswordForm, resetRequirementFromResponse, resetErrorMessage } = await import("./NewPasswordForm");
+  const { default: NewPasswordForm, resetRequirementFromResponse, resetErrorMessage, switchedNoticeFor } = await import("./NewPasswordForm");
+  // Review A4: the switched-account sentence needs the flag AND the e-mail the
+  // route read from the session; the URL can switch it on but never name anyone.
+  check("flag + the session's e-mail → 'You're now signed in as …'", switchedNoticeFor("?switched=1", "bob@example.com")?.title === "You're now signed in as bob@example.com");
+  check("no flag → nothing", switchedNoticeFor("", "bob@example.com") === null && switchedNoticeFor("?switched=0", "bob@example.com") === null);
+  check("flag without a session e-mail → nothing", switchedNoticeFor("?switched=1", undefined) === null && switchedNoticeFor("?switched=1", "") === null && switchedNoticeFor("?switched=1", 7) === null);
+  check("an e-mail in the URL is ignored", !JSON.stringify(switchedNoticeFor("?switched=1&email=attacker@evil.example", "bob@example.com")).includes("attacker"));
   check("401 → the link is gone", resetRequirementFromResponse(401, { error: "unauthorized" }) === "no_session");
   check("mfa_required → the code step (WU-07)", resetRequirementFromResponse(403, { error: "mfa_required", step: "challenge" }) === "mfa");
   check("current_password_required → the current-password field (WU-06)", resetRequirementFromResponse(403, { error: "current_password_required" }) === "current_password");
