@@ -108,6 +108,16 @@ async function main() {
   p = await reset({ newPassword: "Another1Passw0rd", currentPassword: "NewPassw0rd1" });
   check("…the right current password sets it", p.status === 200 && alice.password === "Another1Passw0rd");
 
+  // The same account opens its own reset link while signed in with a password.
+  const liveBefore = fake.liveSessionsOf(alice.id).map((x) => x.id);
+  link = fake.issueLink(alice.id, "recovery");
+  r = await tap({ token_hash: link, type: "recovery", next: "/reset-password" });
+  const liveAfter = fake.liveSessionsOf(alice.id).map((x) => x.id);
+  check("a link for the SAME account: no switched flag", r.location === `${O}/reset-password`);
+  check("…the password session the cookies held is ended at the Auth server, the link's session replaces it", liveBefore.length === 1 && liveAfter.length === 1 && liveAfter[0] !== liveBefore[0] && (await amrOfJar()).amr[0]?.method === "otp");
+  p = await reset({});
+  check("…and that fresh link session may set the password", p.status === 200 && p.body.byLink === true);
+
   // --- An invitation: the invited creator never had a password --------------
   jar.clear();
   const invited = fake.addUser({ email: "invited@example.com", password: null, confirmed: false });

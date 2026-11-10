@@ -260,7 +260,9 @@ async function main() {
   currentUser = { id: "alice", email: "alice@example.com" };
   verifiedUserId = "alice";
   r = await post(RECOVERY, COOKIE);
-  check("signed in, link for the SAME account → plain landing, nobody signed out", getUserCalls === 1 && r.location === `${O}/reset-password` && logouts.length === 0);
+  check("signed in, link for the SAME account → plain landing, no switched flag", getUserCalls === 1 && r.location === `${O}/reset-password`);
+  check("…and the session the cookies held before is ended at the Auth server (not left orphaned)", logouts.length === 1 && logouts[0].authorization === "Bearer token-of-alice" && logouts[0].url.endsWith("/auth/v1/logout?scope=local"));
+  logouts.length = 0;
   verifiedUserId = "bob";
   r = await post(RECOVERY, COOKIE);
   check("signed in as alice, link for bob → lands with the fixed-text flag", r.status === 303 && r.location === `${O}/reset-password?switched=1`);

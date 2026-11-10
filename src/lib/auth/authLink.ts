@@ -167,14 +167,17 @@ export async function verifyAuthLink(req: Request): Promise<NextResponse> {
   if (link.type === "email_change" && !data?.session) {
     return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`, { status: 303 });
   }
-  // A4: the link belonged to a different account than the one signed in here.
-  // The cookies now hold the new session; end the old one at the Auth server
-  // too, and tell the landing page to say whose session this is (the page
-  // reads the e-mail from the session; the flag only switches the sentence on).
-  const newUserId = data?.user?.id ?? data?.session?.user?.id ?? null;
-  if (previous && newUserId && previous.userId !== newUserId) {
+  // A4: the cookies now hold the link's session. The one they held before is
+  // ended at the Auth server too (dropping its cookie alone would leave its
+  // refresh token alive). When it belonged to a DIFFERENT account, the landing
+  // page is told to say whose session this is: it reads the e-mail from the
+  // session; the flag only switches the sentence on.
+  if (previous && data?.session) {
     await revokeSession(previous.accessToken);
-    return NextResponse.redirect(`${origin}${withQueryFlag(link.next, "switched", "1")}`, { status: 303 });
+    const newUserId = data.user?.id ?? data.session.user?.id ?? null;
+    if (newUserId && previous.userId !== newUserId) {
+      return NextResponse.redirect(`${origin}${withQueryFlag(link.next, "switched", "1")}`, { status: 303 });
+    }
   }
   return NextResponse.redirect(`${origin}${link.next}`, { status: 303 });
 }

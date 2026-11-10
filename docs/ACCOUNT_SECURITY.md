@@ -150,9 +150,9 @@ The invitation sender also rechecks current owner/MFA/approval authority after i
   is signed in before it spends the token (`verifiedSession`, only when a session cookie is
   present). The Continue page says "You're signed in as X. Continuing will switch this browser to
   the account this link belongs to." (it runs behind the proxy with the nonce policy, so the
-  session read keeps its cookies). After a successful verify for a DIFFERENT account the old
-  session is ended at the Auth server with its own token (`revokeSession`, `POST /logout?scope=local`,
-  no service key) and the landing page carries `?switched=1`: the dashboard, `/pending` and the
+  session read keeps its cookies). After a successful verify the session the cookies held
+  before is ended at the Auth server with its own token (`revokeSession`, `POST /logout?scope=local`,
+  no service key), and when it belonged to a DIFFERENT account the landing page carries `?switched=1`: the dashboard, `/pending` and the
   new-password screens then show "You're now signed in as <e-mail>", the e-mail read from the
   session on the server, never from the URL (`SessionNotices`, `switchedNoticeFor`). When a link
   FAILS while a session exists, the visitor is not sent to `/login` (the proxy would pass them on

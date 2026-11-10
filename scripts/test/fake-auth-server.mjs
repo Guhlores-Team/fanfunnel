@@ -10,16 +10,18 @@
 // (scripts/security/link-session-runtime-test.mjs) can prove the real value.
 //
 // Implemented: POST /verify (token_hash), GET/PUT /user, POST /token
-// (password, refresh_token), POST /logout, and the admin calls the hosted
-// check uses (users create/list/delete, generate_link). Tokens are unsigned
-// JWT-shaped strings; nothing here is a security boundary.
+// (password, refresh_token), POST /logout, POST /recover and /resend (answer
+// 200 for any address, like the real server), and the admin calls the hosted
+// check uses (users create/list/delete, generate_link). Browser clients are
+// allowed (CORS). Tokens are unsigned JWT-shaped strings; nothing here is a
+// security boundary.
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 
 const b64 = (/** @type {unknown} */ o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 
 /**
- * @param {{ linkAmr?: string | ((type: string) => string), now?: () => number, serviceKey?: string }} [options]
+ * @param {{ linkAmr?: string | ((type: string) => string), now?: () => number, serviceKey?: string, port?: number }} [options]
  */
 export async function startFakeAuthServer(options = {}) {
   const now = options.now ?? (() => Date.now());
@@ -86,10 +88,20 @@ export async function startFakeAuthServer(options = {}) {
     /** @type {Record<string, unknown>} */
     let body = {};
     try { body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}; } catch { body = {}; }
-    const send = (/** @type {number} */ status, /** @type {unknown} */ json) => {
-      res.writeHead(status, { "content-type": "application/json" });
+    const cors = {
+      "access-control-allow-origin": req.headers.origin ?? "*",
+      "access-control-allow-headers": String(req.headers["access-control-request-headers"] ?? "authorization, apikey, content-type, x-client-info, x-supabase-api-version"),
+      "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "access-control-expose-headers": "retry-after",
+    };
+    const send = (/** @type {number} */ status, /** @type {unknown} */ json, /** @type {Record<string, string>} */ extra = {}) => {
+      res.writeHead(status, { "content-type": "application/json", ...cors, ...extra });
       res.end(json === undefined ? "" : JSON.stringify(json));
     };
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, cors);
+      return res.end();
+    }
     const fail = (/** @type {number} */ status, /** @type {string} */ code, /** @type {string} */ msg) => send(status, { code: status, error_code: code, msg });
 
     const queue = forced.get(`${req.method} ${path}`);
@@ -133,6 +145,8 @@ export async function startFakeAuthServer(options = {}) {
         return send(200, userJson(user));
       }
     }
+    // The real server answers the same for a known and an unknown address.
+    if (req.method === "POST" && (path === "/recover" || path === "/resend")) return send(200, {});
     if (req.method === "POST" && path === "/logout") {
       const s = sessionOf(req);
       if (!s) return fail(403, "session_not_found", "Session not found");
@@ -141,7 +155,7 @@ export async function startFakeAuthServer(options = {}) {
         if (other.userId !== s.userId) continue;
         if (scope === "global" || (scope === "local" && other.id === s.id) || (scope === "others" && other.id !== s.id)) other.revoked = true;
       }
-      res.writeHead(204);
+      res.writeHead(204, cors);
       return res.end();
     }
 
@@ -224,7 +238,7 @@ export async function startFakeAuthServer(options = {}) {
     close: () => new Promise((resolve) => server.close(() => resolve(undefined))),
   };
 
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
+  await new Promise((resolve) => server.listen(options.port ?? 0, "127.0.0.1", () => resolve(undefined)));
   const address = server.address();
   control.url = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
   return control;
