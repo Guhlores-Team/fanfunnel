@@ -24,6 +24,19 @@ const ACTION_LABELS: Record<string, string> = {
   "mfa.factor_removed": "removed a two-factor app",
   "system.canary.initialize": "initialized verified reward key protection",
   "retention.cleanup": "ran the retention cleanup",
+  "org.invite": "sent an agency invitation",
+  "org.invite_resend": "re-sent an agency invitation",
+  "org.invite_revoke": "revoked an agency invitation",
+  "org.invite_accept": "accepted an agency invitation",
+  "org.invite_decline": "declined an agency invitation",
+  "org.remove_creator": "removed a creator from an agency",
+  "org.remove_member": "removed an agency seat",
+  "org.scope_change": "changed what an agency seat can act for",
+  "org.leave": "left an agency",
+  "org.seat_self": "took a seat in their own agency",
+  "org.dissolve": "dissolved an agency",
+  "org.suspend_owner": "suspended an agency owner",
+  "admin.chat_read": "opened a fan conversation as admin",
 };
 
 export function auditActionLabel(action: string): string {

@@ -997,7 +997,7 @@ export function mockCreateWheel(opts?: {
   } else {
     // #7: a blank "New wheel" starts EMPTY (no prizes) → editor shows the empty
     // state + "Add your first prize". Templates still seed their prizes above.
-    title = newGameTitle(gameSettings(opts?.gameKind, opts?.gameConfig, true).gameKind);
+    title = newGameTitle(gameSettings(opts?.gameKind, opts?.gameConfig, true).gameKind, Array.from(store.wheels.values(), (w) => w.title));
     subtitle = undefined;
     brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
     prizes = [];

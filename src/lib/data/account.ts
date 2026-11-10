@@ -42,8 +42,6 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
     console.error("clearMyData: delete failed", { table, error: message });
     return { error: "db_error" } as const;
   };
-  const { error: fanError } = await sb.from("fans").delete().eq("creator_id", user.id);
-  if (fanError) return fail("fans", fanError.message);
   // The service-only reset (0071) checks an edit_wheel actor context minted on
   // this session for the creator itself, so a seat can never reset a creator.
   const context = await issueCreatorActorContext(sb, user.id, "edit_wheel");
@@ -52,6 +50,14 @@ export async function clearMyData(): Promise<{ ok: true } | { error: string }> {
     p_context: context, p_creator: user.id, p_actor: user.id,
   });
   if (resetError || reset !== "ok") return fail("campaigns+wheels", resetError?.message ?? String(reset));
+  // CC-01: the fans go AFTER the content reset. A session-side multi-row
+  // DELETE of fans used to run first and could deadlock a Chase fan's spin
+  // (its BEFORE DELETE trigger takes the wheel lock fan by fan); with the
+  // games, passes and focus rows already gone, the fan delete locks nothing
+  // a spin holds. Once 0073's reset_creator_content deletes the fans itself
+  // this statement finds no rows and is a no-op.
+  const { error: fanError } = await sb.from("fans").delete().eq("creator_id", user.id);
+  if (fanError) return fail("fans", fanError.message);
   const tables = [
     "campaign_packs",
     "dm_templates",

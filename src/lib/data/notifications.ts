@@ -8,6 +8,7 @@
 // the SECURITY DEFINER `set_notifications_seen()` RPC (migration 0043) —
 // creators can never UPDATE their profiles row directly.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
+import { dueDateValue, parseDueDay } from "@/lib/dueDate";
 import { readFansOnBreak } from "./playGuard";
 import type { AnyClient } from "./shared";
 import {
@@ -34,6 +35,22 @@ export type {
 } from "./notificationFeed";
 
 type FanRef = { display_name: string | null; handle: string | null } | null;
+
+/**
+ * PR-10: the server knows no zone, so a due day counts as over only once it
+ * has ended everywhere on Earth (local midnight after the due day at UTC−12
+ * = due day + 1, 12:00 UTC). The dashboard row itself turns "Overdue" at the
+ * creator's own local midnight (src/lib/dueDate.ts).
+ */
+export function overdueDeadline(dueAt: string | null | undefined): number | null {
+  const day = dueDateValue(dueAt);
+  const parts = parseDueDay(day);
+  if (!parts) return null;
+  const end = new Date(0);
+  end.setUTCFullYear(parts.y, parts.m - 1, parts.d + 1);
+  end.setUTCHours(12, 0, 0, 0);
+  return end.getTime();
+}
 const fanLabel = (f: FanRef) => f?.display_name ?? f?.handle ?? "Fan";
 
 const ALL_ON: FeedPrefs = { newSpin: true, lowBalance: true, messages: true };
@@ -124,9 +141,9 @@ export async function loadNotificationSources(sb: AnyClient, uid: string): Promi
     // otherwise pull that tenant's prize or fan name into the feed and push.
     sb
       .from("redemptions")
-      .select("id, created_at, spin:spins!inner(prize_label, fan:fans(display_name, handle))")
+      .select("id, created_at, status, due_at, spin:spins!inner(prize_label, fan:fans(display_name, handle))")
       .eq("creator_id", uid)
-      .eq("status", "pending")
+      .in("status", ["pending", "in_progress"])
       .eq("spin.creator_id", uid)
       .order("created_at", { ascending: false })
       .limit(FEED_LIMIT),
@@ -157,7 +174,7 @@ export async function loadNotificationSources(sb: AnyClient, uid: string): Promi
       .from("creator_notices")
       .select("id, kind, details, created_at")
       .eq("creator_id", uid)
-      .in("kind", ["fan_deleted_data", "creator_approved"])
+      .in("kind", ["fan_deleted_data", "creator_approved", "agency_dissolved", "agency_owner_suspended"])
       .order("created_at", { ascending: false })
       .limit(FEED_LIMIT),
   ]);
@@ -207,20 +224,32 @@ export async function loadNotificationSources(sb: AnyClient, uid: string): Promi
       at: n.created_at,
     }));
     sources.approvals = notices.filter((n) => n.kind === "creator_approved").map((n) => ({ id: n.id, at: n.created_at }));
+    // WG-04 / WG-13: agency notices (0073 extends creator_notices.kind; until then none exist).
+    const orgName = (n: { details: Record<string, unknown> | null }) => (typeof n.details?.org_name === "string" ? n.details.org_name.slice(0, 80) : "");
+    sources.agencyDissolved = notices.filter((n) => n.kind === "agency_dissolved").map((n) => ({ id: n.id, orgName: orgName(n), at: n.created_at }));
+    sources.agencyOwnerSuspended = notices.filter((n) => n.kind === "agency_owner_suspended").map((n) => ({ id: n.id, orgName: orgName(n), at: n.created_at }));
   }
 
   if (!failed("wins", winsRes.error)) {
     const rows = (winsRes.data ?? []) as unknown as {
       id: string;
       created_at: string;
+      status: string;
+      due_at: string | null;
       spin: { prize_label: string; fan: FanRef } | null;
     }[];
-    sources.pendingWins = rows.map((r) => ({
+    sources.pendingWins = rows.filter((r) => r.status === "pending").map((r) => ({
       id: r.id,
       fanName: fanLabel(r.spin?.fan ?? null),
       prizeLabel: r.spin?.prize_label ?? "Prize",
       at: r.created_at,
     }));
+    // PR-10: owed wins whose due day has ended in every time zone.
+    sources.overdueWins = rows.flatMap((r) => {
+      const deadline = overdueDeadline(r.due_at);
+      if (deadline === null || deadline > Date.now()) return [];
+      return [{ id: r.id, fanName: fanLabel(r.spin?.fan ?? null), prizeLabel: r.spin?.prize_label ?? "Prize", dueAt: r.due_at as string, deadlineAt: new Date(deadline).toISOString() }];
+    });
   }
 
   if (!failed("messages", msgRes.error)) {

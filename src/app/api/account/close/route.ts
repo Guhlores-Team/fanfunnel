@@ -3,6 +3,7 @@ import { getSessionAssurance } from "@/lib/auth/assurance";
 import { mfaStepUpResponse, verifyCurrentPassword } from "@/lib/auth/stepUp";
 import { deleteAccountAndTombstoneLinks } from "@/lib/account/deleteAccount";
 import { recordAudit } from "@/lib/data";
+import { recordAgencyDissolution } from "@/lib/data/agencyAdmin";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, parseJsonBody } from "@/lib/api/handler";
 import { CLOSE_ACCOUNT_PHRASE, LIMITS, OWED_PRIZE_STATUSES } from "@/lib/privacy/config";
@@ -65,6 +66,11 @@ export async function POST(req: Request) {
 
   const { data: profile } = await svc.from("profiles").select("role").eq("id", userId).maybeSingle();
   const wasAdmin = (profile as { role?: string } | null)?.role === "admin";
+
+  // WG-04: an owner's close dissolves their agency (orgs cascade). Say so in
+  // the activity log and leave a bell notice for every seat and managed
+  // creator before the rows go.
+  await recordAgencyDissolution(svc, userId, userId, "self_close");
 
   const deleted = await deleteAccountAndTombstoneLinks(svc, userId, { wasAdmin });
   if ("error" in deleted) return privateError(deleted.error, deleted.error === "last_admin" || deleted.error === "reports_open" ? 409 : deleted.error === "forbidden" || deleted.error === "suspended" ? 403 : deleted.error === "not_found" ? 404 : 500);

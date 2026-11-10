@@ -171,6 +171,19 @@ export default function WheelEditor({
   onOpenCampaigns?: () => void;
 }) {
   const odds = useMemo(() => prizeOdds(wheel), [wheel]);
+  // WC-16: on phones the Save bar sticks to the bottom; toasts move up so
+  // they never cover it while this editor is open.
+  useEffect(() => {
+    const root = document.documentElement;
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const apply = () => root.style.setProperty("--ff-toast-offset", mq.matches ? "72px" : "0px");
+    apply();
+    mq.addEventListener("change", apply);
+    return () => {
+      mq.removeEventListener("change", apply);
+      root.style.removeProperty("--ff-toast-offset");
+    };
+  }, []);
   // OddsBar expects percentages (0–100); prizeOdds returns fractions (0–1).
   const oddsPct = useMemo(() => {
     const m = new Map<string, number>();
@@ -1014,6 +1027,7 @@ export default function WheelEditor({
                       />
                       <input
                         aria-label="Prize name"
+                        placeholder="Prize name"
                         className="ff-input min-w-0 flex-1"
                         value={p.label}
                         maxLength={MAX_PRIZE_LABEL}

@@ -18,6 +18,7 @@ import AdminLookup from "./AdminLookup";
 import LoadFailed from "@/components/dashboard/LoadFailed";
 import { LoadError, loadFailureKind } from "@/lib/hooks/loadJson";
 import AdminReports from "./AdminReports";
+import AdminAgencies from "./AdminAgencies";
 import { pendingAgeLabel, pendingAgeOverdue } from "./pendingAge";
 import { useNow } from "@/lib/hooks/useNow";
 
@@ -367,6 +368,7 @@ export default function AdminClient() {
           )}
         </section>
 
+        <AdminAgencies onSuspendOwner={(id) => { const el = document.getElementById(`admin-account-${id}`); el?.scrollIntoView({ block: "center" }); el?.querySelector<HTMLButtonElement>("button[data-suspend]")?.focus(); }} />
         <SystemHealthCard />
         <AdminLookup />
         <StuckDeletions />
@@ -406,11 +408,26 @@ function AccountRow({
 }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
   // C11: suspending and making someone an admin each ask first.
-  const [confirming, setConfirming] = useState<null | "suspend" | "admin">(null);
+  const [confirming, setConfirming] = useState<null | "suspend" | "admin" | "reactivate" | "demote">(null);
   const confirmId = useId();
   const [resetting, setResetting] = useState(false);
   const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // WG-04: what deleting an agency owner ends (read when the confirm opens).
+  const [agencyImpact, setAgencyImpact] = useState<{ name: string; seats: number; creators: number } | null>(null);
+  useEffect(() => {
+    if (!confirmingDelete) return;
+    let live = true;
+    fetch("/api/admin/agencies", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { agencies?: { name: string; owner: { id: string } | null; seats: unknown[]; creators: unknown[] }[] } | null) => {
+        if (!live) return;
+        const own = d?.agencies?.find((a) => a.owner?.id === account.id) ?? null;
+        setAgencyImpact(own ? { name: own.name, seats: own.seats.length, creators: own.creators.length } : null);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [confirmingDelete, account.id]);
   const [typedEmail, setTypedEmail] = useState("");
   const [deleting, setDeleting] = useState(false);
   const detailsId = useId();
@@ -447,6 +464,7 @@ function AccountRow({
 
   return (
     <li
+      id={`admin-account-${account.id}`}
       className={`border-b border-[#1f1b27] last:border-b-0 ${
         account.isActive ? "" : "bg-[color-mix(in_oklab,#ef4444_4%,transparent)]"
       }`}
@@ -500,10 +518,11 @@ function AccountRow({
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={() => (account.isActive ? setConfirming("suspend") : onPatch(account.id, { isActive: true }))}
+            onClick={() => setConfirming(account.isActive ? "suspend" : "reactivate")}
+            data-suspend=""
             disabled={busy}
-            aria-controls={account.isActive ? confirmId : undefined}
-            aria-expanded={account.isActive ? confirming === "suspend" : undefined}
+            aria-controls={confirmId}
+            aria-expanded={confirming === "suspend" || confirming === "reactivate"}
             className={account.isActive ? btnGhost : `${btnGhost} border-[#10b981]/40 text-[#6ee7b7]`}
           >
             {account.isActive ? "Suspend" : "Reactivate"}
@@ -536,13 +555,23 @@ function AccountRow({
       </div>
 
       {confirming && (
-        <div id={confirmId} role="group" aria-label={confirming === "suspend" ? `Confirm suspending ${account.displayName}` : `Confirm making ${account.displayName} an admin`} className="px-4 pb-3.5 sm:px-[18px]">
+        <div id={confirmId} role="group" aria-label={confirming === "suspend" ? `Confirm suspending ${account.displayName}` : confirming === "reactivate" ? `Confirm reactivating ${account.displayName}` : confirming === "demote" ? `Confirm removing admin from ${account.displayName}` : `Confirm making ${account.displayName} an admin`} className="px-4 pb-3.5 sm:px-[18px]">
           <div className="rounded-[11px] border border-[#f59e0b]/35 bg-[#f59e0b]/10 p-3.5 text-xs leading-relaxed text-[#fde68a]">
             {confirming === "suspend" ? (
               <p>
-                Suspend <strong className="text-ink">{account.displayName}</strong>? They can still sign in and see their
-                dashboard, but can&rsquo;t change anything, and their games stop working for fans until you reactivate them.
-                They&rsquo;ll see a notice with the support address.
+                Suspend <strong className="text-ink">{account.displayName}</strong>? Their games and fan links stop working
+                for fans, and they can&rsquo;t change anything, until you reactivate them. They&rsquo;ll see a notice with the
+                support address when they sign in. If they run an agency, every seat in it is paused too.
+              </p>
+            ) : confirming === "reactivate" ? (
+              <p>
+                Reactivate <strong className="text-ink">{account.displayName}</strong>? Their games and fan links work again
+                right away, and any agency seats they hold or own resume.
+              </p>
+            ) : confirming === "demote" ? (
+              <p>
+                Remove admin from <strong className="text-ink">{account.displayName}</strong>? They keep their creator
+                account but can no longer see or change other accounts, approve requests or read the activity log.
               </p>
             ) : (
               <p>
@@ -555,12 +584,12 @@ function AccountRow({
                 type="button"
                 disabled={busy}
                 onClick={() => {
-                  onPatch(account.id, confirming === "suspend" ? { isActive: false } : { role: "admin" });
+                  onPatch(account.id, confirming === "suspend" ? { isActive: false } : confirming === "reactivate" ? { isActive: true } : confirming === "demote" ? { role: "creator" } : { role: "admin" });
                   setConfirming(null);
                 }}
-                className={btnDanger}
+                className={confirming === "reactivate" ? `${btnGhost} border-[#10b981]/40 text-[#6ee7b7]` : btnDanger}
               >
-                {confirming === "suspend" ? "Yes, suspend" : "Yes, make admin"}
+                {confirming === "suspend" ? "Yes, suspend" : confirming === "reactivate" ? "Yes, reactivate" : confirming === "demote" ? "Yes, remove admin" : "Yes, make admin"}
               </button>
               <button type="button" onClick={() => setConfirming(null)} className={btnGhost}>
                 Cancel
@@ -583,8 +612,8 @@ function AccountRow({
                 disabled={busy}
                 onChange={(e) => {
                   const role = e.target.value as AppRole;
-                  if (role === "admin") setConfirming("admin");
-                  else onPatch(account.id, { role });
+                  // WG-12: both directions change power; both ask first.
+                  setConfirming(role === "admin" ? "admin" : "demote");
                 }}
               >
                 <option value="creator">Creator</option>
@@ -686,8 +715,15 @@ function AccountRow({
               <p className="text-xs leading-relaxed text-[#fecaca]">
                 This permanently deletes <strong className="text-ink">{account.displayName}</strong> and all
                 of their wheels, fans, spins, grants, campaigns and messages. This{" "}
-                <strong className="text-ink">cannot be undone</strong>. Type{" "}
-                <strong className="break-all text-ink">{account.email}</strong> to confirm:
+                <strong className="text-ink">cannot be undone</strong>.
+                {agencyImpact && (
+                  <>
+                    {" "}They own the agency <strong className="text-ink">{agencyImpact.name}</strong>: deleting them dissolves it, ending{" "}
+                    {agencyImpact.seats} {agencyImpact.seats === 1 ? "seat" : "seats"} and the management of {agencyImpact.creators}{" "}
+                    {agencyImpact.creators === 1 ? "creator" : "creators"} (they&rsquo;ll be told).
+                  </>
+                )}{" "}
+                Type <strong className="break-all text-ink">{account.email}</strong> to confirm:
               </p>
             </div>
             <input
@@ -839,6 +875,8 @@ function AccessRequests({
 }) {
   const [view, setView] = useState<"pending" | "rejected">("pending");
   const [rejecting, setRejecting] = useState<string | null>(null);
+  // WG-12: approving opens an account for fans; it asks first.
+  const [approving, setApproving] = useState<string | null>(null);
   const [reason, setReason] = useState<RejectionReason | "">("");
   const list = view === "pending" ? pending : rejected;
   const tab = (v: "pending" | "rejected", label: string, n: number) => (
@@ -905,9 +943,10 @@ function AccessRequests({
                   <div className="flex shrink-0 gap-2 pl-12 sm:pl-0">
                     <button
                       type="button"
-                      onClick={() => onDecide(a.profileId, "approved")}
+                      onClick={() => { setApproving(a.profileId); setRejecting(null); }}
                       disabled={busy}
-                      className="btn-brand inline-flex min-h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
+                      aria-expanded={approving === a.profileId}
+                      className="btn-brand inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
                     >
                       <Glyph d={P.check} size={14} />
                       {view === "rejected" ? "Approve instead" : "Approve"}
@@ -929,6 +968,29 @@ function AccessRequests({
                     )}
                   </div>
                 </div>
+                {approving === a.profileId && (
+                  <div data-testid="confirm-approve" className="rounded-[11px] border border-[#10b981]/35 bg-[#10b981]/10 p-3.5" role="group" aria-label={`Confirm approving ${name}`}>
+                    <p className="text-xs leading-relaxed text-[#a7f3d0]">
+                      Approve <strong className="text-ink">{name}</strong>? Their dashboard opens, they can create games and mint fan
+                      links right away, and they get an approval notice{a.email ? " and e-mail" : ""}.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          if (await onDecide(a.profileId, "approved")) setApproving(null);
+                        }}
+                        className="btn-brand inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold"
+                      >
+                        Yes, approve
+                      </button>
+                      <button type="button" onClick={() => setApproving(null)} className={btnGhost}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {confirmingReject && (
                   <div className="rounded-[11px] border border-[#ef4444]/35 bg-[#ef4444]/10 p-3.5" role="group" aria-label={`Confirm rejecting ${name}`}>
                     <p className="text-xs leading-relaxed text-[#fecaca]">

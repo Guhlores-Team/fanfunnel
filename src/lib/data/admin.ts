@@ -142,12 +142,14 @@ export type OrgRole = "owner" | "manager" | "chatter" | "fulfiller" | "analyst";
 export interface OrgCreatorStat {
   id: string;
   displayName: string;
+  /** "" when the stats RPC masked it for a scoped seat (0068). */
   email: string;
   wheels: number;
   fans: number;
   spins: number;
   pending: number;
-  revenue: number; // cents
+  /** cents; null when masked for a scoped seat (WG-19: never shown as $0.00). */
+  revenue: number | null;
 }
 export interface OrgMember {
   id: string;
@@ -164,18 +166,43 @@ export interface PendingInvite {
   email: string;
   /** null: invited to join as a creator; otherwise the seat role on acceptance (0068). */
   role: OrgRole | null;
+  expiresAt: string | null;
+  /** WG-06: still listed for a while after it ran out, with Resend. */
+  expired: boolean;
+}
+/** WG-03: every agency the viewer is tied to, so each one has a Leave. */
+export interface AgencyTie {
+  orgId: string;
+  orgName: string;
+  kind: "owner" | "staff" | "creator";
+  role: OrgRole | null;
 }
 export interface AgencyOverview {
   org: { id: string; name: string } | null;
   isOwner: boolean;
-  totals: { creators: number; fans: number; spins: number; pending: number; revenue: number };
+  /** The signed-in user, so the console can tell their own seat apart. */
+  viewerId: string;
+  /** WG-02: the owner has a seat row (org_members) and so can act for creators. */
+  viewerHasSeat: boolean;
+  /** WG-13: false when the owner's account is suspended and every seat is frozen; null when unknown to this viewer. */
+  ownerActive: boolean | null;
+  ties: AgencyTie[];
+  totals: { creators: number; fans: number; spins: number; pending: number; revenue: number | null };
   creators: OrgCreatorStat[];
   members: OrgMember[];
   invites: PendingInvite[];
 }
 
-/** The agency roll-up for the org the signed-in user owns or belongs to. */
-export async function getAgencyOverview(): Promise<AgencyOverview | null> {
+/** How long a run-out invitation stays listed with "Resend" (WG-06). */
+export const EXPIRED_INVITE_GRACE_DAYS = 14;
+
+/**
+ * The agency roll-up for one org the signed-in user owns or belongs to.
+ * WG-03: a freelancer seated by two agencies, or an owner who also holds a
+ * seat elsewhere, has several ties; `orgId` picks the console to show and
+ * `ties` lists every one with its kind, so each can be left.
+ */
+export async function getAgencyOverview(opts: { orgId?: string | null } = {}): Promise<AgencyOverview | null> {
   if (!isSupabaseConfigured()) return null;
   const sb = await createClient();
   const {
@@ -183,23 +210,46 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
   } = await sb.auth.getUser();
   if (!user) return null;
 
-  // Resolve the user's org: one they own, else one they're a member of.
-  const { data: ownedOrg } = await sb
-    .from("orgs")
-    .select("id, name")
-    .eq("owner_id", user.id)
-    .maybeSingle();
-  let org = ownedOrg as { id: string; name: string } | null;
-  const isOwner = !!org;
-  if (!org) {
-    const { data: mem } = await sb
-      .from("org_members")
-      .select("org:orgs(id, name)")
-      .eq("profile_id", user.id)
-      .maybeSingle();
-    org = (mem as unknown as { org: { id: string; name: string } | null } | null)?.org ?? null;
+  const [{ data: ownedOrg }, { data: seatRows }, { data: me }] = await Promise.all([
+    sb.from("orgs").select("id, name").eq("owner_id", user.id).maybeSingle(),
+    sb.from("org_members").select("id, role, org:orgs(id, name)").eq("profile_id", user.id),
+    sb.from("profiles").select("org_id").eq("id", user.id).maybeSingle(),
+  ]);
+  const owned = ownedOrg as { id: string; name: string } | null;
+  const seats = ((seatRows ?? []) as unknown as { id: string; role: OrgRole; org: { id: string; name: string } | null }[])
+    .filter((r) => r.org)
+    .map((r) => ({ id: r.id, role: r.role, org: r.org as { id: string; name: string } }))
+    .sort((a, b) => a.org.name.localeCompare(b.org.name));
+  const managedOrgId = (me as { org_id: string | null } | null)?.org_id ?? null;
+
+  const ties: AgencyTie[] = [];
+  if (owned) ties.push({ orgId: owned.id, orgName: owned.name, kind: "owner", role: null });
+  for (const st of seats) {
+    if (owned && st.org.id === owned.id) continue; // the owner's own seat is not a tie to leave
+    ties.push({ orgId: st.org.id, orgName: st.org.name, kind: "staff", role: st.role });
   }
+  if (managedOrgId && managedOrgId !== owned?.id) {
+    const { data: managed } = await sb.from("orgs").select("id, name").eq("id", managedOrgId).maybeSingle();
+    const m = managed as { id: string; name: string } | null;
+    // A managed creator cannot read the orgs row through RLS unless seated there; name it when known.
+    ties.push({ orgId: managedOrgId, orgName: m?.name ?? seats.find((x) => x.org.id === managedOrgId)?.org.name ?? "the agency that manages your account", kind: "creator", role: null });
+  }
+
+  // The console to show: the requested org when the viewer owns or sits in it, else the owned org, else the first seat.
+  const consoles = [owned, ...seats.map((st) => st.org)].filter((o): o is { id: string; name: string } => !!o);
+  const org = (opts.orgId && consoles.find((o) => o.id === opts.orgId)) || owned || seats[0]?.org || null;
   if (!org) return null;
+  const isOwner = !!owned && owned.id === org.id;
+  const viewerHasSeat = seats.some((st) => st.org.id === org.id);
+
+  // WG-13: the owner's account state (profiles RLS shows other rows to admins only; null = unknown).
+  let ownerActive: boolean | null = null;
+  if (isOwner) ownerActive = true;
+  else {
+    const { data: ownerRow } = await sb.from("orgs").select("owner:profiles!orgs_owner_id_fkey(is_active)").eq("id", org.id).maybeSingle();
+    const active = (ownerRow as unknown as { owner: { is_active: boolean } | null } | null)?.owner?.is_active;
+    ownerActive = typeof active === "boolean" ? active : null;
+  }
 
   const { data: statRows } = await sb.rpc("org_account_stats", { p_org: org.id });
   const creators: OrgCreatorStat[] = ((statRows ?? []) as {
@@ -224,18 +274,22 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     pending: Number(r.pending),
     // 0068: e-mail and revenue are null for a scoped seat that may not manage
     // the creator (the stats RPC masks them); an owner/manager sees both.
-    revenue: Number(r.revenue ?? 0),
+    revenue: r.revenue === null || r.revenue === undefined ? null : Number(r.revenue),
   }));
 
-  // Pending outgoing invites (owner-only view; RLS returns none to staff).
+  // Outgoing invites (owner-only view; RLS returns none to staff): pending
+  // ones, and ones that ran out recently so the owner can re-send (WG-06).
+  const now = Date.now();
+  const graceFloor = new Date(now - EXPIRED_INVITE_GRACE_DAYS * 86_400_000).toISOString();
   const { data: inviteRows } = await sb
     .from("org_invites")
-    .select("id, email, role")
+    .select("id, email, role, expires_at")
     .eq("org_id", org.id)
     .eq("status", "pending")
-    .gt("expires_at", new Date().toISOString());
-  const invites: PendingInvite[] = ((inviteRows ?? []) as { id: string; email: string; role: OrgRole | null }[]).map(
-    (r) => ({ id: r.id, email: r.email, role: r.role ?? null })
+    .gt("expires_at", graceFloor)
+    .order("created_at", { ascending: false });
+  const invites: PendingInvite[] = ((inviteRows ?? []) as { id: string; email: string; role: OrgRole | null; expires_at: string | null }[]).map(
+    (r) => ({ id: r.id, email: r.email, role: r.role ?? null, expiresAt: r.expires_at, expired: !!r.expires_at && Date.parse(r.expires_at) <= now })
   );
 
   const { data: memberRows } = await sb
@@ -266,15 +320,20 @@ export async function getAgencyOverview(): Promise<AgencyOverview | null> {
     for (const m of members) m.creatorIds = byMember.get(m.id) ?? [];
   }
 
+  const revenueKnown = creators.every((c) => c.revenue !== null);
   return {
     org,
     isOwner,
+    viewerId: user.id,
+    viewerHasSeat,
+    ownerActive,
+    ties,
     totals: {
       creators: creators.length,
       fans: creators.reduce((s, c) => s + c.fans, 0),
       spins: creators.reduce((s, c) => s + c.spins, 0),
       pending: creators.reduce((s, c) => s + c.pending, 0),
-      revenue: creators.reduce((s, c) => s + c.revenue, 0),
+      revenue: revenueKnown ? creators.reduce((s, c) => s + (c.revenue ?? 0), 0) : null,
     },
     creators,
     members,
@@ -307,7 +366,40 @@ async function agencyRpc(call: OrgRpc): Promise<{ ok: true } | { error: string }
   const sb = await createClient();
   const { data, error } = await sb.rpc(call.fn, call.args);
   if (error) return { error: "db_error" };
-  return data === "ok" ? { ok: true } : { error: String(data) };
+  // ATK-06: whether an address has an account is never revealed. An invite
+  // to an unknown address answers "ok" exactly like one to a real account
+  // (nothing is stored or mailed; the real outcome stays in the server log).
+  if (data === "no_such_user" && (call.fn === "org_invite_creator" || call.fn === "org_add_member")) {
+    console.info("agency invite: no account for that address", { fn: call.fn, org: call.args.p_org });
+    return { ok: true };
+  }
+  if (data === "ok") {
+    void auditAgencyAction(sb, call);
+    return { ok: true };
+  }
+  return { error: String(data) };
+}
+
+/** WG-07: agency membership changes are activity-log rows (ids only, never addresses). */
+async function auditAgencyAction(sb: Awaited<ReturnType<typeof createClient>>, call: OrgRpc): Promise<void> {
+  const { data: { user } } = await sb.auth.getUser();
+  const actorId = user?.id ?? null;
+  const a = call.args as Record<string, unknown>;
+  const org = typeof a.p_org === "string" ? a.p_org : null;
+  try {
+    switch (call.fn) {
+      case "org_invite_creator": await recordAudit({ actorId, action: "org.invite", targetType: "org", targetId: org, details: { kind: "creator" } }); break;
+      case "org_add_member": await recordAudit({ actorId, action: "org.invite", targetType: "org", targetId: org, details: { kind: "seat", role: String(a.p_role) } }); break;
+      case "org_invite_revoke": await recordAudit({ actorId, action: "org.invite_revoke", targetType: "org", targetId: null, details: { invite: String(a.p_invite).slice(0, 36) } }); break;
+      case "org_invite_respond": await recordAudit({ actorId, action: a.p_accept ? "org.invite_accept" : "org.invite_decline", targetType: "org", targetId: null, details: { invite: String(a.p_invite).slice(0, 36) } }); break;
+      case "org_remove_creator": await recordAudit({ actorId, action: "org.remove_creator", targetType: "profile", targetId: String(a.p_creator), details: { org: org ?? "" } }); break;
+      case "org_remove_member": await recordAudit({ actorId, action: "org.remove_member", targetType: "org", targetId: null, details: { member: String(a.p_member).slice(0, 36) } }); break;
+      case "org_scope_creator": await recordAudit({ actorId, action: "org.scope_change", targetType: "profile", targetId: String(a.p_creator), details: { member: String(a.p_member).slice(0, 36), on: a.p_on === true } }); break;
+      case "org_leave": await recordAudit({ actorId, action: "org.leave", targetType: "org", targetId: org }); break;
+    }
+  } catch {
+    // recordAudit reports its own failures; an audit miss never fails the action.
+  }
 }
 
 // Creators and staff join via consent: the owner sends an invite, the invitee
@@ -320,8 +412,20 @@ export const revokeOrgInvite = (inviteId: string) =>
   agencyRpc({ fn: "org_invite_revoke", args: { p_invite: inviteId } });
 export const respondToOrgInvite = (inviteId: string, accept: boolean) =>
   agencyRpc({ fn: "org_invite_respond", args: { p_invite: inviteId, p_accept: accept } });
-export const removeOrgCreator = (orgId: string, creatorId: string) =>
-  agencyRpc({ fn: "org_remove_creator", args: { p_org: orgId, p_creator: creatorId } });
+export const removeOrgCreator = async (orgId: string, creatorId: string) => {
+  const result = await agencyRpc({ fn: "org_remove_creator", args: { p_org: orgId, p_creator: creatorId } });
+  if ("ok" in result && isSupabaseConfigured()) {
+    // WG-14: the seat scopes that pointed at this creator go too, so a later
+    // re-invitation never silently restores every chatter's access. The
+    // omc_rw policy lets the org owner delete them. (0073 does the same inside
+    // org_remove_creator and org_leave; this is a no-op once it has.)
+    const sb = await createClient();
+    const { data: members } = await sb.from("org_members").select("id").eq("org_id", orgId);
+    const ids = ((members ?? []) as { id: string }[]).map((m) => m.id);
+    if (ids.length > 0) await sb.from("org_member_creators").delete().eq("creator_id", creatorId).in("member_id", ids);
+  }
+  return result;
+};
 export const addOrgMember = (orgId: string, email: string, role: OrgRole) =>
   withInviteEmail(orgId, email, role, () => agencyRpc({ fn: "org_add_member", args: { p_org: orgId, p_email: email, p_role: role } }));
 
@@ -341,14 +445,15 @@ const inviteAddress = (email: string) => {
  * pending invitation only to its org's owner. The answer never depends on the
  * e-mail (the RPC answers "ok" for any address).
  */
+export type InviteOutcome = { ok: true; invite: "new" | "pending" | "unknown" } | { error: string };
 async function withInviteEmail(
   orgId: string,
   email: string,
   role: OrgRole | null,
   rpc: () => Promise<{ ok: true } | { error: string }>,
-): Promise<{ ok: true } | { error: string }> {
+): Promise<InviteOutcome> {
   const address = inviteAddress(email);
-  if (!isSupabaseConfigured() || !address) return rpc();
+  if (!isSupabaseConfigured() || !address) { const r = await rpc(); return "error" in r ? r : { ok: true, invite: "unknown" }; }
   const sb = await createClient();
   const pendingId = async () => {
     const { data } = await sb
@@ -367,6 +472,11 @@ async function withInviteEmail(
   const result = await rpc();
   if ("error" in result) return result;
   const after = await pendingId();
+  // WG-06: the owner is told whether this saved a NEW invitation (then the
+  // e-mail goes out, if the address has an approved account) or found one
+  // still waiting (nothing is sent twice; Resend exists for that). Neither
+  // answer says whether the address has an account (B2 / ATK-06).
+  const outcome: InviteOutcome = { ok: true, invite: after && before === null ? "new" : after ? "pending" : "unknown" };
   if (after && before === null) {
     const { data: org } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
     const orgName = (org as { name: string } | null)?.name ?? "";
@@ -377,6 +487,47 @@ async function withInviteEmail(
       if (outcome === "failed") reportAccountMail("agency_invite", "failed");
     });
   }
+  return outcome;
+}
+
+/**
+ * WG-06: re-send an invitation the owner already made (still pending or run
+ * out): revoke it and create it afresh, which mails the address again (B2's
+ * 3-a-day cap still applies). Owner-only through the RPCs' own checks.
+ */
+export async function resendOrgInvite(inviteId: string): Promise<InviteOutcome> {
+  if (!isSupabaseConfigured()) return { error: "demo_only" };
+  const sb = await createClient();
+  const { data: row } = await sb.from("org_invites").select("org_id, email, role, status").eq("id", inviteId).maybeSingle();
+  const inv = row as { org_id: string; email: string; role: OrgRole | null; status: string } | null;
+  if (!inv || inv.status !== "pending") return { error: "not_found" };
+  const revoked = await revokeOrgInvite(inviteId);
+  if ("error" in revoked && revoked.error !== "not_found") return revoked;
+  const fresh = inv.role
+    ? await withInviteEmail(inv.org_id, inv.email, inv.role, () => agencyRpc({ fn: "org_add_member", args: { p_org: inv.org_id, p_email: inv.email, p_role: inv.role as OrgRole } }))
+    : await withInviteEmail(inv.org_id, inv.email, null, () => agencyRpc({ fn: "org_invite_creator", args: { p_org: inv.org_id, p_email: inv.email } }));
+  if ("ok" in fresh) {
+    const { data: { user } } = await sb.auth.getUser();
+    await recordAudit({ actorId: user?.id ?? null, action: "org.invite_resend", targetType: "org", targetId: inv.org_id, details: { kind: inv.role ? "seat" : "creator" } });
+  }
+  return fresh;
+}
+
+/**
+ * WG-02 (until 0073 seats the owner in org_create): the owner takes a seat
+ * in their own agency so can_act_for grants them the inbox, queue and
+ * campaigns of the creators they manage. org_add_member's owner branch
+ * inserts the seat directly (no invitation) for the owner's own address.
+ */
+export async function seatOrgOwner(orgId: string): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return { error: "demo_only" };
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user?.email) return { error: "unauthorized" };
+  const { data: owned } = await sb.from("orgs").select("id").eq("id", orgId).eq("owner_id", user.id).maybeSingle();
+  if (!owned) return { error: "not_owner" };
+  const result = await agencyRpc({ fn: "org_add_member", args: { p_org: orgId, p_email: user.email.trim().toLowerCase(), p_role: "manager" } });
+  if ("ok" in result) await recordAudit({ actorId: user.id, action: "org.seat_self", targetType: "org", targetId: orgId });
   return result;
 }
 export const removeOrgMember = (memberId: string) =>
@@ -394,6 +545,9 @@ export interface MyInvite {
   orgName: string;
   /** null: join as a creator; otherwise the staff seat offered (0068). */
   role: OrgRole | null;
+  /** WG-05: who runs the agency (their public creator name; never an address). */
+  invitedBy: string | null;
+  expiresAt: string | null;
 }
 
 /** Pending agency invites addressed to the signed-in user (for their dashboard). */
@@ -406,16 +560,35 @@ export async function getMyInvites(): Promise<MyInvite[]> {
   if (!user?.email) return [];
   const { data } = await sb
     .from("org_invites")
-    .select("id, org_id, status, role, org:orgs(name)")
+    .select("id, org_id, status, role, expires_at, org:orgs(name, owner_id)")
     .eq("status", "pending")
     .eq("email", user.email.trim().toLowerCase())
     .gt("expires_at", new Date().toISOString());
-  return ((data ?? []) as unknown as {
+  const rows = (data ?? []) as unknown as {
     id: string;
     org_id: string;
     role: OrgRole | null;
-    org: { name: string } | null;
-  }[]).map((r) => ({ id: r.id, orgId: r.org_id, orgName: r.org?.name ?? "An agency", role: r.role ?? null }));
+    expires_at: string | null;
+    org: { name: string; owner_id: string | null } | null;
+  }[];
+  // WG-05: the invitee sees who runs the agency. The owner's profile row is
+  // not readable through RLS by the invitee, so the service client reads only
+  // the display names of the owners of orgs that invited THIS user, and only
+  // the public (non-address) form of them is returned.
+  const ownerIds = [...new Set(rows.map((r) => r.org?.owner_id).filter((v): v is string => !!v))];
+  const names = new Map<string, string | null>();
+  if (ownerIds.length > 0) {
+    const { data: owners } = await createServiceClient().from("profiles").select("id, display_name").in("id", ownerIds);
+    for (const o of (owners ?? []) as { id: string; display_name: string | null }[]) names.set(o.id, publicCreatorName(o.display_name));
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    orgId: r.org_id,
+    orgName: r.org?.name ?? "An agency",
+    role: r.role ?? null,
+    invitedBy: r.org?.owner_id ? names.get(r.org.owner_id) ?? null : null,
+    expiresAt: r.expires_at,
+  }));
 }
 
 export async function updateAccount(
@@ -541,15 +714,36 @@ export async function updateMyCreatorApplication(input: ApplicationInput): Promi
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
-  const { data, error } = await createServiceClient()
+  const svc = createServiceClient();
+  const { data: current } = await svc.from("creator_applications").select("status").eq("profile_id", user.id).maybeSingle();
+  const status = (current as { status?: string } | null)?.status;
+  if (status !== "pending" && status !== "rejected") return { error: "not_found" };
+  // WG-11: a rejected request can be fixed and sent again; it goes back to
+  // the queue (profile first, so the server-controlled status leads) and the
+  // admins hear about it like a new request.
+  const reapply = status === "rejected";
+  if (reapply) {
+    const { data: prof, error: pErr } = await svc
+      .from("profiles")
+      .update({ approval_status: "pending" })
+      .eq("id", user.id)
+      .eq("approval_status", "rejected")
+      .select("id")
+      .maybeSingle();
+    if (pErr) return { error: "db_error" };
+    if (!prof) return { error: "not_found" };
+  }
+  const { data, error } = await svc
     .from("creator_applications")
-    .update(applicationRow(input))
+    .update({ ...applicationRow(input), ...(reapply ? { status: "pending", decided_at: null } : {}) })
     .eq("profile_id", user.id)
-    .eq("status", "pending")
+    .in("status", ["pending", "rejected"])
     .select("id")
     .maybeSingle();
   if (error) return { error: "db_error" };
-  return data ? { ok: true } : { error: "not_found" };
+  if (!data) return { error: "not_found" };
+  if (reapply) runAfterResponse(async () => reportAccountMail("application_alert", await sendApplicationAlert()));
+  return { ok: true };
 }
 
 export interface MyApplication {

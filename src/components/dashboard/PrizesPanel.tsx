@@ -127,6 +127,17 @@ export default function PrizesPanel({
         toast("Prize cancelled. Its limited unit is back in stock.", { tone: "success" });
       } else if (body?.stock === "taken") {
         toast("Prize reopened. One limited unit is set aside for this fan again.", { tone: "success" });
+      } else if ("status" in patch && patch.status && before && patch.status !== "cancelled") {
+        // WC-06 / WG-08: the row leaves the current filter, so say what
+        // happened and offer a way back for a mis-tap.
+        const was = before.status;
+        const said = patch.status === "fulfilled" ? "Marked fulfilled" : patch.status === "in_progress" ? "Marked in progress" : "Reopened";
+        toast(`${said}: ${before.prizeLabel} for ${before.fanName}.`, {
+          tone: "success",
+          duration: 8000,
+          key: `status:${id}`,
+          action: { label: "Undo", onClick: () => void patchRow(id, { status: was }) },
+        });
       } else if ("notes" in patch || "dueAt" in patch) {
         // The note and due date save on blur with no button, so confirm it.
         toast("notes" in patch ? (patch.notes ? "Note saved" : "Note cleared") : patch.dueAt ? "Due date saved" : "Due date cleared", { tone: "success" });

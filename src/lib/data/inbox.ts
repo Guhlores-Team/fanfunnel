@@ -1,6 +1,8 @@
 // Data layer — inbox: DM templates, fan <-> creator chat threads and the
 // auto intro / outro messages.
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
+import { isActiveAdmin } from "@/lib/auth/adminCheck";
+import { recordAudit } from "./audit";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import type { DmTemplate, ChatMessage, ChatSettings, FanThread } from "./types";
 import {
@@ -347,6 +349,17 @@ export async function hasThreadWith(fanId: string): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
+async function auditAdminThreadRead(sb: Awaited<ReturnType<typeof createClient>>, userId: string, creatorId: string, fanId: string): Promise<void> {
+  try {
+    const { count } = await sb.from("org_members").select("id", { count: "exact", head: true }).eq("profile_id", userId);
+    if ((count ?? 0) > 0) return; // a seat holder: reading as staff, not as admin
+    if (!(await isActiveAdmin(sb))) return;
+    await recordAudit({ actorId: userId, action: "admin.chat_read", targetType: "profile", targetId: creatorId, details: { fan: fanId.slice(0, 36) } });
+  } catch {
+    // the audit writer reports its own failures; a read is never refused for it
+  }
+}
+
 export async function getThread(fanId: string, creatorId?: unknown): Promise<ChatMessage[] | { error: "bad_request" | "forbidden" }> {
   if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockGetThread(fanId);
 
@@ -359,6 +372,10 @@ export async function getThread(fanId: string, creatorId?: unknown): Promise<Cha
   const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
   if ("error" in acting) return acting;
   const owner = acting.creatorId;
+  // WG-10 (T14): an admin opening another creator's fan conversation leaves
+  // an activity-log row (ids only). A seat's read passes can_act_for through
+  // its org membership and is not an admin read.
+  if (owner !== user.id) await auditAdminThreadRead(sb, user.id, owner, fanId);
 
   // Bound the read: fetch the most recent messages (newest-first + limit), then
   // present oldest-first. An unbounded thread read grows without limit as a

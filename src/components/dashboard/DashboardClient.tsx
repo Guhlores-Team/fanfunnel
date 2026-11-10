@@ -334,8 +334,12 @@ export default function DashboardClient({
   const openCampaigns = () => goToSection("campaigns");
   // C18: a fulfilment row's fan name opens that fan's drawer. FansPanel opens
   // the drawer named in the URL when it mounts (fanFromSearch).
-  const openFanDrawer = (fanId: string) =>
-    goToSection("fans", () => window.history.replaceState({ ffFan: fanId }, "", fanHref(fanId, window.location.pathname)));
+  // WC-05: the entry remembers the section it came from, so closing the sheet
+  // returns there (history.back) instead of stranding the creator in Fans.
+  const openFanDrawer = (fanId: string) => {
+    const from = tabRef.current;
+    goToSection("fans", () => window.history.replaceState({ ffFan: fanId, ffFrom: from }, "", fanHref(fanId, window.location.pathname)));
+  };
 
   // "Your first steps" lives inside Today (replacing the old every-section
   // checklist). Rendered here so its signals + dismissal stay owned by the

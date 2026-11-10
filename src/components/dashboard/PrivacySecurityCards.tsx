@@ -338,6 +338,17 @@ export function CloseAccountCard() {
   const panelId = useId();
   const errId = useId();
   const ready = password.length > 0 && phrase.trim() === CLOSE_ACCOUNT_PHRASE;
+  // WG-04: an agency owner is told that closing dissolves their agency.
+  const [agency, setAgency] = useState<{ orgName: string; seats: number; creators: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    fetch("/api/agency/impact", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { impact?: { orgName: string; seats: number; creators: number } | null } | null) => { if (live) setAgency(d?.impact ?? null); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [open]);
 
   async function close() {
     setBusy(true);
@@ -393,6 +404,12 @@ export function CloseAccountCard() {
           <ul className="list-disc space-y-1 pl-5 text-[13px] text-muted">
             <li>Your wheels, prizes, fans, spins, redemptions, campaigns, messages and settings are deleted.</li>
             <li>Every fan link stops working and shows that you&rsquo;ve left FanFunnel.</li>
+            {agency && (
+              <li data-testid="close-agency-impact" className="text-[#fcd34d]">
+                You run the agency <strong className="text-ink">{agency.orgName}</strong> with {agency.seats} staff {agency.seats === 1 ? "seat" : "seats"} and {agency.creators} managed{" "}
+                {agency.creators === 1 ? "creator" : "creators"}. Closing dissolves it: every seat ends, the creators keep their own accounts, and all of them get a notice.
+              </li>
+            )}
             <li>You&rsquo;re signed out everywhere. The email can sign up again later as a new account.</li>
             <li>
               You can&rsquo;t close while fans are still owed prizes. Deliver or cancel every pending prize in{" "}

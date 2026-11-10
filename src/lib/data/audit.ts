@@ -33,12 +33,26 @@ export type AuditAction =
   | "report.reopen"
   | "mfa.factor_removed"
   | "retention.cleanup"
-  | "system.canary.initialize";
+  | "system.canary.initialize"
+  // Agency membership changes (WG-07) and admin reads of fan chats (WG-10).
+  | "org.invite"
+  | "org.invite_resend"
+  | "org.invite_revoke"
+  | "org.invite_accept"
+  | "org.invite_decline"
+  | "org.remove_creator"
+  | "org.remove_member"
+  | "org.scope_change"
+  | "org.leave"
+  | "org.seat_self"
+  | "org.dissolve"
+  | "org.suspend_owner"
+  | "admin.chat_read";
 
 export interface AuditInput {
   actorId: string | null;
   action: AuditAction;
-  targetType?: "profile" | "factor" | "error" | "report" | "spin" | null;
+  targetType?: "profile" | "factor" | "error" | "report" | "spin" | "org" | null;
   targetId?: string | null;
   /** Small, PII-free facts (role names, feature keys, counts, booleans). */
   details?: Record<string, string | number | boolean | null | Record<string, boolean>>;

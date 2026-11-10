@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { recordAudit, updateAccount } from "@/lib/data";
+import { noticeAgencyOwnerSuspended } from "@/lib/data/agencyAdmin";
+import { createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import type { AppRole } from "@/lib/data/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -37,6 +39,8 @@ export async function POST(req: Request) {
   }
   if (typeof body.isActive === "boolean") {
     await recordAudit({ ...target, action: body.isActive ? "account.reactivate" : "account.suspend" });
+    // WG-13: suspending an agency owner pauses every seat; tell them why.
+    if (!body.isActive && isSupabaseConfigured()) await noticeAgencyOwnerSuspended(createServiceClient(), body.id);
     // L5: /c/<slug> is ISR (60s); drop the cached pages now so a suspended
     // creator's page (and tip link) goes at once, not up to a minute later.
     try {

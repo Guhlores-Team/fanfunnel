@@ -128,7 +128,15 @@ export default function FansPanel({
       ignorePop.current = true;
       window.history.back();
     } else if (fanFromSearch(window.location.search)) {
-      window.history.replaceState({}, "", sectionHref("fans", window.location.pathname));
+      const state = window.history.state as { ffFrom?: unknown } | null;
+      if (typeof state?.ffFrom === "string" && state.ffFrom !== "fans") {
+        // WC-05: opened from another section (the Fulfilment queue): go back
+        // to it. The dashboard's popstate handler switches the section.
+        ignorePop.current = true;
+        window.history.back();
+      } else {
+        window.history.replaceState({}, "", sectionHref("fans", window.location.pathname));
+      }
     }
   }, []);
   useEffect(() => {
@@ -339,7 +347,13 @@ export default function FansPanel({
         setPerSpin("");
         setPackId(null);
         setMinted({ fanId: data.fanId, name: fanName, url: `${origin}/spin/${data.token}` });
-        toast(`Link ready for ${fanName}. Copy it or share it below.`, { tone: "success" });
+        toast(`Link ready for ${fanName}. Copy it or share it from the link card.`, { tone: "success", key: "mint" });
+        // WC-02: on a phone the list grows under the form; bring the card with
+        // Copy / Share / QR into view and put focus on it.
+        requestAnimationFrame(() => {
+          mintedRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+          mintedRef.current?.focus({ preventScroll: true });
+        });
         if (!(await load())) toast("The link was created. Refresh the fan list to see it.", { tone: "error" });
       }
     } catch (error) {
@@ -705,7 +719,7 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
     else if (outcome === "failed") toast("Couldn't share or copy the link. Select it and copy it by hand.", { tone: "error" });
   };
   return (
-    <div ref={ref} data-testid="minted-link" role="status" className="mt-3 rounded-xl border border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] p-3.5 [background:color-mix(in_oklab,var(--brand)_7%,transparent)]">
+    <div ref={ref} data-testid="minted-link" role="status" tabIndex={-1} className="mt-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] border border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] p-3.5 [background:color-mix(in_oklab,var(--brand)_7%,transparent)]">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[13.5px] font-bold text-ink">Link ready for {name}</p>

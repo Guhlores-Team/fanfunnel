@@ -27,6 +27,10 @@ const KIND_ICON: Record<NotificationKind, string> = {
   fan_deleted: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM17 8l5 5M22 8l-5 5",
   approved: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10ZM9.5 12l2 2 3.5-4",
   application: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM19 8v6M22 11h-6",
+  overdue: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 3",
+  agency_dissolved: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M4 4l16 16",
+  agency_owner_suspended: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M12 11h.01",
+  game_unlock_request: "M7 11V7a5 5 0 0 1 9.9-1M5 11h14v10H5z",
 };
 const KIND_LABEL: Record<NotificationKind, string> = {
   win: "Win to fulfil",
@@ -36,6 +40,10 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   fan_deleted: "Fan privacy",
   approved: "Account",
   application: "Admin",
+  overdue: "Past due",
+  agency_dissolved: "Agency",
+  agency_owner_suspended: "Agency",
+  game_unlock_request: "Admin",
 };
 
 function Glyph({ d, size = 18 }: { d: string; size?: number }) {

@@ -12,6 +12,12 @@ import { wheelRulesError } from "@/lib/games/wheel/validate";
 import { showsStock } from "@/lib/games/wheel/publicView";
 import { isPlayableGame, pickLiveGame } from "@/lib/games/liveGame";
 import type { WheelSummary, HappyHourStatus } from "./types";
+
+/** PostgREST's answer when an RPC is not on the database yet (0073 not applied). */
+function isMissingRpc(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function|does not exist/i.test(error.message ?? "");
+}
 import {
   mockGetWheel,
   mockSaveWheel,
@@ -507,16 +513,19 @@ export async function createWheel(opts?: {
   } = await sb.auth.getUser();
   if (!user) throw new Error("unauthorized");
 
-  // First wheel? It should be the active one.
-  const { count: existing } = await sb
+  // First wheel? It should be the active one. The titles make the default
+  // name unique (WC-10: "New wheel 2", never two "New wheel"s in a picker).
+  const { data: existingRows } = await sb
     .from("wheels")
-    .select("id", { count: "exact", head: true })
-    .eq("creator_id", user.id);
-  const isFirst = (existing ?? 0) === 0;
+    .select("title")
+    .eq("creator_id", user.id)
+    .limit(1000);
+  const existingTitles = ((existingRows ?? []) as { title: string | null }[]).map((r) => r.title ?? "");
+  const isFirst = existingTitles.length === 0;
 
   // Seed: a template snapshot, else a blank wheel with NO prizes (#7).
   let settings = gameSettings(opts?.gameKind, opts?.gameConfig,true);
-  let title = newGameTitle(settings.gameKind);
+  let title = newGameTitle(settings.gameKind, existingTitles);
   let subtitle: string | null = null;
   let brandColor = SAMPLE_WHEEL.brandColor ?? "#ec4899";
   let seedPrizes: Omit<Prize, "id">[] = [];
@@ -802,6 +811,13 @@ export async function setActiveWheel(
     .maybeSingle();
   if (!target) return { error: "not_found" };
   if(target.game_ready === false)return {error:"game_not_ready"};
+
+  // CC-06: the switch is one statement (`set_active_wheel`, 0073), so no fan
+  // ever plays with no live game or two live games. Until that RPC is on the
+  // database, fall back to the two session updates.
+  const viaRpc = await sb.rpc("set_active_wheel", { p_wheel: id });
+  if (!viaRpc.error) return viaRpc.data === "ok" || viaRpc.data === true || viaRpc.data == null ? { ok: true } : { error: String(viaRpc.data) };
+  if (!isMissingRpc(viaRpc.error)) return { error: gameWriteError(viaRpc.error) };
 
   // Clear every flag for this creator, then set the chosen wheel.
   const { error: clearErr } = await sb

@@ -25,4 +25,9 @@ for (const file of ["../data/wheels.ts", "../data/mock.ts"]) {
   const src = readFileSync(new URL(file, import.meta.url), "utf8");
   check(`${file} names a blank game with newGameTitle`, /newGameTitle\(/.test(src) && !/title = "New wheel"/.test(src));
 }
+// WC-10: default names are unique among the creator's games.
+check("first blank wheel is New wheel", newGameTitle("wheel", []) === "New wheel");
+check("second blank wheel is numbered", newGameTitle("wheel", ["New wheel"]) === "New wheel 2");
+check("numbering skips taken names, case-insensitively", newGameTitle("wheel", ["new wheel", "New wheel 2"]) === "New wheel 3");
+check("scratch keeps its own noun", newGameTitle("scratch", ["New wheel"]) === "New scratch card");
 console.log(`copyTitle.test: ${passed} checks passed`);

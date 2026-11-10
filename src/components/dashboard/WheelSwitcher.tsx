@@ -234,8 +234,29 @@ export default function WheelSwitcher({
     }
   }
 
+  // WC-03: "Set active" changes what every fan plays at once, so it asks
+  // first (naming the game that goes inactive) and offers Undo afterwards.
+  const [confirmActivate, setConfirmActivate] = useState<string | null>(null);
+  const activateKeepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (confirmActivate) activateKeepRef.current?.focus(); }, [confirmActivate]);
+  function askSetActive(id: string) {
+    const previous = visibleWheels?.find((w) => w.isActive && w.id !== id) ?? null;
+    if (!previous) { void setActive(id); return; }
+    setConfirmActivate(id);
+  }
   async function setActive(id: string) {
-    await patchWheel(id, { isActive: true }, "Game set active");
+    const previous = visibleWheels?.find((w) => w.isActive && w.id !== id) ?? null;
+    const target = visibleWheels?.find((w) => w.id === id) ?? null;
+    setConfirmActivate(null);
+    const ok = await patchWheel(id, { isActive: true }, previous ? `${target?.title ?? "Game"} is live for all fans. ${previous.title} is inactive.` : "Game set active");
+    if (ok && previous) {
+      toast(`${target?.title ?? "This game"} is now live for every fan link without its own game.`, {
+        tone: "success",
+        duration: 8000,
+        key: "set-active",
+        action: { label: `Undo (back to ${previous.title})`, onClick: () => void patchWheel(previous.id, { isActive: true }, `${previous.title} is live again`) },
+      });
+    }
   }
 
   async function restore(id: string) {
@@ -474,11 +495,12 @@ export default function WheelSwitcher({
                   {!w.isActive && !w.archivedAt && w.gameReady !== false && (
                     <button
                       type="button"
-                      onClick={() => setActive(w.id)}
+                      onClick={() => askSetActive(w.id)}
                       disabled={busy || w.prizeCount < MIN_WHEEL_PRIZES || !canCreateGame(w.gameKind ?? "wheel", features)}
                       title={w.prizeCount < MIN_WHEEL_PRIZES ? `Save at least ${MIN_WHEEL_PRIZES} prizes before activating this game.` : !canCreateGame(w.gameKind ?? "wheel", features) ? "Ask your admin to enable this game type before activating it." : undefined}
                       aria-label={`Set ${w.title} active`}
-                      className="ml-1.5 shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-2 py-px text-[10.5px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
+                      aria-expanded={confirmActivate === w.id}
+                      className="ml-1 inline-flex min-h-11 shrink-0 items-center rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-3 text-[11px] font-bold uppercase tracking-wide text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50"
                     >
                       Set active
                     </button>
@@ -641,6 +663,20 @@ export default function WheelSwitcher({
           New game
         </button>
       </div>
+      {confirmActivate && (() => {
+        const target = visibleWheels?.find((w) => w.id === confirmActivate);
+        const previous = visibleWheels?.find((w) => w.isActive && w.id !== confirmActivate);
+        if (!target) return null;
+        return (
+          <div role="group" aria-label="Confirm the live game change" data-testid="confirm-set-active" className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/5 px-3.5 py-3 text-[13px] text-ink">
+            <p className="min-w-0 flex-1 basis-60 text-pretty">
+              Make <strong>{target.title}</strong> live for all fans?{previous ? <> <strong>{previous.title}</strong> goes inactive; fans with spins left play {target.title} next.</> : null}
+            </p>
+            <button type="button" onClick={() => void setActive(target.id)} disabled={busy} className="btn-brand min-h-10 rounded-lg px-3.5 text-[12.5px] font-bold">Make it live</button>
+            <button ref={activateKeepRef} type="button" onClick={() => setConfirmActivate(null)} className="min-h-10 rounded-lg border border-line px-3.5 text-[12.5px] font-semibold text-muted hover:text-ink">{previous ? `Keep ${previous.title}` : "Cancel"}</button>
+          </div>
+        );
+      })()}
       {wheels !== null && wheels.length === 0 && (
         <p className="mt-2 text-sm text-muted">No games yet. Create one to get started.</p>
       )}
