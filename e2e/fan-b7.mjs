@@ -19,11 +19,14 @@ const PHONE = { viewport: { width: 390, height: 664 }, isMobile: true, hasTouch:
 const SE_PORTRAIT = { viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const SE_LANDSCAPE = { viewport: { width: 568, height: 320 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const TIKTOK_ANDROID_UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230805.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36 trill_2023 musical_ly_31.0.3 JsSdk/1.0 NetType/WIFI Channel/googleplay AppName/musical_ly app_version/31.0.3 ByteLocale/en ByteFullLocale/en Region/US";
-const ip = () => `198.51.100.${1 + Math.floor(Math.random() * 250)}`;
-// A documentation range no journey spends a budget on, for calls that must
-// never meet a used-up address: WF-03 uses up one in 198.51.100.x, and the
-// attack journey blocks one in 203.0.113.x for a minute just before this one.
-const quietIp = () => `192.0.2.${1 + Math.floor(Math.random() * 250)}`;
+// Addresses of this journey's own, from the benchmark range 198.18.0.0/15
+// (65 thousand each), so they never meet one another journey has spent: the
+// attack journey blocks one in 203.0.113.x for a minute, the ops journey
+// spends several in 198.51.100.x. `ip()` is for calls that spend a budget
+// (WF-03), `quietIp()` for calls that must find theirs untouched.
+const octets = () => `${Math.floor(Math.random() * 256)}.${1 + Math.floor(Math.random() * 254)}`;
+const ip = () => `198.18.${octets()}`;
+const quietIp = () => `198.19.${octets()}`;
 
 async function json(res, what) {
   if (!res.ok()) throw new Error(`${what} failed (${res.status()}) ${(await res.text()).slice(0, 160)}`);
