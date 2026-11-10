@@ -28,6 +28,7 @@ import { contactToken, fanEngagementAllowed } from "@/lib/engagement";
 import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
 import { listRecentOutreach } from "./outreach";
 import { LEGAL, fanNeedsAck } from "@/lib/legal";
+import { linkExpired } from "@/lib/fan/linkExpiry";
 
 /** Service-only atomic economic writes. A transport retry reuses the same
  * request payload; it never subtracts credits after an ambiguous response. */
@@ -706,7 +707,8 @@ export async function updateFanMeta(
  * from the request, and only the fan resolved from this token is updated.
  */
 export async function ackFan(
-  token: string
+  token: string,
+  evidence: { ipHash?: string | null; uaHash?: string | null } = {},
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return mockAckFan(token);
 
@@ -714,11 +716,23 @@ export async function ackFan(
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
 
-  const { error } = await sb
-    .from("fans")
-    .update({ acked_at: new Date().toISOString(), acked_terms_version: LEGAL.version })
-    .eq("id", resolved.fanId);
-  return error ? { error: "db_error" } : { ok: true };
+  // TS-05 (0073): record_fan_ack stamps the acknowledgement with the server's
+  // own legal_terms_version() and keeps the consent evidence digests in a
+  // table only admins can read. Service role only.
+  const { data, error } = await (sb as unknown as {
+    rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { code?: string } | null }>;
+  }).rpc("record_fan_ack", { p_token: token, p_ip_hash: evidence.ipHash ?? null, p_ua_hash: evidence.uaHash ?? null });
+  if (error) {
+    // A database that has not reached 0073 yet has no such function: keep the
+    // gate working with the plain stamp rather than locking every fan out.
+    if (error.code !== "PGRST202" && error.code !== "42883") return { error: "db_error" };
+    const stamped = await sb
+      .from("fans")
+      .update({ acked_at: new Date().toISOString(), acked_terms_version: LEGAL.version })
+      .eq("id", resolved.fanId);
+    return stamped.error ? { error: "db_error" } : { ok: true };
+  }
+  return (data as { status?: string } | null)?.status === "not_found" ? { error: "not_found" } : { ok: true };
 }
 
 // --- Wishlist ---------------------------------------------------------------
@@ -741,7 +755,7 @@ export async function resolveFanByToken(
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select("creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, fan:fans(blocked_at, acked_at, acked_terms_version)")
+    .select("creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, expires_at, fan:fans(blocked_at, acked_at, acked_terms_version)")
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -751,9 +765,12 @@ export async function resolveFanByToken(
     wheel_id: string;
     pinned_wheel_id?: string | null;
     fan_id: string;
+    expires_at?: string | null;
     fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null;
   } | null;
   if (!pass) return null;
+  // PR-13 (0073): an expired link answers like a switched-off one.
+  if (linkExpired(pass.expires_at)) return null;
   const wheelId = await resolveWheelId(sb, pass, new Date());
   if (!wheelId) return null;
   return {

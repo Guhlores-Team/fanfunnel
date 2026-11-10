@@ -81,7 +81,7 @@ async function main() {
   const page = readFileSync(new URL("src/app/spin/[token]/page.tsx", root), "utf8");
   // WF-03 / WA-02: a blocked address gets the honest "too many attempts" page,
   // a dead link the branded 404; both before/without any further lookup.
-  check("/spin/<token> checks the block before its lookup and counts a miss", /missBlocked\(\)\) linkAttemptsBlocked\(await blockedForMs\(\)\);\s*const pass = await getFanPass/.test(page) && page.includes("await noteFanMiss(") && /noteFanMiss\(await visitorIp\(\)\);\s*linkNotFound\("spin", token\);/.test(page));
+  check("/spin/<token> checks the block before its lookup and counts a miss", /missBlocked\(\)\) linkAttemptsBlocked\(await blockedForMs\(\)\);\s*(?:\/\/[^\n]*\n\s*)*const pass = \(await expired\(token\)\) \? null : await getFanPass/.test(page) && page.includes("await noteFanMiss(") && /noteFanMiss\(await visitorIp\(\)\);\s*linkNotFound\("spin", token\);/.test(page));
 
   console.log(`fanMiss.test: ${passed} checks passed`);
 }

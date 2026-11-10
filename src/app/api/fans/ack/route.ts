@@ -6,6 +6,7 @@ import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { tokenKey } from "@/lib/privacy/respond";
 import { refuseCreatorSession } from "@/lib/fan/creatorGuard";
+import { consentEvidence } from "@/lib/fan/consentEvidence";
 
 // A fan acknowledges the age-gate / ToS. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
@@ -22,7 +23,9 @@ export async function POST(req: Request) {
     // ATK-01: consent is the fan's own; the creator's session cannot stamp it.
     const refused = await refuseCreatorSession(body.token);
     if (refused) return refused;
-    const result = await ackFan(body.token);
+    // TS-05: the acknowledgement keeps keyed digests of the address and
+    // browser it came from (never the values), readable by admins only.
+    const result = await ackFan(body.token, consentEvidence(req));
     if ("error" in result) return errorResponse(result.error);
     return NextResponse.json(result);
   });

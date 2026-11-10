@@ -300,8 +300,9 @@ export async function addWishlist(
   // label is then checked against that row; by label for older pages.
   let query = sb.from("prizes").select("id, label, rarity").eq("wheel_id", resolved.wheelId);
   query = prizeId ? query.eq("id", prizeId) : query.eq("label", prizeLabel);
-  const { data: prizeRows } = await query.limit(1);
-  const p = (prizeRows as { id: string; label: string; rarity: Rarity }[] | null)?.[0] ?? null;
+  // limit(1): two prizes that share a label must not make the single-row read fail.
+  const { data: prizeRow } = await query.limit(1).maybeSingle();
+  const p = prizeRow as { id: string; label: string; rarity: Rarity } | null;
   if (!p || (prizeId && p.label !== prizeLabel)) return { error: "invalid_prize" };
 
   const { error } = await sb

@@ -53,7 +53,7 @@ type Receipt = {
   gameKind?: "wheel" | "scratch" | "bingo"; presentation?: unknown; bonusWins?: {line:number;shareId:string;prize:Prize;spin:SpinRow;stockAfter?:number|null;reward?:Receipt["reward"]}[];
   reward?: { kind: DeliveredReward["kind"]; cipher: string; iv: string; keyVersion: number } | null;
 };
-export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" | "not_found" } | { status: "declined"; error: SpinError["error"] };
+export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" | "not_found" } | { status: "declined"; error: SpinError["error"] | "stale" };
 const ERROR_CODES: ReadonlySet<string> = new Set(["not_found", "no_spins", "no_prizes", "rate_limited", "blocked", "on_break", "needs_ack", "db_error", "spin_pending"]);
 // prepare_spin_attempt declines `no_wheel` when no playable game resolves for
 // the link: to the fan that is the same as a wheel with nothing left to win.
@@ -122,11 +122,14 @@ export async function readSpinAttempt(token: string, intent: SpinIntent, sb = cr
     }
     catch { return { status: "pending" }; }
   }
+  // 0073 (CC-08): a prepared attempt nobody finished within a day is aged
+  // out as declined/stale: nothing was spent, and the fan's saved copy of it
+  // must be released with that said, not reported as a fault.
+  if (reply.status === "declined" && reply.error === "stale") return { status: "declined", error: "stale" };
   if (reply.status === "declined") return { status: "declined", ...spinError(reply.error) };
-  // RS-01: an unknown token with no such attempt is a miss (404), not an outage.
-  // `not_found` arrives once get_spin_attempt_status (0073) says it; until
-  // then the SQL's first-branch `unavailable` (attempt missing AND no live
-  // pass) is indistinguishable from a paused link, so it stays 503.
+  // RS-01 (0073): no attempt and no link behind the token at all is a miss
+  // (the route answers 404 and the fan-miss budget counts it). A link that
+  // exists but is paused, expired, blocked or suspended stays `unavailable`.
   if (reply.status === "not_found") return { status: "not_found" };
   return { status: reply.status === "absent" || reply.status === "pending" || reply.status === "conflict" ? reply.status : "unavailable" };
 }

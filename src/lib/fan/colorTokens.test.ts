@@ -17,7 +17,8 @@ check("globals.css no longer defines --color-base", !css.includes("--color-base"
 check("the brand glow sits on the canvas token", css.includes("var(--color-canvas)"));
 
 const files = execFileSync("git", ["ls-files", "src", "e2e", "scripts"], { cwd: root, encoding: "utf8" })
-  .split("\n").filter((f) => /\.(tsx?|css|mjs|js)$/.test(f));
+  // This file names the old token in order to refuse it.
+  .split("\n").filter((f) => /\.(tsx?|css|mjs|js)$/.test(f) && f !== "src/lib/fan/colorTokens.test.ts");
 const colourBase = /(?:^|[\s"'`{(])(?:bg|text|border|ring|from|to|via|fill|stroke|shadow|outline|divide|accent|caret|decoration|placeholder)-base(?:\/\d+)?(?=$|[\s"'`})])/;
 const offenders: string[] = [];
 let canvasUses = 0;

@@ -43,6 +43,9 @@ for (const code of KNOWN.filter((c) => c !== "needs_ack")) {
 
 // on_break (RM-6): the page reloads its play state so SPIN shows the break.
 check("on_break refreshes the play state", spinErrorInfo("on_break").refreshPlay === true);
+// 0073 (CC-08): a spin the ledger closed unfinished says nothing was used.
+check("stale says nothing was used and invites another play", /never finished/.test(spinErrorInfo("stale").message) && /play again/.test(spinErrorInfo("stale").message) && spinErrorInfo("stale").message !== generic);
+check("stale neither reopens the gate nor asks to check a saved spin", !spinErrorInfo("stale").reopenAgeGate && !spinErrorInfo("stale").checkPendingSpin);
 check("on_break reassures that spins and prizes are safe", /spins and prizes are safe/.test(spinErrorInfo("on_break").message));
 for (const code of KNOWN.filter((c) => c !== "on_break")) {
   check(`${code} does not refresh the play state`, !spinErrorInfo(code).refreshPlay);

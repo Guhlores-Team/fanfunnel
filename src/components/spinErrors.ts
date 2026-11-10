@@ -34,6 +34,8 @@ const MESSAGES: Record<string, SpinErrorInfo> = {
     message: "We couldn't confirm this spin yet. Check this saved spin to recover its result before playing again.",
     checkPendingSpin: true,
   },
+  // 0073 (CC-08): an attempt left unfinished for a day is closed by the ledger.
+  stale: { message: "That spin was never finished, so nothing was used up. You can play again." },
   bad_request: { message: "That didn't go through. Refresh the page and try again." },
   upgrade_required: { message: "This page needs an update before it can save a spin safely. Reload this link." },
 };

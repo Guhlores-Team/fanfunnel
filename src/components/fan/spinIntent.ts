@@ -146,7 +146,7 @@ export const SPIN_RECOVERY_COPY = {
  * spin". A 503 (`db_error`, `spin_pending`, `unavailable`) stays pending: the
  * ledger may have committed. `blocked` is handled on its own (FD-3).
  */
-export const TERMINAL_SPIN_REFUSALS: readonly string[] = ["not_found", "no_spins", "no_prizes", "rate_limited", "on_break", "needs_ack", "bad_request", "upgrade_required"];
+export const TERMINAL_SPIN_REFUSALS: readonly string[] = ["not_found", "no_spins", "no_prizes", "rate_limited", "on_break", "needs_ack", "bad_request", "upgrade_required", "stale"];
 
 /** Only a bound, successful terminal status can release the saved identity. */
 export function classifySpinStatus(value: unknown, httpOk: boolean, httpStatus?: number):
@@ -156,7 +156,8 @@ export function classifySpinStatus(value: unknown, httpOk: boolean, httpStatus?:
   | { kind: "keep"; message: string; absent: boolean } {
   const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
   if (httpOk && body.status === "committed" && body.result && typeof body.result === "object") return { kind: "committed", result: body.result };
-  const terminalErrors = ["not_found", "no_spins", "no_prizes", "rate_limited", "blocked", "on_break", "needs_ack", "db_error"];
+  // `stale` (0073, CC-08): the ledger aged the unfinished attempt out; nothing was spent.
+  const terminalErrors = ["not_found", "no_spins", "no_prizes", "rate_limited", "blocked", "on_break", "needs_ack", "db_error", "stale"];
   if (httpOk && body.status === "declined" && typeof body.error === "string" && terminalErrors.includes(body.error)) return { kind: "declined", error: body.error };
   // RS-13: a 404 is the ledger saying "no such link and no such attempt" (RS-01): terminal.
   if (!httpOk && httpStatus === 404 && body.status === "not_found") return { kind: "gone" };

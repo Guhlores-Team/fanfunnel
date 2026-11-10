@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { linkAttemptsBlocked, linkNotFound } from "@/lib/fan/linkNotFound";
 import { clientIpFromHeaders } from "@/lib/api/clientIp";
 import { fanMissBlockedFor, noteFanMiss } from "@/lib/api/fanMiss";
+import { fanLinkExpired } from "@/lib/fan/linkExpiryRead";
 import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass, getPausedFanWins } from "@/lib/data";
 import LinkGone from "@/components/fan/LinkGone";
 import PausedWins from "@/components/fan/PausedWins";
@@ -28,6 +29,8 @@ const appInfo = cache(getFanAppInfo);
 const visitorIp = cache(async () => clientIpFromHeaders(await headers()));
 const blockedForMs = cache(async () => fanMissBlockedFor(await visitorIp()));
 const missBlocked = cache(async () => (await blockedForMs()) > 0);
+// PR-13: an expired link is a switched-off link (0073 fan_passes.expires_at).
+const expired = cache(fanLinkExpired);
 
 export async function generateMetadata({
   params,
@@ -36,7 +39,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { token } = await params;
   const robots = { index: false, follow: false };
-  if (await missBlocked()) return { robots, manifest: null };
+  if ((await missBlocked()) || (await expired(token))) return { robots, manifest: null };
   const info = await appInfo(token);
   // Unknown or ended link: no install surface at all (the page 404s).
   if (!info) return { robots, manifest: null };
@@ -57,8 +60,9 @@ export async function generateViewport({
 }: {
   params: Promise<{ token: string }>;
 }): Promise<Viewport> {
-  if (await missBlocked()) return {};
-  const info = await appInfo((await params).token);
+  const { token } = await params;
+  if ((await missBlocked()) || (await expired(token))) return {};
+  const info = await appInfo(token);
   return info ? { themeColor: info.brandColor } : {};
 }
 
@@ -70,7 +74,8 @@ export default async function SpinPage({
   const { token } = await params;
   // WF-03: an address over its link-attempt budget gets an honest page.
   if (await missBlocked()) linkAttemptsBlocked(await blockedForMs());
-  const pass = await getFanPass(token);
+  // PR-13: past its expiry the link reads exactly like a switched-off one.
+  const pass = (await expired(token)) ? null : await getFanPass(token);
   if (!pass) {
     // T3: a link the fan paused is permanent, but keeps a read-only list of
     // its wins (no SPIN, no chat) instead of a 404.
