@@ -977,7 +977,8 @@ function probePrivacy(db) {
     // 0065 (A11) adds the operational-history counts; 0073 the stale pending
     // attempts and the declined access requests; this fixture has none to trim.
     `retention:{"push_log": 2, "app_errors": 1, "org_invites": 2, "fan_checkins": 0, "admin_audit_log": 1, "creator_notices": 1, "link_tombstones": 1, "fan_import_batches": 0, "stale_spin_attempts": 0, "declined_applications": 0, "spin_attempt_contexts": 0, "declined_applicant_ids": [], "declined_spin_attempts": 0, "creator_request_journal": 0, "actor_request_cancellations": 0}`,
-    "left:1,2,1",
+    // 0073 (DB-06): the fan deletion in this fixture tombstones its link token.
+    "left:1,2,2",
     "invites-left:new-declined@example.test,old-pending@example.test",
     `errors-left:${"d".repeat(32)},${"e".repeat(32)}`,
     "push-left:recent-a",

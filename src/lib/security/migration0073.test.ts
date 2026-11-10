@@ -76,7 +76,7 @@ check("TS-03: set_public_profile and the profile guard refuse a reserved slug", 
 // DB-06 / DB-04 / CC-08 / DB-08: tombstones and retention.
 check("DB-06: a deleted fan's link tokens are tombstoned", /insert into public\.link_tombstones \(token_hash, reason\)[\s\S]*'fan_deleted'/.test(lastDef(migration, "scrub_fan_traces")));
 const retention = lastDef(migration, "run_retention_cleanup");
-check("retention keeps its 5-argument signature", /run_retention_cleanup\(\s*p_app_error_days integer[\s\S]*p_tombstone_days integer/.test(retention) && retention.includes("p_notice_days") && retention.includes("p_closed_invite_days") && retention.includes("p_audit_days"));
+check("retention keeps its 5-argument signature", /run_retention_cleanup\(\s*p_audit_days integer,\s*p_notice_days integer,\s*p_tombstone_days integer,\s*p_app_error_days integer,\s*p_closed_invite_days integer\s*\)/.test(retention));
 check("DB-04: declined access requests go after 90 days", /v_declined_application_days constant integer := 90;/.test(retention) && /status = 'rejected'[\s\S]*decided_at < now\(\) - make_interval\(days => v_declined_application_days\)/.test(retention));
 check("CC-08: pending attempts older than a day are declined as stale", /v_pending_attempt_days constant integer := 1;/.test(retention) && /set state = 'declined', error = 'stale'/.test(retention));
 check("DB-08: retention and the storage prune take the same advisory lock", /pg_advisory_xact_lock\(hashtextextended\('fanfunnel-retention', 0\)\)/.test(retention) && /pg_advisory_xact_lock\(hashtextextended\('fanfunnel-retention', 0\)\)/.test(lastDef(migration, "creator_storage_prune")));
@@ -91,7 +91,7 @@ check("CC-01: account.ts still calls the service reset", /rpc\("reset_creator_co
 for (const fn of ["commit_spin_attempt", "cancel_spin_attempt", "prepare_spin_attempt"]) {
   const body = lastDef(migration, fn);
   check(`CC-02: ${fn} declines a prepared attempt whose link went away as blocked`, /set state='declined',error='blocked',finished_at=now\(\) where id=p_attempt and state='pending'/.test(body));
-  check(`PR-13: ${fn} honours fan_passes.expires_at`, /p\.expires_at is null or p\.expires_at>now\(\)/.test(body));
+  check(`PR-13: ${fn} honours fan_passes.expires_at`, /p\.expires_at is not null and p\.expires_at<=now\(\)|p\.expires_at is null or p\.expires_at>now\(\)/.test(body));
 }
 check("RS-01: get_spin_attempt_status answers not_found only when no link carries the token", /if not exists\(select 1 from public\.fan_passes p where p\.token=p_token\) then\s*return jsonb_build_object\('status','not_found'\);/.test(lastDef(migration, "get_spin_attempt_status")));
 
