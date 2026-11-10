@@ -154,6 +154,10 @@ order of likelihood; check System health first:
    with an explanation.
 2. To re-send an invitation: Admin › Accounts → **New account** again with the same e-mail. For an
    address that has not confirmed yet this re-sends the invitation; nothing is duplicated.
+   The invited person can also finish alone: `/forgot-password` with the invited address sends a
+   link that sets the first password (`docs/ACCOUNT_SECURITY.md` § Re-sending an admin invitation).
+   This path has not been tried against the hosted project yet; until the owner has seen it work
+   on TEST (check 8 below that section), re-send the invitation.
 3. For a reset: the creator requests a new one from `/forgot-password`. Tell them the link works on
    any device, and to open the newest e-mail.
 
@@ -208,7 +212,7 @@ in Admin › Reports. Treat it as the most urgent thing of the day. Steps, in or
 ## Roll back a deploy
 
 0. **The go-live release is the exception.** The deployment before it is the pre-0039 code, which
-   cannot run on the 0039–0072 schema (fulfilment and spins break). For that release do not use
+   cannot run on the 0039–0073 schema (fulfilment and spins break). For that release do not use
    Instant Rollback: go to **Pause the site**, then fix forward with a new PR.
 1. **Stop the harm:** **[dashboard]** Vercel → Deployments → the previous Production deployment →
    **Instant Rollback**. This takes seconds. It skips the `db-migrations-production` Deployment Check

@@ -143,7 +143,7 @@ export E2E_BASE_URL=http://localhost:3000; npm run e2e && npm run e2e:a11y
 ```
 
 ## Roadmap
-Shipped (migrations 0001–0072, all applied to the TEST project and exercised on
+Shipped (migrations 0001–0073, all applied to the TEST project and exercised on
 the Preview): creator/admin auth, persisted multi-wheel editor, fulfilment inbox
 and metrics, admin console, agency console (orgs and staff seats with scopes),
 boosts (happy hours, webhooks, link-in-bio), provably-fair v3 spins with a
@@ -154,9 +154,9 @@ personal bingo (0061), account security (0062), operational integrity (0063),
 fan-report review (0064), per-fan game links and lifecycle locks (0065), agency
 seat scopes and alert release (0066), the runtime schema-version check (0067),
 tenant boundaries (0068), integration hardening (0069), one game resolution per
-play (0070), ledger guards and lock order (0071), advisor hardening (0072), plus
+play (0070), ledger guards and lock order (0071), advisor hardening (0072), batch-7 hardening (0073), plus
 the go-live tooling (carry-over script, DB-before-code check, LIVE backup gate).
-The LIVE project is still at 0038: the go-live merge applies 0039–0072.
+The LIVE project is still at 0038: the go-live merge applies 0039–0073.
 
 Next: the owner's Preview acceptance (`docs/handoff/OWNER_STEPS.md` Stage 7),
 the batch-7 follow-ups and go-live per `docs/GO_LIVE.md`. Live state:
