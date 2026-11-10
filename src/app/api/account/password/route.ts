@@ -6,6 +6,7 @@ import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { isAcceptablePassword } from "@/lib/api/password";
+import { signOutOtherSessions } from "@/lib/auth/sessions";
 
 // Change the signed-in creator's password via Supabase Auth.
 // Security:
@@ -15,6 +16,8 @@ import { isAcceptablePassword } from "@/lib/api/password";
 //     real session cookies.
 //   • Enforces a minimum length and a tight per-user rate limit.
 //   • Never logs or echoes the passwords.
+//   • Afterwards signs the account out everywhere else (WG-16): a password
+//     change is how a creator evicts whoever had the old one.
 export async function POST(req: Request) {
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ error: "demo_mode" }, { status: 400 });
@@ -68,5 +71,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "update_failed" }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true });
+  const othersSignedOut = await signOutOtherSessions(sb);
+  return NextResponse.json({ ok: true, othersSignedOut });
 }

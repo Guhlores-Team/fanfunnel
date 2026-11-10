@@ -1,0 +1,66 @@
+import assert from "node:assert";
+import { authErrorInfo, authErrorMessage, authLinkNotice, isRateLimited, retryAfterMinutes, tooManyEmailsMessage } from "./authCopy";
+import { LEGAL } from "@/lib/legal";
+
+// WU-03 / TS-11 / WU-15 / WC-04: every sentence the sign-in family shows is
+// ours; no raw provider text, no "same browser", and the failed-link notice
+// fits the kind of link.
+
+let passed = 0;
+function check(label: string, cond: unknown) {
+  assert.ok(cond, label);
+  passed++;
+}
+
+// Failed-link notices, per type.
+const signup = authLinkNotice("signup", "expired");
+check("a used/expired confirmation says: already confirmed? sign in", /already used or has expired/.test(signup.title) && /sign in below/.test(signup.body) && signup.actions[0] === "sign_in" && signup.actions.includes("resend_confirmation"));
+check("the e-mail type reads the same", authLinkNotice("email", "expired").title === signup.title);
+const invite = authLinkNotice("invite", "expired");
+check("an expired invitation leads to a new one", /invitation has expired/i.test(invite.title) && invite.actions.includes("contact_admin") && invite.actions.includes("reset_link"));
+const recovery = authLinkNotice("recovery", "expired");
+check("an expired reset offers a new reset link", recovery.actions.includes("reset_link") && !recovery.actions.includes("resend_confirmation"));
+check("an expired e-mail change points at Settings", authLinkNotice("email_change", "expired").actions.includes("settings"));
+check("a malformed link explains the cut link", /incomplete/.test(authLinkNotice("recovery", "malformed").title) && /copy the whole link/i.test(authLinkNotice("recovery", "malformed").body));
+check("an unknown type still gets a notice with both actions", authLinkNotice(null, null).actions.length === 2);
+for (const type of ["signup", "email", "recovery", "invite", "email_change", "magiclink", null]) {
+  for (const reason of ["expired", "invalid", "malformed", null]) {
+    const n = authLinkNotice(type, reason);
+    check(`${type}/${reason}: never says same browser or device`, !/same (browser|device)/i.test(n.title + n.body));
+    if (reason !== "malformed") check(`${type}/${reason}: says links work on any device`, /any device/i.test(n.body));
+  }
+}
+
+// Rate limits (WU-05).
+check("over_email_send_rate_limit is a rate limit", isRateLimited({ code: "over_email_send_rate_limit" }));
+check("a 429 status is a rate limit", isRateLimited({ status: 429, message: "Request rate limit reached" }));
+check("invalid credentials is not", !isRateLimited({ code: "invalid_credentials" }));
+check("the wait comes from Retry-After", retryAfterMinutes({ headers: new Headers({ "retry-after": "180" }) }) === 3);
+check("…or from the message", retryAfterMinutes({ message: "For security purposes, you can only request this after 45 seconds." }) === 1);
+check("…else unknown", retryAfterMinutes({ message: "Email rate limit exceeded" }) === 0);
+check("the honest line names the wait", tooManyEmailsMessage({ headers: new Headers({ "retry-after": "120" }) }) === "Too many e-mails were sent just now, so this one wasn't. Try again in 2 minutes.");
+check("…or 'a few minutes'", /a few minutes/.test(tooManyEmailsMessage({ code: "over_email_send_rate_limit" })));
+
+// Error mapping (TS-11, WU-15, WC-04).
+check("C11: an unknown sign-in error gets the generic line, not the raw text", authErrorMessage({ code: "weird", message: "Database error saving new user" }, "signin") === "We couldn't sign you in. Check your e-mail and password, or reset your password.");
+check("an unknown sign-up error names support", authErrorMessage({ message: "Database error saving new user" }, "signup").includes(LEGAL.contactEmail));
+check("WC-04: 'Error sending confirmation email' gets a next step", /couldn't send the e-mail/i.test(authErrorMessage({ code: "unexpected_failure", message: "Error sending confirmation email" }, "signup")) && authErrorMessage({ message: "Error sending confirmation email" }, "signup").includes(LEGAL.contactEmail));
+check("the raw sentence is kept for the error log only", authErrorInfo({ message: "Error sending confirmation email" }, "signup").raw === "Error sending confirmation email");
+for (const [code, needle] of [
+  ["email_address_invalid", /e-mail address/],
+  ["signup_disabled", /closed right now/],
+  ["same_password", /current password/],
+  ["over_email_send_rate_limit", /Too many e-mails/],
+  ["over_request_rate_limit", /Too many attempts/],
+  ["insufficient_aal", /two-factor code/],
+  ["email_not_confirmed", /resend it below/],
+  ["user_banned", /closed/],
+  ["invalid_credentials", /don't match/],
+] as const) {
+  const m = authErrorMessage({ code, message: "RAW PROVIDER TEXT" }, "signin");
+  check(`${code} is mapped`, needle.test(m) && !m.includes("RAW PROVIDER TEXT"));
+}
+check("a rate-limited sign-in with an e-mail message says e-mails", /e-mails/.test(authErrorMessage({ status: 429, message: "Email rate limit exceeded" }, "signin")));
+check("a string error is still safe", authErrorMessage("boom", "password") === "Couldn't update your password. Try again, or request a new reset link.");
+
+console.log(`authCopy.test: ${passed} checks passed`);

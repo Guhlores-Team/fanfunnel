@@ -9,7 +9,7 @@
 </head>
 <body style="margin:0;padding:0;background:#0c0a0e;">
 {{/* The link is built from the Site URL only, never from the redirect the requester chose: /auth/confirm verifies the token_hash on this site, so it works in any browser. */}}{{ $link := printf "%s/auth/confirm?token_hash=%s&type=email_change&next=/dashboard" .SiteURL .TokenHash }}
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">Tap the button to confirm your new address as the new email for your FanFunnel account.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">You asked to move your FanFunnel account to a new e-mail address. This message went to your current address and the new one; tap Continue in both to finish.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0c0a0e;">
   <tr>
     <td align="center" style="padding:32px 16px;">
@@ -26,7 +26,7 @@
               <tr>
                 <td style="padding:32px 28px 8px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
                   <h1 style="margin:0 0 12px 0;font-size:24px;line-height:1.25;font-weight:800;letter-spacing:-0.02em;color:#f4f1f6;">Confirm your new email</h1>
-                  <p style="margin:0 0 28px 0;font-size:16px;line-height:1.55;color:#c9c3cf;">Tap the button to confirm {{ .NewEmail }} as the new email for your FanFunnel account.</p>
+                  <p style="margin:0 0 28px 0;font-size:16px;line-height:1.55;color:#c9c3cf;">You asked to move your FanFunnel account to <strong style="color:#f4f1f6;">{{ .NewEmail }}</strong>. This message went to your current address and the new one; tap the button in both. Nothing changes until both are confirmed, and you keep signing in with your current e-mail until then.</p>
                   <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                     <tr>
                       <td align="center" bgcolor="#ec4899" style="border-radius:12px;background:#ec4899;">
@@ -40,8 +40,8 @@
                 <td style="padding:24px 28px 28px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
                   <p style="margin:0 0 6px 0;font-size:13px;line-height:1.5;color:#a09aa8;">Button not working? Copy this link into your browser:</p>
                   <p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;word-break:break-all;"><a href="{{ $link }}" target="_blank" style="color:#f472b6;text-decoration:underline;">{{ $link }}</a></p>
-                  <p style="margin:0 0 20px 0;font-size:13px;line-height:1.5;color:#a09aa8;">Open this link on the device you&rsquo;re using to sign in. If it says the link expired, request a new one from the sign-in page.</p>
-                  <p style="margin:0;padding-top:16px;border-top:1px solid #2a2533;font-size:13px;line-height:1.5;color:#a09aa8;">If you didn't ask to change your email, contact us right away.</p>
+                  <p style="margin:0 0 20px 0;font-size:13px;line-height:1.5;color:#a09aa8;">This link works on any device or browser. It opens a page with a Continue button; nothing happens until you tap it. If it says the link expired, request a new one from the sign-in page.</p>
+                  <p style="margin:0;padding-top:16px;border-top:1px solid #2a2533;font-size:13px;line-height:1.5;color:#a09aa8;">If you didn't ask to change your email, don't tap the button: sign in, change your password from Settings &rsaquo; Security, and contact us right away.</p>
                 </td>
               </tr>
             </table>

@@ -1,91 +1,62 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { safeNext } from "@/lib/auth/safeNext";
 import TermsCheckbox from "@/components/TermsCheckbox";
 import { isAcceptablePassword, PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
+import { displayNameErrorMessage, displayNameInputError } from "@/lib/profileErrors";
+import { authErrorInfo } from "@/lib/auth/authCopy";
+import { reportClientError } from "@/lib/monitoring/client";
+import AuthLinkNotice from "@/components/auth/AuthLinkNotice";
+import PasswordField from "@/components/auth/PasswordField";
+import ResendConfirmation from "@/components/auth/ResendConfirmation";
+import LoginNotices, { type LoginParams } from "@/components/auth/LoginNotices";
 
-/** /auth/callback and /auth/confirm send a failed e-mail link here. */
-export const AUTH_LINK_MESSAGE =
-  "This link was opened in a different browser than the one that asked for it, or it expired. Request a new one here and open it in the same browser.";
+export type Mode = "signin" | "signup";
 
-type Mode = "signin" | "signup";
+/** WC-07: the three real steps of getting a creator account, named honestly. */
+export const SIGNUP_STEPS = ["Create your login", "Confirm your e-mail", "Tell us about you"] as const;
 
-// Map known Supabase auth error codes to specific, friendly copy (mirrors how
-// SpinClient maps spin error codes). Falls back to the raw message, then a
-// generic line, so nothing is ever swallowed.
-const AUTH_MESSAGES: Record<string, string> = {
-  invalid_credentials: "That email and password don't match. Try again.",
-  email_not_confirmed: "Confirm your email first — check your inbox for the link.",
-  user_already_exists: "An account with that email already exists. Sign in instead.",
-  email_exists: "An account with that email already exists. Sign in instead.",
-  weak_password: PASSWORD_RULE_MESSAGE,
-  over_request_rate_limit: "Too many attempts — wait a moment and try again.",
-  validation_failed: "Check your email and password and try again.",
-};
-
-function authErrorMessage(err: unknown): string {
-  if (err && typeof err === "object") {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string" && AUTH_MESSAGES[code]) return AUTH_MESSAGES[code];
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === "string" && message) return message;
-  }
-  return "Something went wrong. Try again.";
-}
-
-export default function LoginForm() {
+/** The sign-in form. `params` are the page's query parameters, read server-side. */
+export default function LoginForm({ params }: { params: LoginParams }) {
   const router = useRouter();
-  const params = useSearchParams();
-  const next = safeNext(params.get("next"));
+  const next = safeNext(params.next);
 
-  const [mode, setMode] = useState<Mode>("signin");
+  const [mode, setMode] = useState<Mode>(params.mode === "signup" ? "signup" : "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
-  // After "Close my account" the server signs the browser out and sends it here.
-  const [msg, setMsg] = useState<string | null>(
-    params.get("closed") === "1"
-      ? "Your account is closed and its data deleted. Thanks for using FanFunnel."
-      : null
-  );
+  const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const linkFailed = params.get("error") === "auth_link";
-  const [resent, setResent] = useState(false);
+  // WU-10: "confirm your e-mail first" offers the resend right there.
+  const [offerResend, setOfferResend] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const firstRender = useRef(true);
 
-  // A failed confirmation link: send the sign-up confirmation again to the
-  // address typed above (Supabase answers the same whether or not it exists).
-  async function resendConfirmation() {
-    setError(null);
-    if (!email.trim()) {
-      setError("Type your email below, then tap “Resend confirmation email”.");
+  // WU-17: switching modes swaps the heading and fields; move focus to the new
+  // heading so a screen reader announces where it landed.
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
       return;
     }
-    setBusy(true);
-    try {
-      await createClient().auth.resend({
-        type: "signup",
-        email: email.trim(),
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/pending` },
-      });
-    } catch {
-      /* same answer either way: never reveal whether the address has an account */
-    } finally {
-      setBusy(false);
-      setResent(true);
-    }
-  }
+    headingRef.current?.focus();
+  }, [mode]);
+
+  const linkFailed = params.error === "auth_link";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     setMsg(null);
+    setOfferResend(false);
     const supabase = createClient();
 
     try {
@@ -94,6 +65,14 @@ export default function LoginForm() {
         // disabled without it).
         if (!agreed) {
           setError("Please agree to the Terms of Service and Privacy Policy.");
+          return;
+        }
+        // WG-15 / b6 C9: the name carries into the creator request, so it is
+        // checked here the way Settings and the request form check it.
+        const name = displayName.trim();
+        const nameError = name.length < 2 ? "name_required" : displayNameInputError(name);
+        if (nameError) {
+          setError(nameError === "name_required" ? "Enter the name fans know you by (2 characters or more)." : displayNameErrorMessage(nameError));
           return;
         }
         // The same rule as reset, Settings and admin invites (api/password.ts).
@@ -105,9 +84,9 @@ export default function LoginForm() {
           email,
           password,
           options: {
-            // M1: the name is shown on public pages, so a blank one stays
-            // blank (never the e-mail); the creator can set it in Settings.
-            data: displayName.trim() ? { display_name: displayName.trim() } : {},
+            // Display only (M1): the profiles trigger copies it; it never
+            // decides anything (AGENTS.md rule 1).
+            data: { display_name: name },
             // Only the legacy {{ .ConfirmationURL }} link uses this; the current
             // templates link to the Site URL's /auth/confirm?next=/pending.
             emailRedirectTo: `${window.location.origin}/auth/callback?next=/pending`,
@@ -116,8 +95,11 @@ export default function LoginForm() {
         if (error) throw error;
         // If email confirmation is on, there's no session yet.
         if (!data.session) {
-          setMsg("Check your email to confirm, then sign in to request access.");
+          setMsg(
+            `Step 1 done. We sent a confirmation link to ${email.trim()}: open it on any device (it works for 1 hour), then sign in here to tell us about you. That's the last step before we review your request.`
+          );
           setMode("signin");
+          setPassword("");
           return;
         }
         // Signed in straight away: record the acceptance now (server-side: the
@@ -151,61 +133,64 @@ export default function LoginForm() {
       router.push(next);
       router.refresh();
     } catch (err) {
-      setError(authErrorMessage(err));
+      const info = authErrorInfo(err, mode);
+      setError(info.message);
+      setOfferResend(info.code === "email_not_confirmed");
+      // TS-11 / WC-04: the creator sees plain words; the provider's own
+      // sentence goes to Admin › Errors (it never contains the e-mail).
+      if (info.code === null || info.code === "unexpected_failure" || info.code === "email_send_failed") {
+        reportClientError({ message: `auth ${mode}: ${info.code ?? "unknown"}: ${info.raw}`, kind: "error" });
+      }
     } finally {
       setBusy(false);
     }
   }
 
+  const focusEmail = () => emailRef.current?.focus();
+
   return (
-    <form
-      onSubmit={submit}
-      className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white"
-    >
-      <h1 className="text-lg font-bold">
-        {mode === "signin" ? "Sign in" : "Request creator access"}
+    <form onSubmit={submit} className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white" data-mode={mode}>
+      {mode === "signup" && (
+        <ol data-testid="signup-steps" className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold uppercase tracking-wider text-white/50" aria-label="Steps to a creator account">
+          {SIGNUP_STEPS.map((label, i) => (
+            <li key={label} aria-current={i === 0 ? "step" : undefined} className={i === 0 ? "text-pink-300" : undefined}>
+              {i + 1}. {label}
+            </li>
+          ))}
+        </ol>
+      )}
+      <h1 ref={headingRef} tabIndex={-1} className="text-lg font-bold outline-none">
+        {mode === "signin" ? "Sign in" : "Create your login"}
       </h1>
       <p className="mt-1 text-sm text-white/50">
         {mode === "signin"
           ? "Welcome back to your creator dashboard."
-          : "Creator accounts are reviewed by hand — sign up, then tell us about you."}
+          : "Step 1 of 3. You'll confirm your e-mail next, then tell us about you; creator accounts are approved by hand."}
       </p>
 
-      {linkFailed && (
-        <div data-testid="auth-link-error" role="alert" className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
-          <p>{AUTH_LINK_MESSAGE}</p>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-            <Link href="/forgot-password" className="font-semibold text-white underline underline-offset-4">
-              Send a new password reset link
-            </Link>
-            <button
-              type="button"
-              onClick={resendConfirmation}
-              disabled={busy}
-              className="font-semibold text-white underline underline-offset-4 disabled:opacity-50"
-            >
-              Resend confirmation email
-            </button>
-          </div>
-          {resent && (
-            <p role="status" className="mt-2 text-green-300">
-              If that address has an unconfirmed account, a new confirmation link is on its way.
-            </p>
-          )}
-        </div>
-      )}
+      <LoginNotices params={params} />
+      {linkFailed && <AuthLinkNotice type={params.type ?? null} reason={params.reason ?? null} email={email} canResend onNeedEmail={focusEmail} />}
 
       <div className="mt-5 space-y-3">
         {mode === "signup" && (
           <input
+            id="login-display-name"
+            name="display_name"
+            autoComplete="nickname"
+            required
+            minLength={2}
+            maxLength={80}
             aria-label="Display name"
             className="ff-input w-full"
-            placeholder="Display name"
+            placeholder="Display name (how fans know you)"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
           />
         )}
         <input
+          ref={emailRef}
+          id="login-email"
+          name="email"
           type="email"
           required
           autoComplete="email"
@@ -217,26 +202,21 @@ export default function LoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <input
-          type="password"
-          required
+        <PasswordField
+          value={password}
+          onChange={setPassword}
+          label="Password"
+          name="password"
           minLength={mode === "signup" ? 8 : undefined}
           autoComplete={mode === "signin" ? "current-password" : "new-password"}
-          aria-label="Password"
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? "login-error" : undefined}
-          className="ff-input w-full"
+          invalid={!!error}
+          describedBy={error ? "login-error" : undefined}
           placeholder={mode === "signup" ? "Password (8+ chars, a letter and a number)" : "Password"}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
         />
         {mode === "signup" && <TermsCheckbox checked={agreed} onChange={setAgreed} disabled={busy} />}
         {mode === "signin" && (
           <div className="text-right">
-            <Link
-              href="/forgot-password"
-              className="text-xs text-white/50 hover:text-white"
-            >
+            <Link href="/forgot-password" className="inline-flex min-h-11 items-center text-xs text-white/50 hover:text-white">
               Forgot password?
             </Link>
           </div>
@@ -248,8 +228,13 @@ export default function LoginForm() {
           {error}
         </p>
       )}
+      {offerResend && (
+        <div className="mt-2 flex flex-wrap text-sm">
+          <ResendConfirmation email={email} onNeedEmail={focusEmail} />
+        </div>
+      )}
       {msg && (
-        <p role="status" className="mt-3 text-sm text-green-300">
+        <p role="status" data-testid="login-message" className="mt-3 text-sm text-green-300">
           {msg}
         </p>
       )}
@@ -257,9 +242,9 @@ export default function LoginForm() {
       <button
         type="submit"
         disabled={busy || (mode === "signup" && !agreed)}
-        className="mt-5 w-full rounded-xl bg-pink-600 py-2.5 font-bold text-white hover:bg-pink-500 disabled:opacity-50"
+        className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-pink-600 py-2.5 font-bold text-white hover:bg-pink-500 disabled:opacity-50"
       >
-        {busy ? "…" : mode === "signin" ? "Sign in" : "Request access"}
+        {busy ? "…" : mode === "signin" ? "Sign in" : "Create login & continue"}
       </button>
 
       <button
@@ -268,12 +253,11 @@ export default function LoginForm() {
           setMode(mode === "signin" ? "signup" : "signin");
           setError(null);
           setMsg(null);
+          setOfferResend(false);
         }}
-        className="mt-4 w-full text-center text-sm text-white/50 hover:text-white"
+        className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-center text-sm text-white/50 hover:text-white"
       >
-        {mode === "signin"
-          ? "Want a creator account? Request access"
-          : "Already have an account? Sign in"}
+        {mode === "signin" ? "Want a creator account? Request access" : "Already have a login? Sign in"}
       </button>
     </form>
   );

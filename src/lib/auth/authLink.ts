@@ -3,24 +3,30 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { safeNext } from "./safeNext";
 
-// Every e-mail link lands here, through /auth/confirm or /auth/callback.
+// Every e-mail link lands on this site through /auth/confirm (the current
+// templates, supabase/templates/*.html, which link to
+// {{ .SiteURL }}/auth/confirm?token_hash=…&type=…&next=<fixed page>) or
+// /auth/callback (the app's `redirectTo`, used only by the legacy
+// {{ .ConfirmationURL }} PKCE links).
 //
-// - `token_hash` + `type` (the current templates, supabase/templates/*.html,
-//   which link to {{ .SiteURL }}/auth/confirm with a fixed `next`): verified
-//   server-side with verifyOtp, so the link works in ANY browser or device,
-//   including the in-app browsers of mail and social apps.
-// - `code` (the PKCE flow, the templates' previous {{ .ConfirmationURL }}
-//   links): exchanged with the code-verifier cookie, which only exists in the
-//   browser that asked for the e-mail. Kept so links already sent, and
-//   projects whose templates are not updated yet, keep working.
-// - `message` alone: the first of the secure e-mail change's two links.
+// WU-02 / WA-05 (batch 7): a token_hash is single-use, and mail scanners
+// (Microsoft Safe Links, corporate URL sandboxes, chat-app previews) fetch
+// every link in a message before the reader does. So a GET never verifies
+// anything: /auth/confirm renders a small page with a "Continue" button whose
+// form POSTs the token to /auth/confirm/verify, and only that POST calls
+// verifyOtp. The legacy `code` links (/auth/callback?code=…) are exchanged on
+// GET as before: a code is useless without the code-verifier cookie that only
+// the requesting browser holds, so a scanner cannot consume it.
 //
-// `next` stays on this site (safeNext); a bad, used or expired link, or one
-// opened in another browser (PKCE), goes to /login?error=auth_link, which says
-// what happened and offers a fresh link.
+// `next` stays on this site (safeNext). A bad, used or expired link goes to
+// /login?error=auth_link&type=<type>&reason=<reason>, where the sign-in page
+// says what happened for that kind of link and offers the right next step.
 
-const OTP_TYPES: ReadonlySet<string> = new Set(["signup", "invite", "magiclink", "recovery", "email_change", "email"]);
-const TOKEN_HASH = /^[A-Za-z0-9_-]{8,256}$/;
+export const OTP_TYPES: ReadonlySet<string> = new Set(["signup", "invite", "magiclink", "recovery", "email_change", "email"]);
+export const TOKEN_HASH = /^[A-Za-z0-9_-]{8,256}$/;
+
+/** Why a link could not be used; the sign-in page words each one. */
+export type AuthLinkReason = "expired" | "invalid" | "malformed";
 
 /** Where a link of this type goes when it carries no (usable) `next`. */
 export function defaultNextFor(type: string | null): string {
@@ -30,30 +36,103 @@ export function defaultNextFor(type: string | null): string {
   return "/dashboard";
 }
 
+/** The sign-in page path that explains a failed link of this type. */
+export function authLinkFailurePath(type: string | null, reason: AuthLinkReason): string {
+  const q = new URLSearchParams({ error: "auth_link" });
+  if (type && OTP_TYPES.has(type)) q.set("type", type);
+  q.set("reason", reason);
+  return `/login?${q}`;
+}
+
+export function authLinkFailureUrl(origin: string, type: string | null, reason: AuthLinkReason): string {
+  return `${origin}${authLinkFailurePath(type, reason)}`;
+}
+
+/** Page shown after the first of the secure e-mail change's two links. */
+export const EMAIL_CHANGE_HALF_PATH = "/auth/email-change";
+
+/** The parts of a token_hash link, validated; null when the link is malformed. */
+export function parseTokenLink(params: URLSearchParams | FormData): { tokenHash: string; type: EmailOtpType; next: string } | null {
+  const read = (key: string): string | null => {
+    const v = params.get(key);
+    return typeof v === "string" ? v : null;
+  };
+  const tokenHash = read("token_hash");
+  const type = read("type");
+  if (!tokenHash || !TOKEN_HASH.test(tokenHash) || !type || !OTP_TYPES.has(type)) return null;
+  return { tokenHash, type: type as EmailOtpType, next: safeNext(read("next"), defaultNextFor(type)) };
+}
+
+/** Supabase's "Email link is invalid or has expired" (also a used link). */
+function reasonFor(error: { code?: string; status?: number } | null): AuthLinkReason {
+  return error?.code === "otp_expired" || error?.status === 403 ? "expired" : "invalid";
+}
+
+/**
+ * POST /auth/confirm/verify: the only place a token_hash is spent. The form
+ * fields come from the landing page; the response is a redirect either way,
+ * so a browser never shows the token in a page it keeps.
+ */
+export async function verifyAuthLink(req: Request): Promise<NextResponse> {
+  const { origin } = new URL(req.url);
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return NextResponse.redirect(authLinkFailureUrl(origin, null, "malformed"), { status: 303 });
+  }
+  const link = parseTokenLink(form);
+  if (!link) return NextResponse.redirect(authLinkFailureUrl(origin, typeof form.get("type") === "string" ? String(form.get("type")) : null, "malformed"), { status: 303 });
+  // The demo has no accounts: nothing to verify (and no client to build).
+  if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`, { status: 303 });
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.verifyOtp({ type: link.type, token_hash: link.tokenHash });
+  if (error) return NextResponse.redirect(authLinkFailureUrl(origin, link.type, reasonFor(error)), { status: 303 });
+  // Secure e-mail change: the first of the two links answers with no session
+  // (auth-js documents it: "Some /verify responses (e.g. secure email_change
+  // first-confirmation) return only { msg, code }"). The change is NOT done
+  // yet; the other address holds the second link.
+  if (link.type === "email_change" && !data?.session) {
+    return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`, { status: 303 });
+  }
+  return NextResponse.redirect(`${origin}${link.next}`, { status: 303 });
+}
+
+/**
+ * GET /auth/callback: the app's `redirectTo`. A legacy PKCE `code` is
+ * exchanged here (same browser only). A token_hash link that reaches this
+ * route is sent to the landing page unspent; the `message`-only form of the
+ * legacy e-mail change (Supabase's own redirect after the first link) goes to
+ * the half-done page.
+ */
 export async function completeAuthLink(req: Request): Promise<NextResponse> {
   const { searchParams, origin } = new URL(req.url);
   const type = searchParams.get("type");
   const next = safeNext(searchParams.get("next"), defaultNextFor(type));
-  const tokenHash = searchParams.get("token_hash");
   const code = searchParams.get("code");
-  const failed = NextResponse.redirect(`${origin}/login?error=auth_link`);
-  // The demo has no accounts: nothing to verify (and no client to build).
-  if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`);
 
-  if (tokenHash !== null) {
-    if (!tokenHash || !TOKEN_HASH.test(tokenHash) || !type || !OTP_TYPES.has(type)) return failed;
-    const supabase = await createClient();
-    const { error } = await supabase.auth.verifyOtp({ type: type as EmailOtpType, token_hash: tokenHash });
-    return error ? failed : NextResponse.redirect(`${origin}${next}`);
+  if (searchParams.get("token_hash") !== null) {
+    const link = parseTokenLink(searchParams);
+    if (!link) return NextResponse.redirect(authLinkFailureUrl(origin, type, "malformed"));
+    const landing = new URL("/auth/confirm", origin);
+    landing.searchParams.set("token_hash", link.tokenHash);
+    landing.searchParams.set("type", link.type);
+    landing.searchParams.set("next", link.next);
+    return NextResponse.redirect(landing);
   }
+
+  // The demo has no accounts: nothing to exchange (and no client to build).
+  if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`);
 
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) return NextResponse.redirect(`${origin}${next}`);
+    return NextResponse.redirect(authLinkFailureUrl(origin, type, "invalid"));
   }
 
-  if (searchParams.get("message")) return NextResponse.redirect(`${origin}${next}`);
+  if (searchParams.get("message")) return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`);
 
-  return failed;
+  return NextResponse.redirect(authLinkFailureUrl(origin, type, "malformed"));
 }

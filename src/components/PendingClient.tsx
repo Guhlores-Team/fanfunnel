@@ -36,6 +36,7 @@ export default function PendingClient({
   canEmail,
   rejectionReason,
   canSelfDelete = false,
+  signupName = "",
 }: {
   status: "pending" | "rejected";
   email: string;
@@ -44,11 +45,13 @@ export default function PendingClient({
   rejectionReason?: string | null;
   /** T7: offer "Delete my request and account" (only ever true on /pending). */
   canSelfDelete?: boolean;
+  /** The display name typed at sign-up, carried into the request (b6 C9). */
+  signupName?: string;
 }) {
   const extras = parseApplicationNote(application?.note);
   const [stored, setStored] = useState<PendingApplication | null>(application ?? null);
   const [editing, setEditing] = useState(false);
-  const [displayName, setDisplayName] = useState(application?.displayName ?? "");
+  const [displayName, setDisplayName] = useState(application?.displayName ?? signupName);
   const [platform, setPlatform] = useState(extras.platform);
   const [socials, setSocials] = useState(application?.socials ?? "");
   const [audienceSize, setAudienceSize] = useState(application?.audienceSize ?? "");
@@ -223,7 +226,7 @@ export default function PendingClient({
         <p className="mt-2 text-sm text-muted text-pretty">
           {editing
             ? "Change anything below and save. Your place in the queue stays the same."
-            : "FanFunnel creator accounts are approved by hand, and they’re free for now. Tell us about you and we’ll review it shortly."}
+            : "Step 3 of 3: your login is confirmed. FanFunnel creator accounts are approved by hand, and they’re free during the pilot. Tell us about you and we’ll review it shortly."}
         </p>
         <p data-testid="pending-seat-note" className="mt-2 text-xs text-muted text-pretty">
           Joining an agency as staff (chatter, fulfiller, manager)? Request access here

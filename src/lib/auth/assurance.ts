@@ -25,6 +25,12 @@ type FactorLike = { status?: unknown };
 /** Decode the `aal` claim of a JWT. No signature check: call it only on a token
  *  the Auth server has just accepted (getUser), as getSessionAssurance does. */
 export function aalFromAccessToken(token: string | null | undefined): Aal | null {
+  const json = decodeClaims(token) as { aal?: unknown } | null;
+  if (!json) return null;
+  return json.aal === "aal2" ? "aal2" : json.aal === "aal1" ? "aal1" : null;
+}
+
+function decodeClaims(token: string | null | undefined): unknown {
   if (!token) return null;
   const part = token.split(".")[1];
   if (!part) return null;
@@ -34,11 +40,42 @@ export function aalFromAccessToken(token: string | null | undefined): Aal | null
       typeof atob === "function"
         ? atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="))
         : Buffer.from(b64, "base64").toString("utf8")
-    ) as { aal?: unknown };
-    return json.aal === "aal2" ? "aal2" : json.aal === "aal1" ? "aal1" : null;
+    ) as unknown;
+    return json && typeof json === "object" ? json : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The `amr` claim (authentication method references) of a Supabase access
+ * token: one entry per method the session used, newest first, each with the
+ * Auth server's own timestamp. "recovery" and "invite" mean the session was
+ * opened by the matching e-mail link (verifyOtp). Like the aal claim it is
+ * signed by the Auth server; read it only from a token getUser() accepted.
+ */
+export function amrFromAccessToken(token: string | null | undefined): { method: string; timestamp: number }[] {
+  const claims = decodeClaims(token) as { amr?: unknown } | null;
+  if (!claims || !Array.isArray(claims.amr)) return [];
+  return claims.amr
+    .filter((e): e is { method: string; timestamp?: unknown } => !!e && typeof e === "object" && typeof (e as { method?: unknown }).method === "string")
+    .map((e) => ({ method: e.method, timestamp: typeof e.timestamp === "number" ? e.timestamp : 0 }));
+}
+
+/** How long an e-mail link's session may set a password without the current one. */
+export const LINK_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * WU-06: /reset-password and /set-password may set a password without the
+ * current one only on a session that an e-mail link opened recently
+ * ("recovery" or "invite" in amr, within LINK_SESSION_MAX_AGE_MS). Any other
+ * session (a creator's ordinary sign-in on an unlocked laptop) must give the
+ * current password, exactly as Settings › Security does.
+ */
+export function openedByRecentLink(token: string | null | undefined, now = Date.now()): boolean {
+  return amrFromAccessToken(token).some(
+    (e) => (e.method === "recovery" || e.method === "invite") && e.timestamp > 0 && now - e.timestamp * 1000 <= LINK_SESSION_MAX_AGE_MS
+  );
 }
 
 /** True when the user has at least one VERIFIED MFA factor. */
