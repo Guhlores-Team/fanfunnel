@@ -32,6 +32,19 @@ async function newFan(request, name, spins = 3, { ack = true, wheelId } = {}) {
   if (ack) await json(await acknowledgeFixtureFan(request, fan.token), `ack ${name}`);
   return fan;
 }
+/**
+ * Top up a fan. The call comes right after a reveal (about as long as the
+ * server keeps an idle connection open), so the pooled socket may have just
+ * been closed: a reset is sent again with the same requestId, which the
+ * server counts once.
+ */
+async function topUp(request, fan, name, spins) {
+  const data = { requestId: randomUUID(), name, spins, fanId: fan.fanId };
+  const send = () => request.post(BASE + "/api/passes", { data });
+  let res;
+  try { res = await send(); } catch (e) { if (!/ECONNRESET|socket hang up|EPIPE/.test(String(e?.message))) throw e; res = await send(); }
+  return json(res, "top up");
+}
 const getWheel = async (request) => (await json(await request.get(BASE + "/api/wheel"), "read the wheel")).wheel;
 const putWheel = async (request, wheel) => (await json(await request.put(BASE + "/api/wheel", { data: { wheel } }), "save the wheel")).wheel;
 const prize = (label, rarity = "common", weight = 1, emoji = "🎁") => ({ id: randomUUID(), label, rarity, weight, emoji, stock: null, cost: 100 });
@@ -133,7 +146,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await spinForCard(page); await closeCard(page);
         assert((await chip(page)) === "0", "the only spin is spent");
         await page.getByTestId("topup-ask").waitFor({ timeout: 6000 });
-        await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "B7 topup fan", spins: 2, fanId: fan.fanId } }), "top up");
+        await topUp(request, fan, "B7 topup fan", 2);
         // The tab comes back after >30 s: the page re-reads the server and
         // must adopt the new balance while idle.
         await page.evaluate(() => { const real = Date.now; Date.now = () => real() + 40000; document.dispatchEvent(new Event("visibilitychange")); });
@@ -154,7 +167,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await spinForCard(page); await closeCard(page);
         assert((await chip(page)) === "0", "the only spin is spent");
         await page.getByTestId("topup-ask").waitFor({ timeout: 6000 });
-        await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "B7 waiting fan", spins: 3, fanId: fan.fanId } }), "top up");
+        await topUp(request, fan, "B7 waiting fan", 3);
         // No tab switch, no tap: half a minute passes on the open page.
         await page.clock.fastForward(31000);
         await page.waitForFunction(() => document.querySelector("[data-testid='spins-chip']")?.textContent.replace(/\D/g, "") === "3", null, { timeout: 15000 });
@@ -684,7 +697,21 @@ export function fanB7A11yStates() {
     await page.getByTestId("fan-spin").click();
     await page.waitForFunction(() => /Try again/.test(document.querySelector("[data-testid='fan-spin']")?.textContent ?? ""), null, { timeout: 6000 });
   };
+  const toppedUp = async (page) => {
+    const fan = await newFan(page.request, "A11y top-up", 1);
+    await goto(page, `/spin/${fan.token}`, 600);
+    await passAgeGate(page);
+    await spinForCard(page); await closeCard(page);
+    await topUp(page.request, fan, "A11y top-up", 2);
+    await page.evaluate(() => { const real = Date.now; Date.now = () => real() + 40000; document.dispatchEvent(new Event("visibilitychange")); });
+    await page.getByTestId("topup-note").waitFor({ timeout: 15000 });
+  };
+  const verifyKind = async (page) => { await page.waitForFunction(() => document.querySelector(".nf-kinds")?.getAttribute("data-kind") === "nf-verify", null, { timeout: 8000 }); };
+  const busyKind = async (page) => { await page.getByTestId("link-attempts-retry").waitFor({ timeout: 8000 }); };
   return [
+    { path: null, name: "fan spin phone (top-up note)", viewport: PHONE.viewport, context: { isMobile: true, hasTouch: true }, prep: toppedUp },
+    { path: "/verify/no-such-spin-a11y", name: "verify 404 phone (nothing to verify)", viewport: PHONE.viewport, context: { isMobile: true, hasTouch: true }, prep: verifyKind },
+    { path: "/not-found/busy/75#nf-busy", name: "fan link 404 phone (too many attempts)", viewport: PHONE.viewport, context: { isMobile: true, hasTouch: true }, prep: busyKind },
     { path: null, name: "fan spin phone (in-app browser hint)", viewport: PHONE.viewport, context: { isMobile: true, hasTouch: true, userAgent: INSTAGRAM_IOS_UA }, prep: inAppHint },
     { path: null, name: "fan spin phone (legal sheet over the gate)", viewport: PHONE.viewport, context: { isMobile: true, hasTouch: true }, prep: legalSheet },
     { path: null, name: "fan spin phone (spin cooldown)", viewport: PHONE.viewport, context: { isMobile: true, hasTouch: true }, prep: cooldown },
