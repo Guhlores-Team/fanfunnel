@@ -167,3 +167,5 @@ which offers both paths.
    on the dashboard with the new address.
 7. Ask for three resets within a minute: the third says "too many e-mails" (with the built-in mailer the
    project cap is 2 per hour; custom SMTP lifts it).
+8. Invite a new account, let the invitation expire (or do not open it), then use "Forgot password"
+   with the invited address: the link opens the new-password page and the account can sign in.

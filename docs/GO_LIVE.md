@@ -256,7 +256,7 @@ Residual gaps, stated plainly:
   Instant Rollback, `vercel --prod` and a manual redeploy bypass it.
 - **The first release is not expand-only.** `main` serves pre-0039 code;
   0069 revokes `INSERT` on `redemptions` from sessions, 0071 revokes `DELETE`
-  on wheels and campaigns, 0070 changes the spin RPCs. Once 0039–0072 are
+  on wheels and campaigns, 0070 changes the spin RPCs. Once 0039–0073 are
   applied, an **Instant Rollback to that old deployment breaks fulfilment and
   spins**. For this release, rollback means pausing the site and fixing
   forward (`RUNBOOK.md` § Roll back a deploy).
@@ -271,7 +271,7 @@ Residual gaps, stated plainly:
   never be promoted; the newer commit carries its migrations.
 - **Runtime schema-version check (0067): flags, does not fail closed.**
   `public.schema_version()` returns the migration level the database was
-  built to (72 after 0072). It is a constant every migration redefines with
+  built to (73 after 0073). It is a constant every migration redefines with
   its own number, not a read of `supabase_migrations.schema_migrations`: that
   table is not exposed through the Data API and is empty when SQL was pasted
   by hand, while the constant travels with the schema itself.
@@ -297,7 +297,7 @@ Work through it in order on the day; every line names the mistake it prevents.
 - [ ] **OWNER**: The ruleset requires `verify`, `schema-drift`, `supabase`, `login-ui` and the migration `test` job (section 2); a PR cannot merge with the drift check red.
 - [ ] **OWNER**: Production env vars complete (`docs/handoff/GO_LIVE_KEYS.md`): the Supabase trio, `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE`, `CRON_SECRET`, the two reward keys, the VAPID trio, `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `HEARTBEAT_URL`. A missing or mistyped key builds and deploys fine and then answers 500 on every database page; only the Vercel function log says why ("FanFunnel is misconfigured").
 - [ ] **OWNER**: Read-only `supabase migration list --linked` against LIVE (or ask the agent for the exact command with the password entered by you): the Remote column must list 0001–0038. If it lists fewer, `docs/auto-migration-reconcile.sql` runs first, or `db push` re-runs 0001 against a populated database. Paste the result into the release note and update the status block at the top of `.github/workflows/supabase-migrations.yml`.
-- [ ] **OWNER + AGENT**: The multi-agency check (SQL below) returns no rows, and the 0072 browser-role check has been rehearsed on a fresh TEST clone of LIVE's schema: a failure at 0071 leaves 0039–0070 applied with no rollback, while the old code keeps serving.
+- [ ] **OWNER + AGENT**: The multi-agency check and the two 0073 checks (SQL below) return what they should, and the 0072 browser-role check has been rehearsed on a fresh TEST clone of LIVE's schema: a failure at 0071 leaves 0039–0070 applied with no rollback, while the old code keeps serving.
 - [ ] **OWNER**: Today's LIVE backup is listed (the gate checks it too).
 - [ ] **OWNER**: Merge the PR (section 8). Vercel builds Production; the migration job waits for your approval.
 - [ ] **OWNER**: Approve `db-migrations-production` only after the lines above. Watch it: backup gate → `db push` → history read-back → green. The Production deployment must stay un-aliased until then (Deployment Check) and be promoted after.
@@ -313,7 +313,7 @@ establish ordering; the Deployment Check above does, once configured.
 
 - [ ] **OWNER + AGENT**: Prepare and approve a concrete release plan before any main merge. One option is owner-run pre-application of the exact reviewed migrations while the old code remains safely served, but only after proving old-code/new-schema compatibility. If that cannot be proved, prepare a separately reviewed traffic/deployment hold and restoration plan. Do not assume additive numbering makes an old deployment compatible; later auth/RPC contracts can deliberately retire old calls.
 - [ ] **OWNER**: Verify a recoverable LIVE backup and the original-key backup, intended project identity and actual migration history. Keep LIVE credentials in approved private controls; the agent does not obtain or use them. Never run `supabase/reset.sql` on LIVE.
-- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations 0001–0072 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes 0059 Focus, 0060 Scratch, 0061 Bingo, 0062 account security, 0063 operational integrity, 0064 completeness gaps, 0065 per-fan game pins and batch-3 hardening, 0066 agency seat scopes, the approval notice and alert release, 0067 cancelled-prize stock and `schema_version()`, 0068 tenant boundaries, 0069 batch-4 integration hardening, 0070 one game resolution per play (the stress D4 deadlock), 0071 ledger guards, one agency per owner and lock order, and 0072 advisor hardening (browser-role function privileges, foreign-key indexes, per-statement `auth.uid()` in 32 policies, the Terms version in `legal_terms_version()`, the fan-deletion redemption scrub).
+- [ ] **OWNER + AGENT**: Compare actual LIVE schema/history with the final checked commit, including required migrations 0001–0073 and any subsequently reviewed additions. Record exactly which migrations are missing; do not use a stale hardcoded “already applied” list. Required later scope includes 0059 Focus, 0060 Scratch, 0061 Bingo, 0062 account security, 0063 operational integrity, 0064 completeness gaps, 0065 per-fan game pins and batch-3 hardening, 0066 agency seat scopes, the approval notice and alert release, 0067 cancelled-prize stock and `schema_version()`, 0068 tenant boundaries, 0069 batch-4 integration hardening, 0070 one game resolution per play (the stress D4 deadlock), 0071 ledger guards, one agency per owner and lock order, 0072 advisor hardening (browser-role function privileges, foreign-key indexes, per-statement `auth.uid()` in 32 policies, the Terms version in `legal_terms_version()`, the fan-deletion redemption scrub), and 0073 batch-7 hardening (a row can never change creator, concurrency fixes on plays and prizes, link expiry, the delivery promise, the agency owner's seat and notices, consent evidence, the Terms change notice, retention of declined applications).
 - [ ] **OWNER + AGENT**: If historical SQL was pasted manually, investigate history/schema divergence with a separate reviewed reconciliation plan and backup. Do not mark a migration applied merely to make CI green, infer execution from a history row, or assume a rerun is harmless.
 - [ ] **OWNER + AGENT**: Review the existing ledger prechecks and migration-specific constraints on actual data, including negative balances/grants, stock and costs. A warning or skipped constraint is not proof of the intended invariant. Resolve unexpected counts before proceeding; do not repair financial records automatically.
 - [ ] **OWNER**: Before any merge that brings migration 0071 (and with it 0072), check on LIVE that nobody owns more than one agency. 0071 allows one agency per account and stops with an error if it finds an account that owns two or more. The check only reads data and changes nothing. In the LIVE project, open **SQL Editor**, paste this line and press **Run**:
@@ -324,6 +324,24 @@ establish ordering; the Deployment Check above does, once configured.
 
   - **No rows** ("Success. No rows returned"): this step is done.
   - **One or more rows**: stop, do not merge. Each row is an account (`owner_id`) and how many agencies it owns. Contact that owner, agree which agency they keep, and with their approval merge the extra agencies into it or remove them. Then run the check again, and continue only when it returns no rows.
+- [ ] **OWNER**: Before any merge that brings migration 0073, run two more read-only checks on LIVE (same place: **SQL Editor**, paste, **Run**). Neither changes anything.
+
+  ```sql
+  select conname, convalidated from pg_constraint
+  where conname in ('fan_passes_spins_granted_total_check','fans_spins_granted_total_check',
+    'fans_rl_count_check','prizes_stock_check','prizes_cost_cents_check',
+    'fan_passes_spins_remaining_check','fans_spins_remaining_check');
+  ```
+
+  - **Before 0039–0072 are on LIVE** this returns fewer than seven rows; that is expected, the go-live run creates them. What matters is that no listed row shows `f`.
+  - **A row with `convalidated = f`**: stop. An old ledger row breaks that rule (a negative balance, stock or cost); 0073 re-asserts the rule and would stop on it. Tell the agent which name showed `f`.
+
+  ```sql
+  select profile_id, count(*) from public.creator_applications group by 1 having count(*) > 1;
+  ```
+
+  - **No rows**: done. **One or more rows**: stop, do not merge. 0073 allows one application per account; each row is an account with several. Decide with the agent which one stays.
+- [ ] **AGENT**: Replay caveat for 0073. `supabase/schema.sql` rebuilds a database from nothing and is safe on an empty one. Replaying it over a database that already holds batch-7 creator notices (`agency_dissolved`, `agency_owner_suspended`, `game_unlock_request`) fails where 0071 re-adds its narrower notice-kind rule. Never replay `schema.sql` or older migrations over TEST or LIVE; the workflow's `db push` applies only what is missing.
 - [ ] **OWNER + AGENT**: 0072 ends with a check that stops it (nothing is applied) if a browser role (`anon`, or `authenticated` outside the reviewed list in the migration header) can still execute a SECURITY DEFINER function on LIVE; the error names each one. TEST showed one such drift (`org_add_creator`), which 0072 revokes itself. If LIVE names another, compare it with the migrations before deciding; do not widen the list to make it pass. Leaked-password protection is a Supabase Auth setting the owner turns on in TEST and LIVE (Authentication, Settings); no migration covers it.
 - [ ] **OWNER**: **One story on who applies LIVE migrations (batch 7, OPS3-03 D7):** the workflow does, not a person. The owner merges the PR, then approves the `db-migrations-production` run in the `production` environment; that run verifies a LIVE backup, runs the pinned CLI's `supabase db push` in strict numeric order and reads the history back. Nobody runs `db push` from a laptop, nobody pastes SQL, and the agent never holds LIVE credentials. The only hand-run command on LIVE before merge day is the read-only `supabase migration list --linked` in the merge-day checklist above (and the reconcile SQL if it shows a gap). This runbook is not an instruction to execute anything now.
 - [ ] **OWNER + AGENT**: Record actual completed application, re-read history and compare generated database types/schema with the exact release contract. Check Advisors and relevant invariants/security expectations. A success message or manually inserted history record is not enough. Failed, partial or uncertain application stops release pending inspection.
