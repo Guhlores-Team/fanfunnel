@@ -21,6 +21,8 @@ function check(label: string, cond: boolean) {
 const rpcs: { name: string; args: unknown }[] = [];
 const reads: string[] = [];
 let configured = true;
+/** can_act_for(self, 'manage') as the session sees it. */
+let mayManage: unknown = true;
 let user: { id: string } | null = null;
 let profileRow: Record<string, unknown> | null = { pwa_icon_mode: "avatar" };
 
@@ -43,6 +45,8 @@ const client = {
   auth: { getUser: async () => ({ data: { user }, error: null }) },
   from: (table: string) => builder(table),
   rpc: async (name: string, args: unknown) => {
+    // The session's own standing proof; `rpcs` records the setter only.
+    if (name === "can_act_for") return { data: mayManage, error: null };
     rpcs.push({ name, args });
     return { data: null, error: null };
   },
@@ -116,6 +120,17 @@ async function main() {
     check("PUT with another creator's id → still only own row", sneaky.status === 200);
     check("…and the RPC got the mode only", JSON.stringify(rpcs[0]?.args) === JSON.stringify({ p_mode: "neutral" }));
   }
+
+  // --- 2b. A suspended (or unapproved) account: refused, never "saved" --------
+  // set_pwa_icon_mode writes nothing for it and returns no error.
+  for (const answer of [false, null, "true"]) {
+    mayManage = answer;
+    rpcs.length = 0;
+    const p = await put({ mode: "avatar" });
+    check(`PUT with can_act_for ${JSON.stringify(answer)} → 403 forbidden`, p.status === 403 && p.data.error === "forbidden");
+    check(`…and set_pwa_icon_mode is never called`, rpcs.length === 0);
+  }
+  mayManage = true;
 
   // --- 3. Demo mode: works without Supabase, same validation -----------------
   configured = false;

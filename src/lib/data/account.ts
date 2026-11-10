@@ -2,6 +2,7 @@ import { creatorGameFeatures } from "./gameSettings";
 // Data layer — the signed-in creator's own account: profile prefs,
 // onboarding state, brand colour and the full data reset.
 import { isSupabaseConfigured, createClient, createServiceClient } from "@/lib/supabase/server";
+import { ownAccountActive } from "@/lib/auth/ownStanding";
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import {
   mockClearMyData,
@@ -199,6 +200,11 @@ export async function setMyDisplayName(
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+  // 0073: set_display_name writes nothing for a suspended caller and says
+  // nothing either (void, no error), so the refusal is decided here, from the
+  // session's own row. No approval gate: an applicant may still be renamed.
+  const active = await ownAccountActive(sb, user.id);
+  if (active !== true) return { error: active === false ? "forbidden" : "db_error" };
   const { error } = await sb.rpc("set_display_name", { p_name: name });
   // 0071: a refused name (22023) is a stable code, never the database's text.
   return error ? { error: displayNameRpcError(error) } : { ok: true };

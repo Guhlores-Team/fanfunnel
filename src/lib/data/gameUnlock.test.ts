@@ -123,6 +123,19 @@ async function main() {
     check("it is a well-formed UUID", /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(unlockRequestId("c1", "scratch", now)));
   }
 
+  // 0073: one OPEN request per creator and game (unique index). An older
+  // request outside the window answers 23505: already asked, nobody mailed.
+  {
+    const rowsBefore = inserted.length;
+    const alertsBefore = alerts.length;
+    insertError = { code: "23505", message: 'duplicate key value violates unique constraint "creator_notices_unlock_request_key"' };
+    const again = await requestGameUnlock("scratch", { alert });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    insertError = null;
+    check("an older open request (23505) → already requested", "ok" in again && again.already === true && again.recorded === true);
+    check("…with no second row and no second e-mail", inserted.length === rowsBefore && alerts.length === alertsBefore);
+  }
+
   notices = [
     { id: "n2", creator_id: "c1", details: { game: "scratch" }, created_at: "2026-11-10T01:00:00Z" },
     { id: "n3", creator_id: "c1", details: { game: "scratch" }, created_at: "2026-11-09T01:00:00Z" },

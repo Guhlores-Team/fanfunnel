@@ -99,6 +99,10 @@ async function storeGameUnlockRequest(svc: Svc, creatorId: string, game: Unlocka
     .upsert({ id: unlockRequestId(creatorId, game), creator_id: creatorId, kind: "game_unlock_request", details: { game } }, { onConflict: "id", ignoreDuplicates: true })
     .select("id");
   if (error) {
+    // 0073: one OPEN request per creator and game (unique index
+    // creator_notices_unlock_request_key). An older request that is still
+    // open, outside this window, answers 23505: it is already asked.
+    if (error.code === "23505") return "already";
     console.error("requestGameUnlock: could not store the request", { code: error.code });
     return "refused";
   }

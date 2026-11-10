@@ -3,6 +3,7 @@ import { creatorMfaStepUpResponse } from "@/lib/auth/stepUp";
 // and the gated-signup approval queue.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
+import { ownAccountActive } from "@/lib/auth/ownStanding";
 import type { AdminAccount, AdminOverview, AppRole } from "./types";
 import { inviteCreatorUser } from "./creatorAccount";
 import { recordAudit } from "./audit";
@@ -674,6 +675,11 @@ export async function submitCreatorApplication(input: ApplicationInput): Promise
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+  // A suspended account sends nothing: no row, no admin alert. Applicants
+  // are unapproved, so the check is the caller's own is_active (session
+  // read), not can_act_for.
+  const active = await ownAccountActive(sb, user.id);
+  if (active !== true) return { error: active === false ? "forbidden" : "db_error" };
 
   const { error } = await sb.from("creator_applications").insert({
     profile_id: user.id,
@@ -699,6 +705,10 @@ export async function updateMyCreatorApplication(input: ApplicationInput): Promi
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+  // Before the service role is touched or any admin is e-mailed: the
+  // caller's own account must not be suspended (session read of its own row).
+  const active = await ownAccountActive(sb, user.id);
+  if (active !== true) return { error: active === false ? "forbidden" : "db_error" };
   const svc = createServiceClient();
   const { data, error } = await svc
     .from("creator_applications")

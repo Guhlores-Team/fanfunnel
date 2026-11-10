@@ -5,6 +5,7 @@ import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { recordAudit } from "./audit";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import { sessionMayManageSelf } from "@/lib/auth/ownStanding";
 import type { DmTemplate, ChatMessage, ChatSettings, FanThread } from "./types";
 import {
   mockListDmTemplates,
@@ -530,6 +531,7 @@ export async function setChatSettings(input: {
   intro?: string | null;
   outro?: string | null;
 }): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetChatSettings(input);
 
   const sb = await createClient();
@@ -554,6 +556,9 @@ export async function setChatSettings(input: {
     if (intro === undefined) intro = current.intro;
     if (outro === undefined) outro = current.outro;
   }
+  // set_chat_settings writes nothing for a suspended account and returns no
+  // error: prove the standing first so the refusal is said as one.
+  if (!(await sessionMayManageSelf(sb, user.id))) return { error: "forbidden" };
   const { error } = await sb.rpc("set_chat_settings", {
     p_intro: intro ?? "",
     p_outro: outro ?? "",

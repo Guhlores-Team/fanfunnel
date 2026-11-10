@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Modal from "@/components/ui/Modal";
 import TermsCheckbox from "@/components/TermsCheckbox";
+import { SUSPENDED_SAVE_SUFFIX } from "@/lib/onboarding/suspended";
 
 interface TermsStatus {
   version: string | null;
@@ -50,6 +51,11 @@ export default function TermsPrompt({ canSignOut }: { canSignOut: boolean }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accept: true }),
       });
+      if (res.status === 403) {
+        setError(SUSPENDED_SAVE_SUFFIX);
+        setBusy(false);
+        return;
+      }
       if (!res.ok) throw new Error();
       setStatus({ version: null, needsAcceptance: false });
     } catch {

@@ -32,6 +32,9 @@ let isAdmin = false;
 // Per-test answers: (call) => { data, error }.
 let answer: (c: Call) => { data: unknown; error: unknown } = () => ({ data: null, error: null });
 const after: (() => unknown)[] = [];
+/** The caller's own profiles.is_active as the session reads it (undefined = no row). */
+let ownActive: unknown = true;
+let standingReads = 0;
 
 function builder(client: Call["client"], table: string) {
   const call: Call = { client, table, ops: [] };
@@ -40,7 +43,16 @@ function builder(client: Call["client"], table: string) {
     {},
     {
       get(_t, prop) {
-        if (prop === "then") return (res: (v: unknown) => unknown) => Promise.resolve(answer(call)).then(res);
+        if (prop === "then") return (res: (v: unknown) => unknown) => {
+          // The session's read of its OWN is_active (S3/S5/S6) is not part of
+          // the per-test answers, and is taken out of the recorded calls.
+          if (client === "session" && table === "profiles" && has(call, "select", "is_active")) {
+            standingReads++;
+            calls.splice(calls.indexOf(call), 1);
+            return Promise.resolve({ data: ownActive === undefined ? null : { is_active: ownActive }, error: null }).then(res);
+          }
+          return Promise.resolve(answer(call)).then(res);
+        };
         return (...args: unknown[]) => {
           call.ops.push({ name: String(prop), args });
           return proxy;
@@ -113,6 +125,23 @@ async function main() {
   answer = () => ({ data: null, error: null });
   r = await json(await app.PATCH(req("PATCH", { displayName: "X" }, "10.1.0.4")));
   check("no pending row of mine → 404, nothing changed", r.status === 404);
+
+  // --- S3/S5: a SUSPENDED account sends and edits nothing, and no admin is e-mailed
+  for (const [label, value, status] of [["suspended", false, 403], ["no readable profile", undefined, 400], ["a non-boolean is_active", "true", 400]] as const) {
+    ownActive = value;
+    reset();
+    answer = (c) => (c.client === "service" ? { data: { id: "app-1" }, error: null } : { data: null, error: null });
+    r = await json(await app.POST(req("POST", { displayName: "Bella", socials: "x", audienceSize: "5k", acceptTerms: true }, "10.1.1.1")));
+    check(`${label}: submit → ${status}`, r.status === status && (status !== 403 || r.data.error === "forbidden"));
+    check(`${label}: submit writes no request, uses no service role, schedules no admin notice`, calls.length === 0 && after.length === 0);
+    reset();
+    r = await json(await app.PATCH(req("PATCH", { displayName: "Bella B", socials: "y" }, "10.1.1.2")));
+    check(`${label}: edit → ${status}`, r.status === status && (status !== 403 || r.data.error === "forbidden"));
+    check(`${label}: edit touches no table and schedules no admin notice`, calls.length === 0 && after.length === 0);
+  }
+  check("the standing was read from the session's own profile row", standingReads > 0);
+  ownActive = true;
+
   user = null;
   reset();
   r = await json(await app.PATCH(req("PATCH", { displayName: "X" }, "10.1.0.5")));

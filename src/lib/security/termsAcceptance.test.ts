@@ -175,8 +175,9 @@ async function main() {
     check("signed out → no RPC at all", rpcs.length === 0);
   }
 
-  // Signed in as creator-1.
+  // Signed in as creator-1, an account in good standing.
   user = { id: "creator-1", email: "c1@example.test" };
+  profileRow = { is_active: true };
 
   // Agreement must be a literal true.
   for (const body of [{}, { accept: "true" }, { accept: 1 }, { accept: false }]) {
@@ -222,7 +223,32 @@ async function main() {
     const d = (await (await terms.GET(new Request("http://localhost/"))).json()) as Record<string, unknown>;
     check("GET current version → no prompt", d.needsAcceptance === false);
   }
-  profileRow = null;
+
+  // A SUSPENDED account records nothing and sends nothing: the session reads
+  // its own is_active before the service role is touched (S3/S5/S6).
+  const serviceTouched = () => rpcs.some((r) => r.client === "service") || calls.some((c) => c.client === "service");
+  const wrote = () => calls.some((c) => c.ops.some(([op]) => ["update", "upsert", "insert", "delete"].includes(op)));
+  for (const [label, row] of [["suspended", { is_active: false, terms_version: "2020-01-01", terms_accepted_at: "2020-01-01T00:00:00Z" }], ["no readable profile", null], ["a non-boolean is_active", { is_active: "true" }]] as const) {
+    profileRow = row;
+    reset();
+    const p = await post(terms, { accept: true }, "10.0.1.1");
+    check(`POST terms, ${label} → refused`, p.status === (label === "suspended" ? 403 : 400) && p.data.error === (label === "suspended" ? "forbidden" : "db_error"));
+    check(`POST terms, ${label} → the service role is never touched`, !serviceTouched() && !wrote());
+    reset();
+    const a = await post(application, { displayName: "Ava", socials: "x.com/ava", audienceSize: "5k", acceptTerms: true }, "10.0.1.2");
+    check(`POST application, ${label} → refused`, a.status === (label === "suspended" ? 403 : 400));
+    check(`POST application, ${label} → no acceptance, no request row, no service call`, !serviceTouched() && !wrote());
+    reset();
+    const e = await application.PATCH(new Request("http://x/api", { method: "PATCH", headers: { "Content-Type": "application/json", "x-real-ip": "10.0.1.3" }, body: JSON.stringify({ displayName: "Ava", socials: "x.com/ava", audienceSize: "5k" }) }));
+    check(`PATCH application, ${label} → refused`, e.status === (label === "suspended" ? 403 : 400));
+    check(`PATCH application, ${label} → no service write`, !serviceTouched() && !wrote());
+  }
+  profileRow = { is_active: false, terms_version: "2020-01-01", terms_accepted_at: "2020-01-01T00:00:00Z" };
+  {
+    const d = (await (await terms.GET(new Request("http://localhost/"))).json()) as Record<string, unknown>;
+    check("GET, suspended with a stale version → no prompt it could never answer", d.needsAcceptance === false && d.version === "2020-01-01");
+  }
+  profileRow = { is_active: true };
 
   // The access-request form requires the clickwrap, then records it server-side.
   reset();
