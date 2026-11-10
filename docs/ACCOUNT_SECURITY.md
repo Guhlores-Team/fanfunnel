@@ -106,3 +106,64 @@ The invitation sender also rechecks current owner/MFA/approval authority after i
   the fan's win page (or was given the code), not who they are.
 - **Report tokens (N4):** a fan report stores `t1:<last 4>:<sha256>` of the link token, never the
   token (`src/lib/reports/reportToken.ts`).
+
+## Batch 7 auth rules (sign-in family)
+
+- **E-mail links are spent on POST only (WU-02 / WA-05).** Every template links to
+  `{{ .SiteURL }}/auth/confirm?token_hash=…&type=…&next=…`. That page shows a Continue button;
+  its form POSTs to `/auth/confirm/verify`, the only call to `verifyOtp` (`src/lib/auth/authLink.ts`).
+  A GET never verifies a `token_hash` (mail scanners and link previews fetch every link), and no
+  script auto-submits the form (sandboxes run scripts too). `/auth/callback` still exchanges the
+  legacy PKCE `?code=` on GET (useless without the requesting browser's cookie) and forwards any
+  `token_hash` to the landing page unspent.
+- **A failed link says why, per type (WU-03).** `/login?error=auth_link&type=<type>&reason=<expired|invalid|malformed>`
+  (`src/lib/auth/authCopy.ts`): a used confirmation says "already confirmed? sign in", an expired
+  invitation offers "ask for a new invitation" and the reset link (a recovery link also confirms an
+  invited address), an e-mail change points at Settings. Supabase reports a used link as
+  `otp_expired`, so "expired" always covers "already used". Nothing says "same browser": the
+  links work on any device.
+- **Secure e-mail change is two links (WU-04).** Both the current and the new address get
+  `email_change.html`; the first verify answers with no session and lands on `/auth/email-change`
+  ("step 1 of 2 done"), never on the dashboard. Keep the Supabase setting ON.
+- **Suspended creators keep a read-only dashboard (WU-01 / WG-01).** The proxy no longer bounces
+  `is_active=false` to `/login?suspended=1`; `SuspendedBanner` explains on every section and
+  `can_act_for()` / `current_user_active()` refuse the writes. The sign-in page still explains the
+  old `?suspended=1` links.
+- **New-password screens go through `POST /api/account/password/reset` (WU-06 / WU-07).** A
+  session opened by a recovery or invite link in the last 2 hours (the token's signed `amr`
+  claim, `openedByRecentLink` in `src/lib/auth/assurance.ts`) may set a password outright; any
+  other signed-in session must give its current password, checked on a throwaway client like
+  Settings › Security; a two-factor account gets `mfa_required` first and the screen shows the
+  code step (`TotpChallenge`) instead of the provider's "AAL2 session is required".
+- **A password change signs out everywhere else (WG-16 / WU-20).** `/api/account/password`,
+  the reset route and `POST /api/account/sessions` ("Sign out other devices") call
+  `signOut({ scope: "others" })` with the creator's own session (`src/lib/auth/sessions.ts`);
+  no service key is involved and the current session stays.
+- **Honest rate limits (WU-05).** Forgot-password and "Resend confirmation" keep the same answer
+  for any address, except a Supabase 429 (`over_email_send_rate_limit` /
+  `over_request_rate_limit`), which says "too many e-mails just now, try again in N minutes"; that
+  reveals nothing about the address.
+- **`POST /auth/signout` runs the same-origin check itself (RS-10)**; it is outside `/api/`, so the
+  proxy's check never reaches it.
+
+### Re-sending an admin invitation
+
+Invitations expire with the project's Email OTP expiry (1 hour by default; the templates say so).
+To re-send one: Admin › New account with the same address sends a fresh invite while the address is
+still unconfirmed (`src/lib/data/creatorAccount.ts`). The invited person can also self-serve:
+"Forgot password" with the invited address sends a recovery link, and verifying it confirms the
+address and opens `/reset-password`. An expired link lands on `/login?error=auth_link&type=invite&reason=expired`,
+which offers both paths.
+
+### TEST manual checks (need a mailbox; not reproducible in the demo)
+
+1. Request a reset on a laptop, open the mail on a phone: the Continue page shows, the tap lands on
+   `/reset-password`, the new password works, and the laptop's session is signed out.
+2. Open the same link twice: the second visit lands on `/login?error=auth_link&type=recovery&reason=expired`.
+3. On an Outlook / Microsoft 365 mailbox: Safe Links fetches the URL, the human's tap still works.
+4. A creator with two-factor on: the reset shows the code step before the password form.
+5. Signed in normally, open `/reset-password`: the current password is required; a wrong one is refused.
+6. Change e-mail with Secure email change ON: the first link lands on `/auth/email-change`, the second
+   on the dashboard with the new address.
+7. Ask for three resets within a minute: the third says "too many e-mails" (with the built-in mailer the
+   project cap is 2 per hour; custom SMTP lifts it).
