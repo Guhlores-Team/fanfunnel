@@ -34,7 +34,10 @@ export default function ContinueButton({ label, className }: { label: string; cl
     };
     form.addEventListener("submit", onSubmit);
     window.addEventListener("pageshow", onShow);
+    // Marks the form once the guard is live (the journeys wait for it).
+    form.dataset.enhanced = "1";
     return () => {
+      delete form.dataset.enhanced;
       form.removeEventListener("submit", onSubmit);
       window.removeEventListener("pageshow", onShow);
     };
