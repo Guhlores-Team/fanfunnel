@@ -41,6 +41,17 @@ async function main() {
     check(`${path} has a generic response`, JSON.stringify(await response.json()) === '{"error":"bad_request"}');
   }
   check("every rejection schedules supported background monitoring", pending.length === malformed.length);
+  // WA-08: a hand-made backslash path (`/\admin`) reaches Next as `//admin`
+  // (the URL layer turns `\` into `/`): an empty segment no route has. It is
+  // a 400 here, before Vercel's routing can turn it into an unmonitored 500,
+  // and it is not captured (any scanner could fill Admin › Errors with it).
+  check("the URL layer normalises a backslash to a slash", new NextRequest("https://fanfunnel.test/\\admin").nextUrl.pathname === "//admin" && new NextRequest("https://fanfunnel.test/api\\health").nextUrl.pathname === "/api/health");
+  for (const path of ["/\\admin", "//admin", "/login//", "/api//health", "/spin/private-fan-token//x", "///"]) {
+    check(`${path} reaches the proxy`, matches(path));
+    const response = await proxy(new NextRequest(`https://fanfunnel.test${path}`, { headers: { cookie: "session=private-cookie" } }), event);
+    check(`${path} → 400 bad_request, uncached`, response.status === 400 && response.headers.get("cache-control") === "no-store" && JSON.stringify(await response.json()) === '{"error":"bad_request"}');
+  }
+  check("empty-segment paths are refused without monitoring noise or auth work", pending.length === malformed.length && refreshed.length === 0);
   await Promise.all(pending.splice(0));
   check("malformed paths never refresh Supabase auth", refreshed.length === 0);
   const errors = await store.listAppErrors({ status: "open" });

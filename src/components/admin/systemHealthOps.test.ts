@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { maintenanceLine, opsFlagLines, parseSystemHealthStatus, rateLimitFallbackLine } from "./systemHealthCopy";
+import { alertMailLine, heartbeatLine, maintenanceLine, opsFlagLines, parseSystemHealthStatus, rateLimitFallbackLine } from "./systemHealthCopy";
 
 let passed = 0;
 const check = (label: string, ok: unknown) => { assert.ok(ok, label); passed++; };
@@ -22,4 +22,15 @@ check("maintenance never ran", maintenanceLine({ lastRanAt: null, stale: false }
 check("stale says what to check", /^Maintenance job: last ran .+\. Overdue: it should run daily\. Check the Vercel cron and CRON_SECRET\.$/.test(maintenanceLine({ lastRanAt: "2026-11-01T00:00:00Z", stale: true })));
 check("fresh run", /^Maintenance job: last ran .+\.$/.test(maintenanceLine({ lastRanAt: "2026-11-01T00:00:00Z", stale: false })));
 check("fallback lines", rateLimitFallbackLine(null) === "Rate-limit store: no fallback recorded." && /^Rate-limit store: last fallback to per-instance limits .+\.$/.test(rateLimitFallbackLine("2026-11-01T00:00:00Z")));
+  // OPS3-08: the heartbeat's last outcome and the alert mail's last acceptance are facts, not "configured".
+  const parseFull = parseSystemHealthStatus;
+  check("heartbeat off", heartbeatLine({ configured: false, lastResult: "off", at: null }).text === "Heartbeat: not set.");
+  check("heartbeat never pinged", /no ping sent yet/.test(heartbeatLine({ configured: true, lastResult: "never", at: null }).text));
+  check("heartbeat accepted names the time", /last ping accepted at/.test(heartbeatLine({ configured: true, lastResult: "sent", at: "2026-11-02T04:17:00.000Z" }).text) && !heartbeatLine({ configured: true, lastResult: "sent", at: "2026-11-02T04:17:00.000Z" }).alarm);
+  check("heartbeat refused is red and says what to check", heartbeatLine({ configured: true, lastResult: "failed", at: "2026-11-02T04:17:03.000Z" }).alarm && /refused/.test(heartbeatLine({ configured: true, lastResult: "failed", at: "2026-11-02T04:17:03.000Z" }).text) && /HEARTBEAT_URL/.test(heartbeatLine({ configured: true, lastResult: "failed", at: null }).text));
+  check("alert mail: accepted at / configured but never / off", /last accepted at/.test(alertMailLine("2026-11-01T10:00:00.000Z", true)) && alertMailLine(null, true) === "Alert e-mail: configured, none accepted yet." && alertMailLine(null, false) === "Alert e-mail: none accepted yet.");
+  const parsedOps = parseFull({ demo: false, canary: { status: "healthy" }, summary: null, heartbeat: { configured: true, lastResult: "sent", at: "2026-11-02T04:17:00.000Z" }, alertMail: { lastAcceptedAt: null } });
+  check("the parser keeps well-formed heartbeat and alertMail facts", parsedOps?.heartbeat?.lastResult === "sent" && parsedOps?.alertMail?.lastAcceptedAt === null);
+  const junk = parseFull({ demo: false, canary: { status: "healthy" }, summary: null, heartbeat: { configured: "yes", lastResult: "sent", at: "soon" }, alertMail: { lastAcceptedAt: 5 } });
+  check("…and drops malformed ones", junk !== null && !("heartbeat" in junk) && !("alertMail" in junk));
 console.log(`system health ops copy: ${passed} checks passed`);

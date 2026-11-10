@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
-import { canaryMessage, initializationMessage, ledgerMessage, maintenanceLine, opsFlagLines, parseSystemHealthStatus, rateLimitFallbackLine, rateLimitStoreMessage, schemaMessage, type SystemHealthStatus } from "./systemHealthCopy";
+import { alertMailLine, canaryMessage, heartbeatLine, initializationMessage, ledgerMessage, maintenanceLine, opsFlagLines, parseSystemHealthStatus, rateLimitFallbackLine, rateLimitStoreMessage, schemaMessage, type SystemHealthStatus } from "./systemHealthCopy";
 import { btnGhost, raised, SectionTitle } from "./adminUi";
 
 const date = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Not recorded";
@@ -47,6 +47,8 @@ export default function SystemHealthCard() {
             {opsFlagLines(health.config, health.environment).map(line => <li key={line.key} data-testid={`ops-flag-${line.key}`} className={line.alarm ? "font-semibold text-[#fca5a5]" : "text-muted"}>{line.text}</li>)}
           </ul>}
           {"rateLimitLastFallbackAt" in health && <p className="text-xs text-muted" data-testid="rate-limit-fallback">{rateLimitFallbackLine(health.rateLimitLastFallbackAt)}</p>}
+          {health.heartbeat && <p className={heartbeatLine(health.heartbeat).alarm ? "text-xs font-semibold text-[#fca5a5]" : "text-xs text-muted"} data-testid="heartbeat-line">{heartbeatLine(health.heartbeat).text}</p>}
+          {health.alertMail && <p className="text-xs text-muted" data-testid="alert-mail-line">{alertMailLine(health.alertMail.lastAcceptedAt, health.config?.alertEmail)}</p>}
         </div>}
         {health && !health.demo && <>
           <p>{ledgerMessage(health.summary)}</p>
