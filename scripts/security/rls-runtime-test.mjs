@@ -1440,6 +1440,37 @@ async function main() {
     check(!creatorNotice.error, `0073 a creator reads the Terms notice (${creatorNotice.error?.message ?? "ok"})`);
     const creatorSetsNotice = await a.rpc("set_legal_terms_notice", { p_version: "2099-01-01", p_effective_at: "2099-01-01" });
     check(/admin required/.test(creatorSetsNotice.error?.message ?? ""), `0073 a creator cannot set the Terms notice (${creatorSetsNotice.error?.message ?? "accepted"})`);
+    {
+    // 0073 (8b): the dashboard follow-ups. A creator never writes its own
+    // profile row (delivery promise), never moves another tenant's games, and
+    // reads a link's expiry but not its token.
+    const promise = await a.from("profiles").update({ delivery_days: 9 }).eq("id", A.id).select("id");
+    check(!promise.error && (promise.data?.length ?? 0) === 0, `0073 a creator cannot write its own delivery_days (${promise.error?.message ?? promise.data?.length})`);
+    const promiseRow = must(await admin.from("profiles").select("delivery_days").eq("id", A.id).single(), "0073 A's delivery promise");
+    check(promiseRow.delivery_days === null, `0073 the delivery promise is unchanged (${promiseRow.delivery_days})`);
+    const tooLong = await admin.from("profiles").update({ delivery_days: 61 }).eq("id", A.id);
+    check(tooLong.error?.code === "23514", `0073 a delivery promise over 60 days is refused by the database (${code(tooLong)})`);
+    const foreignSwitch = await a.rpc("set_active_wheel", { p_wheel: B.wheelId });
+    check(!foreignSwitch.error && foreignSwitch.data === "not_found", `0073 A cannot make B's game live (${foreignSwitch.error?.message ?? foreignSwitch.data})`);
+    const ownSwitch = await a.rpc("set_active_wheel", { p_wheel: A.wheelId });
+    check(!ownSwitch.error && ownSwitch.data === "ok", `0073 a creator makes its own game live (${ownSwitch.error?.message ?? ownSwitch.data})`);
+    const liveGames = must(await admin.from("wheels").select("id").eq("creator_id", A.id).eq("is_active", true), "0073 A's live games");
+    check(liveGames.length === 1 && liveGames[0].id === A.wheelId, `0073 exactly one game is live after the switch (${liveGames.length})`);
+    const anonSwitch = await anonClient.rpc("set_active_wheel", { p_wheel: A.wheelId });
+    check(anonSwitch.error?.code === "42501", `0073 anon cannot call set_active_wheel (${deniedCode(anonSwitch)})`);
+    const foreignEmptyDelete = await a.rpc("delete_wheel", { p_wheel: B.wheelId, p_only_if_empty: true });
+    check(!foreignEmptyDelete.error && foreignEmptyDelete.data === "not_found", `0073 A cannot remove B's game as "empty" (${foreignEmptyDelete.error?.message ?? foreignEmptyDelete.data})`);
+    const playedEmptyDelete = await a.rpc("delete_wheel", { p_wheel: A.wheelId, p_only_if_empty: true });
+    check(!playedEmptyDelete.error && playedEmptyDelete.data === "not_empty", `0073 a game with prizes is not removed as "empty" (${playedEmptyDelete.error?.message ?? playedEmptyDelete.data})`);
+    const expiryRead = await a.from("fan_passes").select("id, expires_at").eq("id", A.passId);
+    check(!expiryRead.error && expiryRead.data?.length === 1, `0073 a creator reads its link's expiry (${expiryRead.error?.message ?? expiryRead.data?.length})`);
+    const tokenRead = await a.from("fan_passes").select("token").eq("id", A.passId);
+    check(tokenRead.error?.code === "42501", `0073 the link token stays unreadable to a session (${code(tokenRead)})`);
+    const forgedNotice = await a.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
+    check(forgedNotice.error?.code === "42501", `0073 a session cannot write a notice (${code(forgedNotice)})`);
+    const queueShape = await a.rpc("creator_redemption_queue", { p_limit: 1 });
+    check(!queueShape.error && (queueShape.data ?? []).every((row) => "actor_id" in row && "fan_id" in row), `0073 the queue carries fan_id and actor_id (${queueShape.error?.message ?? "ok"})`);
+    }
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
     // users or seeded tenant data (FK-cascaded from the user) are left behind.
