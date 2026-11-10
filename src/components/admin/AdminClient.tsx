@@ -16,6 +16,7 @@ import StuckDeletions from "./StuckDeletions";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
 import AdminLookup from "./AdminLookup";
+import AdminLegalNotice from "./AdminLegalNotice";
 import LoadFailed from "@/components/dashboard/LoadFailed";
 import { LoadError, loadFailureKind } from "@/lib/hooks/loadJson";
 import AdminReports from "./AdminReports";
@@ -418,6 +419,7 @@ export default function AdminClient() {
         <AdminAgencies onSuspendOwner={(id) => setPinnedAccount(id)} />
         <SystemHealthCard commit={commit} />
         <AdminLookup />
+        <AdminLegalNotice />
         <StuckDeletions />
         <AdminErrors />
         <AdminActivity />

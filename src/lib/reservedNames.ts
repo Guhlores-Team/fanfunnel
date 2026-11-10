@@ -3,9 +3,12 @@
 // a person picks: a creator's display name, a public page slug and a fan's
 // leaderboard board name. Pure: safe in client bundles, routes and tests.
 //
-// The database mirrors this list in public._reserved_name() (0073), which
-// set_display_name and set_public_profile call. Change the list here and
-// there in the same change; reservedNames.test.ts pins the exported words.
+// The database has its own, simpler rule in public._reserved_name() (0073),
+// which set_display_name, set_public_profile and the profiles trigger call.
+// This rule is at least as strict as that one in every case, so a name the
+// route accepts is never refused by the database afterwards;
+// reservedNames.test.ts runs a port of the SQL rule (and the SQL's own word
+// lists, read from the migration) against this one to keep it that way.
 
 /**
  * Words that may not appear ANYWHERE in a name (after normalisation): the
@@ -18,7 +21,7 @@ export const RESERVED_BRAND_WORDS = ["fanfunnel", "easysimplesites"] as const;
  * Words a name may not BE (after normalisation), alone, with digits around
  * them ("admin1", "2support") or joined to another word from this list
  * ("supportteam", "official_mod", "help.desk"). Ordinary names that merely
- * contain one ("supportive_fan", "modesty") are fine.
+ * contain the letters ("supportive_fan", "modesty") are fine.
  */
 export const RESERVED_WORDS = [
   "admin", "admins", "administrator", "administrators", "sysadmin", "root", "system", "owner", "operator",
@@ -26,7 +29,19 @@ export const RESERVED_WORDS = [
   "security", "safety", "trustandsafety", "trustsafety", "abuse", "compliance", "legal", "privacy", "dmca",
   "billing", "payment", "payments", "account", "accounts", "verify", "verified", "verification",
   "bot", "noreply", "webmaster", "postmaster", "hostmaster", "info", "contact", "service", "customerservice",
+  "api", "www", "mail", "terms",
 ] as const;
+
+/**
+ * Words that reserve a name when they appear as a SEPARATE word in it
+ * ("Alice Support", "jane-official", "mod_dan"), the database's word rule.
+ * The first twelve are the SQL list; the plurals are this side's addition.
+ */
+export const RESERVED_WORD_TOKENS = [
+  "admin", "administrator", "support", "staff", "official", "moderator", "mod", "security", "billing", "abuse", "system", "root",
+  "admins", "administrators", "moderators", "mods",
+] as const;
+const TOKENS = new Set<string>(RESERVED_WORD_TOKENS);
 
 const RESERVED = new Set<string>(RESERVED_WORDS);
 
@@ -93,6 +108,27 @@ export function nameKeys(raw: string): string[] {
   return [...keys];
 }
 
+/**
+ * The name's separate words, split the two ways the database can split them
+ * (on anything that is not an ASCII letter or digit, and on anything that is
+ * not a letter or digit in any script), plus the same with accents and
+ * look-alike letters folded.
+ */
+export function nameWords(raw: string): string[] {
+  const lower = raw.toLowerCase();
+  let folded = "";
+  for (const ch of raw.normalize("NFKD").toLowerCase()) {
+    if (/\p{M}/u.test(ch)) continue;
+    folded += CONFUSABLES[ch] ?? ch;
+  }
+  const words = new Set<string>();
+  for (const text of [lower, folded]) {
+    for (const w of text.split(/[^a-z0-9]+/)) if (w) words.add(w);
+    for (const w of text.split(/[^\p{L}\p{N}]+/u)) if (w) words.add(w);
+  }
+  return [...words];
+}
+
 /** Whether `key` is one reserved word or several joined together (up to three). */
 function composedOfReserved(key: string, depth = 3): boolean {
   if (RESERVED.has(key)) return true;
@@ -105,11 +141,13 @@ function composedOfReserved(key: string, depth = 3): boolean {
 
 /**
  * Whether a display name, slug or board name is reserved: it names the
- * operator or its domain anywhere, or is a staff word (alone, digit-padded or
- * joined to another), read plainly or through leet and look-alike letters.
+ * operator or its domain anywhere, has a staff word as one of its words, or
+ * is a reserved word (alone, digit-padded or joined to another), read plainly
+ * or through leet and look-alike letters.
  */
 export function isReservedName(raw: string | null | undefined): boolean {
   if (typeof raw !== "string" || !raw.trim()) return false;
+  if (nameWords(raw).some((word) => TOKENS.has(word))) return true;
   for (const key of nameKeys(raw)) {
     if (RESERVED_BRAND_WORDS.some((brand) => key.includes(brand))) return true;
     if (composedOfReserved(key)) return true;

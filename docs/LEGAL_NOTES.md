@@ -233,17 +233,28 @@ once their thresholds are met.
   includes the version, so a version bump without a fresh hash fails too.
   `src/lib/legalTermsVersion.test.ts` separately fails while the database's
   `legal_terms_version()` differs, and `e2e/economic-fixtures.mjs` must carry the same version.
-- Material change (the 30-day promise, TS-06): at least `LEGAL.changeNoticeDays` before the date,
-  set `LEGAL.upcoming = { version, effectiveDate, summary }`; `LegalChangeNotice` then shows one line
-  on every fan page footer (through `LegalLinks`) and at the top of the dashboard until the end of
-  that day (UTC), and e-mail creators the new text (manual step; no mail job exists). On the date:
-  publish the new text, move `version`/`effectiveDate`/`textHash` and the migration, and set
-  `upcoming` back to null. `activeLegalChangeNotice()` never shows a notice for the version already
-  in force or after its date, so a forgotten `upcoming` cannot mislead. Whether an admin-set notice
-  (a `legal_change_notices` table) is wanted instead of a deploy is an owner call; the SQL is in the
-  batch-7 trust report.
-- The Terms and Privacy "Changes" sections now describe exactly this (notice on the spin page and in
-  the dashboard, e-mail to creators), not more. Lawyer question 11/27.
+- The one exception: a version that has never reached production (never merged to `main`) has not been
+  accepted by anyone, so its text may still be corrected under the same version; set `textHash` again
+  and say so in the commit. Once a version has shipped, the rule above has no exceptions.
+- Material change (the 30-day promise, TS-06): at least `LEGAL.changeNoticeDays` before the date, an
+  admin announces it in **Admin › Terms change notice** (new version + effective date; migration 0073
+  `legal_terms_notice`, `set_legal_terms_notice()`, admin on two-factor only, recorded in Activity as
+  `legal.notice`). From then until the end of that day (UTC) `LegalChangeNotice` shows one line on
+  every fan page footer (through `LegalLinks`) and at the top of the dashboard, read from
+  `GET /api/legal-notice`, and the same action e-mails every active, approved creator
+  (`src/lib/account/legalNoticeMail.ts`; the card says how many were sent, and tells the admin to
+  e-mail by hand when account mail is not configured). The form refuses a date less than 30 days out
+  unless "required by law or needed for security" is ticked, which is the exception the Terms state.
+  On the date: publish the new text, move `version`/`effectiveDate`/`textHash` and the migration; the
+  notice stops by itself (`activeLegalChangeNotice()` never shows one for the version in force or
+  after its date), and Withdraw clears it. `LEGAL.upcoming` in code is the fallback when the
+  database holds no notice.
+- The Terms and Privacy "Changes" sections describe exactly this (notice on the spin page and in the
+  dashboard, e-mail to creators), not more. Lawyer question 11/27.
+- Consent evidence (TS-05, 0073 `fan_consent_evidence`): the fan's age/Terms tick is stored with
+  salted hashes of the IP address and user agent it came from, readable by admins only. The Privacy
+  Policy lists it ("evidence of that confirmation") and its retention (with the fan record). Lawyer
+  question 18.
 
 ## Done in the code (kept here for the record)
 

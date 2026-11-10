@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LEGAL, acceptedCurrentTerms, activeLegalChangeNotice, fanNeedsAck, formatLegalDate } from "./legal";
+import { LEGAL, acceptedCurrentTerms, activeLegalChangeNotice, fanNeedsAck, formatLegalDate, legalNoticeInputError } from "./legal";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -80,8 +80,20 @@ check("an older version never shows", activeLegalChangeNotice(new Date("2000-01-
 check("a malformed date never shows", activeLegalChangeNotice(new Date("2000-01-01T00:00:00Z"), { ...later, effectiveDate: "soon" }) === null);
 if (LEGAL.upcoming) {
   check("an announced change is for a later version", LEGAL.upcoming.version > LEGAL.version);
-  check("an announced change has a date and a summary", /^\d{4}-\d{2}-\d{2}$/.test(LEGAL.upcoming.effectiveDate) && LEGAL.upcoming.summary.length > 0);
+  check("an announced change has a date", /^\d{4}-\d{2}-\d{2}$/.test(LEGAL.upcoming.effectiveDate));
 }
+// The admin's announcement: a real later version, a real date, 30 days ahead
+// unless the law or security requires sooner, never in the past.
+const today = new Date("2026-11-10T12:00:00Z");
+check("a later version 30 days ahead is accepted", legalNoticeInputError("2026-12-15", "2026-12-10", { today }) === null);
+check("exactly 30 days ahead is accepted", legalNoticeInputError("2026-12-10", "2026-12-10", { today }) === null);
+check("29 days ahead is too soon", legalNoticeInputError("2026-12-09", "2026-12-09", { today }) === "too_soon");
+check("…unless the law or security requires it", legalNoticeInputError("2026-12-09", "2026-11-12", { today, sooner: true }) === null);
+check("never in the past, even when urgent", legalNoticeInputError("2026-12-09", "2026-11-09", { today, sooner: true }) === "date_in_past");
+check("the version must be later than the one in force", legalNoticeInputError(LEGAL.version, "2027-01-31", { today }) === "version_not_later" && legalNoticeInputError("2020-01-01", "2027-01-31", { today }) === "version_not_later");
+check("the version must be a real date", legalNoticeInputError("2027-02-30", "2027-03-31", { today }) === "invalid_version" && legalNoticeInputError("soon", "2027-03-31", { today }) === "invalid_version" && legalNoticeInputError(null, "2027-03-31", { today }) === "invalid_version");
+check("the date must be a real date", legalNoticeInputError("2027-03-01", "2027-13-01", { today }) === "invalid_date" && legalNoticeInputError("2027-03-01", 20270301, { today }) === "invalid_date");
+
 check("the team reply label is a decision switch with a label", typeof LEGAL.teamReplyLabel.enabled === "boolean" && LEGAL.teamReplyLabel.label.length > 0);
 
 // Public-text rule: nothing a fan reads on the legal pages or in the change
