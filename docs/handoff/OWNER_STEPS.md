@@ -4,6 +4,15 @@ Tick each box as you go. "Me" = the agent does it; "You" = only you can (account
 Never paste passwords or API keys into chat — put keys straight into the service that needs them.
 Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; incidents are `docs/RUNBOOK.md`.
 
+**Order from here to the live site** (each stage below has the details and links):
+1. Stages 1–3 now (free settings, about an hour in total).
+2. Stage 4 this week: buy the domain, Supabase Pro, Vercel Pro, the support inbox.
+3. Stage 5: keys and alerts in Vercel.
+4. Stage 7: test the Preview with the script below, and tell me what you find.
+5. Stage 6 in parallel: Terms/Privacy read-through, lawyer, decisions.
+6. Stage 8 (together): the go-live pre-check, then you press Merge; the live database updates itself after your approval.
+7. Stage 9 questions before Stage 8.
+
 ## Stage 1 — Lock down your accounts (free, ~30 min, do now)
 
 - [ ] 1. **Gmail 2-step verification** (your login email for everything)
@@ -64,14 +73,17 @@ Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; in
 
 - [ ] 15. **Domain** — pick one (e.g. `fanfunnel.app` $9.99 then $15/yr). Buy at https://vercel.com/domains,
       or tell me the exact domain and I'll buy it through Vercel after you confirm the price.
-      Then: turn on auto-renew. (Me: connect it to the site, DNS, Resend verification, anti-spam records,
-      Supabase URLs, email sender, Terms/Privacy contact.)
+      Then: turn on auto-renew. Connect it with `docs/CUSTOM_DOMAIN.md` (seven short steps: Vercel domain,
+      DNS, the old address redirecting, `NEXT_PUBLIC_SITE_URL`, Supabase LIVE Site URL and Redirect URLs,
+      e-mail sender, the check). Tell me the domain: I update the security file, the contact address and the docs.
+      Switch before real creators and fans arrive: sign-ins, installed apps and push belong to one address.
 - [ ] 16. **Supabase Pro** for the live project (~$25/mo — daily backups, no auto-pause):
       https://supabase.com/dashboard/org/gmsididujlbybxtzhgxl/billing → Upgrade.
       Optional add-on: Point-in-Time Recovery (undo to any minute).
 - [ ] 17. **Vercel Pro** (~$20/mo/member — Hobby is non-commercial only):
       https://vercel.com/easy-simple-sites → Settings → Billing → Upgrade to Pro.
-- [ ] 18. **support@ inbox** on the new domain — free forwarding to Gmail (e.g. https://improvmx.com),
+- [ ] 18. **support@ inbox** (blocks go-live: today `support@easysimplesites.org` has no mail records and bounces, and it is
+      the only contact on the Terms, Privacy, 404 and security pages) on the new domain — free forwarding to Gmail (e.g. https://improvmx.com),
       or Google Workspace (~$7/mo). (Me: add the DNS records once you pick.)
 
 ## Stage 5 — Keys & alerts (after the monitoring feature lands)
@@ -234,7 +246,7 @@ Batch-6 Preview re-test list → steps: 1→25, 2→26, 3→29–30, 4→35, 5�
 ## Stage 8 — Go-live day (together)
 
 - [ ] 27. You (with me on the call): run `scripts/golive/carry-over.mjs` as a dry run, review it together, then run it with `--apply` and type the confirmation line yourself. I never hold the live database password.
-- [ ] 27a. You: the merge-day checklist in `docs/GO_LIVE.md` §5 (today's LIVE backup listed, the read-only `supabase migration list` of LIVE shows 0001–0038, the multi-agency SQL returns no rows, the two 0073 checks pass, Production keys complete, the Deployment Check proven on a code-only merge).
+- [ ] 27a. You: the merge-day checklist in `docs/GO_LIVE.md` §5 (today's LIVE backup listed, the read-only `supabase migration list` of LIVE shows 0001–0038, the go-live pre-check (`scripts/golive/live-precheck.sql`, GO_LIVE §5) shows only `ok`, Production keys complete, the Deployment Check proven on a code-only merge).
 - [ ] 28. **You** merge the pull request into `main` (the GitHub "Merge" button, on your decision; I prepare it and never merge). The merge starts the `db-migrations-production` job, which waits for **your approval** in the `production` environment, verifies the backup, applies 0039–0073 to live and reads the history back. Nobody applies live database changes by hand; this is the one story (`docs/GO_LIVE.md` §5 and §8 say the same).
 - [ ] 28a. Within the hour after Vercel promotes the new site: Admin › System health → **Run checks now** → initialize the reward canary; schema "as this release expects".
 - [ ] 29. You + me: the **LIVE smoke** = `docs/GO_LIVE.md` §9 (no TEST badge, sign in, one controlled fan link and play, a reset e-mail, the support test mail, the monitors). MANUAL-CHECKLIST §4 is the TEST smoke and stays on the Preview.

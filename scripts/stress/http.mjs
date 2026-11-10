@@ -158,8 +158,15 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       report.check(ok.length === replays && ids.size === 1, "every replay answers 200 with the same receipt", [...ids].slice(0, 2));
       report.check(ok.filter(r => r.value.json?.replayed !== true).length === 1 && ok.filter(r => r.value.json?.replayed === true).length === replays - 1, "exactly one response is the original, the rest are marked replayed");
       report.check(ok.every(r => r.value.json?.spinsRemaining === 2), "one debit: balance 3 -> 2 on every reply");
+      // RS-02: the play route reports a request id reused for another intent as unsettled (503 spin_pending,
+      // Retry-After); the status route then names it a conflict (409), which the fan page explains. Only a
+      // tampered request can do this, so its 503 is expected and kept out of the whole-run 5xx rule.
+      const before5xx = stats.serverErrors.length;
       const conflict = await spin(fan, { requestId, clientSeed: "another-seed", from: nextIp() });
-      report.check(conflict.status === 409, "the same requestId with another clientSeed is a 409", conflict.status);
+      report.check(conflict.status === 503 && conflict.json?.error === "spin_pending", "the same requestId with another clientSeed is an unsettled 503, never a second play", `${conflict.status} ${conflict.json?.error}`);
+      if (conflict.status === 503) stats.serverErrors.splice(before5xx, 1);
+      const named = await call("POST", "/api/spin/status", { body: { token: fan.token, requestId, clientSeed: "another-seed" }, ip: fan.ip });
+      report.check(named.status === 409 && named.json?.status === "conflict", "…and /api/spin/status names it a conflict", `${named.status} ${named.json?.status}`);
       const st = await timed(statusSeries, () => call("POST", "/api/spin/status", { body: { token: fan.token, requestId, clientSeed: "stress" }, ip: fan.ip }));
       report.check(st.status === 200 && st.json?.status === "committed" && st.json?.result?.shareId === [...ids][0], "/api/spin/status recovers the committed receipt", st.json?.status);
       const absent = await call("POST", "/api/spin/status", { body: { token: fan.token, requestId: randomUUID(), clientSeed: "stress" }, ip: fan.ip });
@@ -264,17 +271,25 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       report.check(noted.status === 200 && detail.status === 200 && typeof detail.json?.notes === "string" && detail.json.notes.includes("<img src=x onerror=alert(1)>"), "notes and tags round-trip verbatim through JSON (no server-side mangling)");
       const page = await call("GET", `/spin/${encodeURIComponent(created.json.token)}`, { ip: nextIp() });
       report.check(page.status === 200 && !page.text.includes("<img src=x onerror") && !/onerror=alert/.test(page.text.replace(/&lt;img src=x onerror=alert\(1\)&gt;|\\u003cimg src=x onerror=alert\(1\)\\u003e|\\"<img src=x onerror=alert\(1\)>\\"/g, "")), "the fan page renders the injected name escaped (no raw <img onerror> in the HTML)", page.status);
-      const board = await call("GET", "/api/leaderboard/acc-you", { ip: nextIp() });
+      const board = await call("GET", "/api/leaderboard/demo-creator", { ip: nextIp() });
       report.check(board.status === 200 || board.status === 404, "the public leaderboard still answers", board.status);
       const traversals = [["GET", "/api/demo/creator-media/..%2F..%2Fpackage.json"], ["GET", "/api/demo/creator-media/../../package.json"], ["GET", "/api/share-cards/..%2f..%2fetc%2fpasswd"], ["GET", "/c/..%2f..%2f.env"], ["DELETE", "/api/account/media/..%2F..%2F..%2Fetc%2Fpasswd"], ["GET", "/spin/%2e%2e%2f%2e%2e%2fetc%2fpasswd"], ["GET", "/_next/static/../../package.json"], ["GET", "/api/public/wheel/..%2f..%2fadmin"], ["GET", "/spin/%E0%A4%A"], ["GET", "/api/share-cards/%00"]];
       const trav = await parallel(traversals, 5, ([m, p]) => call(m, p, { raw: true, ip: nextIp() }));
       report.number("traversal_statuses", trav.map((r, i) => `${traversals[i][1]} -> ${r.value.status}`));
       // Demo mode serves the one demo creator for ANY slug / creator id on /c/ and the public teaser (the mock ignores the id); with Supabase these are keyed lookups. Everything else must be 400/404.
       const demoAnyId = p => /^\/(c|api\/public\/wheel)\//.test(p);
-      report.check(trav.every((r, i) => ([400, 404].includes(r.value.status) || (r.value.status === 200 && demoAnyId(traversals[i][1]))) && !/"name": "fanfunnel"|root:x:0|SUPABASE/.test(r.value.text)), "every traversal/encoding probe is a 400/404 (or the demo's own page/teaser) and never serves a file", trav.map(r => r.value.status));
+      // WA-02: an unknown fan link answers 307 to the branded 404 at /not-found/<kind>/<id>.
+      const toNotFound = r => r.status === 307 && (r.headers.get("location") ?? "").replace(base, "").startsWith("/not-found/");
+      report.check(trav.every((r, i) => ([400, 404].includes(r.value.status) || toNotFound(r.value) || (r.value.status === 200 && demoAnyId(traversals[i][1]))) && !/"name": "fanfunnel"|root:x:0|SUPABASE/.test(r.value.text)), "every traversal/encoding probe is a 400/404, the branded not-found redirect (or the demo's own page/teaser) and never serves a file", trav.map(r => r.value.status));
       const guesses = scale(300), guessSeries = [];
       const guessed = await parallel(Array.from({ length: guesses }), 40, (_, i) => timed(guessSeries, () => call("GET", `/spin/${randomUUID().replaceAll("-", "")}`, { ip: ip(300_000 + i) })));
-      report.check(guessed.every(r => r.value.status === 404), `${guesses} guessed tokens all 404`, codes(guessed));
+      report.check(guessed.every(r => r.value.status === 404 || toNotFound(r.value)), `${guesses} guessed tokens all end on the branded 404`, codes(guessed));
+      const landing = guessed.find(r => toNotFound(r.value));
+      if (landing) {
+        const target = (landing.value.headers.get("location") ?? "").replace(base, "");
+        const page404 = await call("GET", target, { ip: nextIp() });
+        report.check(page404.status === 404 && /\/not-found\/spin\//.test(target), "the branded not-found page answers 404", `${page404.status} ${target.slice(0, 60)}`);
+      }
       // Mass reports and error reports from rotating addresses stop at the global/per-IP caps.
       const reports = await parallel(Array.from({ length: 30 }), 10, (_, i) => call("POST", "/api/report", { body: { token: legit.token, reason: "spam", detail: `r${i}` }, ip: ip(400_000 + (i % 3)) }));
       const rt = codes(reports); report.number("report_statuses", rt);
@@ -313,15 +328,15 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       // The page load is timed (as before); the follow-up polls come after it, inside the same one-minute windows.
       const loads = await parallel(fans, fansOnPage, (fan, i) => Promise.all([
         timed(page, () => call("GET", `/spin/${encodeURIComponent(fan.token)}`, { ip: natIp[i % 2] })),
-        fanRead(fan, i, "/api/recent-wins/acc-you?k=0", wins).then(v => [v]),
-        fanRead(fan, i, "/api/leaderboard/acc-you?k=0", board).then(v => [v]),
+        fanRead(fan, i, "/api/recent-wins/demo-creator?k=0", wins).then(v => [v]),
+        fanRead(fan, i, "/api/leaderboard/demo-creator?k=0", board).then(v => [v]),
         timed(checkins, () => call("POST", "/api/fan/checkin", { body: { token: fan.token }, ip: natIp[i % 2] })),
       ]));
       const followUps = [];
       await parallel(fans, 50, async (fan, i) => {
         const l = loads[i].value;
-        l[1].push(await fanRead(fan, i, "/api/recent-wins/acc-you?k=1", followUps), await fanRead(fan, i, "/api/recent-wins/acc-you?k=2", followUps));
-        l[2].push(await fanRead(fan, i, "/api/leaderboard/acc-you?k=1", followUps));
+        l[1].push(await fanRead(fan, i, "/api/recent-wins/demo-creator?k=1", followUps), await fanRead(fan, i, "/api/recent-wins/demo-creator?k=2", followUps));
+        l[2].push(await fanRead(fan, i, "/api/leaderboard/demo-creator?k=1", followUps));
       });
       const per = (k, many = false) => tally(loads.flatMap(r => (many ? r.value[k] : [r.value[k]]).map(value => ({ ok: true, value }))), v => String(v.status));
       report.number("fan_page_statuses", per(0)); report.number("recent_wins_statuses", per(1, true)); report.number("leaderboard_statuses", per(2, true)); report.number("checkin_statuses", per(3));
@@ -340,7 +355,7 @@ export async function runHttpScenarios(report, { quick = false, only = null } = 
       // forged tokens, and an address sending no token are all still capped; a neighbour's token on the flooded address is not.
       const flood = async (path, n, headersFor) => { const from = nextIp(); const rs = await parallel(Array.from({ length: n }), 50, (_, i) => call("GET", path, { ip: from, headers: headersFor(i) })); return { from, ok: rs.filter(r => r.value.status === 200).length, limited: rs.filter(r => r.value.status === 429).length, other: rs.filter(r => ![200, 429].includes(r.value.status)).length }; };
       const capped = {};
-      for (const [name, path, perClient, perAddress] of [["leaderboard", "/api/leaderboard/acc-you", 60, 300], ["recent_wins", "/api/recent-wins/acc-you", 120, 600]]) {
+      for (const [name, path, perClient, perAddress] of [["leaderboard", "/api/leaderboard/demo-creator", 60, 300], ["recent_wins", "/api/recent-wins/demo-creator", 120, 600]]) {
         const token = randomUUID().replaceAll("-", ""), one = await flood(path, perClient + 40, () => ({ "x-fan-token": token }));
         const neighbour = await call("GET", path, { ip: one.from, headers: { "x-fan-token": randomUUID().replaceAll("-", "") } });
         const rotating = await flood(path, perAddress + 100, () => ({ "x-fan-token": randomUUID().replaceAll("-", "") }));

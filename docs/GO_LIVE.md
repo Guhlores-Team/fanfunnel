@@ -324,23 +324,13 @@ establish ordering; the Deployment Check above does, once configured.
 
   - **No rows** ("Success. No rows returned"): this step is done.
   - **One or more rows**: stop, do not merge. Each row is an account (`owner_id`) and how many agencies it owns. Contact that owner, agree which agency they keep, and with their approval merge the extra agencies into it or remove them. Then run the check again, and continue only when it returns no rows.
-- [ ] **OWNER**: Before any merge that brings migration 0073, run two more read-only checks on LIVE (same place: **SQL Editor**, paste, **Run**). Neither changes anything.
+- [ ] **OWNER**: Before any merge that brings migration 0073, run the **go-live pre-check** on TEST, then on LIVE. It only reads; it changes nothing.
+  1. Open the file [`scripts/golive/live-precheck.sql`](../scripts/golive/live-precheck.sql) on GitHub, press the copy button (top right of the file).
+  2. Open the SQL Editor of the project: TEST https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/sql/new, LIVE https://supabase.com/dashboard/project/ttlogfmogcccwiraaoae/sql/new
+  3. Paste, press **Run**. One table comes back: `check`, `rows_found`, `verdict`.
+  - **Every verdict starts with `ok`** (or `ok (not in this database yet)`): this step is done.
+  - **Any verdict starts with `STOP`**: do not merge. Copy that row to the agent. It covers the multi-agency check above, negative balances, duplicate access requests, over-long text that 0073 would leave unprotected, and anything in the database the final 0073 check would refuse.
 
-  ```sql
-  select conname, convalidated from pg_constraint
-  where conname in ('fan_passes_spins_granted_total_check','fans_spins_granted_total_check',
-    'fans_rl_count_check','prizes_stock_check','prizes_cost_cents_check',
-    'fan_passes_spins_remaining_check','fans_spins_remaining_check');
-  ```
-
-  - **Before 0039–0072 are on LIVE** this returns fewer than seven rows; that is expected, the go-live run creates them. What matters is that no listed row shows `f`.
-  - **A row with `convalidated = f`**: stop. An old ledger row breaks that rule (a negative balance, stock or cost); 0073 re-asserts the rule and would stop on it. Tell the agent which name showed `f`.
-
-  ```sql
-  select profile_id, count(*) from public.creator_applications group by 1 having count(*) > 1;
-  ```
-
-  - **No rows**: done. **One or more rows**: stop, do not merge. 0073 allows one application per account; each row is an account with several. Decide with the agent which one stays.
 - [ ] **AGENT**: Replay caveat for 0073. `supabase/schema.sql` rebuilds a database from nothing and is safe on an empty one. Replaying it over a database that already holds batch-7 creator notices (`agency_dissolved`, `agency_owner_suspended`, `game_unlock_request`) fails where 0071 re-adds its narrower notice-kind rule. Never replay `schema.sql` or older migrations over TEST or LIVE; the workflow's `db push` applies only what is missing.
 - [ ] **OWNER + AGENT**: 0072 ends with a check that stops it (nothing is applied) if a browser role (`anon`, or `authenticated` outside the reviewed list in the migration header) can still execute a SECURITY DEFINER function on LIVE; the error names each one. TEST showed one such drift (`org_add_creator`), which 0072 revokes itself. If LIVE names another, compare it with the migrations before deciding; do not widen the list to make it pass. Leaked-password protection is a Supabase Auth setting the owner turns on in TEST and LIVE (Authentication, Settings); no migration covers it.
 - [ ] **OWNER**: **One story on who applies LIVE migrations (batch 7, OPS3-03 D7):** the workflow does, not a person. The owner merges the PR, then approves the `db-migrations-production` run in the `production` environment; that run verifies a LIVE backup, runs the pinned CLI's `supabase db push` in strict numeric order and reads the history back. Nobody runs `db push` from a laptop, nobody pastes SQL, and the agent never holds LIVE credentials. The only hand-run command on LIVE before merge day is the read-only `supabase migration list --linked` in the merge-day checklist above (and the reconcile SQL if it shows a gap). This runbook is not an instruction to execute anything now.
