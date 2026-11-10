@@ -1,7 +1,7 @@
 "use client";
 
 import type { HappyHourStatus } from "@/lib/data/types";
-import { useNow } from "@/lib/hooks/useNow";
+import { useServerNow } from "./LinkPauseProvider";
 
 /** A time-boxed "rare odds boosted" banner shown to fans during a happy hour. */
 export default function HappyHourBanner({ status }: { status: HappyHourStatus }) {
@@ -13,7 +13,8 @@ function ActiveBanner({ endsAt, multiplier }: { endsAt: string; multiplier: numb
   // The countdown is clock-driven, so the server HTML and the hydration render
   // show a placeholder (`now` is null) and the live value fills in right after.
   // Computing it from Date.now() during render made SSR and client text differ.
-  const now = useNow(1000);
+  // RF-13: the server's clock, so a phone that is minutes off agrees with the server.
+  const now = useServerNow(1000);
   const left = now === null ? null : remaining(endsAt, now);
 
   if (left !== null && left <= 0) return null;

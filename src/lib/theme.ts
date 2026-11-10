@@ -121,9 +121,42 @@ export function brandText(color: string, min = 4.5, surface: string = APP_BASE):
  */
 export function brandVars(color: string | null | undefined, surface?: string): CSSProperties {
   const safe = parseHex(color) ? (color as string) : DEFAULT_BRAND;
+  const ui = brandUi(safe, surface);
   return {
     ["--brand"]: safe,
-    ["--brand-ink"]: readableInk(safe),
+    // The ink sits on the fill that is actually painted (`--brand-ui`).
+    ["--brand-ink"]: readableInk(ui),
     ["--brand-text"]: brandText(safe, 4.5, surface),
+    ["--brand-ui"]: ui,
   } as CSSProperties;
+}
+
+/** WCAG 1.4.11: non-text UI (focus rings, borders, button fills) needs 3:1 against its surface. */
+export const UI_CONTRAST_MIN = 3;
+
+/**
+ * PA-01: the brand colour as it may be used for NON-TEXT UI on the page
+ * surface: focus rings, input borders, the SPIN button fill, the wheel hub and
+ * the visit-glow rings. A near-black brand on the near-black page gave a
+ * 1.0:1 focus ring (keyboard focus invisible) and a button that looked
+ * disabled; this pushes such a colour toward white until it reaches 3:1,
+ * and leaves every ordinary brand colour untouched.
+ */
+export function brandUi(color: string, surface: string = APP_BASE): string {
+  return brandText(color, UI_CONTRAST_MIN, surface);
+}
+
+/**
+ * For the brand-colour API: whether a colour can be painted as UI on the
+ * page as is. `uiColor` is what the fan page will actually paint when it
+ * cannot (the colour pushed to 3:1), so the creator can be told honestly.
+ */
+export function checkBrandColor(color: string, surface: string = APP_BASE): { ok: boolean; ratio: number; uiColor: string; reason: string | null } {
+  const rgb = parseHex(color);
+  if (!rgb) return { ok: false, ratio: 0, uiColor: DEFAULT_BRAND, reason: "not a hex colour" };
+  const base = parseHex(surface) ?? parseHex(APP_BASE)!;
+  const ratio = Math.round(contrastRatio(rgb, base) * 100) / 100;
+  const uiColor = brandUi(toHex(rgb), surface);
+  const ok = ratio >= UI_CONTRAST_MIN;
+  return { ok, ratio, uiColor, reason: ok ? null : `too dark on the dark theme (${ratio}:1; buttons and focus rings need ${UI_CONTRAST_MIN}:1), fans will see ${uiColor}` };
 }

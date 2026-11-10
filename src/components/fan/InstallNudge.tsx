@@ -125,7 +125,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
           <button
             type="button"
             onClick={install}
-            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             Install
           </button>
@@ -135,7 +135,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
             onClick={() => setGuideOpen((o) => !o)}
             aria-expanded={guideOpen}
             aria-controls={guideId}
-            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="btn-brand inline-flex min-h-11 items-center justify-center rounded-xl px-5 text-sm font-extrabold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             How
           </button>
@@ -143,7 +143,7 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
         <button
           type="button"
           onClick={dismiss}
-          className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 text-sm font-semibold text-ink transition-colors hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+          className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 text-sm font-semibold text-ink transition-colors hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
         >
           Not now
         </button>

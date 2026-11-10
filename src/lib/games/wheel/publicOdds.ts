@@ -30,3 +30,19 @@ export function formatChance(chance: number): string {
   if (pct < 0.001) return "<0.001%";
   return `${Number(pct.toFixed(3)).toString()}%`;
 }
+
+/**
+ * WF-13 / RF-09: the chance as a fan reads it. One decimal at most for
+ * everyday odds ("40.4%", "5%"), two significant decimals below 1%, and a
+ * floor instead of "0%" for a real but tiny chance. The exact table stays on
+ * the verify page.
+ */
+export function formatFanChance(chance: number): string {
+  if (!(chance > 0)) return "0%";
+  const pct = chance * 100;
+  if (pct < 0.001) return "<0.001%";
+  if (pct < 0.1) return `${Number(pct.toPrecision(2))}%`;
+  if (pct < 1) return `${Number(pct.toFixed(2))}%`;
+  return `${Number(pct.toFixed(1))}%`;
+}
+

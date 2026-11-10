@@ -56,7 +56,7 @@ export function GlowMilestoneToast({
           type="button"
           onClick={onDone}
           aria-label="Dismiss"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted transition hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted transition hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
         >
           <span aria-hidden="true">×</span>
         </button>

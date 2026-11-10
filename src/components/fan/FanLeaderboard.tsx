@@ -5,6 +5,7 @@ import { useFetch } from "@/lib/hooks/useFetch";
 import { FAN_CLIENT_HEADER } from "@/lib/api/fanClientHeader";
 import { blockedFanMessage } from "./blockedFan";
 import { spinsText } from "@/lib/format";
+import { hasOwn } from "@/lib/fan/uuid";
 
 interface Entry {
   rank: number;
@@ -42,7 +43,7 @@ async function postConsent(token: string, optIn: boolean, handle?: string): Prom
   });
   const raw: unknown = await response.json().catch(() => null);
   const value = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as { ok?: unknown; error?: unknown } : null;
-  return response.ok && value !== null && Object.hasOwn(value, "ok") && value.ok === true
+  return response.ok && value !== null && hasOwn(value, "ok") && value.ok === true
     ? { ok: true }
     : { ok: false, ...(typeof value?.error === "string" ? { error: value.error } : {}) };
 }
@@ -74,7 +75,7 @@ export function LeaderboardWithdrawal({ token, onWithdrawn }: { token: string; o
     <section data-testid="leaderboard-withdrawal" aria-label="Leaderboard privacy" className="w-full rounded-xl border border-line bg-surface/40 px-3 py-3">
       <p className="text-sm text-muted">You can withdraw your leaderboard consent here.</p>
       <button type="button" onClick={() => void withdraw()} disabled={busy || done} data-testid="leaderboard-withdraw"
-        className="mt-2 min-h-11 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:opacity-60">
+        className="mt-2 min-h-11 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)] disabled:opacity-60">
         {busy ? "Removing…" : "Remove me from the leaderboard"}
       </button>
       <p role={error ? "alert" : "status"} aria-live="polite" className="mt-2 text-xs text-muted">

@@ -143,14 +143,14 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
                   type="button"
                   onClick={() => void openReward(g.instantWins[0], g.label)}
                   data-testid="view-reward"
-                  className="mt-3 min-h-11 w-full rounded-xl border border-line bg-surface/60 px-2 py-2 text-xs font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+                  className="mt-3 min-h-11 w-full rounded-xl border border-line bg-surface/60 px-2 py-2 text-xs font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
                 >
                   View reward<span className="sr-only"> for {g.label}</span>
                 </button>
               )}
               {token && g.instantWins.length > 1 && (
                 <details className="mt-3 text-xs">
-                  <summary className="min-h-11 cursor-pointer rounded-xl py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]">
+                  <summary className="min-h-11 cursor-pointer rounded-xl py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]">
                     View rewards ({g.instantWins.length})<span className="sr-only"> for {g.label}</span>
                   </summary>
                   <ul className="space-y-2">
@@ -160,7 +160,7 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
                           type="button"
                           onClick={() => void openReward(win, g.label)}
                           data-testid="view-reward"
-                          className="min-h-11 w-full rounded-xl border border-line bg-surface/60 px-2 py-2 text-left font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+                          className="min-h-11 w-full rounded-xl border border-line bg-surface/60 px-2 py-2 text-left font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
                         >
                           View reward {index + 1}<span className="sr-only"> for {g.label}</span>
                           <span className="mt-0.5 block font-normal text-muted">{now === null ? "Saved win" : ago(win.at, now)}</span>
@@ -208,7 +208,7 @@ function RewardDialog({ view, onClose, onRetry }: { view: RewardView; onClose: (
             ref={closeRef}
             type="button"
             onClick={onClose}
-            className="min-h-11 shrink-0 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="min-h-11 shrink-0 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             Close
           </button>
@@ -218,7 +218,7 @@ function RewardDialog({ view, onClose, onRetry }: { view: RewardView; onClose: (
         {view.error && (
           <div className="mt-5">
             <p className="text-sm text-muted" role="alert">{view.error}</p>
-            <button type="button" onClick={onRetry} className="mt-3 min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]">Try again</button>
+            <button type="button" onClick={onRetry} className="mt-3 min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]">Try again</button>
           </div>
         )}
         <p className="mt-4 text-xs text-muted">Each time you open a reward, your creator can see that it was viewed.</p>

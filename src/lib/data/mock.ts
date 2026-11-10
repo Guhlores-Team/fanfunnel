@@ -1,4 +1,5 @@
 import { auditActionMatches } from "@/components/admin/auditLabels";
+import { claimCodeFor } from "@/lib/rewards/claimCode";
 import { bingoReadyError } from "./bingo";
 import { mockBingoStore,currentMockBingo,mockBingoEditError,commitMockBingo,eraseMockBingo,clearMockBingo } from "./mockBingo";
 import { gameProposal,addBonusFailure } from "./gameProposal";
@@ -1213,7 +1214,8 @@ export async function mockGetFanPass(
     wheel: applyFocusStock(toPublicWheel(wheel), modifierDisplay.stock),
     spinsRemaining: pass?.spinsRemaining ?? fan.spinsRemaining,
     recentWins: fan.wins.slice(0, 50).map(win => ({ label: win.label, rarity: win.rarity, emoji: win.emoji, color: win.color,
-      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}), ...mockWinDelivery(win.shareId) })),
+      at: win.at, shareId: win.shareId, imageUrl: win.imageUrl, ...(win.instant ? { instant: true } : {}), ...mockWinDelivery(win.shareId),
+      ...(claimCodeFor(win.shareId) ? { claimCode: claimCodeFor(win.shareId)! } : {}) })),
     wishlist: wishlistFor(fan.id),
     happyHour: mockGetActiveHappyHour(wheel.id),
     referral: { code: fan.referralCode, bonusPerReferral: REFERRAL_BONUS },
@@ -4026,6 +4028,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
       rarity: w.rarity,
       wheel: null,
       shareId: w.shareId ?? null,
+      claimCode: claimCodeFor(w.shareId),
       fairness: {
         version: w.fairVersion ?? null,
         serverSeed: w.serverSeed ?? null,

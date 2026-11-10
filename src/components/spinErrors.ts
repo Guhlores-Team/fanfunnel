@@ -3,6 +3,8 @@
  * src/lib/data/index.ts, plus the route's own `bad_request`). Pure so it can be
  * unit-tested; raw server codes/text are never shown to the fan.
  */
+import { hasOwn } from "@/lib/fan/uuid";
+
 export interface SpinErrorInfo {
   message: string;
   /** The fan can continue by (re-)acknowledging the age gate / terms. */
@@ -12,6 +14,7 @@ export interface SpinErrorInfo {
   /** The last commit is uncertain: stop spending until the page is reloaded. */
   checkPendingSpin?: boolean;
 }
+
 
 const GENERIC: SpinErrorInfo = { message: "Something went wrong. Try again." };
 
@@ -36,7 +39,7 @@ const MESSAGES: Record<string, SpinErrorInfo> = {
 };
 
 export function spinErrorInfo(code: unknown): SpinErrorInfo {
-  return typeof code === "string" && Object.hasOwn(MESSAGES, code) ? MESSAGES[code] : GENERIC;
+  return typeof code === "string" && hasOwn(MESSAGES, code) ? MESSAGES[code] : GENERIC;
 }
 
 const ACK_GENERIC = "Couldn't save that — check your connection and try again.";
@@ -50,7 +53,7 @@ const ACK_MESSAGES: Record<string, string> = {
 
 /** Fan-facing copy for a failed POST /api/fans/ack (age gate / ToS). */
 export function ackErrorMessage(code: unknown): string {
-  return typeof code === "string" && Object.hasOwn(ACK_MESSAGES, code)
+  return typeof code === "string" && hasOwn(ACK_MESSAGES, code)
     ? ACK_MESSAGES[code]
     : ACK_GENERIC;
 }

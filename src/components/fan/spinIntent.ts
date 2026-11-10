@@ -132,6 +132,8 @@ export const SPIN_RECOVERY_COPY = {
   gone: "This link no longer works, so that spin could not happen. Ask your creator for a new link.",
   // RF-07: the request never left the phone; nothing is being checked yet.
   offline: "You're offline. When you're back online, tap Check this spin to pick up where you left off.",
+  // WF-09: another tab of this link is playing this spin; this tab only waits.
+  elsewhere: "This spin is being played in another tab of this link. Finish it there, or tap Check this spin to see it here.",
   storage: "Playing needs this browser to save a spin request safely. Allow site storage in your browser settings, then check again. You can still view your previous wins.",
   // FD-5: an app's built-in browser has no site settings to change.
   storageInApp: "This app's built-in browser can't save your spin safely. Open this link in your phone's browser (Safari or Chrome) to play. Your wins are saved.",

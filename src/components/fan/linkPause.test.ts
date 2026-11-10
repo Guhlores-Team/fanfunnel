@@ -40,7 +40,7 @@ for (const spinsRemaining of [0, 5]) {
   const pending = spinControl({ spinsRemaining, busy: false, paused: false, spinPending: true });
   check("pending spin refuses a second spend", !pending.canSpin);
   check("pending spin has an explicit recovery label", pending.label === "Check your last spin");
-  check("pending spin does not assume a refunded balance", pending.balanceLabel === "Checking…");
+  check("RF-16: pending spin shows the last known balance, not a spinner", pending.balanceLabel === String(spinsRemaining));
 }
 check("pause still has priority during an uncertain spin", spinControl({ spinsRemaining: 5, busy: false, paused: true, spinPending: true }).label === "Link paused");
 check("break still has priority during an uncertain spin", spinControl({ spinsRemaining: 5, busy: false, paused: false, onBreak: true, spinPending: true }).label === "On a break");

@@ -20,7 +20,7 @@ export default function WinDeliveryList({ history, open = false }: { history: Wo
   const waiting = rows.filter((w) => w.delivery!.status === "waiting" || w.delivery!.status === "in_progress").length;
   return (
     <details className="mt-3 w-full rounded-2xl border border-line bg-surface/40 px-3 text-sm" open={open} data-testid="win-delivery">
-      <summary className="min-h-11 cursor-pointer py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]">
+      <summary className="min-h-11 cursor-pointer py-3 font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]">
         Prize delivery{waiting > 0 ? ` · ${waiting} not delivered yet` : ""}
       </summary>
       <ul className="space-y-2 pb-3">

@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import { BREAK_OPTIONS, type BreakOptionId } from "@/lib/play/config";
 
 const choiceBtn =
-  "inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-line bg-surface/70 px-3 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:opacity-50";
+  "inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-line bg-surface/70 px-3 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)] disabled:opacity-50";
 
 /** Fan-facing copy for a failed break request. Never the raw server code. */
 export function breakErrorMessage(code: unknown): string {

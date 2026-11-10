@@ -79,7 +79,7 @@ import OpenInBrowser from "./OpenInBrowser";
 import { currentInAppBrowser } from "./inAppBrowser";
 
 const noSubscribe = () => () => {};
-const recoveryPrimary = "btn-brand min-h-12 w-full rounded-2xl px-4 py-3 font-extrabold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]";
+const recoveryPrimary = "btn-brand min-h-12 w-full rounded-2xl px-4 py-3 font-extrabold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -619,7 +619,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           data-fab-avoid
           onClick={handleSpin}
           disabled={playDisabled}
-          className={`btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]${recoveryFirst ? " hidden" : ""}`}
+          className={`btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]${recoveryFirst ? " hidden" : ""}`}
         >
           {activeGameKind === "wheel" ? spinLabel : spinLabel === "SPIN" ? "PLAY" : spinLabel === "Spinning…" ? activeGameKind === "scratch" && gameOutcome?.presentation ? "Reveal your ticket" : "Playing…" : spinLabel}
         </button>
@@ -747,7 +747,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             type="button"
             onClick={skipReveal}
             data-testid="reveal-skip"
-            className="pointer-events-auto rounded-full border border-line bg-surface/90 px-5 py-2.5 text-sm font-semibold text-ink shadow-lg backdrop-blur-sm transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="pointer-events-auto rounded-full border border-line bg-surface/90 px-5 py-2.5 text-sm font-semibold text-ink shadow-lg backdrop-blur-sm transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             Skip <span aria-hidden="true">›</span>
           </button>

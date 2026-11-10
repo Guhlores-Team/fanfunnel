@@ -70,6 +70,8 @@ export interface FanDataExport extends ExportStatus {
     rarity: string;
     wheel: string | null;
     shareId: string | null;
+    /** WF-01: the claim code for this win (null when no code key is configured). */
+    claimCode?: string | null;
     fairness: {
       version: number | null;
       serverSeed: string | null;

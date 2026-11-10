@@ -34,6 +34,9 @@
      computes for the default pink (white-on-pink is the tracked 3.52:1 defect). */
   --brand-ink: #160d12; /* readable text ON the brand fill (e.g. button labels) */
   --brand-text: var(--brand); /* brand color, legibility-adjusted, used AS text */
+  /* PA-01: the brand colour for NON-TEXT UI (focus rings, borders, button
+     fills): brandVars() lifts a near-black brand to 3:1 on the page surface. */
+  --brand-ui: var(--brand);
 
   /* --- Elevation system (redesign command-center) -------------------------
      Surfaces read as RAISED via an inset top-highlight + soft drop shadow, not
@@ -114,8 +117,8 @@ body {
 }
 .ff-input::placeholder { color: color-mix(in oklab, var(--color-ink) 30%, transparent); }
 .ff-input:focus {
-  border-color: var(--brand);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, transparent);
+  border-color: var(--brand-ui);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand-ui) 25%, transparent);
 }
 .ff-input[aria-invalid="true"],
 .ff-input[aria-invalid="true"]:focus {
@@ -159,12 +162,12 @@ input[type="time"] {
 .btn-brand {
   position: relative;
   background: linear-gradient(180deg,
-    color-mix(in oklab, var(--brand) 88%, white 12%),
-    var(--brand));
+    color-mix(in oklab, var(--brand-ui) 88%, white 12%),
+    var(--brand-ui));
   color: var(--brand-ink);
   box-shadow:
     0 1px 0 color-mix(in oklab, white 35%, transparent) inset,
-    0 12px 30px -10px color-mix(in oklab, var(--brand) 70%, transparent);
+    0 12px 30px -10px color-mix(in oklab, var(--brand-ui) 70%, transparent);
   transition: transform 0.12s ease, filter 0.15s ease, box-shadow 0.15s ease;
 }
 .btn-brand:hover { filter: brightness(1.06); }
@@ -201,7 +204,7 @@ input[type="time"] {
    outline follows each element's border-radius in modern browsers. Brand-tinted
    so it's visible on every surface. */
 :focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--brand-ui);
   outline-offset: 2px;
 }
 
@@ -271,14 +274,14 @@ input[type="time"] {
 
 /* RM-3 visit glow: a static ring in the creator's brand colour, brighter the
    more days the fan stopped by in the last week. No animation, no countdown. */
-.visit-glow-1 { box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 35%, transparent); }
+.visit-glow-1 { box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand-ui) 35%, transparent); }
 .visit-glow-2 {
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 60%, transparent),
-    0 0 14px 2px color-mix(in oklab, var(--brand) 35%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand-ui) 60%, transparent),
+    0 0 14px 2px color-mix(in oklab, var(--brand-ui) 35%, transparent);
 }
 .visit-glow-3 {
-  box-shadow: 0 0 0 2px var(--brand),
-    0 0 22px 5px color-mix(in oklab, var(--brand) 55%, transparent);
+  box-shadow: 0 0 0 2px var(--brand-ui),
+    0 0 22px 5px color-mix(in oklab, var(--brand-ui) 55%, transparent);
 }
 
 /* Recent-wins ticker: continuous horizontal scroll (loops via duplicated list).

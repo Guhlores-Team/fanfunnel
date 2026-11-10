@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import type { ScratchPresentation } from "@/lib/games/scratch/engine";
 import { addScratchCoverage, scratchPoint, SCRATCH_BRUSH_FRACTION, SCRATCH_REVEAL_FRACTION, type ScratchPoint } from "./scratchGeometry";
+import { lastOf } from "@/lib/fan/uuid";
 
 /** Cosmetic foil over the immutable server ticket. Gestures never select an outcome. */
 export default function ScratchTicket({ presentation, onReveal, reducedMotion = false }: {
@@ -86,9 +87,9 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
     if (completed.current || activePointer.current !== event.pointerId) return;
     const point = scratchPoint(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
     if (!point) return;
-    const stroke = strokes.current.at(-1);
+    const stroke = lastOf(strokes.current);
     if (!stroke) return;
-    const prior = stroke.at(-1) ?? point;
+    const prior = lastOf(stroke) ?? point;
     stroke.push(point);
     const fraction = addScratchCoverage(covered.current, prior, point);
     paint();
