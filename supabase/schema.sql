@@ -15628,7 +15628,7 @@ begin
  if not found then return jsonb_build_object('status','unavailable'); end if;
  select * into p from public.fan_passes where id=p.id for update;
  if not found then return jsonb_build_object('status','unavailable'); end if;
- if not p.is_active or p.self_excluded_at is not null or (p.expires_at is not null and p.expires_at<=now()) or f.blocked_at is not null
+ if not p.is_active or (p.expires_at is not null and p.expires_at<=now()) or p.self_excluded_at is not null or f.blocked_at is not null
    or not exists(select 1 from public.profiles where id=p.creator_id and is_active and (approval_status='approved' or role='admin')) then
    -- 0073 (CC-02): the link, fan or creator stopped being playable: the
    -- attempt is finished as declined/blocked instead of staying pending for
@@ -15698,7 +15698,7 @@ begin
  select * into a from public.spin_attempts where id=p_attempt for update;
  if not found or a.fan_id is distinct from f.id or a.fan_pass_id is distinct from p.id then return jsonb_build_object('status','unavailable'); end if;
  if a.state<>'pending' then return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash); end if;
- if p.id is null or f.id is null or f.creator_id is distinct from p.creator_id or p.fan_id<>f.id or not p.is_active or p.self_excluded_at is not null or (p.expires_at is not null and p.expires_at<=now()) or f.blocked_at is not null
+ if p.id is null or f.id is null or f.creator_id is distinct from p.creator_id or p.fan_id<>f.id or not p.is_active or (p.expires_at is not null and p.expires_at<=now()) or p.self_excluded_at is not null or f.blocked_at is not null
    or not exists(select 1 from public.profiles where id=a.creator_id and is_active and (approval_status='approved' or role='admin')) then
    -- 0073 (CC-02): the link, fan or creator stopped being playable: the
    -- attempt is finished as declined/blocked instead of staying pending for
