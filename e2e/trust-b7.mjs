@@ -33,14 +33,31 @@ export function trustB7A11yStates(dashAdvisory = []) {
     if (!res.ok()) throw new Error(`announce failed (${res.status()})`);
     await page.reload();
     await ready(page);
-    await page.getByTestId("legal-change-notice").first().waitFor({ timeout: 8000 });
+    await page.getByTestId("legal-change-notice").first().waitFor({ timeout: 8000 }).catch(async (e) => {
+      // Say why: what the page itself gets from the notice read, and where it is.
+      const seen = await page.evaluate(() => fetch("/api/legal-notice").then(async (r) => `${r.status} ${await r.text()}`).catch((err) => `fetch failed: ${err}`)).catch((err) => `evaluate failed: ${err}`);
+      throw new Error(`no change notice on ${page.url()} (the page's own read: ${seen}; links: ${await page.getByRole("navigation", { name: "Legal" }).count()}): ${e.message}`);
+    });
   };
   const cleanup = async (page) => {
     await clearNotice(page.request);
   };
   return [
     { path: "/c/demo", name: "trust-b7 terms change notice (link-in-bio)", prep: announce(), cleanup },
-    { path: "/spin/demo", name: "trust-b7 terms change notice (fan page)", prep: announce(passAgeGate), cleanup },
+    {
+      // Its own fresh fan: after the e2e run's account reset /spin/demo is a 404.
+      path: null,
+      name: "trust-b7 terms change notice (fan page)",
+      prep: async (page) => {
+        const made = await page.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: `Notice A11y ${Math.random().toString(36).slice(2, 7)}`, spins: 1 } });
+        if (!made.ok()) throw new Error(`create fan failed (${made.status()})`);
+        const { token } = await made.json();
+        await acknowledgeFixtureFan(page.request, token);
+        await goto(page, `/spin/${token}`, 800);
+        await announce(passAgeGate)(page);
+      },
+      cleanup,
+    },
     { path: "/dashboard", name: "trust-b7 terms change notice (dashboard)", prep: announce(), cleanup, advisory: dashAdvisory },
     {
       path: "/admin",
