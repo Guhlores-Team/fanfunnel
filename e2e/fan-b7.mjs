@@ -99,7 +99,10 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         assert(status === `Landed on ${[body.prize.emoji, drawn].filter(Boolean).join(" ")}.`, `the wheel landed on the drawn prize, not the old index (${status} vs ${drawn})`);
         assert((await page.getByTestId("reward-reveal").textContent()).includes(drawn), "the card shows the same prize");
         await closeCard(page);
+        // The page follows once the card is closed: the prize book lists the new prize.
+        await page.getByRole("button", { expanded: false }).filter({ hasText: /Show/ }).first().click();
         await page.getByTestId("prize-book-name").filter({ hasText: "Zero sticker" }).first().waitFor({ timeout: 8000 });
+        assert((await page.getByTestId("prize-book-name").count()) === 4, "the prize book lists all four prizes");
       } finally { await context.close(); }
     });
 
@@ -593,7 +596,9 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         const js = await browser.newContext();
         try {
           const page = await js.newPage();
-          attachSink(page, sink);
+          // No sink: the 404 document is the case under test. Script errors still count.
+          const errors = [];
+          page.on("pageerror", (e) => errors.push(String(e?.message || e)));
           const resp = await page.goto(`${BASE}/not-found/verify/abc`);
           assert(resp.status() === 404, "the unmatched path is a 404");
           await page.waitForFunction(() => document.querySelector(".nf-kinds")?.getAttribute("data-kind") === "nf-verify", null, { timeout: 8000 });
@@ -601,6 +606,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
           assert(shown.length === 1 && /Nothing to verify/.test(shown[0]), `hydrated: one explanation, the verify one (${shown.join(" | ")})`);
           const busy = await page.goto(`${BASE}/not-found/busy/75#nf-busy`);
           assert(busy.status() === 404 && (await page.getByTestId("link-attempts-retry").textContent()) === "75 seconds", "the busy page reads its wait from the path");
+          assert(errors.length === 0, `the 404 page hydrates without a script error (${errors.join("; ")})`);
         } finally { await js.close(); }
       } finally { await nojs.close(); }
     });
