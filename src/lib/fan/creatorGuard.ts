@@ -3,6 +3,10 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { mockTokenHasCreator } from "@/lib/data/mock";
+import { clientIp } from "@/lib/api/clientIp";
+import { ROUTE_TIERS } from "@/lib/api/routeTiers";
+import { rateLimitShared } from "@/lib/rateLimit";
+import { NO_STORE_HEADERS } from "@/lib/privacy/respond";
 
 /**
  * ATK-01 / TS-05: the fan's own actions (age and terms acknowledgement,
@@ -14,8 +18,18 @@ import { mockTokenHasCreator } from "@/lib/data/mock";
  * server client and checked with `can_act_for` (server-controlled roles,
  * AGENTS.md rules 1-2); nothing the client sends decides this.
  *
- * Cost for fans: zero. Without a Supabase session cookie nothing is looked up.
+ * Cost for fans: zero. Without a Supabase session cookie nothing is looked up
+ * and nothing is counted.
+ *
+ * Order: the guard answers BEFORE the fan's own limits (the miss budget of
+ * fanMiss.ts and each route's windows). A request that carries a session never
+ * spends the fan's budget, and the 403 does not depend on what that address or
+ * link did earlier. Its lookups still need a cap (C2: a made-up cookie with a
+ * fresh random token per request must not buy a service-role read each time),
+ * so requests that carry a session cookie have a per-address budget of their
+ * own, GUARD_LIMIT, counted before the lookup.
  */
+export const GUARD_LIMIT = ROUTE_TIERS.public;
 export const CREATOR_SESSION_ERROR = "creator_session";
 export const CREATOR_SESSION_MESSAGE =
   "This is the fan's own action. You're signed in as a creator or team member for this fan's creator, so it can't be done from this account. Sign out, or open the fan's link in a private window to help them.";
@@ -60,11 +74,24 @@ export async function creatorActsForFan(token: string): Promise<boolean> {
   return error ? true : data === true;
 }
 
-/** The 403 a fan route answers when the creator's own session is behind the request, else null. */
-export async function refuseCreatorSession(token: string): Promise<NextResponse | null> {
+/**
+ * The answer a fan-only route gives before anything else when the request
+ * carries a session: 403 when that session may act for the fan's creator, 429
+ * when this address is over the guard's own budget, else null (carry on as a
+ * fan). Call it first, ahead of withFanMissLimit and every rateLimitOr429.
+ */
+export async function refuseCreatorSession(req: Request, token: string): Promise<NextResponse | null> {
+  if (!(await hasSessionCookie())) return null;
+  const { ok, retryAfter } = await rateLimitShared(`creatorguard:${clientIp(req)}`, GUARD_LIMIT.limit, GUARD_LIMIT.windowMs);
+  if (!ok) {
+    return NextResponse.json(
+      { error: "rate_limited" },
+      { status: 429, headers: { ...NO_STORE_HEADERS, "Retry-After": String(Math.max(1, Math.ceil(retryAfter / 1000))) } },
+    );
+  }
   if (!(await creatorActsForFan(token))) return null;
   return NextResponse.json(
     { error: CREATOR_SESSION_ERROR, message: CREATOR_SESSION_MESSAGE },
-    { status: 403, headers: { "Cache-Control": "no-store" } },
+    { status: 403, headers: NO_STORE_HEADERS },
   );
 }

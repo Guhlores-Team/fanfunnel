@@ -82,7 +82,7 @@ async function main() {
 
   const root = join(__dirname, "..", "..", "..");
   const route = readFileSync(join(root, "src/app/api/fans/ack/route.ts"), "utf8");
-  check("the route refuses a creator session before it records anything", route.indexOf("refuseCreatorSession(body.token)") > 0 && route.indexOf("refuseCreatorSession(body.token)") < route.indexOf("ackFan(body.token, consentEvidence(req))"));
+  check("the route refuses a creator session before it records anything", route.indexOf("refuseCreatorSession(req, token)") > 0 && route.indexOf("refuseCreatorSession(req, token)") < route.indexOf("ackFan(token, consentEvidence(req))"));
   const src = readFileSync(join(root, "src/lib/fan/consentEvidence.ts"), "utf8");
   check("the evidence module is server-only", src.startsWith('import "server-only";'));
   console.log(`consentEvidence.test: ${passed} checks passed`);

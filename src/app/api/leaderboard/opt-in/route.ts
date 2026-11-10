@@ -37,25 +37,28 @@ export function validateHandle(
 // A fan opts in/out of the public leaderboard and (when opting in) sets their
 // board name. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
-  return withFanMissLimit(req, async () => {
-    const body = await parseJsonBody<{ token?: unknown; optIn?: unknown; handle?: unknown }>(req);
-    // `null`, arrays and scalars parse as valid JSON but aren't a request body.
-    if (body === BAD_REQUEST || typeof body !== "object" || body === null || Array.isArray(body)) {
-      return badRequest();
-    }
-    if (typeof body.token !== "string" || !body.token) {
-      return badRequest();
-    }
-    // Only a literal boolean counts; the string "false" is truthy and must never
-    // read as consent.
-    if (typeof body.optIn !== "boolean") return badRequest();
-    const optIn = body.optIn === true;
+  const body = await parseJsonBody<{ token?: unknown; optIn?: unknown; handle?: unknown }>(req);
+  // `null`, arrays and scalars parse as valid JSON but aren't a request body.
+  if (body === BAD_REQUEST || typeof body !== "object" || body === null || Array.isArray(body)) {
+    return badRequest();
+  }
+  if (typeof body.token !== "string" || !body.token) {
+    return badRequest();
+  }
+  const token = body.token;
+  // Only a literal boolean counts; the string "false" is truthy and must never
+  // read as consent.
+  if (typeof body.optIn !== "boolean") return badRequest();
+  const optIn = body.optIn === true;
 
-    const limited = await rateLimitOr429("lb-optin:" + body.token, 10, 60_000);
+  // ATK-01: publishing a fan on the board is the fan's consent, not the
+  // creator's. First, so it never spends the fan's budgets below.
+  const refused = await refuseCreatorSession(req, token);
+  if (refused) return refused;
+
+  return withFanMissLimit(req, async () => {
+    const limited = await rateLimitOr429("lb-optin:" + token, 10, 60_000);
     if (limited) return limited;
-    // ATK-01: publishing a fan on the board is the fan's consent, not the creator's.
-    const refused = await refuseCreatorSession(body.token);
-    if (refused) return refused;
 
     // Opting IN requires a board name: without one the only thing the public
     // board could show is the fan's real name, which it must never do. Opting
@@ -66,7 +69,7 @@ export async function POST(req: Request) {
       if ("error" in v) return badRequest(v.error);
       handle = v.handle;
     }
-    const result = await setFanLeaderboardOptIn(body.token, optIn, handle);
+    const result = await setFanLeaderboardOptIn(token, optIn, handle);
     if ("error" in result) return errorResponse(result.error);
     return NextResponse.json(result);
   });

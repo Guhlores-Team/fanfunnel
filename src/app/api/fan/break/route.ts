@@ -4,7 +4,6 @@ import { withFanToken } from "@/lib/api/fanToken";
 import { badRequest, errorResponse } from "@/lib/api/handler";
 import { PLAY_ROUTE_LIMIT, PLAY_ROUTE_WINDOW_MS } from "@/lib/play/config";
 import { breakDurationMs } from "@/lib/play/playGuard";
-import { refuseCreatorSession } from "@/lib/fan/creatorGuard";
 
 // RM-6: a fan takes a break. Body: { token, duration: "24h" | "7d" | "30d" }.
 // The end time is computed on the server from that fixed menu (the client never
@@ -13,13 +12,11 @@ import { refuseCreatorSession } from "@/lib/fan/creatorGuard";
 export async function POST(req: Request) {
   return withFanToken<{ token?: unknown; duration?: unknown }>(
     req,
-    { scope: "fan-break", limit: PLAY_ROUTE_LIMIT, windowMs: PLAY_ROUTE_WINDOW_MS },
+    // ATK-01 (fanOnly): a break is the fan's choice; the creator has their own controls.
+    { scope: "fan-break", limit: PLAY_ROUTE_LIMIT, windowMs: PLAY_ROUTE_WINDOW_MS, fanOnly: true },
     async (token, body) => {
       const ms = breakDurationMs(body.duration);
       if (ms === null) return badRequest();
-      // ATK-01: a break is the fan's choice; the creator has their own controls.
-      const refused = await refuseCreatorSession(token);
-      if (refused) return refused;
       const result = await takeBreak(token, ms);
       if ("error" in result) return errorResponse(result.error);
       return NextResponse.json({ breakUntil: result.breakUntil });
