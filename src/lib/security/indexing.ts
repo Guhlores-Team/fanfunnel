@@ -10,6 +10,7 @@ import type { MetadataRoute } from "next";
 export const isProductionDeployment = (vercelEnv: string | undefined) => vercelEnv === "production";
 
 // Public and meant to be found: the marketing pages and creator pages.
+// The sitemap lists the fixed ones (sitemap.ts); creator pages are found by link.
 export const INDEXABLE_PATHS = ["/", "/c/", "/privacy", "/terms"] as const;
 
 // Fan-facing or signed-in surfaces. /spin carries a secret token; /share,
@@ -28,9 +29,10 @@ export const LINK_PREVIEW_BOTS = [
   "Twitterbot", "facebookexternalhit", "LinkedInBot", "Slackbot-LinkExpanding", "Discordbot", "WhatsApp", "TelegramBot",
 ] as const;
 
-export function robotsPolicy(vercelEnv: string | undefined): MetadataRoute.Robots {
+export function robotsPolicy(vercelEnv: string | undefined, origin?: string | null): MetadataRoute.Robots {
   if (!isProductionDeployment(vercelEnv)) return { rules: { userAgent: "*", disallow: "/" } };
   return {
+    ...(origin ? { sitemap: `${origin}/sitemap.xml` } : {}),
     rules: [
       { userAgent: "*", allow: [...INDEXABLE_PATHS], disallow: [...PRIVATE_PATHS] },
       {
