@@ -244,7 +244,9 @@ export default function DashboardClient({
   );
   // Display name for the sidebar workspace pill (no polling — it rarely changes);
   // also the profile step (C9) and the suspended banner (C11).
-  const account = useFetch<{ displayName: string | null; publicSlug?: string | null; isActive?: boolean }>(email ? "/api/account" : null);
+  // Always read (the demo too): the suspended banner (WU-01) comes from it,
+  // and the page only renders for a signed-in creator or the demo.
+  const account = useFetch<{ displayName: string | null; publicSlug?: string | null; isActive?: boolean }>("/api/account");
   const firstStepSignals = {
     profileSet: !email || profileStepDone(account.data),
     wheelSaved,
