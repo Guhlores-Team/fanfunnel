@@ -45,8 +45,10 @@ const refused = [
   "Supp0rt", "0fficial", "Adm1n", "Sta ff", "Suppоrt", "SUPPORT!!", "admin-bot", "verify.team", "Official Admin Team",
   "N0 Reply", "Billing Support", "Customer Service", "fanfunnel.help",
   // a staff word as one of the name's words (the database's word rule)
-  "Alice Support", "Official Jane", "jane-official", "Jane (Official)", "mod_dan", "The Admin Guy", "Security Sam", "Staff Pick Fan",
-  "Root Beer Fan", "System Shock", "Billing Bob", "Abuse Report", "jane.mods", "Team Admins",
+  "Alice Support", "mod_dan", "The Admin Guy", "Staff Pick Fan", "jane.mods", "Team Admins",
+  // official, system, root, security, billing, abuse: reserved as the name, digit-padded or joined, not as one word of many
+  "official", "Official", "official2", "Official Support", "officialsupport", "Security Team", "security team", "System Admin", "Root", "root1",
+  "Billing Team", "Abuse Team", "Official Security",
   // whole names the database also reserves
   "api", "www", "mail", "Terms", "@support", "@Admin",
 ];
@@ -58,6 +60,7 @@ const allowed = [
   "Rooted Ray", "Systematic Sue", "Mailman Mike", "Apiary Anna", "Terms And Tea",
   "Administrative Assistant", "Verify Vicky Wins", "Bot Fan 99", "Infographic", "Contactless", "Legally Blonde Fan",
   "Sam", "x", "Secure Sally", "Billie", "Pay Pal", "The Owner Of Cats", "Funnel Cake", "Fan of Funnels",
+  "Jane Official", "Official Jane", "jane-official", "Jane (Official)", "Root Beer Fan", "System Shock", "Security Sam", "Billing Bob", "Abuse Report",
   "mo", "a1", "", "   ",
 ];
 for (const name of allowed) check(`allowed: "${name}"`, !isReservedName(name));
@@ -71,20 +74,41 @@ const sql = readdirSync(MIGRATIONS).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sor
 const def = [...sql.matchAll(/create or replace function public\._reserved_name\(p text\)[\s\S]*?\$\$;/g)].at(-1)?.[0] ?? "";
 check("a migration defines public._reserved_name(text)", def.length > 0);
 const quoted = (text: string) => [...text.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-const SQL_WHOLE = quoted(/n\.whole in \(([\s\S]*?)\)/.exec(def)?.[1] ?? "");
+// One reserved word, or up to three joined, after digits are trimmed from both ends.
+const SQL_JOINED = /n\.whole, '\^\[0-9\]\+\|\[0-9\]\+\$', '', 'g'\) ~ '\^\(([a-z|]+)\)\{1,3\}\$'/.exec(def)?.[1] ?? "";
+const SQL_WHOLE = SQL_JOINED.split("|").filter(Boolean);
+const SQL_JOINED_RE = new RegExp(`^(?:${SQL_WHOLE.join("|")}){1,3}$`);
 const SQL_LIKE = quoted([...def.matchAll(/n\.whole like ('%[^']+%')/g)].map((m) => m[1]).join(" ")).map((l) => l.replace(/%/g, ""));
 const SQL_WORDS = quoted(/n\.words && array\[([\s\S]*?)\]/.exec(def)?.[1] ?? "");
 check("the SQL whole-name list was read", SQL_WHOLE.length >= 20 && SQL_WHOLE.includes("fanfunnel") && SQL_WHOLE.includes("terms"));
 check("the SQL contains-list was read", SQL_LIKE.includes("fanfunnel") && SQL_LIKE.includes("easysimplesites"));
-check("the SQL word list was read", SQL_WORDS.length >= 12 && SQL_WORDS.includes("admin") && SQL_WORDS.includes("root"));
-check("the SQL normalisation is the one this port copies", def.includes("'^\\s*@'") && def.includes("'[\\s._-]+'") && def.includes("'[^[:alnum:]]+'"));
+check("the SQL word list was read", SQL_WORDS.length >= 6 && SQL_WORDS.includes("admin") && SQL_WORDS.includes("mod"));
+for (const word of ["official", "system", "root", "security", "billing", "abuse"]) {
+  check(`"${word}" is reserved as a name in SQL and here, and is a word-level refusal in neither`, SQL_WHOLE.includes(word) && !SQL_WORDS.includes(word)
+    && (RESERVED_WORDS as readonly string[]).includes(word) && !(RESERVED_WORD_TOKENS as readonly string[]).includes(word));
+}
+check("every SQL word-level refusal is one here too", SQL_WORDS.every((w) => (RESERVED_WORD_TOKENS as readonly string[]).includes(w)));
+check("every SQL reserved name is a reserved word or a brand word here", SQL_WHOLE.every((w) => (RESERVED_WORDS as readonly string[]).includes(w) || (RESERVED_BRAND_WORDS as readonly string[]).includes(w)));
+// The two character classes of the SQL rule (0073, review L7), read from the
+// migration and turned into JS classes: invisible characters, dropped before
+// anything is matched, and the non-ASCII separators removed from the whole name.
+const pgClass = (src: string) => new RegExp(src.replace(/\\U([0-9A-Fa-f]{8})/g, (_, h: string) => `\\u{${h.replace(/^0+/, "")}}`).replace(/\\u([0-9A-Fa-f]{4})/g, "\\u{$1}"), "gu");
+const SQL_INVISIBLE_SRC = /regexp_replace\(coalesce\(p, ''\), '(\[[^']+\])', '', 'g'\) as seen/.exec(def)?.[1] ?? "";
+const SQL_SEPARATOR_SRC = /'(\[\\u0080[^']+\])\+', '', 'g'\)/.exec(def)?.[1] ?? "";
+check("the SQL invisible-character class was read", SQL_INVISIBLE_SRC.includes("\\u200B-\\u200F") && SQL_INVISIBLE_SRC.includes("\\U000E0000-\\U000E0FFF"));
+check("the SQL separator class was read", SQL_SEPARATOR_SRC.includes("\\u2000-\\u206F") && SQL_SEPARATOR_SRC.includes("\\u0300-\\u036F"));
+const SQL_INVISIBLE = pgClass(SQL_INVISIBLE_SRC), SQL_SEPARATORS = pgClass(SQL_SEPARATOR_SRC);
+check("the SQL normalisation is the one this port copies", def.includes("'[\\s._-]+'") && def.includes("'^@'") && def.includes("'[^[:alnum:]]+'") && def.includes("'^[0-9]+|[0-9]+$'")
+  && /regexp_replace\(regexp_replace\(regexp_replace\(v\.seen, '\[\\s\._-\]\+', '', 'g'\),/.test(def) && /regexp_replace\(v\.seen, '\[\^\[:alnum:\]\]\+', ' ', 'g'\)/.test(def));
 
 /** The SQL rule; `ascii` picks how [:alnum:] splits words (C locale vs a UTF-8 locale). */
 function sqlReserved(p: string, ascii: boolean): boolean {
   if (p === "") return false;
-  const whole = p.replace(/^\s*@/, "").replace(/[\s._-]+/g, "").toLowerCase();
-  const words = p.replace(ascii ? /[^A-Za-z0-9]+/g : /[^\p{L}\p{N}]+/gu, " ").toLowerCase().split(/\s+/);
-  return SQL_WHOLE.includes(whole) || SQL_LIKE.some((l) => whole.includes(l)) || words.some((w) => SQL_WORDS.includes(w));
+  const seen = p.replace(SQL_INVISIBLE, "");
+  const whole = seen.replace(/[\s._-]+/g, "").replace(SQL_SEPARATORS, "").replace(/^@/, "").toLowerCase();
+  const words = seen.replace(ascii ? /[^A-Za-z0-9]+/g : /[^\p{L}\p{N}]+/gu, " ").toLowerCase().split(/\s+/);
+  const bare = whole.replace(/^[0-9]+|[0-9]+$/g, "");
+  return SQL_JOINED_RE.test(bare) || SQL_LIKE.some((l) => whole.includes(l)) || words.some((w) => SQL_WORDS.includes(w));
 }
 
 // The SQL rule's own cases, as fixtures: [name, the database refuses it].
@@ -93,13 +117,22 @@ const SQL_CASES: [string, boolean][] = [
   ["support", true], ["Support", true], ["@support", true], ["  @Admin", true], ["s.u.p.p.o.r.t", true], ["ad-min", true],
   ["help", true], ["verify", true], ["team", true], ["legal", true], ["privacy", true], ["terms", true], ["api", true], ["www", true],
   ["mail", true], ["abuse", true], ["system", true], ["root", true], ["Mod", true], ["official", true],
-  ["Alice Support", true], ["Official Jane", true], ["jane-official", true], ["Jane (Official)", true], ["mod_dan", true],
-  ["The Admin Guy", true], ["Security Sam", true], ["Staff Pick Fan", true], ["Root Beer Fan", true], ["System Shock", true],
-  ["Billing Bob", true], ["Abuse Report", true], ["Support!", true], ["ADMINISTRATOR x", true], ["Official Moderator", true],
+  ["Alice Support", true], ["mod_dan", true], ["The Admin Guy", true], ["Staff Pick Fan", true],
+  ["Support!", true], ["ADMINISTRATOR x", true], ["Official Moderator", true],
+  // reserved as a name, digit-padded or joined: the whole-name rule
+  ["admin1", true], ["2support", true], ["official2", true], ["officialsupport", true], ["Official Support", true],
+  ["Security Team", true], ["security_team", true], ["Team Mail Help", true], ["System Admin", true], ["rootroot", true],
+  // official, system, root, security, billing, abuse as one word of a longer name
+  ["Jane Official", false], ["Official Jane", false], ["jane-official", false], ["Jane (Official)", false], ["Security Sam", false],
+  ["Root Beer Fan", false], ["System Shock", false], ["Billing Bob", false], ["Abuse Report", false], ["Team Mail Help Api", false],
   // …and what it lets through
   ["Alice", false], ["Alice Adminton", false], ["JaneOfficial", false], ["supportive_fan", false], ["Help Desk", false],
-  ["Team Jane", false], ["Verify Vicky", false], ["Legal Eagle", false], ["Supp0rt", false], ["admin1", false], ["Mods", false],
+  ["Team Jane", false], ["Verify Vicky", false], ["Legal Eagle", false], ["Supp0rt", false], ["Mods", false], ["123", false],
   ["mailman", false], ["apiary", false], ["Terms And Tea", false], ["", false],
+  // invisible characters and non-ASCII separators do not hide a name (0073, review L7)
+  ["Fan\u200BFunnel", true], ["Fan\u2011Funnel", true], ["Sup\u200Dport", true], ["Support\u30FBTeam", true], ["Official\u2003Support", true],
+  ["admin\u00A0", true], ["mo\u200Bd dan", true], ["Admi\u0301n", true], ["Staff\uFE0F", true], ["\u200E@support", true], ["._@admin", true],
+  ["Zo\u00EB M\u00FCller", false], ["Ana\u2011Mar\u00EDa", false], ["Chlo\u00E9 Official", false], ["Jane\u200B Doe", false],
 ];
 for (const [name, refused] of SQL_CASES) {
   check(`SQL rule fixture: "${name}" → ${refused ? "refused" : "allowed"}`, sqlReserved(name, false) === refused);
@@ -110,8 +143,30 @@ const corpus = new Set<string>([...SQL_CASES.map(([n]) => n), ...refused, ...all
 for (const w of new Set([...SQL_WHOLE, ...SQL_WORDS, ...SQL_LIKE])) {
   for (const shape of [w, w.toUpperCase(), `@${w}`, ` ${w} `, [...w].join("."), [...w].join("-"), [...w].join("_"), [...w].join(" "),
     `Alice ${w}`, `${w} Alice`, `alice-${w}`, `${w}_alice`, `alice.${w}.fan`, `Alice (${w})`, `${w}!`, `${w}é`, `é${w}`, `Alice/${w}`,
-    `x${w}x`, `${w}${w}`, `the${w}`, `${w}1`]) corpus.add(shape);
+    `x${w}x`, `${w}${w}`, `the${w}`, `${w}1`,
+    [...w].join("\u200B"), [...w].join("\u2011"), [...w].join("\u00B7"), `${w}\u00A0`, `\uFEFF${w}`, `${w}\uFE0F`, `${w}\u0301`, `${w.slice(0, 2)}\u2060${w.slice(2)} Alice`,
+    `Alice\u3000${w}`, `${w}\u2014Alice`, `Alice\u200B ${w}\u200B`, `\u202E${w}`]) corpus.add(shape);
 }
+// Every character the SQL rule drops or treats as a separator folds to
+// nothing here as well, so removing it in SQL can never produce a reserved
+// name that this side reads differently; and an invisible character never
+// splits a word here that the database joins.
+let dropped = 0;
+for (const range of [[0x80, 0xffff], [0xe0000, 0xe0fff]]) {
+  for (let cp = range[0]; cp <= range[1]; cp++) {
+    if (cp >= 0xd800 && cp <= 0xdfff) continue;
+    const ch = String.fromCodePoint(cp);
+    const invisible = ch.replace(SQL_INVISIBLE, "") === "", separator = ch.replace(SQL_SEPARATORS, "") === "";
+    if (!invisible && !separator) continue;
+    dropped++;
+    assert.ok(foldName(`ad${ch}min`).replace(/[^a-z0-9]/g, "") === "admin", `U+${cp.toString(16).toUpperCase()} folds to nothing in foldName`);
+    if (invisible) assert.ok(nameWords(`mo${ch}d dan`).includes("mod"), `U+${cp.toString(16).toUpperCase()} is dropped before the word split`);
+  }
+}
+check("the SQL classes cover the zero-width, joiner, space, dash and dot characters, and each one folds to nothing here", dropped > 1000
+  && ["\u200B", "\u200D", "\u2060", "\uFEFF", "\u00AD"].every((c) => c.replace(SQL_INVISIBLE, "") === "")
+  && ["\u00A0", "\u2003", "\u3000", "\u2010", "\u2011", "\u2014", "\u2212", "\u00B7", "\u30FB", "\uFF0E", "\uFF3F", "\u0301"].every((c) => c.replace(SQL_SEPARATORS, "") === "")
+  && ["a", "Z", "5", "\u00E9", "\u00AA", "\u00B2", "\uFF41", "\u0430", "\u65E5"].every((c) => c.replace(SQL_INVISIBLE, "").replace(SQL_SEPARATORS, "") === c));
 let sqlRefused = 0;
 for (const name of corpus) {
   for (const ascii of [false, true]) {

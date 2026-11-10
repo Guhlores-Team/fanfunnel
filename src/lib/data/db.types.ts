@@ -1508,6 +1508,7 @@ export type Database = {
           acked_at: string | null
           acked_terms_version: string | null
           blocked_at: string | null
+          chat_muted_at: string | null
           break_until: string | null
           created_at: string
           creator_id: string
@@ -1531,6 +1532,7 @@ export type Database = {
           acked_at?: string | null
           acked_terms_version?: string | null
           blocked_at?: string | null
+          chat_muted_at?: string | null
           break_until?: string | null
           created_at?: string
           creator_id: string
@@ -1554,6 +1556,7 @@ export type Database = {
           acked_at?: string | null
           acked_terms_version?: string | null
           blocked_at?: string | null
+          chat_muted_at?: string | null
           break_until?: string | null
           created_at?: string
           creator_id?: string
@@ -1830,6 +1833,32 @@ export type Database = {
             columns: ["fan_id"]
             isOneToOne: false
             referencedRelation: "fans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_briefs: {
+        Row: {
+          name: string
+          org_id: string
+          owner_active: boolean
+        }
+        Insert: {
+          name: string
+          org_id: string
+          owner_active?: boolean
+        }
+        Update: {
+          name?: string
+          org_id?: string
+          owner_active?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_briefs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "orgs"
             referencedColumns: ["id"]
           },
         ]
@@ -3864,6 +3893,7 @@ export type Database = {
       }
       set_creator_theme: { Args: { p_theme: Json }; Returns: Json }
       set_display_name: { Args: { p_name: string }; Returns: undefined }
+      set_fan_chat_mute: { Args: { p_muted: boolean; p_token: string }; Returns: Json }
       set_fan_pass_game: {
         Args: {
           p_actor?: string

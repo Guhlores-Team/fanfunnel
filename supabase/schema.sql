@@ -14562,20 +14562,61 @@ comment on function public.schema_version() is 'Migration level of this database
 -- Replayable: every statement is idempotent (create or replace, add column /
 -- index if not exists, drop … if exists before create, constraints added only
 -- when missing, backfills on conflict do nothing). Sections carry the finding
--- ids; the owner pre-check for DB-07 is the 7-row constraint query in the
--- batch-7 report (GO_LIVE §5).
+-- ids. The owner pre-check is scripts/golive/live-precheck.sql: one read-only
+-- query whose grid must say ok on every row before this release is applied.
 --
--- Lock shape at go-live (DB-20): one transaction; the new indexes are small
--- btrees on near-empty tables (not CONCURRENTLY, they block writes on their
--- table only while they build); four DROP POLICY/CREATE POLICY pairs take an
--- AccessExclusive lock on messages, redemptions, grants and spin_attempts
--- until commit; NOT VALID CHECKs take a short lock and VALIDATE only a
--- SHARE UPDATE EXCLUSIVE one. Section (8b) adds one nullable column to
--- profiles and one defaulted column to orgs (catalog-only, a brief
--- AccessExclusive lock each), re-adds the creator_notices kind CHECK (validated
--- over a small table) and adds one policy on orgs. Function redefinitions and
--- the search_path ALTERs lock nothing a play holds. Apply outside the nightly
--- job window.
+-- Lock shape at go-live (DB-20). The migration is applied as one transaction.
+-- Its first statement gives that transaction a 5 second lock_timeout and
+-- takes ACCESS EXCLUSIVE on every table in public, so the strongest lock any
+-- later statement needs is already held and nothing is upgraded mid-way:
+-- ADD CONSTRAINT / ADD COLUMN (fans, prizes, wheels, profiles, campaigns,
+-- orgs, fan_passes, messages, redemptions, creator_notices,
+-- creator_applications, the template tables), DROP / CREATE POLICY (messages,
+-- redemptions, grants, spin_attempts, orgs, creator_applications), CREATE
+-- TRIGGER on every creator-owned table and the six index builds all run
+-- under it. The app, reads included, waits for the whole migration (seconds
+-- at today's row counts). A session that keeps any table longer than 5
+-- seconds (an idle-in-transaction editor tab, a long report) makes the
+-- migration fail instead of queueing the whole app behind it: everything
+-- rolls back and the migration is run again.
+-- Order: spin_attempts first, then the play's own order (profiles, fans,
+-- fan_passes, fan_focus, chase_reservations, bingo_cards, wheels, prizes,
+-- reward tables, spins, redemptions), then the rest by name. Every play
+-- transaction (prepare, commit, cancel, status) reads spin_attempts before
+-- any other table, so the migration waits there while it holds nothing and
+-- a play cannot deadlock with it. What cannot be ordered: a transaction that
+-- is not a play (a dashboard write, the nightly job) takes its tables in its
+-- own order; if it holds a later table and then wants an earlier one,
+-- Postgres ends one of the two (40P01) or the 5 seconds run out, and the
+-- migration rolls back and is re-run. Function redefinitions and the
+-- search_path ALTERs take no table lock. Apply outside the nightly job window.
+--
+-- What a suspended account (profiles.is_active = false) can still write, on
+-- purpose: its own notification switches (set_notification_prefs), its own
+-- onboarding flag (set_onboarding_dismissed), its own "seen" time
+-- (set_notifications_seen), leaving an agency (org_leave), and minting an
+-- actor context (issue_creator_actor_context), which carries no authority:
+-- every use re-checks the seat and the account. All are own-row and change
+-- nothing a fan, another creator or an admin sees. Everything else refuses a
+-- suspended account: set_display_name and the access-request insert were the
+-- last two gaps and are closed below (the name update and section (8b)).
+
+-- ── (0) lock_timeout and the table locks, before anything else ────────────
+-- set_config(..., true) is SET LOCAL without the warning a statement-by-
+-- statement replay (psql -f) would print; LOCK TABLE needs a transaction, so
+-- both live in one block. In such a replay the locks end with the block.
+do $$
+declare r record;
+begin
+  perform set_config('lock_timeout', '5s', true);
+  for r in select c.relname from pg_class c
+            where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
+            order by coalesce(array_position(array['spin_attempts', 'profiles', 'fans', 'fan_passes', 'fan_focus',
+                       'chase_reservations', 'bingo_cards', 'wheels', 'prizes', 'prize_rewards', 'prize_reward_codes',
+                       'spins', 'spin_rewards', 'redemptions']::name[], c.relname), 1000), c.relname loop
+    execute format('lock table public.%I in access exclusive mode', r.relname);
+  end loop;
+end $$;
 
 -- ── (1) DB-07: the 0052 ledger CHECKs are re-asserted and must validate ──
 -- 0052 dropped a CHECK with a warning when a row violated it, so a LIVE
@@ -14711,10 +14752,14 @@ begin
 end $$;
 
 -- ── DB-03 / ATK N-A: free text a session writes has a size limit ─────────
--- Each CHECK sits at or above the app's own limit (routes and data layer), is
--- added NOT VALID and validated only when every existing row passes; an
--- over-long LIVE row leaves that one CHECK NOT VALID with a warning instead
--- of blocking the migration (new writes are still checked).
+-- Each CHECK sits at or above the app's own limit (routes and data layer).
+-- A rule is added, fully validated, only when every existing row passes. A
+-- rule with an over-long row is NOT added at all (never NOT VALID: a NOT
+-- VALID CHECK is still enforced on every UPDATE of the row that breaks it, so
+-- a play that touches such a fan or prize would fail): the row stays
+-- updatable, the setters and routes still cap new writes, a WARNING names the
+-- rule and the count, and the closing check lists every rule not in force.
+-- Shorten the rows (scripts/golive/live-precheck.sql finds them) and re-run.
 create or replace function public._text_array_within(p_values text[], p_max_items integer, p_max_each integer)
 returns boolean language sql immutable set search_path = public, pg_temp as $$
   select coalesce(array_length(p_values, 1), 0) <= p_max_items
@@ -14757,28 +14802,33 @@ begin
       ('creator_applications', 'creator_applications_email_len_check', 'email is null or char_length(email) <= 320'),
       ('creator_applications', 'creator_applications_decision_reason_len_check', 'decision_reason is null or char_length(decision_reason) <= 500')
     ) as t(tbl, con, expr) loop
-    if not exists (select 1 from pg_constraint where conname = r.con and conrelid = ('public.' || r.tbl)::regclass) then
-      execute format('alter table public.%I add constraint %I check (%s) not valid', r.tbl, r.con, r.expr);
-    end if;
     select convalidated into v_valid from pg_constraint where conname = r.con and conrelid = ('public.' || r.tbl)::regclass;
-    if not v_valid then
-      execute format('select count(*) from public.%I where not (%s)', r.tbl, r.expr) into v_bad;
-      if v_bad > 0 then
-        raise warning '0073 (DB-03): % row(s) in public.% exceed %; the CHECK stays NOT VALID until they are shortened', v_bad, r.tbl, r.con;
-      else
-        execute format('alter table public.%I validate constraint %I', r.tbl, r.con);
+    if v_valid then continue; end if;
+    execute format('select count(*) from public.%I where not (%s)', r.tbl, r.expr) into v_bad;
+    if v_bad > 0 then
+      if v_valid is not null then
+        execute format('alter table public.%I drop constraint %I', r.tbl, r.con);
       end if;
+      raise warning '0073 (DB-03): % row(s) in public.% break % (%); the rule is NOT in force until they are shortened and 0073 is re-run', v_bad, r.tbl, r.con, r.expr;
+    elsif v_valid is null then
+      execute format('alter table public.%I add constraint %I check (%s)', r.tbl, r.con, r.expr);
+    else
+      execute format('alter table public.%I validate constraint %I', r.tbl, r.con);
     end if;
   end loop;
 end $$;
 
 -- set_chat_settings / set_creator_note validate what the routes validate
 -- (2000 characters each; the greeting and sign-off are sent to every fan).
+-- Control characters other than tab and line breaks are refused with the
+-- class set_display_name uses ([[:cntrl:]], the same under every server
+-- locale); letters, accents and emoji of any script pass.
 create or replace function public.set_chat_settings(p_intro text, p_outro text)
 returns void language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if char_length(trim(coalesce(p_intro, ''))) > 2000 or char_length(trim(coalesce(p_outro, ''))) > 2000
-     or coalesce(p_intro, '') ~ '[^[:print:][:space:]]' or coalesce(p_outro, '') ~ '[^[:print:][:space:]]' then
+     or regexp_replace(coalesce(p_intro, ''), '[\n\r\t]', '', 'g') ~ '[[:cntrl:]]'
+     or regexp_replace(coalesce(p_outro, ''), '[\n\r\t]', '', 'g') ~ '[[:cntrl:]]' then
     raise exception 'invalid chat settings' using errcode = '22023';
   end if;
   update public.profiles
@@ -14796,7 +14846,7 @@ begin
           or trim(p_avatar) !~ '^https://[^/[:space:]]+/storage/v1/object/public/avatars/[^[:space:]]+$') then
     raise exception 'invalid avatar url' using errcode = '22023';
   end if;
-  if p_note is not null and (char_length(trim(p_note)) > 2000 or p_note ~ '[^[:print:][:space:]]') then
+  if p_note is not null and (char_length(trim(p_note)) > 2000 or regexp_replace(p_note, '[\n\r\t]', '', 'g') ~ '[[:cntrl:]]') then
     raise exception 'invalid creator note' using errcode = '22023';
   end if;
   update public.profiles
@@ -14808,23 +14858,43 @@ revoke execute on function public.set_creator_note(text, text) from public, anon
 grant execute on function public.set_creator_note(text, text) to authenticated;
 
 -- ── TS-03 / ATK N-B: nobody is "FanFunnel", "Support" or "admin" ─────────
--- One reserved list (mirrored by src/lib/reservedNames.ts): a name whose
--- normalized form (lower-case, spaces and _ . - removed, a leading @ dropped)
--- equals an entry, whose words include a staff/operator word, or which
--- contains the product name is refused by set_display_name, set_public_profile
--- (slug) and the public-fields trigger (direct writes).
+-- One reserved list (mirrored by src/lib/reservedNames.ts). A name is refused
+-- by set_display_name, set_public_profile (slug) and the public-fields trigger
+-- (direct writes) when
+--   * its normalized form (lower-case, separators removed, a leading @
+--     dropped, digits trimmed from both ends) is one reserved word or up to
+--     three of them joined ("support", "admin1", "officialsupport",
+--     "Security Team"),
+--   * it contains the product name, or
+--   * one of its separate words is a staff word (admin, administrator,
+--     support, staff, moderator, mod): "Alice Support", "mod_dan".
+-- official, system, root, security, billing and abuse are reserved as a name
+-- (alone, digit-padded or joined), not as one word of a longer name: "Jane
+-- Official", "Root Beer Fan", "System Shock" and "Security Sam" are people.
+-- Characters nobody sees (zero-width, joiners, direction marks, variation
+-- selectors, fillers, tags) are dropped before anything is matched, and the
+-- separators removed for the whole-name tests are the ASCII ones (space _ . -)
+-- and the non-ASCII ones: Unicode spaces, dashes, dots, connectors, combining
+-- marks, punctuation and symbol blocks ("Fan<zero-width space>Funnel" and
+-- "Fan<non-breaking hyphen>Funnel" are FanFunnel). Both classes are listed by
+-- code point, so the rule is the same under every server locale; the TS side
+-- reads them from here (reservedNames.test.ts) and folds at least as much.
+-- Agency names follow the same rule (org_create and the orgs name guard).
 create or replace function public._reserved_name(p text)
 returns boolean language sql immutable set search_path = public, pg_temp as $$
-  with n as (
-    select lower(regexp_replace(regexp_replace(coalesce(p, ''), '^\s*@', ''), '[\s._-]+', '', 'g')) as whole,
-           regexp_split_to_array(lower(regexp_replace(coalesce(p, ''), '[^[:alnum:]]+', ' ', 'g')), '\s+') as words
+  with v as (
+    select regexp_replace(coalesce(p, ''), '[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\U000E0000-\U000E0FFF]', '', 'g') as seen
+  ), n as (
+    select lower(regexp_replace(regexp_replace(regexp_replace(v.seen, '[\s._-]+', '', 'g'),
+             '[\u0080-\u00A9\u00AB-\u00B1\u00B4\u00B6-\u00B8\u00BB\u00BF\u00D7\u00F7\u0300-\u036F\u0387\u0483-\u0489\u058A\u05BE\u1400\u1680\u16EB-\u16ED\u1806\u1AB0-\u1AFF\u1DC0-\u1DFF\u2000-\u206F\u20D0-\u20FF\u2190-\u245F\u2500-\u2BFF\u2E00-\u2E7F\u3000-\u3003\u3008-\u3020\u3030\u303D-\u303F\u30A0\u30FB\uFE10-\uFE19\uFE20-\uFE6F\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65\uFFF9-\uFFFD]+', '', 'g'),
+             '^@', '')) as whole,
+           regexp_split_to_array(lower(regexp_replace(v.seen, '[^[:alnum:]]+', ' ', 'g')), '\s+') as words
+      from v
   )
   select coalesce(p, '') <> '' and (
-       n.whole in ('fanfunnel', 'easysimplesites', 'support', 'admin', 'administrator', 'staff', 'official', 'moderator', 'mod',
-                   'help', 'security', 'billing', 'verify', 'team', 'system', 'root', 'api', 'www', 'mail', 'abuse', 'legal',
-                   'privacy', 'terms')
+       regexp_replace(n.whole, '^[0-9]+|[0-9]+$', '', 'g') ~ '^(fanfunnel|easysimplesites|support|admin|administrator|staff|official|moderator|mod|help|security|billing|verify|team|system|root|api|www|mail|abuse|legal|privacy|terms){1,3}$'
     or n.whole like '%fanfunnel%' or n.whole like '%easysimplesites%'
-    or n.words && array['admin', 'administrator', 'support', 'staff', 'official', 'moderator', 'mod', 'security', 'billing', 'abuse', 'system', 'root'])
+    or n.words && array['admin', 'administrator', 'support', 'staff', 'moderator', 'mod'])
   from n
 $$;
 revoke execute on function public._reserved_name(text) from public, anon, authenticated, service_role;
@@ -14846,7 +14916,10 @@ begin
   if public._reserved_name(v) then
     raise exception 'reserved display name' using errcode = '22023';
   end if;
-  update public.profiles set display_name = v where id = auth.uid() and public._session_mfa_satisfied();
+  -- 0073: a suspended account cannot rename itself (the write is skipped, as
+  -- in the sibling setters). The test is is_active on the own row only: an
+  -- applicant who is not approved yet still edits its application name.
+  update public.profiles set display_name = v where id = auth.uid() and is_active = true and public._session_mfa_satisfied();
 end $$;
 revoke execute on function public.set_display_name(text) from public, anon;
 grant execute on function public.set_display_name(text) to authenticated, service_role;
@@ -15024,7 +15097,9 @@ begin
   get diagnostics v_attempt_contexts = row_count;
   -- 0073 (CC-08): age out attempts left pending by a refused commit, a crash
   -- between prepare and commit, or a fan who never retried.
-  update public.spin_attempts set state = 'declined', error = 'stale', finished_at = now(), context = null, token_hash = ''
+  -- The link's hash stays (the later scrub of finished attempts clears it), so
+  -- the fan's saved request is answered declined/stale, not as a mismatch.
+  update public.spin_attempts set state = 'declined', error = 'stale', finished_at = now(), context = null
    where state = 'pending' and created_at < now() - make_interval(days => v_pending_attempt_days);
   get diagnostics v_stale_attempts = row_count;
   -- A declined attempt moved no credit, stock or seed: nothing to keep.
@@ -15161,14 +15236,17 @@ begin
   -- 0073 (CC-01): the fans go here, after every fan and link is held, so the
   -- per-row release of a Chase reservation (wheel -> prize) never runs while
   -- a later fan of the same statement is still unlocked; the route's own
-  -- session DELETE of fans deadlocked against a committing play.
+  -- session DELETE of fans deadlocked against a committing play. The games
+  -- are held before the first fan goes: a fan's deletion writes its
+  -- redemptions (notes, due date) and a fulfilment takes game -> prize ->
+  -- redemption, so a game is never taken after a redemption here.
+  perform 1 from public.wheels where creator_id = p_creator order by id for update;
   delete from public.fans where creator_id = p_creator;
   -- Every link goes with its game (wheel_id cascades). Deleted here first, so
   -- a link set to another game is never rewritten by that pin's SET NULL after
   -- its own game is gone (its tenant guard would refuse the missing game).
   delete from public.fan_passes where creator_id = p_creator;
   delete from public.campaigns where creator_id = p_creator;
-  perform 1 from public.wheels where creator_id = p_creator order by id for update;
   perform set_config('fanfunnel.creator_reset', p_creator::text, true);
   delete from public.wheels where creator_id = p_creator;
   perform set_config('fanfunnel.creator_reset', '', true);
@@ -15181,7 +15259,10 @@ comment on function public.reset_creator_content(uuid, uuid, uuid) is 'The owner
 -- ── CC-07: archive/delete pre-lock the fans' links too (fan -> pass -> game) ──
 -- A direct fan_passes.is_active write by a creator session holds the pass and
 -- its trigger then wants the fan; the lifecycle helper held the fan and
--- wanted the pass through _release_fan_focus. Same set as _lock_wheel_focus_fans.
+-- wanted the pass through _release_fan_focus. The fans taken are those with a
+-- live Focus or Chase on this game (fan_focus.wheel_id) and those whose link
+-- is set to it; unlike _lock_wheel_focus_fans, a focus that points at the
+-- game only through its prize (fan_focus.prize_id) is not looked up here.
 create or replace function public._lock_wheel_lifecycle(p_wheel uuid)
 returns void language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_try integer;
@@ -15595,6 +15676,11 @@ begin
    end if;
    return jsonb_build_object('status','absent');
  end if;
+ -- 0073 (CC-08): an attempt whose link hash was scrubbed (finished longer
+ -- ago than the retention period, or its fan deleted) can no longer be
+ -- matched to a link: it is answered as a finished, declined/stale request,
+ -- never as a mismatch, so a request id saved in a browser is released.
+ if a.token_hash='' then return jsonb_build_object('status','declined','error','stale'); end if;
  if a.token_hash<>encode(digest(p_token,'sha256'),'hex') or a.request_hash<>p_request_hash then return jsonb_build_object('status','conflict'); end if;
  -- 0073 (CC-02): a declined attempt is answered as declined whatever the
  -- link's state now (it reveals nothing but its own refusal reason).
@@ -15619,6 +15705,7 @@ begin
  perform pg_advisory_xact_lock(hashtextextended(p_attempt::text,59));
  select * into a from public.spin_attempts where id=p_attempt;
  if found then
+   if a.token_hash='' then return jsonb_build_object('status','declined','error','stale'); end if;
    if a.token_hash<>encode(digest(p_token,'sha256'),'hex') or a.request_hash<>p_request_hash then return jsonb_build_object('status','conflict'); end if;
    if a.state<>'pending' then return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash); end if;
  end if;
@@ -15690,7 +15777,8 @@ begin
  -- every call on one attempt.
  select * into a from public.spin_attempts where id=p_attempt;
  if not found then return jsonb_build_object('status','unavailable'); end if;
- if a.token_hash<>encode(digest(p_token,'sha256'),'hex') or a.request_hash<>p_request_hash then return jsonb_build_object('status','conflict'); end if;
+ if a.token_hash='' then return jsonb_build_object('status','declined','error','stale'); end if;
+   if a.token_hash<>encode(digest(p_token,'sha256'),'hex') or a.request_hash<>p_request_hash then return jsonb_build_object('status','conflict'); end if;
  if a.state<>'pending' then return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash); end if;
  -- 0071 (F6): the creator's profile is taken (key share, the lock the spin
  -- insert's foreign key takes anyway) before any fan row, so a profile
@@ -15942,6 +16030,7 @@ begin
  -- 0071 (F1): read without a lock; the attempt row is locked after the fan and the pass.
  select * into a from public.spin_attempts where id=p_attempt;
  if a.id is not null then
+   if a.token_hash='' then return jsonb_build_object('status','declined','error','stale'); end if;
    if a.token_hash<>encode(digest(p_token,'sha256'),'hex') or a.request_hash<>p_request_hash then return jsonb_build_object('status','conflict'); end if;
    if a.state<>'pending' then return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash); end if;
  end if;
@@ -15952,6 +16041,7 @@ begin
  if not found then return jsonb_build_object('status','unavailable'); end if;
  select * into a from public.spin_attempts where id=p_attempt for update;
  if a.id is not null then
+   if a.token_hash='' then return jsonb_build_object('status','declined','error','stale'); end if;
    if a.token_hash<>encode(digest(p_token,'sha256'),'hex') or a.request_hash<>p_request_hash then return jsonb_build_object('status','conflict'); end if;
    if a.state<>'pending' then return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash); end if;
    if a.fan_pass_id is distinct from p.id then return jsonb_build_object('status','unavailable'); end if;
@@ -15982,6 +16072,11 @@ declare v_id uuid;
 begin
   if not public.current_user_active() then
     raise exception 'account is not active' using errcode = '42501';
+  end if;
+  -- 0073 (TS-03): an agency is not named like the operator or its staff (the
+  -- orgs name guard below refuses the same on a direct write).
+  if public._reserved_name(trim(p_name)) then
+    raise exception 'reserved agency name' using errcode = '22023';
   end if;
   -- 0071: one agency per owner (orgs_owner_id_key); a concurrent second call
   -- answers the same org instead of a unique violation.
@@ -16060,16 +16155,16 @@ begin
   if tg_table_name = 'messages' then
     if tg_op = 'INSERT' then
       if auth.uid() is not null then new.actor_id := auth.uid(); end if;
-    else
-      new.actor_id := old.actor_id;
+    elsif new.actor_id is distinct from old.actor_id then
+      new.actor_id := (select p.id from public.profiles p where p.id = old.actor_id);
     end if;
   elsif tg_table_name = 'redemptions' then
     if tg_op = 'INSERT' then
       if auth.uid() is not null then new.actor_id := auth.uid(); end if;
     elsif new.status is distinct from old.status or new.fulfilled_at is distinct from old.fulfilled_at then
       new.actor_id := coalesce(auth.uid(), old.actor_id);
-    else
-      new.actor_id := old.actor_id;
+    elsif new.actor_id is distinct from old.actor_id then
+      new.actor_id := (select p.id from public.profiles p where p.id = old.actor_id);
     end if;
   end if;
   return new;
@@ -16104,7 +16199,10 @@ create table if not exists public.legal_terms_notice (
 create index if not exists legal_terms_notice_announced_by_idx on public.legal_terms_notice(announced_by);
 alter table public.legal_terms_notice enable row level security;
 revoke all on public.legal_terms_notice from public, anon, authenticated;
-grant select on public.legal_terms_notice to authenticated, service_role;
+grant select on public.legal_terms_notice to service_role;
+-- A session reads the notice itself (version, date, when it was announced),
+-- never who announced it: announced_by is an admin's profile id.
+grant select (singleton, upcoming_version, effective_at, announced_at) on public.legal_terms_notice to authenticated;
 -- The notice RPCs run as the caller (SECURITY INVOKER): reads through the
 -- policy below, the admin's write through the is_admin() update policy.
 grant update on public.legal_terms_notice to authenticated;
@@ -16175,6 +16273,9 @@ begin
   end if;
   select * into p from public.fan_passes where token = p_token;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
+  -- The creator's profile (key share, which the evidence insert's foreign key
+  -- takes anyway) before the fan: profile -> fan, as every play (0071 F6).
+  perform 1 from public.profiles where id = p.creator_id for key share;
   perform 1 from public.fans where id = p.fan_id and creator_id = p.creator_id for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
   -- Only a live link is acknowledged, decided here and not left to the
@@ -16319,12 +16420,13 @@ begin
                   where r.creator_id = v_creator and r.status in ('pending', 'in_progress') and s.fan_id is not null),
     'unplayedPaidSpins', (select coalesce(sum(p.spins_remaining), 0) from public.fan_passes p
                            where p.creator_id = v_creator and p.is_active and p.self_excluded_at is null
+                             and (p.expires_at is null or p.expires_at > now())
                              and exists (select 1 from public.grants g where g.fan_id = p.fan_id and g.creator_id = v_creator and g.amount_cents > 0)),
-    'unplayedSpins', (select coalesce(sum(p.spins_remaining), 0) from public.fan_passes p where p.creator_id = v_creator and p.is_active and p.self_excluded_at is null),
+    'unplayedSpins', (select coalesce(sum(p.spins_remaining), 0) from public.fan_passes p where p.creator_id = v_creator and p.is_active and p.self_excluded_at is null and (p.expires_at is null or p.expires_at > now())),
     'fansWithCredit', (select count(*) from public.fans f where f.creator_id = v_creator and f.spins_remaining > 0),
     'liveFocus', (select count(*) from public.fan_focus ff where ff.creator_id = v_creator and ff.status in ('active', 'paused')),
     'heldChase', (select count(*) from public.chase_reservations c where c.creator_id = v_creator and c.state = 'held'),
-    'activeLinks', (select count(*) from public.fan_passes p where p.creator_id = v_creator and p.is_active and p.self_excluded_at is null));
+    'activeLinks', (select count(*) from public.fan_passes p where p.creator_id = v_creator and p.is_active and p.self_excluded_at is null and (p.expires_at is null or p.expires_at > now())));
 end $$;
 revoke execute on function public.creator_obligations(uuid) from public, anon, authenticated;
 grant execute on function public.creator_obligations(uuid) to service_role;
@@ -16433,7 +16535,7 @@ language sql stable security definer set search_path = public, pg_temp as $$
        where s.fan_id = f.id and s.creator_id = f.creator_id order by s.created_at desc, s.id desc limit 1) w on true
     left join lateral (select count(*) as n from public.spins s where s.fan_id = f.id and s.creator_id = f.creator_id) wc on true
     left join lateral (
-      select count(*) as n, count(*) filter (where p.is_active and p.self_excluded_at is null) as active,
+      select count(*) as n, count(*) filter (where p.is_active and p.self_excluded_at is null and (p.expires_at is null or p.expires_at > now())) as active,
              bool_or(p.self_excluded_at is not null) as self_excluded
         from public.fan_passes p where p.fan_id = f.id and p.creator_id = f.creator_id) l on true
     left join lateral (select max(ck.day) as last_day from public.fan_checkins ck where ck.fan_id = f.id and ck.creator_id = f.creator_id) v on true
@@ -16503,13 +16605,23 @@ comment on function public.creator_analytics_summary(uuid, integer) is 'The dash
 -- Functions created above already do; the ~180 older SECURITY DEFINER
 -- functions pinned 'public' only (not exploitable: API roles cannot CREATE
 -- in public, cryptoNamespaceProbe proves it) and get pg_temp here. The 23
--- crypto functions (public, extensions, pg_temp) are left as they are.
+-- crypto functions (public, extensions, pg_temp) are left as they are. A
+-- function owned by a role the migration role is not a member of is skipped
+-- with a warning (see the loop).
 do $$
 declare r record;
 begin
-  for r in select p.oid::regprocedure as sig from pg_proc p
+  for r in select p.oid::regprocedure as sig, pg_has_role(p.proowner, 'USAGE') as mine from pg_proc p
             where p.pronamespace = 'public'::regnamespace and p.proconfig = array['search_path=public'] loop
-    execute format('alter function %s set search_path = public, pg_temp', r.sig);
+    if r.mine then
+      execute format('alter function %s set search_path = public, pg_temp', r.sig);
+    else
+      -- ALTER FUNCTION by a role that does not own the function fails (42501)
+      -- and would roll the whole migration back. No migration creates such a
+      -- function; one found here is reported, left alone and listed again by
+      -- the closing check and by scripts/golive/live-precheck.sql.
+      raise warning '0073 (DB-15): % is owned by another role and keeps search_path=public; its owner must run: alter function % set search_path = public, pg_temp', r.sig, r.sig;
+    end if;
   end loop;
 end $$;
 
@@ -16704,7 +16816,7 @@ comment on column public.orgs.owner_active is 'False while the owner''s account 
 
 create or replace function public._org_owner_state()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_live boolean;
+declare v_live boolean; v_was_live boolean;
 begin
   if tg_table_name = 'orgs' then
     new.owner_active := coalesce((select p.is_active and (p.approval_status = 'approved' or p.role = 'admin')
@@ -16713,13 +16825,21 @@ begin
   end if;
   -- profiles: the owner's account state changed.
   v_live := new.is_active and (new.approval_status = 'approved' or new.role = 'admin');
+  v_was_live := old.is_active and (old.approval_status = 'approved' or old.role = 'admin');
   update public.orgs set owner_active = v_live where owner_id = new.id and owner_active is distinct from v_live;
-  if old.is_active and not new.is_active then
-    -- One notice for every seat and every managed creator of the agency this
-    -- account owns (never the owner itself), in id order. Only creator_notices
-    -- is written: no profile is updated, so this trigger cannot fire again.
+  if v_live and not v_was_live then
+    -- The owner can act again: the "owner was suspended" notices of its
+    -- agency are stale and go (matched by the org id each one carries).
+    delete from public.creator_notices n using public.orgs o
+     where o.owner_id = new.id and n.kind = 'agency_owner_suspended' and n.details ->> 'org_id' = o.id::text;
+  elsif v_was_live and not v_live then
+    -- The seats freeze the moment the owner stops being live, whether the
+    -- account was suspended or its approval withdrawn: one notice for every
+    -- seat and every managed creator of the agency this account owns (never
+    -- the owner itself), in id order. Only creator_notices is written: no
+    -- profile is updated, so this trigger cannot fire again.
     insert into public.creator_notices (creator_id, kind, details)
-    select t.id, 'agency_owner_suspended', jsonb_build_object('org_name', left(o.name, 80))
+    select t.id, 'agency_owner_suspended', jsonb_build_object('org_name', left(o.name, 80), 'org_id', o.id)
       from public.orgs o
       cross join lateral (
         select p.id from public.profiles p where p.org_id = o.id
@@ -16742,20 +16862,70 @@ update public.orgs o set owner_active = o.owner_active
  where o.owner_active is distinct from coalesce((select p.is_active and (p.approval_status = 'approved' or p.role = 'admin')
                                                     from public.profiles p where p.id = o.owner_id), false);
 
--- A managed creator, and a seat even while the owner is suspended, read their
--- own agency's row (name, owner_active). orgs_read still hides the row from a
--- seat once the owner is suspended; this policy only adds the two ties, each
--- through the caller's own rows: profiles_select shows a session its own
--- profile (org_id) and org_members_read its own seats (active accounts only).
+-- A seat reads its agency's row even while the owner is suspended (orgs_read
+-- hides it then); the tie is the caller's own seat row, which org_members_read
+-- shows to active accounts only. A managed creator is NOT given the orgs row
+-- (owner_id and billing_model are not its business, and a column grant cannot
+-- differ by row): it reads the agency's name and owner state from org_briefs.
 drop policy if exists orgs_tie_read on public.orgs;
 create policy orgs_tie_read on public.orgs for select to authenticated
   using (
     (select public.can_act_for((select auth.uid()), 'view'))
-    and (
-      id = (select p.org_id from public.profiles p where p.id = (select auth.uid()))
-      or exists (select 1 from public.org_members m where m.org_id = orgs.id and m.profile_id = (select auth.uid()))
-    )
+    and exists (select 1 from public.org_members m where m.org_id = orgs.id and m.profile_id = (select auth.uid()))
   );
+
+-- org_briefs: what a managed creator may know about the agency that manages
+-- it, and nothing else (org id, name, whether the owner can act). One row per
+-- org, written only by the trigger below from the orgs row; a session holds
+-- SELECT alone and sees the row of its own profiles.org_id.
+create table if not exists public.org_briefs (
+  org_id uuid primary key references public.orgs(id) on delete cascade,
+  name text not null,
+  owner_active boolean not null default true
+);
+alter table public.org_briefs enable row level security;
+revoke all on public.org_briefs from public, anon, authenticated;
+grant select on public.org_briefs to authenticated;
+grant select, insert, update, delete on public.org_briefs to service_role;
+drop policy if exists org_briefs_read on public.org_briefs;
+create policy org_briefs_read on public.org_briefs for select to authenticated
+  using (
+    (select public.can_act_for((select auth.uid()), 'view'))
+    and org_id = (select p.org_id from public.profiles p where p.id = (select auth.uid()))
+  );
+comment on table public.org_briefs is 'The agency facts a managed creator may read: name and whether the owner can act (0073). Trigger-maintained copy of orgs.name / orgs.owner_active.';
+create or replace function public._sync_org_brief()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  insert into public.org_briefs (org_id, name, owner_active) values (new.id, new.name, new.owner_active)
+  on conflict (org_id) do update set name = excluded.name, owner_active = excluded.owner_active
+   where public.org_briefs.name is distinct from excluded.name or public.org_briefs.owner_active is distinct from excluded.owner_active;
+  return null;
+end $$;
+revoke execute on function public._sync_org_brief() from public, anon, authenticated, service_role;
+drop trigger if exists ah_org_brief on public.orgs;
+create trigger ah_org_brief after insert or update on public.orgs
+  for each row execute function public._sync_org_brief();
+insert into public.org_briefs (org_id, name, owner_active)
+select o.id, o.name, o.owner_active from public.orgs o
+on conflict (org_id) do update set name = excluded.name, owner_active = excluded.owner_active;
+
+-- TS-03: an agency name follows the reserved-name rule on every write path
+-- (org_create refuses first with the same error; this guard covers a direct
+-- insert or rename, whoever makes it). Existing names are left alone until
+-- they are changed.
+create or replace function public._guard_org_name()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if (tg_op = 'INSERT' or new.name is distinct from old.name) and public._reserved_name(new.name) then
+    raise exception 'reserved agency name' using errcode = '22023';
+  end if;
+  return new;
+end $$;
+revoke execute on function public._guard_org_name() from public, anon, authenticated, service_role;
+drop trigger if exists ab_org_name on public.orgs;
+create trigger ab_org_name before insert or update of name on public.orgs
+  for each row execute function public._guard_org_name();
 
 -- WG-14: a creator that leaves an agency (or is removed from it) takes its
 -- seat scopes with it. Before, the org_member_creators rows stayed: they gave
@@ -16878,8 +17048,138 @@ revoke execute on function public.set_active_wheel(uuid) from public, anon;
 grant execute on function public.set_active_wheel(uuid) to authenticated, service_role;
 comment on function public.set_active_wheel(uuid) is 'Makes one game the creator''s live game and clears the flag on its others in a single UPDATE (0073, CC-06). Runs as the caller under the wheels policies (can_act_for(creator, edit_wheel) or is_admin()). Answers ok, not_found (unknown or archived), forbidden (visible, not editable) or game_not_ready.';
 
--- ── (9) closing check: browser roles reach only the reviewed functions, and
--- every creator-owned table carries the immutability trigger ────────────────
+-- A suspended account cannot file an access request (it used to: the policy
+-- only pinned the row to the caller, and each new request mails the admins).
+-- The applicant is not approved yet, so the test is is_active on the caller's
+-- own profile row, read through profiles_select (own row), which refers to no
+-- policy of this table. An applicant has no UPDATE policy at all
+-- (creator_apps_admin_update is admin-only; the app edits a pending request
+-- with the service role after its own checks).
+drop policy if exists creator_apps_insert on public.creator_applications;
+create policy creator_apps_insert on public.creator_applications for insert
+  with check (
+    profile_id = (select auth.uid())
+    and exists (select 1 from public.profiles p where p.id = (select auth.uid()) and p.is_active)
+  );
+
+-- TS-17: a fan can mute a creator's messages and undo it. fans.chat_muted_at
+-- is set only through set_fan_chat_mute (service role; the fan route calls it
+-- with the link token). It resolves the token and decides liveness exactly as
+-- record_fan_ack does (fan row first, then the link read again), so a paused,
+-- expired or self-excluded link, a blocked fan or a suspended creator answers
+-- unavailable and nothing changes. The creator and its seats read the column
+-- through fans_select (fans is granted per table); no session can write it:
+-- guard_fan_consent refuses a signed-in INSERT or UPDATE that sets or changes
+-- it. A creator message to a muted fan is refused where it is inserted
+-- (guard_message_writes, for every role: the creator's reply, a seat's reply
+-- and the server's automatic intro / outro alike), with the message 'muted'.
+alter table public.fans add column if not exists chat_muted_at timestamptz;
+comment on column public.fans.chat_muted_at is 'When the fan muted this creator''s messages (0073, TS-17); null = not muted. Written only by set_fan_chat_mute (service role).';
+
+create or replace function public.set_fan_chat_mute(p_token text, p_muted boolean)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare p public.fan_passes%rowtype; v_at timestamptz;
+begin
+  if p_token is null or p_muted is null then
+    raise exception 'invalid mute' using errcode = '22023';
+  end if;
+  select * into p from public.fan_passes where token = p_token;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  perform 1 from public.fans where id = p.fan_id and creator_id = p.creator_id for update;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  select * into p from public.fan_passes where id = p.id;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  if not p.is_active or (p.expires_at is not null and p.expires_at <= now()) or p.self_excluded_at is not null
+     or exists (select 1 from public.fans f where f.id = p.fan_id and f.blocked_at is not null)
+     or not exists (select 1 from public.profiles c where c.id = p.creator_id and c.is_active) then
+    return jsonb_build_object('status', 'unavailable');
+  end if;
+  -- Muting again keeps the first time; unmuting clears it.
+  update public.fans set chat_muted_at = case when p_muted then coalesce(chat_muted_at, now()) end
+   where id = p.fan_id returning chat_muted_at into v_at;
+  return jsonb_build_object('status', 'ok', 'muted', v_at is not null);
+end $$;
+revoke execute on function public.set_fan_chat_mute(text, boolean) from public, anon, authenticated;
+grant execute on function public.set_fan_chat_mute(text, boolean) to service_role;
+comment on function public.set_fan_chat_mute(text, boolean) is 'Mutes or unmutes the creator''s messages for the fan behind a live link (0073, TS-17). Answers {status: ok, muted}, {status: not_found} or {status: unavailable} (nothing written). Service role only.';
+
+create or replace function public.guard_fan_consent()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  if current_user in ('anon', 'authenticated') then
+    if tg_op = 'INSERT' then
+      if new.leaderboard_opt_in or new.acked_at is not null or new.acked_terms_version is not null or new.chat_muted_at is not null then
+        raise exception 'fan consent is recorded by the fan only' using errcode = '42501';
+      end if;
+    elsif new.leaderboard_opt_in is distinct from old.leaderboard_opt_in
+       or new.handle is distinct from old.handle
+       or new.acked_at is distinct from old.acked_at
+       or new.acked_terms_version is distinct from old.acked_terms_version
+       or new.chat_muted_at is distinct from old.chat_muted_at then
+      raise exception 'fan consent is recorded by the fan only' using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function public.guard_fan_consent() from public, anon, authenticated, service_role;
+
+create or replace function public.guard_message_writes()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  if tg_op = 'DELETE' then
+    if current_user in ('anon', 'authenticated') and old.sender <> 'creator' then
+      raise exception 'a fan message cannot be deleted by the creator' using errcode = '42501';
+    end if;
+    return old;
+  end if;
+  if not exists (select 1 from public.fans f where f.id = new.fan_id and f.creator_id = new.creator_id) then
+    raise exception 'message references another creator' using errcode = '42501';
+  end if;
+  -- 0073 (TS-17): nothing from the creator's side reaches a fan who muted it.
+  if tg_op = 'INSERT' and new.sender = 'creator'
+     and exists (select 1 from public.fans f where f.id = new.fan_id and f.chat_muted_at is not null) then
+    raise exception 'muted' using errcode = '42501';
+  end if;
+  if current_user in ('anon', 'authenticated') then
+    if tg_op = 'INSERT' and new.sender <> 'creator' then
+      raise exception 'a creator writes only creator messages' using errcode = '42501';
+    end if;
+    if tg_op = 'UPDATE' and (
+         (to_jsonb(new) - 'read_at') <> (to_jsonb(old) - 'read_at')
+         or (old.read_at is not null and new.read_at is distinct from old.read_at)) then
+      raise exception 'messages are append-only (read receipts excepted)' using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function public.guard_message_writes() from public, anon, authenticated, service_role;
+
+-- ── (8z) a deleted creator's request receipts (pre-existing since 0059) ──────
+-- Deleting a grant marks its receipt 'gone'. When the grant goes because its
+-- creator's account is being deleted, the receipt is about to be deleted by the
+-- same cascade; updating it first made Postgres re-check its creator key when
+-- the receipt had already been touched in this transaction (for example its
+-- actor set to null because a seat account was deleted earlier in the same
+-- transaction), and the whole deletion failed. Receipts of a creator that no
+-- longer exists are left to the cascade.
+create or replace function public._creator_request_grant_erased()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+ update public.creator_request_journal j
+    set state='gone', error='gone', grant_id=null, finished_at=coalesce(j.finished_at, now())
+  where j.grant_id = old.id
+    and exists (select 1 from public.profiles p where p.id = j.creator_id);
+ return old;
+end $$;
+revoke execute on function public._creator_request_grant_erased() from public, anon, authenticated, service_role;
+
+-- ── (9) closing check: browser roles reach only the reviewed functions,
+-- every creator-owned table carries the immutability trigger, the retired
+-- signatures are gone, every table has row security and a real policy, the
+-- browser roles hold none of the revoked privileges, and one line says which
+-- free-text rules are not in force ───────────────────────────────────────────
 do $$
 declare v_bad text;
 begin
@@ -16911,14 +17211,107 @@ begin
   select string_agg(c.relname, ', ' order by c.relname) into v_bad
     from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attname = 'creator_id' and not a.attisdropped
    where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
-     and not exists (select 1 from pg_trigger t where t.tgrelid = c.oid and t.tgname = 'zz_creator_immutable');
+     and not exists (select 1 from pg_trigger t where t.tgrelid = c.oid and t.tgname = 'zz_creator_immutable'
+                        and t.tgenabled in ('O', 'A') and t.tgfoid = 'public._guard_creator_immutable()'::regprocedure);
   if v_bad is not null then
-    raise exception '0073: creator-owned tables without the immutability trigger: %', v_bad;
+    raise exception '0073: creator-owned tables without the enabled immutability trigger: %', v_bad;
+  end if;
+  -- A function the migration role does not own could not be altered above:
+  -- it is reported, not fatal (the pre-check lists it before go-live).
+  select string_agg(p.oid::regprocedure::text, ', ') into v_bad
+    from pg_proc p where p.pronamespace = 'public'::regnamespace and not pg_has_role(p.proowner, 'USAGE')
+     and (p.proconfig = array['search_path=public']
+          or (p.prosecdef and not exists (select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) c where c ~ '^search_path=.*pg_temp"?$')));
+  if v_bad is not null then
+    raise warning '0073: functions owned by another role without a pinned search_path ending in pg_temp (their owner must fix them): %', v_bad;
   end if;
   select string_agg(p.oid::regprocedure::text, ', ') into v_bad
-    from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proconfig = array['search_path=public'];
+    from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proconfig = array['search_path=public']
+     and pg_has_role(p.proowner, 'USAGE');
   if v_bad is not null then
     raise exception '0073: functions still pinning search_path=public only: %', v_bad;
+  end if;
+  select string_agg(p.oid::regprocedure::text, ', ') into v_bad
+    from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef and pg_has_role(p.proowner, 'USAGE')
+     and not exists (select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) c where c ~ '^search_path=.*pg_temp"?$');
+  if v_bad is not null then
+    raise exception '0073: SECURITY DEFINER functions whose search_path does not end in pg_temp: %', v_bad;
+  end if;
+  -- The signatures this migration retired are really gone.
+  select string_agg(sig, ', ') into v_bad
+    from unnest(array[
+      'public.save_wheel_prizes(uuid, uuid, jsonb)',
+      'public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid)',
+      'public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid)',
+      'public.save_game_wheel(uuid, uuid, uuid, jsonb, jsonb, uuid)',
+      'public.my_seat_creators()',
+      'public.import_fans(jsonb)',
+      'public.credit_pass_spins(uuid, integer)',
+      'public.claim_spin(text)',
+      'public.rollback_claimed_spin(text, uuid)',
+      'public.cancel_fan_focus(uuid, uuid, uuid, uuid)',
+      'public.reconcile_creator_request(uuid, uuid, uuid, text, boolean, boolean)',
+      'public.edit_pass_grant(uuid, uuid, uuid, jsonb, uuid)',
+      'public.grant_focus_pack(uuid, uuid, uuid, uuid, uuid, uuid, uuid)',
+      'public.import_fans_durable(uuid, uuid, text, jsonb, uuid)',
+      'public.delete_wheel(uuid)']) sig
+   where to_regprocedure(sig) is not null;
+  if v_bad is not null then
+    raise exception '0073: retired function signatures still exist: %', v_bad;
+  end if;
+  -- Every table has row security and at least one policy; none is wide open.
+  select string_agg(c.relname, ', ' order by c.relname) into v_bad
+    from pg_class c
+   where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+     and (not c.relrowsecurity or not exists (select 1 from pg_policy pol where pol.polrelid = c.oid));
+  if v_bad is not null then
+    raise exception '0073: public tables without row security or without a policy: %', v_bad;
+  end if;
+  select string_agg(c.relname || '.' || pol.polname, ', ' order by c.relname, pol.polname) into v_bad
+    from pg_policy pol join pg_class c on c.oid = pol.polrelid
+   where c.relnamespace = 'public'::regnamespace
+     and (pg_get_expr(pol.polqual, pol.polrelid) = 'true' or pg_get_expr(pol.polwithcheck, pol.polrelid) = 'true');
+  if v_bad is not null then
+    raise exception '0073: policies that are literally true: %', v_bad;
+  end if;
+  -- What a browser session must not hold.
+  select string_agg(t.what, ', ') into v_bad
+    from (values
+      ('SELECT on fan_passes.token (authenticated)', has_column_privilege('authenticated', 'public.fan_passes', 'token', 'SELECT')),
+      ('SELECT on fan_passes.token (anon)', has_column_privilege('anon', 'public.fan_passes', 'token', 'SELECT')),
+      ('UPDATE on prizes', has_any_column_privilege('authenticated', 'public.prizes', 'UPDATE')),
+      ('DELETE on prizes', has_table_privilege('authenticated', 'public.prizes', 'DELETE')),
+      ('INSERT on spins', has_any_column_privilege('authenticated', 'public.spins', 'INSERT')),
+      ('UPDATE on spins', has_any_column_privilege('authenticated', 'public.spins', 'UPDATE')),
+      ('DELETE on spins', has_table_privilege('authenticated', 'public.spins', 'DELETE')),
+      ('INSERT on profiles', has_any_column_privilege('authenticated', 'public.profiles', 'INSERT')),
+      ('DELETE on profiles', has_table_privilege('authenticated', 'public.profiles', 'DELETE'))
+    ) as t(what, held)
+   where t.held;
+  if v_bad is not null then
+    raise exception '0073: a browser role still holds: %', v_bad;
+  end if;
+  -- DB-03: one line for the free-text rules that could not be added.
+  select string_agg(con, ', ' order by con) into v_bad
+    from unnest(array[
+      'fans_notes_len_check', 'fans_tags_shape_check', 'fans_display_name_len_check',
+      'fans_handle_len_check', 'prizes_label_len_check', 'prizes_description_len_check',
+      'prizes_color_len_check', 'prizes_emoji_len_check', 'wheels_title_len_check',
+      'wheels_subtitle_len_check', 'wheel_templates_name_len_check', 'wheel_templates_title_len_check',
+      'wheel_templates_subtitle_len_check', 'campaigns_name_len_check', 'orgs_name_len_check',
+      'wishlists_prize_label_len_check', 'dm_templates_title_len_check', 'dm_templates_body_len_check',
+      'prize_templates_label_len_check', 'prize_templates_description_len_check',
+      'campaign_packs_label_len_check', 'profiles_chat_intro_len_check',
+      'profiles_chat_outro_len_check', 'profiles_creator_note_len_check',
+      'creator_applications_display_name_len_check', 'creator_applications_socials_len_check',
+      'creator_applications_audience_size_len_check', 'creator_applications_note_len_check',
+      'creator_applications_email_len_check', 'creator_applications_decision_reason_len_check']) con
+   where not exists (select 1 from pg_constraint k where k.conname = con and k.contype = 'c' and k.convalidated
+                        and k.connamespace = 'public'::regnamespace);
+  if v_bad is not null then
+    raise warning '0073 (DB-03): free-text size rules NOT in force (rows over the limit; shorten them, then re-run 0073): %', v_bad;
+  else
+    raise notice '0073 (DB-03): every free-text size rule is in force';
   end if;
 end $$;
 

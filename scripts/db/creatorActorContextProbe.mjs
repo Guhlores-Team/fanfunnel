@@ -82,6 +82,6 @@ export async function probeCreatorActorContexts(sql) {
   const renewed=await mint(a,a,'grant','aal2');check(Number((await sql(`select count(*) from public.creator_actor_contexts where actor_id=${q(a)};`)).trim())===1,'next direct mint removes expired contexts before bounded issuance');
   await sql(`update public.creator_actor_contexts set created_at=now()-interval '61 seconds',expires_at=now()-interval '1 second' where id=${q(renewed.context)};select public.run_retention_cleanup(365,90,365,90,90);`);
   check(Number((await sql(`select count(*) from public.creator_actor_contexts where actor_id=${q(a)};`)).trim())===0,'normal retention removes abandoned expired contexts');
- } finally {await sql(`delete from auth.users where id in(${q(a)},${q(b)});`);}
+ } finally {for(const u of[b,a])await sql(`delete from auth.users where id=${q(u)};`);}
  console.log(`PASS creator actor context: ${checks} causal PostgreSQL checks`);
 }

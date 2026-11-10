@@ -1395,6 +1395,17 @@ async function main() {
     check(second.error?.code === "23505", `0073 a second request by the same account is refused (${code(second)})`);
     const appDelete = await app.from("creator_applications").delete().eq("profile_id", APP.id).select("id");
     check(appDelete.error?.code === "42501", `0073 an applicant cannot DELETE its request (${code(appDelete)})`);
+    // A suspended account files no access request and cannot rename itself.
+    const SUS = await makeUser("sus73");
+    const sus = await signedClient(SUS.email);
+    const susBefore = must(await admin.from("profiles").update({ is_active: false }).eq("id", SUS.id).select("display_name").single(), "0073 suspend the applicant");
+    const susApp = await sus.from("creator_applications").insert({ profile_id: SUS.id, note: "let me in" }).select("id").single();
+    check(susApp.error?.code === "42501", `0073 a suspended account cannot file an access request (${code(susApp)})`);
+    const susRows = await admin.from("creator_applications").select("id").eq("profile_id", SUS.id);
+    check(!susRows.error && (susRows.data?.length ?? 0) === 0, `0073 the refused request stores nothing (${susRows.error?.message ?? susRows.data?.length})`);
+    const susRename = await sus.rpc("set_display_name", { p_name: `Suspended ${RUN}` });
+    const susAfter = must(await admin.from("profiles").select("display_name").eq("id", SUS.id).single(), "0073 the suspended account's name");
+    check(!susRename.error && susAfter.display_name === susBefore.display_name, `0073 a suspended account cannot rename itself (${susRename.error?.message ?? susAfter.display_name})`);
     // TS-03: reserved display names and slugs.
     const reservedName = await a.rpc("set_display_name", { p_name: "FanFunnel Support" });
     check(/reserved display name/.test(reservedName.error?.message ?? ""), `0073 a display name impersonating the product is refused (${reservedName.error?.message ?? "accepted"})`);
@@ -1482,8 +1493,43 @@ async function main() {
     const firstAsk = await admin.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
     const secondAsk = await admin.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
     check(!firstAsk.error && secondAsk.error?.code === "23505", `0073 a second open unlock request for the same game is a unique violation (${firstAsk.error?.message ?? "ok"} / ${code(secondAsk)})`);
+    // TS-17: the fan's mute is server-written, creator-readable, and stops creator messages.
+    const muted = await admin.rpc("set_fan_chat_mute", { p_token: liveLink.token, p_muted: true });
+    check(muted.data?.status === "ok" && muted.data?.muted === true, `0073 the fan path mutes the creator's messages (${muted.error?.message ?? JSON.stringify(muted.data)})`);
+    const creatorMute = await a.rpc("set_fan_chat_mute", { p_token: liveLink.token, p_muted: false });
+    check(creatorMute.error?.code === "42501", `0073 a creator cannot call set_fan_chat_mute (${deniedCode(creatorMute)})`);
+    const forgedUnmute = await a.from("fans").update({ chat_muted_at: null }).eq("id", liveFan.id).select("id");
+    check(forgedUnmute.error?.code === "42501", `0073 a creator cannot unmute its fan (${code(forgedUnmute)})`);
+    const mutedRead = await a.from("fans").select("chat_muted_at").eq("id", liveFan.id).single();
+    check(!mutedRead.error && typeof mutedRead.data?.chat_muted_at === "string", `0073 a creator reads that its fan muted it (${mutedRead.error?.message ?? mutedRead.data?.chat_muted_at})`);
+    const mutedReply = await a.from("messages").insert({ creator_id: A.id, fan_id: liveFan.id, sender: "creator", body: `muted ${RUN}` }).select("id");
+    check(mutedReply.error?.code === "42501" && mutedReply.error?.message === "muted", `0073 a creator's message to a muted fan is refused with 'muted' (${mutedReply.error?.message ?? "accepted"})`);
+    const unmuted = await admin.rpc("set_fan_chat_mute", { p_token: liveLink.token, p_muted: false });
+    check(unmuted.data?.status === "ok" && unmuted.data?.muted === false, `0073 the fan path unmutes (${unmuted.error?.message ?? JSON.stringify(unmuted.data)})`);
+    const pausedMute = await admin.rpc("set_fan_chat_mute", { p_token: A.token, p_muted: true });
+    check(pausedMute.data?.status === "unavailable", `0073 a self-excluded link cannot change the mute (${pausedMute.error?.message ?? JSON.stringify(pausedMute.data)})`);
     const queueShape = await a.rpc("creator_redemption_queue", { p_limit: 1 });
     check(!queueShape.error && (queueShape.data ?? []).every((row) => "actor_id" in row && "fan_id" in row), `0073 the queue carries fan_id and actor_id (${queueShape.error?.message ?? "ok"})`);
+    // 0073 (independent review): narrower reads and reserved agency names.
+    // A is a managed creator of `org` (not seated there): it reads the brief, not the orgs row.
+    const managedOrg = await a.from("orgs").select("id, owner_id, billing_model").eq("id", org.id);
+    check(!managedOrg.error && (managedOrg.data?.length ?? 0) === 0, `0073 a managed creator cannot read its agency's orgs row (${managedOrg.error?.message ?? managedOrg.data?.length})`);
+    const brief = await a.from("org_briefs").select("org_id, name, owner_active").eq("org_id", org.id);
+    check(!brief.error && brief.data?.length === 1 && brief.data[0].name === `rls ${RUN}` && typeof brief.data[0].owner_active === "boolean", `0073 a managed creator reads its agency's name and owner state from org_briefs (${brief.error?.message ?? JSON.stringify(brief.data)})`);
+    const foreignBrief = await b.from("org_briefs").select("org_id");
+    check(!foreignBrief.error && (foreignBrief.data?.length ?? 0) === 0, `0073 a creator outside the agency reads no brief (${foreignBrief.error?.message ?? foreignBrief.data?.length})`);
+    const anonBrief = await anonClient.from("org_briefs").select("org_id");
+    check(anonBrief.error?.code === "42501", `0073 anon cannot read org_briefs (${code(anonBrief)})`);
+    const forgedBrief = await a.from("org_briefs").update({ name: "forged" }).eq("org_id", org.id).select("org_id");
+    check(forgedBrief.error?.code === "42501", `0073 a session cannot write org_briefs (${code(forgedBrief)})`);
+    const announcer = await a.from("legal_terms_notice").select("announced_by");
+    check(announcer.error?.code === "42501", `0073 a session cannot read who announced the Terms notice (${code(announcer)})`);
+    const noticeCols = await a.from("legal_terms_notice").select("upcoming_version, effective_at, announced_at");
+    check(!noticeCols.error, `0073 a session still reads the notice's own columns (${noticeCols.error?.message ?? "ok"})`);
+    const reservedAgency = await b.rpc("org_create", { p_name: "FanFunnel Support" });
+    check(reservedAgency.error?.code === "22023" && /reserved agency name/.test(reservedAgency.error?.message ?? ""), `0073 an agency cannot be named like the operator (${reservedAgency.error?.message ?? "accepted"})`);
+    const reservedRename = await ownClient.from("orgs").update({ name: "Official Support" }).eq("id", org.id).select("id");
+    check(reservedRename.error?.code === "22023", `0073 an owner cannot rename its agency to a reserved name (${code(reservedRename)})`);
     }
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable

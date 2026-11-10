@@ -19,8 +19,16 @@
 //   F8  a fulfil seat's state change in flight while the owner removes the seat
 //   F9  archive_wheel vs a direct link pause by the creator session (Chase fan)
 //   F10 a manager seat's grant in flight while the owner removes the seat
+// 0073 round 6 (independent review L6, L3, M3, H1):
+//   F12 the owner's full reset vs a fulfilment of one of its prizes (and one
+//       fan's deletion vs the same fulfilment, which needed no change)
+//   F13 an account deletion cascade vs a fan's acknowledgement (record_fan_ack)
+//   F14 the migration's lock block gives up after 5 seconds behind a held table
+//   H1  an attempt aged out by retention releases the request; the next play
+//       commits once; replays move nothing (ledger asserted)
 import { createHash, randomUUID } from "node:crypto";
 import { mintActorContext, withActorContext } from "./actorContextFixture.mjs";
+import { LOCK_BLOCK_0073 } from "./batch7Probe.mjs";
 
 const quote = (s) => `'${String(s).replaceAll("'", "''")}'`;
 const json = (v) => `${quote(JSON.stringify(v))}::jsonb`;
@@ -31,10 +39,12 @@ const TERMS = "2026-11-11";
 const seen = (name, lock) => `do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'${lock ? " and wait_event_type='Lock'" : ""}); perform pg_sleep(0.01); end loop; end $$;`;
 const asCreator = (creator, body) => `begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(creator)},true);select set_config('request.jwt.claims','{"sub":"${creator}","role":"authenticated","aal":"aal1"}',true);${body}commit;`;
 
-/** @param {string} db @param {(db: string, sql: string) => Promise<{ status: number | null, stdout: string, stderr: string }>} psqlAsync */
-export async function probeLockOrder(db, psqlAsync) {
-  const bad = []; let checks = 0;
-  const check = (ok, label) => { checks++; if (!ok) bad.push(label); };
+/**
+ * The real fixtures of a play (creator, game, fan with ten granted spins,
+ * prepare, a plain-wheel commit), shared with goLivePrecheckProbe.mjs.
+ * @param {string} db @param {(db: string, sql: string) => Promise<{ status: number | null, stdout: string, stderr: string }>} psqlAsync
+ */
+export function playFixtures(db, psqlAsync) {
   const sql = async (q) => { const r = await psqlAsync(db, q); if (r.status !== 0) throw Error(`${q.slice(0, 100)}: ${(r.stderr || "").trim()}`); return r.stdout; };
   const rpc = async (name, args) => withActorContext(sql, name, args, async (bound) => JSON.parse((await sql(`begin;set local role service_role;select public.${name}(${bound.join(",")});commit;`)).trim().split("\n").at(-1) || "null"));
 
@@ -82,6 +92,15 @@ export async function probeLockOrder(db, psqlAsync) {
     const spin = { id: a.id, fan_id: c.fanId, fan_pass_id: c.passId, creator_id: c.creatorId, wheel_id: c.wheelId, campaign_id: c.campaignId, prize_id: p.id, prize_label: p.label, prize_rarity: p.rarity, prize_image_url: p.image_url, server_seed: c.serverSeed, server_seed_hash: c.serverSeedHash, nonce: c.nonce, fair_version: 3, next_pity_counter: c.pityCounter + 1, focus_consumed: false, chase_consumed: false, chase_completed: false, next_focus_spins_left: null, next_chase_counter: null, response_prize: { id: p.id, label: p.label, rarity: p.rarity, weight: p.weight }, response_prize_index: c.prizes.findIndex((x) => x.id === p.id), response_show_stock: c.wheel.show_stock, client_seed: "lock-order", pool_snapshot: snapshot, pool_hash: hash(canonical(snapshot)), fair_trace: { excluded: [], won: p.id } };
     return `begin;set local role service_role;select public.commit_spin_attempt(${quote(a.id)},${quote(who.token)},${quote(a.binding)},${json({ contextHash: c.contextHash })},${json(spin)},${json({ delivery: p.delivery ?? "manual" })},${json({ seed, hash: hash(seed) })});commit;`;
   };
+
+  return { sql, rpc, addCreator, addWheel, addFan, focusOn, prep, commitSql };
+}
+
+/** @param {string} db @param {(db: string, sql: string) => Promise<{ status: number | null, stdout: string, stderr: string }>} psqlAsync */
+export async function probeLockOrder(db, psqlAsync) {
+  const bad = []; let checks = 0;
+  const check = (ok, label) => { checks++; if (!ok) bad.push(label); };
+  const { sql, addCreator, addWheel, addFan, focusOn, prep, commitSql } = playFixtures(db, psqlAsync);
 
   /**
    * Gate holds `gateSql`'s rows; `first` starts and is seen blocked, then
@@ -280,6 +299,95 @@ export async function probeLockOrder(db, psqlAsync) {
       check(errors.length === 0 && runs.every((r) => (r.stdout || "").trim().split("\n").at(-1) === "ok"), `F11 round ${round + 1}: twelve concurrent switches all answer ok (${errors[0] ?? "-"})`);
       check((await sql(`select count(*) filter (where is_active) from public.wheels where creator_id=${quote(c)};`)).trim() === "1", `F11 round ${round + 1}: exactly one game is live afterwards`);
     }
+  });
+  // F12 (L6): the reset deleted its fans (the fan trigger writes their
+  // redemptions) before it held its games, while a fulfilment holds game ->
+  // prize -> redemption. The reset now takes the games first. Gate: the prizes.
+  await guard("F12", async () => {
+    const c = await addCreator(), cw = await addWheel(c, [{ label: "A", stock: 50 }, { label: "B" }]);
+    const winner = await addFan(c, cw.id), a = await prep(winner), won = await psqlAsync(db, commitSql(winner, a));
+    if (!committed(won.stdout)) throw Error(`F12 fixture commit: ${won.stderr || won.stdout}`);
+    const red = (await sql(`select id from public.redemptions where creator_id=${quote(c)} limit 1;`)).trim();
+    if (!red) throw Error("F12 fixture: no redemption");
+    await sql(`update public.redemptions set notes='leave it at the door' where id=${quote(red)};`);
+    const chaser = await addFan(c, cw.id);
+    await focusOn(c, chaser, cw.prizes.A, "chase");
+    const { context } = await mintActorContext(sql, c, c, "edit_wheel");
+    const r = await staged(`select 1 from public.prizes where wheel_id=${quote(cw.id)} order by id for update;`,
+      asCreator(c, `select public.set_redemption_state(${quote(red)},${quote(c)},'{"status":"fulfilled"}'::jsonb);`),
+      `begin;set local role service_role;select public.reset_creator_content(${quote(context)},${quote(c)},${quote(c)});commit;`);
+    clean("F12 reset_creator_content vs a fulfilment", r, /"status": ?"ok"/.test(r.last(r.first)) && r.last(r.second) === "ok");
+    check((await sql(`select (select count(*) from public.fans where creator_id=${quote(c)})||','||(select count(*) from public.wheels where creator_id=${quote(c)});`)).trim() === "0,0", "F12 the fans and the games are gone after the reset");
+    await sql(`delete from public.creator_actor_contexts where id=${quote(context)};`);
+  });
+  // F12 (single fan): one fan's deletion takes its Focus game and prize
+  // (aa_focus_lifecycle, the first BEFORE trigger) before its redemptions
+  // (trg_fan_scrub_traces), the fulfilment's own order, so it needed no
+  // change: staged the same way, it waits for the game and both finish.
+  await guard("F12 single fan", async () => {
+    const c = await addCreator(), cw = await addWheel(c, [{ label: "A", stock: 50 }, { label: "B" }]);
+    const who = await addFan(c, cw.id), a = await prep(who), won = await psqlAsync(db, commitSql(who, a));
+    if (!committed(won.stdout)) throw Error(`F12 single-fan fixture commit: ${won.stderr || won.stdout}`);
+    const red = (await sql(`select id from public.redemptions where creator_id=${quote(c)} limit 1;`)).trim();
+    await sql(`update public.redemptions set notes='leave it at the door' where id=${quote(red)};`);
+    await focusOn(c, who, cw.prizes.A, "chase");
+    const r = await staged(`select 1 from public.prizes where wheel_id=${quote(cw.id)} order by id for update;`,
+      asCreator(c, `select public.set_redemption_state(${quote(red)},${quote(c)},'{"status":"fulfilled"}'::jsonb);`),
+      `delete from public.fans where id=${quote(who.fan)};`);
+    clean("F12 a single fan's deletion vs a fulfilment", r, /"status": ?"ok"/.test(r.last(r.first)) && r.second.status === 0);
+    check((await sql(`select (select count(*) from public.fans where id=${quote(who.fan)})||','||(select status from public.redemptions where id=${quote(red)});`)).trim() === "0,fulfilled", "F12 the fan is gone and its prize stays fulfilled");
+  });
+  // F13 (L3): the acknowledgement held the fan and then took the creator's
+  // profile (key share, the evidence insert's foreign key); the account
+  // deletion holds the profile and wants the fan. Gate: the fan.
+  await guard("F13", async () => {
+    const c = await addCreator(), cw = await addWheel(c), who = await addFan(c, cw.id);
+    const r = await staged(`select 1 from public.fans where id=${quote(who.fan)} for update;`,
+      `begin;set local role service_role;select public.record_fan_ack(${quote(who.token)});commit;`,
+      `delete from auth.users where id=${quote(c)};`);
+    clean("F13 account deletion vs a fan's acknowledgement", r, /"status": ?"ok"/.test(r.last(r.first)) && r.second.status === 0);
+    check((await sql(`select count(*) from public.profiles where id=${quote(c)};`)).trim() === "0", "F13 the account is gone after the acknowledgement");
+  });
+  // F14 (M3): the migration's first block. A session keeps one table; the
+  // block gives up after its 5 second lock_timeout instead of queueing, and
+  // goes through once the table is free.
+  await guard("F14", async () => {
+    const tag = `ff-lock-${randomUUID().slice(0, 8)}`;
+    const holder = psqlAsync(db, `set application_name='${tag}-hold';begin;select count(*) from public.spins;select pg_sleep(30);commit;`);
+    await psqlAsync(db, `do $$ begin for i in 1..1500 loop exit when exists(select 1 from pg_locks l join pg_stat_activity a on a.pid=l.pid where a.application_name='${tag}-hold' and l.relation='public.spins'::regclass and l.granted); perform pg_sleep(0.01); end loop; end $$;`);
+    const started = Date.now();
+    const blocked = await psqlAsync(db, `begin;${LOCK_BLOCK_0073}commit;`);
+    const waited = Date.now() - started;
+    await psqlAsync(db, `select pg_terminate_backend(pid) from pg_stat_activity where application_name='${tag}-hold';`);
+    await holder;
+    check(blocked.status !== 0 && /lock timeout/.test(blocked.stderr || "") && waited >= 4500 && waited < 20000, `F14 the lock block fails with a lock timeout after about 5 seconds behind a held table (${waited} ms; ${(blocked.stderr || "no error").trim().split("\n")[0].slice(0, 120)})`);
+    const free = await psqlAsync(db, `begin;${LOCK_BLOCK_0073}select 'held:'||count(*) from pg_locks where pid=pg_backend_pid() and mode='AccessExclusiveLock' and relation='public.spins'::regclass;rollback;`);
+    check(free.status === 0 && /held:1/.test(free.stdout || ""), `F14 the lock block goes through once the table is free (${(free.stderr || "").trim().split("\n")[0].slice(0, 120)})`);
+  });
+  // H1: prepare, age the attempt, run retention; status and a fresh prepare
+  // with the same request id answer declined/stale (the saved request is
+  // released), the old request cannot commit, the next one commits exactly
+  // once, and replays of either move nothing.
+  await guard("H1", async () => {
+    const c = await addCreator(), cw = await addWheel(c), who = await addFan(c, cw.id), a = await prep(who);
+    const svc = async (call) => JSON.parse((await sql(`begin;set local role service_role;select ${call};commit;`)).trim().split("\n").at(-1) || "null");
+    const ledger = async () => (await sql(`select p.spins_remaining||','||f.spins_remaining||','||(select count(*) from public.spins where fan_id=${quote(who.fan)})||','||(select count(*) from public.spin_attempts where fan_id=${quote(who.fan)} and state='committed')||','||(select count(*) from public.redemptions r join public.spins s on s.id=r.spin_id where s.fan_id=${quote(who.fan)}) from public.fan_passes p join public.fans f on f.id=p.fan_id where p.id=${quote(who.pass)};`)).trim();
+    const status = (attempt) => svc(`public.get_spin_attempt_status(${quote(attempt.id)},${quote(who.token)},${quote(attempt.binding)})`);
+    await sql(`update public.spin_attempts set created_at=now()-interval '3 days' where id=${quote(a.id)};`);
+    await svc(`public.run_retention_cleanup(365,90,180,90,90)`);
+    const row = (await sql(`select state||','||error||','||(token_hash<>'')::text from public.spin_attempts where id=${quote(a.id)};`)).trim();
+    check(row === "declined,stale,true", `H1 retention declines the aged attempt as stale and keeps its link hash (${row})`);
+    const st = await status(a), again = await svc(`public.prepare_spin_attempt(${quote(a.id)},${quote(who.token)},${quote(a.binding)})`);
+    check(st?.status === "declined" && st?.error === "stale" && again?.status === "declined" && again?.error === "stale", `H1 status and a fresh prepare with the same request id answer declined/stale (${JSON.stringify(st)} | ${JSON.stringify(again)})`);
+    const late = await psqlAsync(db, commitSql(who, a));
+    check(late.status === 0 && /"declined"/.test(late.stdout) && /"stale"/.test(late.stdout) && !committed(late.stdout), `H1 the aged request cannot commit any more (${(late.stderr || late.stdout).trim().slice(0, 120)})`);
+    check((await ledger()) === "10,10,0,0,0", `H1 nothing moved for the aged request (${await ledger()})`);
+    const b = await prep(who), played = await psqlAsync(db, commitSql(who, b));
+    check(committed(played.stdout), `H1 the fan plays with a new request (${(played.stderr || played.stdout).trim().slice(0, 120)})`);
+    check((await ledger()) === "9,9,1,1,1", `H1 exactly one spin was spent, recorded and awarded (${await ledger()})`);
+    const replay = await psqlAsync(db, commitSql(who, b)), stale = await status(a), done = await status(b), lateAgain = await psqlAsync(db, commitSql(who, a));
+    check(replay.status === 0 && lateAgain.status === 0 && stale?.status === "declined" && stale?.error === "stale" && done?.status === "committed" && (await ledger()) === "9,9,1,1,1",
+      `H1 replays of either request move nothing: no spin lost, none doubled (${JSON.stringify(stale)} | ${done?.status} | ${await ledger()})`);
   });
   return { bad, checks };
 }

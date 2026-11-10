@@ -34,11 +34,16 @@ export const RESERVED_WORDS = [
 
 /**
  * Words that reserve a name when they appear as a SEPARATE word in it
- * ("Alice Support", "jane-official", "mod_dan"), the database's word rule.
- * The first twelve are the SQL list; the plurals are this side's addition.
+ * ("Alice Support", "The Admin Guy", "mod_dan"), the database's word rule.
+ * The first six are the SQL list; the plurals are this side's addition.
+ * official, system, root, security, billing and abuse are NOT here: they
+ * are reserved as a name (alone, digit-padded or joined to another reserved
+ * word, see RESERVED_WORDS), so "Jane Official", "Root Beer Fan", "System
+ * Shock" and "Security Sam" are allowed while "Official Support" and
+ * "Security Team" are not.
  */
 export const RESERVED_WORD_TOKENS = [
-  "admin", "administrator", "support", "staff", "official", "moderator", "mod", "security", "billing", "abuse", "system", "root",
+  "admin", "administrator", "support", "staff", "moderator", "mod",
   "admins", "administrators", "moderators", "mods",
 ] as const;
 const TOKENS = new Set<string>(RESERVED_WORD_TOKENS);
@@ -51,6 +56,14 @@ const CONFUSABLES: Record<string, string> = {
   "ԁ": "d", "ɡ": "g", "ո": "n", "ս": "u", "ν": "v", "ο": "o", "α": "a", "ε": "e", "ι": "i", "κ": "k", "ρ": "p",
   "τ": "t", "υ": "u", "ω": "w", "ℓ": "l", "ı": "i", "ł": "l", "ø": "o", "ß": "ss", "æ": "ae", "œ": "oe",
 };
+
+/**
+ * Characters nobody sees (zero-width spaces and joiners, direction marks,
+ * variation selectors, fillers, tags). The database drops them before it
+ * splits a name into words (public._reserved_name, 0073), so this side does
+ * too: "mo<zero-width space>d dan" has the word "mod".
+ */
+const INVISIBLE = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{E0000}-\u{E0FFF}]/gu;
 
 /** Digits and symbols used in place of letters. Ambiguous ones list every reading. */
 const LEET: Record<string, readonly string[]> = {
@@ -112,12 +125,13 @@ export function nameKeys(raw: string): string[] {
  * The name's separate words, split the two ways the database can split them
  * (on anything that is not an ASCII letter or digit, and on anything that is
  * not a letter or digit in any script), plus the same with accents and
- * look-alike letters folded.
+ * look-alike letters folded. Invisible characters are dropped first.
  */
 export function nameWords(raw: string): string[] {
-  const lower = raw.toLowerCase();
+  const visible = raw.replace(INVISIBLE, "");
+  const lower = visible.toLowerCase();
   let folded = "";
-  for (const ch of raw.normalize("NFKD").toLowerCase()) {
+  for (const ch of visible.normalize("NFKD").toLowerCase()) {
     if (/\p{M}/u.test(ch)) continue;
     folded += CONFUSABLES[ch] ?? ch;
   }

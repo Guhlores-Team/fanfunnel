@@ -323,6 +323,8 @@ export async function probeBingoGames(sqlInput){
   console.log(`PASS0061 ${checks} Bingo checks: real pure RNG card/multi-line proofs, atomic retry/rollback, zero-weight line prize, lifecycle, RLS and erasure`);
  }finally{
   bridge.stdin.end();await Promise.allSettled([...pending]);
-  await sql(`drop trigger if exists zz_bingo_probe_fault on public.bingo_line_awards;drop function if exists public._bingo_probe_fault();drop trigger if exists zz_bingo_publish_fault on public.prizes;drop function if exists public._bingo_publish_fault();delete from auth.users where id in(${q(owner)},${q(other)});`);
+  await sql(`drop trigger if exists zz_bingo_probe_fault on public.bingo_line_awards;drop function if exists public._bingo_probe_fault();drop trigger if exists zz_bingo_publish_fault on public.prizes;drop function if exists public._bingo_publish_fault();`);
+  // One account per transaction, as the app deletes accounts (Auth deleteUser).
+  for (const u of [other, owner]) await sql(`delete from auth.users where id=${q(u)};`);
  }
 }

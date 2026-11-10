@@ -49,5 +49,5 @@ export async function probeRewardViews(sql){
   check(afterErase===0&&(await counters()).map(r=>r.views).join(',')===before,'disclosure waiting behind erasure returns zero and never logs cleared values');
   check((await sql(`select count(*) from public.spin_rewards where spin_id=any(${array(wins)}) and cipher is null and iv is null and erased_at is not null;`)).trim()==='2','erasure retains counts but no delivered secrets');
   console.log(`PASS reward views ${checks} authorization, atomic counters, no-economy, break and erasure-race checks`);
- }finally{await sql(`drop trigger if exists zz_reward_views_fault on public.spin_rewards;drop function if exists public._reward_views_fault();delete from auth.users where id in(${q(owner)},${q(other)});`);}
+ }finally{await sql(`drop trigger if exists zz_reward_views_fault on public.spin_rewards;drop function if exists public._reward_views_fault();`);for(const u of[other,owner])await sql(`delete from auth.users where id=${q(u)};`);}
 }

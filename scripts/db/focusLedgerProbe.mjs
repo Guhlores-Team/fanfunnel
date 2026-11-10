@@ -477,5 +477,5 @@ export async function probeFocusLedger(sqlInput) {
     check((await sql(`select bool_and(f.spins_remaining=(select coalesce(sum(p.spins_remaining),0) from public.fan_passes p where p.fan_id=f.id and p.is_active)) from public.fans f where creator_id=${quote(owner)};`)).trim()==="t","fan totals equal authoritative active-pass sums");
     console.log(`PASS 0059 ${checks} economic/RLS checks: prep, atomic manual/code receipts, replay, stale context, credit grants, focus/break, concrete chase reservation, erasure/dedup, concurrent grants and release`);
     return checks;
-  } finally { await Promise.allSettled([...pending]); await sql(`delete from auth.users where id in(${quote(owner)},${quote(other)});`); }
+  } finally { await Promise.allSettled([...pending]); for (const u of [other, owner]) await sql(`delete from auth.users where id=${quote(u)};`); }
 }

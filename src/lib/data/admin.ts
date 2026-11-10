@@ -227,9 +227,9 @@ export async function getAgencyOverview(opts: { orgId?: string | null } = {}): P
     ties.push({ orgId: st.org.id, orgName: st.org.name, kind: "staff", role: st.role });
   }
   if (managedOrgId && managedOrgId !== owned?.id) {
-    const { data: managed } = await sb.from("orgs").select("id, name").eq("id", managedOrgId).maybeSingle();
-    const m = managed as { id: string; name: string } | null;
-    // A managed creator cannot read the orgs row through RLS unless seated there; name it when known.
+    // A managed creator reads its agency's name from org_briefs (0073): the orgs row itself is for the owner and the seats.
+    const { data: managed } = await sb.from("org_briefs").select("org_id, name").eq("org_id", managedOrgId).maybeSingle();
+    const m = managed as { org_id: string; name: string } | null;
     ties.push({ orgId: managedOrgId, orgName: m?.name ?? seats.find((x) => x.org.id === managedOrgId)?.org.name ?? "the agency that manages your account", kind: "creator", role: null });
   }
 

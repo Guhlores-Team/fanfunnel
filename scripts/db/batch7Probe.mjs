@@ -8,6 +8,21 @@
 // TS-*, ops OPS*, performance PA-03); the staged concurrency cases (CC-01,
 // CC-03, CC-07 and CC-02's commit) live in lockOrderProbe.mjs.
 // Against the 0072 schema the catalog, privilege and behaviour checks fail.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// Blocks of the migration itself, re-run by the round-6 checks (the lock
+// block, the DB-03 rule loop and the closing check), so what is probed is the
+// text that ships.
+const MIGRATION = readFileSync(join(import.meta.dirname, "../../supabase/migrations/0073_batch7_hardening.sql"), "utf8");
+const block = (after) => {
+  const a = MIGRATION.indexOf(after), b = MIGRATION.indexOf("do $$", a), c = MIGRATION.indexOf("end $$;", b);
+  if (a < 0 || b < 0 || c < 0) throw new Error(`0073 block not found: ${after}`);
+  return MIGRATION.slice(b, c + 7);
+};
+export const LOCK_BLOCK_0073 = block("-- ── (0) lock_timeout");
+const DB03_BLOCK = block("-- ── DB-03 / ATK N-A");
+const CLOSING_BLOCK = block("-- ── (9) closing check");
 
 const id = (n) => `00000000-0000-4000-8000-0000000073${n}`;
 const A = id("a1"), A2 = id("a2"), B = id("b1"), OW = id("c1"), MG = id("c2"), CH = id("c3"), FU = id("c4"), AD = id("c5"), X = id("c6"), OW2 = id("c7");
@@ -409,25 +424,44 @@ export function probeBatch7(db, psql) {
   // WG-13: an owner's suspension reaches every seat and managed creator.
   expect("WG-13: suspending an agency owner leaves one notice per seat and managed creator (not the owner), flips orgs.owner_active, and neither repeats nor recurses",
     service(`update public.profiles set is_active = false where id = '${OW}';`)
-    + `select 'notices:' || count(*) || ',' || count(distinct creator_id) || ',' || min(details->>'org_name') from public.creator_notices where kind = 'agency_owner_suspended';
+    + `select 'notices:' || count(*) || ',' || count(distinct creator_id) || ',' || min(details->>'org_name') || ',' || (min(details->>'org_id') = '${ORG}') from public.creator_notices where kind = 'agency_owner_suspended';
        select 'who:' || string_agg(creator_id::text, ',' order by creator_id) from public.creator_notices where kind = 'agency_owner_suspended';
        select 'flag:' || owner_active from public.orgs where id = '${ORG}';`
     + as(A, `select 'creator-reads:' || count(*) from public.creator_notices where kind = 'agency_owner_suspended';`)
     + service(`update public.profiles set display_name = 'still suspended' where id = '${OW}'; update public.profiles set is_active = true where id = '${OW}';`)
     + `select 'back:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`
     + service(`update public.profiles set approval_status = 'pending' where id = '${OW}';`)
-    + `select 'unapproved:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`,
-    ["notices:5,5,probe 0073 org", `who:${[A, A2, MG, CH, FU].sort().join(",")}`, "flag:false", "creator-reads:1", "back:true,5", "unapproved:false,5"]);
+    + `select 'unapproved:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`
+    + service(`update public.profiles set is_active = false where id = '${OW}';`)
+    + `select 'still:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`
+    + service(`update public.profiles set is_active = true where id = '${OW}';`)
+    + `select 'half:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`
+    + service(`update public.profiles set approval_status = 'approved' where id = '${OW}';`)
+    + `select 'live:' || owner_active || ',' || (select count(*) from public.creator_notices where kind = 'agency_owner_suspended') from public.orgs where id = '${ORG}';`,
+    // L8: a withdrawn approval notifies like a suspension; becoming live again removes the stale notices; no repeat while not live.
+    ["notices:5,5,probe 0073 org,true", `who:${[A, A2, MG, CH, FU].sort().join(",")}`, "flag:false", "creator-reads:1", "back:true,0", "unapproved:false,5", "still:false,5", "half:false,5", "live:true,0"]);
   expect("WG-13: suspending an account that owns no agency writes no notice",
     service(`update public.profiles set is_active = false where id in ('${B}', '${MG}', '${A}');`) + `select 'none:' || count(*) from public.creator_notices where kind = 'agency_owner_suspended';`, ["none:0"]);
   // WG-13: who may read the owner state, and that it cannot be forged.
   expect("WG-13: a managed creator and a seat read their agency's owner state, also while the owner is suspended; a stranger reads nothing",
-    as(A, `select 'creator:' || name || ',' || owner_active from public.orgs;`) + as(CH, `select 'seat:' || name || ',' || owner_active from public.orgs;`)
-    + as(B, `select 'stranger:' || count(*) from public.orgs;`)
+    // A managed creator reads org_briefs (id, name, owner state), never the orgs row (owner_id, billing_model).
+    as(A, `select 'creator-org:' || count(*) from public.orgs; select 'creator:' || org_id || ',' || name || ',' || owner_active from public.org_briefs;`)
+    + as(CH, `select 'seat:' || name || ',' || owner_active from public.orgs; select 'seat-brief:' || count(*) from public.org_briefs;`)
+    + as(B, `select 'stranger:' || count(*) || ',' || (select count(*) from public.org_briefs) from public.orgs;`)
     + service(`update public.profiles set is_active = false where id = '${OW}';`)
-    + as(A, `select 'creator-after:' || name || ',' || owner_active from public.orgs;`) + as(CH, `select 'seat-after:' || name || ',' || owner_active from public.orgs;`)
-    + as(OW, `select 'owner-after:' || count(*) from public.orgs;`) + as(B, `select 'stranger-after:' || count(*) from public.orgs;`),
-    ["creator:probe 0073 org,true", "seat:probe 0073 org,true", "stranger:0", "creator-after:probe 0073 org,false", "seat-after:probe 0073 org,false", "owner-after:0", "stranger-after:0"]);
+    + as(A, `select 'creator-after:' || name || ',' || owner_active from public.org_briefs;`) + as(CH, `select 'seat-after:' || name || ',' || owner_active from public.orgs;`)
+    + as(OW, `select 'owner-after:' || count(*) || ',' || (select count(*) from public.org_briefs) from public.orgs;`) + as(B, `select 'stranger-after:' || count(*) || ',' || (select count(*) from public.org_briefs) from public.orgs;`)
+    + service(`update public.profiles set is_active = false where id = '${A}';`) + as(A, `select 'suspended-creator:' || count(*) from public.org_briefs;`),
+    ["creator-org:0", `creator:${ORG},probe 0073 org,true`, "seat:probe 0073 org,true", "seat-brief:0", "stranger:0,0", "creator-after:probe 0073 org,false", "seat-after:probe 0073 org,false", "owner-after:0,0", "stranger-after:0,0", "suspended-creator:1"]); // a suspended creator keeps its read-only view (can_act_for(self, 'view'))
+  same("INFO: org_briefs has row security, one policy and SELECT alone for a session", q(`select c.relrowsecurity || ',' || (select count(*) from pg_policy where polrelid = c.oid) || ',' || has_table_privilege('authenticated', c.oid, 'SELECT') || ',' || has_table_privilege('authenticated', c.oid, 'INSERT') || ',' || has_table_privilege('authenticated', c.oid, 'UPDATE') || ',' || has_table_privilege('authenticated', c.oid, 'DELETE') || ',' || has_table_privilege('anon', c.oid, 'SELECT') from pg_class c where c.oid = 'public.org_briefs'::regclass`), "true,1,true,false,false,false,false");
+  refused("INFO: a session cannot write org_briefs", as(A, `update public.org_briefs set name = 'forged';`), /permission denied for table org_briefs/);
+  expect("INFO: org_briefs follows the org (insert, rename, owner state, delete)",
+    `insert into public.orgs (id, name, owner_id) values ('${id("e9")}', 'Second agency', '${B}'); select 'new:' || name || ',' || owner_active from public.org_briefs where org_id = '${id("e9")}';
+     update public.orgs set name = 'Second agency renamed' where id = '${id("e9")}'; select 'renamed:' || name from public.org_briefs where org_id = '${id("e9")}';`
+    + service(`update public.profiles set is_active = false where id = '${B}';`) + `select 'state:' || owner_active from public.org_briefs where org_id = '${id("e9")}';
+     delete from public.orgs where id = '${id("e9")}'; select 'gone:' || count(*) from public.org_briefs where org_id = '${id("e9")}';
+     select 'all:' || ((select count(*) from public.orgs) = (select count(*) from public.org_briefs b join public.orgs o on o.id = b.org_id and o.name = b.name and o.owner_active = b.owner_active));`,
+    ["new:Second agency,true", "renamed:Second agency renamed", "state:false", "gone:0", "all:true"]);
   expect("WG-13: owner_active follows the owner's account, never the request; a creator or seat cannot write the org; a suspended seat reads none",
     as(OW, `update public.orgs set owner_active = false, name = 'renamed' where id = '${ORG}';`) + `select 'forged:' || name || ',' || owner_active from public.orgs where id = '${ORG}';`
     + as(A, `update public.orgs set name = 'by creator' where id = '${ORG}';`) + as(CH, `update public.orgs set name = 'by seat' where id = '${ORG}';`)
@@ -521,6 +555,229 @@ export function probeBatch7(db, psql) {
        select 'others:' || count(*) from public.creator_notices where kind = 'creator_approved';`
     + service(`update public.profiles set features = '{}'::jsonb where id = '${A}';` + ask(A, "bingo")) + `select 'again:' || count(*) from public.creator_notices where kind = 'game_unlock_request' and creator_id = '${A}';`,
     ["open:3", `resolved:${[`${A}/scratch`, `${B}/bingo`].sort().join(",")}`, "others:2", "again:2"]);
+
+  // What a suspended account can still write: the name and the access request.
+  expect("suspended: set_display_name is skipped without an error and writes nothing; an active creator and a pending applicant still rename",
+    `update public.profiles set display_name = 'Before' where id in ('${A}', '${X}'); update public.profiles set is_active = false where id = '${A}';`
+    + as(A, `select 'suspended:' || public.set_display_name('Renamed while suspended')::text || 'void';`)
+    + `select 'kept:' || display_name from public.profiles where id = '${A}'; update public.profiles set is_active = true where id = '${A}';`
+    + as(A, `select 'active:' || public.set_display_name('Renamed')::text || 'void';`) + as(X, `select public.set_display_name('Applicant');`)
+    + `select 'now:' || string_agg(display_name, ',' order by display_name) from public.profiles where id in ('${A}', '${X}');`,
+    ["suspended:void", "kept:Before", "active:void", "now:Applicant,Renamed"]);
+  refused("suspended: an account that is not active cannot file an access request", `update public.profiles set is_active = false where id = '${X}';` + as(X, `insert into public.creator_applications (profile_id, note) values ('${X}', 'let me in');`), /new row violates row-level security policy for table "creator_applications"/);
+  expect("suspended: the refused request stores nothing; an active applicant still files one and cannot change it afterwards",
+    `update public.profiles set is_active = false where id = '${X}'; savepoint s;`
+    + as(X, `do $$ begin insert into public.creator_applications (profile_id, note) values ('${X}', 'let me in'); exception when insufficient_privilege then null; end $$;`)
+    + `select 'stored:' || count(*) from public.creator_applications where profile_id = '${X}'; update public.profiles set is_active = true where id = '${X}';`
+    + as(X, `insert into public.creator_applications (profile_id, note) values ('${X}', 'let me in'); update public.creator_applications set note = 'edited', status = 'approved' where profile_id = '${X}';`)
+    + `select 'active:' || note || ',' || status from public.creator_applications where profile_id = '${X}';`,
+    ["stored:0", "active:let me in,pending"]);
+  same("suspended: an applicant has no UPDATE policy on its request (admin only)", q(`select string_agg(polname, ',' order by polname) from pg_policy where polrelid = 'public.creator_applications'::regclass and polcmd in ('w', '*')`), "creator_apps_admin_update");
+
+  // TS-03: official, system, root, security, billing, abuse are reserved as a
+  // name (alone, digit-padded, joined), not as one word of a longer name.
+  for (const name of ["Jane Official", "Root Beer Fan", "System Shock", "Security Sam"]) {
+    expect(`TS-03: "${name}" is an ordinary display name`, as(A, `select public.set_display_name('${name}'); select 'name:' || display_name from public.profiles where id = '${A}';`), [`name:${name}`]);
+  }
+  for (const name of ["Official Support", "Security Team", "official", "officialsupport", "official2", "admin1", "Alice Support", "The Admin Guy"]) {
+    refused(`TS-03: "${name}" is refused as a display name`, as(A, `select public.set_display_name('${name}');`), /reserved display name/);
+  }
+  refused("TS-03: a slug of joined reserved words is refused", as(A, `select public.set_public_profile('security-team', null, null);`), /reserved slug/);
+  expect("TS-03: a slug with one of the six words inside a longer name is kept", as(A, `select public.set_public_profile('root-beer-fan', null, null); select 'slug:' || public_slug from public.profiles where id = '${A}';`), ["slug:root-beer-fan"]);
+  // TS-17: the fan's reversible mute.
+  const mute = (on) => `select public.set_fan_chat_mute('${TOKEN_A}', ${on})`;
+  same("TS-17: fans.chat_muted_at exists and set_fan_chat_mute is service-role only", q(`select (select data_type from information_schema.columns where table_schema = 'public' and table_name = 'fans' and column_name = 'chat_muted_at') || ',' || has_function_privilege('service_role', p.oid, 'EXECUTE') || ',' || has_function_privilege('authenticated', p.oid, 'EXECUTE') || ',' || has_function_privilege('anon', p.oid, 'EXECUTE') || ',' || p.prosecdef || ',' || p.proconfig::text from pg_proc p where p.oid = 'public.set_fan_chat_mute(text,boolean)'::regprocedure`), `timestamp with time zone,true,false,false,true,{"search_path=public, pg_temp"}`);
+  expect("TS-17: the fan mutes and unmutes; muting twice keeps the first time; the creator and its seat read the state, another creator does not",
+    service(`select 'mute:' || (${mute(true)})::text;`) + `update public.fans set chat_muted_at = '2026-01-01T00:00:00Z' where id = '${FA}';`
+    + service(`select 'again:' || (${mute(true)})::text;`) + `select 'first:' || to_char(chat_muted_at at time zone 'utc', 'YYYY-MM-DD') from public.fans where id = '${FA}';`
+    + as(A, `select 'creator:' || (chat_muted_at is not null) from public.fans where id = '${FA}';`) + as(CH, `select 'seat:' || (chat_muted_at is not null) from public.fans where id = '${FA}';`)
+    + as(B, `select 'other:' || count(*) from public.fans where id = '${FA}';`)
+    + service(`select 'unmute:' || (${mute(false)})::text;`) + `select 'cleared:' || (chat_muted_at is null) from public.fans where id = '${FA}';`
+    + service(`select 'unknown:' || (public.set_fan_chat_mute('no-such-token', true))::text;`),
+    [`mute:{"muted": true, "status": "ok"}`, `again:{"muted": true, "status": "ok"}`, "first:2026-01-01", "creator:true", "seat:true", "other:0", `unmute:{"muted": false, "status": "ok"}`, "cleared:true", `unknown:{"status": "not_found"}`]);
+  for (const [label, state] of [
+    ["paused", `update public.fan_passes set is_active = false where id = '${PASS_A}';`],
+    ["expired", `update public.fan_passes set expires_at = now() - interval '1 minute' where id = '${PASS_A}';`],
+    ["self-excluded", `update public.fan_passes set self_excluded_at = now(), is_active = false where id = '${PASS_A}';`],
+    ["blocked", `update public.fans set blocked_at = now() where id = '${FA}';`],
+    ["suspended creator", `update public.profiles set is_active = false where id = '${A}';`],
+  ]) {
+    expect(`TS-17: set_fan_chat_mute answers unavailable for a ${label} link and writes nothing`,
+      state + service(`select '${label}:' || (${mute(true)})::text;`) + `select 'state:' || (chat_muted_at is null) from public.fans where id = '${FA}';`,
+      [`${label}:{"status": "unavailable"}`, "state:true"]);
+  }
+  refused("TS-17: a creator session cannot call set_fan_chat_mute", as(A, `${mute(true)};`), /permission denied for function set_fan_chat_mute/);
+  refused("TS-17: anon cannot call set_fan_chat_mute", `set local role anon; ${mute(true)};`, /permission denied for function set_fan_chat_mute/);
+  refused("TS-17: a mute without a value is refused", service(`select public.set_fan_chat_mute('${TOKEN_A}', null);`), /invalid mute/);
+  refused("TS-17: a creator session cannot unmute its fan", service(`${mute(true)};`) + as(A, `update public.fans set chat_muted_at = null where id = '${FA}';`), /fan consent is recorded by the fan only/);
+  refused("TS-17: a creator session cannot mute its fan", as(A, `update public.fans set chat_muted_at = now() where id = '${FA}';`), /fan consent is recorded by the fan only/);
+  refused("TS-17: a manager seat cannot change the mute either", service(`${mute(true)};`) + as(MG, `update public.fans set chat_muted_at = null where id = '${FA}';`), /fan consent is recorded by the fan only/);
+  refused("TS-17: a creator cannot add a fan that is already muted", as(A, `insert into public.fans (creator_id, display_name, chat_muted_at) values ('${A}', 'born muted', now());`), /fan consent is recorded by the fan only/);
+  expect("TS-17: a creator still edits its fan's notes while the fan is muted, and the mute stays",
+    service(`${mute(true)};`) + as(A, `update public.fans set notes = 'vip' where id = '${FA}';`) + `select 'notes:' || notes || ',' || (chat_muted_at is not null) from public.fans where id = '${FA}';`, ["notes:vip,true"]);
+  const say = (who) => `insert into public.messages (creator_id, fan_id, sender, body) values ('${A}', '${FA}', '${who}', 'hello from ${who}');`;
+  refused("TS-17: the creator's reply to a muted fan is refused with 'muted'", service(`${mute(true)};`) + as(A, say("creator")), /ERROR:\s+muted/);
+  refused("TS-17: a chat seat's reply to a muted fan is refused with 'muted'", service(`${mute(true)};`) + as(CH, say("creator")), /ERROR:\s+muted/);
+  refused("TS-17: the server's automatic creator message to a muted fan is refused with 'muted'", service(`${mute(true)};` + say("creator")), /ERROR:\s+muted/);
+  expect("TS-17: the muted fan still writes; nothing from the creator was stored; after unmuting the creator's reply goes through",
+    service(`${mute(true)};` + say("fan")) + `savepoint s;` + as(A, `do $$ begin ${say("creator")} exception when insufficient_privilege then null; end $$;`)
+    + `select 'stored:' || count(*) filter (where sender = 'fan' and body = 'hello from fan') || ',' || count(*) filter (where sender = 'creator') from public.messages where fan_id = '${FA}';`
+    + service(`${mute(false)};`) + as(A, say("creator")) + `select 'after:' || count(*) from public.messages where fan_id = '${FA}' and sender = 'creator';`,
+    ["stored:1,0", "after:1"]);
+
+  // ══ round 6 (independent review of 0073) ═════════════════════════════════
+  // H1: a stale or scrubbed attempt always releases the fan's saved request.
+  expect("H1: an attempt aged out by retention keeps its link hash and answers declined/stale to status and to a fresh prepare with the same request id; the next request plays; no credit moved",
+    service(`select 'prep:' || (public.prepare_spin_attempt('${id("38")}', '${TOKEN_A}', '${HEX}')->>'status');`)
+    + `update public.spin_attempts set created_at = now() - interval '3 days' where id = '${id("38")}';`
+    + service(`select 'ran:' || (public.run_retention_cleanup(365, 90, 180, 90, 90)->>'stale_spin_attempts');`)
+    + `select 'row:' || state || ',' || error || ',' || (token_hash <> '')::text || ',' || coalesce(context::text, 'null') from public.spin_attempts where id = '${id("38")}';`
+    + service(`select 'status:' || (s->>'status') || ',' || (s->>'error') from public.get_spin_attempt_status('${id("38")}', '${TOKEN_A}', '${HEX}') s;
+       select 'again:' || (s->>'status') || ',' || (s->>'error') from public.prepare_spin_attempt('${id("38")}', '${TOKEN_A}', '${HEX}') s;
+       select 'next:' || (public.prepare_spin_attempt('${id("39")}', '${TOKEN_A}', '${HEX}')->>'status');`)
+    + `select 'ledger:' || spins_remaining || ',' || (select count(*) from public.spins where fan_id = '${FA}') from public.fan_passes where id = '${PASS_A}';`,
+    ["prep:ready", "ran:2", "row:declined,stale,true,null", "status:declined,stale", "again:declined,stale", "next:ready", "ledger:5,1"]);
+  expect("H1: an attempt whose link hash was scrubbed answers declined/stale on status, prepare, commit and cancel (any request hash), never conflict; a live attempt with another hash is still a conflict",
+    service(`select 'prep:' || (public.prepare_spin_attempt('${id("38")}', '${TOKEN_A}', '${HEX}')->>'status'); select 'live:' || (public.get_spin_attempt_status('${id("38")}', '${TOKEN_A}', '${"b".repeat(64)}')->>'status');`)
+    + `update public.spin_attempts set token_hash = '' where id = '${id("38")}';`
+    + service(`select 'status:' || (s->>'status') || ',' || (s->>'error') from public.get_spin_attempt_status('${id("38")}', '${TOKEN_A}', '${HEX}') s;
+       select 'other:' || (s->>'status') || ',' || (s->>'error') from public.get_spin_attempt_status('${id("38")}', '${TOKEN_A}', '${"b".repeat(64)}') s;
+       select 'prepare:' || (s->>'status') || ',' || (s->>'error') from public.prepare_spin_attempt('${id("38")}', '${TOKEN_A}', '${HEX}') s;
+       select 'commit:' || (s->>'status') || ',' || (s->>'error') from public.commit_spin_attempt('${id("38")}', '${TOKEN_A}', '${HEX}', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb) s;
+       select 'cancel:' || (s->>'status') || ',' || (s->>'error') from public.cancel_spin_attempt('${id("38")}', '${TOKEN_A}', '${HEX}', 'cancelled') s;`),
+    ["prep:ready", "live:conflict", "status:declined,stale", "other:declined,stale", "prepare:declined,stale", "commit:declined,stale", "cancel:declined,stale"]);
+  expect("H1: the 90-day pass scrubs a finished attempt's link hash: a declined one is deleted (absent), a committed one answers declined/stale, neither is a conflict",
+    `insert into public.spin_attempts (id, creator_id, fan_id, fan_pass_id, token_hash, request_hash, state, error, spin_id, finished_at, created_at) values
+       ('${id("3a")}', '${A}', '${FA}', '${PASS_A}', encode(sha256(convert_to('${TOKEN_A}', 'UTF8')), 'hex'), '${HEX}', 'declined', 'no_spins', null, now() - interval '100 days', now() - interval '100 days'),
+       ('${id("3b")}', '${A}', '${FA}', '${PASS_A}', encode(sha256(convert_to('${TOKEN_A}', 'UTF8')), 'hex'), '${HEX}', 'committed', null, '${SPIN_A}', now() - interval '100 days', now() - interval '100 days');`
+    + service(`select public.run_retention_cleanup(365, 90, 180, 90, 90) is not null;
+       select 'declined:' || (public.get_spin_attempt_status('${id("3a")}', '${TOKEN_A}', '${HEX}')->>'status');
+       select 'committed:' || (s->>'status') || ',' || (s->>'error') from public.get_spin_attempt_status('${id("3b")}', '${TOKEN_A}', '${HEX}') s;`)
+    + `select 'kept:' || state || ',' || (token_hash = '')::text || ',' || (spin_id is not null)::text from public.spin_attempts where id = '${id("3b")}';`,
+    ["declined:absent", "committed:declined,stale", "kept:committed,true,true"]);
+  // M1: the attribution trigger lets the foreign key's SET NULL through.
+  expect("M1: a seat that replied and fulfilled is deleted: actor_id is null on both rows, no row points at a missing profile; while the account exists the stamp cannot be changed",
+    as(CH, `insert into public.messages (creator_id, fan_id, sender, body) values ('${A}', '${FA}', 'creator', 'from the seat');`)
+    + as(FU, `select public.set_redemption_state('${RED_A}', '${A}', '{"status":"in_progress"}'::jsonb);`)
+    + `update public.messages set actor_id = null where body = 'from the seat'; update public.messages set actor_id = '${B}' where body = 'from the seat'; update public.redemptions set actor_id = null where id = '${RED_A}';
+       select 'kept:' || (select actor_id from public.messages where body = 'from the seat') || ',' || (select actor_id from public.redemptions where id = '${RED_A}');
+       delete from auth.users where id in ('${CH}', '${FU}');
+       select 'after:' || coalesce((select actor_id::text from public.messages where body = 'from the seat'), 'null') || ',' || coalesce((select actor_id::text from public.redemptions where id = '${RED_A}'), 'null') || ',' || (select status from public.redemptions where id = '${RED_A}');
+       select 'orphans:' || ((select count(*) from public.messages m where m.actor_id is not null and not exists (select 1 from public.profiles p where p.id = m.actor_id))
+         + (select count(*) from public.redemptions r where r.actor_id is not null and not exists (select 1 from public.profiles p where p.id = r.actor_id)));
+       select 'gone:' || count(*) from public.profiles where id in ('${CH}', '${FU}');`,
+    [`kept:${CH},${FU}`, "after:null,null,in_progress", "orphans:0", "gone:0"]);
+  // M2: a free-text rule with an over-long row is not added at all.
+  {
+    checks++;
+    const rules = `select 'rules:' || count(*) filter (where conname in ('fans_notes_len_check', 'prizes_description_len_check')) || ',' || count(*) filter (where not convalidated) from pg_constraint where contype = 'c' and conrelid in ('public.fans'::regclass, 'public.prizes'::regclass);`;
+    const r = run(`alter table public.fans drop constraint fans_notes_len_check; alter table public.prizes drop constraint prizes_description_len_check;
+      update public.fans set notes = repeat('n', 2500) where id = '${FA}'; update public.prizes set description = repeat('d', 1500) where id = '${PA1}';
+      ${DB03_BLOCK}
+      ${rules}
+      ${as(A, `update public.fans set display_name = 'Still editable', tags = array['vip'] where id = '${FA}';`)}
+      update public.prizes set stock = 3 where id = '${PA1}';
+      select 'row:' || display_name || ',' || char_length(notes) || ',' || (select stock from public.prizes where id = '${PA1}') from public.fans where id = '${FA}';
+      ${service(`select 'prep:' || (public.prepare_spin_attempt('${id("3c")}', '${TOKEN_A}', '${HEX}')->>'status');`)}
+      ${CLOSING_BLOCK}
+      update public.fans set notes = 'short' where id = '${FA}'; update public.prizes set description = 'short' where id = '${PA1}';
+      ${DB03_BLOCK}
+      select 'again:' || count(*) filter (where convalidated) || ',' || count(*) from pg_constraint where conname in ('fans_notes_len_check', 'prizes_description_len_check');
+      ${CLOSING_BLOCK}`);
+    const lines = out(r), stderr = r.stderr || "";
+    const ok = r.status === 0 && lines.includes("rules:0,0") && lines.includes("row:Still editable,2500,3") && lines.includes("prep:ready") && lines.includes("again:2,2")
+      && /WARNING: +0073 \(DB-03\): 1 row\(s\) in public\.fans break fans_notes_len_check/.test(stderr) && /WARNING: +0073 \(DB-03\): 1 row\(s\) in public\.prizes break prizes_description_len_check/.test(stderr)
+      && /WARNING: +0073 \(DB-03\): free-text size rules NOT in force[^\n]*: fans_notes_len_check, prizes_description_len_check\n/.test(stderr + "\n")
+      && /NOTICE: +0073 \(DB-03\): every free-text size rule is in force/.test(stderr);
+    if (!ok) bad.push(`M2: an over-long legacy row keeps its rule out (never NOT VALID), stays updatable, its fan can still play, the closing check names the rules, and a re-run after shortening adds them validated (${lines.filter((l) => /:/.test(l)).join(" | ")}; ${r.status !== 0 ? err(r) : stderr.split("\n").filter((l) => /DB-03/.test(l)).join(" | ").slice(0, 400)})`);
+  }
+  // M3: the first block of the migration.
+  expect("M3: the first block gives the transaction a 5 second lock_timeout and holds every public table in ACCESS EXCLUSIVE mode",
+    `${LOCK_BLOCK_0073} select 'timeout:' || current_setting('lock_timeout');
+     select 'locked:' || ((select count(distinct l.relation) from pg_locks l join pg_class c on c.oid = l.relation where l.pid = pg_backend_pid() and l.mode = 'AccessExclusiveLock' and l.granted and c.relnamespace = 'public'::regnamespace and c.relkind = 'r')
+       = (select count(*) from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r'));`,
+    ["timeout:5s", "locked:true"]);
+  // L9: the closing check passes on this database (retired signatures gone, row security everywhere, no revoked privilege held).
+  {
+    checks++;
+    const r = run(CLOSING_BLOCK);
+    if (r.status !== 0 || !/every free-text size rule is in force/.test(r.stderr || "")) bad.push(`L9: the closing check of 0073 passes on the built database (${err(r)})`);
+  }
+  for (const [label, breakIt, pattern] of [
+    ["a table without row security", `create table public.r6_open (id int); `, /public tables without row security or without a policy: r6_open/],
+    ["a table with row security and no policy", `create table public.r6_nopolicy (id int); alter table public.r6_nopolicy enable row level security;`, /public tables without row security or without a policy: r6_nopolicy/],
+    ["a wide-open policy", `create policy r6_true on public.wishlists for select using (true);`, /policies that are literally true: wishlists\.r6_true/],
+    ["a retired signature that came back", `create function public.delete_wheel(p uuid) returns void language sql set search_path = public, pg_temp as 'select null::void';`, /retired function signatures still exist: public\.delete_wheel\(uuid\)/],
+    ["a readable link token", `grant select (token) on public.fan_passes to authenticated;`, /a browser role still holds: SELECT on fan_passes\.token \(authenticated\)/],
+    ["a prize column a session may update", `grant update (label) on public.prizes to authenticated;`, /a browser role still holds: UPDATE on prizes/],
+    ["a session DELETE on profiles", `grant delete on public.profiles to authenticated;`, /a browser role still holds: DELETE on profiles/],
+    ["a disabled immutability trigger", `alter table public.fans disable trigger zz_creator_immutable;`, /creator-owned tables without the enabled immutability trigger: fans/],
+    ["a SECURITY DEFINER function without pg_temp", `create function public.r6_definer() returns int language sql security definer set search_path = public, extensions as 'select 1'; revoke execute on function public.r6_definer() from public, anon, authenticated;`, /SECURITY DEFINER functions whose search_path does not end in pg_temp: r6_definer\(\)/],
+  ]) refused(`L9: the closing check refuses ${label}`, `${breakIt} ${CLOSING_BLOCK}`, pattern);
+  // L2: the control-character class, the same under every locale.
+  expect("L2: accents, emoji and non-Latin text pass set_chat_settings and set_creator_note under this server's locale; tabs and line breaks pass",
+    as(A, `select public.set_chat_settings(E'Ol\u00E1 \u{1F44B} \u00E7a va?\\t\u3053\u3093\u306B\u3061\u306F\\nline two', 'Tsch\u00FC\u00DF \u{1F389}'); select public.set_creator_note(E'Zo\u00EB \u{1F49C} \u043F\u0440\u0438\u0432\u0435\u0442\\r\\nbye', null);
+      select 'kept:' || (chat_intro like 'Ol\u00E1 \u{1F44B}%line two') || ',' || chat_outro || ',' || (creator_note like 'Zo\u00EB \u{1F49C} \u043F\u0440\u0438\u0432\u0435\u0442%bye') from public.profiles where id = '${A}';`),
+    ["kept:true,Tsch\u00FC\u00DF \u{1F389},true"]);
+  refused("L2: set_creator_note refuses an escape character", as(A, `select public.set_creator_note('note' || chr(27), null);`), /invalid creator note/);
+  refused("L2: set_chat_settings refuses a C1 control character in the sign-off", as(A, `select public.set_chat_settings('hi', 'bye' || chr(155));`), /invalid chat settings/);
+  {
+    // The class as each available collation reads it (C, a UTF-8 libc locale, ICU): accents and emoji are never control characters, a bell always is.
+    const collations = q(`select string_agg(collname, ',' order by collname) from pg_collation where collname in ('C', 'POSIX', 'C.utf8', 'en_US.utf8', 'und-x-icu', 'en-x-icu') and collencoding in (-1, pg_char_to_encoding('UTF8'))`).split(",").filter(Boolean);
+    same("L2: the setters test control characters with [[:cntrl:]] and no longer with [:print:]", q(`select bool_and(prosrc like '%[[:cntrl:]]%' and prosrc not like '%[:print:]%') from pg_proc where pronamespace = 'public'::regnamespace and proname in ('set_chat_settings', 'set_creator_note', 'set_display_name')`), "t");
+    same("L2: a C collation and a UTF-8 one are both available to test", String(collations.includes("C") && collations.some((c) => /utf8|icu/.test(c))), "true");
+    for (const c of collations) {
+      same(`L2: under collation ${c} accents, emoji and other scripts are not control characters; a bell is; a tab or a line break is let through`,
+        q(`select (regexp_replace(E'Ol\u00E1 \u{1F44B} \u{1FAE8} \u3053\u3093\u306B\u3061\u306F \u043F\u0440\u0438\u0432\u0435\u0442\\t\\r\\n' collate "${c}", '[\\n\\r\\t]', '', 'g') ~ '[[:cntrl:]]') || ',' || (('x' || chr(7)) collate "${c}" ~ '[[:cntrl:]]')`), "false,true");
+    }
+  }
+  // L3 / L6: lock order, read from the live definitions (the staged cases are in lockOrderProbe F12, F13).
+  same("L3: record_fan_ack takes the creator's profile (key share) before the fan", q(`select position('from public.profiles where id = p.creator_id for key share' in prosrc) between 1 and position('from public.fans where id = p.fan_id and creator_id = p.creator_id for update' in prosrc) from pg_proc where oid = 'public.record_fan_ack(text,text,text)'::regprocedure`), "t");
+  same("L6: reset_creator_content holds its games before it deletes a fan", q(`select position('from public.wheels where creator_id = p_creator order by id for update' in prosrc) between 1 and position('delete from public.fans where creator_id = p_creator' in prosrc) from pg_proc where oid = 'public.reset_creator_content(uuid,uuid,uuid)'::regprocedure`), "t");
+  // L7: invisible characters and non-ASCII separators do not hide a reserved name.
+  for (const name of ["Fan\u200BFunnel", "Fan\u2011Funnel", "F\u2060anFunnel Fan", "Sup\u200Dport", "Support\u30FBTeam", "Official\u2003Support", "admin\u00A0", "mo\u200Bd dan", "Admi\u0301n", "Staff\uFE0F", "\u200E@support", "Help\u2014Team\u2026"]) {
+    refused(`L7: ${JSON.stringify(name)} is refused as a display name`, as(A, `select public.set_display_name('${name}');`), /reserved display name/);
+  }
+  for (const name of ["Zo\u00EB M\u00FCller", "Jos\u00E9 \u{1F319}", "\u65E5\u672C\u8A9E\u30D5\u30A1\u30F3", "Chlo\u00E9 Official", "Ana\u2011Mar\u00EDa", "\u041C\u0430\u0440\u0438\u044F"]) {
+    expect(`L7: ${JSON.stringify(name)} is an ordinary display name`, as(A, `select public.set_display_name('${name}'); select 'name:' || display_name from public.profiles where id = '${A}';`), [`name:${name}`]);
+  }
+  for (const name of ["FanFunnel Agency", "Sup\u200Bport Team", "Official\u2011Support", "Staff", "The Admin Agency"]) {
+    refused(`L7: org_create refuses the agency name ${JSON.stringify(name)}`, as(B, `select public.org_create('${name}');`), /reserved agency name/);
+  }
+  refused("L7: an owner cannot rename its agency to a reserved name", as(OW, `update public.orgs set name = 'Official Support' where id = '${ORG}';`), /reserved agency name/);
+  refused("L7: the server cannot store a reserved agency name either", service(`insert into public.orgs (name, owner_id) values ('Moderator Team', '${B}');`), /reserved agency name/);
+  expect("L7: ordinary agency names pass (create, rename), and an unchanged name is not re-checked",
+    as(B, `select 'made:' || (public.org_create('Dream Team Talent') is not null); select 'name:' || name from public.orgs where owner_id = '${B}';`)
+    + as(OW, `update public.orgs set name = 'Northside Creators' where id = '${ORG}';`) + `select 'renamed:' || name from public.orgs where id = '${ORG}';`
+    + `alter table public.orgs disable trigger ab_org_name; update public.orgs set name = 'Support' where id = '${ORG}'; alter table public.orgs enable trigger ab_org_name;`
+    + service(`update public.orgs set billing_model = billing_model where id = '${ORG}';`) + `select 'legacy:' || name from public.orgs where id = '${ORG}';`,
+    ["made:true", "name:Dream Team Talent", "renamed:Northside Creators", "legacy:Support"]);
+  // INFO: narrower reads.
+  same("INFO: a session holds SELECT on the notice columns it needs, not on announced_by", q(`select has_column_privilege('authenticated', 'public.legal_terms_notice', 'announced_by', 'SELECT') || ',' || has_column_privilege('authenticated', 'public.legal_terms_notice', 'upcoming_version', 'SELECT') || ',' || has_table_privilege('authenticated', 'public.legal_terms_notice', 'SELECT') || ',' || has_any_column_privilege('anon', 'public.legal_terms_notice', 'SELECT')`), "false,true,false,false");
+  refused("INFO: a session cannot read who announced the Terms notice", as(A, `select announced_by from public.legal_terms_notice;`), /permission denied for table legal_terms_notice/);
+  expect("INFO: the notice is still set by an admin and read by a creator, through the RPCs and by column",
+    as(AD, `select 'set:' || (public.set_legal_terms_notice('2027-01-15', '2027-01-15')->>'version');`, "aal2")
+    + as(A, `select 'rpc:' || (public.legal_terms_upcoming()->>'version'); select 'cols:' || upcoming_version || ',' || effective_at || ',' || (announced_at is not null) from public.legal_terms_notice;`)
+    + `select 'by:' || announced_by from public.legal_terms_notice;`,
+    ["set:2027-01-15", "rpc:2027-01-15", "cols:2027-01-15,2027-01-15,true", `by:${AD}`]);
+  expect("INFO: an expired link counts like a paused one in creator_obligations and creator_fan_summaries",
+    `update public.fan_passes set expires_at = now() - interval '1 minute' where id = '${PASS_A}';`
+    + service(`select 'ob:' || (o->>'unplayedPaidSpins') || ',' || (o->>'unplayedSpins') || ',' || (o->>'activeLinks') from public.creator_obligations('${A}') o; select 'fan:' || links || ',' || active_links from public.creator_fan_summaries('${A}');`)
+    + `update public.fan_passes set expires_at = now() + interval '1 day' where id = '${PASS_A}';`
+    + service(`select 'live:' || (o->>'unplayedSpins') || ',' || (o->>'activeLinks') from public.creator_obligations('${A}') o; select 'fan-live:' || links || ',' || active_links from public.creator_fan_summaries('${A}');`),
+    ["ob:0,0,0", "fan:1,0", "live:5,1", "fan-live:1,1"]);
+  same("INFO: a function owned by another role is skipped by the search_path loop, not altered", q(`select position('pg_has_role(p.proowner, ''USAGE'')' in $m$${MIGRATION.slice(MIGRATION.indexOf("-- \u2500\u2500 (8) DB-15"), MIGRATION.indexOf("-- \u2500\u2500 DB-14"))}$m$) > 0`), "t");
+
+  // 8z: the receipt trigger now leaves a deleted creator's receipts to the cascade; an ordinary grant deletion
+  // still marks its receipt gone. (The app deletes one account per transaction, through Auth's deleteUser.)
+  {
+    const J2 = id("93"), G2 = id("94");
+    const receipt = (jid, actor, grant) => `insert into public.creator_request_journal (id, creator_id, actor_id, kind, request_hash, state, finished_at, grant_id) values ('${jid}', '${A}', '${actor}', 'grant', '${HEX}', 'committed', now(), '${grant}');`;
+    expect("8z: a grant deleted while its creator exists marks its receipt gone",
+      `insert into public.grants (id, creator_id, fan_id, spins) values ('${G2}', '${A}', '${FA}', 1); ${receipt(J2, MG, G2)} delete from public.grants where id = '${G2}';
+       select 'receipt:' || state || ',' || coalesce(grant_id::text, 'null') from public.creator_request_journal where id = '${J2}';`,
+      ["receipt:gone,null"]);
+  }
 
   return { bad, checks };
 }

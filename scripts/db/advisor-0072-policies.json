@@ -57,7 +57,7 @@
    "public"
   ],
   "using": null,
-  "check": "(profile_id = auth.uid())"
+  "check": "((profile_id = auth.uid()) AND (EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND p.is_active))))"
  },
  {
   "table": "creator_applications",

@@ -126,6 +126,8 @@ export async function probeScratchGames(sql) {
   console.log(`PASS 0060 ${checks} scratch checks: actual pure RNG proof/face, atomic20-retry replay, negatives, immutable proof, feature gates/templates, rollback, grandfathered links and erasure`);
  }finally{
   fixture.stdin.end();await Promise.allSettled([...pending]);
-  await query(`drop trigger if exists zz_scratch_probe_fault on public.redemptions;drop function if exists public._scratch_probe_fault();delete from auth.users where id in(${quote(owner)},${quote(other)});`);
+  await query(`drop trigger if exists zz_scratch_probe_fault on public.redemptions;drop function if exists public._scratch_probe_fault();`);
+  // One account per transaction, as the app deletes accounts (Auth deleteUser).
+  for (const u of [other, owner]) await query(`delete from auth.users where id=${quote(u)};`);
  }
 }
