@@ -118,7 +118,7 @@ async function main() {
   const { readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const panel = readFileSync(join(import.meta.dirname, "../../../../components/dashboard/SettingsPanel.tsx"), "utf8");
-  check("the Profile card shows displayNameErrorMessage(code)", /toast\(displayNameErrorMessage\(/.test(panel) && !/Couldn't save your name\.", \{ tone/.test(panel));
+  check("the Profile card shows displayNameErrorMessage(code)", /setNameError\(displayNameErrorMessage\(/.test(panel) && !/Couldn't save your name\.", \{ tone/.test(panel));
   check("the Public page card shows publicProfileErrorMessage(code)", /toast\(publicProfileErrorMessage\(/.test(panel));
 
   console.log(`account profile errors: ${checks} checks passed`);

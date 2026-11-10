@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
+import { useBuildCommit } from "./buildCommit";
 import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/privacy/deletionResult";
 import { FEATURES } from "@/lib/features";
 import { REJECTION_REASONS, type RejectionReason } from "@/lib/onboarding/rejectionReasons";
@@ -54,7 +55,8 @@ function initialsOf(name: string, email: string) {
  * checkAdmin in dashboard/page.tsx); every /api/admin route re-checks with
  * requireAdminRoute, so a 401/403 here still shows "Admins only".
  */
-export default function AdminClient({ commit }: { /** WG-18: the short commit this build came from (server-derived). */ commit?: string } = {}) {
+export default function AdminClient() {
+  const commit = useBuildCommit();
   const [data, setData] = useState<AdminOverview | null>(null);
   // WG-18: search and "Show more" over the loaded accounts; `pinned` keeps an
   // account another card jumps to (Agencies › Suspend owner) in the list.

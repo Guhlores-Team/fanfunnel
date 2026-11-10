@@ -8,6 +8,7 @@ import { isStarterWheel } from "@/lib/games/wheel/sample";
 import type { WheelConfig } from "@/lib/games/wheel/types";
 import type { CreatorOverview } from "@/lib/data/types";
 import { ToastProvider } from "@/components/ui/Toast";
+import { BuildCommitContext } from "@/components/admin/buildCommit";
 import { useCreatorFetch as useFetch } from "@/lib/hooks/useFetch";
 import { REPORTS_CHANGED_EVENT } from "@/lib/reports/config";
 import TodayPanel from "@/components/dashboard/TodayPanel";
@@ -452,6 +453,7 @@ export default function DashboardClient({
   return (
     <ToastProvider>
     <CreatorDraftProvider value={draftRegistry}>
+    <BuildCommitContext.Provider value={commit}>
     <div
       className="flex min-h-[100dvh] flex-col lg:flex-row"
       // Live brand theming: the page shell seeds --brand at request time, but
@@ -625,7 +627,7 @@ export default function DashboardClient({
             onDisplayNameChange={onSettingsDisplayName}
           />
         )}
-        {tab === "admin" && adminVisible && <AdminClient commit={commit} />}
+        {tab === "admin" && adminVisible && <AdminClient />}
         {leaveRequest && (
           <DiscardChangesDialog
             what={leaveRequest.what}
@@ -671,6 +673,7 @@ export default function DashboardClient({
       />
       <TermsPrompt canSignOut={!!email} />
     </div>
+    </BuildCommitContext.Provider>
     </CreatorDraftProvider>
     </ToastProvider>
   );
