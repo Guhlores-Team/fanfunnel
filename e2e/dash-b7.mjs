@@ -22,6 +22,8 @@
 //           blocking the fan.
 //  PR-15    "Send test" delivers a marked sample to a webhook.
 //  PR-07    fans, wins and daily numbers download as formula-safe CSV.
+//  RD-19    a long conversation loads its earlier messages on demand.
+//  PR-10    a delivery promise is saved and suggested as the expected-by day.
 // Steps that answer API calls with errors run on their own page with no error
 // sink: the failures are the point of the step. Every fixture is removed again.
 import { randomUUID } from "node:crypto";
@@ -446,6 +448,62 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await page.close().catch(() => {});
       await request.delete(BASE + `/api/webhooks/${hook.webhook.id}`).catch(() => {});
       await request.post(BASE + "/api/fan-data/delete", { data: { token: evil.token, confirm: "DELETE" } }).catch(() => {});
+    }
+  });
+
+  await step("b7 RD-19 + PR-10: a long thread loads its earlier messages on demand; a delivery promise suggests an expected-by day in the queue", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const name = `b7 thread ${randomUUID().slice(0, 6)}`;
+    const before = await json(await request.get(BASE + "/api/public-profile"), "read profile");
+    const fan = await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins: 1 } }), "create fan");
+    try {
+      await json(await acknowledgeFixtureFan(request, fan.token), "ack fan");
+      for (const body of ["b7 one", "b7 two", "b7 three", "b7 four", "b7 five"]) {
+        await json(await request.post(BASE + "/api/messages/creator", { data: { fanId: fan.fanId, body } }), "send " + body);
+      }
+      const first = await json(await request.get(BASE + `/api/messages/thread/${fan.fanId}?limit=2`), "first page");
+      assert(first.more === true && first.messages.map((m) => m.body).join() === "b7 four,b7 five", "the first page is the newest two");
+      const older = await json(await request.get(BASE + `/api/messages/thread/${fan.fanId}?limit=2&before=${encodeURIComponent(first.messages[0].at)}`), "older page");
+      assert(older.messages.map((m) => m.body).join() === "b7 two,b7 three" && older.more === true, "before= continues with the older two");
+      assert((await request.get(BASE + `/api/messages/thread/${fan.fanId}?before=nope`)).status() === 400, "a before that is no date is a 400");
+
+      // The panel asks for whole pages; shrink them so five messages span three.
+      await page.route((url) => url.pathname === `/api/messages/thread/${fan.fanId}`, (route) => {
+        const url = new URL(route.request().url());
+        if (route.request().method() !== "GET" || url.searchParams.has("limit")) return route.continue();
+        url.searchParams.set("limit", "2");
+        return route.continue({ url: url.toString() });
+      });
+      await goto(page, "/dashboard?section=inbox", 1200);
+      await page.getByRole("list", { name: "Conversations" }).getByRole("button").filter({ hasText: name }).first().click();
+      const more = page.getByTestId("thread-load-earlier");
+      await more.waitFor({ timeout: 10000 });
+      assert(await page.getByText("b7 five", { exact: true }).count() === 1 && await page.getByText("b7 two", { exact: true }).count() === 0, "only the newest page is shown at first");
+      await more.click();
+      await page.getByText("b7 two", { exact: true }).waitFor({ timeout: 10000 });
+      await more.click();
+      await page.getByText("b7 one", { exact: true }).waitFor({ timeout: 10000 });
+      assert(await page.getByText("b7 four", { exact: true }).count() === 1, "loading earlier pages never duplicates a message");
+
+      // PR-10: the promise is saved from Settings and suggested in the queue.
+      assert((await request.put(BASE + "/api/public-profile", { data: { deliveryDays: 99 } })).status() === 400, "a 99-day promise is refused");
+      await goto(page, "/dashboard?section=settings", 1200);
+      const days = page.getByTestId("delivery-days");
+      await days.waitFor({ timeout: 10000 });
+      await days.fill("4");
+      await page.locator('section[aria-labelledby="settings-public"]').getByRole("button", { name: "Save", exact: true }).click();
+      await page.getByTestId("toast").filter({ hasText: /Link-in-bio saved/ }).first().waitFor({ timeout: 10000 });
+      assert((await json(await request.get(BASE + "/api/public-profile"), "re-read")).deliveryDays === 4, "the promise was saved");
+      await goto(page, "/dashboard?section=prizes", 1200);
+      const hint = page.getByTestId("expected-by").first();
+      if (await hint.count()) {
+        assert(/4-day promise/.test(await hint.innerText()), "a win without a due date shows the expected-by day");
+      }
+    } finally {
+      await page.close().catch(() => {});
+      await request.put(BASE + "/api/public-profile", { data: { deliveryDays: before.deliveryDays ?? null } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 }

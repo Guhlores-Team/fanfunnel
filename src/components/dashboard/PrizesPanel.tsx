@@ -7,7 +7,7 @@ import type { CreatorOverview, RedemptionItem, RedemptionStatus } from "@/lib/da
 import { OVERVIEW_REDEMPTION_WINDOW } from "@/lib/data/queueWindow";
 import { useToast } from "@/components/ui/Toast";
 import { useNow } from "@/lib/hooks/useNow";
-import { dueDateInRange, dueDateValue, isOverdue } from "@/lib/dueDate";
+import { dueDateInRange, dueDateValue, dueDayLabel, isOverdue, localDayPlus } from "@/lib/dueDate";
 import { formatWhen } from "@/lib/localTime";
 
 // 24×24 stroke paths (Command Center prototype line icons).
@@ -98,6 +98,21 @@ export default function PrizesPanel({
   const [older, setOlder] = useState<{ key: string; anchor: string; items: RedemptionItem[]; next: string | null } | null>(null);
   const [olderBusy, setOlderBusy] = useState(false);
   const [olderError, setOlderError] = useState(false);
+  // PR-10: the creator's delivery promise (Settings › Public page), used to
+  // suggest an expected-by date on wins that have no due date yet.
+  const [deliveryDays, setDeliveryDays] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/public-profile", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (live && p && Number.isInteger(p.deliveryDays) && p.deliveryDays > 0) setDeliveryDays(p.deliveryDays);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const toast = useToast();
   // PATCH a redemption: status and/or notes/dueAt. Optimistically patch the
@@ -304,7 +319,7 @@ export default function PrizesPanel({
       {shown.length > 0 && (
         <ul className="flex flex-col gap-2">
           {shown.map((r) => (
-            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} />
+            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} deliveryDays={deliveryDays} />
           ))}
         </ul>
       )}
@@ -384,12 +399,15 @@ function RedemptionRow({
   onPatch,
   onOpenFan,
   onMessageFan,
+  deliveryDays = null,
 }: {
   r: RedemptionItem;
   onSet: (id: string, status: RedemptionStatus) => void;
   onPatch: (id: string, patch: Patch) => void;
   onOpenFan?: (fanId: string) => void;
   onMessageFan?: (fanId: string) => void;
+  /** PR-10: the creator's delivery promise in days, when one is set. */
+  deliveryDays?: number | null;
 }) {
   const fanId = r.fanId ?? null;
   const color = RARITY_COLORS[r.rarity];
@@ -411,6 +429,12 @@ function RedemptionRow({
   }, [savedDue]);
   const now = useNow(60_000);
   const overdue = now !== null && isOverdue(r.dueAt, r.status, now);
+  // PR-10: a win with no due date inherits the creator's delivery promise as
+  // its suggested expected-by day; one click makes it the due date.
+  const suggestedDue =
+    deliveryDays && !r.auto && !savedDue && (r.status === "pending" || r.status === "in_progress")
+      ? localDayPlus(deliveryDays, new Date(r.at).getTime())
+      : "";
   const subject = `${r.prizeLabel} for ${r.fanName}`;
   const canCancel = !r.auto && r.status !== "cancelled" && r.status !== "fulfilled";
   // "Cancel prize" asks first, in a full-width strip under the row header (so
@@ -588,6 +612,21 @@ function RedemptionRow({
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
+          {suggestedDue && (
+            <span className="text-[11.5px] text-muted" data-testid="expected-by">
+              Expected by {dueDayLabel(suggestedDue)} ({deliveryDays}-day promise).{" "}
+              <button
+                type="button"
+                className="font-semibold text-brand underline-offset-2 hover:underline"
+                onClick={() => {
+                  setDueDraft(suggestedDue);
+                  commitDue(suggestedDue);
+                }}
+              >
+                Use it
+              </button>
+            </span>
+          )}
         </label>
       </div>
     </li>

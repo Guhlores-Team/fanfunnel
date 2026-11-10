@@ -20,6 +20,7 @@ import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profil
 import LoadFailed from "./LoadFailed";
 import { loadJson } from "@/lib/hooks/loadJson";
 import { MAX_CREATOR_NOTE, publicTextCheck, publicTextMessage } from "@/lib/publicText";
+import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
 
 /**
  * Settings (Command Center). Two groups:
@@ -52,6 +53,9 @@ export default function SettingsPanel({
   // C14: only once the saved profile is in can unsaved Public page text be
   // told apart from it (and kept for this tab across section switches).
   const [profileLoaded, setProfileLoaded] = useState(false);
+  // PR-10: "I usually deliver within N days" (shown on the fan page; the
+  // default due date of new wins once 0073 lands).
+  const [delivery, setDelivery] = useState<DeliveryState>({ supported: false, days: "", saved: "" });
 
   // RD-01 / RD-09: a failed read is shown as a failed read with Retry, never
   // as empty fields that a later Save would write back over the real values.
@@ -76,8 +80,10 @@ export default function SettingsPanel({
   }, []);
   const loadProfile = useCallback(async () => {
     try {
-      const p = await loadJson<Partial<ProfileFields>>("/api/public-profile");
+      const p = await loadJson<Partial<ProfileFields> & { deliveryDays?: number | null }>("/api/public-profile");
       setProfileError(null);
+      // PR-10: the field exists only once the database carries the column.
+      setDelivery(p.deliveryDays === undefined ? { supported: false, days: "", saved: "" } : { supported: true, days: p.deliveryDays === null ? "" : String(p.deliveryDays), saved: p.deliveryDays === null ? "" : String(p.deliveryDays) });
       const next: ProfileFields = {
         slug: p.slug ?? "",
         tipUrl: p.tipUrl ?? "",
@@ -155,6 +161,8 @@ export default function SettingsPanel({
           patchProfile={patchProfile}
           markSaved={markSaved}
           onBrandColorChange={onBrandColorChange}
+          delivery={delivery}
+          setDelivery={setDelivery}
         />
       </section>
 
@@ -822,6 +830,8 @@ const serverOrigin = () => "";
 
 const PUBLIC_DRAFT_KEY = "public-page";
 type PublicDraft = Pick<ProfileFields, "slug" | "tipUrl" | "tagline" | "note">;
+/** PR-10: `supported` is false until the delivery_days column is readable. */
+type DeliveryState = { supported: boolean; days: string; saved: string };
 /** The unsaved Public page text held for this tab, if any (sessionDrafts). */
 function readPublicDraft(): Partial<PublicDraft> {
   const held = readSessionDraft(PUBLIC_DRAFT_KEY);
@@ -846,6 +856,8 @@ function PublicPageSection({
   patchProfile,
   markSaved,
   onBrandColorChange,
+  delivery,
+  setDelivery,
 }: {
   loaded: boolean;
   loadError: unknown;
@@ -856,6 +868,8 @@ function PublicPageSection({
   patchProfile: (p: Partial<ProfileFields>) => void;
   markSaved: (p: Partial<ProfileFields>) => void;
   onBrandColorChange?: (color: string) => void;
+  delivery: DeliveryState;
+  setDelivery: (next: DeliveryState) => void;
 }) {
   const toast = useToast();
   const { copy, copied } = useClipboard();
@@ -876,7 +890,8 @@ function PublicPageSection({
     slug !== savedProfile.slug ||
     tipUrl !== savedProfile.tipUrl ||
     tagline !== savedProfile.tagline ||
-    note !== savedProfile.note;
+    note !== savedProfile.note ||
+    delivery.days !== delivery.saved;
   // C14: the tagline / note / links typed here survive leaving Settings and
   // coming back (this tab only); a reload or sign-out asks first.
   useEffect(() => {
@@ -917,12 +932,18 @@ function PublicPageSection({
       toast(`Keep the note to ${MAX_CREATOR_NOTE} characters or fewer.`, { tone: "error" });
       return;
     }
+    // PR-10: the delivery promise is a whole number of days (1–60) or blank.
+    const deliveryDays = delivery.days.trim() === "" ? null : Number(delivery.days);
+    if (delivery.supported && deliveryDays !== null && (!Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > MAX_DELIVERY_DAYS)) {
+      toast(`Delivery days must be a whole number from 1 to ${MAX_DELIVERY_DAYS}, or left blank.`, { tone: "error" });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/public-profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, tipUrl, tagline, note }),
+        body: JSON.stringify({ slug, tipUrl, tagline, note, ...(delivery.supported ? { deliveryDays } : {}) }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -938,6 +959,7 @@ function PublicPageSection({
       const normalized = fresh.slug ?? "";
       patchProfile({ slug: normalized });
       markSaved({ slug: normalized, tipUrl, tagline, note });
+      if (delivery.supported) setDelivery({ ...delivery, saved: delivery.days });
     } catch (e) {
       toast(publicProfileErrorMessage(e instanceof Error ? e.message : ""), { tone: "error" });
     } finally {
@@ -1017,6 +1039,23 @@ function PublicPageSection({
             />
           </Field>
           <p className="-mt-2 text-xs text-muted">No links, phone numbers or @handles in the tagline or note: fans reach you through your tip link.</p>
+          {delivery.supported && (
+            <Field label="I usually deliver prizes within (days)">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={MAX_DELIVERY_DAYS}
+                step={1}
+                value={delivery.days}
+                onChange={(e) => setDelivery({ ...delivery, days: e.target.value })}
+                className="ff-input w-24"
+                data-testid="delivery-days"
+                aria-describedby="delivery-days-hint"
+              />
+              <p id="delivery-days-hint" className="mt-1 text-xs text-muted">Shown to fans when they win, and used as the expected-by date on new wins. Leave blank for no promise.</p>
+            </Field>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={save} disabled={busy || !loaded} className={primaryBtn}>
               {busy ? "Saving…" : "Save"}

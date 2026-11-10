@@ -360,14 +360,37 @@ async function auditAdminThreadRead(sb: Awaited<ReturnType<typeof createClient>>
   }
 }
 
+/** Messages per conversation page (RD-19): the newest page loads first, older pages on demand. */
+export const MESSAGE_PAGE_SIZE = 200;
+export interface MessagePage { messages: ChatMessage[]; /** An older page exists before the first message here. */ more: boolean }
+
 export async function getThread(fanId: string, creatorId?: unknown): Promise<ChatMessage[] | { error: "bad_request" | "forbidden" }> {
-  if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockGetThread(fanId);
+  const page = await getThreadPage(fanId, creatorId);
+  return "error" in page ? page : page.messages;
+}
+
+/**
+ * One page of a conversation, oldest-first within the page: the newest
+ * MESSAGE_PAGE_SIZE messages, or with `before` (an ISO time) the ones older
+ * than it. A long thread is never cut at a fixed cap any more (RD-19).
+ */
+export async function getThreadPage(fanId: string, creatorId?: unknown, opts: { before?: string | null; limit?: number } = {}): Promise<MessagePage | { error: "bad_request" | "forbidden" }> {
+  const limit = Math.min(Math.max(1, opts.limit ?? MESSAGE_PAGE_SIZE), 500);
+  const before = opts.before && Number.isFinite(Date.parse(opts.before)) ? opts.before : null;
+  if (opts.before && !before) return { error: "bad_request" };
+  if (!isSupabaseConfigured()) {
+    const refused = demoActingCreator(creatorId);
+    if (refused) return refused;
+    const all = mockGetThread(fanId).filter((m) => !before || m.at < before);
+    const messages = all.slice(Math.max(0, all.length - limit));
+    return { messages, more: all.length > limit };
+  }
 
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (!user) return [];
+  if (!user) return { messages: [], more: false };
   // A19: reading another creator's thread needs 'chat'.
   const acting = await resolveActingCreator(sb, user.id, creatorId, "chat");
   if ("error" in acting) return acting;
@@ -377,21 +400,20 @@ export async function getThread(fanId: string, creatorId?: unknown): Promise<Cha
   // its org membership and is not an admin read.
   if (owner !== user.id) await auditAdminThreadRead(sb, user.id, owner, fanId);
 
-  // Bound the read: fetch the most recent messages (newest-first + limit), then
-  // present oldest-first. An unbounded thread read grows without limit as a
-  // conversation ages; the UI only needs recent history.
-  const { data } = await sb
+  // One page, newest-first with one extra row to know whether an older page
+  // exists, then presented oldest-first.
+  let query = sb
     .from("messages")
     .select(MESSAGE_SELECT)
     .eq("creator_id", owner)
-    .eq("fan_id", fanId)
-    .order("created_at", { ascending: false })
-    .limit(500);
-  const rows = ((data ?? []) as Parameters<typeof toChatMessage>[0][])
-    .slice()
-    .reverse();
-
-  return rows.map(toChatMessage);
+    .eq("fan_id", fanId);
+  if (before) query = query.lt("created_at", before);
+  const { data } = await query.order("created_at", { ascending: false }).limit(limit + 1);
+  const rows = ((data ?? []) as Parameters<typeof toChatMessage>[0][]).slice();
+  const more = rows.length > limit;
+  if (more) rows.length = limit;
+  rows.reverse();
+  return { messages: rows.map(toChatMessage), more };
 }
 
 /**

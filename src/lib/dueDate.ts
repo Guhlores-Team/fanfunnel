@@ -70,3 +70,10 @@ export function localDayPlus(days: number, now: number = Date.now()): string {
   const dd = String(t.getDate()).padStart(2, "0");
   return `${t.getFullYear()}-${mm}-${dd}`;
 }
+
+/** A short local label for a "YYYY-MM-DD" due day ("Nov 17"); the raw value otherwise. */
+export function dueDayLabel(value: string): string {
+  const day = parseDueDay(value);
+  if (!day) return value;
+  return new Date(day.y, day.m - 1, day.d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}

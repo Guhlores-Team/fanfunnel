@@ -4,7 +4,7 @@ import { loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
 import { useSessionDraft } from "./sessionDrafts";
 import { useCreatorDraft } from "./CreatorDrafts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, ChatSettings, FanThread } from "@/lib/data/types";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { startPoll } from "@/lib/poll";
@@ -676,6 +676,11 @@ function Thread({
   onBack: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // RD-19: pages older than the newest one, loaded on demand and kept while
+  // the newest page keeps polling.
+  const [earlier, setEarlier] = useState<ChatMessage[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   // C14: the half-typed reply is kept per thread for this tab, so switching
   // threads or sections never loses it; a reload asks first (DashboardClient).
@@ -706,9 +711,11 @@ function Thread({
     try {
       const res = await fetch(`/api/messages/thread/${fan.fanId}`, { cache: "no-store" });
       if (!res.ok) return false;
-      const list: ChatMessage[] = (await res.json()).messages ?? [];
+      const body = (await res.json()) as { messages?: ChatMessage[]; more?: boolean };
+      const list: ChatMessage[] = body.messages ?? [];
       if (id !== reqId.current) return true;
       setMessages(list);
+      setHasMore(body.more === true);
       // I3: reading is side-effect free; mark what the creator now sees as
       // read with its own POST, then refresh the list's unread counts.
       const unread = list.some((m) => m.sender === "fan" && !m.readAt);
@@ -732,6 +739,33 @@ function Thread({
     const poll = startPoll({ intervalMs: 6000, immediate: true, task: load });
     return () => poll.stop();
   }, [load]);
+  // Another thread: its older pages belong to it.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset per thread
+    setEarlier([]);
+    setHasMore(false);
+  }, [fan.fanId]);
+  const loadEarlier = useCallback(async () => {
+    const oldest = earlier[0] ?? messages[0];
+    if (!oldest || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/messages/thread/${fan.fanId}?before=${encodeURIComponent(oldest.at)}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const body = (await res.json()) as { messages?: ChatMessage[]; more?: boolean };
+      setEarlier((cur) => [...(body.messages ?? []), ...cur]);
+      setHasMore(body.more === true);
+    } catch {
+      /* the button stays; the creator can try again */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [earlier, messages, loadingMore, fan.fanId]);
+  const shownMessages = useMemo(() => {
+    if (earlier.length === 0) return messages;
+    const seen = new Set(messages.map((m) => m.id));
+    return [...earlier.filter((m) => !seen.has(m.id)), ...messages];
+  }, [earlier, messages]);
 
   // Below `lg` the list is hidden once a thread opens, so the focused row is
   // gone; hand focus to the conversation heading instead of letting it drop.
@@ -818,7 +852,7 @@ function Thread({
             {fan.fanName}
           </h3>
           <p className="tnum mt-0.5 truncate text-xs text-muted">
-            {messages.length} {messages.length === 1 ? "message" : "messages"} · {timeAgo(newest)}
+            {shownMessages.length}{hasMore ? "+" : ""} {shownMessages.length === 1 ? "message" : "messages"} · {timeAgo(newest)}
           </p>
         </div>
       </div>
@@ -828,7 +862,12 @@ function Thread({
         aria-label={`Conversation with ${fan.fanName}`}
         className="flex flex-1 flex-col gap-2 overflow-y-auto p-3.5 sm:p-[18px]"
       >
-        {messages.map((m) => (
+        {hasMore && (
+          <button type="button" onClick={() => void loadEarlier()} disabled={loadingMore} className="self-center rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:text-ink disabled:opacity-50" data-testid="thread-load-earlier">
+            {loadingMore ? "Loading…" : "Load earlier messages"}
+          </button>
+        )}
+        {shownMessages.map((m) => (
           <div key={m.id} className={m.sender === "creator" ? "flex justify-end" : "flex justify-start"}>
             <span
               className={

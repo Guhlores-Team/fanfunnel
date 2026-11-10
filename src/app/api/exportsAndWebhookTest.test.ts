@@ -45,6 +45,7 @@ async function main() {
   const payload = webhookTestPayload("all", new Date("2026-11-10T00:00:00Z"));
   check("a test payload is marked and shaped like a win", payload.event === "prize_pending" && payload.test === true && typeof payload.win === "object");
   const hook = m.mockCreateWebhook("https://example.com/hook", "all");
+  assert.ok("id" in hook, "the demo webhook was created");
   const params = (id: string) => ({ params: Promise.resolve({ id }) });
   res = await test.POST(new Request("http://localhost/api/webhooks/x/test", { method: "POST" }), params(hook.id));
   const out = (await res.json()) as { ok?: boolean; status?: number; signed?: boolean; event?: string };

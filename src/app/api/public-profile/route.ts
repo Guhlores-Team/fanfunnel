@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { MAX_CREATOR_NOTE, publicTextCheck, publicTextErrorCode } from "@/lib/publicText";
 import { revalidatePath } from "next/cache";
 import { getMyPublicProfile, normalizePublicSlug, setMyPublicProfile } from "@/lib/data";
+import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -74,8 +75,13 @@ export async function PUT(req: Request) {
     tagline?: string;
     note?: string;
     avatarUrl?: string;
+    deliveryDays?: unknown;
   }>(req);
   if (body === BAD_REQUEST) return badRequest();
+  // PR-10: a whole number of days (1..60) or null for no promise.
+  if (body.deliveryDays !== undefined && body.deliveryDays !== null && (!Number.isInteger(body.deliveryDays) || (body.deliveryDays as number) < 1 || (body.deliveryDays as number) > MAX_DELIVERY_DAYS)) {
+    return NextResponse.json({ error: "invalid_delivery_days" }, { status: 400 });
+  }
   if (body.avatarUrl !== undefined && !isTrustedAvatarUrl(body.avatarUrl)) {
     return NextResponse.json({ error: "invalid_avatar_url" }, { status: 400 });
   }
@@ -129,6 +135,7 @@ export async function PUT(req: Request) {
     ...(body.tagline !== undefined ? { tagline: body.tagline } : {}),
     ...(body.note !== undefined ? { note: body.note } : {}),
     ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
+    ...(body.deliveryDays !== undefined ? { deliveryDays: body.deliveryDays as number | null } : {}),
   });
   if ("error" in result) return errorResponse(result.error);
   if (touchesPublicPage) {

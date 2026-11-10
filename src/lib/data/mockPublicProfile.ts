@@ -10,6 +10,14 @@ export interface DemoPublicProfile {
 }
 
 const DEFAULTS: DemoPublicProfile = { slug: "demo-creator", tipUrl: "", tagline: "", note: "", avatarUrl: "" };
+/** PR-10: "I usually deliver within N days" (null = no promise). */
+const gDelivery = globalThis as unknown as { __ffDemoDeliveryDays?: number | null };
+export function mockGetDeliveryDays(): number | null {
+  return gDelivery.__ffDemoDeliveryDays ?? null;
+}
+export function mockSetDeliveryDays(days: number | null): void {
+  gDelivery.__ffDemoDeliveryDays = days;
+}
 /** The fan-page note the demo shows until the demo creator saves their own. */
 const SAMPLE_NOTE = "Hey you 😘 spin away — every spin wins!";
 type Stored = DemoPublicProfile & { noteSaved: boolean };

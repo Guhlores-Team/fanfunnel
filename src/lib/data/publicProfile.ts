@@ -10,14 +10,18 @@ import { publicGameKind } from "@/lib/games/publicCopy";
 import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
 import { mockGetPublicWheelTeaser } from "./mock";
-import { WHEEL_SELECT, toWheelConfig } from "./shared";
+import { WHEEL_SELECT, isMissingRpc, toWheelConfig } from "./shared";
 import { getCreatorThemeView, type CreatorThemeView } from "./creatorTheme";
 import type { DbWheelRow } from "./shared";
 import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
-import { mockGetPublicProfileFields, mockSetPublicProfileFields } from "./mockPublicProfile";
+import { mockGetDeliveryDays, mockGetPublicProfileFields, mockSetDeliveryDays, mockSetPublicProfileFields } from "./mockPublicProfile";
 import { readPublicCreator } from "./publicCreatorRow";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 import { publicProfileRpcError } from "@/lib/profileErrors";
+import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
+
+/** PR-10: the longest delivery promise a creator can make, in days. */
+export { MAX_DELIVERY_DAYS };
 
 // --- Public teaser ----------------------------------------------------------
 
@@ -169,8 +173,10 @@ export async function getMyPublicProfile(): Promise<{
   tagline: string | null;
   note: string | null;
   avatarUrl: string | null;
+  /** PR-10: "I usually deliver within N days"; absent when the database has no such column yet. */
+  deliveryDays?: number | null;
 }> {
-  if (!isSupabaseConfigured()) return mockGetPublicProfileFields();
+  if (!isSupabaseConfigured()) return { ...mockGetPublicProfileFields(), deliveryDays: mockGetDeliveryDays() };
   const sb = await createClient();
   const {
     data: { user },
@@ -188,7 +194,12 @@ export async function getMyPublicProfile(): Promise<{
     creator_note: string | null;
     avatar_url: string | null;
   } | null;
+  // PR-10: read on its own so a database without the column (pre-0073) still
+  // answers the rest; the field is then absent and the setting hidden.
+  const delivery = await sb.from("profiles").select("delivery_days").eq("id", user.id).maybeSingle();
+  const deliveryDays = delivery.error ? undefined : ((delivery.data as { delivery_days?: number | null } | null)?.delivery_days ?? null);
   return {
+    ...(deliveryDays !== undefined ? { deliveryDays } : {}),
     slug: row?.public_slug ?? null,
     tipUrl: row?.tip_url ?? null,
     tagline: row?.public_tagline ?? null,
@@ -230,6 +241,8 @@ export async function setMyPublicProfile(input: {
   tagline?: string;
   note?: string;
   avatarUrl?: string;
+  /** PR-10: 1..MAX_DELIVERY_DAYS, or null to make no promise. */
+  deliveryDays?: number | null;
 }): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) {
     // A36: keep what was saved, with the same normalization and avatar rule
@@ -250,6 +263,7 @@ export async function setMyPublicProfile(input: {
       note: input.note,
       avatarUrl: input.avatarUrl,
     });
+    if (input.deliveryDays !== undefined) mockSetDeliveryDays(input.deliveryDays);
     return { ok: true };
   }
   const sb = await createClient();
@@ -297,6 +311,13 @@ export async function setMyPublicProfile(input: {
       p_avatar: avatar,
     });
     if (noteError) return { error: "db_error" };
+  }
+  if (input.deliveryDays !== undefined) {
+    // PR-10: creators cannot UPDATE profiles directly (AGENTS.md rule 6), so
+    // the promise goes through set_delivery_days (0073 proposal). Without it
+    // the answer is not_supported and the Settings field stays hidden.
+    const { error: dErr } = await sb.rpc("set_delivery_days", { p_days: input.deliveryDays });
+    if (dErr) return { error: isMissingRpc(dErr) ? "not_supported" : "db_error" };
   }
   return { ok: true };
 }
