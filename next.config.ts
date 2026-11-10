@@ -73,17 +73,16 @@ const nextConfig: NextConfig = {
       { source: "/:path*", headers: securityHeaders },
       // API responses are only ever read by this origin's fetch(); refuse
       // no-cors embedding (<img>/<script> of a signed-in JSON response).
-      // RS-04/WA-10: and they are personal by default. Without this, a route
-      // that sets no Cache-Control went out as Vercel's `public, max-age=0`;
-      // now every /api answer is private and uncacheable unless the route
-      // itself says otherwise (a route's own header wins: /api/health keeps
-      // its `no-store, max-age=0`, /api/public/wheel/* its short public TTL).
+      { source: "/api/:path*", headers: [{ key: "Cross-Origin-Resource-Policy", value: "same-origin" }] },
+      // RS-04/WA-10: API answers are personal by default. Without this, a
+      // route that sets no Cache-Control went out as Vercel's `public,
+      // max-age=0`. A header set here REPLACES the route's own (proved on a
+      // built server), so the two shared public reads that carry a short CDN
+      // TTL are excluded by path and must set theirs explicitly
+      // (src/lib/security/apiCacheDefault.test.ts holds them to that).
       {
-        source: "/api/:path*",
-        headers: [
-          { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
-          { key: "Cache-Control", value: "private, no-store" },
-        ],
+        source: "/api/:path((?!public/|recent-wins/).*)",
+        headers: [{ key: "Cache-Control", value: "private, no-store" }],
       },
       // RM-4: the app service worker. Always revalidated so a fix reaches every
       // device at once, and locked to same-origin scripts.

@@ -57,7 +57,10 @@ async function main() {
   check("fan read deadlines are a few seconds, under the page cap, under maxDuration", FAN_READ_TIMEOUT_MS === 4000 && FAN_PAGE_DEADLINE_MS === 10_000 && SPIN_RPC_TIMEOUT_MS === 8000);
   let thrown: unknown = null;
   const t = Date.now();
-  try { await withFanDeadline(new Promise(() => undefined), 60, "x"); } catch (e) { thrown = e; }
+  // The deadline timer is unref'd (a serverless process must not be held by
+  // it), so keep the event loop alive here or node exits silently before it fires.
+  const keepAlive = setInterval(() => undefined, 10);
+  try { await withFanDeadline(new Promise(() => undefined), 60, "x"); } catch (e) { thrown = e; } finally { clearInterval(keepAlive); }
   check("withFanDeadline throws FanPassUnavailableError once the deadline passes", thrown instanceof FanPassUnavailableError && Date.now() - t < 1000);
   check("…and passes a value through otherwise", (await withFanDeadline(Promise.resolve(7), 60, "x")) === 7);
   check("only a missing column is a fallback-worthy error", isMissingColumnError({ code: "42703" }) && isMissingColumnError({ message: "column spins.kind does not exist" }) && !isMissingColumnError({ code: "", message: "AbortError: This operation was aborted" }) && !isMissingColumnError(null));
