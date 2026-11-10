@@ -11,7 +11,7 @@ import { packFormDraft, parsePackForm, type PackFormDraft, type PackKind } from 
 import { FocusValuePicker } from "./FocusValuePreview";
 import { useCreatorDraft } from "./CreatorDrafts";
 
-const ghostBtn = "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50";
+const ghostBtn = "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-50";
 const KIND_LABEL = { spins: "Spins", focus: "Focus", chase: "Chase" };
 
 /** Saved presets; modifier packs never inherit ordinary quantity stacking. */

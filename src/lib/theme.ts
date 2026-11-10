@@ -117,18 +117,18 @@ export function brandText(color: string, min = 4.5, surface: string = APP_BASE):
 export const MIN_BRAND_UI_CONTRAST = 3;
 
 /**
- * PA-01: whether a brand color can be seen on the dark app base. The SPIN
- * button fill, input focus borders and every keyboard focus ring use the
- * brand color, so one under 3:1 (black, near-black) is refused when a creator
- * saves it. Anything that is not a hex color is not ok. One rule, shared with
- * the fan page's own lift (`brandUi`): see `checkBrandColor`.
+ * PA-01: whether a brand color can be seen on the dark app base as it is.
+ * Nothing is refused for darkness: any valid hex saves, and the fan page
+ * paints `--brand-ui` (the color lifted to 3:1, see `brandUi`) wherever the
+ * raw color would vanish. This is a pure helper that drives the editor's and
+ * Settings' non-blocking hint. Anything that is not a hex color is not ok.
  */
 export function brandColorContrastOk(hex: string | null | undefined): boolean {
   return checkBrandColor(hex).ok;
 }
 
-/** Creator-facing copy for a refused brand color. */
-export const BRAND_TOO_DARK_MESSAGE = "That color is too dark to see on the fan page (its button and focus outlines would vanish). Pick a lighter one.";
+/** Creator-facing, non-blocking hint for a very dark brand color (it still saves). */
+export const BRAND_DARK_HINT = "This color is very dark; buttons and outlines will be shown in a lighter shade so fans can see them.";
 
 /**
  * CSS custom properties to spread into a `style={}` so brand text stays readable.
@@ -164,10 +164,10 @@ export function brandUi(color: string, surface: string = APP_BASE): string {
 }
 
 /**
- * The one brand-colour rule: whether a colour can be painted as UI on the
+ * The one brand-colour measure: whether a colour can be painted as UI on the
  * page as is (`brandColorContrastOk` is its yes/no). `uiColor` is what the
- * fan page paints when it cannot (the colour pushed to 3:1, for a colour
- * saved before the rule existed), so the creator can be told honestly.
+ * fan page paints when it cannot (the colour pushed to 3:1), so the creator
+ * can be told honestly. A verdict, never a refusal.
  */
 export function checkBrandColor(color: string | null | undefined, surface: string = APP_BASE): { ok: boolean; ratio: number; uiColor: string; reason: string | null } {
   const rgb = parseHex(color);

@@ -34,7 +34,7 @@ export default function AdminClaim() {
 
   return (
     <div className="w-full max-w-sm rounded-2xl border border-[var(--hair)] [background:var(--s1)] px-6 py-8 text-center text-ink shadow-[var(--lift)]">
-      <span className="mx-auto grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-brand">
+      <span className="mx-auto grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] text-brand">
         <svg
           width="22"
           height="22"

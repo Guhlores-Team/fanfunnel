@@ -81,7 +81,7 @@ export default function Home() {
             className="ambient-glow pointer-events-none absolute h-[90%] w-[90%] rounded-full blur-3xl"
             style={{
               background:
-                "radial-gradient(circle, color-mix(in oklab, var(--brand) 32%, transparent), transparent 65%)",
+                "radial-gradient(circle, color-mix(in oklab, var(--brand-ui) 32%, transparent), transparent 65%)",
             }}
           />
           <div className="ambient-float relative">

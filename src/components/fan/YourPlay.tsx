@@ -101,9 +101,9 @@ export default function YourPlay({
                     <label
                       key={n ?? "off"}
                       className={`inline-flex min-h-11 min-w-[3.25rem] cursor-pointer items-center justify-center rounded-xl border px-3 text-sm font-semibold transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--brand-ui)] ${
-                        checked ? "border-[var(--brand)] text-ink" : "border-line text-muted hover:text-ink"
+                        checked ? "border-[var(--brand-ui)] text-ink" : "border-line text-muted hover:text-ink"
                       }`}
-                      style={checked ? { background: "color-mix(in oklab, var(--brand) 18%, transparent)" } : undefined}
+                      style={checked ? { background: "color-mix(in oklab, var(--brand-ui) 18%, transparent)" } : undefined}
                     >
                       <input
                         type="radio"

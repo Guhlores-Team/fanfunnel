@@ -158,7 +158,7 @@ export default function FanLeaderboard({
         <>
           {you && (
             <p className="mb-3 text-center text-sm font-semibold text-ink">
-              You&rsquo;re <span className="text-[var(--brand)]">#{you.rank}</span>
+              You&rsquo;re <span className="text-[var(--brand-text)]">#{you.rank}</span>
               {nextUp ? (
                 <span className="font-normal text-muted">
                   {" "}
@@ -178,13 +178,13 @@ export default function FanLeaderboard({
                 style={
                   you && e.rank === you.rank
                     ? {
-                        borderColor: "var(--brand)",
-                        background: "color-mix(in oklab, var(--brand) 16%, transparent)",
+                        borderColor: "var(--brand-ui)",
+                        background: "color-mix(in oklab, var(--brand-ui) 16%, transparent)",
                       }
                     : e.rank <= 3
                       ? {
-                          borderColor: "color-mix(in oklab, var(--brand) 45%, transparent)",
-                          background: "color-mix(in oklab, var(--brand) 8%, transparent)",
+                          borderColor: "color-mix(in oklab, var(--brand-ui) 45%, transparent)",
+                          background: "color-mix(in oklab, var(--brand-ui) 8%, transparent)",
                         }
                       : { borderColor: "var(--color-line)" }
                 }
@@ -195,7 +195,7 @@ export default function FanLeaderboard({
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
                   {e.handle}
                   {you && e.rank === you.rank && (
-                    <span className="ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--brand-ink)]">
+                    <span className="ml-1.5 rounded-full bg-[var(--brand-ui)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--brand-ink)]">
                       You
                     </span>
                   )}
@@ -332,7 +332,7 @@ function LeaderboardOptIn({
           className="shrink-0 rounded-full border border-line p-2.5 transition disabled:opacity-60"
         >
           <span
-            className={`relative block h-6 w-11 rounded-full transition ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+            className={`relative block h-6 w-11 rounded-full transition ${on ? "bg-[var(--brand-ui)]" : "bg-line"}`}
           >
             <span
               className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${on ? "left-[1.375rem]" : "left-0.5"}`}
@@ -364,7 +364,7 @@ function LeaderboardOptIn({
               type="button"
               disabled={busy}
               onClick={() => void save(true, draft)}
-              className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)] disabled:opacity-60"
+              className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand-ui)] disabled:opacity-60"
             >
               {on ? "Save" : "Join"}
             </button>

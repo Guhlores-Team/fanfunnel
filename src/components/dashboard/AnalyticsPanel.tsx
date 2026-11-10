@@ -93,7 +93,7 @@ function HeatmapCard() {
                   background:
                     s === 0
                       ? "var(--s2)"
-                      : `color-mix(in srgb, var(--brand) ${heatmapStrength(s, 100)}%, transparent)`,
+                      : `color-mix(in srgb, var(--brand-ui) ${heatmapStrength(s, 100)}%, transparent)`,
                 }}
               />
             ))}
@@ -132,7 +132,7 @@ function HeatmapCard() {
                           style={{
                             background:
                               strength > 0
-                                ? `color-mix(in srgb, var(--brand) ${strength}%, transparent)`
+                                ? `color-mix(in srgb, var(--brand-ui) ${strength}%, transparent)`
                                 : "var(--s2)",
                           }}
                         />

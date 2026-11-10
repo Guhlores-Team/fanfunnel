@@ -25,7 +25,7 @@ import { slugHint } from "@/lib/data/publicSlug";
 import { isAcceptablePassword, PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
 import PasswordInput from "./PasswordInput";
 import { withSuspendedReason } from "@/lib/onboarding/suspended";
-import { BRAND_TOO_DARK_MESSAGE, brandColorContrastOk } from "@/lib/theme";
+import { BRAND_DARK_HINT, brandColorContrastOk } from "@/lib/theme";
 
 /**
  * Settings (Command Center). Two groups:
@@ -229,7 +229,7 @@ const recessed = "border border-[var(--hair)] [background:var(--s2)]";
 const primaryBtn =
   "btn-brand inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] px-[18px] text-sm font-bold disabled:opacity-50";
 const secondaryBtn =
-  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand-ui)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 
 function GroupHeader({ id, title, hint }: { id: string; title: string; hint?: string }) {
   return (
@@ -238,7 +238,7 @@ function GroupHeader({ id, title, hint }: { id: string; title: string; hint?: st
         id={id}
         className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink"
       >
-        <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+        <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
         {title}
       </h2>
       {hint && <p className="mt-1 max-w-2xl text-[13px] text-muted">{hint}</p>}
@@ -483,7 +483,7 @@ function Avatar({ url, name, size }: { url: string; name: string; size: number }
     <span
       aria-hidden="true"
       style={style}
-      className="text-[color-mix(in_oklab,var(--brand-text)_72%,white)] grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-lg font-bold"
+      className="text-[color-mix(in_oklab,var(--brand-text)_72%,white)] grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-lg font-bold"
     >
       {initialsOf(name)}
     </span>
@@ -574,7 +574,7 @@ function EmailBlock({
       {pending && (
         <p
           role="status"
-          className="rounded-lg border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_10%,transparent)] px-3 py-2 text-xs text-ink"
+          className="rounded-lg border border-[var(--brand-ui)]/40 bg-[color-mix(in_oklab,var(--brand-ui)_10%,transparent)] px-3 py-2 text-xs text-ink"
         >
           Pending confirmation: <span className="break-all font-semibold">{pending}</span> — open the link in BOTH inboxes.
         </p>
@@ -818,7 +818,7 @@ function NotificationsCard({
               </span>
               <span
                 aria-hidden="true"
-                className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+                className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand-ui)]" : "bg-line"}`}
               >
                 <span
                   className={`absolute top-[3px] h-5 w-5 rounded-full transition-all ${
@@ -999,10 +999,7 @@ function PublicPageSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ color: brandColor }),
       });
-      if (!res.ok) {
-        const d = (await res.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(d.error === "brand_too_dark" ? BRAND_TOO_DARK_MESSAGE : "");
-      }
+      if (!res.ok) throw new Error("");
       setSavedBrand(brandColor);
       onBrandColorChange?.(brandColor);
       toast("Brand color saved", { tone: "success" });
@@ -1152,7 +1149,7 @@ function PublicPageSection({
             {brandColor !== savedBrand && <Unsaved />}
           </div>
           {!brandColorContrastOk(brandColor) && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(brandColor.trim()) && (
-            <p role="alert" data-testid="brand-too-dark" className="text-xs text-amber-200 text-pretty">{BRAND_TOO_DARK_MESSAGE}</p>
+            <p data-testid="brand-dark-hint" className="text-xs text-muted text-pretty">{BRAND_DARK_HINT}</p>
           )}
         </Card>
         <LookAndFeelCard displayName={displayName} brandColor={brandColor} onPreviewChange={setLook} />
@@ -1217,7 +1214,7 @@ function AvatarUpload({ onUploaded }: { onUploaded: (url: string) => void }) {
   }
 
   return (
-    <label className="relative inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] border border-line px-3.5 text-sm font-semibold text-ink transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--brand)] hover:border-[var(--brand)]/60 hover:bg-white/5 min-h-9 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60">
+    <label className="relative inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] border border-line px-3.5 text-sm font-semibold text-ink transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--brand-ui)] hover:border-[var(--brand-ui)]/60 hover:bg-white/5 min-h-9 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60">
       <Glyph d={P.upload} size={15} />
       {busy ? "Uploading…" : "Change avatar"}
       <input

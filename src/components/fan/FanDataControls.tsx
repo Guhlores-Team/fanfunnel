@@ -239,7 +239,7 @@ export function FanDataActions({ token }: { token: string }) {
           }
           setBusy(false);
         }}
-        className="w-full rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-[var(--brand)] disabled:opacity-50"
+        className="w-full rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-[var(--brand-ui)] disabled:opacity-50"
       >
         {busy ? "Preparing…" : "Download my data"}
       </button>

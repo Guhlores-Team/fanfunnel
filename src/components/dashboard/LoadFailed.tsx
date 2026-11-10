@@ -31,7 +31,7 @@ export default function LoadFailed({ error, what, onRetry, compact = false, stal
     setBusy(true);
     try { await onRetry(); } finally { setBusy(false); }
   };
-  const action = "inline-flex min-h-9 items-center justify-center rounded-[9px] border border-line px-3 text-xs font-semibold text-ink hover:border-[var(--brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-60";
+  const action = "inline-flex min-h-9 items-center justify-center rounded-[9px] border border-line px-3 text-xs font-semibold text-ink hover:border-[var(--brand-ui)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-60";
   return (
     <div
       role="alert"

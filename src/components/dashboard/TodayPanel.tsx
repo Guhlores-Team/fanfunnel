@@ -89,7 +89,7 @@ const KIND_ICON: Record<string, string> = {
 // Tone → [tile/tag background, foreground]. Foregrounds are the light tints so
 // small uppercase tag text clears AA on the dark surface.
 const TONE: Record<ImpactTag["tone"], [string, string]> = {
-  brand: ["bg-[color-mix(in_oklab,var(--brand)_16%,transparent)]", "text-brand"],
+  brand: ["bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)]", "text-brand"],
   blue: ["bg-[#3b82f6]/15", "text-[#93c5fd]"],
   amber: ["bg-[#f59e0b]/15", "text-[#fcd34d]"],
   green: ["bg-[#22c55e]/15", "text-[#86efac]"],
@@ -137,7 +137,7 @@ function PulseCard({
   chip,
   note,
   spark,
-  sparkColor = "var(--brand)",
+  sparkColor = "var(--brand-ui)",
   action,
 }: {
   icon: string;
@@ -185,7 +185,7 @@ function PulseCard({
           type="button"
           onClick={action.onClick}
           aria-label={action.ariaLabel}
-          className="absolute right-2.5 top-2.5 rounded-lg px-2 py-1 text-xs font-semibold text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand)_12%,transparent)]"
+          className="absolute right-2.5 top-2.5 rounded-lg px-2 py-1 text-xs font-semibold text-brand transition-colors hover:bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)]"
         >
           {action.label} <span aria-hidden="true">→</span>
         </button>
@@ -329,7 +329,7 @@ export default function TodayPanel({
     <div className="relative flex flex-col gap-6">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 -top-6 h-60 blur-[8px] [background:radial-gradient(60%_100%_at_30%_0%,color-mix(in_oklab,var(--brand)_22%,transparent),transparent_70%)]"
+        className="pointer-events-none absolute inset-x-0 -top-6 h-60 blur-[8px] [background:radial-gradient(60%_100%_at_30%_0%,color-mix(in_oklab,var(--brand-ui)_22%,transparent),transparent_70%)]"
       />
 
       {/* "Today" on these two tiles is the UTC day (the /api/metrics daily
@@ -395,7 +395,7 @@ export default function TodayPanel({
       <section aria-labelledby="needs-you-now" className="relative">
         <div className="mb-3.5 flex items-baseline justify-between gap-3">
           <h2 id="needs-you-now" className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink">
-            <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+            <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
             Needs you now
           </h2>
           {cards && cards.length > 0 && (
@@ -439,7 +439,7 @@ export default function TodayPanel({
               return (
                 <li
                   key={c.key}
-                  className={`lift-in flex flex-col gap-3 rounded-2xl px-4 py-4 transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] sm:flex-row sm:items-start sm:gap-3.5 sm:px-[18px] ${raised}`}
+                  className={`lift-in flex flex-col gap-3 rounded-2xl px-4 py-4 transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand-ui)_35%,var(--hair))] sm:flex-row sm:items-start sm:gap-3.5 sm:px-[18px] ${raised}`}
                 >
                   <div className="flex min-w-0 flex-1 items-start gap-3.5">
                     <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-[11px] ${tint} ${fg}`}>

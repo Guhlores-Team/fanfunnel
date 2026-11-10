@@ -82,7 +82,7 @@ export default function ImportFans({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
-            <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+            <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand-ui)]" />
             Import fans
           </h3>
           <p className="mt-1 text-[13px] text-muted">

@@ -34,6 +34,16 @@ for (const f of files) {
 check(`no file uses "base" as a colour or the old token (${offenders.join("; ")})`, offenders.length === 0);
 check("the canvas token is in use across the app", canvasUses >= 25);
 
+// PA-01 (decision): any hex brand colour is accepted, so nothing may paint
+// the raw `--brand`. UI paints `--brand-ui` (lifted to 3:1 on the page), text
+// on it uses `--brand-ink`, brand-coloured text uses `--brand-text`. Only
+// globals.css (the defaults and the decorative glow) names the raw variable.
+const rawBrand = files.filter((f) => f.startsWith("src/") && f !== "src/app/globals.css" && !/\.test\.tsx?$/.test(f) && f !== "src/lib/theme.ts")
+  .filter((f) => readFileSync(join(root, f), "utf8").includes("var(--brand)"));
+check(`no component paints the raw brand colour (${rawBrand.join("; ")})`, rawBrand.length === 0);
+const chat = readFileSync(join(root, "src/components/fan/ChatPanel.tsx"), "utf8");
+check("the fan's chat bubbles read on any brand colour", !/background: "var\(--brand-ui\)",?\s*color: "#fff"/.test(chat) && (chat.match(/color: "var\(--brand-ink\)"/g) ?? []).length >= 2);
+
 // The three fan inputs the audit named mean 16 px on phones: text-base + text-ink.
 for (const f of ["src/components/fan/ChatPanel.tsx", "src/components/fan/FanLeaderboard.tsx"]) {
   const text = readFileSync(join(root, f), "utf8");

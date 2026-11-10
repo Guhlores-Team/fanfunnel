@@ -251,7 +251,7 @@ export default function PrizesPanel({
     <div className="max-w-[780px]">
       <div className="mb-3.5 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink">
-          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
           Prize queue
         </h2>
         <div className="flex flex-wrap items-center gap-2">
@@ -281,7 +281,7 @@ export default function PrizesPanel({
                 }}
                 className={`min-h-9 shrink-0 rounded-full border px-3.5 text-[12.5px] font-semibold transition-colors ${
                   active
-                    ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-brand"
+                    ? "border-[color-mix(in_oklab,var(--brand-ui)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] text-brand"
                     : "border-line text-muted hover:text-ink"
                 }`}
               >
@@ -320,7 +320,7 @@ export default function PrizesPanel({
 
       {!loading && (data || error == null) && shown.length === 0 && (
         <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-8 py-12 text-center">
-          <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+          <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] text-brand">
             <Glyph d={P.check} size={22} />
           </span>
           <p className="text-[15px] font-bold text-ink">All clear here</p>
@@ -487,7 +487,7 @@ function RedemptionRow({
 
   return (
     <li
-      className={`lift-in flex flex-col gap-3 rounded-[13px] px-4 py-[13px] transition-[border-color] duration-150 hover:border-[color-mix(in_oklab,var(--brand)_30%,var(--hair))] ${raised}`}
+      className={`lift-in flex flex-col gap-3 rounded-[13px] px-4 py-[13px] transition-[border-color] duration-150 hover:border-[color-mix(in_oklab,var(--brand-ui)_30%,var(--hair))] ${raised}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2.5">
         <div className="flex min-w-0 items-center gap-3">
@@ -550,7 +550,7 @@ function RedemptionRow({
             {STATUS_LABEL[r.status]}
           </span>
           {r.auto && <span data-testid="redemption-auto" title="Reward delivered instantly to the winning fan" className="rounded-full border border-[#22c55e]/30 bg-[#22c55e]/10 px-[11px] py-1 text-xs font-bold text-[#86efac]">Auto · {r.auto.kind === "link" ? "Link" : r.auto.kind === "code" ? "Code" : "Text"}</span>}
-          {r.focusKind && <span data-testid="redemption-focus" title={r.chaseAwarded ? "This win completed the Chase guarantee" : "Won while a Focus or Chase pack was active"} className="rounded-full border border-[var(--brand)]/30 px-[11px] py-1 text-xs font-bold text-ink">Focus{r.focusKind === "chase" ? r.chaseAwarded ? " · Chase guaranteed" : " · Chase" : ""}</span>}
+          {r.focusKind && <span data-testid="redemption-focus" title={r.chaseAwarded ? "This win completed the Chase guarantee" : "Won while a Focus or Chase pack was active"} className="rounded-full border border-[var(--brand-ui)]/30 px-[11px] py-1 text-xs font-bold text-ink">Focus{r.focusKind === "chase" ? r.chaseAwarded ? " · Chase guaranteed" : " · Chase" : ""}</span>}
           {!r.auto && (
           <button
             type="button"

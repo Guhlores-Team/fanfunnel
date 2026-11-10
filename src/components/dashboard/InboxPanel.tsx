@@ -59,7 +59,7 @@ const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(-
 // Initials sit in ink, not brand: brand-as-text is only legibility-tuned against
 // the base surface, and on the 16% tint the default pink is already < 4.5:1.
 const avatar =
-  "grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] font-bold text-ink";
+  "grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] font-bold text-ink";
 
 /**
  * The creator's chat inbox: a list of fan threads with unread counts, and a
@@ -384,7 +384,7 @@ export default function InboxPanel({
             type="button"
             onClick={onOpenPushSettings}
             data-testid="inbox-push-optin"
-            className="flex min-h-11 items-center gap-[7px] rounded-xl border border-line bg-surface px-4 text-[13px] font-semibold text-ink transition-colors duration-150 hover:border-[var(--brand)]"
+            className="flex min-h-11 items-center gap-[7px] rounded-xl border border-line bg-surface px-4 text-[13px] font-semibold text-ink transition-colors duration-150 hover:border-[var(--brand-ui)]"
           >
             <Glyph d={P.bell} size={15} className="text-brand" />
             Get alerts on this device
@@ -411,7 +411,7 @@ export default function InboxPanel({
         </div>
       ) : threads.length === 0 ? (
         <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-8 py-14 text-center">
-          <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+          <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] text-brand">
             <Glyph d={P.inbox} size={22} />
           </span>
           <p className="text-[15px] font-bold text-ink">No conversations yet</p>
@@ -427,7 +427,7 @@ export default function InboxPanel({
               id="inbox-conversations"
               className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink"
             >
-              <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+              <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
               Conversations
             </h2>
             <span className="tnum text-xs text-muted">
@@ -460,8 +460,8 @@ export default function InboxPanel({
                       }}
                       className={`flex w-full items-center gap-3 rounded-xl border px-[13px] py-[11px] text-left transition-[border-color,background-color] duration-150 ${
                         on
-                          ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_10%,transparent)]"
-                          : "border-[#1f1b27] bg-[#16131c] hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))]"
+                          ? "border-[color-mix(in_oklab,var(--brand-ui)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand-ui)_10%,transparent)]"
+                          : "border-[#1f1b27] bg-[#16131c] hover:border-[color-mix(in_oklab,var(--brand-ui)_35%,var(--hair))]"
                       }`}
                     >
                       <span className={`${avatar} h-9 w-9 text-xs`} aria-hidden="true">
@@ -473,7 +473,7 @@ export default function InboxPanel({
                       </span>
                       {t.unread > 0 && (
                         <>
-                          <span className="tnum grid h-[19px] min-w-[19px] shrink-0 place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
+                          <span className="tnum grid h-[19px] min-w-[19px] shrink-0 place-items-center rounded-full bg-[var(--brand-ui)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
                             {t.unread}
                           </span>
                           <span className="sr-only"> unread</span>
@@ -490,7 +490,7 @@ export default function InboxPanel({
                     onClick={() => void loadOlder()}
                     disabled={loadingOlder}
                     data-testid="inbox-load-older"
-                    className="inline-flex min-h-9 items-center rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+                    className="inline-flex min-h-9 items-center rounded-[9px] border border-line px-3 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand-ui)] disabled:opacity-50"
                   >
                     {loadingOlder ? "Loading…" : "Load older conversations"}
                   </button>
@@ -515,7 +515,7 @@ export default function InboxPanel({
               ) : (
                 <div className={`grid h-full place-items-center rounded-2xl px-6 py-10 text-center ${raised}`}>
                   <div className="flex flex-col items-center gap-2.5">
-                    <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+                    <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] text-brand">
                       <Glyph d={P.inbox} size={22} />
                     </span>
                     <p className="text-[15px] font-bold text-ink">Select a conversation</p>
@@ -593,7 +593,7 @@ function AutoMessagesCard() {
   };
 
   const well =
-    "w-full rounded-[10px] border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none transition-colors focus:border-[var(--brand)]";
+    "w-full rounded-[10px] border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none transition-colors focus:border-[var(--brand-ui)]";
 
   return (
     <div className={`min-w-0 flex-1 basis-[260px] rounded-xl ${raised}`}>
@@ -838,7 +838,7 @@ function Thread({
   };
 
   const newest = messages[messages.length - 1]?.at ?? fan.lastAt;
-  const own = "max-w-[78%] rounded-2xl bg-[var(--brand)] px-[13px] py-[9px] text-[13.5px] text-[var(--brand-ink)]";
+  const own = "max-w-[78%] rounded-2xl bg-[var(--brand-ui)] px-[13px] py-[9px] text-[13.5px] text-[var(--brand-ink)]";
 
   return (
     <div className={`lift-in flex h-full flex-col rounded-2xl ${raised}`}>
@@ -925,7 +925,7 @@ function Thread({
             key={q}
             type="button"
             onClick={() => insertQuickReply(q)}
-            className="rounded-full border border-line px-2.5 py-1 text-xs text-muted transition-colors duration-150 hover:border-[var(--brand)] hover:text-ink"
+            className="rounded-full border border-line px-2.5 py-1 text-xs text-muted transition-colors duration-150 hover:border-[var(--brand-ui)] hover:text-ink"
           >
             {q}
           </button>
@@ -939,7 +939,7 @@ function Thread({
           maxLength={2000}
           aria-label="Reply to this fan"
           placeholder="Reply…"
-          className="min-w-0 flex-1 rounded-full border border-line bg-canvas px-4 py-2.5 text-sm text-ink outline-none transition-colors focus:border-[var(--brand)]"
+          className="min-w-0 flex-1 rounded-full border border-line bg-canvas px-4 py-2.5 text-sm text-ink outline-none transition-colors focus:border-[var(--brand-ui)]"
         />
         <button
           type="button"

@@ -94,7 +94,7 @@ export default function HomeScreenIconCard({
         {OPTIONS.map((o) => (
           <label
             key={o.mode}
-            className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-line p-3 transition-colors hover:bg-white/[0.03] has-[:checked]:border-[var(--brand)] has-[:checked]:bg-white/[0.04] has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--brand)] has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+            className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-line p-3 transition-colors hover:bg-white/[0.03] has-[:checked]:border-[var(--brand-ui)] has-[:checked]:bg-white/[0.04] has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--brand-ui)] has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
           >
             <input
               type="radio"

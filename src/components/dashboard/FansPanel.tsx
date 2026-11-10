@@ -477,7 +477,7 @@ export default function FansPanel({
           this view (e2e selector) and keeps the top-bar focus target. */}
       <section aria-labelledby="mint-fan-link" className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
         <h2 id="mint-fan-link" className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
-          <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+          <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand-ui)]" />
           Mint a fan link
         </h2>
         <p className="mt-1 text-[13px] text-muted text-pretty">
@@ -826,7 +826,7 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
     else if (outcome === "failed") toast("Couldn't share or copy the link. Select it and copy it by hand.", { tone: "error" });
   };
   return (
-    <div ref={ref} data-testid="minted-link" role="status" tabIndex={-1} className="mt-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] border border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] p-3.5 [background:color-mix(in_oklab,var(--brand)_7%,transparent)]">
+    <div ref={ref} data-testid="minted-link" role="status" tabIndex={-1} className="mt-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] border border-[color-mix(in_oklab,var(--brand-ui)_45%,var(--hair))] p-3.5 [background:color-mix(in_oklab,var(--brand-ui)_7%,transparent)]">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[13.5px] font-bold text-ink">Link ready for {name}</p>
@@ -855,7 +855,7 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
 function FansEmpty({ title, body }: { title: string; body: string }) {
   return (
     <div className="flex flex-col items-center gap-2.5 rounded-2xl border border-dashed border-[var(--hair)] px-8 py-12 text-center">
-      <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] text-brand">
+      <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[color-mix(in_oklab,var(--brand-ui)_12%,transparent)] text-brand">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
           <path d={FANS_ICON} />
         </svg>
@@ -906,11 +906,11 @@ function FanRow({
       ref={ref}
       id={`fan-row-${account.fanId}`}
       data-fresh={fresh ? "true" : undefined}
-      className={`relative ${fresh ? "ring-2 ring-[var(--brand)] " : ""} flex flex-wrap items-center gap-3 rounded-[13px] px-3.5 py-[13px] transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] sm:gap-3.5 sm:px-4 ${raised}`}
+      className={`relative ${fresh ? "ring-2 ring-[var(--brand-ui)] " : ""} flex flex-wrap items-center gap-3 rounded-[13px] px-3.5 py-[13px] transition-[transform,border-color] duration-150 ease-out hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--brand-ui)_45%,var(--hair))] sm:gap-3.5 sm:px-4 ${raised}`}
     >
       <span
         aria-hidden="true"
-        className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-sm font-bold text-ink"
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] text-sm font-bold text-ink"
       >
         {initialsOf(account.name)}
       </span>
@@ -945,7 +945,7 @@ function FanRow({
           {account.tags.slice(0, 3).map((t) => (
             <span
               key={t}
-              className="rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] px-2.5 py-[3px] text-[11.5px] font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
+              className="rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_14%,transparent)] px-2.5 py-[3px] text-[11.5px] font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
             >
               {t}
             </span>

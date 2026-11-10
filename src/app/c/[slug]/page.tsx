@@ -75,14 +75,14 @@ export default async function PublicProfilePage({
           <img
             src={profile.avatarUrl}
             alt={profile.creatorTitle}
-            className="mx-auto mb-6 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand)]"
+            className="mx-auto mb-6 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand-ui)]"
           />
         ) : (
           <div
             aria-hidden
             className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full text-4xl"
             style={{
-              background: `radial-gradient(circle, color-mix(in oklab, var(--brand) 40%, transparent), transparent 70%)`,
+              background: `radial-gradient(circle, color-mix(in oklab, var(--brand-ui) 40%, transparent), transparent 70%)`,
             }}
           >
             {copy.emoji}

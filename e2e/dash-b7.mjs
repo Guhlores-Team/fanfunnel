@@ -721,15 +721,28 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     }
   });
 
-  await step("b7 PA-01 + PA-12 + WC-18/19/23/30: a too-dark brand colour is refused; skip link, field errors, slug hint and the discard list", async () => {
+  await step("b7 PA-01 + PA-12 + WC-18/19/23/30: a very dark brand colour saves with a hint; skip link, field errors, slug hint and the discard list", async () => {
     const page = await ctx.newPage();
     attachSink(page, sink);
     const profile = await json(await request.get(BASE + "/api/public-profile"), "read profile");
+    const brandBefore = (await json(await request.get(BASE + "/api/wheel"), "read the live game")).wheel?.brandColor || "#ec4899";
     try {
+      // PA-01 (decision): no colour is refused for darkness. Near-white and
+      // near-black both save; the fan page paints --brand-ui (lifted to 3:1,
+      // checked in the fan journey) and Settings says so without blocking.
+      const light = await request.put(BASE + "/api/account/brand-color", { data: { color: "#fefefe" } });
+      assert(light.status() === 200, `a near-white colour saves (${light.status()})`);
       const dark = await request.put(BASE + "/api/account/brand-color", { data: { color: "#050505" } });
-      assert(dark.status() === 400 && (await dark.json()).error === "brand_too_dark", "the route refuses a colour that cannot be read on the dark dashboard");
+      assert(dark.status() === 200 && (await dark.json()).color === "#050505", `a near-black colour saves (${dark.status()})`);
+      assert((await request.put(BASE + "/api/account/brand-color", { data: { color: "black" } })).status() === 400, "only a value that is not a hex colour is refused");
 
       await goto(page, "/dashboard?section=settings", 1500);
+      const darkHint = page.getByTestId("brand-dark-hint");
+      await darkHint.waitFor({ timeout: 8000 });
+      assert(/lighter shade/.test(await darkHint.innerText()) && (await darkHint.getAttribute("role")) !== "alert", "Settings explains what fans will see, as a hint and not an error");
+      await json(await request.put(BASE + "/api/account/brand-color", { data: { color: brandBefore } }), "restore the brand colour");
+      await goto(page, "/dashboard?section=settings", 1500);
+      assert((await page.getByTestId("brand-dark-hint").count()) === 0, "an everyday colour shows no hint");
       // PA-12: the first Tab stop is the skip link, and it lands on the content.
       await page.keyboard.press("Tab");
       const skip = page.getByTestId("skip-to-content");
@@ -773,6 +786,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await list.waitFor({ state: "detached", timeout: 5000 });
       assert((await json(await request.get(BASE + "/api/public-profile"), "re-read profile")).slug === profile.slug, "nothing was saved");
     } finally {
+      await request.put(BASE + "/api/account/brand-color", { data: { color: brandBefore } }).catch(() => {});
       await page.close().catch(() => {});
     }
   });

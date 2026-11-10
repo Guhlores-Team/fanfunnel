@@ -332,7 +332,7 @@ export default function ChatPanel({
         data-step-aside={stepAside ? "true" : undefined}
         data-nudged={nudge.up > 0 ? "true" : undefined}
         style={nudge.up > 0 ? { transform: `translateY(-${nudge.up}px)` } : undefined}
-        className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)] ${stepAside ? "invisible opacity-0" : ""}`}
+        className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand-ui)] ${stepAside ? "invisible opacity-0" : ""}`}
         aria-label="Message creator"
       >
         💬 Message
@@ -340,7 +340,7 @@ export default function ChatPanel({
           <span
             aria-label="New message"
             className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full border-2 border-surface"
-            style={{ background: "var(--brand)" }}
+            style={{ background: "var(--brand-ui)" }}
           />
         )}
       </button>
@@ -390,7 +390,7 @@ export default function ChatPanel({
                       className="max-w-[80%] rounded-2xl px-3 py-2 text-sm"
                       style={
                         m.sender === "fan"
-                          ? { background: "var(--brand)", color: "#fff" }
+                          ? { background: "var(--brand-ui)", color: "var(--brand-ink)" }
                           : { background: "color-mix(in oklab, var(--color-ink) 8%, transparent)", color: "var(--color-ink)" }
                       }
                     >
@@ -404,8 +404,8 @@ export default function ChatPanel({
                     <span
                       className="max-w-[80%] rounded-2xl px-3 py-2 text-sm"
                       style={{
-                        background: "var(--brand)",
-                        color: "#fff",
+                        background: "var(--brand-ui)",
+                        color: "var(--brand-ink)",
                         opacity: m.status === "failed" ? 0.55 : 0.7,
                       }}
                     >
@@ -449,7 +449,7 @@ export default function ChatPanel({
                   }}
                   maxLength={2000}
                   placeholder="Message…"
-                  className="min-w-0 flex-1 rounded-full border border-line bg-canvas px-4 py-2 text-base text-ink outline-none focus:border-[var(--brand)] sm:text-sm"
+                  className="min-w-0 flex-1 rounded-full border border-line bg-canvas px-4 py-2 text-base text-ink outline-none focus:border-[var(--brand-ui)] sm:text-sm"
                 />
                 <button
                   onClick={send}

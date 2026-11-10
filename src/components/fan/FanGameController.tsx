@@ -669,7 +669,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             // edge) so the layout box, even at the pulse's 1.05 scale peak,
             // stays inside the viewport on narrow phones.
             background:
-              "radial-gradient(circle closest-side, color-mix(in oklab, var(--brand) 38%, transparent), transparent)",
+              "radial-gradient(circle closest-side, color-mix(in oklab, var(--brand-ui) 38%, transparent), transparent)",
           }}
         />
         <div className="relative">
@@ -1088,7 +1088,7 @@ function AgeGate({
               checked={adult}
               disabled={!hydrated}
               onChange={(e) => setAdult(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand-ui)]"
             />
             <span className="text-ink">{AGE_CONFIRMATION}</span>
           </label>
@@ -1098,7 +1098,7 @@ function AgeGate({
               checked={terms}
               disabled={!hydrated}
               onChange={(e) => setTerms(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand-ui)]"
             />
             <span className="text-ink">
               I agree to the{" "}

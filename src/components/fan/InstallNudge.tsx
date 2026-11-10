@@ -111,8 +111,8 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
       data-testid="install-nudge"
       className="lift-in w-full rounded-2xl border p-4 text-left"
       style={{
-        borderColor: "color-mix(in oklab, var(--brand) 40%, transparent)",
-        background: "color-mix(in oklab, var(--brand) 8%, var(--color-surface))",
+        borderColor: "color-mix(in oklab, var(--brand-ui) 40%, transparent)",
+        background: "color-mix(in oklab, var(--brand-ui) 8%, var(--color-surface))",
       }}
     >
       <h2 id={titleId} className="text-sm font-extrabold text-ink">
@@ -193,7 +193,7 @@ function StepBadge({ n }: { n: number }) {
     <span
       aria-hidden="true"
       className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-extrabold"
-      style={{ background: "var(--brand)", color: "var(--brand-ink)" }}
+      style={{ background: "var(--brand-ui)", color: "var(--brand-ink)" }}
     >
       {n}
     </span>

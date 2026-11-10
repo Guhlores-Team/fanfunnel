@@ -161,7 +161,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 <p className="text-sm font-bold text-ink">Safety &amp; privacy</p>
                 <button
                   onClick={() => setMode("report")}
-                  className="mt-4 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)]"
+                  className="mt-4 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand-ui)]"
                 >
                   🚩 Report this creator
                   <span className="mt-0.5 block text-xs text-muted">
@@ -171,7 +171,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 {!paused && (
                   <button
                     onClick={() => setMode("exclude")}
-                    className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)]"
+                    className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand-ui)]"
                   >
                     ⏸️ Pause my link
                     <span className="mt-0.5 block text-xs text-muted">
@@ -182,7 +182,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 <button
                   onClick={exportOrShow}
                   disabled={busy}
-                  className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand)] disabled:opacity-50"
+                  className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand-ui)] disabled:opacity-50"
                 >
                   ⬇️ {busy ? "Preparing your data…" : "Download my data"}
                   <span className="mt-0.5 block text-xs text-muted">

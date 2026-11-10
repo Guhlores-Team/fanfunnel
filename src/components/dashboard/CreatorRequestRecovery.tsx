@@ -6,7 +6,7 @@ import { releaseCreatorRequest, terminalCreatorRequest, type CreatorRequestKind,
 import { useCreatorDraft } from "./CreatorDrafts";
 import { requestCreatorReceipt, type CreatorReceiptRequest } from "./creatorRequestJournal";
 
-const button = "min-h-10 rounded-lg border border-line px-3 py-2 text-xs font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50";
+const button = "min-h-10 rounded-lg border border-line px-3 py-2 text-xs font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-50";
 
 /** A retry receipt can only be released by a matching terminal journal result. */
 export default function CreatorRequestRecovery({ scope, kind, guardScope = scope, creatorId, refreshKey, disabled = false, request = requestCreatorReceipt, onFound, onResolved, onBusyChange }: {

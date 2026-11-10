@@ -7,7 +7,7 @@ import { breatherTitle } from "./yourPlay";
 
 // Keep playing and Take a break carry exactly the same weight (RM-6 copy rule).
 const equalBtn =
-  "inline-flex min-h-12 flex-1 items-center justify-center rounded-xl border border-line bg-surface/70 px-4 text-sm font-bold text-ink transition-colors hover:border-[var(--brand)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]";
+  "inline-flex min-h-12 flex-1 items-center justify-center rounded-xl border border-line bg-surface/70 px-4 text-sm font-bold text-ink transition-colors hover:border-[var(--brand-ui)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]";
 
 /**
  * RM-6 reminder card: once today's spins reach the fan's own reminder, the next

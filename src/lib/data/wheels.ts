@@ -1,4 +1,3 @@
-import { brandColorContrastOk } from "@/lib/theme";
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { bingoReadyError } from "./bingo";
 import { gameSettings, gameWriteError, requireGameFeature } from "./gameSettings";
@@ -226,16 +225,6 @@ export async function getWheel(): Promise<WheelConfig | null> {
   return { ...toWheelConfig(data as unknown as DbWheelRow), ...wheelVersion(data), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
 }
 
-/**
- * PA-01: a game save may not CHANGE the brand color to one that cannot be
- * seen on the dark fan page. A color that is already stored never blocks
- * other edits to the game.
- */
-function brandColorRefused(next: string | null | undefined, stored: string | null | undefined): boolean {
-  if (!next || brandColorContrastOk(next)) return false;
-  return next.trim().toLowerCase() !== (stored ?? "").trim().toLowerCase();
-}
-
 /** The creator's own read of a game also carries its version (0073, DB-11). */
 const CREATOR_WHEEL_SELECT = `updated_at, ${WHEEL_SELECT}`;
 function wheelVersion(row: unknown): { updatedAt?: string } {
@@ -274,7 +263,6 @@ export async function saveWheel(
 
   if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
-    if (brandColorRefused(config.brandColor, mockGetWheelById(config.id)?.brandColor)) return { error: "brand_too_dark" };
     try { return { wheel: mockSaveWheel(config, expectedStock, { expectedUpdatedAt, draft: options.draft === true }) }; } catch(error) { return { error: error instanceof Error ? error.message : "db_error" }; }
   }
 
@@ -297,7 +285,6 @@ export async function saveWheel(
 
   const existing = await getWheelById(wheelId);
   if (!existing) return { error: "not_found" };
-  if (brandColorRefused(config.brandColor, existing.brandColor)) return { error: "brand_too_dark" };
   // WC-11: only a game that was never published can be saved as a draft.
   const allowDraft = options.draft === true && existing.gameReady === false;
   let settings;

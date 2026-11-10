@@ -36,7 +36,7 @@ export default function BingoCard({ card, presentation, prizeLabel, savedPlay = 
           const index = row * 3 + column;
           const marked = !!(state.markedMask & (1 << index));
           return <td key={cell.id} data-testid="bingo-cell" data-prize-id={cell.id} data-marked={String(marked)}
-            className={`h-32 border border-line px-1 py-3 align-middle ${marked ? "bg-[color-mix(in_oklab,var(--brand)_15%,var(--color-canvas))]" : "bg-canvas"}`}>
+            className={`h-32 border border-line px-1 py-3 align-middle ${marked ? "bg-[color-mix(in_oklab,var(--brand-ui)_15%,var(--color-canvas))]" : "bg-canvas"}`}>
             {/* PA-12: a td takes no aria-label; the position is read as text instead. */}
             <span className="sr-only">Row {row + 1}, column {column + 1}: </span>
             <span className="block text-2xl" aria-hidden="true">{cell.emoji ?? "🎁"}</span>

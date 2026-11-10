@@ -517,7 +517,7 @@ function AccountRow({
       }`}
     >
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 px-4 py-3.5 sm:px-[18px]">
-        <span className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-[13px] font-bold text-ink">
+        <span className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] text-[13px] font-bold text-ink">
           {initialsOf(account.displayName, account.email)}
         </span>
         <div className="min-w-0 flex-1 basis-40">
@@ -696,7 +696,7 @@ function AccountRow({
                       }
                       className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
                         on
-                          ? "bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand)_40%,transparent)]"
+                          ? "bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand-ui)_40%,transparent)]"
                           : "bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] text-muted hover:text-ink"
                       } ${f.base ? "cursor-default" : "disabled:opacity-50"}`}
                     >
@@ -851,7 +851,7 @@ function InviteModal({
     >
       <form onSubmit={submit}>
         <h2 id={titleId} className="flex items-center gap-[9px] text-lg font-bold tracking-[-0.01em]">
-          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
+          <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand-ui)]" />
           New account
         </h2>
         <p className="mt-1 text-[13.5px] text-muted">
@@ -934,7 +934,7 @@ function AccessRequests({
       aria-pressed={view === v}
       className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
         view === v
-          ? "bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand)_40%,transparent)]"
+          ? "bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand-ui)_40%,transparent)]"
           : "text-muted hover:text-ink"
       }`}
     >
@@ -955,7 +955,7 @@ function AccessRequests({
       >
         Access requests
         {pending.length > 0 && (
-          <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
+          <span className="tnum grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand-ui)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)]">
             {pending.length}
           </span>
         )}
@@ -974,7 +974,7 @@ function AccessRequests({
               <li key={a.id} className={`flex flex-col gap-3 rounded-[13px] px-4 py-3.5 ${recessed}`}>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-xs font-bold text-ink">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] text-xs font-bold text-ink">
                       {initialsOf(a.displayName ?? "", a.email ?? "")}
                     </span>
                     <div className="min-w-0 flex-1">

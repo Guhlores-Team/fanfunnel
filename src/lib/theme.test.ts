@@ -88,12 +88,12 @@ const base = parseHex("#0c0a0e")!;
     check(`brandVars exposes --brand-ui for ${dark}`, vars["--brand-ui"] === ui && vars["--brand"] === dark);
     check(`the button ink is readable on the painted fill for ${dark}`, vars["--brand-ink"] === readableInk(ui));
     const verdict = checkBrandColor(dark);
-    check(`checkBrandColor refuses ${dark} with a plain reason`, !verdict.ok && verdict.ratio < 3 && /too dark/.test(verdict.reason ?? "") && verdict.uiColor === ui);
+    check(`checkBrandColor flags ${dark} with a plain reason (a verdict for the hint, not a refusal)`, !verdict.ok && verdict.ratio < 3 && /too dark/.test(verdict.reason ?? "") && verdict.uiColor === ui);
   }
   check("brandUi leaves the default pink alone", brandUi(DEFAULT_BRAND) === DEFAULT_BRAND);
   check("checkBrandColor accepts the default pink", checkBrandColor(DEFAULT_BRAND).ok && checkBrandColor(DEFAULT_BRAND).reason === null);
   check("checkBrandColor accepts mid grey", checkBrandColor("#808080").ok);
-  check("checkBrandColor refuses junk", !checkBrandColor("#e").ok);
+  check("checkBrandColor does not pass junk", !checkBrandColor("#e").ok);
 }
 
 console.log(`theme.test.ts: ${passed} checks passed`);

@@ -76,7 +76,7 @@ const recessed = "border border-[var(--hair)] [background:var(--s2)]";
 const primaryBtn =
   "btn-brand inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] px-[15px] text-[13px] font-bold disabled:opacity-50 aria-disabled:opacity-50";
 const secondaryBtn =
-  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border border-line px-3.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-[var(--brand-ui)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 const fieldLabel = "flex min-w-0 flex-col gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-muted";
 const quietBtn =
   "shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-muted transition-colors hover:bg-white/5 hover:text-ink";
@@ -206,9 +206,9 @@ function Card({
           <h2
             id={id}
             tabIndex={-1}
-            className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/60 rounded-sm"
+            className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]/60 rounded-sm"
           >
-            <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+            <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand-ui)]" />
             <span className={tone === "danger" ? "text-[#fca5a5]" : "text-brand"}>
               <Glyph d={icon} size={16} />
             </span>
@@ -460,7 +460,7 @@ function LeaderboardToggle({
           <span aria-hidden="true">{on ? "On" : "Off"}</span>
           <span
             aria-hidden="true"
-            className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+            className={`relative h-[26px] w-[46px] shrink-0 rounded-full transition-colors ${on ? "bg-[var(--brand-ui)]" : "bg-line"}`}
           >
             <span
               className={`absolute top-[3px] h-5 w-5 rounded-full transition-all ${
@@ -508,7 +508,7 @@ function LeaderboardToggle({
 // Status → [pill classes, label]. Live = green, scheduled = brand, ended = muted.
 const HH_STATUS: Record<HappyHourStatus, [string, string]> = {
   live: ["bg-[#10b981]/15 text-[#6ee7b7]", "Live"],
-  scheduled: ["bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-brand", "Scheduled"],
+  scheduled: ["bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] text-brand", "Scheduled"],
   ended: ["bg-[color-mix(in_oklab,var(--color-ink)_7%,transparent)] text-muted", "Ended"],
 };
 
@@ -788,7 +788,7 @@ function WishlistDemandCard() {
                   role="img"
                   aria-label={`${pct}% of top demand`}
                 >
-                  <span className="block h-full rounded-full bg-[var(--brand)]" style={{ width: `${pct}%` }} />
+                  <span className="block h-full rounded-full bg-[var(--brand-ui)]" style={{ width: `${pct}%` }} />
                 </span>
                 <span className="tnum w-6 shrink-0 text-right font-bold text-ink">{d.count}</span>
               </li>
@@ -1033,7 +1033,7 @@ function WebhooksCard() {
         <ul className="mt-3 flex flex-col gap-2">
           {hooks.map((h) => (
             <li key={h.id} className={`flex flex-wrap items-center gap-3 rounded-[11px] px-3.5 py-2.5 text-sm ${recessed}`}>
-              <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] px-2 py-0.5 text-[11px] font-semibold text-brand">
+              <span className="shrink-0 rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] px-2 py-0.5 text-[11px] font-semibold text-brand">
                 {WEBHOOK_EVENT_LABEL[h.event] ?? h.event}
               </span>
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">{h.url}</span>
@@ -1042,7 +1042,7 @@ function WebhooksCard() {
                 disabled={testing === h.id}
                 onClick={() => void sendTest(h.id)}
                 aria-label={`Send a test delivery to ${h.url}`}
-                className="min-h-11 rounded-[9px] border border-line px-3 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+                className="min-h-11 rounded-[9px] border border-line px-3 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand-ui)] disabled:opacity-50"
                 data-testid="webhook-test"
               >
                 {testing === h.id ? "Sending…" : "Send test"}

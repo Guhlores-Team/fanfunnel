@@ -110,7 +110,7 @@ export default function InvitesBanner() {
       {invites.map((inv) => (
         <div
           key={inv.id}
-          className="card flex flex-wrap items-center justify-between gap-3 rounded-2xl border-[var(--brand)]/40 p-4"
+          className="card flex flex-wrap items-center justify-between gap-3 rounded-2xl border-[var(--brand-ui)]/40 p-4"
         >
           <div className="min-w-0 flex-1 basis-72">
             <p className="font-bold text-ink">
@@ -123,7 +123,7 @@ export default function InvitesBanner() {
                 : "Accepting lets the agency run your account with you. You can leave at any time from the Agency page, and the owner can remove you."}
             </p>
             {!inv.role && confirming?.id === inv.id && confirming.accept && (
-              <div role="group" aria-label={`What ${inv.orgName} will be able to do`} data-testid="invite-consent" className="mt-3 rounded-xl border border-[var(--brand)]/40 p-3 text-sm text-ink">
+              <div role="group" aria-label={`What ${inv.orgName} will be able to do`} data-testid="invite-consent" className="mt-3 rounded-xl border border-[var(--brand-ui)]/40 p-3 text-sm text-ink">
                 <p className="font-semibold">Before you accept, this is what {inv.orgName} and its staff can do:</p>
                 <ul className="mt-1.5 list-disc space-y-1 pl-5 text-muted">
                   <li>Read and answer every fan conversation in your Inbox, as you.</li>

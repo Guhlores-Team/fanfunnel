@@ -20,8 +20,8 @@ export default function NewGameDialog({ features, busy, error, onCreate, onClose
     <form className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); if (!busy && canCreateGame(kind, features)) void onCreate(kind, name); }}>
       <fieldset data-testid="game-kind-picker" disabled={busy} className="space-y-2">
         <legend className="mb-2 text-sm font-semibold">Game type</legend>
-        {(["wheel", "scratch", "bingo"] as const).filter((choice) => canCreateGame(choice, features)).map((choice) => <label key={choice} className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-line p-3 has-[:checked]:border-[var(--brand)]">
-          <input ref={choice === "wheel" ? initial : undefined} data-testid={`new-game-kind-${choice}`} className="mt-1 accent-[var(--brand)]" type="radio" name="new-game-kind" value={choice} checked={kind === choice} onChange={() => setKind(choice)} />
+        {(["wheel", "scratch", "bingo"] as const).filter((choice) => canCreateGame(choice, features)).map((choice) => <label key={choice} className="flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border border-line p-3 has-[:checked]:border-[var(--brand-ui)]">
+          <input ref={choice === "wheel" ? initial : undefined} data-testid={`new-game-kind-${choice}`} className="mt-1 accent-[var(--brand-ui)]" type="radio" name="new-game-kind" value={choice} checked={kind === choice} onChange={() => setKind(choice)} />
           <span><span className="block text-sm font-semibold">{GAME_LABEL[choice]}</span><span className="mt-1 block text-xs text-muted">{choice === "wheel" ? "A prize wheel. Every play wins its drawn prize." : choice === "scratch" ? "A classic nine-cell ticket. Fans scratch the cells one by one, or tap Reveal all to see everything at once." : "A personal 3×3 card. Every play wins, and each new line awards an extra prize."}</span></span>
         </label>)}
         {/* PR-04: locked game types stay visible with a way to ask for them. */}
@@ -37,7 +37,7 @@ export default function NewGameDialog({ features, busy, error, onCreate, onClose
                 </span>
               </span>
               {state !== "sent" && state !== "already" && (
-                <button type="button" disabled={busy || state === "sending"} onClick={async () => { setAsked((a) => ({ ...a, [choice]: "sending" })); const r = await onRequestUnlock(choice); setAsked((a) => ({ ...a, [choice]: r })); }} className="min-h-11 shrink-0 rounded-lg border border-line px-3 text-xs font-semibold text-ink hover:border-[var(--brand)]">
+                <button type="button" disabled={busy || state === "sending"} onClick={async () => { setAsked((a) => ({ ...a, [choice]: "sending" })); const r = await onRequestUnlock(choice); setAsked((a) => ({ ...a, [choice]: r })); }} className="min-h-11 shrink-0 rounded-lg border border-line px-3 text-xs font-semibold text-ink hover:border-[var(--brand-ui)]">
                   {state === "sending" ? "Asking…" : "Ask to enable"}
                 </button>
               )}
