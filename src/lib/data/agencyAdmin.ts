@@ -2,6 +2,7 @@
 // view of agencies (WG-09) and the notices seats get when an owner is
 // suspended (WG-13). Every read here runs on the service client AFTER an
 // explicit check: the caller's own id (close account) or isActiveAdmin().
+import { createHash } from "node:crypto";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { recordAudit, type AuditInput } from "./audit";
@@ -20,17 +21,18 @@ export interface AgencyImpact {
   creatorIds: string[];
 }
 
-/** What dissolving `ownerId`'s agency would end; null when they own none. */
+/** What dissolving `ownerId`'s agency would end; null when they own none. Reads only. */
 export async function agencyImpactForOwner(svc: Service, ownerId: string): Promise<AgencyImpact | null> {
   const { data: org } = await svc.from("orgs").select("id, name").eq("owner_id", ownerId).maybeSingle();
   const o = org as { id: string; name: string } | null;
   if (!o) return null;
   const [{ data: members }, { data: creators }] = await Promise.all([
-    svc.from("org_members").select("profile_id").eq("org_id", o.id).neq("profile_id", ownerId),
-    svc.from("profiles").select("id").eq("org_id", o.id).neq("id", ownerId),
+    svc.from("org_members").select("profile_id").eq("org_id", o.id),
+    svc.from("profiles").select("id").eq("org_id", o.id),
   ]);
-  const memberIds = [...new Set(((members ?? []) as { profile_id: string }[]).map((m) => m.profile_id))];
-  const creatorIds = ((creators ?? []) as { id: string }[]).map((c) => c.id);
+  // The owner's own seat and own profile are not "someone the agency loses".
+  const memberIds = [...new Set(((members ?? []) as { profile_id: string }[]).map((m) => m.profile_id))].filter((id) => id !== ownerId);
+  const creatorIds = ((creators ?? []) as { id: string }[]).map((c) => c.id).filter((id) => id !== ownerId);
   return { orgId: o.id, orgName: o.name, seats: memberIds.length, creators: creatorIds.length, memberIds, creatorIds };
 }
 
@@ -46,40 +48,69 @@ export async function myAgencyImpact(): Promise<Omit<AgencyImpact, "memberIds" |
 }
 
 /**
- * Leave a bell notice for every seat and managed creator (creator_notices;
- * 0073 adds the kinds — until then the CHECK refuses and the miss is logged).
+ * The notice row for one recipient of one dissolved agency. Derived, so a
+ * close that answers "pending" and is retried writes the SAME primary key
+ * and the database keeps one notice per person.
  */
-async function leaveAgencyNotices(svc: Service, kind: "agency_dissolved" | "agency_owner_suspended", orgName: string, profileIds: string[]): Promise<number> {
+export function dissolvedNoticeId(orgId: string, profileId: string): string {
+  const hex = createHash("sha256").update(`agency_dissolved:${orgId}:${profileId}`).digest("hex");
+  // Shaped as a name-based (version 5, RFC 4122 variant) UUID.
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16)}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * Leave a bell notice for every seat and managed creator of a dissolved
+ * agency (creator_notices); answers how many were NEWLY written. The
+ * owner-suspended notice is NOT written here: a database trigger on
+ * profiles.is_active writes it (0073), so the app never inserts that kind.
+ */
+async function leaveAgencyNotices(svc: Service, impact: AgencyImpact): Promise<number> {
+  const profileIds = [...new Set([...impact.memberIds, ...impact.creatorIds])];
   if (profileIds.length === 0) return 0;
   try {
-    const { error } = await svc.from("creator_notices").insert(profileIds.map((id) => ({ creator_id: id, kind, details: { org_name: orgName.slice(0, 80) } })));
+    const { data, error } = await svc
+      .from("creator_notices")
+      .upsert(
+        profileIds.map((id) => ({ id: dissolvedNoticeId(impact.orgId, id), creator_id: id, kind: "agency_dissolved", details: { org_name: impact.orgName.slice(0, 80) } })),
+        { onConflict: "id", ignoreDuplicates: true },
+      )
+      .select("id");
     if (error) {
-      console.error("agency notice: insert failed", { kind, code: error.code ?? "error" });
+      console.error("agency notice: insert failed", { kind: "agency_dissolved", code: error.code ?? "error" });
       return 0;
     }
-    return profileIds.length;
+    return ((data ?? []) as unknown[]).length;
   } catch {
     return 0;
   }
 }
 
-/** WG-04: the notices and the audit entry for an owner's agency being dissolved. Call BEFORE the delete. */
-export async function prepareAgencyDissolution(svc: Service, ownerId: string, actorId: string | null, by: "self_close" | "admin_delete" | "admin_dissolve"): Promise<{ impact: AgencyImpact; audit: AuditInput } | null> {
-  const impact = await agencyImpactForOwner(svc, ownerId);
-  if (!impact) return null;
-  const notified = await leaveAgencyNotices(svc, "agency_dissolved", impact.orgName, [...new Set([...impact.memberIds, ...impact.creatorIds])]);
-  return {
-    impact,
-    audit: { actorId, action: "org.dissolve", targetType: "org", targetId: impact.orgId, details: { by, seats: impact.seats, creators: impact.creators, notified } },
-  };
+type DissolvedBy = "self_close" | "admin_delete" | "admin_dissolve";
+
+/**
+ * WG-04: tell the seats and managed creators that the agency is gone. Call
+ * only AFTER the database accepted the deletion (S1: a refused close used to
+ * announce a dissolution that never happened), with the impact read BEFORE
+ * it (the rows cascade away). Answers the audit entry for the caller to
+ * write.
+ */
+export async function announceAgencyDissolved(svc: Service, impact: AgencyImpact, actorId: string | null, by: DissolvedBy): Promise<AuditInput> {
+  const notified = await leaveAgencyNotices(svc, impact);
+  return { actorId, action: "org.dissolve", targetType: "org", targetId: impact.orgId, details: { by, seats: impact.seats, creators: impact.creators, notified } };
 }
 
-/** prepareAgencyDissolution + the audit row, for routes that own no other audit write. */
-export async function recordAgencyDissolution(svc: Service, ownerId: string, actorId: string | null, by: "self_close" | "admin_delete" | "admin_dissolve"): Promise<AgencyImpact | null> {
-  const prepared = await prepareAgencyDissolution(svc, ownerId, actorId, by);
-  if (!prepared) return null;
-  await recordAudit(prepared.audit);
-  return prepared.impact;
+/**
+ * announceAgencyDissolved + the audit row, for the account routes. Safe to
+ * call again for the same agency (a deletion that answered "pending" and
+ * then finished): the notices keep their keys and the activity entry is
+ * written once.
+ */
+export async function recordAgencyDissolved(svc: Service, impact: AgencyImpact | null, actorId: string | null, by: DissolvedBy): Promise<void> {
+  if (!impact) return;
+  const audit = await announceAgencyDissolved(svc, impact, actorId, by);
+  const { data: logged, error } = await svc.from("admin_audit_log").select("id").eq("action", "org.dissolve").eq("target_id", impact.orgId).limit(1);
+  if (!error && ((logged ?? []) as unknown[]).length > 0) return;
+  await recordAudit(audit);
 }
 
 // --- Admin view (WG-09) ------------------------------------------------------
@@ -164,9 +195,11 @@ export async function adminAgencyAction(input: AdminAgencyAction): Promise<{ ok:
   const o = org as { id: string; name: string; owner_id: string } | null;
   if (!o) return { error: "not_found" };
   if (o.name.trim().toLowerCase() !== input.confirmName.trim().toLowerCase()) return { error: "name_mismatch" };
-  const prepared = await prepareAgencyDissolution(svc, o.owner_id, actorId, "admin_dissolve");
+  // Who to tell is read before the rows go; they are told only once the
+  // agency really is gone.
+  const impact = await agencyImpactForOwner(svc, o.owner_id);
   // Managed creators are detached by the FK (profiles.org_id → on delete set null); seats and invites cascade.
   const { error } = await svc.from("orgs").delete().eq("id", o.id);
   if (error) return { error: "db_error" };
-  return { ok: true, audit: prepared?.audit ?? { actorId, action: "org.dissolve", targetType: "org", targetId: o.id, details: { by: "admin_dissolve" } } };
+  return { ok: true, audit: impact ? await announceAgencyDissolved(svc, impact, actorId, "admin_dissolve") : { actorId, action: "org.dissolve", targetType: "org", targetId: o.id, details: { by: "admin_dissolve" } } };
 }

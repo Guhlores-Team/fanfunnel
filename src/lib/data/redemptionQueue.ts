@@ -3,6 +3,7 @@
 // polls; this server-side, filtered, keyset-paginated read
 // (creator_redemption_queue, 0064, SECURITY INVOKER so RLS applies) makes
 // every older prize reachable, including the oldest pending one.
+import { actorNames } from "./actorNames";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import type { RedemptionItem, RedemptionStatus } from "./types";
 import { focusTag } from "./focusTag";
@@ -51,6 +52,8 @@ type QueueRow = {
   fan_name: string;
   /** 0073 (DB-10): the fan the prize belongs to; null when the win has no fan. */
   fan_id?: string | null;
+  /** 0073 (WG-07): who last moved the prize; null until someone does. */
+  actor_id?: string | null;
   pool_snapshot: unknown;
   fair_trace: unknown;
   reward_kind: string | null;
@@ -90,6 +93,8 @@ export async function listRedemptionQueue(opts: {
   creatorId?: unknown;
   /** 0073 (DB-10): only this fan's prizes. */
   fanId?: string | null;
+  /** 0073 (WG-07): only prizes last moved by this account (a team member). */
+  actorId?: string | null;
 }): Promise<QueuePage | { error: "unauthorized" | "bad_request" | "forbidden" | "db_error" }> {
   const limit = Math.min(Math.max(1, opts.limit ?? QUEUE_PAGE_SIZE), 100);
   const before = opts.before ? decodeQueueCursor(opts.before) : null;
@@ -101,10 +106,12 @@ export async function listRedemptionQueue(opts: {
   if (!isSupabaseConfigured()) {
     const refused = demoActingCreator(opts.creatorId);
     if (refused) return refused;
-    rows = mockListRedemptionQueue({ status: opts.status, query, before, limit: limit + 1, fanId: opts.fanId ?? undefined });
+    // The demo has no team, so no prize was ever moved by someone else.
+    rows = opts.actorId ? [] : mockListRedemptionQueue({ status: opts.status, query, before, limit: limit + 1, fanId: opts.fanId ?? undefined });
   } else {
     if (before && !isUuid(before.id)) return { error: "bad_request" };
     if (opts.fanId && !isUuid(opts.fanId)) return { error: "bad_request" };
+    if (opts.actorId && !isUuid(opts.actorId)) return { error: "bad_request" };
     const sb = await createClient();
     const {
       data: { user },
@@ -120,9 +127,19 @@ export async function listRedemptionQueue(opts: {
       p_limit: limit + 1,
       ...(acting.creatorId !== user.id ? { p_creator: acting.creatorId } : {}),
       ...(opts.fanId ? { p_fan: opts.fanId } : {}),
+      ...(opts.actorId ? { p_actor: opts.actorId } : {}),
     });
     if (error) return { error: "db_error" };
-    rows = ((data ?? []) as unknown as QueueRow[]).map(toItem);
+    const queue = (data ?? []) as unknown as QueueRow[];
+    // WG-07: a prize a team member moved says who. The creator's own moves
+    // carry no line; names come from actorNames, which proves the session
+    // again ('view' for the creator, 'fulfil' for a seat) before reading.
+    const moved = queue.filter((r) => r.status !== "pending" && typeof r.actor_id === "string" && r.actor_id !== acting.creatorId);
+    const names = moved.length ? await actorNames(sb, acting.creatorId, acting.creatorId === user.id ? "view" : "fulfil", moved.map((r) => r.actor_id)) : null;
+    rows = queue.map((r) => {
+      const via = r.status !== "pending" && r.actor_id ? names?.get(r.actor_id) : undefined;
+      return via && r.actor_id ? { ...toItem(r), via, viaId: r.actor_id } : toItem(r);
+    });
   }
   const items = rows.slice(0, limit);
   return { items, next: rows.length > limit ? encodeQueueCursor(items[items.length - 1]) : null };

@@ -79,6 +79,9 @@ export function displayNameErrorMessage(code: unknown): string {
       return RESERVED_NAME_MESSAGE;
     case "rate_limited":
       return "Too many changes in a row. Wait a minute and try again.";
+    case "forbidden":
+      // A suspended account; the Profile card adds the reason and who to e-mail.
+      return "Your name wasn't changed.";
     default:
       return publicTextErrorMessage(code) ?? "Couldn't save your name. Please try again.";
   }

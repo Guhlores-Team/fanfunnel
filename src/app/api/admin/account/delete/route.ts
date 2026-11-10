@@ -7,7 +7,7 @@ import {
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { deleteAccountAndTombstoneLinks } from "@/lib/account/deleteAccount";
 import { recordAudit } from "@/lib/data";
-import { recordAgencyDissolution } from "@/lib/data/agencyAdmin";
+import { agencyImpactForOwner, recordAgencyDissolved } from "@/lib/data/agencyAdmin";
 
 /**
  * Hard-delete a creator account and ALL of its tenant data — irreversible.
@@ -90,9 +90,10 @@ export async function POST(req: Request) {
   // failed delete the shared helper restores an admin target's role (the
   // reservation above demoted it); on success each fan link gets a "this
   // creator has left" tombstone.
-  // WG-04: deleting an agency owner dissolves the agency; record it and tell
-  // the seats and managed creators before the cascade.
-  await recordAgencyDissolution(svc, id, callerId, "admin_delete");
+  // WG-04: deleting an agency owner dissolves the agency. Who that ends is
+  // read before the cascade; they are told, and it is logged, only once the
+  // deletion is accepted (a refused delete announces nothing).
+  const agency = await agencyImpactForOwner(svc, id);
 
   const deleted = await deleteAccountAndTombstoneLinks(svc, id, {
     wasAdmin: target.role === "admin",
@@ -102,6 +103,7 @@ export async function POST(req: Request) {
   if ("error" in deleted) {
     return NextResponse.json({ error: deleted.error }, { status: deleted.error === "last_admin" ? 400 : deleted.error === "forbidden" ? 403 : deleted.error === "not_found" ? 404 : 500 });
   }
+  await recordAgencyDissolved(svc, agency, callerId, "admin_delete");
   if ("pending" in deleted) return NextResponse.json(deleted, { status: 202, headers: { "Cache-Control": "no-store" } });
 
   if (!deleted.auditRecorded) await recordAudit({

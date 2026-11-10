@@ -134,8 +134,11 @@ export async function DELETE(
   const rateLimited = await limitRoute(req, "wheels/[id]:DELETE");
   if (rateLimited) return rateLimited;
   const { id } = await params;
-  const hard = new URL(req.url).searchParams.get("hard") === "1";
-  const result = hard ? await deleteWheel(id) : await archiveWheel(id);
+  const query = new URL(req.url).searchParams;
+  const hard = query.get("hard") === "1";
+  // WC-09: `empty=1` deletes only a game that still has no prize, play or
+  // bingo card (409 not_empty otherwise), decided inside the database.
+  const result = hard ? await deleteWheel(id, { onlyIfEmpty: query.get("empty") === "1" }) : await archiveWheel(id);
   if ("error" in result) return errorResponse(result.error);
   await revalidateMyPublicPage();
   return NextResponse.json({ ok: true });

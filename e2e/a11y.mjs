@@ -337,6 +337,14 @@ const openLeaveAgency = (answer) => async (page) => {
   await page.getByRole("button", { name: "Leave agency" }).click();
   await page.getByRole("group", { name: /Leave .*\?/ }).waitFor({ timeout: 5000 });
 };
+// b7: the agency page for a suspended account, and a seat whose agency's
+// owner is suspended (both answers stubbed in the state's own context).
+const openAgencyStanding = ({ viewerActive, agency, waitFor }) => async (page) => {
+  await page.route("**/api/agency", (r) => r.fulfill({ json: agency }));
+  if (!viewerActive) await page.route("**/api/account", (r) => r.fulfill({ json: { displayName: "A11y Creator", isActive: false } }));
+  await goto(page, "/agency", 1200);
+  await page.getByTestId(waitFor).waitFor({ timeout: 8000 });
+};
 const openCloseAccount = async (page) => {
   await clickTab(page, "Settings");
   await page.getByRole("button", { name: /Close my account/ }).click();
@@ -464,6 +472,8 @@ const PAGES = [
   // /api/agency answer is stubbed in the state's own context).
   { path: null, name: "agency (managed creator: leave confirmation)", context: {}, prep: openLeaveAgency({ org: null, managed: true, orgId: LEAVE_ORG.id }) },
   { path: null, name: "agency phone (staff seat: leave confirmation)", viewport: PHONE, context: PHONE_CTX, prep: openLeaveAgency({ org: LEAVE_ORG, isOwner: false, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] }) },
+  { path: null, name: "agency (suspended account: console paused)", context: {}, prep: openAgencyStanding({ viewerActive: false, agency: null, waitFor: "agency-suspended" }) },
+  { path: null, name: "agency phone (staff seat: owner suspended)", viewport: PHONE, context: PHONE_CTX, prep: openAgencyStanding({ viewerActive: true, agency: { org: LEAVE_ORG, isOwner: false, ownerActive: false, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] }, waitFor: "agency-owner-suspended" }) },
 ];
 
 // Impacts that fail the build vs. advisory-only.

@@ -7,6 +7,7 @@ import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { recordAudit } from "./audit";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import { sessionMayManageSelf } from "@/lib/auth/ownStanding";
 import type { DmTemplate, ChatMessage, ChatSettings, FanThread } from "./types";
 import {
   mockListDmTemplates,
@@ -427,10 +428,11 @@ export async function getThreadPage(fanId: string, creatorId?: unknown, opts: { 
   const more = rows.length > limit;
   if (more) rows.length = limit;
   rows.reverse();
-  // can_act_for was proved above (resolveActingCreator), so the names of the
-  // creator's own team may be read for the "via <name>" line.
+  // The names of the creator's own team, for the "via <name>" line. The
+  // session proves can_act_for again right before the service read: 'view'
+  // for the creator itself, 'chat' (what this read needed) for a seat.
   const staffReplies = rows.filter((r) => r.sender === "creator" && r.actor_id && r.actor_id !== owner);
-  const names = staffReplies.length ? await actorNames(owner, staffReplies.map((r) => r.actor_id)) : null;
+  const names = staffReplies.length ? await actorNames(sb, owner, owner === user.id ? "view" : "chat", staffReplies.map((r) => r.actor_id)) : null;
   return {
     messages: rows.map((r) => {
       const via = r.sender === "creator" && r.actor_id ? names?.get(r.actor_id) : undefined;
@@ -539,6 +541,7 @@ export async function setChatSettings(input: {
   intro?: string | null;
   outro?: string | null;
 }): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetChatSettings(input);
 
   const sb = await createClient();
@@ -563,6 +566,9 @@ export async function setChatSettings(input: {
     if (intro === undefined) intro = current.intro;
     if (outro === undefined) outro = current.outro;
   }
+  // set_chat_settings writes nothing for a suspended account and returns no
+  // error: prove the standing first so the refusal is said as one.
+  if (!(await sessionMayManageSelf(sb, user.id))) return { error: "forbidden" };
   const { error } = await sb.rpc("set_chat_settings", {
     p_intro: intro ?? "",
     p_outro: outro ?? "",

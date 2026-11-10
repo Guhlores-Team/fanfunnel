@@ -75,7 +75,9 @@ async function main() {
   const { GET } = await import("@/app/api/agency/route");
   const req = () => new Request("http://localhost/api/agency");
   world = { owns: 0, seats: 0, orgId: "f0000000-0000-4000-8000-000000000001" };
-  check("/api/agency: a managed creator gets the managed notice, not the start-an-agency form", JSON.stringify(await (await GET(req())).json()) === '{"org":null,"managed":true,"orgId":"f0000000-0000-4000-8000-000000000001"}');
+  const managed = (await (await GET(req())).json()) as { org: unknown; managed?: boolean; orgId?: string; ownerActive?: unknown };
+  check("/api/agency: a managed creator gets the managed notice, not the start-an-agency form", managed.org === null && managed.managed === true && managed.orgId === "f0000000-0000-4000-8000-000000000001");
+  check("/api/agency: …with the owner's standing when the session may read it (null = unknown), never a guess", managed.ownerActive === null || typeof managed.ownerActive === "boolean");
   world = { owns: 0, seats: 0, orgId: null };
   check("/api/agency: anyone else still gets null (start an agency)", (await (await GET(req())).json()) === null);
 

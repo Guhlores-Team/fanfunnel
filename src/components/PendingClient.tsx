@@ -110,6 +110,11 @@ export default function PendingClient({
         setError("You've already sent a request. Reload this page to see and edit it.");
         return;
       }
+      if (res.status === 403) {
+        // A suspended account sends nothing; say why instead of "try again".
+        setError(`This account is suspended, so ${editing ? "your changes weren't saved" : "your request wasn't sent"}. Email ${LEGAL.contactEmail}.`);
+        return;
+      }
       if (!res.ok) throw new Error();
       setStored({
         displayName,

@@ -9,15 +9,22 @@ import { mock } from "node:test";
 
 const calls: { name: string; args: Record<string, unknown> }[] = [];
 let answer: { data: unknown; error: unknown } = { data: null, error: null };
+/** The account's standing: profiles.is_active and can_act_for(self, 'manage'). */
+let standing = true;
 const revalidated: string[] = [];
 
 mock.module("@/lib/supabase/server", { namedExports: {
   isSupabaseConfigured: () => true,
   createClient: async () => {
-    const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { public_slug: "demo-creator" }, error: null }) };
+    const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { public_slug: "demo-creator", is_active: standing }, error: null }) };
     return {
       auth: { getUser: async () => ({ data: { user: { id: "u", email: "me@example.com" } }, error: null }) },
-      rpc: async (name: string, args: Record<string, unknown>) => { calls.push({ name, args }); return answer; },
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        // The session's own standing proof; `calls` records the setters only.
+        if (name === "can_act_for") return { data: args.target_creator === "u" && args.perm === "manage" ? standing : false, error: null };
+        calls.push({ name, args });
+        return answer;
+      },
       from: () => q,
     };
   },
@@ -102,6 +109,21 @@ async function main() {
     check(`public profile, ${label}: reached set_public_profile`, calls.some((c) => c.name === "set_public_profile"));
     check(`public profile, ${label}: no database text, no revalidation`, !RAW.test(JSON.stringify(b)) && !/duplicate key|internal error/.test(JSON.stringify(b)) && revalidated.length === 0);
   }
+
+  // --- a suspended account: refused, never "saved" (the setters themselves
+  // write nothing for it and return no error) ---------------------------------
+  standing = false;
+  answer = { data: null, error: null };
+  calls.length = 0;
+  revalidated.length = 0;
+  res = await profile.PUT(put("/api/account/profile", { displayName: "Demo Creator" }));
+  body = await res.json();
+  check("suspended: the display name is refused with 403 forbidden", res.status === 403 && body.error === "forbidden");
+  const pub = await publicProfile.PUT(put("/api/public-profile", { slug: "demo-creator", tagline: "Spin me", note: "hey" }));
+  check("suspended: the public page is refused with 403 forbidden", pub.status === 403 && (await pub.json()).error === "forbidden");
+  check("suspended: no setter is called and nothing is revalidated", calls.length === 0 && revalidated.length === 0);
+  check("the Profile card has its own line for the refusal", msg.displayNameErrorMessage("forbidden") !== msg.displayNameErrorMessage("db_error") && !/try again/i.test(msg.displayNameErrorMessage("forbidden")));
+  standing = true;
 
   // --- what the Settings UI says ------------------------------------------
   for (const code of ["name_required", "name_too_long", "name_looks_like_email", "invalid_display_name", "rate_limited"]) {

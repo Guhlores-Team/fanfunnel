@@ -3,7 +3,8 @@ import { getSessionAssurance } from "@/lib/auth/assurance";
 import { mfaStepUpResponse, verifyCurrentPassword } from "@/lib/auth/stepUp";
 import { deleteAccountAndTombstoneLinks } from "@/lib/account/deleteAccount";
 import { recordAudit } from "@/lib/data";
-import { recordAgencyDissolution } from "@/lib/data/agencyAdmin";
+import { agencyImpactForOwner, recordAgencyDissolved } from "@/lib/data/agencyAdmin";
+import { ownAccountActive } from "@/lib/auth/ownStanding";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, parseJsonBody } from "@/lib/api/handler";
 import { CLOSE_ACCOUNT_PHRASE, LIMITS, OWED_PRIZE_STATUSES } from "@/lib/privacy/config";
@@ -26,7 +27,9 @@ import { privateError, privateJson } from "@/lib/privacy/respond";
  *      pending or in progress the close is refused with 409 'prizes_owed'
  *      (and the count), so fans' wins are not deleted out from under them. A
  *      failed read fails closed. An admin delete is unaffected;
- *   7. (0068) the database refuses a suspended account ('suspended') and one
+ *   7. a suspended account is refused up front ('suspended', from the
+ *      session's own profiles.is_active), and (0068) the database refuses a
+ *      suspended account ('suspended') and one
  *      with an open safety report ('reports_open'): closing would otherwise
  *      cascade the evidence away. An admin delete is unaffected, and reports
  *      survive any deletion with a non-PII snapshot of the account.
@@ -49,6 +52,16 @@ export async function POST(req: Request) {
   const limited = await rateLimitOr429("closeaccount:" + userId, ...LIMITS.closeAccount);
   if (limited) return limited;
 
+  // A suspended account cannot close itself (0068: the database refuses it
+  // too, keeping the evidence). Said up front, from the session's own row,
+  // before the password is asked for or the service role is touched.
+  // The one exception is a close that is already under way: the accepted
+  // deletion parks the account inactive while its files are removed, and the
+  // retry must be let through to finish it.
+  const active = await ownAccountActive(sb, userId);
+  if (active === null) return privateError("db_error", 500);
+  if (active === false && !(await closeUnderWay(userId))) return privateError("suspended", 403);
+
   const body = await parseJsonBody<{ currentPassword?: unknown; confirm?: unknown }>(req);
   if (body === BAD_REQUEST) return privateError("bad_request", 400);
   if (typeof body.confirm !== "string" || body.confirm.trim() !== CLOSE_ACCOUNT_PHRASE) {
@@ -67,13 +80,16 @@ export async function POST(req: Request) {
   const { data: profile } = await svc.from("profiles").select("role").eq("id", userId).maybeSingle();
   const wasAdmin = (profile as { role?: string } | null)?.role === "admin";
 
-  // WG-04: an owner's close dissolves their agency (orgs cascade). Say so in
-  // the activity log and leave a bell notice for every seat and managed
-  // creator before the rows go.
-  await recordAgencyDissolution(svc, userId, userId, "self_close");
+  // WG-04: an owner's close dissolves their agency (orgs cascade). Who that
+  // ends is read now, before the rows go; the seats and managed creators are
+  // told, and the activity log says so, only once the database has accepted
+  // the deletion. A refused close (suspended, an open report, the last
+  // admin) announces nothing.
+  const agency = await agencyImpactForOwner(svc, userId);
 
   const deleted = await deleteAccountAndTombstoneLinks(svc, userId, { wasAdmin });
   if ("error" in deleted) return privateError(deleted.error, deleted.error === "last_admin" || deleted.error === "reports_open" ? 409 : deleted.error === "forbidden" || deleted.error === "suspended" ? 403 : deleted.error === "not_found" ? 404 : 500);
+  await recordAgencyDissolved(svc, agency, userId, "self_close");
   if ("pending" in deleted) return privateJson(deleted, 202);
 
   if (!deleted.auditRecorded) await recordAudit({
@@ -91,6 +107,13 @@ export async function POST(req: Request) {
     // The refresh token was already revoked with the user; nothing to undo.
   }
   return privateJson({ ok: true });
+}
+
+/** The caller's own account deletion was accepted earlier and has not finished (own id, from the verified session). */
+async function closeUnderWay(userId: string): Promise<boolean> {
+  const { data, error } = await createServiceClient().from("creator_storage_deletions").select("state").eq("owner_id", userId).maybeSingle();
+  const state = (data as { state?: unknown } | null)?.state;
+  return !error && typeof state === "string" && state !== "paused";
 }
 
 /** T4: the caller's own redemptions still waiting or in progress (null on a failed read). */

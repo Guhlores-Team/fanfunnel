@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAgencyOverview } from "@/lib/data";
+import { getManagedOrgState } from "@/lib/data/admin";
 import { limitRoute } from "@/lib/api/limit";
 import { getAgencyStanding } from "@/lib/data/seatScope";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
@@ -21,5 +22,8 @@ export async function GET(req: Request) {
   // offers to leave it (the caller's own profiles.org_id; org_leave acts on
   // the caller's own rows only, so the id grants nothing).
   const standing = await getAgencyStanding();
-  return NextResponse.json(standing?.inAgency ? { org: null, managed: true, orgId: standing.creatorOrgId } : null);
+  if (!standing?.inAgency) return NextResponse.json(null);
+  // WG-13: say when the agency's owner is suspended (orgs.owner_active, 0073).
+  const state = await getManagedOrgState(standing.creatorOrgId);
+  return NextResponse.json({ org: null, managed: true, orgId: standing.creatorOrgId, orgName: state.orgName, ownerActive: state.ownerActive });
 }

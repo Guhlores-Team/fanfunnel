@@ -796,9 +796,11 @@ export async function unarchiveWheel(
  * analytics records). Callers should archive instead when there's history.
  */
 export async function deleteWheel(
-  id: string
+  id: string,
+  options: { onlyIfEmpty?: boolean } = {}
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockDeleteWheel(id);
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
+  if (!isSupabaseConfigured()) return mockDeleteWheel(id, options);
 
   const sb = await createClient();
   const {
@@ -819,9 +821,12 @@ export async function deleteWheel(
   // records) or a fan link stored on it (the cascade would erase that link and
   // its balance) under the wheel lock, taken after its Focus/Chase fans and the
   // fans whose links are set to it, like a play.
-  const { data: deleted, error } = await sb.rpc("delete_wheel", { p_wheel: id });
+  // With p_only_if_empty (0073, WC-09) the same call also refuses a game that
+  // has a prize, a play or a bingo card, so "remove this empty game" can never
+  // take a game that was filled in since it was offered.
+  const { data: deleted, error } = await sb.rpc("delete_wheel", options.onlyIfEmpty ? { p_wheel: id, p_only_if_empty: true } : { p_wheel: id });
   if (error) return { error: lifecycleBusy(error) ? "game_busy" : gameWriteError(error) };
-  if (deleted === "has_history") return { error: "has_history" };
+  if (deleted === "has_history" || deleted === "not_empty") return { error: deleted };
   if (deleted !== "ok") return { error: "not_found" };
 
   // If the deleted wheel was active, promote the oldest survivor.

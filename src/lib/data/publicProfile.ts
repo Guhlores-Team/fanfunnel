@@ -3,6 +3,7 @@
 import { publicBaseOdds, type PublicOddsRow } from "@/lib/games/wheel/publicOdds";
 import { isReservedName } from "@/lib/reservedNames";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import { sessionMayManageSelf } from "@/lib/auth/ownStanding";
 import { externalUrl } from "@/lib/format";
 import type { PublicPrize, PublicWheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER } from "@/lib/games/wheel/types";
@@ -281,6 +282,10 @@ export async function setMyPublicProfile(input: {
     data: { user },
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
+  // The setters below write nothing for a suspended account and return no
+  // error, so the standing is proved first (literal true) and a refusal is
+  // said as one, never as "saved".
+  if (!(await sessionMayManageSelf(sb, user.id))) return { error: "forbidden" };
   // Atomic partial update: pass NULL for any field omitted from the request so
   // the RPC leaves that column unchanged (migration 0033). This replaces the
   // route's old read-modify-write, which raced concurrent partial updates
@@ -327,17 +332,17 @@ export async function setMyPublicProfile(input: {
   if (input.deliveryDays !== undefined) {
     // PR-10: the profiles UPDATE policy is admin-only (AGENTS.md rule 6) and
     // no new signed-in SECURITY DEFINER setter can be added (0072 closing
-    // check), so this one column is written on the server: the session must
-    // be an active creator acting for itself (can_act_for 'manage'), the row
-    // is its own id, and the value was validated by the route (1..60 or
-    // null). Until profiles.delivery_days exists the answer is not_supported
-    // and the Settings field stays hidden.
-    const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: user.id, perm: "manage" });
-    if (permissionError || allowed !== true) return { error: "forbidden" };
+    // check), so this one column is written on the server: the session was
+    // proved above to be an active creator acting for itself (can_act_for
+    // 'manage', literal true), the row is its own id, and the value was
+    // validated by the route (1..60 or null). 0073 added
+    // profiles.delivery_days (owner reads its own row; the CHECK refuses
+    // anything outside 1..60 with 23514). A database without the column
+    // answers not_supported and the Settings field stays hidden.
     const days = input.deliveryDays;
     if (days !== null && (!Number.isInteger(days) || days < 1 || days > MAX_DELIVERY_DAYS)) return { error: "invalid_delivery_days" };
     const { error: dErr } = await createServiceClient().from("profiles").update({ delivery_days: days } as never).eq("id", user.id);
-    if (dErr) return { error: dErr.code === "PGRST204" || dErr.code === "42703" ? "not_supported" : "db_error" };
+    if (dErr) return { error: dErr.code === "PGRST204" || dErr.code === "42703" ? "not_supported" : dErr.code === "23514" ? "invalid_delivery_days" : "db_error" };
   }
   return { ok: true };
 }

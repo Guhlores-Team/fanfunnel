@@ -11,7 +11,9 @@ import { FakeStorageWork } from "@/lib/storage/fakeWork";
 // NOTHING: demo mode, signed out, wrong or missing confirm phrase, a two-factor
 // user on a password-only (aal1) session, a wrong password, the last admin, a
 // body that names someone else's id, a creator who still owes fans prizes
-// (T4). Then the success path: only the caller's
+// (T4), a suspended account (refused up front), and (S1) any refused close of
+// an agency owner, which must leave no "agency dissolved" notice and no
+// org.dissolve entry. Then the success path: only the caller's
 // own id is reserved and deleted, every fan link is tombstoned (hash only), an
 // activity entry is recorded, the browser is signed out; and a failed delete
 // restores an admin's role.
@@ -24,6 +26,9 @@ const check = (label: string, cond: unknown) => {
 
 const ME = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
+const ORG = "33333333-3333-4333-8333-333333333333";
+const SEAT = "44444444-4444-4444-8444-444444444444";
+const MANAGED = "55555555-5555-4555-8555-555555555555";
 const tok = (aal: string) => `h.${Buffer.from(JSON.stringify({ aal })).toString("base64url")}.s`;
 
 let configured = true;
@@ -33,6 +38,7 @@ let passwordOk = true;
 let reserveAnswer = "ok";
 let deleteFails = false;
 let signedOut = 0;
+let sessionProfileReads = 0;
 const rpcCalls: { fn: string; args: unknown }[] = [];
 const deletedUsers: string[] = [];
 const audits: Record<string, unknown>[] = [];
@@ -40,7 +46,7 @@ const storage = new FakeStorage();
 storage.add("avatars", `${ME}/current.png`, `${ME}/replaced.png`, `${OTHER}/keep.png`);
 storage.add("creator-media", `${ME}/photo.webp`, `${OTHER}/keep.webp`);
 const svcTables = new FakeTables({
-  profiles: [{ id: ME, role: "creator" }],
+  profiles: [{ id: ME, role: "creator", is_active: true }],
   fan_passes: [
     { id: "p1", creator_id: ME, token: "linkAAAA1111" },
     { id: "p2", creator_id: ME, token: "linkBBBB2222" },
@@ -59,6 +65,12 @@ mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => configured,
     createClient: async () => ({
+      // The session reads its own profile row (profiles_select).
+      from: (table: string) => {
+        if (table !== "profiles") throw new Error(`unexpected session read of ${table}`);
+        sessionProfileReads++;
+        return svcTables.from(table);
+      },
       auth: {
         getUser: async () => ({ data: { user } }),
         getSession: async () => ({ data: { session: { access_token: tok(aal) } } }),
@@ -149,12 +161,36 @@ async function main() {
   passwordOk = true;
   check("nothing deleted after any refusal", nothingDeleted());
 
-  reserveAnswer = "last_admin";
-  res = await close(GOOD);
-  check("last admin → 409 last_admin", res.status === 409 && (await res.json()).error === "last_admin");
-  check("the last admin is not deleted", deletedUsers.length === 0 && svcTables.rows("link_tombstones").length === 0);
+  // S1: the caller owns an agency with one seat and one managed creator. A
+  // close the database refuses must announce nothing: no "agency dissolved"
+  // notice to anyone and no org.dissolve activity entry.
+  svcTables.tables.orgs = [{ id: ORG, name: "Northside", owner_id: ME }];
+  svcTables.tables.org_members = [{ org_id: ORG, profile_id: ME }, { org_id: ORG, profile_id: SEAT }];
+  svcTables.rows("profiles").push({ id: SEAT, role: "creator", is_active: true }, { id: MANAGED, role: "creator", is_active: true, org_id: ORG });
+  const announced = () => svcTables.rows("creator_notices").length + svcTables.rows("admin_audit_log").filter((r) => r.action === "org.dissolve").length;
+
+  for (const refusal of ["last_admin", "reports_open", "suspended"]) {
+    reserveAnswer = refusal;
+    res = await close(GOOD);
+    check(`${refusal} → refused as ${refusal}`, res.status === (refusal === "suspended" ? 403 : 409) && (await res.json()).error === refusal);
+    check(`${refusal}: nothing is deleted`, deletedUsers.length === 0 && svcTables.rows("link_tombstones").length === 0);
+    check(`${refusal}: no agency notice and no org.dissolve entry for a close that didn't happen`, announced() === 0);
+  }
   reserveAnswer = "ok";
   rpcCalls.length = 0;
+
+  // A suspended session is refused up front, from its own row: before the
+  // password is tried, before the service role is touched.
+  svcTables.rows("profiles")[0].is_active = false;
+  pwAttempts.length = 0;
+  const statementsBefore = svcTables.statements.length;
+  res = await close(GOOD);
+  check("a suspended account → 403 suspended", res.status === 403 && (await res.json()).error === "suspended");
+  check("…before the password is tried", pwAttempts.length === 0);
+  check("…nothing reserved, deleted or announced", nothingDeleted() && announced() === 0);
+  check("…and the only writes are none at all", svcTables.statements.slice(statementsBefore).every((st) => st.op === "select"));
+  svcTables.rows("profiles")[0].is_active = true;
+  check("the standing came from the session's own profile row", sessionProfileReads > 0);
 
   // T4: a creator who still owes fans prizes cannot close (pending or in progress).
   for (const status of ["pending", "in_progress"]) {
@@ -183,6 +219,7 @@ async function main() {
   check("storage failure → 500, never false success", res.status === 500 && (await res.json()).error === "storage_cleanup_failed");
   check("storage failure preserves auth/DB retry paths", deletedUsers.length === 0 && svcTables.rows("fan_passes").length === 3);
   check("storage failure records no success audit or signout", audits.length === 0 && signedOut === 0);
+  check("a failed close announces no dissolution either", announced() === 0);
   storage.removeFailures = 0;
   rpcCalls.length = 0;
 
@@ -201,6 +238,13 @@ async function main() {
   check("no raw token stored", !JSON.stringify(svcTables.rows("link_tombstones")).includes("link"));
   check("activity entry: self_close by and for the caller, no email", audits.length === 1 && audits[0].action === "account.self_close" && audits[0].actorId === ME && audits[0].targetId === ME && !JSON.stringify(audits[0]).includes("@"));
   check("the browser session is signed out", signedOut === 1);
+  // The agency really is dissolved now: its seat and its managed creator are
+  // told (never the owner), and the activity log says so once.
+  const told = svcTables.rows("creator_notices");
+  check("the seat and the managed creator each get one agency_dissolved notice", told.length === 2 && told.every((n) => n.kind === "agency_dissolved" && (n.details as { org_name?: string }).org_name === "Northside") && told.some((n) => n.creator_id === SEAT) && told.some((n) => n.creator_id === MANAGED));
+  check("the owner is never sent the notice", !told.some((n) => n.creator_id === ME));
+  const dissolved = svcTables.rows("admin_audit_log").filter((r) => r.action === "org.dissolve");
+  check("one org.dissolve activity entry, by self_close", dissolved.length === 1 && dissolved[0].target_id === ORG && (dissolved[0].details as { by?: string }).by === "self_close");
 
   // A failed delete restores an admin's role (the reservation demoted it).
   deletedUsers.length = 0;
@@ -217,6 +261,20 @@ async function main() {
   check("…and the original active state is restored", svcTables.rows("profiles")[0].is_active === true);
   check("…and no tombstones are written", svcTables.rows("link_tombstones").length === 0);
   check("…and no activity entry for a close that didn't happen", audits.length === 1);
+
+  // A close already under way (accepted earlier, the account parked inactive
+  // while its files go) is let through to finish; only a suspension with no
+  // deletion in flight is refused up front.
+  deleteFails = false;
+  svcTables.rows("profiles")[0].is_active = false;
+  svcTables.tables.creator_storage_deletions = [{ owner_id: ME, id: "job-1", state: "pending", link_hashes: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt_id: "attempt-1", was_role: "creator", was_active: true, lease_id: null }];
+  res = await close(GOOD);
+  const resumed = await res.json();
+  check("a close already under way is not refused as suspended", res.status !== 403 && resumed.error !== "suspended" && (res.status === 200 || res.status === 202));
+  svcTables.tables.creator_storage_deletions = [{ owner_id: ME, id: "job-2", state: "paused", link_hashes: [], created_at: new Date().toISOString() }];
+  svcTables.rows("profiles")[0].is_active = false;
+  res = await close(GOOD);
+  check("a paused (failed) deletion does not excuse a suspended account", res.status === 403 && (await res.json()).error === "suspended");
 
   console.log(`account close route: ${passed} checks passed`);
 }

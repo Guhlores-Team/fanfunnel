@@ -6,6 +6,7 @@
 // written only through the set_pwa_icon_mode RPC (migration 0046), which
 // updates the caller's own row; profiles UPDATE stays admin-only.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
+import { sessionMayManageSelf } from "@/lib/auth/ownStanding";
 import { readFanPassRow } from "./spins";
 import { DEFAULT_BRAND } from "@/lib/theme";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
@@ -16,7 +17,7 @@ import {
   normalizeIconMode,
   type FanAppInfo,
 } from "@/lib/pwa/manifest";
-import { mockGetFanAppInfo, mockGetMyPwaIconMode, mockSetMyPwaIconMode } from "./mock";
+import { mockDemoCreatorActive, mockGetFanAppInfo, mockGetMyPwaIconMode, mockSetMyPwaIconMode } from "./mock";
 import { resolveWheelId } from "./wheels";
 import { creatorCanHostPlay } from "./creatorPlayable";
 import { publicCreatorTitle } from "@/lib/publicCreator";
@@ -74,9 +75,10 @@ export async function getMyPwaIconMode(): Promise<{ mode: PwaIconMode } | { erro
  */
 export async function setMyPwaIconMode(
   mode: unknown
-): Promise<{ ok: true; mode: PwaIconMode } | { error: "unauthorized" | "invalid_mode" | "db_error" }> {
+): Promise<{ ok: true; mode: PwaIconMode } | { error: "unauthorized" | "forbidden" | "invalid_mode" | "db_error" }> {
   if (!isSupabaseConfigured()) {
     if (!isPwaIconMode(mode)) return { error: "invalid_mode" };
+    if (!mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
     mockSetMyPwaIconMode(mode);
     return { ok: true, mode };
   }
@@ -86,6 +88,9 @@ export async function setMyPwaIconMode(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
   if (!isPwaIconMode(mode)) return { error: "invalid_mode" };
+  // set_pwa_icon_mode writes nothing for a suspended account and returns no
+  // error: prove the standing first.
+  if (!(await sessionMayManageSelf(sb, user.id))) return { error: "forbidden" };
   const { error } = await sb.rpc("set_pwa_icon_mode", { p_mode: mode });
   return error ? { error: "db_error" } : { ok: true, mode };
 }

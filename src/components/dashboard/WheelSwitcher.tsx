@@ -14,7 +14,7 @@ import { formatWhen, isPlayableGame, scheduleTakeover } from "@/lib/games/liveGa
 import { KindBadge, GameName } from "./GameChoice";
 import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
 import { scheduleHint } from "./scheduleHint";
-import { abandonedEmptyGame, emptyGameNotice } from "./emptyGame";
+import { abandonedEmptyGame, emptyGameNotice, gameChangeRefusal } from "./emptyGame";
 import { useTimeZone, zoneHint } from "@/lib/localTime";
 
 type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
@@ -155,8 +155,13 @@ export default function WheelSwitcher({
         label: "Remove it",
         onClick: () => {
           void (async () => {
-            const gone = await fetch(`/api/wheels/${game.id}?hard=1`, { method: "DELETE" }).catch(() => null);
+            // Atomic in the database (delete_wheel with p_only_if_empty): a game
+            // that gained a prize or a play since the offer is kept.
+            const gone = await fetch(`/api/wheels/${game.id}?hard=1&empty=1`, { method: "DELETE" }).catch(() => null);
+            const refusal = gone && !gone.ok ? ((await gone.json().catch(() => null)) as { error?: string } | null)?.error : null;
             if (gone?.ok) toast(`Removed "${game.title}".`, { tone: "success" });
+            else if (refusal === "not_empty" || refusal === "has_history") toast(`"${game.title}" has prizes or plays now, so it was kept.`, { tone: "info" });
+            else if (refusal === "not_found") toast(`"${game.title}" was already removed.`, { tone: "info" });
             else toast("Couldn't remove that game. You can delete it from its Manage menu.", { tone: "error" });
             await load().catch(() => {});
             onChanged?.();
@@ -269,7 +274,9 @@ export default function WheelSwitcher({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null) as { error?: string } | null;
-        toast(gameRefusalMessage(data?.error) ?? "Couldn't update this game. Your settings are still here.", { tone: "error" });
+        toast(gameChangeRefusal(data?.error, body), { tone: "error" });
+        // The list may be what is out of date (a game deleted or archived elsewhere).
+        if (data?.error === "not_found") await load().catch(() => {});
         return false;
       }
       toast(okMsg, { tone: "success" });

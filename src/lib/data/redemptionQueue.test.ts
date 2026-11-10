@@ -19,6 +19,9 @@ const rpcCalls: [string, Record<string, unknown>][] = [];
 let signedIn = true;
 let rpcRows: unknown[] = [];
 let useSupabase = false;
+let canAct: unknown = false;
+let serviceUses = 0;
+const STAFF = "cccccccc-0000-4000-8000-000000000001";
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => useSupabase,
@@ -26,11 +29,20 @@ mock.module("@/lib/supabase/server", {
       auth: { getUser: async () => ({ data: { user: signedIn ? { id: "creator-1" } : null }, error: null }) },
       rpc: async (name: string, args: Record<string, unknown>) => {
         rpcCalls.push([name, args]);
+        if (name === "can_act_for") return { data: canAct, error: null };
         return { data: rpcRows, error: null };
       },
     }),
+    // The queue itself never uses the service role; only the team-name read
+    // (WG-07) does, and only after the session proved can_act_for.
     createServiceClient: () => {
-      throw new Error("the queue must not use the service role");
+      serviceUses++;
+      if (canAct !== true) throw new Error("the service role was used without a permission proof");
+      const rows = (table: string) => table === "org_members" ? [{ profile_id: STAFF }] : table === "profiles" ? [{ id: STAFF, display_name: "Robin Chatter" }] : [];
+      return { from: (table: string) => ({ select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: table === "profiles" ? { org_id: "org-1" } : { owner_id: "owner-1" }, error: null }), in: async () => ({ data: rows(table), error: null }) }),
+        in: async () => ({ data: rows(table), error: null }),
+      }) }) };
     },
   },
 });
@@ -75,6 +87,8 @@ async function main() {
   check("demo: older pages only hold pending wins", older.every((r) => r.status === "pending"));
   check("demo: no older row repeats a window row", !older.some((r) => overview.redemptions.some((w) => w.id === r.id)));
   check("demo: paging stops", cursor === null);
+  const mine = await listRedemptionQueue({ actorId: "cccccccc-0000-4000-8000-000000000001" });
+  check("demo: no team, so no prize was moved by a team member", !("error" in mine) && mine.items.length === 0 && mine.next === null);
 
   const oldest = older[older.length - 1];
   check("demo: the oldest pending win can be fulfilled", "ok" in (await data.setRedemptionStatus(oldest.id, "fulfilled")));
@@ -138,6 +152,43 @@ async function main() {
   const calls = rpcCalls.length;
   check("supabase: a non-uuid cursor id is refused", JSON.stringify(await listRedemptionQueue({ before: "2026-10-01T00:00:00Z|red_123" })) === '{"error":"bad_request"}');
   check("supabase: …without a database call", rpcCalls.length === calls);
+  // --- WG-07: paged rows say which team member moved the prize -----------------
+  {
+    const row = (id: string, status: string, actor: string | null) => ({ id, status, created_at: "2026-10-02T00:00:00Z", notes: null, due_at: null, prize_label: "Selfie", prize_rarity: "rare", fan_name: "Sam", pool_snapshot: null, fair_trace: null, reward_kind: null, reward_views: null, reward_last_viewed_at: null, actor_id: actor });
+    rpcRows = [
+      row("aaaaaaaa-0000-4000-8000-000000000011", "in_progress", STAFF),
+      row("aaaaaaaa-0000-4000-8000-000000000012", "fulfilled", "creator-1"),
+      row("aaaaaaaa-0000-4000-8000-000000000013", "pending", STAFF),
+      row("aaaaaaaa-0000-4000-8000-000000000014", "fulfilled", null),
+    ];
+    canAct = true;
+    let usesBefore = serviceUses;
+    const named = await listRedemptionQueue({});
+    assert.ok(!("error" in named));
+    const proof = rpcCalls.filter(([n]) => n === "can_act_for").at(-1);
+    check("a prize a team member moved says who", named.items[0].via === "Robin Chatter");
+    check("…with that member's id, so the queue can be narrowed to them", named.items[0].viaId === STAFF);
+    check("the creator's own move, a pending prize and an untouched one carry no line", named.items.slice(1).every((i) => i.via === undefined && i.viaId === undefined));
+    // 0073: `actorId` narrows the queue to the prizes one account last moved.
+    await listRedemptionQueue({ actorId: STAFF });
+    check("actorId is passed as p_actor", rpcCalls.filter(([n]) => n === "creator_redemption_queue").at(-1)![1].p_actor === STAFF);
+    await listRedemptionQueue({});
+    check("no actorId → no p_actor", !("p_actor" in rpcCalls.filter(([n]) => n === "creator_redemption_queue").at(-1)![1]));
+    const actorCalls = rpcCalls.length;
+    check("an actorId that is no uuid is refused without a call", JSON.stringify(await listRedemptionQueue({ actorId: "robin" })) === '{"error":"bad_request"}' && rpcCalls.length === actorCalls);
+    check("the session proved can_act_for(self, 'view') before the names were read", proof?.[1].perm === "view" && proof?.[1].target_creator === "creator-1" && serviceUses === usesBefore + 1);
+    canAct = false;
+    usesBefore = serviceUses;
+    const unnamed = await listRedemptionQueue({});
+    assert.ok(!("error" in unnamed));
+    check("without the proof the rows still load, with no names and no service read", unnamed.items.length === 4 && unnamed.items.every((i) => i.via === undefined) && serviceUses === usesBefore);
+    rpcRows = [row("aaaaaaaa-0000-4000-8000-000000000015", "fulfilled", "creator-1")];
+    canAct = true;
+    usesBefore = serviceUses;
+    await listRedemptionQueue({});
+    check("a page with no team moves asks nothing and reads nothing", serviceUses === usesBefore);
+    canAct = false;
+  }
   check("cursor decoding rejects junk", decodeQueueCursor("x|y") === null && decodeQueueCursor("2026-10-01T00:00:00Z|ok_id")?.id === "ok_id");
   signedIn = false;
   check("supabase: signed out → unauthorized", JSON.stringify(await listRedemptionQueue({})) === '{"error":"unauthorized"}');

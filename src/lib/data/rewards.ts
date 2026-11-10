@@ -49,6 +49,15 @@ export type RewardError = {
 };
 /** Bingo readiness refusals from set_prize_delivery / add_reward_codes, by name. */
 const BINGO_REWARD_ERRORS = ["bingo_active_card", "bingo_needs_cells", "bingo_needs_fallback"] as const;
+/**
+ * 0073: set_prize_delivery / add_reward_codes refuse a suspended creator's
+ * prize with 'creator_unavailable' (42501). That is a refusal the dashboard
+ * words as one (like save_wheel_prizes in gameSettings), not a database fault.
+ */
+function creatorUnavailable(error: { code?: string; message?: string }): boolean {
+  return error.message === "creator_unavailable";
+}
+
 function bingoRewardError(message: string | undefined): (typeof BINGO_REWARD_ERRORS)[number] | null {
   return BINGO_REWARD_ERRORS.find((code) => message === code) ?? null;
 }
@@ -156,6 +165,8 @@ export async function setPrizeDelivery(
     ...(sealed ? { p_cipher: sealed.cipher, p_iv: sealed.iv, p_key_version: sealed.keyVersion } : {}),
   });
   if (error) {
+    // 0073: the owning creator is suspended (creator_unavailable, 42501).
+    if (creatorUnavailable(error)) return { error: "forbidden" };
     console.error("rewards: set_prize_delivery failed", error.code);
     return { error: bingoRewardError(error.message) ?? (error.code === "P0002" ? "not_found" : "db_error") };
   }
@@ -176,6 +187,7 @@ export async function addPrizeCodes(prizeId: string, codes: string[]): Promise<(
   const svc = createServiceClient();
   const { data: added, error } = await svc.rpc("add_reward_codes", { p_prize: prizeId, p_creator: auth.creatorId, p_codes: rows });
   if (error) {
+    if (creatorUnavailable(error)) return { error: "forbidden" };
     console.error("rewards: add_reward_codes failed", error.code);
     const bingo = bingoRewardError(error.message);
     if (bingo) return { error: bingo };

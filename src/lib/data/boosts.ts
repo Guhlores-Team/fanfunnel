@@ -4,6 +4,7 @@ import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
 // Data layer — boosts: happy hours, share cards, provably-fair verification,
 // wishlists, the public leaderboard and the recent-wins ticker.
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import { sessionMayManageSelf } from "@/lib/auth/ownStanding";
 import { sha256Hex } from "@/lib/games/wheel/fairness";
 import type { Rarity } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -29,6 +30,7 @@ import {
   mockGetLeaderboard,
   mockGetRecentWins,
   mockGetSpinVerification,
+  mockDemoCreatorActive,
 } from "./mock";
 import { resolveFanByToken } from "./fans";
 import { withdrawFanLeaderboardConsent } from "./privacy";
@@ -397,6 +399,7 @@ export async function getWishlistDemand(): Promise<WishlistDemand[]> {
 export async function setLeaderboardEnabled(
   enabled: boolean
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetLeaderboardEnabled(enabled);
 
   const sb = await createClient();
@@ -405,6 +408,9 @@ export async function setLeaderboardEnabled(
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
+  // set_leaderboard_enabled writes nothing for a suspended account and
+  // returns no error: prove the standing first.
+  if (!(await sessionMayManageSelf(sb, user.id))) return { error: "forbidden" };
   const { error } = await sb.rpc("set_leaderboard_enabled", {
     p_enabled: enabled,
   });

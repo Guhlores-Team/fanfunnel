@@ -1124,9 +1124,11 @@ export function mockArchiveWheel(id: string): { ok: true } | { error: string } {
 }
 
 /** Permanently remove a wheel (demo has no real spin history to protect). */
-export function mockDeleteWheel(id: string): { ok: true } | { error: string } {
+export function mockDeleteWheel(id: string, options: { onlyIfEmpty?: boolean } = {}): { ok: true } | { error: string } {
   const wheel = store.wheels.get(id);
   if (!wheel) return { error: "not_found" };
+  // delete_wheel(p_only_if_empty) parity: a prize, a play or a card keeps the game.
+  if (options.onlyIfEmpty && wheel.prizes.length > 0) return { error: "not_empty" };
   const progress=mockBingoEditError(id,null);if(progress)return {error:progress};
   const hasHistory=[...store.fans.values()].some(fan=>fan.wins.some(win=>win.wheelId===id))||[...(mockFocusState().anonymousWins?.values()??[])].some(win=>win.wheelId===id);
   // delete_wheel (0065): a game a fan link is stored on is archived instead;
@@ -3518,7 +3520,8 @@ export function mockGetNotificationSources(): NotificationSources {
 // PR-04: demo "Ask to enable" requests (the demo account is its own admin).
 const gUnlock = globalThis as unknown as { __ffUnlock?: { id: string; creatorId: string; creatorName: string | null; game: "scratch" | "bingo"; at: string }[] };
 const unlockRequests = (gUnlock.__ffUnlock ??= []);
-export function mockRequestGameUnlock(game: "scratch" | "bingo"): { ok: true; recorded: boolean; already: boolean } | { error: "already_enabled" } {
+export function mockRequestGameUnlock(game: "scratch" | "bingo"): { ok: true; recorded: boolean; already: boolean } | { error: "already_enabled" | "forbidden" } {
+  if (!mockDemoCreatorActive()) return { error: "forbidden" }; // parity: a suspended account cannot ask
   if (mockGameFeatures()[game] === true) return { error: "already_enabled" };
   if (unlockRequests.some((r) => r.creatorId === "acc-you" && r.game === game)) return { ok: true, recorded: true, already: true };
   unlockRequests.unshift({ id: genId("unlock"), creatorId: "acc-you", creatorName: CREATOR_TITLE, game, at: new Date().toISOString() });
