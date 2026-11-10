@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { clientIpFromHeaders } from "@/lib/api/clientIp";
-import { fanMissBlockedFor, noteFanMiss } from "@/lib/api/fanMiss";
+import { noteFanMiss } from "@/lib/api/fanMiss";
 import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass, getPausedFanWins } from "@/lib/data";
 import LinkGone from "@/components/fan/LinkGone";
 import PausedWins from "@/components/fan/PausedWins";
@@ -25,8 +25,9 @@ export const dynamic = "force-dynamic";
 // dashboard app) and is never indexed. One read shared by both exports below.
 const appInfo = cache(getFanAppInfo);
 // C2: the per-address budget for link lookups that miss (src/lib/api/fanMiss.ts).
+// ATK-04: the lookup always runs (a valid link behind a shared address must
+// open); only a genuine miss is counted, after the lookup.
 const visitorIp = cache(async () => clientIpFromHeaders(await headers()));
-const missBlocked = cache(async () => fanMissBlockedFor(await visitorIp()) > 0);
 
 export async function generateMetadata({
   params,
@@ -35,7 +36,6 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { token } = await params;
   const robots = { index: false, follow: false };
-  if (await missBlocked()) return { robots, manifest: null };
   const info = await appInfo(token);
   // Unknown or ended link: no install surface at all (the page 404s).
   if (!info) return { robots, manifest: null };
@@ -53,7 +53,6 @@ export async function generateViewport({
 }: {
   params: Promise<{ token: string }>;
 }): Promise<Viewport> {
-  if (await missBlocked()) return {};
   const info = await appInfo((await params).token);
   return info ? { themeColor: info.brandColor } : {};
 }
@@ -64,7 +63,6 @@ export default async function SpinPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  if (await missBlocked()) notFound();
   const pass = await getFanPass(token);
   if (!pass) {
     // T3: a link the fan paused is permanent, but keeps a read-only list of

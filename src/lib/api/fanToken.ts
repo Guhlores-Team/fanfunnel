@@ -34,5 +34,5 @@ export async function withFanToken<B extends { token?: unknown }>(
     const limited = await rateLimitOr429(`${opts.scope}:${clientIp(req)}:${token}`, opts.limit, opts.windowMs);
     if (limited) return limited;
     return fn(token, body);
-  });
+  }, token);
 }
