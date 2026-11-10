@@ -122,11 +122,14 @@ const sessionClient = {
     return { data: null, error: { message: "permission denied for function " + name } };
   },
 };
+/** Set to make the service client's next RPCs fail (a database without the function). */
+let serviceRpcError: { code: string; message: string } | null = null;
 const serviceClient = {
   from: (t: string) => builder("service", t),
   rpc: async (name: string, args: Record<string, unknown>) => {
     rpcs.push({ client: "service", name, args });
-    return { data: "2026-10-27T12:00:00.000Z", error: null };
+    if (serviceRpcError) return { data: null, error: serviceRpcError };
+    return name === "record_fan_ack" ? { data: { status: "ok", version: "from-the-database" }, error: null } : { data: "2026-10-27T12:00:00.000Z", error: null };
   },
 };
 
@@ -243,17 +246,36 @@ async function main() {
   passes["tok-a"] = "fan-a";
   passes["tok-b"] = "fan-b";
   {
+    // TS-05 (0073): the stamp is record_fan_ack on the service client. The
+    // function reads the version from the database itself and resolves the fan
+    // from the token, so neither can come from the request.
     const r = await post(ack, { token: "tok-a", version: "2099-01-01", fanId: "fan-b" }, "10.0.0.7");
     check("fan ack → 200", r.status === 200);
-    const updates = calls.filter((c) => c.table === "fans" && c.ops.some(([op]) => op === "update"));
-    check("one fans update", updates.length === 1 && updates[0].client === "service");
+    const fanUpdates = () => calls.filter((c) => c.table === "fans" && c.ops.some(([op]) => op === "update"));
+    check("one record_fan_ack on the SERVICE client", rpcs.length === 1 && rpcs[0].name === "record_fan_ack" && rpcs[0].client === "service");
+    check("…for the token only: no version and no fan id from the body", JSON.stringify(Object.keys(rpcs[0].args).sort()) === JSON.stringify(["p_ip_hash", "p_token", "p_ua_hash"]) &&
+      rpcs[0].args.p_token === "tok-a" && !JSON.stringify(rpcs[0].args).includes("2099-01-01") && !JSON.stringify(rpcs[0].args).includes("fan-b"));
+    check("…with a digest of the address, never the address", /^[0-9a-f]{64}$/.test(String(rpcs[0].args.p_ip_hash)) && !JSON.stringify(rpcs[0].args).includes("10.0.0.7"));
+    check("…and no second, direct stamp", fanUpdates().length === 0);
+    reset();
+    // A database that has not reached 0073 has no such function: the plain
+    // stamp still records the server's version for the token's fan only.
+    serviceRpcError = { code: "PGRST202", message: "function not found" };
+    const old = await post(ack, { token: "tok-a", version: "2099-01-01", fanId: "fan-b" }, "10.0.0.7");
+    const updates = fanUpdates();
+    check("fan ack before 0073 → 200 with one fans update", old.status === 200 && updates.length === 1 && updates[0].client === "service");
     const payload = updates[0].ops.find(([op]) => op === "update")![1][0] as Record<string, unknown>;
     check("the update stamps LEGAL.version, not the body's", payload.acked_terms_version === LEGAL.version);
     check("the update is scoped to the token's fan only", updates[0].ops.some(([op, a]) => op === "eq" && a[0] === "id" && a[1] === "fan-a") &&
       !updates[0].ops.some(([, a]) => a.includes("fan-b")));
     reset();
+    serviceRpcError = { code: "57014", message: "statement timeout" };
+    const failed = await post(ack, { token: "tok-a" }, "10.0.0.7");
+    check("any other database failure is an error, never a silent plain stamp", failed.status >= 400 && failed.data.error === "db_error" && fanUpdates().length === 0);
+    serviceRpcError = null;
+    reset();
     const bad = await post(ack, { token: "tok-unknown" }, "10.0.0.8");
-    check("unknown token → 404 and no write", bad.status === 404 && !calls.some((c) => c.ops.some(([op]) => op === "update")));
+    check("unknown token → 404 and no write", bad.status === 404 && rpcs.length === 0 && !calls.some((c) => c.ops.some(([op]) => op === "update")));
   }
 
   // A failed consent read must not turn into permission to spend a spin.

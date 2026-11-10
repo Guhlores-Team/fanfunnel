@@ -69,7 +69,7 @@ async function main() {
   mockDeleteFan(fan.fanId);
   check("erasure removes private scratch code but retains anonymous face proof", "error" in mockGetFanReward(fan.token, codeWin.shareId) && !!(await mockGetSpinVerification(codeWin.shareId))?.v3?.presentation);
   const anonymous = await mockGetSpinVerification(first.shareId);
-  check("fan erasure retains anonymous replay but removes private attempts", !!anonymous?.v3?.presentation && (await mockReadSpinAttempt(fan.token, { requestId, clientSeed: "fixture-seed" })).status === "unavailable");
+  check("fan erasure retains anonymous replay but removes private attempts", !!anonymous?.v3?.presentation && (await mockReadSpinAttempt(fan.token, { requestId, clientSeed: "fixture-seed" })).status === "not_found");
   mockUpdateAccount(account.id, { features: { ...originalFeatures, scratch: true } });
   const copy = mockDuplicateWheel(game.id).wheel;
   check("new authorized copy retains game settings but starts unlocked", copy.gameKind === "scratch" && copy.gameKindLocked === false);
