@@ -58,10 +58,26 @@ const fnBodies = [...everywhere.matchAll(/create or replace function public\.(\w
 check("SQL functions were found to scan", fnBodies.length > 20);
 // The one exception is retention (0065, A11): run_retention_cleanup may only
 // delete check-ins past their retention day, which reads no visit into a spin.
+// 0073 (PA-03) adds one reader: creator_fan_summaries, the dashboard's fans
+// list, shows the creator each fan's last visit day (a row the creator can
+// already select through fan_checkins_select). It is a STABLE SQL function
+// for the service role, writes nothing and no other function calls it, so a
+// visit still has no path to spins or odds. (0073 also dropped the legacy
+// claim_spin shell; no spin function ever read fan_checkins.)
 const touching = fnBodies.filter((m) => m[2].includes("fan_checkins"));
-check("no SQL function reads fan_checkins (claim_spin can't see visits)", touching.every((m) => m[1] === "run_retention_cleanup"));
+const SUMMARY = "creator_fan_summaries";
+check("no SQL function reads fan_checkins except retention and the read-only fans summary (the spin path can't see visits)",
+  touching.every((m) => m[1] === "run_retention_cleanup" || m[1] === SUMMARY));
 check("retention only deletes expired check-ins, never reads them",
-  touching.every((m) => [...m[2].replaceAll("'fan_checkins', v_checkins", "").matchAll(/[^;]*fan_checkins[^;]*/g)].every((s) => /^\s*delete from public\.fan_checkins\s+where day < current_date - v_checkin_days\s*$/.test(s[0]))));
+  touching.filter((m) => m[1] === "run_retention_cleanup").every((m) => [...m[2].replaceAll("'fan_checkins', v_checkins", "").matchAll(/[^;]*fan_checkins[^;]*/g)].every((s) => /^\s*delete from public\.fan_checkins\s+where day < current_date - v_checkin_days\s*$/.test(s[0]))));
+const summaries = touching.filter((m) => m[1] === SUMMARY);
+check("the fans summary is a STABLE SQL function that only selects", summaries.length > 0 && summaries.every((m) =>
+  /language sql stable security definer/.test(m[0]) && !/\b(insert|update|delete|perform|execute)\b/.test(m[2])));
+check("the fans summary reads only the last visit day of the creator's own fan",
+  summaries.every((m) => (m[2].match(/fan_checkins/g) ?? []).length === 1 && m[2].includes("select max(ck.day) as last_day from public.fan_checkins ck where ck.fan_id = f.id and ck.creator_id = f.creator_id")));
+check("no SQL function calls the fans summary (it cannot feed a spin or a grant)", fnBodies.every((m) => !m[2].includes(`${SUMMARY}(`)));
+check("the fans summary is service-only", everywhere.includes(`revoke execute on function public.${SUMMARY}(uuid, text, timestamptz, uuid, integer) from public, anon, authenticated;`)
+  && !new RegExp(`grant execute on function public\\.${SUMMARY}\\([^)]*\\) to [^;]*(anon|authenticated)`).test(everywhere));
 check("no SQL function calls the retention cleanup", fnBodies.every((m) => !m[2].includes("run_retention_cleanup")));
 
 function walk(dir: string): string[] {
