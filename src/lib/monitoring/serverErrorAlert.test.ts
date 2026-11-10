@@ -54,6 +54,9 @@ async function main() {
   check("captureInline awaits alertFor", /await alertFor\(/.test(inline) && !/runAfterResponse/.test(inline));
   const inst = readFileSync(new URL("../../instrumentation.ts", import.meta.url), "utf8");
   check("onRequestError awaits captureServerError", /await captureServerError\(/.test(inst));
+  // An awaited capture must not hang the error response on a hung database.
+  const appErrors = readFileSync(new URL("../data/appErrors.ts", import.meta.url), "utf8");
+  check("the store/claim/release RPCs use a bounded service client", (appErrors.match(/createServiceClient\(\{ timeoutMs: APP_ERROR_DB_TIMEOUT_MS \}\)\.rpc\(/g) ?? []).length === 3 && !/createServiceClient\(\)\.rpc\(/.test(appErrors));
   console.log(`serverErrorAlert: ${passed} checks passed`);
 }
 process.exitCode = 1;
