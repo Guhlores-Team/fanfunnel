@@ -87,6 +87,7 @@ import { probeSpinResolution } from "./spinResolutionProbe.mjs";
 import { probeLedgerGuards } from "./ledgerGuardsProbe.mjs";
 import { probeLockOrder } from "./lockOrderProbe.mjs";
 import { probeAdvisorHardening } from "./advisorHardeningProbe.mjs";
+import { probeBatch7 } from "./batch7Probe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -358,7 +359,8 @@ function probeGrants(db) {
   for(const role of ["anon","authenticated","service_role"]) {
     if(priv(role,"import_fans(jsonb)"))bad.push(`${role} retained EXECUTE on legacy import_fans`);
     const retired=psql(db,["-c",`begin;set local role ${role};select public.import_fans('[]'::jsonb);rollback;`],{allowFail:true});
-    if(!/permission denied for function import_fans\b/.test(retired.stderr||""))bad.push(`${role} reached retired import_fans`);
+    // 0073 (DB-14) dropped the shell: "does not exist" is the final answer.
+    if(!/permission denied for function import_fans\b|function public\.import_fans\(jsonb\) does not exist/.test(retired.stderr||""))bad.push(`${role} reached retired import_fans`);
   }
   for (const sig of RLS_HELPERS) {
     if (priv("anon", sig)) bad.push(`anon can EXECUTE RLS helper ${sig} (0072 revoked it)`);
@@ -506,7 +508,7 @@ function probeBreaks(db, asUser) {
       ('probe-0049-a', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FA}', 3),
       ('probe-0049-b', '${B}', '00000000-0000-4000-8000-0000000049bb', '${FB}', 3),
       ('probe-0049-c', '${A}', '00000000-0000-4000-8000-0000000049aa', '${FC}', 3);
-    update public.fans set acked_at=now(),acked_terms_version='2026-10-27' where id in ('${FA}','${FB}','${FC}');
+    update public.fans set acked_at=now(),acked_terms_version=public.legal_terms_version() where id in ('${FA}','${FB}','${FC}');
     update public.fans set break_until = now() - interval '1 hour' where id = '${FC}';
     -- Supabase grants table privileges to anon/authenticated by default and
     -- leaves the rest to RLS; the stub does not, so model that here.
@@ -1210,6 +1212,12 @@ const rwSpin = (id, prize) =>
    values ('${id}', '${RW_PASS}', '${RW_A}', '${RW_WA}', '${RW_FAN}', '${prize}', 'probe');`;
 
 
+// 0073 batch-7 hardening (batch7Probe.mjs): one check per audit finding.
+function probeBatch7Hardening(db) {
+  const { bad, checks } = probeBatch7(db, psql);
+  if (bad.length) { failures++; for (const message of bad) console.log(`FAIL  ${db}: 0073 batch-7: ${message}`); }
+  else console.log(`PASS  ${db}: 0073 batch-7: ${checks} checks (creator_id immutable, seat-scoped reads, pinned access requests, text caps, reserved names, tombstones, retention ageing, canary latch, reset deletes fans, declined/blocked attempts, not_found status, link expiry, seat key share, suspended-creator editors, game_changed, bingo drafts, dashboard summaries, owner seat, actor attribution, Terms notice, consent evidence)`); }
+}
 function psqlAsync(db, sqlText) {
   return new Promise((resolve) => {
     const p = spawn(
@@ -1526,6 +1534,7 @@ try {
     probeBatch4Integration(db);
     probeLedger0071(db);
     probeAdvisor0072(db);
+    probeBatch7Hardening(db);
     await probeFocusLedger(async (q) => {
       const r=await psqlAsync(db,q);
       if(r.status!==0)throw new Error(r.stderr||"focus SQL failed");

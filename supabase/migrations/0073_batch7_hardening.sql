@@ -158,7 +158,8 @@ returns boolean language sql immutable set search_path = public, pg_temp as $$
   select coalesce(array_length(p_values, 1), 0) <= p_max_items
      and coalesce((select max(char_length(v)) from unnest(p_values) v), 0) <= p_max_each
 $$;
-revoke execute on function public._text_array_within(text[], integer, integer) from public, anon, authenticated, service_role;
+-- A CHECK runs as the writing role, so the pure helper stays executable.
+grant execute on function public._text_array_within(text[], integer, integer) to public;
 do $$
 declare r record; v_bad bigint; v_valid boolean;
 begin
@@ -1462,8 +1463,8 @@ declare v_seats integer := 0; v_creator integer := 0;
 begin
   if auth.uid() is null or p_org is null or not public._session_mfa_satisfied() then return 'not_member'; end if;
   -- 0073 (WG-02): an owner does not leave its own agency (its seat stays).
-  delete from public.org_members m where m.org_id = p_org and m.profile_id = auth.uid()
-     and not exists (select 1 from public.orgs o where o.id = m.org_id and o.owner_id = auth.uid());
+  if exists (select 1 from public.orgs o where o.id = p_org and o.owner_id = auth.uid()) then return 'owner_seat'; end if;
+  delete from public.org_members where org_id = p_org and profile_id = auth.uid();
   get diagnostics v_seats = row_count;
   update public.profiles set org_id = null where id = auth.uid() and org_id = p_org;
   get diagnostics v_creator = row_count;
@@ -1925,21 +1926,24 @@ end $$;
 -- code(uuid,uuid) and release_reward_code(uuid) (the drift probe exercises the
 -- code-reservation semantics through them as postgres), _spin_attempt_context
 -- (uuid) (the interplay probe's pre-0070 context reader) and the 13-argument
--- create_pass_grant (the crypto-namespace fixture's causal check).
+-- create_pass_grant (the crypto-namespace fixture's causal check). Also kept
+-- because a live function still calls them: _creator_default_wheel(uuid,uuid)
+-- (_create_pass_grant_core and the 3-argument wrapper), the 9-argument
+-- edit_pass_grant (_edit_grant_patch_core), _creator_actor_grant_allowed
+-- (uuid,uuid) (the revoked 9-argument grant_pass_spins / 13-argument
+-- create_pass_grant) and _game_actor_edit_allowed(uuid,uuid) (the revoked
+-- 5-argument save_game_wheel) and cancel_fan_focus(uuid,uuid,uuid) (the
+-- implementation the 5-argument actor gateway delegates to); the actor-context
+-- probe asserts the two helpers fail closed.
 drop function if exists public.import_fans(jsonb);
 drop function if exists public.credit_pass_spins(uuid, integer);
 drop function if exists public.claim_spin(text);
 drop function if exists public.rollback_claimed_spin(text, uuid);
-drop function if exists public.cancel_fan_focus(uuid, uuid, uuid);
 drop function if exists public.cancel_fan_focus(uuid, uuid, uuid, uuid);
 drop function if exists public.reconcile_creator_request(uuid, uuid, uuid, text, boolean, boolean);
-drop function if exists public.edit_pass_grant(uuid, uuid, integer, integer, integer, uuid, boolean, boolean, boolean);
 drop function if exists public.edit_pass_grant(uuid, uuid, uuid, jsonb, uuid);
 drop function if exists public.grant_focus_pack(uuid, uuid, uuid, uuid, uuid, uuid, uuid);
 drop function if exists public.import_fans_durable(uuid, uuid, text, jsonb, uuid);
-drop function if exists public._creator_actor_grant_allowed(uuid, uuid);
-drop function if exists public._game_actor_edit_allowed(uuid, uuid);
-drop function if exists public._creator_default_wheel(uuid, uuid);
 
 -- ── (9) closing check: browser roles reach only the reviewed functions, and
 -- every creator-owned table carries the immutability trigger ────────────────

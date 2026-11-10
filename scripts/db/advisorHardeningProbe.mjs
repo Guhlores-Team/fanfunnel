@@ -45,6 +45,9 @@ export const AUTHENTICATED_DEFINER = [
   "set_display_name(text)", "set_leaderboard_enabled(boolean)", "set_notification_prefs(boolean, boolean, boolean)",
   "set_notifications_seen()", "set_onboarding_dismissed(boolean)", "set_public_profile(text, text, text)",
   "set_pwa_icon_mode(text)", "set_redemption_state(uuid, uuid, jsonb)", "wipe_my_spin_attempts()",
+  // 0073: the dashboard summaries, the obligations counter and the Terms notice.
+  "creator_analytics_summary(uuid, integer)", "creator_fan_summaries(uuid, text, timestamp with time zone, uuid, integer)",
+  "creator_obligations(uuid)", "legal_terms_upcoming()", "set_legal_terms_notice(text, date)",
 ];
 /** Advisor: anon could execute these on TEST at 0071. */
 export const ANON_REVOKED = [
@@ -166,8 +169,10 @@ export function probeAdvisorHardening(db, psql) {
   // The prize update fires sync_code_prize_stock; the fan deletion fires
   // erase_fan_reward_values and scrub_fan_traces (T10: the deleted fan's
   // redemption stays, without the creator's notes or due date).
-  expect("revoked trigger functions still fire (prize update, fan deletion); T10 scrub", as(A, `
-    update public.prizes set label = 'one renamed' where id = '${PA}';
+  // 0073 (DB-05): a session no longer updates prizes directly; the editors
+  // (service role) fire the same trigger.
+  expect("revoked trigger functions still fire (prize update, fan deletion); T10 scrub", `set local role service_role;
+    update public.prizes set label = 'one renamed' where id = '${PA}'; reset role;` + as(A, `
     delete from public.fans where id = '${FA}';`) +
     ` select 'prize:' || label from public.prizes where id = '${PA}'; select 'fan:' || count(*) from public.fans where id = '${FA}';
       select 'redemption:' || count(*) || ',' || bool_and(notes is null) || ',' || bool_and(due_at is null) from public.redemptions where id = '${RED_A}';`,

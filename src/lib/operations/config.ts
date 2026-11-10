@@ -8,7 +8,7 @@ export const DIAGNOSTIC_MAX_ROWS = 100_000;
 export const DIAGNOSTIC_TIMEOUT_MS = 3_000;
 export const STARTUP_DEADLINE_MS = 5_000;
 /** A39: the migration this code needs (public.schema_version(), 0067). Bump it with every migration. */
-export const EXPECTED_SCHEMA_VERSION = 72;
+export const EXPECTED_SCHEMA_VERSION = 73;
 export type SchemaStatus = "current" | "ahead" | "behind" | "unavailable";
 /** `applied` is null when the database could not say (unavailable, or older than 0067 so it has no schema_version()). */
 export type SchemaCheck = { status: SchemaStatus; applied: number | null; expected: number };

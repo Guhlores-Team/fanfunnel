@@ -21,7 +21,7 @@ export async function probeFocusLedger(sqlInput) {
     insert into public.focus_creator_config(creator_id,chase_enabled) values(${quote(owner)},true);`);
   const addFan = async (credit = 100) => {
     const fan = randomUUID(), pass = randomUUID(), token = `focus-${randomUUID()}`;
-    await sql(`insert into public.fans(id,creator_id,acked_at,acked_terms_version) values(${quote(fan)},${quote(owner)},now(),'2026-10-27');
+    await sql(`insert into public.fans(id,creator_id,acked_at,acked_terms_version) values(${quote(fan)},${quote(owner)},now(),'2026-11-11');
       insert into public.fan_passes(id,token,creator_id,fan_id,wheel_id) values(${quote(pass)},${quote(token)},${quote(owner)},${quote(fan)},${quote(wheel)});`);
     const granted = await rpc("grant_pass_spins", [quote(randomUUID()),quote(owner),quote(fan),quote(pass),String(credit),"0","0","null"]);
     check(granted.status === "granted", "fixture ordinary credit grant succeeds");
@@ -74,7 +74,7 @@ export async function probeFocusLedger(sqlInput) {
     for(const name of ["prepare_spin_attempt","commit_spin_attempt","get_spin_attempt_status","grant_focus_pack","cancel_fan_focus","get_fan_focus_state","grant_pass_spins","edit_pass_grant","ensure_pass_commitment","create_pass_grant","award_fan_referral","cancel_spin_attempt","import_fans_durable","reconcile_creator_request"]) {
       check((await sql(`select bool_and(not has_function_privilege('anon',p.oid,'execute') and not has_function_privilege('authenticated',p.oid,'execute')) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=${quote(name)};`)).trim()==="t",`${name} denies both browser roles`);
     }
-    for(const name of ["claim_spin","rollback_claimed_spin","finalize_reward_spin","reserve_reward_code","release_reward_code","credit_pass_spins","import_fans"])check((await sql(`select bool_and(not has_function_privilege('service_role',p.oid,'execute')) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=${quote(name)};`)).trim()==="t",`${name} legacy writer retired`);
+    for(const name of ["claim_spin","rollback_claimed_spin","finalize_reward_spin","reserve_reward_code","release_reward_code","credit_pass_spins","import_fans"])check((await sql(`select coalesce(bool_and(not has_function_privilege('service_role',p.oid,'execute')),true) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=${quote(name)};`)).trim()==="t",`${name} legacy writer retired`);
     let denied=false;try{await sql(`update public.fan_passes set spins_remaining=999 where id=${quote(one.pass)};`)}catch{denied=true}check(denied,"direct credit write denied even service-level caller");
     denied=false;try{await sql(`insert into public.fans(creator_id,spins_remaining) values(${quote(owner)},999);`)}catch(e){denied=/use atomic grant RPC/.test(e.message)}check(denied,"nonzero fan INSERT cannot forge aggregate credit");
     denied=false;try{await sql(`insert into public.fan_passes(token,creator_id,fan_id,wheel_id,next_server_seed,next_server_seed_hash) values('forged-seed-${owner}',${quote(owner)},${quote(one.fan)},${quote(wheel)},repeat('a',64),repeat('b',64));`)}catch(e){denied=/use atomic grant RPC/.test(e.message)}check(denied,"creator cannot choose initial future seed through direct pass INSERT");
@@ -280,7 +280,7 @@ export async function probeFocusLedger(sqlInput) {
     const retiredBatch=randomUUID(),retiredRows=Array.from({length:2},(_,i)=>({fan_id:randomUUID(),pass_id:randomUUID(),token:`retired-import-${randomUUID()}`,wheel_id:wheel,campaign_id:null,name:`Retired bypass ${i}`,spins:5,amount_cents:0}));
     check((await rpc("reconcile_creator_request",[quote(retiredBatch),"null",quote(owner),quote("import"),"true","false"])).status==="cancelled","import intent is authoritatively cancelled before bypass attempt");
     for(const role of ["anon","authenticated","service_role"]) {
-      let refused=false;try{await sql(`begin;set local role ${role};select set_config('request.jwt.claim.sub',${quote(owner)},true);select public.import_fans(${json(retiredRows)});rollback;`)}catch(e){refused=/permission denied for function import_fans/.test(e.message)}
+      let refused=false;try{await sql(`begin;set local role ${role};select set_config('request.jwt.claim.sub',${quote(owner)},true);select public.import_fans(${json(retiredRows)});rollback;`)}catch(e){refused=/permission denied for function import_fans|function public.import_fans\(jsonb\) does not exist/.test(e.message)}
       check(refused,`${role} cannot use legacy import to bypass an actor cancellation`);
     }
     const publicLegacy=(await sql(`select exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where n.nspname='public' and p.proname='import_fans' and a.grantee=0 and a.privilege_type='EXECUTE');`)).trim();
@@ -442,7 +442,7 @@ export async function probeFocusLedger(sqlInput) {
     const revokedCancel=JSON.parse((await sql(`begin;set local role service_role;select public.cancel_fan_focus(${[quote(admittedCancel.context),quote(owner),quote(cancelFan.fan),quote(cancelHeld.focus.id),quote(other)].join(",")});commit;`)).trim());await revoker;
     check(revokedCancel.status==="unavailable","already-dispatched cancellation rechecks and refuses the now-revoked actual actor");
     check((await sql(`select state||','||(select stock from public.prizes where id=${quote(cancelTarget)}) from public.chase_reservations where focus_id=${quote(cancelHeld.focus.id)};`)).trim()==="held,0","revoked cancellation leaves reservation held and free stock unchanged");
-    let oldCancelDenied=false;try{await sql(`set role service_role;select public.cancel_fan_focus(${quote(owner)},${quote(cancelFan.fan)},${quote(cancelHeld.focus.id)});`)}catch(e){oldCancelDenied=/permission denied/.test(e.message)}
+    let oldCancelDenied=false;try{await sql(`set role service_role;select public.cancel_fan_focus(${quote(owner)},${quote(cancelFan.fan)},${quote(cancelHeld.focus.id)});`)}catch(e){oldCancelDenied=/permission denied|does not exist/.test(e.message)}
     check(oldCancelDenied,"actorless service cancellation cannot bypass the transactional permission check");
     check((await rpc("cancel_fan_focus",[quote(owner),quote(cancelFan.fan),quote(cancelHeld.focus.id),quote(owner)])).status==="released","current owner can still cancel the exact paid promise");
     check((await rpc("cancel_fan_focus",[quote(owner),quote(cancelFan.fan),quote(cancelHeld.focus.id),quote(owner)])).status==="absent"&&(await sql(`select stock from public.prizes where id=${quote(cancelTarget)};`)).trim()==="1","authorized repeat cancellation returns the held stock exactly once");

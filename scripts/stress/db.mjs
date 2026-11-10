@@ -18,7 +18,7 @@ const quote = s => `'${String(s).replaceAll("'", "''")}'`;
 const json = v => `${quote(JSON.stringify(v))}::jsonb`;
 const hash = s => createHash("sha256").update(s).digest("hex");
 const canonical = v => v === null || typeof v !== "object" ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canonical).join(",")}]` : `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
-const TERMS = "2026-10-27";
+const TERMS = "2026-11-11";
 const root = join(import.meta.dirname, "../..");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
