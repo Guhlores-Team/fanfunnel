@@ -24,11 +24,20 @@
 //  PR-07    fans, wins and daily numbers download as formula-safe CSV.
 //  RD-19    a long conversation loads its earlier messages on demand.
 //  PR-10    a delivery promise is saved and suggested as the expected-by day.
+//  C16/WC-11 a save over a newer game version is a 409 with Reload; an
+//           unfinished bingo saves as a draft with a checklist.
+//  WC-09/26 leaving a just-created empty game offers its removal; a status
+//           change shows it is being saved.
+//  PR-13    a link can be given an expiry and made permanent again.
+//  WG-18    Admin search, request ages and the build commit.
+//  PA-01/12 + WC-18/19/23/30 too-dark brand colours are refused; skip link,
+//           field errors, the handle hint and the discard list.
 // Steps that answer API calls with errors run on their own page with no error
 // sink: the failures are the point of the step. Every fixture is removed again.
 import { randomUUID } from "node:crypto";
-import { acknowledgeFixtureFan, attachSink, BASE, goto } from "./harness.mjs";
+import { acknowledgeFixtureFan, attachSink, BASE, goto, NAV_ITEMS } from "./harness.mjs";
 import { json } from "./focus.mjs";
+import { gameFeatureSettings, setGameFeatures } from "./games.mjs";
 
 const path = (p) => (url) => url.pathname === p;
 const answer = (status, error = status === 429 ? "rate_limited" : "boom") => (route) => route.fulfill({ status, json: { error } });
@@ -504,6 +513,258 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await page.close().catch(() => {});
       await request.put(BASE + "/api/public-profile", { data: { deliveryDays: before.deliveryDays ?? null } }).catch(() => {});
       await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+    }
+  });
+
+  await step("b7 C16 + WC-11: a save over a newer game version is refused and offers Reload; an unfinished bingo saves as a draft with a checklist", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const tag = randomUUID().slice(0, 6);
+    let dupId = null;
+    let bingoId = null;
+    const features = await gameFeatureSettings(request);
+    const read = async (id) => (await json(await request.get(BASE + `/api/wheels/${id}`), "read game")).wheel;
+    const editable = (wheel) => {
+      const { gameKindLocked: _l, gameReady: _r, updatedAt: _u, ...rest } = wheel;
+      return rest;
+    };
+    try {
+      const list = (await json(await request.get(BASE + "/api/wheels"), "list games")).wheels;
+      const live = list.find((w) => w.isActive) ?? list[0];
+      dupId = (await json(await request.post(BASE + `/api/wheels/${live.id}/duplicate`), "duplicate the live game")).wheel.id;
+      const v1 = await read(dupId);
+      assert(typeof v1.updatedAt === "string" && Number.isFinite(Date.parse(v1.updatedAt)), "a loaded game carries its version");
+      await page.waitForTimeout(20);
+      const saved = await json(await request.put(BASE + "/api/wheel", { data: { wheel: { ...editable(v1), title: `b7 cas ${tag}` }, expectedUpdatedAt: v1.updatedAt } }), "save with the loaded version");
+      assert(saved.wheel.updatedAt && saved.wheel.updatedAt !== v1.updatedAt, "a settings save moves the version on");
+      const stale = await request.put(BASE + "/api/wheel", { data: { wheel: { ...editable(v1), title: `b7 lost ${tag}` }, expectedUpdatedAt: v1.updatedAt } });
+      assert(stale.status() === 409 && (await stale.json()).error === "game_changed", "a save from the older version is a 409 game_changed");
+      assert((await read(dupId)).title === `b7 cas ${tag}`, "the refused save changed nothing");
+      assert((await request.put(BASE + "/api/wheel", { data: { wheel: editable(v1), expectedUpdatedAt: "yesterday" } })).status() === 400, "a version that is no date is a 400");
+      assert((await request.put(BASE + "/api/wheel", { data: { wheel: editable(v1), draft: "yes" } })).status() === 400, "a non-boolean draft is a 400");
+
+      // The editor: load the game, let "another tab" save it, then save here.
+      await goto(page, "/dashboard?section=editor", 1500);
+      const switcher = page.locator("section[aria-label='Game switcher']");
+      await switcher.getByRole("button", { name: new RegExp(`^b7 cas ${tag}`) }).click();
+      const title = page.getByLabel("Title", { exact: true });
+      await page.waitForFunction((want) => document.querySelector("input[value]") && [...document.querySelectorAll("input")].some((i) => i.value === want), `b7 cas ${tag}`, { timeout: 10000 });
+      const current = await read(dupId);
+      await page.waitForTimeout(20);
+      await json(await request.put(BASE + "/api/wheel", { data: { wheel: { ...editable(current), title: `b7 other tab ${tag}` }, expectedUpdatedAt: current.updatedAt } }), "another tab saves");
+      await title.fill(`b7 mine ${tag}`);
+      await page.getByRole("button", { name: "Save game", exact: true }).click();
+      const error = page.getByTestId("game-save-error");
+      await error.waitFor({ timeout: 10000 });
+      assert(/changed in another tab or by a team member/.test(await error.innerText()), "the editor says the game changed elsewhere");
+      assert((await read(dupId)).title === `b7 other tab ${tag}`, "the other tab's save was not overwritten");
+      await page.getByTestId("game-reload-latest").click();
+      await page.waitForFunction((want) => [...document.querySelectorAll("input")].some((i) => i.value === want), `b7 other tab ${tag}`, { timeout: 10000 });
+      assert((await error.count()) === 0, "Reload clears the refusal");
+
+      // WC-11: a never-published bingo game may be stored unfinished.
+      await setGameFeatures(request, { ...features, bingo: true });
+      const bingo = (await json(await request.post(BASE + "/api/wheels", { data: { name: `b7 bingo ${tag}`, gameKind: "bingo", gameConfig: { size: 3, linePrizeId: null } } }), "create a bingo draft")).wheel;
+      bingoId = bingo.id;
+      const prizes = [1, 2].map((n) => ({ id: randomUUID(), label: `b7 square ${n}`, rarity: "common", weight: 1, emoji: "⭐", stock: null, cost: 0 }));
+      const strict = await request.put(BASE + "/api/wheel", { data: { wheel: { ...editable(bingo), prizes } } });
+      assert(strict.status() === 400, `an unfinished bingo is still refused as a finished save (${strict.status()})`);
+      const draft = await json(await request.put(BASE + "/api/wheel", { data: { wheel: { ...editable(bingo), prizes }, draft: true } }), "save the bingo draft");
+      assert(draft.wheel.gameReady === false && draft.wheel.prizes.length === 2, "the draft keeps its prizes and stays not ready");
+      const listed = (await json(await request.get(BASE + "/api/wheels"), "list with the draft")).wheels.find((w) => w.id === bingoId);
+      assert(listed && listed.isActive === false, "a draft is never the live game");
+      const ready = await request.put(BASE + "/api/wheel", { data: { wheel: { ...editable(await read(dupId)), prizes: [] }, draft: true } });
+      assert(ready.status() === 400, "draft: true does not loosen the rules for a published game");
+
+      await goto(page, "/dashboard?section=editor", 1500);
+      await switcher.getByRole("button", { name: new RegExp(`^b7 bingo ${tag}`) }).click();
+      const checklist = page.getByTestId("bingo-checklist");
+      await checklist.waitFor({ timeout: 10000 });
+      assert((await checklist.locator("li[data-done='false']").count()) >= 1, "the checklist shows what is still to do");
+      assert(/save it as a draft/.test(await page.getByTestId("bingo-missing").innerText()), "the editor says a draft can be saved");
+      await page.getByLabel("Title", { exact: true }).fill(`b7 bingo ${tag} v2`);
+      const saveDraft = page.getByRole("button", { name: "Save draft", exact: true });
+      await saveDraft.waitFor({ timeout: 10000 });
+      await saveDraft.click();
+      await page.getByTestId("toast").filter({ hasText: /Draft saved/ }).first().waitFor({ timeout: 10000 });
+      const after = await read(bingoId);
+      assert(after.title === `b7 bingo ${tag} v2` && after.gameReady === false, "the draft was stored and is still a draft");
+    } finally {
+      await page.close().catch(() => {});
+      for (const id of [dupId, bingoId]) if (id) await request.delete(BASE + `/api/wheels/${id}?hard=1`).catch(() => {});
+      await setGameFeatures(request, features).catch(() => {});
+    }
+  });
+
+  await step("b7 WC-09 + WC-26: leaving a just-created empty game offers to remove it; a status change shows it is being saved", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const gameName = `b7 empty ${randomUUID().slice(0, 6)}`;
+    const name = `@b7busy${Date.now().toString(36)}`;
+    const fan = await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins: 2 } }), "create fan");
+    let createdId = null;
+    try {
+      const before = (await json(await request.get(BASE + "/api/wheels"), "list games")).wheels;
+      const live = before.find((w) => w.isActive) ?? before[0];
+      await goto(page, "/dashboard?section=editor", 1500);
+      await page.getByRole("button", { name: "New game", exact: true }).click();
+      await page.getByPlaceholder("Give this game a name").fill(gameName);
+      await page.getByRole("button", { name: "Create game", exact: true }).click();
+      await page.getByTestId("toast").filter({ hasText: /Game created/ }).first().waitFor({ timeout: 10000 });
+      createdId = (await json(await request.get(BASE + "/api/wheels"), "list after create")).wheels.find((w) => w.title === gameName)?.id ?? null;
+      assert(createdId, "the game was stored on create");
+      await page.waitForTimeout(600);
+      assert((await page.getByTestId("toast").filter({ hasText: /has no prizes yet/ }).count()) === 0, "nothing is offered while the new game is still open");
+      const switcher = page.locator("section[aria-label='Game switcher']");
+      await switcher.getByRole("button", { name: new RegExp(`^${live.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first().click();
+      const offer = page.getByTestId("toast").filter({ hasText: /has no prizes yet/ });
+      await offer.waitFor({ timeout: 10000 });
+      assert((await offer.innerText()).includes(gameName), "the notice names the empty game");
+      assert((await json(await request.get(BASE + "/api/wheels"), "list before removal")).wheels.some((w) => w.id === createdId), "nothing is removed without the tap");
+      await offer.getByRole("button", { name: "Remove it" }).click();
+      await page.getByTestId("toast").filter({ hasText: `Removed "${gameName}"` }).first().waitFor({ timeout: 10000 });
+      assert(!(await json(await request.get(BASE + "/api/wheels?archived=1"), "list after removal")).wheels.some((w) => w.id === createdId), "the empty game is gone");
+      createdId = null;
+
+      // WC-26: the queue button is disabled and says so while the change is on its way.
+      await json(await acknowledgeFixtureFan(request, fan.token), "ack fan");
+      await json(await request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: fan.token, clientSeed: "b7-busy" } }), "fan plays");
+      await page.route((url) => url.pathname.startsWith("/api/redemptions/"), async (route) => {
+        if (route.request().method() === "PATCH") await new Promise((r) => setTimeout(r, 900));
+        await route.continue();
+      });
+      await goto(page, "/dashboard?section=prizes", 1200);
+      const row = page.locator("li").filter({ hasText: name }).first();
+      await row.waitFor({ timeout: 10000 });
+      await row.getByRole("button", { name: /^Start:/ }).click();
+      const busy = row.locator("button[aria-busy='true']");
+      await busy.waitFor({ timeout: 3000 });
+      assert(await busy.isDisabled() && /Saving…/.test(await busy.innerText()), "the button is disabled and reads Saving… while the change is sent");
+      await row.getByRole("button", { name: /^Mark fulfilled:/ }).waitFor({ timeout: 10000 });
+      await page.waitForFunction((n) => ![...document.querySelectorAll("li")].some((li) => li.textContent?.includes(n) && li.querySelector("button[aria-busy='true']")), name, { timeout: 10000 });
+    } finally {
+      await page.close().catch(() => {});
+      if (createdId) await request.delete(BASE + `/api/wheels/${createdId}?hard=1`).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+    }
+  });
+
+  await step("b7 PR-13: a link can be given an expiry and made permanent again from the fan sheet", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const name = `b7 expiry ${randomUUID().slice(0, 6)}`;
+    const fan = await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins: 2 } }), "create fan");
+    const links = (data) => request.post(BASE + `/api/fans/${fan.fanId}/links`, { data: { token: fan.token, ...data } });
+    const pass = async () => (await json(await request.get(BASE + `/api/fans/${fan.fanId}`), "fan detail")).passes?.[0];
+    try {
+      assert((await pass()).expiresAt === null, "a fresh link never expires");
+      assert((await links({ expiresAt: new Date(Date.now() - 60_000).toISOString() })).status() === 400, "an expiry in the past is refused");
+      assert((await links({ expiresAt: new Date(Date.now() + 400 * 86_400_000).toISOString() })).status() === 400, "an expiry over a year out is refused");
+      assert((await links({ expiresAt: "soon" })).status() === 400, "an expiry that is no date is refused");
+      assert((await links({})).status() === 400, "a body with neither field is refused");
+
+      await goto(page, `/dashboard?section=fans&fan=${encodeURIComponent(fan.fanId)}`, 1200);
+      const expiry = page.getByTestId("link-expiry").first();
+      await expiry.waitFor({ timeout: 10000 });
+      assert(/Never expires/.test(await expiry.innerText()), "the sheet says the link never expires");
+      await expiry.getByRole("combobox").selectOption("7");
+      await page.getByTestId("toast").filter({ hasText: /stops working in 7 days/ }).first().waitFor({ timeout: 10000 });
+      const set = (await pass()).expiresAt;
+      const days = (Date.parse(set) - Date.now()) / 86_400_000;
+      assert(days > 6.9 && days < 7.1, `the link expires in seven days (${days.toFixed(2)})`);
+      await page.waitForFunction(() => /Expires/.test(document.querySelector("[data-testid='link-expiry']")?.textContent ?? ""), null, { timeout: 10000 });
+      assert((await request.get(BASE + `/spin/${fan.token}`)).status() === 200, "a link with a future expiry still opens");
+      await expiry.getByRole("combobox").selectOption("never");
+      await page.getByTestId("toast").filter({ hasText: /no longer expires/ }).first().waitFor({ timeout: 10000 });
+      assert((await pass()).expiresAt === null, "Never clears the expiry");
+    } finally {
+      await page.close().catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+    }
+  });
+
+  await step("b7 WG-18: Admin searches its accounts, shows how long a request has waited and names the build", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    try {
+      await goto(page, "/dashboard?section=admin", 1500);
+      const count = page.getByTestId("admin-accounts-count");
+      await count.waitFor({ timeout: 10000 });
+      const total = Number((await count.innerText()).match(/(\d+) total/)?.[1]);
+      assert(total > 0, "the accounts header counts every account");
+      const search = page.getByTestId("admin-accounts-search");
+      await search.fill("zz-no-such-account");
+      await page.getByTestId("admin-accounts-none").waitFor({ timeout: 5000 });
+      assert(new RegExp(`^0 of ${total}$`).test((await count.innerText()).trim()), "the count reads 0 of the total");
+      await search.fill("");
+      await page.getByTestId("admin-accounts-none").waitFor({ state: "detached", timeout: 5000 });
+      const ages = page.getByTestId("request-age");
+      if (await ages.count()) {
+        const text = await ages.first().innerText();
+        assert(/^Asked /.test(text), `a request says when it was asked (${text})`);
+        assert(["true", "false"].includes(await ages.first().getAttribute("data-overdue")), "each request is marked overdue or not");
+      }
+      const build = page.getByTestId("build-commit");
+      await build.waitFor({ timeout: 10000 });
+      assert(/^Build: \S+/.test((await build.innerText()).trim()), "System health names the deployed build");
+    } finally {
+      await page.close().catch(() => {});
+    }
+  });
+
+  await step("b7 PA-01 + PA-12 + WC-18/19/23/30: a too-dark brand colour is refused; skip link, field errors, slug hint and the discard list", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const profile = await json(await request.get(BASE + "/api/public-profile"), "read profile");
+    try {
+      const dark = await request.put(BASE + "/api/account/brand-color", { data: { color: "#050505" } });
+      assert(dark.status() === 400 && (await dark.json()).error === "brand_too_dark", "the route refuses a colour that cannot be read on the dark dashboard");
+
+      await goto(page, "/dashboard?section=settings", 1500);
+      // PA-12: the first Tab stop is the skip link, and it lands on the content.
+      await page.keyboard.press("Tab");
+      const skip = page.getByTestId("skip-to-content");
+      assert(await skip.evaluate((el) => el === document.activeElement), "the skip link is the first Tab stop");
+      await page.keyboard.press("Enter");
+      assert(await page.evaluate(() => location.hash === "#dash-content" && !!document.getElementById("dash-content")), "it jumps to the content");
+
+      // WC-18: a password problem is said under its field, as an alert, with no error toast.
+      const security = page.locator("div").filter({ has: page.getByRole("button", { name: "Update password" }) }).last();
+      await security.getByLabel("Current password").fill("whatever-1");
+      await security.getByLabel("New password").fill("longenough-1");
+      await security.getByLabel("Confirm new").fill("different-1");
+      await security.getByRole("button", { name: "Update password" }).click();
+      const fieldError = security.getByTestId("field-error");
+      await fieldError.waitFor({ timeout: 5000 });
+      assert(/don.t match/.test(await fieldError.innerText()) && (await fieldError.getAttribute("role")) === "alert", "the mismatch is an alert under the field");
+      assert((await page.locator('[data-testid="toast"][data-tone="error"]').count()) === 0, "no error toast for a field problem");
+      await security.getByLabel(/^Confirm new/).fill("longenough-1x");
+      await fieldError.waitFor({ state: "detached", timeout: 5000 });
+
+      // WC-30: the handle field says what a save stores and what it breaks.
+      const pub = page.locator('section[aria-labelledby="settings-public"]');
+      const handle = pub.getByPlaceholder("your-name");
+      const hint = page.getByTestId("public-slug-hint");
+      await handle.fill("B7 New Name");
+      await page.waitForFunction(() => /Will be saved as/.test(document.querySelector("[data-testid='public-slug-hint']")?.textContent ?? ""), null, { timeout: 5000 });
+      assert((await hint.innerText()).includes("/c/b7-new-name"), "the stored form is previewed");
+      if (profile.slug) assert((await page.getByTestId("public-slug-retires").innerText()).includes(`/c/${profile.slug}`), "the link that would stop working is named");
+      await handle.fill("Walk Creator!!");
+      await page.waitForFunction(() => /letters, numbers/.test(document.querySelector("[data-testid='public-slug-hint']")?.textContent ?? ""), null, { timeout: 5000 });
+      assert((await handle.getAttribute("aria-invalid")) === "true", "a handle the save would refuse is marked invalid while typing");
+
+      // WC-19: with three unsaved forms the leave dialog lists them.
+      await page.getByLabel("Display name").fill(`b7 name ${Date.now().toString(36)}`);
+      await page.getByLabel("New email").fill("b7-nobody@example.com");
+      await page.locator(NAV_ITEMS).filter({ hasText: /^Today/ }).first().click();
+      const list = page.getByTestId("discard-list");
+      await list.waitFor({ timeout: 5000 });
+      assert((await list.locator("li").count()) >= 3, "the unsaved forms are listed one per line");
+      await page.getByRole("dialog").getByRole("button", { name: /Discard/ }).first().click();
+      await list.waitFor({ state: "detached", timeout: 5000 });
+      assert((await json(await request.get(BASE + "/api/public-profile"), "re-read profile")).slug === profile.slug, "nothing was saved");
+    } finally {
+      await page.close().catch(() => {});
     }
   });
 }
