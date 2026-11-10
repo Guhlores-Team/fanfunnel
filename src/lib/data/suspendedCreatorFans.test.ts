@@ -180,7 +180,7 @@ async function main() {
   // --- Supabase path ----------------------------------------------------------------
   useSupabase = true;
   const live = {
-    creator_id: "c1", campaign_id: null, wheel_id: "w1", fan_id: "f1", expires_at: null,
+    creator_id: "c1", campaign_id: null, wheel_id: "w1", fan_id: "f1", is_active: true, expires_at: null,
     creator: { is_active: true, approval_status: "approved", role: "creator" } as Record<string, unknown> | null,
     fan: { id: "f1", spins_remaining: 2, spins_granted_total: 3, blocked_at: null, break_until: null,
       acked_at: "2026-10-29T00:00:00Z", acked_terms_version: LEGAL.version },

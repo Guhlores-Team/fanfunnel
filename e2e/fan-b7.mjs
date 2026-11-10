@@ -426,12 +426,20 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         if (r.status() === 429) cut = true;
       }
       assert(cut, "random tokens from one address are cut off");
-      const page = await request.get(`${BASE}/spin/${fan.token}`, { headers: { "x-real-ip": addr } });
-      const html = await page.text();
-      assert(html.includes('data-testid="link-attempts-blocked"') && html.includes("Too many link attempts"), `the real link shows the busy page from that address (${page.status()})`);
-      assert(!html.includes("fan-spin") && !html.includes("Before you play"), "no game is served to the blocked address");
-      const fine = await request.get(`${BASE}/spin/${fan.token}`);
-      assert(fine.status() === 200 && (await fine.text()).includes('data-testid="fan-spin"'), "another address is unaffected");
+      // ATK-04: the lookup always runs, so a real link still opens from that
+      // address (fans behind one carrier address are not locked out together).
+      const real = await request.get(`${BASE}/spin/${fan.token}`, { headers: { "x-real-ip": addr } });
+      assert(real.status() === 200 && (await real.text()).includes('data-testid="fan-spin"'), `a real link still opens from the spent address (${real.status()})`);
+      // WF-03: a miss from it gets the honest page, not "mistyped link". The
+      // not-found page carries every explanation and shows one by its
+      // address, so the address the miss was sent to is what tells them apart.
+      const miss = await request.get(`${BASE}/spin/${randomBytes(24).toString("hex")}`, { headers: { "x-real-ip": addr } });
+      const html = await miss.text();
+      assert(miss.status() === 404 && /\/not-found\/busy\/\d+$/.test(new URL(miss.url()).pathname), `an unknown link from that address is sent to the busy page (${miss.status()} ${new URL(miss.url()).pathname})`);
+      assert(html.includes('data-testid="link-attempts-blocked"') && html.includes("Too many link attempts"), "the busy page says what happened");
+      assert(!html.includes("fan-spin") && !html.includes("Before you play"), "no game is served for a miss");
+      const fine = await request.get(`${BASE}/spin/${randomBytes(24).toString("hex")}`);
+      assert(fine.status() === 404 && /\/not-found\/spin\//.test(new URL(fine.url()).pathname), `a miss from another address is the ordinary not-found page (${new URL(fine.url()).pathname})`);
       const ackAddr = ip();
       let ackCut = null;
       for (let i = 0; i < 25; i++) {

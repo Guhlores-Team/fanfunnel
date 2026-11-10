@@ -4,6 +4,7 @@ import { buildCsp, createNonce, usesStrictCsp } from "@/lib/security/csp";
 import { isCrossOriginWrite } from "@/lib/security/sameOrigin";
 import { limitRoute } from "@/lib/api/limit";
 import { MAINTENANCE_HEADERS, maintenanceBlocksWrite, maintenanceOn } from "@/lib/ops/maintenance";
+import { tooManyRequestsPage } from "@/lib/api/tooManyPage";
 
 // Next 16 renamed the `middleware` file convention to `proxy` (same behavior).
 // This refreshes the Supabase session before the auth pages render. It runs
@@ -24,6 +25,13 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.json({ error: "bad_request" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
   const path = request.nextUrl.pathname;
+  // WA-08: a hand-made path such as `/\admin` (browsers never send one) is
+  // what the URL layer hands us as `//admin`: no route has an empty segment,
+  // and Vercel's routing of the built app answered such paths with an
+  // unmonitored 500. Refuse it like malformed encoding, before anything runs.
+  if (path.includes("//")) {
+    return NextResponse.json({ error: "bad_request" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+  }
   // I4: a cookie-carrying write to the API must come from this origin. Only
   // cookie-carrying /api requests reach here (matcher); they never refresh
   // the session here, so a slow Supabase can't delay the API.
@@ -43,8 +51,14 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   // per client like its API (the page itself can't answer 429).
   if (path.startsWith("/leaderboard/")) {
     const limited = await limitRoute(request, "leaderboard-page:GET", "public");
-    if (limited) limited.headers.set("Cache-Control", "no-store");
-    return limited ?? NextResponse.next();
+    if (!limited) return NextResponse.next();
+    // WF-05: a fan asked for a PAGE; raw JSON is not an answer. Same status and
+    // Retry-After as the API, as a branded "try again in N s" page.
+    const retryAfter = limited.headers.get("Retry-After") ?? "60";
+    return new NextResponse(tooManyRequestsPage(Number(retryAfter)), {
+      status: 429,
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Retry-After": retryAfter },
+    });
   }
   if (!needsSessionRefresh(path)) return NextResponse.next();
   if (!usesStrictCsp(path)) return await updateSession(request);
@@ -71,6 +85,8 @@ export const config = {
   // Must be literals: Next reads these statically.
   matcher: [
     "/(.*%.*)",
+    "/(/.*)",
+    "/(.*//.*)",
     { source: "/api/:path*", has: [{ type: "header", key: "cookie" }] },
     "/leaderboard/:path*",
     "/dashboard/:path*",

@@ -1,13 +1,15 @@
 import assert from "node:assert";
 import { NextResponse } from "next/server";
 import { withFanToken } from "./fanToken";
-import { FAN_MISS_LIMIT, resetFanMissBlocks, withFanMissLimit } from "./fanMiss";
+import { FAN_MISS_LIMIT, fanTokenKnownGood, noteFanMiss, resetFanMissBlocks, withFanMissLimit } from "./fanMiss";
 import { ROUTE_TIERS } from "./limit";
 import { ROUTE_TIERS as TIERS } from "./routeTiers";
 
 // C2 (batch 6 attack audit): fan routes key their limit on the token, so a
 // fresh random token per request was never limited. Lookups that MISS (404)
 // are now capped per address at the public tier; a hit is never counted.
+// ATK-04 (batch 7): the cap never refuses a request BEFORE its lookup, so a
+// valid token behind a hostile NAT neighbour's address still works.
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -40,7 +42,17 @@ async function main() {
   check("…then 429 with a fresh random token", statuses.at(-1) === 429);
   const before = lookups;
   const blocked = await post("10.9.0.1", rnd());
-  check("a blocked address is refused before any lookup", blocked.status === 429 && lookups === before && Number(blocked.headers.get("Retry-After")) >= 1);
+  check("ATK-04: an over-budget address's next miss is refused AFTER its lookup (never before)", blocked.status === 429 && lookups === before + 1 && Number(blocked.headers.get("Retry-After")) >= 1);
+  // The hostile neighbour's address is over budget; a real fan behind the same
+  // address still spins, acks and chats.
+  let neighbour = true;
+  for (let i = 0; i < 20; i++) neighbour &&= (await post("10.9.0.1", KNOWN)).status === 200;
+  check("ATK-04: a valid token behind an over-budget address still works", neighbour);
+  check("…and is remembered as known-good (digest only)", fanTokenKnownGood(KNOWN));
+  check("…while the address's misses stay refused", (await post("10.9.0.1", rnd())).status === 429);
+  const lookupsBefore = lookups;
+  check("a known-good token still runs its lookup (the cache spares only the bookkeeping)", (await post("10.9.0.1", KNOWN)).status === 200 && lookups === lookupsBefore + 1);
+  check("a repeat miss from an over-budget address is answered from this instance's memory", (await noteFanMiss("10.9.0.1")).over);
 
   // Another address is untouched.
   check("another address still gets its 404", (await post("10.9.0.2", rnd())).status === 404);
@@ -79,9 +91,12 @@ async function main() {
     check(`${f}: every handler runs under withFanMissLimit`, handlers > 0 && (src.match(/withFanMissLimit\(req,/g) ?? []).length === handlers);
   }
   const page = readFileSync(new URL("src/app/spin/[token]/page.tsx", root), "utf8");
-  // WF-03 / WA-02: a blocked address gets the honest "too many attempts" page,
-  // a dead link the branded 404; both before/without any further lookup.
-  check("/spin/<token> checks the block before its lookup and counts a miss", /missBlocked\(\)\) linkAttemptsBlocked\(await blockedForMs\(\)\);\s*(?:\/\/[^\n]*\n\s*)*const pass = \(await expired\(token\)\) \? null : await getFanPass/.test(page) && page.includes("await noteFanMiss(") && /noteFanMiss\(await visitorIp\(\)\);\s*linkNotFound\("spin", token\);/.test(page));
+  check("/spin/<token> never refuses before its lookup and counts only a genuine miss", !/missBlocked|fanMissBlockedFor/.test(page) && page.includes("await noteFanMiss(") && page.indexOf("await getFanPass(") < page.indexOf("await noteFanMiss("));
+  const fanToken = readFileSync(new URL("src/lib/api/fanToken.ts", root), "utf8");
+  check("withFanToken hands the token to the miss budget so hits are remembered", /\}, token\);/.test(fanToken));
+  // WF-03 / WA-02: an over-budget address's miss gets the honest "too many
+  // attempts" page, any other miss the branded 404; both after the lookup.
+  check("/spin/<token> sends an over-budget miss to the busy page, else to the branded 404", /const \{ over, retryAfter \} = await noteFanMiss\(await visitorIp\(\)\);\s*if \(over\) linkAttemptsBlocked\(retryAfter\);\s*linkNotFound\("spin", token\);/.test(page));
 
   console.log(`fanMiss.test: ${passed} checks passed`);
 }

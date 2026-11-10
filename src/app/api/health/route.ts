@@ -18,8 +18,10 @@ export async function GET(req: Request) {
     limited.headers.set("Cache-Control", "no-store");
     return limited;
   }
-  if (!isSupabaseConfigured()) return reply({ ok: true, mode: "demo" }, 200);
   try {
+    // OPS3-01: a misconfigured Production (isSupabaseConfigured throws when a
+    // required key is missing) is "down" to the monitor: 503, never a 500.
+    if (!isSupabaseConfigured()) return reply({ ok: true, mode: "demo" }, 200);
     const { error } = await createServiceClient().rpc("schema_version").abortSignal(AbortSignal.timeout(HEALTH_TIMEOUT_MS));
     return error ? reply({ ok: false }, 503) : reply({ ok: true }, 200);
   } catch {

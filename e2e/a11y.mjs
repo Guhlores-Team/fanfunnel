@@ -27,6 +27,7 @@ import { safetyA11yStates } from "./safety-a11y.mjs";
 import { qaB5A11yStates } from "./qa-b5.mjs";
 import { fanDevicesA11yStates } from "./fan-devices.mjs";
 import { fanB7A11yStates } from "./fan-b7.mjs";
+import { trustB7A11yStates } from "./trust-b7.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -359,6 +360,7 @@ const PAGES = [
   ...fanDevicesA11yStates(),
   // b7: the in-app hint, the legal sheet over the gate, the spin cooldown.
   ...fanB7A11yStates(),
+  ...trustB7A11yStates(DASH_ADVISORY), // TS-06: the announced Terms change on fan pages and the dashboard, and the admin card
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
   // b7 auth: the Continue landing page, the failed-link and suspended notices,

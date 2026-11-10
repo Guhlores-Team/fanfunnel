@@ -52,6 +52,10 @@ export function parseClientReport(raw: unknown): ClientReport | null {
 export function isNoise(message: string, stack?: string | null): boolean {
   if (/^(uncaught\s+)?script error\.?$/i.test(message.trim())) return true;
   if (/ResizeObserver loop/i.test(message)) return true;
+  // WA-03: Vercel's Preview toolbar (vercel.live) is blocked by the CSP on
+  // purpose; every anonymous Preview view reported it, filling Admin › Errors
+  // and spending the browser alert budget on a non-error.
+  if (/CSP blocked .*vercel\.live/i.test(message) || /^CSP blocked script-src(?:-elem)?: https:\/\/vercel\.live\b/i.test(message)) return true;
   const where = `${message}\n${stack ?? ""}`;
   return /\b(?:chrome|moz|safari(?:-web)?)-extension:\/\//i.test(where);
 }

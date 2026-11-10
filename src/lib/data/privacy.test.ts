@@ -168,9 +168,17 @@ async function main() {
   check("a malformed token never reaches the database", (await exportFanData("../../etc")) === null);
 
   // ---------------- fan delete ----------------
+  // ATK-01 (widened): fan A's win s1 still has a pending redemption, so the
+  // fan (or a creator holding the token) cannot erase the fan yet.
+  svc.statements.length = 0;
+  const owed = await deleteFanData("tokA1aaaaaaa");
+  check("a fan who is owed a prize is not deleted: prize_owed", "error" in owed && owed.error === "prize_owed");
+  check("…and nothing was deleted or tombstoned", svc.statements.every((s) => s.op !== "delete") && svc.rows("link_tombstones").length === 0 && svc.rows("fans").some((f) => f.id === "fanA"));
+  check("…the owed check is pinned to fan A + creator A", svc.statements.some((s) => s.table === "spins" && eqValue(s, "fan_id") === "fanA" && eqValue(s, "creator_id") === CA) && svc.statements.some((s) => s.table === "redemptions" && eqValue(s, "creator_id") === CA && s.filters.some((f) => f.col === "status" && f.kind === "in" && JSON.stringify(f.value) === '["pending","in_progress"]')));
+  svc.rows("redemptions").find((r) => r.spin_id === "s1")!.status = "fulfilled";
   svc.statements.length = 0;
   const del = await deleteFanData("tokA1aaaaaaa");
-  check("delete ok, reports spins kept", "ok" in del && del.spinsKept === 1);
+  check("delete ok once the prize is settled, reports spins kept", "ok" in del && del.spinsKept === 1);
   const fanDeletes = svc.statements.filter((s) => s.op === "delete");
   check("exactly one delete, on fans, for fan A of creator A", fanDeletes.length === 1 && fanDeletes[0].table === "fans" && eqValue(fanDeletes[0], "id") === "fanA" && eqValue(fanDeletes[0], "creator_id") === CA);
   check("the other fans are untouched", svc.rows("fans").map((f) => f.id).sort().join() === "fanA2,fanB");

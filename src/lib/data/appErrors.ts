@@ -9,6 +9,13 @@ import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/s
 import { APP_ERRORS_MAX_ROWS, type ErrorEnvironment, type ErrorSource } from "@/lib/monitoring/config";
 import type { RecordOutcome } from "@/lib/monitoring/alert";
 
+/**
+ * RS-03: the server-error capture is awaited inside the failing request, so
+ * its own database calls must be bounded or a hung database would also hang
+ * every error response. Well under the 8 s alert e-mail timeout.
+ */
+export const APP_ERROR_DB_TIMEOUT_MS = 5_000;
+
 export interface AppErrorRow {
   id: string;
   fingerprint: string;
@@ -210,7 +217,7 @@ export async function recordAppError(
   maxRows: number = APP_ERRORS_MAX_ROWS,
 ): Promise<RecordOutcome | null> {
   if (!isSupabaseConfigured()) return memRecord(input, maxRows);
-  const { data, error } = await createServiceClient().rpc("record_app_error", {
+  const { data, error } = await createServiceClient({ timeoutMs: APP_ERROR_DB_TIMEOUT_MS }).rpc("record_app_error", {
     p_fingerprint: input.fingerprint,
     p_environment: input.environment,
     p_source: input.source,
@@ -234,7 +241,7 @@ export async function claimAppErrorAlert(
   errorId?: string,
 ): Promise<AlertClaim> {
   if (!isSupabaseConfigured()) return memClaim(limit, errorId);
-  const { data, error } = await createServiceClient().rpc("claim_app_error_alert", {
+  const { data, error } = await createServiceClient({ timeoutMs: APP_ERROR_DB_TIMEOUT_MS }).rpc("claim_app_error_alert", {
     p_limit: limit,
     p_error_id: errorId,
   });
@@ -254,7 +261,7 @@ export async function claimAppErrorAlert(
  */
 export async function releaseAppErrorAlert(alertId: string): Promise<boolean> {
   if (!isSupabaseConfigured()) return memRelease(alertId);
-  const { data, error } = await createServiceClient().rpc("release_app_error_alert", { p_alert: alertId });
+  const { data, error } = await createServiceClient({ timeoutMs: APP_ERROR_DB_TIMEOUT_MS }).rpc("release_app_error_alert", { p_alert: alertId });
   return !error && data === true;
 }
 

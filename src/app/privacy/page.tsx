@@ -147,6 +147,12 @@ const SECTIONS: LegalSection[] = [
             the date and time you confirmed you are 18 or older and agreed to the Terms, and which version of
             the Terms you agreed to;
           </li>
+          <li>
+            <strong>evidence of that confirmation:</strong> one-way scrambled (hashed) forms of the IP address
+            and the browser type the confirmation came from, and how many times you have confirmed. We cannot
+            turn them back into your address. The creator and their team can never see them; our admins can,
+            only to settle a dispute about who agreed;
+          </li>
           <li>your leaderboard choice and, if you opt in, the board name you pick;</li>
           <li>prizes you add to your wishlist;</li>
           <li>chat messages between you and the creator;</li>
@@ -245,7 +251,8 @@ const SECTIONS: LegalSection[] = [
           </li>
           <li>
             <strong>To prevent abuse and keep the Service secure</strong> (rate limits, blocks, reports, age
-            confirmation, error reports): our legitimate interests, and legal obligations where they apply.
+            confirmation and the evidence of it, error reports): our legitimate interests, and legal obligations
+            where they apply.
           </li>
           <li>
             <strong>To show you on a leaderboard:</strong> your consent, which you can withdraw at any time by
@@ -433,6 +440,10 @@ const SECTIONS: LegalSection[] = [
           reported account is deleted. The report then keeps only the creator&apos;s display name and public
           page name (never an e-mail address or a spin link). A suspended account, or one with a report
           under review, cannot close itself until the review is done.
+        </li>
+        <li>
+          <strong>Age and Terms confirmation evidence</strong> (the hashed IP address and browser type):
+          kept with the fan record it belongs to, and deleted with it.
         </li>
         <li>
           <strong>Check-ins, bingo cards, breaks and play reminders, Focus and Chase boosts and win-back records:</strong>{" "}

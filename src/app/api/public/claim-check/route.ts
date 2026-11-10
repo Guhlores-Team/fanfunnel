@@ -12,21 +12,25 @@ import type { ClaimCheckState } from "@/lib/fan/claimCheck";
 
 const SHARE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+// /api/public/* is outside the default `private, no-store` of the other API
+// routes (next.config.ts), so every answer here sets its own.
+const noStore = <R extends Response>(res: R): R => { res.headers.set("Cache-Control", "no-store"); return res; };
+
 export async function POST(req: Request) {
   const limited = await limitRoute(req, "public/claim-check:POST", "costly");
   const form = (req.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded");
   let shareId: unknown, code: unknown;
   if (form) {
     const data = await req.formData().catch(() => null);
-    if (!data) return badRequest();
+    if (!data) return noStore(badRequest());
     shareId = data.get("shareId");
     code = data.get("code");
   } else {
     const body = await parseJsonBody<{ shareId?: unknown; code?: unknown }>(req);
-    if (body === BAD_REQUEST) return badRequest();
+    if (body === BAD_REQUEST) return noStore(badRequest());
     ({ shareId, code } = body);
   }
-  if (typeof shareId !== "string" || !SHARE_ID.test(shareId)) return badRequest();
+  if (typeof shareId !== "string" || !SHARE_ID.test(shareId)) return noStore(badRequest());
 
   let state: ClaimCheckState;
   if (limited) state = "limited";
@@ -40,7 +44,7 @@ export async function POST(req: Request) {
     // it posted from, whatever host a proxy handed this function.
     return new NextResponse(null, { status: 303, headers: { Location: `/verify/${encodeURIComponent(shareId)}?claimed=${state}`, "Cache-Control": "no-store" } });
   }
-  if (limited) return limited;
+  if (limited) return noStore(limited);
   return NextResponse.json({ state }, { headers: { "Cache-Control": "no-store" } });
 }
 

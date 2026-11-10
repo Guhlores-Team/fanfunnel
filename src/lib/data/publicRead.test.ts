@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { mock } from "node:test";
 
 // OPS3-06: the public readers behind /share, /verify and /leaderboard tell a
-// failed database read (throw → the route's error.tsx) apart from a missing
+// failed database read (FanPassUnavailableError → the route's error.tsx) apart from a missing
 // row (null → the branded 404). Older-schema column misses still fall back.
 
 let passed = 0;
@@ -39,7 +39,7 @@ async function rejects(p: Promise<unknown>, name: string): Promise<boolean> {
 
 async function main() {
   const { getShareCard, getSpinVerification, getLeaderboard } = await import("./boosts");
-  const { readPublicCreator, PublicReadError } = await import("./publicCreatorRow");
+  const { readPublicCreator } = await import("./publicCreatorRow");
 
   // readPublicCreator: a missing row and a bad uuid are null; a failure throws.
   queue.push({ data: null, error: null });
@@ -47,7 +47,7 @@ async function main() {
   queue.push({ data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } });
   check("a non-uuid id → null (not an outage)", (await readPublicCreator({ from: query } as never, "nope", { by: "id" })) === null);
   queue.push({ data: null, error: DOWN });
-  check("a failed profile read throws PublicReadError", await rejects(readPublicCreator({ from: query } as never, PROFILE.id, { by: "id" }), "PublicReadError"));
+  check("a failed profile read throws FanPassUnavailableError", await rejects(readPublicCreator({ from: query } as never, PROFILE.id, { by: "id" }), "FanPassUnavailableError"));
   queue.push({ data: PROFILE, error: null });
   check("a public profile is returned", (await readPublicCreator({ from: query } as never, PROFILE.id, { by: "id" }))?.display_name === "Ada");
 
@@ -55,38 +55,37 @@ async function main() {
   queue.push({ data: null, error: null });
   check("share: unknown id → null", (await getShareCard("abc")) === null);
   queue.push({ data: null, error: DOWN });
-  check("share: failed read throws", await rejects(getShareCard("abc"), "PublicReadError"));
+  check("share: failed read throws", await rejects(getShareCard("abc"), "FanPassUnavailableError"));
   queue.push({ data: SPIN, error: null }, { data: PROFILE, error: null });
   check("share: a row renders", (await getShareCard("abc"))?.prizeLabel === "Sticker");
   queue.push({ data: SPIN, error: null }, { data: null, error: DOWN });
-  check("share: the creator read failing throws too", await rejects(getShareCard("abc"), "PublicReadError"));
+  check("share: the creator read failing throws too", await rejects(getShareCard("abc"), "FanPassUnavailableError"));
 
   // getSpinVerification: column misses fall back, outages throw.
   queue.push({ data: null, error: null });
   check("verify: unknown id → null", (await getSpinVerification("abc")) === null);
   queue.push({ data: null, error: DOWN });
-  check("verify: failed read throws", await rejects(getSpinVerification("abc"), "PublicReadError"));
+  check("verify: failed read throws", await rejects(getSpinVerification("abc"), "FanPassUnavailableError"));
   const missing = { code: "42703", message: "column spins.fair_trace does not exist" };
   calls.length = 0;
   queue.push({ data: null, error: missing }, { data: null, error: missing }, { data: null, error: null });
   check("verify: an older schema falls back twice then answers null", (await getSpinVerification("abc")) === null && calls.length === 3);
   queue.push({ data: null, error: missing }, { data: null, error: DOWN });
-  check("verify: an outage after a column fallback still throws", await rejects(getSpinVerification("abc"), "PublicReadError"));
+  check("verify: an outage after a column fallback still throws", await rejects(getSpinVerification("abc"), "FanPassUnavailableError"));
   queue.push({ data: { ...SPIN, kind: "bonus", parent_spin_id: "p", bingo_line: 1, server_seed: null, server_seed_hash: null }, error: null }, { data: PROFILE, error: null }, { data: null, error: DOWN });
-  check("verify: a bonus whose parent read fails throws", await rejects(getSpinVerification("abc"), "PublicReadError"));
+  check("verify: a bonus whose parent read fails throws", await rejects(getSpinVerification("abc"), "FanPassUnavailableError"));
 
   // getLeaderboard
   queue.push({ data: null, error: null });
   check("board: unknown creator → null", (await getLeaderboard(PROFILE.id)) === null);
   queue.push({ data: null, error: DOWN });
-  check("board: failed profile read throws", await rejects(getLeaderboard(PROFILE.id), "PublicReadError"));
+  check("board: failed profile read throws", await rejects(getLeaderboard(PROFILE.id), "FanPassUnavailableError"));
   queue.push({ data: { ...PROFILE, leaderboard_enabled: true }, error: null }, { data: null, error: DOWN, count: null });
   const boardErr = await getLeaderboard(PROFILE.id).then(() => null, (e: Error) => e);
   check("board: a failed fan read throws (CompleteReadError), never an empty board", boardErr?.name === "CompleteReadError");
   queue.push({ data: { ...PROFILE, leaderboard_enabled: true }, error: null }, { data: [], error: null, count: 0 });
   check("board: no opted-in fans → an open, empty board", (await getLeaderboard(PROFILE.id))?.entries.length === 0);
 
-  check("PublicReadError carries the cause", new PublicReadError("x", DOWN).cause === DOWN);
   console.log(`publicRead.test: ${passed} checks passed`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

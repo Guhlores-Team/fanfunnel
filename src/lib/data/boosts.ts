@@ -1,4 +1,5 @@
 import { readScopedRows, visitScopedRows } from "./readPages";
+import { FAN_READ_TIMEOUT_MS, FanPassUnavailableError, isMissingColumnError } from "./unavailable";
 import { MAX_COMBINED_BOOST } from "@/lib/focus/config";
 // Data layer — boosts: happy hours, share cards, provably-fair verification,
 // wishlists, the public leaderboard and the recent-wins ticker.
@@ -31,7 +32,7 @@ import {
 } from "./mock";
 import { resolveFanByToken } from "./fans";
 import { withdrawFanLeaderboardConsent } from "./privacy";
-import { PublicReadError, readFailed, readPublicCreator } from "./publicCreatorRow";
+import { readFailed, readPublicCreator } from "./publicCreatorRow";
 import { mockGetPublicProfileFields } from "./mockPublicProfile";
 
 const DEMO_CREATOR_ID = "demo-creator";
@@ -163,7 +164,7 @@ export async function getShareCard(
     .eq("share_id", shareId)
     .maybeSingle();
   // OPS3-06: a failed read is an error page, not "not found".
-  if (readFailed(error)) throw new PublicReadError("spins", error);
+  if (readFailed(error)) throw new FanPassUnavailableError("spins read failed");
 
   const row = data as unknown as {
     creator_id: string;
@@ -193,7 +194,6 @@ export async function getShareCard(
 
 // Postgres "undefined_column": the only read failure that means an older
 // schema rather than a database outage.
-const MISSING_COLUMN = "42703";
 
 /**
  * The fairness data for a single spin, keyed by its non-secret share_id. Reveals
@@ -207,7 +207,10 @@ export async function getSpinVerification(
 ): Promise<SpinVerification | null> {
   if (!isSupabaseConfigured()) return mockGetSpinVerification(shareId);
 
-  const sb = createServiceClient();
+  // OPS3-02/06: every read aborts after FAN_READ_TIMEOUT_MS, and a fault (a
+  // timeout, an outage) throws so the page shows "temporarily unavailable"
+  // instead of "nothing to verify". Only a genuinely missing column falls back.
+  const sb = createServiceClient({ timeoutMs: FAN_READ_TIMEOUT_MS });
   const SELECT =
     "creator_id, prize_label, prize_rarity, server_seed, server_seed_hash, nonce, client_seed, created_at";
   let res = await sb
@@ -216,14 +219,14 @@ export async function getSpinVerification(
     .eq("share_id", shareId)
     .maybeSingle();
   // Pre-0047 DB (no fairness-v3 columns yet): every spin verifies as v1/v2.
-  if (res.error?.code === MISSING_COLUMN) {
+  if (res.error && isMissingColumnError(res.error)) {
     res = await sb.from("spins").select(`${SELECT}, seed_commitment`).eq("share_id", shareId).maybeSingle();
   }
   // Pre-0041 DB (no seed_commitment column yet): read the rest; the commitment
   // is then unknown, which the page states rather than claiming more.
-  if (res.error?.code === MISSING_COLUMN) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
+  if (res.error && isMissingColumnError(res.error)) res = await sb.from("spins").select(SELECT).eq("share_id", shareId).maybeSingle();
   // OPS3-06: any other failure is the database, not a missing spin.
-  if (readFailed(res.error)) throw new PublicReadError("spins", res.error);
+  if (readFailed(res.error)) throw new FanPassUnavailableError("spins read failed");
 
   const row = res.data as {
     creator_id: string;
@@ -251,7 +254,7 @@ export async function getSpinVerification(
   if(row.kind === "bonus") {
     if(!row.parent_spin_id || !Number.isInteger(row.bingo_line) || row.bingo_line!<0 || row.bingo_line!>7)return null;
     const {data:parent,error}=await sb.from("spins").select("share_id,kind").eq("id",row.parent_spin_id).maybeSingle();
-    if(readFailed(error))throw new PublicReadError("spins",error);
+    if(readFailed(error))throw new FanPassUnavailableError("spins read failed");
     if(!parent?.share_id||parent.kind!=="play")return null;
     return {prizeLabel:row.prize_label,rarity:row.prize_rarity,at:row.created_at,serverSeed:"",serverSeedHash:"",nonce:0,hashOk:false,
       parent:{shareId:parent.share_id,line:row.bingo_line!,prizeId:row.prize_id??null}};
@@ -448,7 +451,9 @@ export async function getLeaderboard(
   }
   const cutoff = new Date().toISOString();
 
-  const sb = createServiceClient();
+  // OPS3-02/06: bounded reads; a fault throws (the page's error boundary),
+  // only an unknown or non-public creator is "no board" (null).
+  const sb = createServiceClient({ timeoutMs: FAN_READ_TIMEOUT_MS });
   // Accept either a UUID id or a public_slug, so the shareable URL can be
   // /leaderboard/<slug> (pretty) or /leaderboard/<uuid> (internal).
   const prof = await readPublicCreator<{ leaderboard_enabled: boolean }>(sb, creatorIdOrSlug, {

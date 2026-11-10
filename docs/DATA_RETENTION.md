@@ -18,6 +18,7 @@ storage work uses `COMPLETED_STORAGE_WORK_DAYS` in `src/lib/storage/work.ts`.
 | Error reports an admin marked resolved | `app_errors` | **90 days** after `resolved_at` | resolved and older than the period; unresolved reports are never auto-deleted |
 | Creator service authorization contexts | `creator_actor_contexts` | **60 seconds maximum** | expired rows are removed on the next mint or retention cleanup; at most32 live contexts per actor; Auth session/account deletion cascades |
 | Declined, revoked and expired agency invitations | `org_invites` | **90 days** after sending (declined/revoked), or after deadline (expired) | expired pending rows are also pruned; accepted consent records follow account lifecycle |
+| Declined creator access requests and the applicant's account | `creator_applications`, then the account (profile, sign-in, stored files) | **90 days** after the request is declined (`DECLINED_ACCESS_REQUEST_DAYS` in `src/lib/privacy/retention.ts`) | the nightly cleanup deletes the request (migration 0073) and hands the applicant's account to the same durable account deletion a self-close uses (`src/lib/account/declinedApplicants.ts`). An applicant approved since, an admin, or an account that holds an agency seat or owns an agency is never deleted by age; an account the database refuses (suspended, open safety report) is alerted for an admin. The applicant can delete both at any time from `/pending` ("Delete my request and account") |
 | Fan visit check-ins (the days a fan opened their link, for the visit glow) | `fan_checkins` | **90 days** | older than the period; the glow reads back at most 59 days |
 | Finished spin attempts | `spin_attempts` | **90 days** after the attempt finished | the prepared play context (seed, prize pool, reward hints) and the link's hash are cleared from committed and declined attempts; declined attempts (no spin, no credit used) are deleted. Committed attempts keep their short record; pending attempts are never touched |
 | Settled grant/import request records (retry protection) | `creator_request_journal` | **90 days** after the request settled | settled only; pending requests are kept. The grants and fans a request created are business records and stay |
@@ -29,12 +30,6 @@ storage work uses `COMPLETED_STORAGE_WORK_DAYS` in `src/lib/storage/work.ts`.
 
 `app_errors` arrives with migration 0053. Until that table exists the cleanup
 skips it and reports `app_errors: null`; nothing fails.
-
-### Promised, not yet automated
-
-| Record | Kept for | Status |
-| --- | --- | --- |
-| Declined creator access requests (`creator_applications` and the applicant's account) | **90 days** after the request is declined (`DECLINED_ACCESS_REQUEST_DAYS` in `src/lib/privacy/retention.ts`) | The Privacy Policy states this period. `run_retention_cleanup` does not delete them yet: that needs a migration (owned by the DB branch). Until then an admin deletes them by hand, and the applicant can delete the request and account themselves from `/pending` ("Delete my request and account"). |
 
 ### Undefined: chat messages (TS-19)
 

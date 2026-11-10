@@ -36,9 +36,17 @@ import { EXPORT_PAGE_SIZE, EXPORT_ROW_CAP, exportStatus, safeExportValue } from 
 import { publicCreatorName } from "@/lib/publicCreator";
 import { exportDelivery } from "@/lib/fan/delivery";
 import { claimCodeFor } from "@/lib/rewards/claimCode";
+import { creatorCanHostPlay } from "./creatorPlayable";
+import { fanLinkExpired, FAN_READ_TIMEOUT_MS } from "./unavailable";
 
 type Svc = ReturnType<typeof createServiceClient>;
-export type FanLinkStatus = "creator_closed" | "fan_deleted";
+/**
+ * Why a link no longer opens: the creator closed their account (tombstone),
+ * the fan deleted their data (tombstone), or the creator's account is
+ * suspended, deactivated or not approved right now (WC-13: the link is
+ * closed, nothing was deleted, the fan's wins stay recorded).
+ */
+export type FanLinkStatus = "creator_closed" | "fan_deleted" | "creator_paused";
 
 /** Tokens are opaque random strings; anything else is refused before any read. */
 export function isPlausibleToken(token: unknown): token is string {
@@ -151,13 +159,27 @@ const num = (value: unknown): number => typeof value === "number" && Number.isFi
 export async function getFanLinkStatus(token: string): Promise<FanLinkStatus | null> {
   if (!isPlausibleToken(token)) return null;
   if (!isSupabaseConfigured()) return mockGetFanLinkStatus(token);
-  const { data } = await createServiceClient()
+  const svc = createServiceClient({ timeoutMs: FAN_READ_TIMEOUT_MS });
+  const { data } = await svc
     .from("link_tombstones")
     .select("reason")
     .eq("token_hash", await tokenHash(token))
     .maybeSingle();
   const reason = (data as { reason?: string } | null)?.reason;
-  return reason === "creator_closed" || reason === "fan_deleted" ? reason : null;
+  if (reason === "creator_closed" || reason === "fan_deleted") return reason;
+  // WC-13: a live link whose creator cannot host play right now (suspended,
+  // deactivated, unapproved) is "closed", not "unknown": the fan page says so
+  // instead of a bare 404 that looks like a typo. Service read, pinned to the
+  // token; only the creator's standing is selected.
+  const { data: pass } = await svc
+    .from("fan_passes")
+    .select("expires_at, creator:profiles(is_active, approval_status, role)")
+    .eq("token", token)
+    .eq("is_active", true)
+    .maybeSingle();
+  const row = pass as { expires_at?: string | null; creator?: { is_active?: boolean | null; approval_status?: string | null; role?: string | null } | null } | null;
+  // PR-13: an expired link is over for good, so it is never "closed right now".
+  return row && !fanLinkExpired(row.expires_at) && !creatorCanHostPlay(row.creator) ? "creator_paused" : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,15 +300,11 @@ export async function deleteFanData(
   if (!who) return { error: "not_found" };
   const { fanId, creatorId } = who;
 
-  // ATK-01 (widened): a prize still owed to this fan would vanish with the
-  // fan row (its redemption cascades); the fan is told to settle it first.
-  const { count: owed, error: owedError } = await svc
-    .from("redemptions")
-    .select("id", { count: "exact", head: true })
-    .eq("fan_id", fanId)
-    .in("status", ["pending", "in_progress"]);
-  if (owedError) return { error: "db_error" };
-  if ((owed ?? 0) > 0) return { error: "prize_owed" };
+  // ATK-01 (widened): a fan who is still owed a prize cannot be erased, by
+  // anyone holding the token: deleting the fans row scrubs the redemption's
+  // delivery notes and due date (0072), so the prize could never be delivered.
+  // The fan (or the creator) settles the redemption first.
+  if (await prizeOwed(svc, fanId, creatorId)) return { error: "prize_owed" };
 
   const [{ data: passRows }, { count }] = await Promise.all([
     svc.from("fan_passes").select("token").eq("fan_id", fanId).eq("creator_id", creatorId),
@@ -324,6 +342,17 @@ export async function deleteFanData(
     if (r.error) console.error("deleteFanData: follow-up write failed", r.error.message);
   }
   return { ok: true, spinsKept };
+}
+
+/** True when any of this fan's wins with this creator still has a prize to deliver (pending or in progress). */
+async function prizeOwed(svc: Svc, fanId: string, creatorId: string): Promise<boolean> {
+  const { data: spins, error } = await svc.from("spins").select("id").eq("fan_id", fanId).eq("creator_id", creatorId).limit(1000);
+  if (error) return true; // fail closed: never erase what could not be checked
+  const ids = ((spins ?? []) as { id: string }[]).map((s) => s.id);
+  if (ids.length === 0) return false;
+  const { count, error: redemptionError } = await svc.from("redemptions").select("id", { count: "exact", head: true }).eq("creator_id", creatorId).in("status", ["pending", "in_progress"]).in("spin_id", ids);
+  if (redemptionError) return true;
+  return (count ?? 0) > 0;
 }
 
 // ---------------------------------------------------------------------------

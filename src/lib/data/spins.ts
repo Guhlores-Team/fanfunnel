@@ -8,7 +8,9 @@ import { mockReadSpinAttempt } from "./mock";
 // entry point (every credited play commits through the 0059 attempt ledger
 // in ./spinAttempts: one prepare, one commit, no split writes) and minting
 // passes. The pre-0059 claim/record/stock path is gone; its RPCs are revoked.
+import { cache } from "react";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import { FAN_PAGE_DEADLINE_MS, FAN_READ_TIMEOUT_MS, FanPassUnavailableError, SPIN_RPC_TIMEOUT_MS, fanLinkExpired, withFanDeadline } from "./unavailable";
 import { normalizeClientSeed } from "@/lib/games/wheel/fairness";
 import type { Rarity, SpinResult } from "@/lib/games/wheel/types";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -38,71 +40,87 @@ import { claimCodeFor } from "@/lib/rewards/claimCode";
 // configured, so local dev and previews work with zero setup.
 // ---------------------------------------------------------------------------
 
-/** A transient database fault while reading a fan link: the page must retry, not 404. */
-export class FanPassUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "FanPassUnavailableError";
-  }
-}
+export { FanPassUnavailableError } from "./unavailable";
+
+/** The active fan_passes row behind a link, with the fan and creator embeds every fan surface needs. */
+export type FanPassRow = {
+  id: string;
+  creator_id: string;
+  campaign_id: string | null;
+  wheel_id: string;
+  pinned_wheel_id?: string | null; // per-fan game pin (migration 0065)
+  expires_at?: string | null; // PR-13 (0073): null = never
+  fan_id: string;
+  spins_remaining: number;
+  next_server_seed_hash: string | null;
+  fan: {
+    id: string;
+    display_name: string | null;
+    handle: string | null;
+    spins_remaining: number;
+    spins_granted_total: number;
+    referral_code: string | null;
+    acked_at: string | null;
+    acked_terms_version?: string | null;
+    leaderboard_opt_in?: boolean | null;
+    blocked_at?: string | null;
+  } | null;
+  creator: {
+    display_name: string | null;
+    tip_url: string | null;
+    leaderboard_enabled: boolean | null;
+    creator_note: string | null;
+    avatar_url: string | null;
+    pwa_icon_mode?: string | null;
+    is_active?: boolean | null;
+    approval_status?: string | null;
+    role?: string | null;
+  } | null;
+};
+
+/** The fan-path service client: every call aborts after FAN_READ_TIMEOUT_MS. */
+const fanReadClient = () => createServiceClient({ timeoutMs: FAN_READ_TIMEOUT_MS });
 
 /**
- * The fan's pass view, or null when no active link matches. Throws
- * {@link FanPassUnavailableError} on a database fault so a transient outage
- * reaches the error boundary (retryable) instead of rendering "link not found".
+ * OPS3-02: the ONE fan_passes read per request. The spin page's metadata,
+ * viewport, page and manifest/icon all resolve the same link; React's cache()
+ * dedupes them within a request (outside a request it is a plain call). The
+ * per-pass balance (0020) and the commit-reveal hash (0022) are part of every
+ * deployed schema: a failing select (or one past its deadline) is a transient
+ * fault, never a missing column. Surfacing it (the error boundary offers a
+ * retry) beats degrading to "link not found" or to a stale aggregate balance.
  */
-export async function getFanPass(token: string): Promise<FanPassView | null> {
-  if (!isSupabaseConfigured()) return mockGetFanPass(token);
-
-  const sb = createServiceClient();
+export const readFanPassRow = cache(async (token: string): Promise<{ sb: ReturnType<typeof createServiceClient>; pass: FanPassRow | null }> => {
+  const sb = fanReadClient();
   const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in, blocked_at)`;
-  const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url, is_active, approval_status, role)`;
-  // The per-pass balance (0020) and the commit-reveal hash (0022) are part
-  // of every deployed schema: a failing select is a transient fault, never a
-  // missing column. Surfacing it (the error boundary offers a retry) beats
-  // degrading to "link not found" or to a stale aggregate balance.
+  const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url, pwa_icon_mode, is_active, approval_status, role)`;
   const primary = await sb
     .from("fan_passes")
-    .select(`id, creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, is_active, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
+    .select(`id, creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, is_active, expires_at, spins_remaining, next_server_seed_hash, ${FAN}, ${CREATOR}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
   if (primary.error) throw new FanPassUnavailableError("fan_passes read failed");
-  const data: unknown = primary.data;
+  const pass = primary.data as unknown as FanPassRow | null;
+  // PR-13: an expired link is not live (the spin RPCs refuse it): the page
+  // treats it like a link that was switched off.
+  return { sb, pass: pass && !fanLinkExpired(pass.expires_at) ? pass : null };
+});
 
-  const pass = data as unknown as {
-    id: string;
-    creator_id: string;
-    campaign_id: string | null;
-    wheel_id: string;
-    pinned_wheel_id?: string | null; // per-fan game pin (migration 0065)
-    fan_id: string;
-    spins_remaining: number;
-    next_server_seed_hash: string | null;
-    fan: {
-      id: string;
-      display_name: string | null;
-      handle: string | null;
-      spins_remaining: number;
-      spins_granted_total: number;
-      referral_code: string | null;
-      acked_at: string | null;
-      acked_terms_version?: string | null;
-      leaderboard_opt_in?: boolean | null;
-      blocked_at?: string | null;
-    } | null;
-    creator: {
-      display_name: string | null;
-      tip_url: string | null;
-      leaderboard_enabled: boolean | null;
-      creator_note: string | null;
-      avatar_url: string | null;
-      is_active?: boolean | null;
-      approval_status?: string | null;
-      role?: string | null;
-    } | null;
-  } | null;
+/**
+ * The fan's pass view, or null when no active link matches. Throws
+ * {@link FanPassUnavailableError} on a database fault, or once the whole read
+ * passes FAN_PAGE_DEADLINE_MS, so a transient outage or slowdown reaches the
+ * error boundary (retryable, "nothing was spent") instead of rendering "link
+ * not found" or hanging until the platform's timeout.
+ */
+export async function getFanPass(token: string): Promise<FanPassView | null> {
+  if (!isSupabaseConfigured()) return mockGetFanPass(token);
+  return withFanDeadline(readFanPassView(token), FAN_PAGE_DEADLINE_MS, "fan page read");
+}
 
+async function readFanPassView(token: string): Promise<FanPassView | null> {
+  const { sb, pass } = await readFanPassRow(token);
   if (!pass || !pass.fan) return null;
   // FD-3: a suspended, deactivated or unapproved creator's links are not
   // playable (prepare_spin_attempt answers `unavailable` for them), so the
@@ -121,9 +139,12 @@ export async function getFanPass(token: string): Promise<FanPassView | null> {
   // fan's NEXT spin, and publish its hash on the page. Generating it here
   // (page load) rather than at spin time is the entire point: the commitment
   // observably predates the spin request.
+  // Its own service client (not the cached reader's) so the server-only RPC
+  // scanner can see the receiver is the service role; same per-call timeout.
+  const commitClient = createServiceClient({ timeoutMs: FAN_READ_TIMEOUT_MS });
   const commitRead: Promise<{ hash: string | null }> = pass.next_server_seed_hash
     ? Promise.resolve({ hash: pass.next_server_seed_hash })
-    : Promise.resolve(sb.rpc("ensure_pass_commitment", { p_token: token })).then(({ data: committed, error }) => {
+    : Promise.resolve(commitClient.rpc("ensure_pass_commitment", { p_token: token })).then(({ data: committed, error }) => {
         if (error) throw new FanPassUnavailableError("ensure_pass_commitment failed");
         return { hash: (committed as { hash?: string } | null)?.hash ?? null };
       });
@@ -259,7 +280,10 @@ export async function spin(token: string, rawClientSeed?: unknown, requestId = c
     }
     return result;
   }
-  const sb = createServiceClient();
+  // OPS3-02: every RPC and read on the spin path aborts after SPIN_RPC_TIMEOUT_MS;
+  // an aborted call is reported as spin_pending (the request id is kept, the
+  // browser checks the saved spin), never as a success or a silent hang.
+  const sb = createServiceClient({ timeoutMs: SPIN_RPC_TIMEOUT_MS });
   // Fail closed before opening an attempt; the transaction checks the same consent again under its locks.
   const { data: ackRow, error: ackError } = await sb.from("fan_passes")
     .select("fan_id, fan:fans(acked_at, acked_terms_version)").eq("token", token).maybeSingle();

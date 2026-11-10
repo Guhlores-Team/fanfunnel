@@ -19,15 +19,15 @@ for (const seg of ["src/app/verify/[shareId]", "src/app/leaderboard/[creatorId]"
 }
 
 const boosts = read("src/lib/data/boosts.ts");
-check("boosts imports the read-failure helpers", boosts.includes('import { PublicReadError, readFailed, readPublicCreator } from "./publicCreatorRow";'));
+check("boosts imports the read-failure helpers", boosts.includes('import { readFailed, readPublicCreator } from "./publicCreatorRow";') && /import \{[^}]*FanPassUnavailableError[^}]*\} from "\.\/unavailable";/.test(boosts));
 for (const fn of ["getShareCard", "getSpinVerification"]) {
   const body = boosts.slice(boosts.indexOf(`export async function ${fn}(`));
   const end = body.indexOf("\nexport ");
-  check(`${fn} throws PublicReadError on a failed read`, body.slice(0, end).includes("throw new PublicReadError("));
+  check(`${fn} throws FanPassUnavailableError on a failed read`, /if \(readFailed\((?:res\.)?error\)\) throw new FanPassUnavailableError\(/.test(body.slice(0, end)));
 }
-check("verify falls back only on an undefined column (42703)", boosts.includes('const MISSING_COLUMN = "42703";') && boosts.includes("res.error?.code === MISSING_COLUMN"));
+check("verify falls back only on an undefined column", (boosts.match(/if \(res\.error && isMissingColumnError\(res\.error\)\)/g) ?? []).length === 2);
 const creatorRow = read("src/lib/data/publicCreatorRow.ts");
-check("readPublicCreator throws on a failed read and nulls a missing row", creatorRow.includes("if (readFailed(error)) throw new PublicReadError(\"profiles\", error);") && creatorRow.includes("if (!data) return null;"));
+check("readPublicCreator throws on a failed read and nulls a missing row", creatorRow.includes("if (readFailed(error)) throw new FanPassUnavailableError(\"profiles read failed\");") && !/strict/.test(creatorRow) && creatorRow.includes("if (!data) return null;"));
 
 const og = read("src/app/share/[shareId]/opengraph-image.tsx");
 check("WA-04: the share image 404s for an unknown id", og.includes("if (!card) return new Response(null, { status: 404"));

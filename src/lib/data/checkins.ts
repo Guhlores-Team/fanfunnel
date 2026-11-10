@@ -5,6 +5,7 @@
 // the fan's own page and, through RLS, by the owning creator. Nothing here
 // reads or writes a balance, a pass's spins or anything the spin engine uses:
 // a visit never grants spins or changes odds.
+import { LINK_LIVE, fanLinkLive } from "./fanLinkLive";
 import { CREATOR_STANDING, creatorCanHostPlay, type CreatorStanding } from "./creatorPlayable";
 import { isSupabaseConfigured, createServiceClient } from "@/lib/supabase/server";
 import { CHECKIN_READ_DAYS, GLOW_WINDOW_DAYS } from "@/lib/glow/config";
@@ -50,7 +51,7 @@ export async function recordCheckin(
   const sb: Service = createServiceClient();
   const { data: passRow } = await sb
     .from("fan_passes")
-    .select(`fan_id, creator_id, fan:fans(blocked_at, break_until), ${CREATOR_STANDING}`)
+    .select(`fan_id, creator_id, ${LINK_LIVE}, fan:fans(blocked_at, break_until), ${CREATOR_STANDING}`)
     .eq("token", token)
     .eq("is_active", true)
     .is("self_excluded_at", null)
@@ -58,10 +59,13 @@ export async function recordCheckin(
   const pass = passRow as unknown as {
     fan_id: string;
     creator_id: string;
+    is_active?: boolean | null;
+    expires_at?: string | null;
     fan: { blocked_at: string | null; break_until: string | null } | null;
     creator?: CreatorStanding;
   } | null;
-  if (!pass || !pass.fan) return { error: "not_found" };
+  // PR-13: an expired link answers like a switched-off one.
+  if (!pass || !pass.fan || !fanLinkLive(pass)) return { error: "not_found" };
   // A suspended creator's link is not active (the fan page's answer): no visit is recorded.
   if (!creatorCanHostPlay(pass.creator)) return { error: "not_found" };
   if (!glowGateOpen({ blockedAt: pass.fan.blocked_at, breakUntil: pass.fan.break_until }, now)) return { error: "not_allowed" };

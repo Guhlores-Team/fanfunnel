@@ -6,6 +6,9 @@ import { brandVars } from "@/lib/theme";
 import { linkNotFound } from "@/lib/fan/linkNotFound";
 
 export const dynamic = "force-dynamic";
+// OPS3-02: the reads behind this page carry their own deadlines (src/lib/data/unavailable.ts);
+// this caps the whole invocation so a stuck one ends with our page, not the platform's.
+export const maxDuration = 15;
 
 // One read shared by the metadata and the page.
 const board = cache(getLeaderboard);

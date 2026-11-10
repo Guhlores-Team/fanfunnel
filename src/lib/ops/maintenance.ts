@@ -2,8 +2,12 @@
 // Vercel applies env changes on the next deployment) fans and visitors see a
 // friendly "back soon, nothing was spent" page, API writes answer 503
 // {error:"maintenance"} with Retry-After, and the owner's way in stays open:
-// /dashboard, /admin, /login (+ /mfa and /auth for two-factor sign-in),
-// /api/admin/*, /api/health and static assets.
+// /dashboard, /admin, /agency, /login (+ /mfa and /auth for two-factor sign-in),
+// /api/admin/*, /api/health and static assets. OPS3-04: so do the pages an
+// invited or locked-out creator needs to finish set-up (/pending,
+// /forgot-password, /reset-password, /set-password), a fan's proof page
+// (/verify, a read), and the nightly job (/api/cron/*), so a pause never
+// fails the heartbeat or strands a creator mid-invite.
 //
 // How it is enforced. The proxy's matcher is deliberately narrow (PERF-4,
 // src/proxy.test.ts: fan pages and cookieless API calls never run it), and a
@@ -21,9 +25,9 @@ export const MAINTENANCE_PAGE = "/maintenance";
 export const MAINTENANCE_API = "/api/maintenance";
 
 /** Page path prefixes that stay reachable: `x` matches `/x` and `/x/...`. */
-export const MAINTENANCE_PAGE_EXEMPT = ["dashboard", "admin", "login", "mfa", "auth", "maintenance", "app-icon", "privacy", "terms", "_next"] as const;
+export const MAINTENANCE_PAGE_EXEMPT = ["dashboard", "admin", "agency", "login", "mfa", "auth", "pending", "forgot-password", "reset-password", "set-password", "verify", "maintenance", "app-icon", "privacy", "terms", "_next"] as const;
 /** API path prefixes (after /api/) that stay reachable. */
-export const MAINTENANCE_API_EXEMPT = ["admin", "health", "maintenance"] as const;
+export const MAINTENANCE_API_EXEMPT = ["admin", "health", "maintenance", "cron"] as const;
 
 export function maintenanceOn(env: Record<string, string | undefined> = process.env): boolean {
   return env.FF_MAINTENANCE === "1";

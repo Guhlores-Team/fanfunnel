@@ -17,7 +17,7 @@ type Rpc = { name: string; args: Record<string, unknown> };
 const rpcs: Rpc[] = [];
 const updates: Record<string, unknown>[] = [];
 let rpcResult: { data: unknown; error: { code?: string } | null } = { data: { status: "ok" }, error: null };
-let pass: Record<string, unknown> | null = { creator_id: "c1", campaign_id: null, wheel_id: "w1", pinned_wheel_id: null, fan_id: "f1", expires_at: null, fan: { blocked_at: null, acked_at: null, acked_terms_version: null }, creator: { is_active: true, approval_status: "approved", role: "creator" } };
+let pass: Record<string, unknown> | null = { creator_id: "c1", campaign_id: null, wheel_id: "w1", pinned_wheel_id: null, fan_id: "f1", is_active: true, expires_at: null, fan: { blocked_at: null, acked_at: null, acked_terms_version: null }, creator: { is_active: true, approval_status: "approved", role: "creator" } };
 const chain = (result: unknown) => { const q: Record<string, unknown> = {}; for (const m of ["select", "eq", "is", "lte", "gte", "or", "order", "limit", "in", "not"]) q[m] = () => q; q.maybeSingle = async () => result; q.then = (ok: (v: unknown) => unknown) => Promise.resolve(result).then(ok); return q; };
 mock.module("@/lib/supabase/server", {
   namedExports: {

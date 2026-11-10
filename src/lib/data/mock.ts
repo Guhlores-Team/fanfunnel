@@ -1,4 +1,5 @@
 import { auditActionMatches } from "@/components/admin/auditLabels";
+import { fanLinkExpired } from "./unavailable";
 import { claimCodeFor } from "@/lib/rewards/claimCode";
 import { bingoReadyError } from "./bingo";
 import { mockBingoStore,currentMockBingo,mockBingoEditError,commitMockBingo,eraseMockBingo,clearMockBingo } from "./mockBingo";
@@ -705,7 +706,19 @@ function fanForToken(token: string): MockFan | null {
  * active, the answer the fan page gives (mockGetFanPass), so nothing is written.
  */
 function fanReachingCreator(token: string): MockFan | null {
-  return mockDemoCreatorActive() ? fanForToken(token) : null;
+  const fan = mockDemoCreatorActive() ? fanForToken(token) : null;
+  return fan && mockLinkLive(fan, token) ? fan : null;
+}
+
+/**
+ * Parity with fanLinkLive (PR-13): the link behind this token is switched on,
+ * not paused by its fan and not past its expiry. An expired link answers like
+ * a switched-off one on every token-keyed fan route.
+ */
+function mockLinkLive(fan: MockFan, token: string): boolean {
+  if (fan.selfExcludedAt) return false;
+  const pass = fan.passes?.find((p) => p.token === token);
+  return !pass || (pass.isActive !== false && !mockPassExpired(pass));
 }
 
 // --- Wheel resolution -------------------------------------------------------
@@ -1343,8 +1356,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
 
 export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
   const found = passForToken(token);
-  // RS-01 parity with get_spin_attempt_status (0073): an unknown link is a miss.
-  if (!found) return { status: "not_found" };
+  if (!found) return { status: "not_found" }; // RS-01 parity with get_spin_attempt_status (0073)
   if (found.fan.blockedAt || found.fan.selfExcludedAt || !mockDemoCreatorActive()) return { status: "unavailable" };
   const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", normalizeClientSeed(intent.clientSeed), intent.publishedSeedHash?.toLowerCase() ?? null]));
   const attempt = mockFocusState().attempts.get(intent.requestId.toLowerCase());
@@ -3175,11 +3187,10 @@ export async function mockFireWebhooks(
 export function mockAckFan(token: string): { ok: true } | { error: string } {
   const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
-  // Parity with record_fan_ack (0073): only a live link is acknowledged. A
-  // switched-off, expired or self-excluded link and a blocked fan answer like
-  // a link that is not there (`unavailable`), and nothing is stamped.
-  const pass = fan.passes?.find((p) => p.token === token);
-  if (fan.selfExcludedAt || fan.blockedAt || (pass && (pass.isActive === false || mockPassExpired(pass)))) return { error: "not_found" };
+  // Parity with record_fan_ack (0073): only a live link is acknowledged
+  // (fanReachingCreator); a blocked fan answers like a link that is not there
+  // too (`unavailable`), and nothing is stamped.
+  if (fan.blockedAt) return { error: "not_found" };
   fan.ackedAt = new Date().toISOString();
   fan.ackedTermsVersion = LEGAL.version;
   return { ok: true };
@@ -3211,7 +3222,7 @@ export function mockUpdateFanLink(fanId: string, token: string, patch: { active?
   return { ok: true };
 }
 /** PR-13: an expired link reads like a switched-off one. */
-const mockPassExpired = (pass: { expiresAt?: string | null }) => !!pass.expiresAt && Date.parse(pass.expiresAt) <= Date.now();
+const mockPassExpired = (pass: { expiresAt?: string | null }) => fanLinkExpired(pass.expiresAt);
 
 export function mockSetFanLinkGame(fanId: string, token: string, wheelId: string | null): { ok: true } | { error: string } {
   const fan = store.fans.get(fanId);
@@ -3230,6 +3241,8 @@ function liveFanForToken(token: string): MockFan | { error: "not_found" | "block
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
   if (fan.selfExcludedAt || fan.blockedAt) return { error: "blocked" };
+  // PR-13: a switched-off or expired link is not_found, as on the Supabase path.
+  if (!mockLinkLive(fan, token)) return { error: "not_found" };
   return fan;
 }
 
@@ -3646,7 +3659,8 @@ export function mockSendFanMessage(
 /** A fan's full thread (oldest first); marks creator→fan messages read. */
 export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blocked" | "needs_ack" } {
   const fan = fanForToken(token);
-  if (!fan) return [];
+  // PR-13: a switched-off or expired link reads as an empty thread, as getFanMessages does.
+  if (!fan || !mockLinkLive(fan, token)) return [];
   if (fan.blockedAt) return { error: "blocked" }; // I7: parity with getFanMessages
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
   const now = new Date().toISOString();
@@ -4061,8 +4075,12 @@ export function mockTokenHasCreator(token: string): boolean {
 /** Why a link no longer opens, when its tombstone says (else null → 404). */
 export async function mockGetFanLinkStatus(
   token: string
-): Promise<"creator_closed" | "fan_deleted" | null> {
-  return privacy.tombstones.get(await sha256Hex(token)) ?? null;
+): Promise<"creator_closed" | "fan_deleted" | "creator_paused" | null> {
+  const tomb = privacy.tombstones.get(await sha256Hex(token));
+  if (tomb) return tomb;
+  // WC-13 parity: a known live link of the suspended demo creator is "closed".
+  const hit = mockFanByAnyToken(token);
+  return hit && !hit.fan.selfExcludedAt && !mockDemoCreatorActive() ? "creator_paused" : null;
 }
 
 export function mockExportFanData(token: string): FanDataExport | null {

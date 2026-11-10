@@ -33,6 +33,22 @@ async function main() {
   assert.equal(persisted, 1); assert.equal(alerts, 1);
   assert.equal(schemaReads, 1, "A39: startup reads the schema version once");
   assert.deepEqual(reportedSchema, { status: "behind", applied: 66, expected: 67 }, "A39: a database behind the code is reported at startup");
-  console.log("operational startup: original7 +17 CI-isolation checks passed; no build-time remote effects or real alerts");
+  // RS-12: with a shared store, one instance per deployment runs the check.
+  const { startupCheckClaimed, STARTUP_CHECK_ONCE_PER_DEPLOYMENT_MS } = await import("./startup");
+  const claims: string[] = [];
+  const claimOk = async (key: string) => { claims.push(key); return { ok: true }; };
+  assert.equal(await startupCheckClaimed({ VERCEL_DEPLOYMENT_ID: "dpl_1" }, claimOk), true, "without a shared store every instance still checks");
+  assert.equal(claims.length, 0, "…and nothing is claimed");
+  assert.equal(await startupCheckClaimed({ KV_REST_API_URL: "https://kv.example", KV_REST_API_TOKEN: "t" }, claimOk), true, "without a deployment id every instance checks");
+  assert.equal(claims.length, 0);
+  const shared = { VERCEL_DEPLOYMENT_ID: "dpl_1", KV_REST_API_URL: "https://kv.example", KV_REST_API_TOKEN: "t" };
+  assert.equal(await startupCheckClaimed(shared, claimOk), true, "the first instance of a deployment claims the check");
+  assert.deepEqual(claims, ["startup-check:dpl_1"], "keyed on the deployment");
+  assert.equal(await startupCheckClaimed(shared, async () => ({ ok: false })), false, "a later instance of the same deployment skips it");
+  assert.equal(await startupCheckClaimed(shared, async () => { throw new Error("store down"); }), true, "an unreachable store never suppresses the check");
+  assert.equal(STARTUP_CHECK_ONCE_PER_DEPLOYMENT_MS, 6 * 3_600_000);
+  const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(new URL("./startup.ts", import.meta.url), "utf8"), /if \(!\(await startupCheckClaimed\(\)\)\) return;\s*const svc = createServiceClient\(\);/, "the claim is checked before any database work");
+  console.log("operational startup: original7 +17 CI-isolation +9 once-per-deployment checks passed; no build-time remote effects or real alerts");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

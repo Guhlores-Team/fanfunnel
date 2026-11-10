@@ -10,6 +10,7 @@
 // server-only fan_take_break() can only lengthen it, and a trigger stops
 // anyone shortening it (migration 0049). The reminder is soft: it only makes
 // the fan page ask "Want a breather?" before the next spin.
+import { LINK_LIVE, fanLinkLive } from "./fanLinkLive";
 import { isSupabaseConfigured, createServiceClient } from "@/lib/supabase/server";
 import { BREAK_MAX_MS, PLAY_TODAY_WINDOW_MS, PLAY_WEEK_WINDOW_MS } from "@/lib/play/config";
 import { isOnBreak, reminderDue } from "@/lib/play/playGuard";
@@ -116,13 +117,14 @@ async function resolveLiveFan(
 ): Promise<{ fanId: string } | PlayGuardError> {
   const { data, error } = await sb
     .from("fan_passes")
-    .select("fan_id, is_active, self_excluded_at, fan:fans(blocked_at)")
+    .select(`fan_id, ${LINK_LIVE}, self_excluded_at, fan:fans(blocked_at)`)
     .eq("token", token)
     .maybeSingle();
   if (error) return { error: "db_error" };
   const row = data as unknown as {
     fan_id: string;
     is_active: boolean;
+    expires_at?: string | null;
     self_excluded_at: string | null;
     fan: { blocked_at: string | null } | null;
   } | null;
@@ -130,7 +132,8 @@ async function resolveLiveFan(
   // Paused (self-excluded) or blocked first: pausing also deactivates the link,
   // and the mock store reports a paused link as blocked too.
   if (row.self_excluded_at || row.fan?.blocked_at) return { error: "blocked" };
-  if (!row.is_active) return { error: "not_found" };
+  // PR-13: an expired link answers like a switched-off one.
+  if (!fanLinkLive(row)) return { error: "not_found" };
   return { fanId: row.fan_id };
 }
 

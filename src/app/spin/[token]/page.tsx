@@ -3,8 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { linkAttemptsBlocked, linkNotFound } from "@/lib/fan/linkNotFound";
 import { clientIpFromHeaders } from "@/lib/api/clientIp";
-import { fanMissBlockedFor, noteFanMiss } from "@/lib/api/fanMiss";
-import { fanLinkExpired } from "@/lib/fan/linkExpiryRead";
+import { noteFanMiss } from "@/lib/api/fanMiss";
 import { publicGameCopy } from "@/lib/games/publicCopy";
 import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass, getPausedFanWins } from "@/lib/data";
 import LinkGone from "@/components/fan/LinkGone";
@@ -22,16 +21,17 @@ import { NoScriptNote } from "@/components/fan/FanGameController";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
 export const dynamic = "force-dynamic";
+// OPS3-02: the reads behind this page carry their own deadlines (src/lib/data/unavailable.ts);
+// this caps the whole invocation so a stuck one ends with our page, not the platform's.
+export const maxDuration = 15;
 
 // RM-4: this page links ITS OWN manifest (installs this fan's link, not the
 // dashboard app) and is never indexed. One read shared by both exports below.
 const appInfo = cache(getFanAppInfo);
 // C2: the per-address budget for link lookups that miss (src/lib/api/fanMiss.ts).
+// ATK-04: the lookup always runs (a valid link behind a shared address must
+// open); only a genuine miss is counted, after the lookup.
 const visitorIp = cache(async () => clientIpFromHeaders(await headers()));
-const blockedForMs = cache(async () => fanMissBlockedFor(await visitorIp()));
-const missBlocked = cache(async () => (await blockedForMs()) > 0);
-// PR-13: an expired link is a switched-off link (0073 fan_passes.expires_at).
-const expired = cache(fanLinkExpired);
 
 export async function generateMetadata({
   params,
@@ -40,7 +40,6 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { token } = await params;
   const robots = { index: false, follow: false };
-  if ((await missBlocked()) || (await expired(token))) return { robots, manifest: null };
   const info = await appInfo(token);
   // Unknown or ended link: no install surface at all (the page 404s).
   if (!info) return { robots, manifest: null };
@@ -61,9 +60,7 @@ export async function generateViewport({
 }: {
   params: Promise<{ token: string }>;
 }): Promise<Viewport> {
-  const { token } = await params;
-  if ((await missBlocked()) || (await expired(token))) return {};
-  const info = await appInfo(token);
+  const info = await appInfo((await params).token);
   return info ? { themeColor: info.brandColor } : {};
 }
 
@@ -73,10 +70,7 @@ export default async function SpinPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  // WF-03: an address over its link-attempt budget gets an honest page.
-  if (await missBlocked()) linkAttemptsBlocked(await blockedForMs());
-  // PR-13: past its expiry the link reads exactly like a switched-off one.
-  const pass = (await expired(token)) ? null : await getFanPass(token);
+  const pass = await getFanPass(token);
   if (!pass) {
     // T3: a link the fan paused is permanent, but keeps a read-only list of
     // its wins (no SPIN, no chat) instead of a 404.
@@ -88,7 +82,11 @@ export default async function SpinPage({
     // fan's data controls.
     const status = await getFanLinkStatus(token);
     if (!status) {
-      await noteFanMiss(await visitorIp());
+      // ATK-04: the lookup above always runs, so a real link opens whatever
+      // its address did. WF-03: once the address is over its budget of
+      // misses, a miss gets the honest "too many attempts" page instead.
+      const { over, retryAfter } = await noteFanMiss(await visitorIp());
+      if (over) linkAttemptsBlocked(retryAfter);
       linkNotFound("spin", token);
     }
     return <LinkGone status={status} />;

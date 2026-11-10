@@ -1,4 +1,5 @@
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
+import { LINK_LIVE, fanLinkLive } from "./fanLinkLive";
 import { CREATOR_STANDING, creatorCanHostPlay, type CreatorStanding } from "./creatorPlayable";
 import { storedReportToken } from "@/lib/reports/reportToken";
 import { CompleteReadError, MAX_REPORT_PAGES, MAX_REPORT_ROWS, readScopedRows } from "./readPages";
@@ -33,7 +34,6 @@ import { contactToken, fanEngagementAllowed } from "@/lib/engagement";
 import { selectDormant, winbackStats, type WinbackStats } from "@/lib/winback/list";
 import { listRecentOutreach } from "./outreach";
 import { LEGAL, fanNeedsAck } from "@/lib/legal";
-import { linkExpired } from "@/lib/fan/linkExpiry";
 
 /** Service-only atomic economic writes. A transport retry reuses the same
  * request payload; it never subtracts credits after an ambiguous response. */
@@ -1128,7 +1128,7 @@ export async function resolveFanByToken(
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, expires_at, fan:fans(blocked_at, acked_at, acked_terms_version), ${CREATOR_STANDING}`)
+    .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, ${LINK_LIVE}, fan:fans(blocked_at, acked_at, acked_terms_version), ${CREATOR_STANDING}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -1138,13 +1138,13 @@ export async function resolveFanByToken(
     wheel_id: string;
     pinned_wheel_id?: string | null;
     fan_id: string;
+    is_active?: boolean | null;
     expires_at?: string | null;
     fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null;
     creator?: CreatorStanding;
   } | null;
-  if (!pass) return null;
   // PR-13 (0073): an expired link answers like a switched-off one.
-  if (linkExpired(pass.expires_at)) return null;
+  if (!pass || !fanLinkLive(pass)) return null;
   // A suspended (or unapproved) creator's links are not active: the same test
   // and the same answer as the fan page (getFanPass), for every caller.
   if (!creatorCanHostPlay(pass.creator)) return null;

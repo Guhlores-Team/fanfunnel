@@ -3,11 +3,11 @@ import { mock } from "node:test";
 import { NextResponse } from "next/server";
 
 // OPS-02: /api/health answers 200/503 from the database, uncached, with no detail.
-let configured = true, limited = false, rpcError: unknown = null, hang = false, throws = false, rpcName = "";
+let configured = true, limited = false, rpcError: unknown = null, hang = false, throws = false, misconfigured = false, rpcName = "";
 mock.module("@/lib/api/limit", { namedExports: { limitRoute: async () => limited ? NextResponse.json({ error: "rate_limited" }, { status: 429 }) : null } });
 mock.module("@/lib/supabase/server", {
   namedExports: {
-    isSupabaseConfigured: () => configured,
+    isSupabaseConfigured: () => { if (misconfigured) throw new Error("FanFunnel is misconfigured: missing required env var(s) in production: SUPABASE_SERVICE_ROLE_KEY"); return configured; },
     createServiceClient: () => {
       if (throws) throw new Error("Supabase is not configured: https://secret-ref.supabase.co");
       return { rpc: (name: string) => { rpcName = name; return { abortSignal: (signal: AbortSignal) => hang
@@ -38,7 +38,10 @@ async function main() {
   const t = Date.now();
   r = await get();
   check(`a hanging database answers 503 within the ${HEALTH_TIMEOUT_MS} ms timeout`, r.status === 503 && Date.now() - t < HEALTH_TIMEOUT_MS + 1500);
-  hang = false; limited = true;
+  hang = false; misconfigured = true;
+  r = await get();
+  check("OPS3-01: a misconfigured Production answers 503 {ok:false} (never 500), without the variable name", r.status === 503 && JSON.stringify(await r.json()) === '{"ok":false}' && noStore(r));
+  misconfigured = false; limited = true;
   r = await get();
   check("rate limited → 429, not cached", r.status === 429 && noStore(r));
   limited = false; configured = false;
