@@ -47,6 +47,12 @@ export default function AuthLinkNotice({
             Open Settings
           </Link>
         );
+      case "contact_support":
+        return (
+          <a key={a} href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold text-white underline underline-offset-4">
+            Write to {SUPPORT_EMAIL}
+          </a>
+        );
       case "contact_admin":
         return (
           <a key={a} href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold text-white underline underline-offset-4">

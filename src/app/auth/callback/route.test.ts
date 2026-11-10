@@ -21,8 +21,23 @@ function check(label: string, cond: boolean) {
   passed++;
 }
 
+// Review A3: the app's limiter runs before the provider call, and a failure
+// that decided nothing (429, 5xx, network) returns to the Continue page with
+// the token unspent; only a refusal of the token reads "used or expired"; a
+// blocked account gets its own reason.
+let limited = false;
+const limiterCalls: { scope: string; tier: string }[] = [];
+mock.module("@/lib/api/limit", {
+  namedExports: {
+    limitRoute: async (_req: Request, scope: string, tier: string) => {
+      limiterCalls.push({ scope, tier });
+      return limited ? Response.json({ error: "rate_limited" }, { status: 429 }) : null;
+    },
+  },
+});
+let verifyThrows: unknown = null;
 let exchangeOk = true;
-let verifyResult: { error: { code?: string; status?: number; message: string } | null; session?: object | null } = { error: null, session: { access_token: "t" } };
+let verifyResult: { error: { code?: string; status?: number; name?: string; message: string } | null; session?: object | null } = { error: null, session: { access_token: "t" } };
 const verified: { type: string; token_hash: string }[] = [];
 let clientsBuilt = 0;
 mock.module("@/lib/supabase/server", {
@@ -33,6 +48,7 @@ mock.module("@/lib/supabase/server", {
         exchangeCodeForSession: async () => ({ error: exchangeOk ? null : { message: "bad" } }),
         verifyOtp: async (p: { type: string; token_hash: string }) => {
           verified.push(p);
+          if (verifyThrows) throw verifyThrows;
           return { data: { user: verifyResult.session ? { id: "u" } : null, session: verifyResult.session ?? null }, error: verifyResult.error };
         },
       },
@@ -144,6 +160,64 @@ async function main() {
   r = await post({ token_hash: "abcdef123456", type: "invite" });
   check("another verify error → reason=invalid", r.location === `${O}/login?error=auth_link&type=invite&reason=invalid`);
 
+  // --- A3: failures that decided nothing never read "used or expired" ------
+  const { verifyFailureFor } = await import("@/lib/auth/authLink");
+  const mapping: [string, { code?: string; status?: number; name?: string } | null | undefined, string][] = [
+    ["otp_expired (a used or expired link)", { code: "otp_expired", status: 403 }, "expired"],
+    ["a bare 403 from an older Auth server", { status: 403 }, "expired"],
+    ["another refusal of the token (422)", { code: "validation_failed", status: 422 }, "invalid"],
+    ["a 400", { status: 400 }, "invalid"],
+    ["a blocked account (user_banned, 403)", { code: "user_banned", status: 403 }, "banned"],
+    ["429 over_request_rate_limit", { code: "over_request_rate_limit", status: 429 }, "busy"],
+    ["a bare 429", { status: 429 }, "busy"],
+    ["500 unexpected_failure", { code: "unexpected_failure", status: 500 }, "busy"],
+    ["502", { status: 502, name: "AuthRetryableFetchError" }, "busy"],
+    ["503", { status: 503 }, "busy"],
+    ["504 request_timeout", { code: "request_timeout", status: 504 }, "busy"],
+    ["a network failure (status 0)", { status: 0, name: "AuthRetryableFetchError" }, "busy"],
+    ["a non-JSON answer (AuthUnknownError)", { name: "AuthUnknownError" }, "busy"],
+    ["an error with no status at all", {}, "busy"],
+    ["null", null, "busy"],
+  ];
+  for (const [label, error, want] of mapping) check(`verify failure: ${label} → ${want}`, verifyFailureFor(error) === want);
+
+  const BUSY = `${O}/auth/confirm?token_hash=abcdef123456&type=recovery&next=%2Freset-password&retry=busy`;
+  const RECOVERY = { token_hash: "abcdef123456", type: "recovery", next: "/reset-password" };
+  for (const [label, error] of [
+    ["a provider 429", { code: "over_request_rate_limit", status: 429, message: "Request rate limit reached" }],
+    ["a provider 500", { code: "unexpected_failure", status: 500, message: "Internal Server Error" }],
+    ["a gateway 503", { status: 503, name: "AuthRetryableFetchError", message: "{}" }],
+    ["a network failure", { status: 0, name: "AuthRetryableFetchError", message: "fetch failed" }],
+  ] as const) {
+    verifyResult = { error };
+    r = await post(RECOVERY);
+    check(`${label} → back to the Continue page, link intact, never "expired"`, r.status === 303 && r.location === BUSY);
+  }
+  verifyResult = { error: null, session: { access_token: "t" } };
+  verifyThrows = new TypeError("fetch failed");
+  r = await post(RECOVERY);
+  check("a thrown network error → back to the Continue page too", r.location === BUSY);
+  verifyThrows = null;
+  verifyResult = { error: { code: "user_banned", status: 403, message: "User is banned" } };
+  r = await post(RECOVERY);
+  check("a blocked account → its own reason, not 'expired'", r.location === `${O}/login?error=auth_link&type=recovery&reason=banned`);
+
+  // The app's own limiter: before the provider, after the origin check.
+  verifyResult = { error: null, session: { access_token: "t" } };
+  limiterCalls.length = 0;
+  let calls = verified.length;
+  r = await post(RECOVERY);
+  check("the verify POST is rate-limited per client on the costly tier", limiterCalls.length === 1 && limiterCalls[0].scope === "auth-confirm-verify:POST" && limiterCalls[0].tier === "costly" && verified.length === calls + 1);
+  limited = true;
+  calls = verified.length;
+  let built = clientsBuilt;
+  r = await post(RECOVERY);
+  check("over the limit → back to the Continue page (still good), Supabase never called", r.status === 303 && r.location === BUSY && verified.length === calls && clientsBuilt === built);
+  limited = false;
+  limiterCalls.length = 0;
+  await post(RECOVERY, { origin: "https://evil.example" });
+  check("a cross-site POST does not spend the visitor's limiter budget", limiterCalls.length === 0);
+
   // WU-04: the secure e-mail change's first link answers with no session.
   verifyResult = { error: null, session: null };
   r = await post({ token_hash: "abcdef123456", type: "email_change", next: "/dashboard" });
@@ -154,7 +228,8 @@ async function main() {
 
   // A GET on the verify route only shows the landing page again.
   const getVerify = await verify.GET(new Request(`${O}/auth/confirm/verify?token_hash=abcdef123456&type=recovery`));
-  check("GET /auth/confirm/verify → the landing page, unspent", getVerify.headers.get("location") === `${O}/auth/confirm?token_hash=abcdef123456&type=recovery` && verified.length === spent + 4);
+  const spentBeforeGet = verified.length;
+  check("GET /auth/confirm/verify → the landing page, unspent", getVerify.headers.get("location") === `${O}/auth/confirm?token_hash=abcdef123456&type=recovery` && verified.length === spentBeforeGet);
 
   console.log(`✅ auth callback/confirm: ${passed} checks passed`);
 }

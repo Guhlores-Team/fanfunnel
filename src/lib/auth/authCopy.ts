@@ -7,10 +7,10 @@ import { PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
 // exceeded") never reaches a creator (TS-11, WU-15, WC-04).
 
 export type AuthLinkType = "recovery" | "invite" | "email_change" | "magiclink" | "email" | "signup";
-export type AuthLinkReason = "expired" | "invalid" | "malformed";
+export type AuthLinkReason = "expired" | "invalid" | "malformed" | "banned" | "busy";
 
 /** One next step the failed-link notice offers. */
-export type AuthLinkAction = "resend_confirmation" | "reset_link" | "sign_in" | "contact_admin" | "settings";
+export type AuthLinkAction = "resend_confirmation" | "reset_link" | "sign_in" | "contact_admin" | "contact_support" | "settings";
 
 export interface AuthLinkNoticeCopy {
   title: string;
@@ -28,7 +28,25 @@ const ANY_DEVICE = "Links work once, on any device or browser, for a limited tim
  * `otp_expired`), so "expired" always covers "already used" too.
  */
 export function authLinkNotice(type: string | null, reason: string | null): AuthLinkNoticeCopy {
-  const r: AuthLinkReason = reason === "expired" || reason === "malformed" ? reason : "invalid";
+  const r: AuthLinkReason = reason === "expired" || reason === "malformed" || reason === "banned" || reason === "busy" ? reason : "invalid";
+  // A3: nothing was decided (rate limit, an outage, the network). The link
+  // was not used up, so this must never read "already used or expired".
+  if (r === "busy") {
+    return {
+      title: "We couldn't check your link just now",
+      body: "That was a problem on our side or with the connection, not with your link: it is still good. Wait a few minutes, then open the link from your e-mail again and tap Continue.",
+      actions: [],
+    };
+  }
+  // A3: the token was fine; the account itself is blocked from signing in. A
+  // new link would fail the same way, so none is offered.
+  if (r === "banned") {
+    return {
+      title: "This account can't sign in right now",
+      body: `Your link was fine, but sign-in is blocked for this account, so a new link won't help. If you think that's a mistake, write to ${LEGAL.contactEmail}.`,
+      actions: ["contact_support"],
+    };
+  }
   if (r === "malformed") {
     return {
       title: "This link is incomplete",

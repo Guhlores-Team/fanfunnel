@@ -31,6 +31,20 @@ for (const type of ["signup", "email", "recovery", "invite", "email_change", "ma
   }
 }
 
+// Review A3: a failure that decided nothing, and a blocked account.
+const busy = authLinkNotice("recovery", "busy");
+check("busy: says the link is still good and to try again in a few minutes", /still good/.test(busy.body) && /few minutes/.test(busy.body));
+check("busy: never says used or expired, and offers no new link", !/used|expired/i.test(busy.title + busy.body) && busy.actions.length === 0);
+const banned = authLinkNotice("invite", "banned");
+check("banned: says sign-in is blocked for the account, names support", /blocked/.test(banned.body) && banned.body.includes(LEGAL.contactEmail) && banned.actions.join() === "contact_support");
+check("banned: never says used or expired, never offers a new link", !/used|expired/i.test(banned.title + banned.body) && !banned.actions.includes("reset_link"));
+for (const type of ["signup", "email", "recovery", "invite", "email_change", "magiclink", null]) {
+  for (const reason of ["busy", "banned"]) {
+    const n = authLinkNotice(type, reason);
+    check(`${type}/${reason}: same sentence for every link type, no 'same browser'`, n.title === authLinkNotice("recovery", reason).title && !/same (browser|device)/i.test(n.title + n.body));
+  }
+}
+
 // Rate limits (WU-05).
 check("over_email_send_rate_limit is a rate limit", isRateLimited({ code: "over_email_send_rate_limit" }));
 check("a 429 status is a rate limit", isRateLimited({ status: 429, message: "Request rate limit reached" }));

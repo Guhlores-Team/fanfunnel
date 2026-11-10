@@ -19,6 +19,7 @@ const HEADLINE: Record<string, { title: string; body: string; cta: string }> = {
 // Fixed sentences for `?retry=<flag>` (the verify route sends a request back
 // here with the token unspent); the flag only picks one, it is never shown.
 const RETRY_NOTICE: Record<string, string> = {
+  busy: "We couldn't check your link just now (too many tries, or a problem on our side). Nothing was used up and your link is still good: wait a few minutes, then tap the button again.",
   origin:
     "For your safety we only accept this step from this page. Nothing was used up: tap the button below to carry on. If you keep landing here, open the link from your e-mail in Chrome, Safari, Firefox or Edge.",
 };
