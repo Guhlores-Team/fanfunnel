@@ -41,6 +41,13 @@ check("WF-01: Escape goes through the confirmation", /onEscape: requestClose/.te
 check("PA-12: the second copy is a plain group", /if \(!landmark\) return <div className=\{classes\}>\{links\}<\/div>;/.test(legalLinks));
 check("PA-12: the Safety sheet uses the plain copy", /<LegalLinks className="mt-3" landmark=\{false\} \/>/.test(safety) && (safety.match(/<LegalLinks/g) ?? []).length === 1);
 
+// m6 with TS-14: the play button is mounted only once the gate is passed, so
+// the focus hand-off is retried from an effect that runs after that render.
+const onAck = controller.slice(controller.indexOf("onAck={() => {"), controller.indexOf("/>", controller.indexOf("onAck={() => {")));
+check("m6: focus is handed to the play button after the gate's render, never on a frame that may come before it",
+  /useEffect\(\(\) => \{ tryRefocusPlay\(\); \}, \[playDisabled, needsAck, tryRefocusPlay\]\);/.test(controller)
+  && /refocusPlay\.current = true;/.test(onAck) && !/requestAnimationFrame/.test(onAck));
+
 // TS-10: scratch and bingo count plays, the wheel counts spins.
 check("TS-10: the balance chip names the game's unit", /activeGameKind === "scratch" \|\| activeGameKind === "bingo" \? "Plays left" : "Spins left"/.test(controller));
 

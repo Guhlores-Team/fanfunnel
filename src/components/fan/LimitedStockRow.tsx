@@ -35,7 +35,9 @@ export default function LimitedStockRow({ prizes }: { prizes: PublicPrize[] }) {
               }`}
               style={
                 gone
-                  ? undefined
+                  // Muted text needs its own backing: the row can cross the
+                  // Preview badge band, like the page footer.
+                  ? { backgroundColor: "var(--theme-bg, transparent)" }
                   : {
                       borderColor: `color-mix(in oklab, ${c} ${low ? 75 : 50}%, transparent)`,
                       backgroundColor: `color-mix(in oklab, ${c} ${low ? 22 : 14}%, transparent)`,

@@ -708,7 +708,8 @@ export function fanB7A11yStates() {
     const fan = await newFan(page.request, "A11y top-up", 1);
     await goto(page, `/spin/${fan.token}`, 600);
     await passAgeGate(page);
-    await spinForCard(page); await closeCard(page);
+    await page.getByTestId("fan-spin").waitFor({ timeout: 10000 });
+    // No play here: a scan must not use up the demo wheel's limited prizes.
     await topUp(page.request, fan, "A11y top-up", 2);
     await page.evaluate(() => { const real = Date.now; Date.now = () => real() + 40000; document.dispatchEvent(new Event("visibilitychange")); });
     await page.getByTestId("topup-note").waitFor({ timeout: 15000 });

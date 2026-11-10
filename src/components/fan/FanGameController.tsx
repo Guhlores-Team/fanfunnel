@@ -603,7 +603,10 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     // screens that put the wheel and the creator's note off the first screen).
     if (button && button.getAttribute("aria-disabled") !== "true") { button.focus({ preventScroll: true }); refocusPlay.current = false; }
   }, []);
-  useEffect(() => { tryRefocusPlay(); }, [playDisabled, tryRefocusPlay]);
+  // Also when the gate goes: the play button only exists once the gate is
+  // passed (TS-14), and until that render focus is still on the gate's own
+  // button; this effect runs after it.
+  useEffect(() => { tryRefocusPlay(); }, [playDisabled, needsAck, tryRefocusPlay]);
   // FD-13: while a spin is unresolved the recovery action replaces the play button.
   const recoveryFirst = recovery.phase === "pending" || recovery.phase === "storage";
   const storageInApp = recovery.phase === "storage" ? currentInAppBrowser() : null;
@@ -973,8 +976,10 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           onAck={() => {
             setNeedsAck(false);
             // The gate held focus; hand it to the play button (m6), not <body>.
+            // The effect on needsAck does it once the gate is gone: asking on
+            // the next frame could come before that render, find focus still
+            // on the gate's own button and give up.
             refocusPlay.current = true;
-            requestAnimationFrame(tryRefocusPlay);
           }}
         />
       )}
