@@ -24,7 +24,7 @@ const svc = new FakeTables({
     { id: CB, display_name: "Creator B" },
   ],
   fans: [
-    { id: "fanA", creator_id: CA, display_name: "Alice", handle: "ali", notes: "VIP whale", tags: ["whale"], spins_remaining: 2, spins_granted_total: 5, created_at: "2026-01-01", last_spin_at: null, referral_code: "R1", referred_by_fan_id: null, acked_at: "2026-01-02", acked_terms_version: "2026-01-02", leaderboard_opt_in: true },
+    { id: "fanA", creator_id: CA, display_name: "Alice", handle: "ali", notes: "VIP whale", tags: ["whale"], spins_remaining: 2, spins_granted_total: 5, created_at: "2026-01-01", last_spin_at: null, referral_code: "R1", referred_by_fan_id: null, acked_at: "2026-01-02", acked_terms_version: "2026-01-02", leaderboard_opt_in: true, blocked_at: "2026-01-08", chat_muted_at: "2026-01-09T10:00:00Z" },
     { id: "fanA2", creator_id: CA, display_name: "Other fan", notes: "secret", spins_remaining: 9, spins_granted_total: 9 },
     { id: "fanB", creator_id: CB, display_name: "Alice", notes: "B's notes", spins_remaining: 1, spins_granted_total: 1 },
   ],
@@ -152,7 +152,11 @@ async function main() {
   check("wishlist is this fan's", exp!.wishlist.length === 1 && exp!.wishlist[0].prize === "Video");
   check("consents carried", exp!.consents.ageAndTermsAcceptedAt === "2026-01-02" && exp!.consents.leaderboardOptIn === true);
   check("the export preserves the accepted Terms version rather than substituting today's", exp!.consents.termsVersion === "2026-01-02");
-  check("top-ups without amounts", exp!.topUps.length === 1 && !("amount" in exp!.topUps[0]) && !text.includes("999"));
+  // TS-13: the amount the creator noted against the fan's own top-up is the
+  // fan's record too; another fan's top-up is not in the file.
+  check("this fan's top-ups carry their amount", exp!.topUps.length === 1 && exp!.topUps[0].amountCents === 999 && exp!.topUps[0].spins === 5);
+  check("TS-13: the profile says whether the creator blocked this fan", exp!.profile.blocked === true);
+  check("TS-17: the consents carry when the fan muted the creator", exp!.consents.chatMutedAt === "2026-01-09T10:00:00Z");
   check("friends referred is a count, no ids", exp!.profile.friendsReferred === 1 && !text.includes("fanA2"));
   for (const secret of ["VIP whale", "whale", "ship to his flat", "2026-02-01", "NEXT-SEED-SECRET", "Other fan", "hi from someone else", "B's notes", "hi from B's Alice"]) {
     check(`the fan export never contains "${secret}"`, !text.includes(secret));
@@ -165,6 +169,8 @@ async function main() {
     }
   }
   check("an unknown token exports nothing", (await exportFanData("tokZZZZZZZZZ")) === null);
+  const expB = await exportFanData("tokB1ccccccc");
+  check("TS-13 / TS-17: a fan the creator never blocked, who never muted them, says so", expB!.profile.blocked === false && expB!.consents.chatMutedAt === null && expB!.topUps.length === 0);
   check("a malformed token never reaches the database", (await exportFanData("../../etc")) === null);
 
   // ---------------- fan delete ----------------
