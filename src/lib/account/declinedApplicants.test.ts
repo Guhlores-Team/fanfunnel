@@ -21,7 +21,15 @@ mock.module("./deleteAccount", { namedExports: { deleteAccountAndTombstoneLinks:
 let profiles: { id: string; role: string; approval_status: string }[] = [];
 let readError = false;
 let asked: string[] = [];
-const svc = { from: (table: string) => ({ select: () => ({ in: async (_col: string, ids: string[]) => { assert.equal(table, "profiles"); asked = ids; return readError ? { data: null, error: { message: "down" } } : { data: profiles.filter((p) => ids.includes(p.id)), error: null }; } }) }) } as never;
+let seatHolders: string[] = [];
+let orgOwners: string[] = [];
+let tieError = false;
+const svc = { from: (table: string) => ({ select: () => ({ in: async (_col: string, ids: string[]) => {
+  if (table === "org_members") return tieError ? { data: null, error: { message: "down" } } : { data: seatHolders.filter((id) => ids.includes(id)).map((profile_id) => ({ profile_id })), error: null };
+  if (table === "orgs") return { data: orgOwners.filter((id) => ids.includes(id)).map((owner_id) => ({ owner_id })), error: null };
+  assert.equal(table, "profiles"); asked = ids;
+  return readError ? { data: null, error: { message: "down" } } : { data: profiles.filter((p) => ids.includes(p.id)), error: null };
+} }) }) } as never;
 
 async function main() {
   const { deleteDeclinedApplicants, DECLINED_APPLICANT_BATCH } = await import("./declinedApplicants");
@@ -49,6 +57,16 @@ async function main() {
   const down = await deleteDeclinedApplicants(svc, [A, B]);
   check("an unreadable profile table fails closed: nothing deleted, both reported", down.failed === 2 && calls.length === 0);
   readError = false;
+
+  calls.length = 0; outcomes = {}; profiles = [rejected(A), rejected(B), rejected(C)]; seatHolders = [A]; orgOwners = [B];
+  const tiedRun = await deleteDeclinedApplicants(svc, [A, B, C]);
+  check("NEGATIVE: a declined applicant who holds an agency seat is never deleted by age", !calls.some((c) => c.id === A));
+  check("NEGATIVE: a declined applicant who owns an agency is never deleted by age", !calls.some((c) => c.id === B));
+  check("…while the plain applicant in the same run still is", tiedRun.completed === 1 && tiedRun.kept === 2 && calls.length === 1 && calls[0].id === C);
+  calls.length = 0; tieError = true;
+  const blind = await deleteDeclinedApplicants(svc, [C]);
+  check("unreadable agency ties fail closed: nothing deleted, reported for an admin", blind.failed === 1 && calls.length === 0);
+  tieError = false; seatHolders = []; orgOwners = [];
 
   calls.length = 0; outcomes = {};
   const many = Array.from({ length: DECLINED_APPLICANT_BATCH + 3 }, (_, i) => `aaaaaaaa-aaaa-4aaa-8aaa-${String(i).padStart(12, "0")}`);

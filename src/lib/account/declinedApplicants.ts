@@ -20,7 +20,7 @@ export type DeclinedApplicantsOutcome = {
   completed: number;
   /** Deletions begun and left to the storage/retry steps. */
   pending: number;
-  /** Not a declined creator applicant any more (approved since, an admin, gone): left alone. */
+  /** Not a declined creator applicant any more (approved since, an admin, an agency seat or owner, gone): left alone. */
   kept: number;
   /** Could not be begun, or the database refused; an admin must delete these by hand. */
   failed: number;
@@ -29,7 +29,9 @@ export type DeclinedApplicantsOutcome = {
 /**
  * Delete the accounts behind the declined requests the cleanup just removed.
  * An account is only touched while its profile still reads `creator` and
- * `rejected`: a later approval, or an admin, is never deleted by age.
+ * `rejected`: a later approval, or an admin, is never deleted by age. * An account
+ * that holds an agency seat or owns an agency is somebody's staff or business,
+ * not only an applicant, and is left for an admin as well.
  */
 export async function deleteDeclinedApplicants(svc: AccountDeletionClient, raw: unknown): Promise<DeclinedApplicantsOutcome> {
   const all = Array.isArray(raw) ? [...new Set(raw.filter((id): id is string => typeof id === "string" && UUID.test(id)))] : [];
@@ -41,9 +43,17 @@ export async function deleteDeclinedApplicants(svc: AccountDeletionClient, raw: 
   const found = await svc.from("profiles").select("id, role, approval_status").in("id", ids);
   if (found.error) return { ...out, failed: out.failed + ids.length };
   const profiles = new Map(((found.data ?? []) as { id: string; role: string; approval_status: string }[]).map((p) => [p.id, p]));
+  // Fail closed: if the agency ties cannot be read, nobody is deleted in this run.
+  const seats = await svc.from("org_members").select("profile_id").in("profile_id", ids);
+  const owned = await svc.from("orgs").select("owner_id").in("owner_id", ids);
+  if (seats.error || owned.error) return { ...out, failed: out.failed + ids.length };
+  const tied = new Set([
+    ...((seats.data ?? []) as { profile_id: string }[]).map((r) => r.profile_id),
+    ...((owned.data ?? []) as { owner_id: string }[]).map((r) => r.owner_id),
+  ]);
   for (const id of ids) {
     const profile = profiles.get(id);
-    if (!profile || profile.role !== "creator" || profile.approval_status !== "rejected") { out.kept++; continue; }
+    if (!profile || profile.role !== "creator" || profile.approval_status !== "rejected" || tied.has(id)) { out.kept++; continue; }
     let result: Awaited<ReturnType<typeof deleteAccountAndTombstoneLinks>>;
     try {
       // The SQL `begin` accepts a self-close only for the account itself; the
