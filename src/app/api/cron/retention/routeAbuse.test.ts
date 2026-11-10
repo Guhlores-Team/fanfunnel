@@ -5,7 +5,8 @@ import { mock } from "node:test";
 // one client is cut off with 429 (no-store) before any work or alert, and the
 // two alerts an unauthenticated caller can provoke (CRON_SECRET unset, a
 // spoofed "vercel-cron/" User-Agent with a wrong secret) are recorded at most
-// once per hour across every caller, then again in the next hour.
+// once per hour across every caller, then again in the next hour. WA-09: an
+// unset secret answers 401 like a wrong one, never a 503 naming the state.
 
 let passed = 0;
 const check = (label: string, cond: unknown) => { assert.ok(cond, label); passed++; };
@@ -35,7 +36,7 @@ async function main() {
   // Misconfigured: every caller gets 503, one alert per hour in total.
   delete process.env.CRON_SECRET;
   const unconfigured = await Promise.all(Array.from({ length: 20 }, () => call()));
-  check("unset secret: every probe is refused with 503", unconfigured.every((r) => r.status === 503));
+  check("unset secret: every probe is refused with 401, like a wrong secret", unconfigured.every((r) => r.status === 401));
   check("unset secret: the alert is recorded once, not per probe", captured.filter((m) => /not configured/.test(m)).length === 1);
   now += 59 * 60 * 1000;
   await call();
@@ -64,7 +65,7 @@ async function main() {
   check("the 31st call in a minute from one client is 429", last!.status === 429);
   check("…with Retry-After and no-store", Number(last!.headers.get("retry-after")) >= 1 && last!.headers.get("cache-control") === "no-store");
   check("…and the flood raised exactly one alert", captured.length === 1);
-  check("another client still gets the normal answer", (await call({}, "203.0.113.51")).status === 503);
+  check("another client still gets the normal answer", (await call({}, "203.0.113.51")).status === 401);
   process.env.CRON_SECRET = SECRET;
   check("the scheduler with the right secret still runs (demo store)", (await call({ authorization: `Bearer ${SECRET}` }, "203.0.113.52")).status === 200);
 

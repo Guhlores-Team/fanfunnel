@@ -5,8 +5,9 @@
 // service client (server-side only, like getFanPass). The creator's setting is
 // written only through the set_pwa_icon_mode RPC (migration 0046), which
 // updates the caller's own row; profiles UPDATE stays admin-only.
-import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
+import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { sessionMayManageSelf } from "@/lib/auth/ownStanding";
+import { readFanPassRow } from "./spins";
 import { DEFAULT_BRAND } from "@/lib/theme";
 import { DEFAULT_PWA_ICON_MODE, type PwaIconMode } from "@/lib/pwa/config";
 import {
@@ -21,21 +22,6 @@ import { resolveWheelId } from "./wheels";
 import { creatorCanHostPlay } from "./creatorPlayable";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 
-type PassRow = {
-  creator_id: string;
-  campaign_id: string | null;
-  wheel_id: string;
-  pinned_wheel_id?: string | null;
-  fan: { id: string } | null;
-  creator: {
-    display_name: string | null;
-    avatar_url: string | null;
-    pwa_icon_mode?: string | null;
-    is_active?: boolean | null;
-    approval_status?: string | null;
-    role?: string | null;
-  } | null;
-};
 
 /**
  * The creator name, brand colour, icon mode and (safe-to-fetch) avatar for an
@@ -46,18 +32,9 @@ export async function getFanAppInfo(token: string): Promise<FanAppInfo | null> {
   if (!isValidFanToken(token)) return null;
   if (!isSupabaseConfigured()) return mockGetFanAppInfo(token);
 
-  const sb = createServiceClient();
-  const select = (creatorCols: string) =>
-    sb
-      .from("fan_passes")
-      .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan:fans(id), creator:profiles(${creatorCols})`)
-      .eq("token", token)
-      .eq("is_active", true)
-      .maybeSingle();
-  let res = await select("display_name, avatar_url, pwa_icon_mode, is_active, approval_status, role");
-  // A database without 0046 yet: serve the neutral default rather than 404.
-  if (res.error) res = await select("display_name, avatar_url, is_active, approval_status, role");
-  const pass = res.data as unknown as PassRow | null;
+  // OPS3-02: the same per-request cached fan_passes read as the page itself
+  // (metadata, viewport, page, manifest and icon no longer each read the row).
+  const { sb, pass } = await readFanPassRow(token);
   if (!pass || !pass.fan) return null;
   // FD-3: the links getFanPass refuses for a creator who can't host play.
   if (!creatorCanHostPlay(pass.creator)) return null;

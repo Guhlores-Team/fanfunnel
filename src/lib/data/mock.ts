@@ -1327,7 +1327,7 @@ export async function mockSpin(token: string, clientSeed = "", requestId: string
 
 export async function mockReadSpinAttempt(token: string, intent: SpinIntent): Promise<SpinAttemptStatus> {
   const found = passForToken(token);
-  if (!found) return { status: "unavailable" };
+  if (!found) return { status: "not_found" }; // RS-01 parity with get_spin_attempt_status (0073)
   if (found.fan.blockedAt || found.fan.selfExcludedAt || !mockDemoCreatorActive()) return { status: "unavailable" };
   const hash = await sha256Hex(JSON.stringify(["spin-attempt-v1", "wheel", normalizeClientSeed(intent.clientSeed), intent.publishedSeedHash?.toLowerCase() ?? null]));
   const attempt = mockFocusState().attempts.get(intent.requestId.toLowerCase());
@@ -4033,8 +4033,12 @@ function mockFanByAnyToken(token: string): { fan: MockFan; pass: MockPass | null
 /** Why a link no longer opens, when its tombstone says (else null → 404). */
 export async function mockGetFanLinkStatus(
   token: string
-): Promise<"creator_closed" | "fan_deleted" | null> {
-  return privacy.tombstones.get(await sha256Hex(token)) ?? null;
+): Promise<"creator_closed" | "fan_deleted" | "creator_paused" | null> {
+  const tomb = privacy.tombstones.get(await sha256Hex(token));
+  if (tomb) return tomb;
+  // WC-13 parity: a known live link of the suspended demo creator is "closed".
+  const hit = mockFanByAnyToken(token);
+  return hit && !hit.fan.selfExcludedAt && !mockDemoCreatorActive() ? "creator_paused" : null;
 }
 
 export function mockExportFanData(token: string): FanDataExport | null {
@@ -4165,6 +4169,8 @@ export async function mockDeleteFanData(
   if (!hit) return { error: "not_found" };
   const { fan } = hit;
   if (fan.id === "demo-fan") return { error: "not_allowed" };
+  // ATK-01 (widened) parity: a fan who is still owed a prize cannot be erased.
+  if (store.redemptions.some((r) => r.fanId === fan.id && r.status === "pending")) return { error: "prize_owed" };
   const spinsKept = fan.wins.length;
   await mockDeleteFanWithTombstones(fan.id);
   privacy.notices.unshift({ id: crypto.randomUUID(), spinsKept, at: new Date().toISOString() });

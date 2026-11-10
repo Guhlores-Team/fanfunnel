@@ -48,8 +48,13 @@ async function main() {
   assert.deepEqual(writes, ["startup:configuration_missing", "startup:healthy"]);
   assert.notEqual(latched, null, "a later real healthy startup cannot clear the existing latch");
   const maintenance = await runOperationalChecks("maintenance");
-  assert.equal(maintenance.canary.status, "healthy"); assert.equal(maintenance.ok, false, "maintenance remains non-green because of previous local CI startup");
+  assert.equal(maintenance.canary.status, "healthy");
+  // OPS3-05: the earlier latch is reported, but a healthy nightly run is ok
+  // (the heartbeat pings; no daily false "down"). The current SQL keeps the
+  // latch until a manual run; the proposed 0073 change clears it here too.
+  assert.equal(maintenance.ok, true, "a healthy maintenance run is green despite an earlier latch");
+  assert.notEqual(maintenance.summary?.canaryFailureAt, null, "…while the earlier failure stays visible in the summary");
   const manual = await runOperationalChecks("manual"); assert.equal(manual.ok, true); assert.equal(latched, null);
-  console.log("Startup isolation: explicit local CI has zero client/RPC/alert I/O; actual Vercel startup with identical CI flags records missing configuration; healthy startup and maintenance retain latch; manual recovery alone clears. Real functions, mocked service only; no hosted calls or real keys.");
+  console.log("Startup isolation: explicit local CI has zero client/RPC/alert I/O; actual Vercel startup with identical CI flags records missing configuration; a healthy maintenance run is green while the latch stays visible; manual recovery clears it. Real functions, mocked service only; no hosted calls or real keys.");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

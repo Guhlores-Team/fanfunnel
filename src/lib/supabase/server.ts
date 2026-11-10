@@ -95,10 +95,35 @@ export async function createClient() {
  * ONLY use server-side for trusted operations like recording a spin where we
  * must atomically decrement spins and stock regardless of the caller.
  */
-export function createServiceClient() {
-  return createSupabaseClient(
+export function createServiceClient(options: { timeoutMs?: number } = {}) {
+  const { timeoutMs } = options;
+  const client = createSupabaseClient(
     supabaseUrl(),
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
+    {
+      auth: { persistSession: false },
+      // OPS3-02: a per-call deadline for the fan path, so a slow database makes
+      // a fan page fail fast (the "nothing was spent" page) instead of hanging
+      // until the platform's own timeout. Every query and RPC made through
+      // this client aborts after timeoutMs; the caller maps the error.
+      ...(timeoutMs ? { db: { timeout: timeoutMs } } : {}),
+    }
   );
+  if (timeoutMs) disableReadRetries(client);
+  return client;
 }
+
+/**
+ * OPS3-02: postgrest-js retries idempotent reads up to three times with a
+ * 1/2/4 s backoff on a network error or a 503/520, and counts a per-attempt
+ * timeout as a network error, so a 4 s deadline was really 4×4+7 = 23 s
+ * (measured against a hanging fake). The SDK has no client-level switch (only
+ * a per-query `.retry(false)`); its PostgREST client carries the flag every
+ * query builder copies, so it is cleared here. serviceClientTimeout.test.ts
+ * holds the SDK to this: one attempt per call on a bounded client.
+ */
+function disableReadRetries(client: unknown) {
+  const rest = (client as unknown as { rest?: { retry?: boolean } }).rest;
+  if (rest) rest.retry = false;
+}
+

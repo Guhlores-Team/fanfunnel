@@ -59,8 +59,22 @@ export const OPS_FLAG_LABELS: Record<OpsFlagKey, string> = {
 };
 export type OpsEnvironment = "production" | "preview" | "development";
 export type MaintenanceState = { lastRanAt: string | null; stale: boolean };
+export type HeartbeatState = { configured: boolean; lastResult: "sent" | "failed" | "never" | "off"; at: string | null };
 export type SystemHealthStatus = { demo: boolean; canary: { status: CanaryStatus | "demo" }; summary: HealthSummary | null; rateLimitStore?: RateLimitStore; schema?: SchemaCheck;
-  environment?: OpsEnvironment; config?: OpsFlags; maintenance?: MaintenanceState; rateLimitLastFallbackAt?: string | null };
+  environment?: OpsEnvironment; config?: OpsFlags; maintenance?: MaintenanceState; rateLimitLastFallbackAt?: string | null; heartbeat?: HeartbeatState; alertMail?: { lastAcceptedAt: string | null } };
+
+/** OPS3-08: what the heartbeat last did, in one line (red when the ping was refused). */
+export function heartbeatLine(h: HeartbeatState): { text: string; alarm: boolean } {
+  if (!h.configured) return { text: "Heartbeat: not set.", alarm: false };
+  if (h.lastResult === "failed") return { text: `Heartbeat: last ping was refused${h.at ? ` at ${when(h.at)}` : ""}. Check HEARTBEAT_URL and the monitor.`, alarm: true };
+  if (h.lastResult === "sent" && h.at) return { text: `Heartbeat: last ping accepted at ${when(h.at)}.`, alarm: false };
+  return { text: "Heartbeat: configured, no ping sent yet (it pings after each daily run).", alarm: false };
+}
+/** OPS3-08: when Resend last accepted an alert e-mail (a wrong key shows as never). */
+export function alertMailLine(lastAcceptedAt: string | null, alertEmailOn: boolean | undefined): string {
+  if (lastAcceptedAt) return `Alert e-mail: last accepted at ${when(lastAcceptedAt)}.`;
+  return alertEmailOn ? "Alert e-mail: configured, none accepted yet." : "Alert e-mail: none accepted yet.";
+}
 
 const when = (iso: string) => new Date(iso).toLocaleString();
 /** OPS-08: the daily job's last run; red (stale) on Production after 30 h. */
@@ -79,8 +93,14 @@ export function rateLimitFallbackLine(at: string | null | undefined): string {
   return at ? `Rate-limit store: last fallback to per-instance limits ${when(at)}.` : "Rate-limit store: no fallback recorded.";
 }
 const isDate = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
-function parseOps(row: Record<string, unknown>): Pick<SystemHealthStatus, "environment" | "config" | "maintenance" | "rateLimitLastFallbackAt"> {
-  const out: Pick<SystemHealthStatus, "environment" | "config" | "maintenance" | "rateLimitLastFallbackAt"> = {};
+function parseOps(row: Record<string, unknown>): Pick<SystemHealthStatus, "environment" | "config" | "maintenance" | "rateLimitLastFallbackAt" | "heartbeat" | "alertMail"> {
+  const out: Pick<SystemHealthStatus, "environment" | "config" | "maintenance" | "rateLimitLastFallbackAt" | "heartbeat" | "alertMail"> = {};
+  const h = row.heartbeat as Record<string, unknown> | undefined;
+  if (h && typeof h === "object" && !Array.isArray(h) && typeof h.configured === "boolean" && ["sent", "failed", "never", "off"].includes(String(h.lastResult)) && (h.at === null || isDate(h.at))) {
+    out.heartbeat = { configured: h.configured, lastResult: h.lastResult as HeartbeatState["lastResult"], at: h.at as string | null };
+  }
+  const a = row.alertMail as Record<string, unknown> | undefined;
+  if (a && typeof a === "object" && !Array.isArray(a) && (a.lastAcceptedAt === null || isDate(a.lastAcceptedAt))) out.alertMail = { lastAcceptedAt: a.lastAcceptedAt as string | null };
   if (row.environment === "production" || row.environment === "preview" || row.environment === "development") out.environment = row.environment;
   const c = row.config as Record<string, unknown> | undefined;
   if (c && typeof c === "object" && !Array.isArray(c) && OPS_FLAG_KEYS.every((k) => typeof c[k] === "boolean")) {

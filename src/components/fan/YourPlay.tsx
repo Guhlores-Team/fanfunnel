@@ -54,6 +54,10 @@ export default function YourPlay({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, daily: next }),
       });
+      // Read the answer to the end. Every /api response is `private, no-store`
+      // (RS-04), and a no-store response whose body is never read stays
+      // "loading" in the browser for good.
+      await res.text().catch(() => "");
       if (!res.ok) throw new Error(String(res.status));
       setNote(next === null ? "Reminder off." : `We'll check in after ${next} spins a day.`);
     } catch {

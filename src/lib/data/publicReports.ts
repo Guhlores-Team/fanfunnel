@@ -11,9 +11,13 @@ import { addMockReport } from "./mockReports";
 import { PUBLIC_PHOTO_NOTE_MAX } from "@/lib/reports/config";
 
 export { PUBLIC_PHOTO_NOTE_MAX };
-/** Reports per visitor IP per 10 minutes, and per public page per hour. */
+/** Reports per visitor IP per 10 minutes, and per public page per hour. The
+ * page ceiling is a sanity bound on one creator's review queue (and the
+ * urgent alert), set well above what a single address can send (N-D: at 30 it
+ * took two addresses to lock every genuine visitor out of reporting a page
+ * for an hour); the per-address cap is what stops one visitor. */
 export const PHOTO_REPORTS_PER_IP = 3;
-export const PHOTO_REPORTS_PER_PAGE = 30;
+export const PHOTO_REPORTS_PER_PAGE = 300;
 
 function reportDetail(slug: string, mediaId: string, note: string | null): string {
   const where = `Reported from the public page /c/${slug} · photo ${mediaId}`;

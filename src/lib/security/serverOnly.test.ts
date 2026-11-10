@@ -231,8 +231,12 @@ const files = walk(SRC);
   const privateKeyReaders = files
     .filter((f) => f !== SELF && !f.endsWith(".test.ts") && /VAPID_PRIVATE_KEY/.test(stripComments(read(f))))
     .map(rel);
-  if (privateKeyReaders.join() === "lib/push/keys.ts") ok("only lib/push/keys.ts reads VAPID_PRIVATE_KEY");
-  else fail(`VAPID_PRIVATE_KEY must be read only in lib/push/keys.ts (found: ${privateKeyReaders.join(", ") || "none"})`);
+  // OPS3-01: lib/ops/productionEnv.ts only checks the key's shape at build
+  // time (next.config.ts) and never exports or forwards its value; the client
+  // bundle scan above still proves no "use client" module can reach it.
+  const allowedPrivateKeyReaders = ["lib/ops/productionEnv.ts", "lib/push/keys.ts"];
+  if ([...privateKeyReaders].sort().join() === allowedPrivateKeyReaders.join()) ok("only lib/push/keys.ts (and the build-time shape check) read VAPID_PRIVATE_KEY");
+  else fail(`VAPID_PRIVATE_KEY must be read only in ${allowedPrivateKeyReaders.join(", ")} (found: ${privateKeyReaders.join(", ") || "none"})`);
   const publicPrivate = files.filter((f) => /NEXT_PUBLIC_VAPID_PRIVATE/.test(read(f)) && f !== SELF).map(rel);
   if (publicPrivate.length === 0) ok("no NEXT_PUBLIC_ variant of the VAPID private key");
   else fail(`the VAPID private key must never be NEXT_PUBLIC_: ${publicPrivate.join(", ")}`);
