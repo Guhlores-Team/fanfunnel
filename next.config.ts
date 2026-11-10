@@ -80,6 +80,9 @@ const nextConfig: NextConfig = {
       // built server), so the two shared public reads that carry a short CDN
       // TTL are excluded by path and must set theirs explicitly
       // (src/lib/security/apiCacheDefault.test.ts holds them to that).
+      // Client code must read the body of every /api response it fetches: a
+      // no-store response that is never read does not finish loading in
+      // Chromium, and a browser test that then asks for that body waits forever.
       {
         source: "/api/:path((?!public/|recent-wins/).*)",
         headers: [{ key: "Cache-Control", value: "private, no-store" }],
