@@ -417,10 +417,11 @@ export async function getThreadPage(fanId: string, creatorId?: unknown, opts: { 
   const more = rows.length > limit;
   if (more) rows.length = limit;
   rows.reverse();
-  // can_act_for was proved above (resolveActingCreator), so the names of the
-  // creator's own team may be read for the "via <name>" line.
+  // The names of the creator's own team, for the "via <name>" line. The
+  // session proves can_act_for again right before the service read: 'view'
+  // for the creator itself, 'chat' (what this read needed) for a seat.
   const staffReplies = rows.filter((r) => r.sender === "creator" && r.actor_id && r.actor_id !== owner);
-  const names = staffReplies.length ? await actorNames(owner, staffReplies.map((r) => r.actor_id)) : null;
+  const names = staffReplies.length ? await actorNames(sb, owner, owner === user.id ? "view" : "chat", staffReplies.map((r) => r.actor_id)) : null;
   return {
     messages: rows.map((r) => {
       const via = r.sender === "creator" && r.actor_id ? names?.get(r.actor_id) : undefined;

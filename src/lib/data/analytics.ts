@@ -135,7 +135,7 @@ export async function getOverview(): Promise<CreatorOverview> {
   // WG-07: a prize whose status a team member changed says who (the session
   // is the creator itself, so its own team's names may be read).
   const staffMoves = rows.filter((r) => r.status !== "pending" && r.actor_id && r.actor_id !== user.id);
-  const actors = staffMoves.length ? await actorNames(user.id, staffMoves.map((r) => r.actor_id)) : null;
+  const actors = staffMoves.length ? await actorNames(sb, user.id, "view", staffMoves.map((r) => r.actor_id)) : null;
   const redemptions: RedemptionItem[] = rows.map((r) => ({
     id: r.id,
     ...(r.status !== "pending" && r.actor_id && actors?.get(r.actor_id) ? { via: actors.get(r.actor_id) } : {}),

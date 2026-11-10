@@ -3479,7 +3479,8 @@ export function mockGetNotificationSources(): NotificationSources {
 // PR-04: demo "Ask to enable" requests (the demo account is its own admin).
 const gUnlock = globalThis as unknown as { __ffUnlock?: { id: string; creatorId: string; creatorName: string | null; game: "scratch" | "bingo"; at: string }[] };
 const unlockRequests = (gUnlock.__ffUnlock ??= []);
-export function mockRequestGameUnlock(game: "scratch" | "bingo"): { ok: true; recorded: boolean; already: boolean } | { error: "already_enabled" } {
+export function mockRequestGameUnlock(game: "scratch" | "bingo"): { ok: true; recorded: boolean; already: boolean } | { error: "already_enabled" | "forbidden" } {
+  if (!mockDemoCreatorActive()) return { error: "forbidden" }; // parity: a suspended account cannot ask
   if (mockGameFeatures()[game] === true) return { error: "already_enabled" };
   if (unlockRequests.some((r) => r.creatorId === "acc-you" && r.game === game)) return { ok: true, recorded: true, already: true };
   unlockRequests.unshift({ id: genId("unlock"), creatorId: "acc-you", creatorName: CREATOR_TITLE, game, at: new Date().toISOString() });

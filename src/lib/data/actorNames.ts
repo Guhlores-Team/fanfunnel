@@ -7,8 +7,10 @@ import { publicCreatorName } from "@/lib/publicCreator";
 // messages.actor_id / redemptions.actor_id (0073) hold the profile id; a
 // creator cannot read other profiles under RLS, so the name is read here with
 // the service role, under two rules:
-//   1. the caller has ALREADY proved on its own session that it may act for
-//      `creatorId` (the creator itself, or can_act_for through a seat);
+//   1. the caller's own session proves, here and every time, that it may act
+//      for `creatorId` (literal `true` from can_act_for with the permission
+//      the caller is using: 'view' for the creator's own reads, 'chat' for a
+//      seat in the Inbox). Without that proof nothing is read or returned;
 //   2. a name is returned only for a profile that owns or holds a seat in the
 //      creator's own agency. Anyone else (a removed seat, support) gets the
 //      neutral label, and an e-mail address is never used as a name.
@@ -29,9 +31,25 @@ type Service = {
   };
 };
 
-export async function actorNames(creatorId: string, actorIds: Iterable<string | null | undefined>, now: number = Date.now()): Promise<Map<string, string>> {
+type Session = { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> };
+
+export async function actorNames(
+  session: unknown,
+  creatorId: string,
+  perm: "view" | "chat",
+  actorIds: Iterable<string | null | undefined>,
+  now: number = Date.now(),
+): Promise<Map<string, string>> {
   const ids = [...new Set([...actorIds].filter((id): id is string => typeof id === "string" && id !== "" && id !== creatorId))].slice(0, MAX_ACTORS);
   const out = new Map<string, string>();
+  if (ids.length === 0) return out;
+  // Before the cache and before the service role: no proof, no names.
+  try {
+    const { data: allowed, error } = await (session as Session).rpc("can_act_for", { target_creator: creatorId, perm });
+    if (error || allowed !== true) return out;
+  } catch {
+    return out;
+  }
   const missing: string[] = [];
   for (const id of ids) {
     const hit = cache.get(`${creatorId}:${id}`);
