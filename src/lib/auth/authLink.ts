@@ -122,6 +122,8 @@ export async function completeAuthLink(req: Request): Promise<NextResponse> {
     return NextResponse.redirect(landing);
   }
 
+  if (searchParams.get("message")) return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`);
+
   // The demo has no accounts: nothing to exchange (and no client to build).
   if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`);
 
@@ -131,8 +133,6 @@ export async function completeAuthLink(req: Request): Promise<NextResponse> {
     if (!error) return NextResponse.redirect(`${origin}${next}`);
     return NextResponse.redirect(authLinkFailureUrl(origin, type, "invalid"));
   }
-
-  if (searchParams.get("message")) return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`);
 
   return NextResponse.redirect(authLinkFailureUrl(origin, type, "malformed"));
 }

@@ -32,7 +32,7 @@ export async function authB7Journey(browser, { step, assert }, sink, ctx) {
     assert(html.includes('action="/auth/confirm/verify"') && html.includes('method="post"'), "a form POSTs to the verify route");
     assert(html.includes(`name="token_hash" value="${TOKEN}"`) && html.includes('name="type" value="recovery"') && html.includes('name="next" value="/reset-password"'), "token, type and next travel as hidden fields");
     assert(/Continue to reset my password/.test(html), "the button says what it does");
-    assert(!/<script[^>]*>[^<]*submit/.test(html), "nothing auto-submits the form");
+    assert(!/requestSubmit\(|\.submit\(\)/.test(html), "nothing auto-submits the form");
     const page = await ctx.newPage();
     try {
       await goto(page, `/auth/confirm?token_hash=${TOKEN}&type=invite`, 600);
