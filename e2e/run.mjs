@@ -53,6 +53,7 @@ import { fanDevicesJourney } from "./fan-devices.mjs";
 import { dashB6Journey } from "./dash-b6.mjs";
 import { opsB6Journey } from "./ops-b6.mjs";
 import { attackB6Journey } from "./attack-b6.mjs";
+import { trustB7Journey } from "./trust-b7.mjs";
 
 let server = null;
 let browser = null;
@@ -107,6 +108,7 @@ try {
     await dashB6Journey(browser, runner, sink, ctx); // b6: failed loads vs empty, 401/429, unsaved drafts, minted link card, fulfilment → fan, owed before Clear all data, stale-tab save
     await opsB6Journey(browser, runner, sink, ctx); // b6 ops: /api/health, System health config/maintenance lines, admin win lookup (+ cross-site 403), Activity filter
     await attackB6Journey(page, runner, ctx); // b6 attack: demo dashboard APIs, /verify 404, fan-token miss cap, /api/errors limits, server claim codes
+    await trustB7Journey(page, runner, ctx); // b7 trust: reserved names, public-text screening, legal page facts, security.txt Canonical/Policy
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

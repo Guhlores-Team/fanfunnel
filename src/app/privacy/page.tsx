@@ -39,7 +39,8 @@ const SUMMARY = [
     cookies.
   </>,
   <>
-    We use a small number of providers to host and run the Service: Supabase, Vercel, Upstash and Resend.
+    We use a small number of providers to host and run the Service: Supabase, Vercel, Upstash and Resend,
+    plus the browser push services (Google, Apple, Mozilla) that deliver notifications creators allow.
   </>,
   <>
     Fans can download or delete their data from Safety &amp; privacy; creators can use Settings → Your
@@ -179,7 +180,7 @@ const SECTIONS: LegalSection[] = [
           </li>
           <li>
             <strong>Game cards and tickets:</strong> if a creator runs personal bingo, your card: the prizes
-            on it, which squares are marked, which lines have paid a bonus and when it was completed. For a
+            on it, which squares are marked, which lines have earned a bonus and when it was completed. For a
             scratch ticket or a bingo play, the symbols or card it showed are kept with that spin’s fairness
             record.
           </li>
@@ -273,7 +274,8 @@ const SECTIONS: LegalSection[] = [
       <ul>
         <li>
           <strong>Creators</strong> see their own fans’ records, spins, wins, wishlists and chats, and the team
-          members a creator or agency adds can see what their role allows.
+          members a creator or agency adds can see what their role allows, which can include reading and
+          answering chat messages for the creator.
         </li>
         <li>
           <strong>The public</strong> can see a creator’s public page, any leaderboard (board names of fans
@@ -312,6 +314,11 @@ const SECTIONS: LegalSection[] = [
                 Resend: delivering account emails (such as sign-up and password emails), and technical alert emails
                 to our own team.
               </li>
+              <li>
+                Browser push services (Google, Apple, Mozilla): deliver notifications to a creator’s device that
+                allowed them. They receive the device’s push address and a payload encrypted for that device,
+                which they cannot read.
+              </li>
             </ul>
           </li>
           <li>
@@ -325,7 +332,7 @@ const SECTIONS: LegalSection[] = [
             authorities.
           </li>
           <li>
-            <strong>A buyer or successor</strong> if {OP} is reorganised or sold, who must keep protecting the
+            <strong>A successor</strong> if {OP} is reorganised or sold, who must keep protecting the
             information as this policy describes.
           </li>
         </ul>
@@ -379,6 +386,11 @@ const SECTIONS: LegalSection[] = [
           <li>
             <strong>Reveal counter</strong> (fans): counts spins in the current browser tab to pace the win
             animations, and is cleared when the tab closes.
+          </li>
+          <li>
+            <strong>Sign-in redirect timer</strong> (creators): remembers for one minute that the dashboard just
+            sent you to sign in, so it does not loop (session storage, <code>ff-auth-redirect-at</code>; cleared
+            when the tab closes).
           </li>
           <li>
             <strong>Debug switch:</strong> a troubleshooting flag for the current tab, which only works for {OP}
@@ -600,11 +612,10 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We will post any update here and change the “Last updated” date. If a change is material, we will
-        tell creators by e-mail and show a notice on the spin page at least {LEGAL.changeNoticeDays} days
-        before it takes effect. When
-        it takes effect, the app asks creators (in the dashboard) and fans (on their spin page) to agree to
-        the new version before they continue. A change required by law, or needed to keep the Service
-        secure, may take effect sooner.
+        show a notice on the spin page and in the dashboard, with the date it takes effect, at least{" "}
+        {LEGAL.changeNoticeDays} days before, and e-mail creators about it. When it takes effect, the app asks
+        creators (in the dashboard) and fans (on their spin page) to agree to the new version before they
+        continue. A change required by law, or needed to keep the Service secure, may take effect sooner.
       </p>
     ),
   },
@@ -616,8 +627,15 @@ const SECTIONS: LegalSection[] = [
         <p>
           To report a creator, use Safety &amp; privacy on the spin page. To report anything else (abuse, a
           prize that was never delivered, content involving someone under {LEGAL.minimumAge}, or a security
-          problem), email <ContactEmail />. Reports involving a minor are handled first. The same address
-          answers requests from the police and other authorities.
+          problem), email <ContactEmail />. Reports involving a minor are handled first: we acknowledge them,
+          preserve what was reported, do not tell the reported account, and report child sexual abuse
+          material to the National Center for Missing &amp; Exploited Children (NCMEC) as US law requires.
+        </p>
+        <p>
+          The same address answers requests from the police and other authorities. We answer them as the law
+          requires, release only what the request lawfully covers, and tell the person concerned where the law
+          allows it. Security researchers can find our disclosure details at{" "}
+          <a href="/.well-known/security.txt">/.well-known/security.txt</a>.
         </p>
       </>
     ),

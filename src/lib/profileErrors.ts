@@ -6,6 +6,9 @@
 // refuse, and the unique public_slug raises 23505. Those become stable codes
 // and a 400/409; the database's own text never reaches the client.
 
+import { RESERVED_NAME_MESSAGE, isReservedName } from "@/lib/reservedNames";
+import { publicTextCheck, publicTextErrorMessage, type PublicTextCode } from "@/lib/publicText";
+
 type DbError = { code?: string | null; message?: string | null } | null | undefined;
 
 /** An e-mail-shaped string: the shape public._looks_like_email refuses. */
@@ -15,15 +18,29 @@ export function looksLikeEmail(value: string): boolean {
 
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
+export type DisplayNameInputError =
+  | "name_too_long"
+  | "invalid_display_name"
+  | "name_looks_like_email"
+  | "name_reserved"
+  | PublicTextCode;
+
 /**
  * The route's own check of a trimmed, non-blank display name, so the demo
  * answers like the database. The database stays the authority: it also
- * refuses a name containing the account's own e-mail.
+ * refuses a name containing the account's own e-mail. TS-03/TS-04: a name
+ * that presents as FanFunnel or its staff, or carries a link, e-mail, phone
+ * number, other-app handle or slur, is refused too (fans see it on every
+ * surface, including the installed app's name). `allowReserved` is for an
+ * admin naming a staff account.
  */
-export function displayNameInputError(name: string): "name_too_long" | "invalid_display_name" | "name_looks_like_email" | null {
+export function displayNameInputError(name: string, opts: { allowReserved?: boolean } = {}): DisplayNameInputError | null {
   if (name.length > 80) return "name_too_long";
   if (CONTROL_CHARS.test(name)) return "invalid_display_name";
   if (looksLikeEmail(name)) return "name_looks_like_email";
+  if (!opts.allowReserved && isReservedName(name)) return "name_reserved";
+  const text = publicTextCheck(name, { field: "displayName" });
+  if (!text.ok) return text.code;
   return null;
 }
 
@@ -55,10 +72,12 @@ export function displayNameErrorMessage(code: unknown): string {
       return "Your display name can't be or contain an e-mail address. Fans see it, so pick a name instead.";
     case "invalid_display_name":
       return "That display name has characters we can't show. Use letters, numbers and punctuation.";
+    case "name_reserved":
+      return RESERVED_NAME_MESSAGE;
     case "rate_limited":
       return "Too many changes in a row. Wait a minute and try again.";
     default:
-      return "Couldn't save your name. Please try again.";
+      return publicTextErrorMessage(code) ?? "Couldn't save your name. Please try again.";
   }
 }
 
@@ -69,6 +88,8 @@ export function publicProfileErrorMessage(code: unknown): string {
       return "Use letters, numbers, spaces, dashes or underscores in your link name.";
     case "slug_taken":
       return "That link name is taken. Try another one.";
+    case "slug_reserved":
+      return "That link name is reserved for FanFunnel and its staff. Try another one.";
     case "invalid_tip_url":
       return "That tip link doesn't look like a web address. Use an https:// link.";
     case "invalid_tagline":
@@ -78,6 +99,6 @@ export function publicProfileErrorMessage(code: unknown): string {
     case "rate_limited":
       return "Too many changes in a row. Wait a minute and try again.";
     default:
-      return "Couldn't save your public page. Please try again.";
+      return publicTextErrorMessage(code) ?? "Couldn't save your public page. Please try again.";
   }
 }

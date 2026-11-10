@@ -223,7 +223,7 @@ export default function PendingClient({
         <p className="mt-2 text-sm text-muted text-pretty">
           {editing
             ? "Change anything below and save. Your place in the queue stays the same."
-            : "FanFunnel creator accounts are approved by hand, and they’re free for now. Tell us about you and we’ll review it shortly."}
+            : "FanFunnel creator accounts are approved by hand, and they’re free during the pilot. Tell us about you and we’ll review it shortly."}
         </p>
         <p data-testid="pending-seat-note" className="mt-2 text-xs text-muted text-pretty">
           Joining an agency as staff (chatter, fulfiller, manager)? Request access here

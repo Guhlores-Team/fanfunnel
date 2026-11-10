@@ -19,8 +19,9 @@ export async function POST(req: Request) {
   const email = typeof body.email === "string" ? body.email.trim() : "";
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
   if (!EMAIL.test(email) || email.length > 254) return badRequest("invalid_email");
-  // The same rules as Settings: fans see this name.
-  const nameError = displayName ? displayNameInputError(displayName) : null;
+  // The same rules as Settings: fans see this name. An admin may name a
+  // staff account with a reserved word ("FanFunnel Support"); nobody else can.
+  const nameError = displayName ? displayNameInputError(displayName, { allowReserved: true }) : null;
   if (nameError) return badRequest(nameError);
 
   const redirectTo = `${new URL(req.url).origin}/auth/callback?next=/set-password`;
