@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import CreatorMfaRecovery from "@/components/auth/CreatorMfaRecovery";
-import type { CreatorOverview, FanAccountSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
 import { loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
-import { owedSentence, owedSummary } from "./owedSummary";
+import { owedSentence, type OwedSummary } from "./owedSummary";
 import { useCreatorDraft } from "./CreatorDrafts";
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
@@ -39,11 +38,10 @@ export default function ClearDataCard() {
   const loadOwed = useCallback(async () => {
     setOwed({ state: "loading" });
     try {
-      const [overview, list] = await Promise.all([
-        loadJson<CreatorOverview>("/api/overview"),
-        loadJson<{ fans?: FanAccountSummary[] }>("/api/fans"),
-      ]);
-      setOwed({ state: "ok", sentence: owedSentence(owedSummary(overview, list.fans ?? [])) });
+      // PA-03: one bounded read (creator_obligations with 0073) instead of the
+      // whole fan list.
+      const owed = await loadJson<OwedSummary>("/api/account/obligations");
+      setOwed({ state: "ok", sentence: owedSentence(owed) });
     } catch (error) {
       setOwed({ state: "failed", error });
     }

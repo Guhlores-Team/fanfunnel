@@ -14,6 +14,8 @@
 //  WC-02/03/06 the minted card is focused; Set active asks first and offers
 //           Undo; Start / Mark fulfilled offer Undo.
 //  WG-12    reactivate / demote ask first (admin demo accounts).
+//  PA-03/PR-11 the Fans list is paged and searched on the server; sort and
+//           "Needs a top-up" apply to the loaded rows; obligations are one read.
 // Steps that answer API calls with errors run on their own page with no error
 // sink: the failures are the point of the step. Every fixture is removed again.
 import { randomUUID } from "node:crypto";
@@ -301,6 +303,51 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await demote.getByRole("button", { name: "Cancel" }).click();
     } finally {
       await page.close().catch(() => {});
+    }
+  });
+
+  await step("b7 PA-03 + PR-11: /api/fans pages with a cursor and searches on the server; the list sorts and filters; obligations are one read", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const tag = `b7p${randomUUID().slice(0, 6)}`;
+    const made = [];
+    try {
+      for (const [name, spins, amountDollars] of [[`${tag} alpha`, 0, 9], [`${tag} beta`, 5, 0], [`${tag} gamma`, 2, 3]]) {
+        const fan = await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins, amountDollars } }), `create ${name}`);
+        made.push(fan);
+      }
+      const first = await json(await request.get(BASE + `/api/fans?q=${tag}&limit=2`), "first page");
+      assert(first.fans.length === 2 && typeof first.nextCursor === "string", "a page of 2 carries a cursor for the next page");
+      const second = await json(await request.get(BASE + `/api/fans?q=${tag}&limit=2&cursor=${encodeURIComponent(first.nextCursor)}`), "second page");
+      assert(second.fans.length === 1 && second.nextCursor === null && !second.fans.some((f) => first.fans.some((g) => g.fanId === f.fanId)), "the second page holds the remaining fan and ends");
+      const whole = await json(await request.get(BASE + "/api/fans"), "default page");
+      assert(typeof whole.total === "number" && whole.total >= 3 && whole.fans.length <= 50, "the default page is at most 50 fans with the creator's total");
+      assert((await request.get(BASE + "/api/fans?limit=x")).status() === 400, "a bad limit is a 400");
+      const owed = await json(await request.get(BASE + "/api/account/obligations"), "obligations");
+      assert(typeof owed.prizes === "number" && typeof owed.paidSpins === "number" && owed.payingFans >= 1, "obligations come back as one summary");
+
+      const searches = [];
+      page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === "/api/fans" && u.searchParams.get("q")) searches.push(u.searchParams.get("q")); });
+      await goto(page, "/dashboard?section=fans", 1200);
+      const search = page.getByTestId("fans-search");
+      await search.waitFor({ timeout: 10000 });
+      await search.fill(`${tag} be`);
+      await page.waitForFunction((t) => document.querySelectorAll("li[id^='fan-row-']").length === 1 && document.body.innerText.includes(`${t} beta`), tag, { timeout: 10000 });
+      assert(searches.some((q) => q === `${tag} be`), "the search was answered by the server");
+      await search.fill(tag);
+      await page.waitForFunction(() => document.querySelectorAll("li[id^='fan-row-']").length === 3, null, { timeout: 10000 });
+      const names = async () => page.locator("li[id^='fan-row-'] p.font-semibold").allInnerTexts();
+      await page.getByTestId("fans-sort").selectOption("spent");
+      assert((await names())[0] === `${tag} alpha`, "Most tips recorded puts the 900-cent fan first");
+      await page.getByTestId("fans-sort").selectOption("spinsLeft");
+      assert((await names())[0] === `${tag} beta`, "Most spins left puts the 5-spin fan first");
+      await page.getByTestId("fans-show").selectOption("topup");
+      await page.waitForFunction(() => document.querySelectorAll("li[id^='fan-row-']").length === 1, null, { timeout: 5000 });
+      assert((await names())[0] === `${tag} alpha`, "Needs a top-up shows only the tipped fan with no spins");
+      assert(/Showing 3 matches/.test(await page.getByTestId("fans-paging").innerText()), "the paging line counts the matches");
+    } finally {
+      await page.close().catch(() => {});
+      for (const fan of made) await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 }

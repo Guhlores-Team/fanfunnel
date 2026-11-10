@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { loadJson } from "@/lib/hooks/loadJson";
+import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
 import { shareOrCopy } from "./shareLink";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
@@ -13,7 +13,7 @@ import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { CloseButton, Field, initialsOf } from "./ui";
-import { copyLinkToken, fanRowMeta, noLinkMessage, threadFanIds } from "./fansHelpers";
+import { copyLinkToken, fanRowMeta, noLinkMessage, sortFans, threadFanIds, type FanSort } from "./fansHelpers";
 import { fanFromSearch, fanHref, sectionHref } from "./dashboardSection";
 import { TEMPLATE_TOKENS } from "@/lib/winback/template";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
@@ -32,6 +32,16 @@ import { linkGame, mintPlaysReason } from "./gameAssignment";
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 // Reserve the button's footprint while the code splits in, so the minted card
 // above the list keeps its height and the fresh row's scroll stays put.
+/** One server page of fans (PA-03). */
+interface FanListPage { fans?: FanAccountSummary[]; nextCursor?: string | null; total?: number | null; approximate?: boolean }
+const FAN_PAGE = 50;
+function fansPath(q: string, cursor: string | null, limit: number): string {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (cursor) params.set("cursor", cursor);
+  params.set("limit", String(limit));
+  return `/api/fans?${params.toString()}`;
+}
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), {
   ssr: false,
   loading: () => <span aria-hidden="true" className="inline-flex min-h-9 min-w-[4.5rem] rounded-[9px] border border-transparent" />,
@@ -66,6 +76,15 @@ export default function FansPanel({
 }) {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [accountsError, setAccountsError] = useState<unknown>(null);
+  // PA-03: the list is one server page at a time (newest first), searched on
+  // the server; "Load more" appends the next page.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [fanTotal, setFanTotal] = useState<number | null>(null);
+  const [approximate, setApproximate] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // PR-11: sort and the "needs a top-up" view apply to the fans loaded so far.
+  const [sortBy, setSortBy] = useState<FanSort>("newest");
+  const [needsTopUp, setNeedsTopUp] = useState(false);
   // C12: the link just minted, shown as a card with Copy / Share / QR.
   const [minted, setMinted] = useState<{ fanId: string; name: string; url: string } | null>(null);
   const mintedRef = useRef<HTMLDivElement>(null);
@@ -181,10 +200,19 @@ export default function FansPanel({
 
   // A failed load is an error state, never "No fans yet" (C2). Resolves false
   // on failure so a caller can say the list did not refresh.
+  const searchRef = useRef(initialSearch);
+  const loadedRef = useRef(0);
   const load = useCallback(async (): Promise<boolean> => {
     try {
-      const d = await loadJson<{ fans?: FanAccountSummary[] }>("/api/fans");
+      // A refresh after a change re-reads as many rows as were on screen
+      // (one page at least, the server's cap at most) so "Load more" holds.
+      const limit = Math.min(200, Math.max(FAN_PAGE, loadedRef.current));
+      const d = await loadJson<FanListPage>(fansPath(searchRef.current, null, limit));
       setAccounts(d.fans ?? []);
+      setNextCursor(d.nextCursor ?? null);
+      setFanTotal(typeof d.total === "number" ? d.total : null);
+      setApproximate(d.approximate === true);
+      loadedRef.current = d.fans?.length ?? 0;
       setAccountsError(null);
       return true;
     } catch (e) {
@@ -192,6 +220,34 @@ export default function FansPanel({
       return false;
     }
   }, []);
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const d = await loadJson<FanListPage>(fansPath(searchRef.current, nextCursor, FAN_PAGE));
+      setAccounts((cur) => {
+        const seen = new Set((cur ?? []).map((a) => a.fanId));
+        const next = [...(cur ?? []), ...(d.fans ?? []).filter((a) => !seen.has(a.fanId))];
+        loadedRef.current = next.length;
+        return next;
+      });
+      setNextCursor(d.nextCursor ?? null);
+      if (d.approximate) setApproximate(true);
+    } catch (e) {
+      toast(e instanceof LoadError && e.kind === "rate" ? "Slow down a moment, then try \"Load more\" again." : "Couldn't load more fans. Try again.", { tone: "error" });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore, toast]);
+  // The search box asks the server after a short pause; a change mid-flight
+  // is answered by the newest request only (load() reads the ref).
+  useEffect(() => {
+    if (searchRef.current === search.trim()) return;
+    searchRef.current = search.trim();
+    loadedRef.current = 0;
+    const id = setTimeout(() => { void load(); }, 300);
+    return () => clearTimeout(id);
+  }, [search, load]);
   const loadCampaigns = useCallback(async () => {
     const res = await fetch("/api/campaigns", { cache: "no-store" });
     if (!res.ok) return;
@@ -230,12 +286,8 @@ export default function FansPanel({
     setThreadIds(threadFanIds(d.threads ?? []));
   }, []);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load();
-    loadCampaigns();
-    loadTemplates();
-    loadWheels();
-    loadThreads();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state changes only after the responses arrive
+    void Promise.all([load(), loadCampaigns(), loadTemplates(), loadWheels(), loadThreads()]);
   }, [load, loadCampaigns, loadTemplates, loadWheels, loadThreads]);
   // Re-check whenever a drawer opens: a fan may have written since, and an old
   // conversation can sit beyond the Inbox's first page (A13), so ask per fan.
@@ -405,15 +457,16 @@ export default function FansPanel({
 
   // Client-side filtering over the loaded accounts. NOTE: once accounts
   // paginate, this must move server-side so search/filter cover all fans.
-  const filtered = (accounts ?? []).filter((a) => {
-    const q = search.trim().toLowerCase();
-    const matchesSearch = !q || a.name.toLowerCase().includes(q);
+  // The search itself is answered by the server (name, handle, tags).
+  const filtered = sortFans((accounts ?? []).filter((a) => {
     const matchesCampaign =
       !campaignFilter || a.campaignNames.includes(campaignFilter);
     const matchesTag = !tagFilter || a.tags.includes(tagFilter);
     const matchesVisits = !regularsOnly || isRegular(a.visits7 ?? 0);
-    return matchesSearch && matchesCampaign && matchesTag && matchesVisits;
-  });
+    const matchesTopUp = !needsTopUp || (a.spinsRemaining === 0 && a.totalSpent > 0 && !a.blocked && !a.selfExcluded);
+    return matchesCampaign && matchesTag && matchesVisits && matchesTopUp;
+  }), sortBy);
+  const filtersOn = !!campaignFilter || !!tagFilter || regularsOnly || needsTopUp;
   const openAccount = accounts?.find((a) => a.fanId === openFanId) ?? null;
   const existingFanNames = useMemo(() => (accounts ?? []).map((a) => a.name), [accounts]);
   const mintPlays = useMemo(() => linkGame({ wheelId: "", campaignId: campaignId || null }, campaigns, wheels, now), [campaignId, campaigns, wheels, now]);
@@ -556,10 +609,36 @@ export default function FansPanel({
             <Field label="Search">
               <input
                 className="ff-input w-full sm:w-[190px]"
-                placeholder="Name or handle"
+                placeholder="Name, handle or tag"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                data-testid="fans-search"
               />
+            </Field>
+            <Field label="Sort">
+              <select
+                className="ff-input w-full sm:w-44"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as FanSort)}
+                data-testid="fans-sort"
+              >
+                <option value="newest">Newest first</option>
+                <option value="spent">Most tips recorded</option>
+                <option value="lastActive">Last active</option>
+                <option value="spinsLeft">Most spins left</option>
+                <option value="fewestSpins">Fewest spins left</option>
+              </select>
+            </Field>
+            <Field label="Show">
+              <select
+                className="ff-input w-full sm:w-44"
+                value={needsTopUp ? "topup" : ""}
+                onChange={(e) => setNeedsTopUp(e.target.value === "topup")}
+                data-testid="fans-show"
+              >
+                <option value="">All fans</option>
+                <option value="topup">Needs a top-up (0 spins, has tipped)</option>
+              </select>
             </Field>
             <Field label="Campaign">
               <select
@@ -647,8 +726,11 @@ export default function FansPanel({
       {accounts && accounts.length > 0 && filtered.length === 0 && (
         <FansEmpty
           title="No fans match"
-          body="Nothing matches your search or filters. Clear them, or mint a fresh link above."
+          body={nextCursor && filtersOn ? "None of the fans loaded so far match these filters. Load more fans below, or clear the filters." : "Nothing matches your search or filters. Clear them, or mint a fresh link above."}
         />
+      )}
+      {accounts?.length === 0 && search.trim() !== "" && (
+        <p className="sr-only" role="status">No fans match your search.</p>
       )}
       {filtered.length > 0 && (
         <ul className="flex flex-col gap-2">
@@ -662,6 +744,23 @@ export default function FansPanel({
             />
           ))}
         </ul>
+      )}
+      {accounts && accounts.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3" data-testid="fans-paging">
+          <p className="tnum text-[12.5px] text-muted">
+            {fanTotal !== null && search.trim() === ""
+              ? `Showing ${accounts.length} of ${fanTotal} fan${fanTotal === 1 ? "" : "s"}`
+              : `Showing ${accounts.length} match${accounts.length === 1 ? "" : "es"}`}
+            {filtersOn && filtered.length !== accounts.length ? ` · ${filtered.length} after filters` : ""}
+            {(sortBy !== "newest" || filtersOn) && nextCursor ? " · sorting and filters apply to the fans loaded so far" : ""}
+            {approximate ? " · some totals are approximate until the database upgrade" : ""}
+          </p>
+          {nextCursor && (
+            <button type="button" onClick={() => void loadMore()} disabled={loadingMore} className={ghostBtn} data-testid="fans-load-more" aria-busy={loadingMore}>
+              {loadingMore ? "Loading…" : "Load more fans"}
+            </button>
+          )}
+        </div>
       )}
 
       <FanDetailDrawer

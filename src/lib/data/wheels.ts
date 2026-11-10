@@ -13,11 +13,6 @@ import { showsStock } from "@/lib/games/wheel/publicView";
 import { isPlayableGame, pickLiveGame } from "@/lib/games/liveGame";
 import type { WheelSummary, HappyHourStatus } from "./types";
 
-/** PostgREST's answer when an RPC is not on the database yet (0073 not applied). */
-function isMissingRpc(error: { code?: string; message?: string } | null | undefined): boolean {
-  if (!error) return false;
-  return error.code === "PGRST202" || error.code === "42883" || /could not find the function|does not exist/i.test(error.message ?? "");
-}
 import {
   mockGetWheel,
   mockSaveWheel,
@@ -31,7 +26,7 @@ import {
   mockSetActiveWheel,
   mockSetWheelSchedule,
 } from "./mock";
-import { WHEEL_SELECT, clampInt, isUuid, toWheelConfig } from "./shared";
+import { WHEEL_SELECT, clampInt, isMissingRpc, isUuid, toWheelConfig } from "./shared";
 import type { Json } from "./db.types";
 import type { AnyClient, DbWheelRow } from "./shared";
 import { copyTitle, newGameTitle } from "@/lib/games/copyTitle";

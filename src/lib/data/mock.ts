@@ -1981,6 +1981,22 @@ export function mockDeleteFan(fanId: string): boolean {
   return true;
 }
 
+/**
+ * PA-03: the demo list is paged and searched like the Supabase one. The
+ * cursor is the offset of the next row (`o:<n>`), newest fan first.
+ */
+export function mockListFansPage(options: { query?: string | null; cursor?: string | null; limit?: number } = {}): { fans: FanAccountSummary[]; nextCursor: string | null; total: number | null } {
+  const q = (options.query ?? "").trim().toLowerCase();
+  const limit = Math.min(200, Math.max(1, Math.floor(options.limit ?? Number.MAX_SAFE_INTEGER)));
+  const offset = options.cursor && /^o:\d{1,9}$/.test(options.cursor) ? Number(options.cursor.slice(2)) : 0;
+  const all = mockListFans().reverse();
+  const matching = q
+    ? all.filter((f) => f.name.toLowerCase().includes(q) || f.tags.some((t) => t.toLowerCase().includes(q)))
+    : all;
+  const fans = matching.slice(offset, offset + limit);
+  return { fans, nextCursor: offset + limit < matching.length ? `o:${offset + limit}` : null, total: all.length };
+}
+
 export function mockListFans(): FanAccountSummary[] {
   const tokensByFan = new Map<string, string[]>();
   for (const [token, fanId] of store.tokens) {
@@ -2166,6 +2182,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
     links,
     grants,
     byCampaign,
+    passes: mockListFans().find((f) => f.fanId === fan.id)?.passes ?? [],
     visits7: visitsLast7(checkinDays(fan.id), new Date()),
   };
 }

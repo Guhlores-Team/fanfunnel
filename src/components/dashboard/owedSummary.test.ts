@@ -8,7 +8,7 @@ const fan = (fanId: string, spinsRemaining: number, totalSpent: number) => ({ fa
 
 const s = owedSummary(overview(3, [red("1", "a", "pending"), red("2", "a", "in_progress"), red("3", "b", "pending"), red("4", "c", "fulfilled"), red("5", "d", "cancelled")]),
   [fan("a", 4, 500), fan("b", 2, 0), fan("e", 6, 1200), fan("f", 0, 900)]);
-assert.deepEqual(s, { fans: 2, fansAtLeast: false, prizes: 3, paidSpins: 10, payingFans: 2 }, "open prizes per fan; paid balances only");
+assert.deepEqual(s, { fans: 2, fansAtLeast: false, prizes: 3, paidSpins: 10, payingFans: 2, unplayedSpins: 12, activeLinks: null }, "open prizes per fan; paid balances only");
 assert.equal(owedSentence(s), "2 fans are owed 3 prizes and 2 fans with recorded tips hold 10 unplayed spins.");
 
 const floor = owedSummary(overview(250, [red("1", "a", "pending")]), []);

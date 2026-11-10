@@ -118,7 +118,10 @@ function from(table: string) {
 // 0068: creator_link_tokens / creator_link_pass are read RPCs (the token column
 // is no longer selectable); anything else from a read path is still a failure.
 const LINK_RPCS = new Set(["creator_link_tokens", "creator_link_pass"]);
+// Read summaries (0073) are not on this database: the reader takes its complete-read path.
+const ABSENT_READ_RPCS = new Set(["creator_fan_summaries"]);
 const client = { from, auth: { getUser: async () => ({ data: { user: signedIn ? { id: OWNER } : null }, error: null }) }, rpc: async (name: string, args: Record<string, unknown>) => {
+  if (ABSENT_READ_RPCS.has(name)) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name}` } };
   if (!LINK_RPCS.has(name)) throw new Error("Read queries must not issue economic RPCs");
   const passes = (db.fan_passes ?? []) as Record<string, unknown>[];
   if (name === "creator_link_tokens") return { data: passes.filter(p => p.creator_id === args.p_creator && (!args.p_fan || p.fan_id === args.p_fan)).map(p => ({ pass_id: p.id, fan_id: p.fan_id, token: p.token })), error: null };

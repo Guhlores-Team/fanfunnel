@@ -352,6 +352,8 @@ export interface FanAccountSummary {
   breakUntil?: string | null;
   /** RM-3: days visited out of the last 7 (the "Regulars" filter). */
   visits7?: number;
+  /** When the fan account was made (absent on older readers). */
+  createdAt?: string;
 }
 
 export interface FanDetail {
@@ -368,6 +370,8 @@ export interface FanDetail {
   winsByRarity: { rarity: Rarity; count: number }[];
   pendingPrizes: { label: string; rarity: Rarity; emoji?: string; at: string }[];
   links: { token: string; createdAt: string }[];
+  /** PA-03: the same per-link view the Fans list carries (absent on older readers). */
+  passes?: FanPassInfo[];
   grants: Grant[]; // newest first
   byCampaign: FanCampaignBreakdown[];
   /** RM-3: days visited out of the last 7. */

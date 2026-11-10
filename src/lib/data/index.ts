@@ -39,6 +39,7 @@ export {
   editGrant,
   grantSpins,
   listFans,
+  listFansPage,
   getCreatorCrm,
   getFanDetail,
   deleteFan,
@@ -49,6 +50,7 @@ export {
   updateFanMeta,
   ackFan,
 } from "./fans";
+export { getCreatorObligations, obligationsFrom } from "./obligations";
 export {
   createCampaign,
   listCampaigns,

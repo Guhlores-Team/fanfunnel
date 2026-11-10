@@ -896,10 +896,10 @@ function TopUpForm({
   // fan's links now (the grant has committed) and let the server's rule pick.
   async function currentPasses(): Promise<FanAccountSummary["passes"] | null> {
     try {
-      const res = await fetch("/api/fans", { cache: "no-store" });
+      // PA-03: the list is paged now; the fan's own detail carries its links.
+      const res = await fetch(`/api/fans/${fanId}`, { cache: "no-store" });
       if (!res.ok) return null;
-      const fans = ((await res.json()) as { fans?: FanAccountSummary[] }).fans ?? [];
-      return fans.find((f) => f.fanId === fanId)?.passes ?? null;
+      return ((await res.json()) as { passes?: FanAccountSummary["passes"] }).passes ?? null;
     } catch { return null; }
   }
 
