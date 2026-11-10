@@ -4,17 +4,19 @@
 
 /**
  * An announced change to the Terms or Privacy Policy, shown on fan pages and
- * in the dashboard until it takes effect (TS-06). Set it at least
- * LEGAL.changeNoticeDays before `effectiveDate`; on that date publish the new
- * text, move `version`/`effectiveDate` to it and set this back to null.
+ * in the dashboard until it takes effect (TS-06). An admin announces it in
+ * Admin › Terms change notice (public.legal_terms_notice, 0073) at least
+ * LEGAL.changeNoticeDays before `effectiveDate`; on that date the new text
+ * ships with `version`/`effectiveDate` moved to it. LEGAL.upcoming is the
+ * same thing set in code, used when the database holds no notice.
  */
 export interface LegalChangeNotice {
   /** The version the change will become (YYYY-MM-DD). */
   version: string;
   /** When it takes effect (YYYY-MM-DD, end of that day UTC). */
   effectiveDate: string;
-  /** One plain sentence saying what changes. */
-  summary: string;
+  /** One plain sentence saying what changes (code-set notices only). */
+  summary?: string;
 }
 
 export const LEGAL = {
@@ -44,7 +46,7 @@ export const LEGAL = {
    * prints the new value. Update it ONLY together with `version` and
    * `effectiveDate` (docs/LEGAL_NOTES.md, "Version discipline").
    */
-  textHash: "5b6466715bbdce072aac58dc168e834858ef22d990af2d44f3940ad46b273ffa",
+  textHash: "3a8b21c1673ff372a48c6f3171ec6ac03a0f9087cc99a9491618d286468a569b",
   /** The change announced for a coming version, or null when none is announced. */
   upcoming: null as LegalChangeNotice | null,
   /** Advance notice before a material change to either document, or a creator fee, takes effect. */
@@ -101,4 +103,37 @@ export function activeLegalChangeNotice(now: Date = new Date(), notice: LegalCha
   const endOfDay = Date.parse(`${notice.effectiveDate}T23:59:59.999Z`);
   if (!Number.isFinite(endOfDay) || now.getTime() > endOfDay) return null;
   return notice;
+}
+
+export type LegalNoticeInputError = "invalid_version" | "version_not_later" | "invalid_date" | "date_in_past" | "too_soon";
+
+/**
+ * Whether an admin may announce `version` taking effect on `effectiveDate`:
+ * both are real YYYY-MM-DD dates, the version is later than the one in force,
+ * and the date is at least LEGAL.changeNoticeDays ahead of `today` (UTC),
+ * unless `sooner` marks a change required by law or needed for security,
+ * which the Terms allow to take effect earlier (never in the past).
+ */
+export function legalNoticeInputError(
+  version: unknown,
+  effectiveDate: unknown,
+  opts: { sooner?: boolean; today?: Date } = {},
+): LegalNoticeInputError | null {
+  const isDate = (v: unknown): v is string =>
+    typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
+  const safe = (v: unknown) => {
+    try {
+      return isDate(v);
+    } catch {
+      return false;
+    }
+  };
+  if (!safe(version)) return "invalid_version";
+  if ((version as string) <= LEGAL.version) return "version_not_later";
+  if (!safe(effectiveDate)) return "invalid_date";
+  const today = (opts.today ?? new Date()).toISOString().slice(0, 10);
+  if ((effectiveDate as string) < today) return "date_in_past";
+  const days = Math.round((Date.parse(`${effectiveDate as string}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  if (!opts.sooner && days < LEGAL.changeNoticeDays) return "too_soon";
+  return null;
 }
