@@ -90,11 +90,11 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await putWheel(request, { ...editable(wheel), prizes: [prize("Zero sticker"), ...wheel.prizes] });
         const body = await spinForCard(page);
         assert(Array.isArray(body.prizes) && body.prizes.length === 4, "the spin result carries the prize list it was drawn from");
-        assert(typeof body.prizeId === "string" || typeof body.prize?.id === "string", "the result names the prize by id");
-        const drawn = body.prizes[body.index]?.label;
-        assert(drawn && drawn === (body.prize?.label ?? drawn), `index ${body.index} points at the drawn prize in that list (${drawn})`);
+        assert(typeof body.prize?.id === "string", "the result names the prize by id");
+        const drawn = body.prizes[body.prizeIndex]?.label;
+        assert(drawn && drawn === body.prize.label, `index ${body.prizeIndex} points at the drawn prize in that list (${drawn})`);
         const status = await page.getByTestId("wheel-status").textContent();
-        assert(status === `Landed on ${drawn}.`, `the wheel landed on the drawn prize, not the old index (${status})`);
+        assert(status === `Landed on ${[body.prize.emoji, drawn].filter(Boolean).join(" ")}.`, `the wheel landed on the drawn prize, not the old index (${status} vs ${drawn})`);
         assert((await page.getByTestId("reward-reveal").textContent()).includes(drawn), "the card shows the same prize");
         await closeCard(page);
         await page.getByTestId("prize-book-name").filter({ hasText: "Zero sticker" }).first().waitFor({ timeout: 8000 });
@@ -147,7 +147,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         const body = await spinForCard(page);
         const sent = (await req).postDataJSON();
         assert(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sent.requestId), `the request id is a v4 uuid from the fallback (${sent.requestId})`);
-        assert(body.prize || body.index >= 0, "the spin resolved");
+        assert(typeof body.prize?.id === "string", "the spin resolved");
         await closeCard(page);
         await page.getByTestId("win-codes").waitFor({ timeout: 8000 });
       } finally { await context.close(); }
@@ -212,16 +212,18 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await page.waitForFunction(() => /offline/i.test(document.querySelector("[data-testid='spin-recovery-status']")?.textContent ?? ""), null, { timeout: 8000 });
         await context.setOffline(false);
         await page.getByTestId("offline-note").waitFor({ state: "hidden", timeout: 8000 });
-        // FD-13: the attempt is kept (the server may have seen it); online
-        // again the fan checks it, learns it never arrived, and plays it.
-        await page.getByTestId("spin-recovery-check").click();
+        // FD-13: the attempt is kept (the server may have seen it). Back
+        // online the page checks it by itself (or the fan taps Check), learns
+        // it never arrived, and offers the same spin again.
         const retry = page.getByTestId("spin-recovery-retry");
+        await retry.or(page.getByTestId("spin-recovery-check")).first().waitFor({ timeout: 10000 });
+        if (!(await retry.isVisible())) await page.getByTestId("spin-recovery-check").click({ timeout: 3000 }).catch(() => {});
         await retry.waitFor({ timeout: 10000 });
         const resp = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/spin" && r.request().method() === "POST");
         await retry.click();
         const body = await (await resp).json();
         await page.getByTestId("reward-reveal").waitFor({ timeout: 20000 });
-        assert(body.prize || body.index >= 0, "the spin plays once back online");
+        assert(typeof body.prize?.id === "string", "the spin plays once back online");
         await closeCard(page);
         assert((await chip(page)) === "1", "exactly one spin was spent");
         assert(errors.length === 0, `no page errors (${errors.join("; ")})`);
@@ -424,7 +426,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await b.waitForFunction(() => document.querySelector("[data-testid='spins-chip']")?.textContent.replace(/\D/g, "") === "2", null, { timeout: 15000 });
         assert((await b.getByTestId("reward-reveal").count()) === 0, "…and still no card after it finished");
         const bBody = await spinForCard(b); await closeCard(b);
-        assert(bBody.prize || bBody.index >= 0, "the second tab plays its own spin");
+        assert(typeof bBody.prize?.id === "string", "the second tab plays its own spin");
         await a.waitForFunction(() => document.querySelector("[data-testid='spins-chip']")?.textContent.replace(/\D/g, "") === "1", null, { timeout: 15000 });
       } finally { await context.close(); }
     });
