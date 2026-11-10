@@ -298,6 +298,12 @@ export async function deleteFanData(
   if (!who) return { error: "not_found" };
   const { fanId, creatorId } = who;
 
+  // ATK-01 (widened): a fan who is still owed a prize cannot be erased, by
+  // anyone holding the token: deleting the fans row scrubs the redemption's
+  // delivery notes and due date (0072), so the prize could never be delivered.
+  // The fan (or the creator) settles the redemption first.
+  if (await prizeOwed(svc, fanId, creatorId)) return { error: "prize_owed" };
+
   const [{ data: passRows }, { count }] = await Promise.all([
     svc.from("fan_passes").select("token").eq("fan_id", fanId).eq("creator_id", creatorId),
     svc
@@ -334,6 +340,17 @@ export async function deleteFanData(
     if (r.error) console.error("deleteFanData: follow-up write failed", r.error.message);
   }
   return { ok: true, spinsKept };
+}
+
+/** True when any of this fan's wins with this creator still has a pending redemption. */
+async function prizeOwed(svc: Svc, fanId: string, creatorId: string): Promise<boolean> {
+  const { data: spins, error } = await svc.from("spins").select("id").eq("fan_id", fanId).eq("creator_id", creatorId).limit(1000);
+  if (error) return true; // fail closed: never erase what could not be checked
+  const ids = ((spins ?? []) as { id: string }[]).map((s) => s.id);
+  if (ids.length === 0) return false;
+  const { count, error: redemptionError } = await svc.from("redemptions").select("id", { count: "exact", head: true }).eq("creator_id", creatorId).eq("status", "pending").in("spin_id", ids);
+  if (redemptionError) return true;
+  return (count ?? 0) > 0;
 }
 
 // ---------------------------------------------------------------------------

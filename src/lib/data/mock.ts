@@ -4080,6 +4080,8 @@ export async function mockDeleteFanData(
   if (!hit) return { error: "not_found" };
   const { fan } = hit;
   if (fan.id === "demo-fan") return { error: "not_allowed" };
+  // ATK-01 (widened) parity: a fan who is still owed a prize cannot be erased.
+  if (store.redemptions.some((r) => r.fanId === fan.id && r.status === "pending")) return { error: "prize_owed" };
   const tokens = new Set([...store.tokens].filter(([, id]) => id === fan.id).map(([t]) => t));
   for (const p of fan.passes ?? []) tokens.add(p.token);
   const spinsKept = fan.wins.length;

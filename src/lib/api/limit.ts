@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { rateLimitShared } from "@/lib/rateLimit";
 import { clientIp } from "@/lib/api/clientIp";
@@ -46,11 +47,22 @@ export { ROUTE_TIERS, type RouteTier } from "./routeTiers";
 export async function limitRoute(req: Request, scope: string, tier: RouteTier = "account"): Promise<NextResponse | null> {
   if (tier === "account" && isSupabaseConfigured() && !hasSessionCookie(req)) return unauthorized();
   const { limit, windowMs } = ROUTE_TIERS[tier];
-  return rateLimitOr429(`route:${scope}:${clientIp(req)}`, limit, windowMs);
+  // N-E: a signed-in call is budgeted per SESSION (a digest of its session
+  // cookie), not per address, so a creator behind a busy NAT never shares the
+  // dashboard budget with strangers; cookieless calls stay per address.
+  const session = tier === "account" ? sessionKey(req) : null;
+  return rateLimitOr429(session ? `route:${scope}:session:${session}` : `route:${scope}:${clientIp(req)}`, limit, windowMs);
 }
 
 // @supabase/ssr's default storage key: sb-<project ref>-auth-token, chunked as .0, .1, …
 const SESSION_COOKIE = /(?:^|;\s*)sb-[A-Za-z0-9_-]+-auth-token(?:\.\d+)?=[^;\s]/;
+const SESSION_COOKIE_VALUE = /(?:^|;\s*)(sb-[A-Za-z0-9_-]+-auth-token(?:\.0)?)=([^;\s]+)/;
+
+/** A pseudonymous key for the request's session cookie (first chunk), or null. */
+export function sessionKey(req: Request): string | null {
+  const m = SESSION_COOKIE_VALUE.exec(req.headers.get("cookie") ?? "");
+  return m ? createHash("sha256").update(`${m[1]}=${m[2]}`, "utf8").digest("base64url").slice(0, 32) : null;
+}
 
 /** Whether the request carries a (possibly chunked) Supabase session cookie. */
 export function hasSessionCookie(req: Request): boolean {

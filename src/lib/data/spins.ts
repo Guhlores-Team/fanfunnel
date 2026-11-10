@@ -134,9 +134,12 @@ async function readFanPassView(token: string): Promise<FanPassView | null> {
   // fan's NEXT spin, and publish its hash on the page. Generating it here
   // (page load) rather than at spin time is the entire point: the commitment
   // observably predates the spin request.
+  // Its own service client (not the cached reader's) so the server-only RPC
+  // scanner can see the receiver is the service role; same per-call timeout.
+  const commitClient = createServiceClient({ timeoutMs: FAN_READ_TIMEOUT_MS });
   const commitRead: Promise<{ hash: string | null }> = pass.next_server_seed_hash
     ? Promise.resolve({ hash: pass.next_server_seed_hash })
-    : Promise.resolve(sb.rpc("ensure_pass_commitment", { p_token: token })).then(({ data: committed, error }) => {
+    : Promise.resolve(commitClient.rpc("ensure_pass_commitment", { p_token: token })).then(({ data: committed, error }) => {
         if (error) throw new FanPassUnavailableError("ensure_pass_commitment failed");
         return { hash: (committed as { hash?: string } | null)?.hash ?? null };
       });
