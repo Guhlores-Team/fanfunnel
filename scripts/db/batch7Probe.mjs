@@ -17,11 +17,9 @@ const TOKEN_A = "probe-0073-a";
 const HEX = "a".repeat(64);
 const DIAG = "public.run_reward_ledger_invariants()";
 
-/** SECURITY DEFINER functions a signed-in session may execute after 0073 (the 0072 list plus the five new read/notice RPCs). */
-export const AUTHENTICATED_DEFINER_0073 = [
-  "creator_analytics_summary(uuid, integer)", "creator_fan_summaries(uuid, text, timestamp with time zone, uuid, integer)",
-  "creator_obligations(uuid)", "legal_terms_upcoming()", "set_legal_terms_notice(text, date)",
-];
+// 0073 adds no signed-in SECURITY DEFINER function (the replayed 0072 closing
+// check admits none): the three dashboard summaries are service-only behind a
+// route's can_act_for check, the two Terms-notice RPCs are SECURITY INVOKER.
 /** DB-14: legacy shells dropped by 0073 (regprocedure spellings). */
 export const DROPPED_0073 = [
   "import_fans(jsonb)", "credit_pass_spins(uuid,integer)", "claim_spin(text)", "rollback_claimed_spin(text,uuid)",
@@ -123,7 +121,9 @@ export function probeBatch7(db, psql) {
   same("TS-05/TS-06: the two new tables have RLS and a policy", q(`select count(*) from pg_class c where c.relname in ('legal_terms_notice','fan_consent_evidence') and c.relrowsecurity and exists (select 1 from pg_policy where polrelid = c.oid)`), "2");
   same("DB-05/09/16: the session role lost the direct writes", q(`select has_table_privilege('authenticated','public.prizes','UPDATE') or has_table_privilege('authenticated','public.prizes','DELETE') or has_table_privilege('authenticated','public.creator_reports','DELETE') or has_table_privilege('authenticated','public.creator_applications','DELETE') or has_table_privilege('authenticated','public.profiles','INSERT') or has_table_privilege('authenticated','public.profiles','DELETE') or has_table_privilege('authenticated','public.spins','INSERT') or has_table_privilege('authenticated','public.spins','UPDATE') or has_table_privilege('authenticated','public.spins','DELETE')`), "f");
   same("the service role keeps the prize and ledger writes", q(`select has_table_privilege('service_role','public.prizes','UPDATE') and has_table_privilege('service_role','public.spins','INSERT') and has_table_privilege('service_role','public.creator_applications','DELETE')`), "t");
-  same("the new read RPCs are signed-in only, record_fan_ack is service only", q(`select bool_and(has_function_privilege('authenticated', s, 'EXECUTE')) and not bool_or(has_function_privilege('anon', s, 'EXECUTE')) from unnest(array['public.creator_obligations(uuid)','public.creator_fan_summaries(uuid,text,timestamptz,uuid,integer)','public.creator_analytics_summary(uuid,integer)','public.legal_terms_upcoming()','public.set_legal_terms_notice(text,date)']) s`) + "," + q(`select has_function_privilege('service_role','public.record_fan_ack(text,text,text)','EXECUTE') and not has_function_privilege('authenticated','public.record_fan_ack(text,text,text)','EXECUTE') and not has_function_privilege('anon','public.record_fan_ack(text,text,text)','EXECUTE')`), "t,t");
+  same("the dashboard summaries and record_fan_ack are service only", q(`select bool_and(has_function_privilege('service_role', s, 'EXECUTE') and not has_function_privilege('authenticated', s, 'EXECUTE') and not has_function_privilege('anon', s, 'EXECUTE')) from unnest(array['public.creator_obligations(uuid)','public.creator_fan_summaries(uuid,text,timestamptz,uuid,integer)','public.creator_analytics_summary(uuid,integer)','public.record_fan_ack(text,text,text)']) s`), "t");
+  same("the Terms-notice RPCs are signed-in SECURITY INVOKER functions", q(`select bool_and(has_function_privilege('authenticated', p.oid, 'EXECUTE') and not has_function_privilege('anon', p.oid, 'EXECUTE') and not p.prosecdef) from pg_proc p where p.oid in ('public.legal_terms_upcoming()'::regprocedure, 'public.set_legal_terms_notice(text,date)'::regprocedure)`), "t");
+  same("no signed-in SECURITY DEFINER function was added (the 0072 closing check replays)", q(`select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef and has_function_privilege('authenticated', p.oid, 'EXECUTE') and p.proname in ('creator_obligations','creator_fan_summaries','creator_analytics_summary','legal_terms_upcoming','set_legal_terms_notice','record_fan_ack')`), "0");
   for (const fn of ["set_redemption_state", "archive_wheel", "delete_wheel", "delete_campaign"]) {
     same(`CC-03: ${fn} re-checks authority after its last lock`, q(`select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname = '${fn}' and prosrc like '%0073 (CC-03)%'`), "1");
   }
@@ -282,21 +282,23 @@ export function probeBatch7(db, psql) {
 
   // ── DB-13 / DB-17 / DB-10 / PA-03: the dashboard read RPCs ───────────────
   expect("DB-13: creator_obligations counts the open prize, the fan owed, the credit and the live link",
-    as(A, `select 'ob:' || (o->>'openPrizes') || ',' || (o->>'fansOwed') || ',' || (o->>'unplayedPaidSpins') || ',' || (o->>'unplayedSpins') || ',' || (o->>'fansWithCredit') || ',' || (o->>'liveFocus') || ',' || (o->>'heldChase') || ',' || (o->>'activeLinks') from public.creator_obligations() o;`),
+    service(`select 'ob:' || (o->>'openPrizes') || ',' || (o->>'fansOwed') || ',' || (o->>'unplayedPaidSpins') || ',' || (o->>'unplayedSpins') || ',' || (o->>'fansWithCredit') || ',' || (o->>'liveFocus') || ',' || (o->>'heldChase') || ',' || (o->>'activeLinks') from public.creator_obligations('${A}') o;`),
     ["ob:1,1,5,5,1,0,0,1"]);
-  expect("DB-13: creator_obligations answers null to another tenant and a value to a view seat", as(B, `select 'other:' || coalesce(public.creator_obligations('${A}')::text, 'null');`) + as(CH, `select 'seat:' || (public.creator_obligations('${A}')->>'openPrizes');`), ["other:null", "seat:1"]);
+  refused("DB-13: a session cannot call creator_obligations directly (the route checks can_act_for and uses the service role)", as(A, `select public.creator_obligations('${A}');`), /permission denied for function creator_obligations/);
   expect("DB-17: my_seat_creators reports can_manage", as(CH, `select 'ch:' || can_chat::text || ',' || can_fulfil::text || ',' || can_manage::text from public.my_seat_creators();`) + as(MG, `select 'mg:' || can_chat::text || ',' || can_fulfil::text || ',' || can_manage::text from public.my_seat_creators() where creator_id = '${A}';`), ["ch:true,false,false", "mg:true,true,true"]);
   expect("DB-10: the redemption queue carries fan_id", as(A, `select 'queue:' || coalesce(fan_id::text, 'null') from public.creator_redemption_queue(null, null, null, null, 50, null);`), [`queue:${FA}`]);
   expect("PA-03: creator_fan_summaries summarises the fan in SQL (newest first, keyset, search, totals)",
-    as(A, `select 'fan:' || fan_id || ',' || display_name || ',' || spins_remaining || ',' || total_spent_cents || ',' || grant_count || ',' || array_to_string(campaign_names, '+') || ',' || coalesce(last_win_label, 'null') || ',' || wins || ',' || links || ',' || active_links || ',' || self_excluded::text || ',' || total_fans from public.creator_fan_summaries();
-      select 'search:' || count(*) from public.creator_fan_summaries(null, 'nomatch');
-      select 'page:' || count(*) from public.creator_fan_summaries(null, null, (select created_at from public.fans where id = '${FA}'), '${FA}', 50);`)
-    + as(B, `select 'other:' || count(*) from public.creator_fan_summaries('${A}');`) + as(CH, `select 'seat:' || count(*) from public.creator_fan_summaries('${A}');`),
-    [`fan:${FA},Fan A,5,1500,1,launch,one,1,1,1,false,1`, "search:0", "page:0", "other:0", "seat:1"]);
+    service(`select 'fan:' || fan_id || ',' || display_name || ',' || spins_remaining || ',' || total_spent_cents || ',' || grant_count || ',' || array_to_string(campaign_names, '+') || ',' || coalesce(last_win_label, 'null') || ',' || wins || ',' || links || ',' || active_links || ',' || self_excluded::text || ',' || total_fans from public.creator_fan_summaries('${A}');
+      select 'search:' || count(*) from public.creator_fan_summaries('${A}', 'nomatch');
+      select 'page:' || count(*) from public.creator_fan_summaries('${A}', null, (select created_at from public.fans where id = '${FA}'), '${FA}', 50);
+      select 'nobody:' || count(*) from public.creator_fan_summaries(null);`),
+    [`fan:${FA},Fan A,5,1500,1,launch,one,1,1,1,false,1`, "search:0", "page:0", "nobody:0"]);
+  refused("PA-03: a session cannot call creator_fan_summaries directly", as(A, `select count(*) from public.creator_fan_summaries('${A}');`), /permission denied for function creator_fan_summaries/);
   expect("PA-03: creator_analytics_summary aggregates in SQL and answers null to another tenant",
-    as(A, `select 'an:' || (s->>'days') || ',' || jsonb_array_length(s->'spinsByDay') || ',' || (s->'funnel'->>'fans') || ',' || (s->'funnel'->>'spun') || ',' || (s->'activeFans'->>'thisWeek') || ',' || (s->'profit'->>'revenueCents') || ',' || jsonb_array_length(s->'prizeRoi') || ',' || (s->'cohorts'->0->>'campaignName') || ',' || (s->'cohorts'->0->>'fans') from public.creator_analytics_summary(null, 30) s;`)
-    + as(B, `select 'other:' || coalesce(public.creator_analytics_summary('${A}')::text, 'null');`),
-    ["an:30,1,1,1,1,1500,1,launch,1", "other:null"]);
+    service(`select 'an:' || (s->>'days') || ',' || jsonb_array_length(s->'spinsByDay') || ',' || (s->'funnel'->>'fans') || ',' || (s->'funnel'->>'spun') || ',' || (s->'activeFans'->>'thisWeek') || ',' || (s->'profit'->>'revenueCents') || ',' || jsonb_array_length(s->'prizeRoi') || ',' || (s->'cohorts'->0->>'campaignName') || ',' || (s->'cohorts'->0->>'fans') from public.creator_analytics_summary('${A}', 30) s;
+      select 'nobody:' || coalesce(public.creator_analytics_summary(null)::text, 'null');`),
+    ["an:30,1,1,1,1,1500,1,launch,1", "nobody:null"]);
+  refused("PA-03: a session cannot call creator_analytics_summary directly", as(A, `select public.creator_analytics_summary('${A}');`), /permission denied for function creator_analytics_summary/);
 
   // ── WG-02 / ATK-06: agencies ──────────────────────────────────────────────
   expect("WG-02: org_create seats its owner; the owner seat cannot be removed or left",

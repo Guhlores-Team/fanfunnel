@@ -15577,12 +15577,18 @@ create index if not exists legal_terms_notice_announced_by_idx on public.legal_t
 alter table public.legal_terms_notice enable row level security;
 revoke all on public.legal_terms_notice from public, anon, authenticated;
 grant select on public.legal_terms_notice to authenticated, service_role;
+-- The notice RPCs run as the caller (SECURITY INVOKER): reads through the
+-- policy below, the admin's write through the is_admin() update policy.
+grant update on public.legal_terms_notice to authenticated;
+drop policy if exists legal_terms_notice_admin_write on public.legal_terms_notice;
+create policy legal_terms_notice_admin_write on public.legal_terms_notice for update
+  using (public.is_admin()) with check (public.is_admin());
 drop policy if exists legal_terms_notice_read on public.legal_terms_notice;
 create policy legal_terms_notice_read on public.legal_terms_notice for select
   using (public.current_user_active() or public.is_admin());
 insert into public.legal_terms_notice (singleton) values (true) on conflict (singleton) do nothing;
 create or replace function public.legal_terms_upcoming()
-returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
+returns jsonb language sql stable security invoker set search_path = public, pg_temp as $$
   select case when n.upcoming_version is null then null
               else jsonb_build_object('version', n.upcoming_version, 'effectiveAt', n.effective_at, 'announcedAt', n.announced_at) end
     from public.legal_terms_notice n where n.singleton
@@ -15591,7 +15597,7 @@ revoke execute on function public.legal_terms_upcoming() from public, anon;
 grant execute on function public.legal_terms_upcoming() to authenticated, service_role;
 comment on function public.legal_terms_upcoming() is 'The announced upcoming Terms/Privacy version and its effective date, or null (0073, TS-06).';
 create or replace function public.set_legal_terms_notice(p_version text, p_effective_at date)
-returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+returns jsonb language plpgsql security invoker set search_path = public, pg_temp as $$
 begin
   if not public.is_admin() then raise exception 'admin required' using errcode = '42501'; end if;
   if (p_version is null) <> (p_effective_at is null) or (p_version is not null and (p_version !~ '^\d{4}-\d{2}-\d{2}$' or p_effective_at < current_date)) then
@@ -15600,7 +15606,8 @@ begin
   update public.legal_terms_notice
      set upcoming_version = p_version, effective_at = p_effective_at,
          announced_at = case when p_version is null then null else now() end,
-         announced_by = case when p_version is null then null else auth.uid() end
+         -- the caller's id read as Supabase's auth.uid() does (this function runs as the caller, who has no USAGE on schema auth locally)
+         announced_by = case when p_version is null then null else coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid end
    where singleton;
   return public.legal_terms_upcoming();
 end $$;
@@ -15654,6 +15661,8 @@ grant execute on function public.record_fan_ack(text, text, text) to service_rol
 comment on function public.record_fan_ack(text, text, text) is 'Stamps the age/terms acknowledgement on the fan behind a link with the current legal_terms_version() and optional consent evidence hashes (0073, TS-05). Service role only.';
 
 -- ── (7) DB-10: the fulfilment queue names the fan (null once deleted) ──────
+-- A changed row type needs a new signature so the snapshots stay replayable:
+-- the queue gains p_fan (the one fan's open prizes) as its last argument.
 drop function if exists public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid);
 create or replace function public.creator_redemption_queue(
   p_status text default null,
@@ -15661,7 +15670,8 @@ create or replace function public.creator_redemption_queue(
   p_before_at timestamptz default null,
   p_before_id uuid default null,
   p_limit integer default 50,
-  p_creator uuid default null
+  p_creator uuid default null,
+  p_fan uuid default null
 )
 returns table (
   id uuid,
@@ -15705,6 +15715,7 @@ language sql stable security definer set search_path = public, pg_temp as $$
     left join public.spin_rewards sr on sr.spin_id = s.id
     cross join pattern
    where (p_status is null or r.status::text = p_status)
+     and (p_fan is null or s.fan_id = p_fan)
      and (pattern.p is null
           or s.prize_label ilike pattern.p
           or f.display_name ilike pattern.p
@@ -15713,8 +15724,8 @@ language sql stable security definer set search_path = public, pg_temp as $$
    order by r.created_at desc, r.id desc
    limit least(greatest(coalesce(p_limit, 50), 1), 100);
 $$;
-revoke execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid) from public, anon;
-grant execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid) to authenticated, service_role;
+revoke execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid) from public, anon;
+grant execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid) to authenticated, service_role;
 
 -- ── DB-11, DB-12: save_game_wheel takes the game version and a draft flag ──
 drop function if exists public.save_game_wheel(uuid, uuid, uuid, jsonb, jsonb, uuid);
@@ -15759,7 +15770,8 @@ create or replace function public.creator_obligations(p_creator uuid default nul
 returns jsonb language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare v_creator uuid := coalesce(p_creator, auth.uid());
 begin
-  if v_creator is null or not (public.can_act_for(v_creator, 'view') or public.is_admin()) then return null; end if;
+  if v_creator is null then return null; end if;
+  if auth.uid() is not null and not (public.can_act_for(v_creator, 'view') or public.is_admin()) then return null; end if;
   return jsonb_build_object(
     'openPrizes', (select count(*) from public.redemptions r where r.creator_id = v_creator and r.status in ('pending', 'in_progress')),
     'fansOwed', (select count(distinct s.fan_id) from public.redemptions r join public.spins s on s.id = r.spin_id
@@ -15773,13 +15785,14 @@ begin
     'heldChase', (select count(*) from public.chase_reservations c where c.creator_id = v_creator and c.state = 'held'),
     'activeLinks', (select count(*) from public.fan_passes p where p.creator_id = v_creator and p.is_active and p.self_excluded_at is null));
 end $$;
-revoke execute on function public.creator_obligations(uuid) from public, anon;
-grant execute on function public.creator_obligations(uuid) to authenticated, service_role;
-comment on function public.creator_obligations(uuid) is 'Open prizes, fans owed, unplayed (paid) spins and live promises of a creator, over every row (0073, DB-13). Caller needs can_act_for(creator, view).';
+revoke execute on function public.creator_obligations(uuid) from public, anon, authenticated;
+grant execute on function public.creator_obligations(uuid) to service_role;
+comment on function public.creator_obligations(uuid) is 'Open prizes, fans owed, unplayed (paid) spins and live promises of a creator, over every row (0073, DB-13). Caller needs can_act_for(creator, view). Service role only: the server route checks can_act_for on the session and passes p_creator (a replayed 0072 closing check admits no new signed-in SECURITY DEFINER function).';
 
 -- ── DB-17: my_seat_creators says whether the seat may run campaigns too ───
+-- (new signature, p_limit, so the historic definitions still replay).
 drop function if exists public.my_seat_creators();
-create or replace function public.my_seat_creators()
+create or replace function public.my_seat_creators(p_limit integer default 200)
 returns table (creator_id uuid, display_name text, can_chat boolean, can_fulfil boolean, can_manage boolean)
 language sql stable security definer set search_path = public, pg_temp as $$
   select c.id, c.display_name, c.can_chat, c.can_fulfil, c.can_manage
@@ -15795,10 +15808,10 @@ language sql stable security definer set search_path = public, pg_temp as $$
     ) c
    where c.can_chat or c.can_fulfil
    order by c.display_name, c.id
-   limit 200;
+   limit least(greatest(coalesce(p_limit, 200), 1), 200);
 $$;
-revoke execute on function public.my_seat_creators() from public, anon;
-grant execute on function public.my_seat_creators() to authenticated, service_role;
+revoke execute on function public.my_seat_creators(integer) from public, anon;
+grant execute on function public.my_seat_creators(integer) to authenticated, service_role;
 
 -- ── PA-03: the fans list and the analytics are summarised in SQL ──────────
 -- listFans read every fan, link, spin and grant of the creator into Node and
@@ -15845,7 +15858,7 @@ returns table (
 language sql stable security definer set search_path = public, pg_temp as $$
   with target as (
     select coalesce(p_creator, auth.uid()) as id
-     where public.can_act_for(coalesce(p_creator, auth.uid()), 'view') or public.is_admin()
+     where auth.uid() is null or public.can_act_for(coalesce(p_creator, auth.uid()), 'view') or public.is_admin()
   ), q as (
     select nullif(btrim(coalesce(p_query, '')), '') as raw
   ), pattern as (
@@ -15885,9 +15898,9 @@ language sql stable security definer set search_path = public, pg_temp as $$
     left join lateral (select max(ck.day) as last_day from public.fan_checkins ck where ck.fan_id = f.id and ck.creator_id = f.creator_id) v on true
    order by f.created_at desc, f.id desc;
 $$;
-revoke execute on function public.creator_fan_summaries(uuid, text, timestamptz, uuid, integer) from public, anon;
-grant execute on function public.creator_fan_summaries(uuid, text, timestamptz, uuid, integer) to authenticated, service_role;
-comment on function public.creator_fan_summaries(uuid, text, timestamptz, uuid, integer) is 'One page of the creator''s fans (newest first, keyset cursor on created_at/id, optional name/handle/tag search) with per-fan totals computed in SQL (0073, PA-03). Caller needs can_act_for(creator, view).';
+revoke execute on function public.creator_fan_summaries(uuid, text, timestamptz, uuid, integer) from public, anon, authenticated;
+grant execute on function public.creator_fan_summaries(uuid, text, timestamptz, uuid, integer) to service_role;
+comment on function public.creator_fan_summaries(uuid, text, timestamptz, uuid, integer) is 'One page of the creator''s fans (newest first, keyset cursor on created_at/id, optional name/handle/tag search) with per-fan totals computed in SQL (0073, PA-03). Caller needs can_act_for(creator, view). Service role only: the server route checks can_act_for on the session and passes p_creator (a replayed 0072 closing check admits no new signed-in SECURITY DEFINER function).';
 create or replace function public.creator_analytics_summary(p_creator uuid default null, p_days integer default 30)
 returns jsonb language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare
@@ -15895,7 +15908,8 @@ declare
   v_days integer := least(greatest(coalesce(p_days, 30), 1), 365);
   v_since timestamptz := now() - make_interval(days => least(greatest(coalesce(p_days, 30), 1), 365));
 begin
-  if v_creator is null or not (public.can_act_for(v_creator, 'view') or public.is_admin()) then return null; end if;
+  if v_creator is null then return null; end if;
+  if auth.uid() is not null and not (public.can_act_for(v_creator, 'view') or public.is_admin()) then return null; end if;
   return jsonb_build_object(
     'days', v_days,
     'since', v_since,
@@ -15940,9 +15954,9 @@ begin
                           left join public.campaigns c on c.id = fg.campaign_id
                          group by fg.campaign_id, c.name) y));
 end $$;
-revoke execute on function public.creator_analytics_summary(uuid, integer) from public, anon;
-grant execute on function public.creator_analytics_summary(uuid, integer) to authenticated, service_role;
-comment on function public.creator_analytics_summary(uuid, integer) is 'The dashboard analytics (daily spins and revenue, funnel, weekly-active fans, hour-of-week heatmap, profit, prize ROI, cohorts) aggregated in SQL for one creator and window (0073, PA-03). Caller needs can_act_for(creator, view).';
+revoke execute on function public.creator_analytics_summary(uuid, integer) from public, anon, authenticated;
+grant execute on function public.creator_analytics_summary(uuid, integer) to service_role;
+comment on function public.creator_analytics_summary(uuid, integer) is 'The dashboard analytics (daily spins and revenue, funnel, weekly-active fans, hour-of-week heatmap, profit, prize ROI, cohorts) aggregated in SQL for one creator and window (0073, PA-03). Caller needs can_act_for(creator, view). Service role only: the server route checks can_act_for on the session and passes p_creator (a replayed 0072 closing check admits no new signed-in SECURITY DEFINER function).';
 
 -- ── (8) DB-15: every function pins search_path = public, pg_temp ────────────
 -- Functions created above already do; the ~180 older SECURITY DEFINER
@@ -16007,9 +16021,9 @@ begin
        'org_invite_respond', 'org_invite_revoke', 'org_leave', 'org_remove_creator', 'org_remove_member',
        'org_scope_creator', 'set_chat_settings', 'set_creator_note', 'set_creator_theme', 'set_display_name',
        'set_leaderboard_enabled', 'set_notification_prefs', 'set_notifications_seen', 'set_onboarding_dismissed',
-       'set_public_profile', 'set_pwa_icon_mode', 'set_redemption_state', 'wipe_my_spin_attempts',
-       -- 0073
-       'creator_obligations', 'creator_fan_summaries', 'creator_analytics_summary', 'legal_terms_upcoming', 'set_legal_terms_notice');
+       'set_public_profile', 'set_pwa_icon_mode', 'set_redemption_state', 'wipe_my_spin_attempts');
+       -- 0073 adds no signed-in SECURITY DEFINER function: the 0072 list above
+       -- must still hold when the snapshots are replayed over this schema.
   if v_bad is not null then
     raise exception '0073: authenticated can execute SECURITY DEFINER functions outside the reviewed list: %', v_bad;
   end if;

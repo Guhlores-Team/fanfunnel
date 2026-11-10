@@ -35,9 +35,9 @@ export const AUTHENTICATED_DEFINER = [
   "_is_org_member(uuid)", "_my_confirmed_email()", "_owns_org(uuid)", "_owns_org_seat(uuid)",
   "admin_account_stats()", "archive_wheel(uuid)", "can_act_for(uuid, text)", "creator_link_pass(text)",
   "creator_link_tokens(uuid, uuid)",
-  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid)",
+  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid, uuid)",
   "current_user_active()", "delete_campaign(uuid, uuid)", "delete_wheel(uuid)", "is_admin()",
-  "issue_creator_actor_context(uuid, text)", "my_seat_creators()", "org_account_stats(uuid)",
+  "issue_creator_actor_context(uuid, text)", "my_seat_creators(integer)", "org_account_stats(uuid)",
   "org_add_member(uuid, text, org_role)", "org_create(text)", "org_invite_creator(uuid, text)",
   "org_invite_respond(uuid, boolean)", "org_invite_revoke(uuid)", "org_leave(uuid)",
   "org_remove_creator(uuid, uuid)", "org_remove_member(uuid)", "org_scope_creator(uuid, uuid, boolean)",
@@ -45,9 +45,6 @@ export const AUTHENTICATED_DEFINER = [
   "set_display_name(text)", "set_leaderboard_enabled(boolean)", "set_notification_prefs(boolean, boolean, boolean)",
   "set_notifications_seen()", "set_onboarding_dismissed(boolean)", "set_public_profile(text, text, text)",
   "set_pwa_icon_mode(text)", "set_redemption_state(uuid, uuid, jsonb)", "wipe_my_spin_attempts()",
-  // 0073: the dashboard summaries, the obligations counter and the Terms notice.
-  "creator_analytics_summary(uuid, integer)", "creator_fan_summaries(uuid, text, timestamp with time zone, uuid, integer)",
-  "creator_obligations(uuid)", "legal_terms_upcoming()", "set_legal_terms_notice(text, date)",
 ];
 /** Advisor: anon could execute these on TEST at 0071. */
 export const ANON_REVOKED = [
