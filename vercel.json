@@ -30,7 +30,14 @@
       "gaps/b6-dash": false,
       "gaps/b6-db": false,
       "gaps/b6-ops": false,
-      "gaps/b6-attack": false
+      "gaps/b6-attack": false,
+      "gaps/b7-fan": false,
+      "gaps/b7-auth": false,
+      "gaps/b7-server": false,
+      "gaps/b7-dash": false,
+      "gaps/b7-trust": false,
+      "gaps/b7-ci": false,
+      "gaps/b7-db": false
     }
   },
   "crons": [
