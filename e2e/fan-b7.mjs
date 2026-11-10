@@ -719,8 +719,14 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
       const name = `B7 mute ${randomBytes(3).toString("hex")}`;
       const fan = await own(name, 2);
       const { context, page } = await openFan(browser, sink, fan.token);
+      // The creator's page meets one intended 409 (the refused send), so it
+      // keeps its own error list instead of the shared sink: anything else
+      // (a script error, another failed response) still fails the step.
       const creator = await ctx.newPage();
-      attachSink(creator, sink);
+      const creatorErrors = [];
+      creator.on("pageerror", (e) => creatorErrors.push(String(e?.message || e)));
+      creator.on("console", (m) => { if (m.type() === "error" && !/status of 409/.test(m.text())) creatorErrors.push(m.text()); });
+      creator.on("response", (r) => { if (r.status() >= 400 && !(r.status() === 409 && new URL(r.url()).pathname === "/api/messages/creator")) creatorErrors.push(`${r.status()} ${r.url()}`); });
       const safety = async () => {
         await page.getByRole("button", { name: "Safety & privacy" }).first().click();
         const dialog = page.getByRole("dialog", { name: "Safety and privacy" });
@@ -768,6 +774,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         const after = await fanThread();
         assert(after.some((m) => m.sender === "creator" && m.body === "b7 drawer while muted"), "after unmuting, the creator's message reaches the fan");
         assert(after.every((m) => !("actor_id" in m) && !("actorId" in m) && !("creator_id" in m)), "the fan's thread carries no account ids (TS-07)");
+        assert(creatorErrors.length === 0, `the creator's page had no other errors (${creatorErrors.join("; ")})`);
       } finally {
         await creator.close().catch(() => {});
         await context.close();
