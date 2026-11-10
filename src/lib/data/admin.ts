@@ -204,12 +204,28 @@ export const EXPIRED_INVITE_GRACE_DAYS = 14;
  * seat elsewhere, has several ties; `orgId` picks the console to show and
  * `ties` lists every one with its kind, so each can be left.
  */
-/** One agency's name and owner standing, as this session may read it (owner, seat or managed creator). */
+/** One agency's name and owner standing from its orgs row, as an owner or a seat may read it. */
 async function readOrgState(sb: Awaited<ReturnType<typeof createClient>>, orgId: string): Promise<{ name: string; ownerActive: boolean | null } | null> {
   const { data, error } = await sb.from("orgs").select("id, name, owner_active").eq("id", orgId).maybeSingle();
   if (error || !data) return null;
   const row = data as unknown as { name: string; owner_active?: unknown };
   return { name: row.name, ownerActive: typeof row.owner_active === "boolean" ? row.owner_active : null };
+}
+
+/**
+ * What a MANAGED creator may know of its agency: the name and whether the
+ * owner is in good standing. 0073 keeps the orgs row (owner, billing) for the
+ * owner and the seats and gives a managed creator org_briefs instead (its
+ * own agency only, by RLS). A database from before that table answers
+ * through the orgs row, as it did then.
+ */
+async function readManagedOrgState(sb: Awaited<ReturnType<typeof createClient>>, orgId: string): Promise<{ name: string; ownerActive: boolean | null } | null> {
+  const { data, error } = await sb.from("org_briefs" as never).select("org_id, name, owner_active").eq("org_id", orgId).maybeSingle();
+  if (!error && data) {
+    const row = data as unknown as { name: string; owner_active?: unknown };
+    return { name: row.name, ownerActive: typeof row.owner_active === "boolean" ? row.owner_active : null };
+  }
+  return readOrgState(sb, orgId);
 }
 
 /** A45/WG-13: what a managed creator (no console of its own) is told about its agency. */
@@ -218,7 +234,7 @@ export async function getManagedOrgState(orgId: string | null): Promise<{ orgNam
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { orgName: null, ownerActive: null };
-  const state = await readOrgState(sb, orgId);
+  const state = await readManagedOrgState(sb, orgId);
   return { orgName: state?.name ?? null, ownerActive: state?.ownerActive ?? null };
 }
 
@@ -249,9 +265,9 @@ export async function getAgencyOverview(opts: { orgId?: string | null } = {}): P
     ties.push({ orgId: st.org.id, orgName: st.org.name, kind: "staff", role: st.role });
   }
   if (managedOrgId && managedOrgId !== owned?.id) {
-    // 0073 (orgs_tie_read): a managed creator reads its agency's name and
-    // whether the owner's account is in good standing.
-    const m = await readOrgState(sb, managedOrgId);
+    // 0073: a managed creator reads its agency's name and whether the
+    // owner's account is in good standing (org_briefs, never the orgs row).
+    const m = await readManagedOrgState(sb, managedOrgId);
     ties.push({ orgId: managedOrgId, orgName: m?.name ?? seats.find((x) => x.org.id === managedOrgId)?.org.name ?? "the agency that manages your account", kind: "creator", role: null, ...(m ? { ownerActive: m.ownerActive } : {}) });
   }
 

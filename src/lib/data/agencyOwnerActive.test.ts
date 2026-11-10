@@ -17,6 +17,10 @@ const db = new FakeSupabase(me);
 db.tables.orgs = [];
 db.seed("orgs", { id: org, name: "Northside Talent", owner_id: "00000000-0000-4000-8000-0000000000a1", owner_active: false });
 db.seed("orgs", { id: oldOrg, name: "Before 0073", owner_id: "00000000-0000-4000-8000-0000000000a2" });
+// 0073: a managed creator reads org_briefs (its own agency only); empty here
+// stands for a database where the orgs row still answers.
+const briefOrg = "00000000-0000-4000-8000-00000000000d";
+db.tables.org_briefs = [];
 
 let configured = true;
 let signedIn = true;
@@ -54,6 +58,15 @@ async function main() {
   state = await getManagedOrgState("00000000-0000-4000-8000-0000000000ff");
   check("an agency this session cannot read is unknown", state.ownerActive === null && state.orgName === null);
   check("no agency: nothing to say", (await getManagedOrgState(null)).ownerActive === null);
+  // The agency's orgs row is not readable by a managed creator; its brief is.
+  db.seed("org_briefs", { org_id: briefOrg, name: "Brief Talent", owner_active: false });
+  state = await getManagedOrgState(briefOrg);
+  check("a managed creator reads its agency's name and owner standing from org_briefs", state.orgName === "Brief Talent" && state.ownerActive === false);
+  db.tables.org_briefs[0].owner_active = true;
+  check("…and an owner in good standing from the same place", (await getManagedOrgState(briefOrg)).ownerActive === true);
+  db.seed("org_briefs", { org_id: org, name: "Northside Talent (brief)", owner_active: false });
+  check("the brief is preferred over the orgs row when both answer", (await getManagedOrgState(org)).orgName === "Northside Talent (brief)");
+  db.tables.org_briefs = [];
 
   // Creating an agency: a refusal is said as what it is, never "db_error".
   const { createOrg } = await import("./admin");
