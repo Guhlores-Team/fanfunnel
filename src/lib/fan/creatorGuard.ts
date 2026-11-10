@@ -55,7 +55,9 @@ export async function creatorActsForFan(token: string): Promise<boolean> {
   const { data: { user } } = await session.auth.getUser();
   if (!user) return false;
   const { data, error } = await session.rpc("can_act_for", { target_creator: creatorId, perm: "view" });
-  return !error && data === true;
+  // A signed-in user whose permission could not be read is refused, not waved
+  // through: the guard must not open when the check itself fails.
+  return error ? true : data === true;
 }
 
 /** The 403 a fan route answers when the creator's own session is behind the request, else null. */

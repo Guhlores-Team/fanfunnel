@@ -8,6 +8,7 @@ let cookieNames: string[] = [];
 let configured = true;
 let user: { id: string } | null = { id: "creator-1" };
 let canAct = true;
+let rpcError: { message: string } | null = null;
 const rpcCalls: unknown[] = [];
 let passLookups = 0;
 
@@ -19,7 +20,7 @@ mock.module("@/lib/supabase/server", { namedExports: {
   isSupabaseConfigured: () => configured,
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user } }) },
-    rpc: async (name: string, args: unknown) => { rpcCalls.push([name, args]); return { data: canAct, error: null }; },
+    rpc: async (name: string, args: unknown) => { rpcCalls.push([name, args]); return { data: rpcError ? null : canAct, error: rpcError }; },
   }),
   createServiceClient: () => ({
     from: () => ({ select: () => ({ eq: (_c: string, token: string) => ({ maybeSingle: async () => { passLookups++; return { data: token === "known" ? { creator_id: "creator-1" } : null }; } }) }) }),
@@ -49,6 +50,9 @@ async function main() {
 
   canAct = false;
   check("a signed-in user who cannot act for this creator is a stranger: not refused", !(await creatorActsForFan("known")));
+  rpcError = { message: "connection reset" };
+  check("a signed-in user whose permission cannot be read is refused (fails closed)", await creatorActsForFan("known"));
+  rpcError = null;
   canAct = true;
   user = null;
   check("a stale cookie with no user: not refused", !(await creatorActsForFan("known")));
