@@ -20,7 +20,8 @@
 //   F9  archive_wheel vs a direct link pause by the creator session (Chase fan)
 //   F10 a manager seat's grant in flight while the owner removes the seat
 // 0073 round 6 (independent review L6, L3, M3, H1):
-//   F12 the owner's full reset vs a fulfilment of one of its prizes
+//   F12 the owner's full reset vs a fulfilment of one of its prizes (and one
+//       fan's deletion vs the same fulfilment, which needed no change)
 //   F13 an account deletion cascade vs a fan's acknowledgement (record_fan_ack)
 //   F14 the migration's lock block gives up after 5 seconds behind a held table
 //   H1  an attempt aged out by retention releases the request; the next play
@@ -318,6 +319,23 @@ export async function probeLockOrder(db, psqlAsync) {
     clean("F12 reset_creator_content vs a fulfilment", r, /"status": ?"ok"/.test(r.last(r.first)) && r.last(r.second) === "ok");
     check((await sql(`select (select count(*) from public.fans where creator_id=${quote(c)})||','||(select count(*) from public.wheels where creator_id=${quote(c)});`)).trim() === "0,0", "F12 the fans and the games are gone after the reset");
     await sql(`delete from public.creator_actor_contexts where id=${quote(context)};`);
+  });
+  // F12 (single fan): one fan's deletion takes its Focus game and prize
+  // (aa_focus_lifecycle, the first BEFORE trigger) before its redemptions
+  // (trg_fan_scrub_traces), the fulfilment's own order, so it needed no
+  // change: staged the same way, it waits for the game and both finish.
+  await guard("F12 single fan", async () => {
+    const c = await addCreator(), cw = await addWheel(c, [{ label: "A", stock: 50 }, { label: "B" }]);
+    const who = await addFan(c, cw.id), a = await prep(who), won = await psqlAsync(db, commitSql(who, a));
+    if (!committed(won.stdout)) throw Error(`F12 single-fan fixture commit: ${won.stderr || won.stdout}`);
+    const red = (await sql(`select id from public.redemptions where creator_id=${quote(c)} limit 1;`)).trim();
+    await sql(`update public.redemptions set notes='leave it at the door' where id=${quote(red)};`);
+    await focusOn(c, who, cw.prizes.A, "chase");
+    const r = await staged(`select 1 from public.prizes where wheel_id=${quote(cw.id)} order by id for update;`,
+      asCreator(c, `select public.set_redemption_state(${quote(red)},${quote(c)},'{"status":"fulfilled"}'::jsonb);`),
+      `delete from public.fans where id=${quote(who.fan)};`);
+    clean("F12 a single fan's deletion vs a fulfilment", r, /"status": ?"ok"/.test(r.last(r.first)) && r.second.status === 0);
+    check((await sql(`select (select count(*) from public.fans where id=${quote(who.fan)})||','||(select status from public.redemptions where id=${quote(red)});`)).trim() === "0,fulfilled", "F12 the fan is gone and its prize stays fulfilled");
   });
   // F13 (L3): the acknowledgement held the fan and then took the creator's
   // profile (key share, the evidence insert's foreign key); the account
