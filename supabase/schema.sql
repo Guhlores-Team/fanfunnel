@@ -14570,8 +14570,12 @@ comment on function public.schema_version() is 'Migration level of this database
 -- table only while they build); four DROP POLICY/CREATE POLICY pairs take an
 -- AccessExclusive lock on messages, redemptions, grants and spin_attempts
 -- until commit; NOT VALID CHECKs take a short lock and VALIDATE only a
--- SHARE UPDATE EXCLUSIVE one. Function redefinitions and the search_path
--- ALTERs lock nothing a play holds. Apply outside the nightly job window.
+-- SHARE UPDATE EXCLUSIVE one. Section (8b) adds one nullable column to
+-- profiles and one defaulted column to orgs (catalog-only, a brief
+-- AccessExclusive lock each), re-adds the creator_notices kind CHECK (validated
+-- over a small table) and adds one policy on orgs. Function redefinitions and
+-- the search_path ALTERs lock nothing a play holds. Apply outside the nightly
+-- job window.
 
 -- ── (1) DB-07: the 0052 ledger CHECKs are re-asserted and must validate ──
 -- 0052 dropped a CHECK with a warning when a row violated it, so a LIVE
