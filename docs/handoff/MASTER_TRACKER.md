@@ -102,270 +102,270 @@ Open items found while integrating batch 3 (2026-11-04):
 
 ## 4. Batch 7 (sixteen audits of 2026-11-10 at `orch/fixes` 64000ec)
 Every finding ID from the batch-7 audit summaries (`scratchpad/b7audit/*/SUMMARY.md`). The
-status column is filled at merge; `(builder)` = assigned to a batch-7 builder branch, `(owner)` = a
+status column was filled at the final merge (2026-11-10; builder reports and docs/handoff/batch7/TRIAGE.md); `(builder)` = assigned to a batch-7 builder branch, `(owner)` = a
 dashboard setting or decision only the owner can make, `(lawyer)` = a legal question. Severity is
 the auditor's. CI / config / docs items (SC, OPS3-12, WU-11, TS-12, the owner checklist and test
 script) were built on `gaps/b7-ci`.
 
 | Audit | ID | Finding (one line) | Status |
 |---|---|---|---|
-| attacker3 | ATK-01 | token-only consent/pause/reveal routes; fan delete has no owed-prize guard (= b6 C1, widened) | (builder) |
-| attacker3 | ATK-02 | 30-bit claim code (rate-limited) | (builder) |
-| attacker3 | ATK-03 | `'unsafe-inline'` CSP on fan pages | (builder) |
-| attacker3 | ATK-04 | fan-miss cap pre-blocks a whole address: one hostile fan on carrier NAT locks real fans out | (builder) |
-| attacker3 | ATK-05 | messages/redemptions/grants SELECT policies gate on `view`, not `chat`/`fulfil`/`grant` | (builder) |
-| attacker3 | ATK-06 | `org_invite_creator` answers `no_such_user` verbatim with no throttle (account enumeration) | (builder) |
-| attacker3 | ATK-nits | uncapped chat_intro/creator_note, no reserved slugs, unlimited creator_applications rows, photo-report budget, IP-keyed account tier | (builder) |
-| conc2 | CC-01 | "Reset all my data" multi-row fan delete deadlocks against a Chase commit | (builder) |
-| conc2 | CC-02 | commit `unavailable` leaves a pending attempt and `spin_pending` copy forever | (builder) |
-| conc2 | CC-03 | `set_redemption_state` / `archive_wheel` / `delete_wheel` / `delete_campaign` check `can_act_for` before the locks only | (builder) |
-| conc2 | CC-04 | nothing orders `org_remove_member` against an in-flight grant | (builder) |
-| conc2 | CC-05 | `save_wheel_prizes` / `set_prize_delivery` / `add_reward_codes` have no privilege check of their own | (builder) |
-| conc2 | CC-06 | `setActiveWheel` is two autocommit statements (transient no-live / two-live games) | (builder) |
-| conc2 | CC-07 | `_lock_wheel_lifecycle` pre-locks fans but not passes | (builder) |
-| conc2 | CC-08 | pending `spin_attempts` never aged out | (builder) |
-| dbaudit | DB-01 | a manager seat can move fans/campaigns between creators of one agency | (builder) |
-| dbaudit | DB-02 | applicant writes any e-mail/status/date/200 kB note into `creator_applications` | (builder) |
-| dbaudit | DB-03 | no DB length caps on creator free text | (builder) |
-| dbaudit | DB-04 | declined access requests never auto-deleted (= OPS-06 / T7) | (builder) |
-| dbaudit | DB-05 | direct prize UPDATE via API deadlocks a play | (builder) |
-| dbaudit | DB-06 | creator-side fan delete writes no link tombstone (bare 404 for the fan) | (builder) |
-| dbaudit | DB-07 | 0052 non-negative CHECKs are dropped-on-warning and may be missing on LIVE | (builder) |
-| dbaudit | DB-08 | retention/prune not serialised | (builder) |
-| dbaudit | DB-09 | admin can raw-DELETE safety reports | (builder) |
-| dbaudit | DB-10 | 0073 candidate C18 confirmed | (builder) |
-| dbaudit | DB-11 | 0073 candidate C16 confirmed | (builder) |
-| dbaudit | DB-12 | 0073 candidate C15 confirmed | (builder) |
-| dbaudit | DB-13 | 0073 candidate C4 confirmed | (builder) |
-| dbaudit | DB-14 | drop 19 revoked legacy function shells | (builder) |
-| dbaudit | DB-15 | `pg_temp` on ~160 search_paths | (builder) |
-| dbaudit | DB-16 | revoke unused I/U/D grants on profiles/spins | (builder) |
-| dbaudit | DB-17 | `my_seat_creators.can_manage` | (builder) |
-| dbaudit | DB-18 | `prize_reward_codes.spin_id` has no FK | (builder) |
-| dbaudit | DB-19 | `legal_terms_upcoming` | (builder) |
-| dbaudit | DB-20 | 0072 lock shape at scale | (builder) |
+| attacker3 | ATK-01 | token-only consent/pause/reveal routes; fan delete has no owed-prize guard (= b6 C1, widened) | built |
+| attacker3 | ATK-02 | 30-bit claim code (rate-limited) | built |
+| attacker3 | ATK-03 | `'unsafe-inline'` CSP on fan pages | built |
+| attacker3 | ATK-04 | fan-miss cap pre-blocks a whole address: one hostile fan on carrier NAT locks real fans out | built |
+| attacker3 | ATK-05 | messages/redemptions/grants SELECT policies gate on `view`, not `chat`/`fulfil`/`grant` | built |
+| attacker3 | ATK-06 | `org_invite_creator` answers `no_such_user` verbatim with no throttle (account enumeration) | built |
+| attacker3 | ATK-nits | uncapped chat_intro/creator_note, no reserved slugs, unlimited creator_applications rows, photo-report budget, IP-keyed account tier | built |
+| conc2 | CC-01 | "Reset all my data" multi-row fan delete deadlocks against a Chase commit | built |
+| conc2 | CC-02 | commit `unavailable` leaves a pending attempt and `spin_pending` copy forever | built |
+| conc2 | CC-03 | `set_redemption_state` / `archive_wheel` / `delete_wheel` / `delete_campaign` check `can_act_for` before the locks only | built |
+| conc2 | CC-04 | nothing orders `org_remove_member` against an in-flight grant | built |
+| conc2 | CC-05 | `save_wheel_prizes` / `set_prize_delivery` / `add_reward_codes` have no privilege check of their own | built |
+| conc2 | CC-06 | `setActiveWheel` is two autocommit statements (transient no-live / two-live games) | built |
+| conc2 | CC-07 | `_lock_wheel_lifecycle` pre-locks fans but not passes | built |
+| conc2 | CC-08 | pending `spin_attempts` never aged out | built |
+| dbaudit | DB-01 | a manager seat can move fans/campaigns between creators of one agency | built |
+| dbaudit | DB-02 | applicant writes any e-mail/status/date/200 kB note into `creator_applications` | built |
+| dbaudit | DB-03 | no DB length caps on creator free text | built |
+| dbaudit | DB-04 | declined access requests never auto-deleted (= OPS-06 / T7) | built |
+| dbaudit | DB-05 | direct prize UPDATE via API deadlocks a play | built |
+| dbaudit | DB-06 | creator-side fan delete writes no link tombstone (bare 404 for the fan) | built |
+| dbaudit | DB-07 | 0052 non-negative CHECKs are dropped-on-warning and may be missing on LIVE | built |
+| dbaudit | DB-08 | retention/prune not serialised | built |
+| dbaudit | DB-09 | admin can raw-DELETE safety reports | built |
+| dbaudit | DB-10 | 0073 candidate C18 confirmed | built |
+| dbaudit | DB-11 | 0073 candidate C16 confirmed | built |
+| dbaudit | DB-12 | 0073 candidate C15 confirmed | built |
+| dbaudit | DB-13 | 0073 candidate C4 confirmed | built |
+| dbaudit | DB-14 | drop 19 revoked legacy function shells | built |
+| dbaudit | DB-15 | `pg_temp` on ~160 search_paths | built |
+| dbaudit | DB-16 | revoke unused I/U/D grants on profiles/spins | built |
+| dbaudit | DB-17 | `my_seat_creators.can_manage` | built |
+| dbaudit | DB-18 | `prize_reward_codes.spin_id` has no FK | built |
+| dbaudit | DB-19 | `legal_terms_upcoming` | built |
+| dbaudit | DB-20 | 0072 lock shape at scale | built |
 | ops3 | OPS-01 | support@ has no MX record (carried) | (owner) |
-| ops3 | OPS3-01 | new code can go live before its 34 migrations; a mistyped Production key passes the build | (builder) |
-| ops3 | OPS3-02 | fan reads have no timeouts during a database slowdown | (builder) |
-| ops3 | OPS3-03 | merge-day mistake map (docs: GO_LIVE §5 merge-day checklist, one story, required checks) | (builder) |
-| ops3 | OPS-06 | declined-request 90-day deletion not automated (carried) | (builder) |
+| ops3 | OPS3-01 | new code can go live before its 34 migrations; a mistyped Production key passes the build | built |
+| ops3 | OPS3-02 | fan reads have no timeouts during a database slowdown | built |
+| ops3 | OPS3-03 | merge-day mistake map (docs: GO_LIVE §5 merge-day checklist, one story, required checks) | built |
+| ops3 | OPS-06 | declined-request 90-day deletion not automated (carried) | built |
 | ops3 | OPS-07 | single admin (carried) | (owner) |
-| ops3 | OPS3-04 | maintenance mode pauses set-up pages and the nightly cron (docs: RUNBOOK full list) | (builder) |
-| ops3 | OPS3-05 | a transient canary blip silences the nightly heartbeat until a manual run | (builder) |
-| ops3 | OPS3-06 | `/verify` and `/leaderboard` answer 404 while the database is down | (builder) |
-| ops3 | OPS3-07 | restore recipe not owner-executable, silent about re-issued codes (docs: RUNBOOK restore) | (builder) |
-| ops3 | OPS3-08 | failing heartbeat ping / wrong Resend key invisible | (builder) |
-| ops3 | OPS3-09 | push devices paused after 5 failures do not resume by themselves (docs: RUNBOOK) | (builder) |
-| ops3 | OPS3-10 | nightly job: no maxDuration, no advisory lock, no per-step timeouts | (builder) |
-| ops3 | OPS3-11 | startup self-check may freeze mid-flight on serverless | (builder) |
-| ops3 | OPS3-12 | 15 doc/code mismatches D1–D15 (DEPLOY, README, ENVIRONMENTS, OWNER_STEPS, RUNBOOK, .env.example, workflow note) | (builder) |
-| ops3 | R1–R6 | roadmap: one-click pause, morning summary, health scope, last alert accepted, cron exempt, post-restore SQL (R6 in RUNBOOK) | (builder) |
-| perf-a11y | PA-01 | no non-text contrast guard on the creator brand colour (invisible focus rings) | (builder) |
-| perf-a11y | PA-02 | wheel spin ~20 fps at 4x CPU (canvas redraw with shadowBlur) | (builder) |
-| perf-a11y | PA-03 | `/api/fans` reads every row; 503 at 50 000 rows | (builder) |
-| perf-a11y | PA-04 | no announcement during the spin; focus drops to body | (builder) |
-| perf-a11y | PA-05 | WCAG 2.2 target size in the game editor (20x13 px buttons) | (builder) |
-| perf-a11y | PA-06 | common-rarity grey and brand-on-tint chips below 4.5:1 | (builder) |
-| perf-a11y | PA-07 | Games list cuts off "Set active" at 320 px | (builder) |
-| perf-a11y | PA-08 | no font preload on `/spin`; unused Geist Mono on the fan page | (builder) |
-| perf-a11y | PA-09 | 6 API calls after hydration; inbox fetched twice | (builder) |
-| perf-a11y | PA-10 | rarity by colour only | (builder) |
-| perf-a11y | PA-11 | 144 uses of 9–11 px text | (builder) |
-| perf-a11y | PA-12 | heading order, duplicate Legal landmark, no skip link, `td aria-label` | (builder) |
-| perf-a11y | PA-16 | Preview auth buttons white on pink-600 = 3.58:1 | (builder) |
+| ops3 | OPS3-04 | maintenance mode pauses set-up pages and the nightly cron (docs: RUNBOOK full list) | built |
+| ops3 | OPS3-05 | a transient canary blip silences the nightly heartbeat until a manual run | built |
+| ops3 | OPS3-06 | `/verify` and `/leaderboard` answer 404 while the database is down | built |
+| ops3 | OPS3-07 | restore recipe not owner-executable, silent about re-issued codes (docs: RUNBOOK restore) | built |
+| ops3 | OPS3-08 | failing heartbeat ping / wrong Resend key invisible | built, unit-tested only (lines do not render in the demo) |
+| ops3 | OPS3-09 | push devices paused after 5 failures do not resume by themselves (docs: RUNBOOK) | built |
+| ops3 | OPS3-10 | nightly job: no maxDuration, no advisory lock, no per-step timeouts | built |
+| ops3 | OPS3-11 | startup self-check may freeze mid-flight on serverless | built |
+| ops3 | OPS3-12 | 15 doc/code mismatches D1–D15 (DEPLOY, README, ENVIRONMENTS, OWNER_STEPS, RUNBOOK, .env.example, workflow note) | built |
+| ops3 | R1–R6 | roadmap: one-click pause, morning summary, health scope, last alert accepted, cron exempt, post-restore SQL (R6 in RUNBOOK) | built |
+| perf-a11y | PA-01 | no non-text contrast guard on the creator brand colour (invisible focus rings) | built |
+| perf-a11y | PA-02 | wheel spin ~20 fps at 4x CPU (canvas redraw with shadowBlur) | built |
+| perf-a11y | PA-03 | `/api/fans` reads every row; 503 at 50 000 rows | partly: profit/ROI/cohorts stay table rows |
+| perf-a11y | PA-04 | no announcement during the spin; focus drops to body | built |
+| perf-a11y | PA-05 | WCAG 2.2 target size in the game editor (20x13 px buttons) | built |
+| perf-a11y | PA-06 | common-rarity grey and brand-on-tint chips below 4.5:1 | built |
+| perf-a11y | PA-07 | Games list cuts off "Set active" at 320 px | built |
+| perf-a11y | PA-08 | no font preload on `/spin`; unused Geist Mono on the fan page | not built: Next preloads fonts only on prerendered pages |
+| perf-a11y | PA-09 | 6 API calls after hydration; inbox fetched twice | built |
+| perf-a11y | PA-10 | rarity by colour only | built |
+| perf-a11y | PA-11 | 144 uses of 9–11 px text | built |
+| perf-a11y | PA-12 | heading order, duplicate Legal landmark, no skip link, `td aria-label` | built |
+| perf-a11y | PA-16 | Preview auth buttons white on pink-600 = 3.58:1 | built |
 | product | PR-01 | fans have no working contact (= OPS-01) | (owner) |
-| product | PR-02 | no front door on the landing page (Apply / FAQ) | (builder) |
-| product | PR-03 | fans may see "Creator" (C9 still open) | (builder) |
-| product | PR-04 | scratch/bingo admin-gated with no ask path | (builder) |
-| product | PR-05 | agency seats cannot run games/fans/boosts | (builder) |
+| product | PR-02 | no front door on the landing page (Apply / FAQ) | partly: home page Request access button; no FAQ |
+| product | PR-03 | fans may see "Creator" (C9 still open) | partly: name optional at sign-up, copied at approval |
+| product | PR-04 | scratch/bingo admin-gated with no ask path | built |
+| product | PR-05 | agency seats cannot run games/fans/boosts | roadmap |
 | product | PR-06 | "Start an agency" entry (decision 4) | (owner) |
-| product | PR-07 | no CSV export anywhere | (builder) |
-| product | PR-08 | no proof / claim code on past wins | (builder) |
-| product | PR-09 | fans have no notifications | (builder) |
-| product | PR-10 | no delivery promise or overdue nudge | (builder) |
-| product | PR-11 | fans list has no sort | (builder) |
-| product | PR-12 | no bulk actions; import cannot top up | (builder) |
-| product | PR-13 | no per-link off switch or expiry | (builder) |
-| product | PR-14 | one-off schedules | (builder) |
-| product | PR-15 | webhooks win-only (no test fire) | (builder) |
-| product | PR-16 | no analytics range / export | (builder) |
-| product | PR-17 | bingo draft save (0073) | (builder) |
-| product | PR-18 | no fan offline page | (builder) |
-| product | PR-19 | demo `https://#` CTA on `/c` | (builder) |
-| product | PR-20 | English only | (builder) |
-| review-dash | RD-01 | failed GET of Public page / auto-messages shows an empty form with Save enabled | (builder) |
-| review-dash | RD-02 | `/agency` shows "Start your agency" to an existing owner on a failed read | (builder) |
-| review-dash | RD-03 | Admin shows "No creator accounts yet." on a failed read | (builder) |
-| review-dash | RD-04 | seat workspace vanishes silently on a failed seat read | (builder) |
-| review-dash | RD-05 | a plain 400 on New fan link locks the form until "Cancel uncompleted request" | (builder) |
-| review-dash | RD-06 | due date PATCHes on every keystroke; year 0002 accepted | (builder) |
-| review-dash | RD-07 | campaign "Pending" never drops after a cancelled win | (builder) |
-| review-dash | RD-08 | Today header shows the server's UTC date | (builder) |
-| review-dash | RD-09 | failed `/api/account` read shown as loaded defaults | (builder) |
-| review-dash | RD-10 | "couldn't confirm" wording for definitive refusals | (builder) |
-| review-dash | RD-11 | thread poll refreshes the overview every 6 s | (builder) |
-| review-dash | RD-12 | Enter mid-IME | (builder) |
-| review-dash | RD-13 | campaign filter by name | (builder) |
-| review-dash | RD-14 | autopilot dismiss unhandled | (builder) |
-| review-dash | RD-15 | webhook copy has no fallback | (builder) |
-| review-dash | RD-16 | template refetch race | (builder) |
-| review-dash | RD-17 | label/name limit mismatch | (builder) |
-| review-dash | RD-18 | happy-hour multiplier pills | (builder) |
-| review-dash | RD-19 | 500-message thread cap | (builder) |
-| review-dash | RD-20 | "last 200 wins" unlabelled | (builder) |
-| review-dash | RD-21 | nested button in toasts | (builder) |
-| review-fan | RF-01 | wheel lands by stale index after the creator edits prizes | (builder) |
-| review-fan | RF-02 | game-kind switch mid-session dead-ends in "cannot check" | (builder) |
-| review-fan | RF-03 | top-up never shows on an open page (state not re-synced) | (builder) |
-| review-fan | RF-04 | `crypto.randomUUID` / `Object.hasOwn` / `.at()` without fallbacks | (builder) |
-| review-fan | RF-05 | report form network error is an unhandled rejection | (builder) |
-| review-fan | RF-06 | every refused spin = 3 taps; needs_ack gate reopens | (builder) |
-| review-fan | RF-07 | offline copy says "still being checked" | (builder) |
-| review-fan | RF-08 | `text-base` compiles to a colour | (builder) |
-| review-fan | RF-09 | Prize book "0% chance" for rare odds | (builder) |
-| review-fan | RF-10 | UTC delivery date | (builder) |
-| review-fan | RF-11 | 340 px SSR wheel on 320 px phones | (builder) |
-| review-fan | RF-12 | mute mid-spin stale closure | (builder) |
-| review-fan | RF-13 | device-clock countdowns | (builder) |
-| review-fan | RF-14 | backdrop tap closes the win card | (builder) |
-| review-fan | RF-15 | wishlist by label, not prize id | (builder) |
-| review-fan | RF-16 | "Checking…" pill during a decline | (builder) |
-| review-server | RS-01 | `/api/spin/status` answers 503, never 404, for an unknown token | (builder) |
-| review-server | RS-02 | `/api/spin` maps `db_error`/`unavailable`/`spin_pending`/`unauthorized` to 409 | (builder) |
-| review-server | RS-03 | server-error alert e-mails never sent (`after()` outside a request) | (builder) |
-| review-server | RS-04 | route JSON without explicit Cache-Control | (builder) |
-| review-server | RS-05 | no `maxDuration` on the maintenance cron | (builder) |
-| review-server | RS-06 | Upstash outage: no circuit breaker | (builder) |
-| review-server | RS-07 | `.env.example` / DEPLOY.md miss four variables | (builder) |
-| review-server | RS-08 | Upstash URL with a trailing slash falls back forever | (builder) |
-| review-server | RS-09 | `Secure`-flag derivation on multi-hop proxies | (builder) |
-| review-server | RS-10 | `/auth/signout` has no origin check | (builder) |
-| review-server | RS-11 | admin routes unthrottled | (builder) |
-| review-server | RS-12 | startup checks per cold start | (builder) |
-| review-server | RS-13 | dead-link recovery copy | (builder) |
-| review-server | RS-14 | deeper health probe | (builder) |
-| supply2 | SC-01 | DB-before-code unenforced until the Deployment Check; no backup before `db push` | (builder) |
-| supply2 | SC-02 | account token and VERCEL_TOKEN reachable from any branch via the `test` environment; PR #42 stale | (builder) |
-| supply2 | SC-03 | Dependabot alerts / PVR off; no cooldown; no security contact | (builder) |
-| supply2 | SC-04 | Vercel Preview builds were a hand-maintained deny-list | (builder) |
-| supply2 | SC-05 | one abandoned migration PR blocks every other PR's required checks on TEST | (builder) |
-| supply2 | SC-06 | no `timeout-minutes` on lock-holding jobs | (builder) |
-| supply2 | SC-07 | Dependabot and fork PRs always show a red migration check | (builder) |
-| supply2 | SC-08 | Supabase CLI pin one patch behind | (builder) |
-| supply2 | SC-09 | env-var inventory and go-live docs disagree with the code | (builder) |
-| supply2 | SC-10 | hygiene: tracked `reviews/`, tarballs, stale archive doc, no LICENSE | (builder) |
-| supply2 | SC-11 | dependency currency | (builder) |
-| supply2 | SC-12 | `ci.yml` has no concurrency group | (builder) |
-| supply2 | SC-13 | login-UI failure screenshot uploaded as an artifact on a public repository | (builder) |
-| supply2 | SC-14 | stable Preview deploy from an agent's machine, not a reviewed workflow | (builder) |
-| supply2 | SC-15 | RUNBOOK notes on concurrency/timeouts and a dirty TEST history | (builder) |
-| trust2 | TS-01 | Terms/Privacy text edited after version 2026-10-27; re-consent never fires | (builder) |
-| trust2 | TS-02 | fan-facing pay-for-chance copy survives | (builder) |
-| trust2 | TS-03 | "FanFunnel Support" / "admin" accepted as names (no reserved words) | (builder) |
-| trust2 | TS-04 | no URL/phone/slur screening on public text; label cap mismatch | (builder) |
-| trust2 | TS-05 | consent stampable by whoever holds the token (C1) | (builder) |
-| trust2 | TS-06 | 30-day change-notice promise has no mechanism | (builder) |
-| trust2 | TS-07 | team replies shown as the creator, no disclosure | (builder) |
-| trust2 | TS-08 | report reason free text, not restricted to `REPORT_REASONS` | (builder) |
-| trust2 | TS-09 | Privacy page omits `ff-auth-redirect-at` and push processors | (builder) |
-| trust2 | TS-10 | wheel-only wording for scratch/bingo fans | (builder) |
-| trust2 | TS-11 | raw provider error text on the sign-in form | (builder) |
-| trust2 | TS-12 | child-safety / law-enforcement procedure (docs: RUNBOOK) | (builder) |
-| trust2 | TS-13 | fan export omits tip amounts and blocked state | (builder) |
-| trust2 | TS-14 | gated content rendered under the age overlay | (builder) |
-| trust2 | TS-15 | "free for now" | (builder) |
-| trust2 | TS-16 | creator-side "Revenue" / "Spins bought" vocabulary | (builder) |
-| trust2 | TS-17 | no reversible fan mute | (builder) |
-| trust2 | TS-18 | prize-label cap disagreement | (builder) |
-| trust2 | TS-19 | message retention undefined | (builder) |
-| trust2 | TS-20 | detailed push titles include the fan's name | (builder) |
-| trust2 | TS-21 | board handle similarity to a creator's name | (builder) |
-| trust2 | TS-22 | plain-language summary on the verify page | (builder) |
-| trust2 | TS-23 | admin cannot see report detail without the full chat | (builder) |
-| trust2 | TS-24 | accessibility statement page | (builder) |
-| trust2 | C1–C18 | copy table rows | (builder) |
+| product | PR-07 | no CSV export anywhere | built |
+| product | PR-08 | no proof / claim code on past wins | built |
+| product | PR-09 | fans have no notifications | roadmap |
+| product | PR-10 | no delivery promise or overdue nudge | built |
+| product | PR-11 | fans list has no sort | built |
+| product | PR-12 | no bulk actions; import cannot top up | roadmap |
+| product | PR-13 | no per-link off switch or expiry | built |
+| product | PR-14 | one-off schedules | roadmap |
+| product | PR-15 | webhooks win-only (no test fire) | built |
+| product | PR-16 | no analytics range / export | roadmap |
+| product | PR-17 | bingo draft save (0073) | built |
+| product | PR-18 | no fan offline page | not built: fan pages deliberately have no service worker (RM-4); in-page offline handling instead |
+| product | PR-19 | demo `https://#` CTA on `/c` | built |
+| product | PR-20 | English only | roadmap |
+| review-dash | RD-01 | failed GET of Public page / auto-messages shows an empty form with Save enabled | built |
+| review-dash | RD-02 | `/agency` shows "Start your agency" to an existing owner on a failed read | built |
+| review-dash | RD-03 | Admin shows "No creator accounts yet." on a failed read | built |
+| review-dash | RD-04 | seat workspace vanishes silently on a failed seat read | built |
+| review-dash | RD-05 | a plain 400 on New fan link locks the form until "Cancel uncompleted request" | built |
+| review-dash | RD-06 | due date PATCHes on every keystroke; year 0002 accepted | built |
+| review-dash | RD-07 | campaign "Pending" never drops after a cancelled win | built |
+| review-dash | RD-08 | Today header shows the server's UTC date | built |
+| review-dash | RD-09 | failed `/api/account` read shown as loaded defaults | built |
+| review-dash | RD-10 | "couldn't confirm" wording for definitive refusals | built |
+| review-dash | RD-11 | thread poll refreshes the overview every 6 s | built |
+| review-dash | RD-12 | Enter mid-IME | built |
+| review-dash | RD-13 | campaign filter by name | built |
+| review-dash | RD-14 | autopilot dismiss unhandled | built |
+| review-dash | RD-15 | webhook copy has no fallback | built |
+| review-dash | RD-16 | template refetch race | built |
+| review-dash | RD-17 | label/name limit mismatch | built |
+| review-dash | RD-18 | happy-hour multiplier pills | built |
+| review-dash | RD-19 | 500-message thread cap | built |
+| review-dash | RD-20 | "last 200 wins" unlabelled | built |
+| review-dash | RD-21 | nested button in toasts | built |
+| review-fan | RF-01 | wheel lands by stale index after the creator edits prizes | built |
+| review-fan | RF-02 | game-kind switch mid-session dead-ends in "cannot check" | built |
+| review-fan | RF-03 | top-up never shows on an open page (state not re-synced) | built |
+| review-fan | RF-04 | `crypto.randomUUID` / `Object.hasOwn` / `.at()` without fallbacks | built |
+| review-fan | RF-05 | report form network error is an unhandled rejection | built |
+| review-fan | RF-06 | every refused spin = 3 taps; needs_ack gate reopens | built |
+| review-fan | RF-07 | offline copy says "still being checked" | built |
+| review-fan | RF-08 | `text-base` compiles to a colour | built |
+| review-fan | RF-09 | Prize book "0% chance" for rare odds | built |
+| review-fan | RF-10 | UTC delivery date | built |
+| review-fan | RF-11 | 340 px SSR wheel on 320 px phones | built |
+| review-fan | RF-12 | mute mid-spin stale closure | built |
+| review-fan | RF-13 | device-clock countdowns | built |
+| review-fan | RF-14 | backdrop tap closes the win card | built |
+| review-fan | RF-15 | wishlist by label, not prize id | built |
+| review-fan | RF-16 | "Checking…" pill during a decline | built |
+| review-server | RS-01 | `/api/spin/status` answers 503, never 404, for an unknown token | built |
+| review-server | RS-02 | `/api/spin` maps `db_error`/`unavailable`/`spin_pending`/`unauthorized` to 409 | built |
+| review-server | RS-03 | server-error alert e-mails never sent (`after()` outside a request) | built; Vercel keep-alive for the inline capture unproven locally |
+| review-server | RS-04 | route JSON without explicit Cache-Control | built |
+| review-server | RS-05 | no `maxDuration` on the maintenance cron | built |
+| review-server | RS-06 | Upstash outage: no circuit breaker | built |
+| review-server | RS-07 | `.env.example` / DEPLOY.md miss four variables | built |
+| review-server | RS-08 | Upstash URL with a trailing slash falls back forever | built |
+| review-server | RS-09 | `Secure`-flag derivation on multi-hop proxies | built |
+| review-server | RS-10 | `/auth/signout` has no origin check | built |
+| review-server | RS-11 | admin routes unthrottled | built |
+| review-server | RS-12 | startup checks per cold start | built |
+| review-server | RS-13 | dead-link recovery copy | built |
+| review-server | RS-14 | deeper health probe | built |
+| supply2 | SC-01 | DB-before-code unenforced until the Deployment Check; no backup before `db push` | built |
+| supply2 | SC-02 | account token and VERCEL_TOKEN reachable from any branch via the `test` environment; PR #42 stale | built |
+| supply2 | SC-03 | Dependabot alerts / PVR off; no cooldown; no security contact | built |
+| supply2 | SC-04 | Vercel Preview builds were a hand-maintained deny-list | built |
+| supply2 | SC-05 | one abandoned migration PR blocks every other PR's required checks on TEST | built |
+| supply2 | SC-06 | no `timeout-minutes` on lock-holding jobs | built |
+| supply2 | SC-07 | Dependabot and fork PRs always show a red migration check | built |
+| supply2 | SC-08 | Supabase CLI pin one patch behind | built |
+| supply2 | SC-09 | env-var inventory and go-live docs disagree with the code | built |
+| supply2 | SC-10 | hygiene: tracked `reviews/`, tarballs, stale archive doc, no LICENSE | built |
+| supply2 | SC-11 | dependency currency | built |
+| supply2 | SC-12 | `ci.yml` has no concurrency group | built |
+| supply2 | SC-13 | login-UI failure screenshot uploaded as an artifact on a public repository | not built (roadmap) |
+| supply2 | SC-14 | stable Preview deploy from an agent's machine, not a reviewed workflow | not built (roadmap) |
+| supply2 | SC-15 | RUNBOOK notes on concurrency/timeouts and a dirty TEST history | built |
+| trust2 | TS-01 | Terms/Privacy text edited after version 2026-10-27; re-consent never fires | built |
+| trust2 | TS-02 | fan-facing pay-for-chance copy survives | built |
+| trust2 | TS-03 | "FanFunnel Support" / "admin" accepted as names (no reserved words) | built |
+| trust2 | TS-04 | no URL/phone/slur screening on public text; label cap mismatch | partly: public-text rule on every public field; chat flags not stored |
+| trust2 | TS-05 | consent stampable by whoever holds the token (C1) | built |
+| trust2 | TS-06 | 30-day change-notice promise has no mechanism | built |
+| trust2 | TS-07 | team replies shown as the creator, no disclosure | built, label switched off until the owner decides |
+| trust2 | TS-08 | report reason free text, not restricted to `REPORT_REASONS` | built |
+| trust2 | TS-09 | Privacy page omits `ff-auth-redirect-at` and push processors | built |
+| trust2 | TS-10 | wheel-only wording for scratch/bingo fans | built |
+| trust2 | TS-11 | raw provider error text on the sign-in form | built |
+| trust2 | TS-12 | child-safety / law-enforcement procedure (docs: RUNBOOK) | built |
+| trust2 | TS-13 | fan export omits tip amounts and blocked state | built |
+| trust2 | TS-14 | gated content rendered under the age overlay | built |
+| trust2 | TS-15 | "free for now" | built |
+| trust2 | TS-16 | creator-side "Revenue" / "Spins bought" vocabulary | built |
+| trust2 | TS-17 | no reversible fan mute | built (fan mute) |
+| trust2 | TS-18 | prize-label cap disagreement | built |
+| trust2 | TS-19 | message retention undefined | built |
+| trust2 | TS-20 | detailed push titles include the fan's name | not built |
+| trust2 | TS-21 | board handle similarity to a creator's name | partly: look-alikes refused; similarity to other names needs a lookup |
+| trust2 | TS-22 | plain-language summary on the verify page | not built |
+| trust2 | TS-23 | admin cannot see report detail without the full chat | not built |
+| trust2 | TS-24 | accessibility statement page | not built (accessibility statement page) |
+| trust2 | C1–C18 | copy table rows | built |
 | trust2 | Q17–Q26 | lawyer questions | (lawyer) |
-| walk-agency-admin | WG-01 | suspended creator loops on a blank sign-in form (= WU-01) | (builder) |
-| walk-agency-admin | WG-02 | agency owner gets no seat row from `org_create` | (builder) |
-| walk-agency-admin | WG-03 | staff seated by two agencies see "Start your agency"; cannot leave | (builder) |
-| walk-agency-admin | WG-04 | owner close / admin delete dissolves the agency silently | (builder) |
-| walk-agency-admin | WG-05 | invite consent: one tap, no owner identity | (builder) |
-| walk-agency-admin | WG-06 | "they'll get an e-mail" shown when none is sent; expired invites vanish | (builder) |
-| walk-agency-admin | WG-07 | seat replies/fulfilments unattributed, no agency audit | (builder) |
-| walk-agency-admin | WG-08 | seat "Mark fulfilled" one tap, no undo | (builder) |
-| walk-agency-admin | WG-09 | admin has no view of agencies | (builder) |
-| walk-agency-admin | WG-10 | admins can read all fan chats via RLS, unaudited (T14) | (builder) |
-| walk-agency-admin | WG-11 | rejected applicant cannot edit / re-apply | (builder) |
-| walk-agency-admin | WG-12 | approve / reactivate / demote one tap | (builder) |
-| walk-agency-admin | WG-13 | owner suspension freezes the agency mutely | (builder) |
-| walk-agency-admin | WG-14 | stale seat scopes re-apply on re-invite | (builder) |
-| walk-agency-admin | WG-15 | New-account name error generic | (builder) |
-| walk-agency-admin | WG-16 | no sign-out of other devices | (builder) |
-| walk-agency-admin | WG-17 | UTC "today" / unlabelled zones | (builder) |
-| walk-agency-admin | WG-18 | admin list search / paging gaps | (builder) |
-| walk-agency-admin | WG-19 | "Revenue $0.00" for scoped seats | (builder) |
+| walk-agency-admin | WG-01 | suspended creator loops on a blank sign-in form (= WU-01) | built |
+| walk-agency-admin | WG-02 | agency owner gets no seat row from `org_create` | built |
+| walk-agency-admin | WG-03 | staff seated by two agencies see "Start your agency"; cannot leave | built |
+| walk-agency-admin | WG-04 | owner close / admin delete dissolves the agency silently | built |
+| walk-agency-admin | WG-05 | invite consent: one tap, no owner identity | built |
+| walk-agency-admin | WG-06 | "they'll get an e-mail" shown when none is sent; expired invites vanish | built |
+| walk-agency-admin | WG-07 | seat replies/fulfilments unattributed, no agency audit | built |
+| walk-agency-admin | WG-08 | seat "Mark fulfilled" one tap, no undo | built |
+| walk-agency-admin | WG-09 | admin has no view of agencies | built |
+| walk-agency-admin | WG-10 | admins can read all fan chats via RLS, unaudited (T14) | built |
+| walk-agency-admin | WG-11 | rejected applicant cannot edit / re-apply | built |
+| walk-agency-admin | WG-12 | approve / reactivate / demote one tap | built |
+| walk-agency-admin | WG-13 | owner suspension freezes the agency mutely | built |
+| walk-agency-admin | WG-14 | stale seat scopes re-apply on re-invite | built |
+| walk-agency-admin | WG-15 | New-account name error generic | built |
+| walk-agency-admin | WG-16 | no sign-out of other devices | built |
+| walk-agency-admin | WG-17 | UTC "today" / unlabelled zones | built |
+| walk-agency-admin | WG-18 | admin list search / paging gaps | built |
+| walk-agency-admin | WG-19 | "Revenue $0.00" for scoped seats | built |
 | walk-anon | WA-01 | support@ has no MX (= OPS-01) | (owner) |
-| walk-anon | WA-02 | dead/paused/mistyped `/spin`, `/share`, `/verify`, `/c` links are blank until JavaScript runs | (builder) |
-| walk-anon | WA-03 | every anonymous Preview view POSTs a "CSP blocked vercel.live" error | (builder) |
-| walk-anon | WA-04 | share OG image answers 200 for any id, no rate limit | (builder) |
-| walk-anon | WA-05 | auth e-mail links consumed by a plain GET (= WU-02) | (builder) |
-| walk-anon | WA-06 | public pages link the dashboard manifest | (builder) |
-| walk-anon | WA-07 | root marketing title on auth/fan pages | (builder) |
-| walk-anon | WA-08 | backslash paths 500 on Vercel | (builder) |
-| walk-anon | WA-09 | `/api/cron/retention` reveals `not_configured` to anyone | (builder) |
-| walk-anon | WA-10 | `/api/me` Cache-Control public | (builder) |
-| walk-anon | WA-11 | share/verify/leaderboard have no `noindex` meta | (builder) |
-| walk-anon | WA-12 | 20 px mode-toggle tap targets on sign-in | (builder) |
-| walk-anon | WA-13 | no OG/Twitter card on `/`, no image on `/c` | (builder) |
-| walk-anon | WA-14 | home page says nothing to fans; "Request access" hard to find | (builder) |
-| walk-anon | WA-15 | dark-only | (builder) |
-| walk-anon | WA-16 | `/maintenance` always reachable | (builder) |
-| walk-anon | WA-17 | `security.txt` Canonical / Policy | (builder) |
-| walk-anon | WA-18 | no sitemap / canonical | (builder) |
-| walk-auth | WU-01 | suspended creator: blank sign-in form, loop | (builder) |
-| walk-auth | WU-02 | e-mail links consumed by link scanners (verify on GET) | (builder) |
-| walk-auth | WU-03 | failed-link page and templates give "same browser" advice; expired invites dead-end | (builder) |
-| walk-auth | WU-04 | secure e-mail change first link treated as done | (builder) |
-| walk-auth | WU-05 | forgot/resend show "check your inbox" on 429 | (builder) |
-| walk-auth | WU-06 | `/reset-password` lets any signed-in session change the password | (builder) |
-| walk-auth | WU-07 | two-factor creator's reset may fail with raw `insufficient_aal` | (builder) |
-| walk-auth | WU-08 | Settings password error says "8 characters" when the rule is letter+digit | (builder) |
-| walk-auth | WU-09 | no show-password / confirm field | (builder) |
-| walk-auth | WU-10 | "confirm your email first" has no resend action | (builder) |
-| walk-auth | WU-11 | OWNER_STEPS lacked the Supabase e-mail settings (docs: Stage 2) | (builder) |
-| walk-auth | WU-12–WU-20 | admin-claim card for creators, page titles, `/mfa` "Not now", raw provider messages, field names, focus, dead `/signup` matcher, old look, no "sign out everywhere" | (builder) |
-| walk-creator | WC-01 | empty handle mints a fan "Fan" with a live link | (builder) |
-| walk-creator | WC-02 | minted-link card scrolls off-screen on phones | (builder) |
-| walk-creator | WC-03 | "Set active" goes live instantly, no confirm/undo | (builder) |
-| walk-creator | WC-04 | raw Supabase "Error sending confirmation email" on sign-up | (builder) |
-| walk-creator | WC-05 | fan sheet from the queue closes into Fans | (builder) |
-| walk-creator | WC-06 | Start / Mark fulfilled give no toast or undo | (builder) |
-| walk-creator | WC-07 | "Request access" only creates a login; the request is a second form | (builder) |
-| walk-creator | WC-08 | `/signup` is a fan-worded 404; `?mode=signup` ignored | (builder) |
-| walk-creator | WC-09 | "Create game" persists empty games | (builder) |
-| walk-creator | WC-10 | default names "New wheel" / "New prize" reach fans | (builder) |
-| walk-creator | WC-11 | bingo draft unsaveable until complete | (builder) |
-| walk-creator | WC-12 | agency invite banner omits who / what they see | (builder) |
-| walk-creator | WC-13 | suspended creator's fan page still live | (builder) |
-| walk-creator | WC-14 | dashboard dark-only | (builder) |
-| walk-creator | WC-15–WC-30 | polish: reorder buttons, toasts over the Save bar, focus on invalid save, field errors, discard dialog, jargon, term drift, first-steps order, Share, time-zone hint, "a Uncommon", busy states, headings, small targets, push copy, handle rename | (builder) |
-| walk-fan | WF-01 | the claim code lives only on the win card | (builder) |
-| walk-fan | WF-02 | page jumps mid-page after the age gate on short phones | (builder) |
-| walk-fan | WF-03 | 120 bad links from one IP lock every fan on that IP out (= ATK-04) | (builder) |
-| walk-fan | WF-04 | sold-out prizes read "Claimed ✨" | (builder) |
-| walk-fan | WF-05 | leaderboard 429 is raw JSON | (builder) |
-| walk-fan | WF-06 | an open page never learns of a top-up (= RF-03) | (builder) |
-| walk-fan | WF-07 | no in-app browser hint | (builder) |
-| walk-fan | WF-08 | tap targets < 44 px | (builder) |
-| walk-fan | WF-09 | second tab re-pops the same win card | (builder) |
-| walk-fan | WF-10 | "send it to your creator" with the Message FAB hidden | (builder) |
-| walk-fan | WF-11 | Terms from the gate opens a new tab with no way back (FD-19) | (builder) |
-| walk-fan | WF-12 | "a Uncommon prize" | (builder) |
-| walk-fan | WF-13 | "40.404% chance" | (builder) |
-| walk-fan | WF-14 | "Add Spins to your home screen" | (builder) |
-| walk-fan | WF-15 | "Visit glow … 1 of the last 7 days" on first visit | (builder) |
-| walk-fan | WF-16 | no H2s, silent wheel live region | (builder) |
-| walk-fan | WF-17 | claim code in the verify URL | (builder) |
+| walk-anon | WA-02 | dead/paused/mistyped `/spin`, `/share`, `/verify`, `/c` links are blank until JavaScript runs | built |
+| walk-anon | WA-03 | every anonymous Preview view POSTs a "CSP blocked vercel.live" error | built |
+| walk-anon | WA-04 | share OG image answers 200 for any id, no rate limit | built |
+| walk-anon | WA-05 | auth e-mail links consumed by a plain GET (= WU-02) | built |
+| walk-anon | WA-06 | public pages link the dashboard manifest | partly: 404, Terms and Privacy still link the manifest |
+| walk-anon | WA-07 | root marketing title on auth/fan pages | built |
+| walk-anon | WA-08 | backslash paths 500 on Vercel | partly: guard targets Vercel's router; `next start` redirects first |
+| walk-anon | WA-09 | `/api/cron/retention` reveals `not_configured` to anyone | built |
+| walk-anon | WA-10 | `/api/me` Cache-Control public | built |
+| walk-anon | WA-11 | share/verify/leaderboard have no `noindex` meta | built |
+| walk-anon | WA-12 | 20 px mode-toggle tap targets on sign-in | built |
+| walk-anon | WA-13 | no OG/Twitter card on `/`, no image on `/c` | built: home link-preview metadata |
+| walk-anon | WA-14 | home page says nothing to fans; "Request access" hard to find | partly: home copy unchanged |
+| walk-anon | WA-15 | dark-only | roadmap (light theme) |
+| walk-anon | WA-16 | `/maintenance` always reachable | built |
+| walk-anon | WA-17 | `security.txt` Canonical / Policy | built |
+| walk-anon | WA-18 | no sitemap / canonical | built: /sitemap.xml on Production |
+| walk-auth | WU-01 | suspended creator: blank sign-in form, loop | built |
+| walk-auth | WU-02 | e-mail links consumed by link scanners (verify on GET) | built |
+| walk-auth | WU-03 | failed-link page and templates give "same browser" advice; expired invites dead-end | built |
+| walk-auth | WU-04 | secure e-mail change first link treated as done | built |
+| walk-auth | WU-05 | forgot/resend show "check your inbox" on 429 | built |
+| walk-auth | WU-06 | `/reset-password` lets any signed-in session change the password | built |
+| walk-auth | WU-07 | two-factor creator's reset may fail with raw `insufficient_aal` | built |
+| walk-auth | WU-08 | Settings password error says "8 characters" when the rule is letter+digit | built |
+| walk-auth | WU-09 | no show-password / confirm field | built |
+| walk-auth | WU-10 | "confirm your email first" has no resend action | built |
+| walk-auth | WU-11 | OWNER_STEPS lacked the Supabase e-mail settings (docs: Stage 2) | built |
+| walk-auth | WU-12–WU-20 | admin-claim card for creators, page titles, `/mfa` "Not now", raw provider messages, field names, focus, dead `/signup` matcher, old look, no "sign out everywhere" | built except WU-19 (restyle, not built) |
+| walk-creator | WC-01 | empty handle mints a fan "Fan" with a live link | built |
+| walk-creator | WC-02 | minted-link card scrolls off-screen on phones | built |
+| walk-creator | WC-03 | "Set active" goes live instantly, no confirm/undo | built |
+| walk-creator | WC-04 | raw Supabase "Error sending confirmation email" on sign-up | built |
+| walk-creator | WC-05 | fan sheet from the queue closes into Fans | built |
+| walk-creator | WC-06 | Start / Mark fulfilled give no toast or undo | built |
+| walk-creator | WC-07 | "Request access" only creates a login; the request is a second form | partly: three honest steps, not one screen |
+| walk-creator | WC-08 | `/signup` is a fan-worded 404; `?mode=signup` ignored | built |
+| walk-creator | WC-09 | "Create game" persists empty games | partly: notice + Remove, not create-on-save |
+| walk-creator | WC-10 | default names "New wheel" / "New prize" reach fans | built |
+| walk-creator | WC-11 | bingo draft unsaveable until complete | built |
+| walk-creator | WC-12 | agency invite banner omits who / what they see | built |
+| walk-creator | WC-13 | suspended creator's fan page still live | built |
+| walk-creator | WC-14 | dashboard dark-only | roadmap (light theme) |
+| walk-creator | WC-15–WC-30 | polish: reorder buttons, toasts over the Save bar, focus on invalid save, field errors, discard dialog, jargon, term drift, first-steps order, Share, time-zone hint, "a Uncommon", busy states, headings, small targets, push copy, handle rename | built except WC-20 (Mint→Create: owner decision) and WC-21 glossary (not built) |
+| walk-fan | WF-01 | the claim code lives only on the win card | built |
+| walk-fan | WF-02 | page jumps mid-page after the age gate on short phones | built |
+| walk-fan | WF-03 | 120 bad links from one IP lock every fan on that IP out (= ATK-04) | built |
+| walk-fan | WF-04 | sold-out prizes read "Claimed ✨" | built |
+| walk-fan | WF-05 | leaderboard 429 is raw JSON | built |
+| walk-fan | WF-06 | an open page never learns of a top-up (= RF-03) | built |
+| walk-fan | WF-07 | no in-app browser hint | built |
+| walk-fan | WF-08 | tap targets < 44 px | built |
+| walk-fan | WF-09 | second tab re-pops the same win card | built |
+| walk-fan | WF-10 | "send it to your creator" with the Message FAB hidden | built |
+| walk-fan | WF-11 | Terms from the gate opens a new tab with no way back (FD-19) | built |
+| walk-fan | WF-12 | "a Uncommon prize" | built |
+| walk-fan | WF-13 | "40.404% chance" | built |
+| walk-fan | WF-14 | "Add Spins to your home screen" | built |
+| walk-fan | WF-15 | "Visit glow … 1 of the last 7 days" on first visit | built |
+| walk-fan | WF-16 | no H2s, silent wheel live region | built |
+| walk-fan | WF-17 | claim code in the verify URL | built |
 
 Owner questions collected from the sixteen reports are items 39–48 of `OWNER_STEPS.md` Stage 9;
 lawyer questions Q17–Q26 belong in `docs/LAWYER_QUESTIONS.md` (trust builder).
