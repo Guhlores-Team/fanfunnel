@@ -204,8 +204,11 @@ const start = (rarity: Rarity, reducedMotion = false, spinsBefore = 0): RevealEv
   const committed = client.slice(client.indexOf("const onCommitted ="), client.indexOf("const onRefusal ="));
   const validation = client.slice(client.indexOf("const validateGameResult ="), client.indexOf("const onCommitted ="));
   check("game validation rejects an unreadable server outcome before any presentation",
-    /readCommittedGame\(data, passGameKind \?\? "wheel"\) !== null/.test(validation) &&
-    /const game = readCommittedGame\(data, passGameKind \?\? "wheel"\)/.test(committed) &&
+    // RF-02: read with the kind the server committed (a creator may switch
+    // games while the tab is open), falling back to the page's own kind.
+    /readCommittedGame\(data, committedKind\(data, passGameKind\)\) !== null/.test(validation) &&
+    /const game = readCommittedGame\(data, committedKind\(data, passGameKind\)\)/.test(committed) &&
+    /const committedKind = \(data: unknown, passGameKind[^\n]*\n\s*readFanGameKind\([^\n]*\?\? passGameKind \?\? "wheel"/.test(client) &&
     /if \(!game\) throw new Error\("Unconfirmed game outcome"\)/.test(committed) &&
     committed.indexOf("if (!game) throw") < committed.indexOf("setGameOutcome(game)") &&
     committed.indexOf("if (!game) throw") < committed.indexOf("dispatchReveal("));

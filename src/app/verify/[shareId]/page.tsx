@@ -11,8 +11,8 @@ import { replayGameV3 } from "@/lib/games/core/replay";
 import { V3_FORMULA } from "./oddsCopy";
 import LocalTime from "./LocalTime";
 import ClaimCheck, { type ClaimCheckState } from "./ClaimCheck";
-import { notFound } from "next/navigation";
 import { headers } from "next/headers";
+import { linkNotFound } from "@/lib/fan/linkNotFound";
 import { clientIpFromHeaders } from "@/lib/api/clientIp";
 import { ROUTE_TIERS } from "@/lib/api/limit";
 import { rateLimitShared } from "@/lib/rateLimit";
@@ -28,7 +28,13 @@ const RARITY_LABEL: Record<string, string> = {
   legendary: "Legendary",
 };
 
-export const metadata: Metadata = { title: "Verify fairness · FanFunnel" };
+// WA-07 / WA-11 / WA-06: a public proof page, reachable by link only, not an app.
+export const metadata: Metadata = {
+  title: "Verify fairness · FanFunnel",
+  description: "Proof that this win was decided by a committed random seed, with the exact odds it used.",
+  robots: { index: false, follow: false },
+  manifest: null,
+};
 
 /** C4: check a claim code a creator typed, per address at the `costly` tier. */
 async function checkClaim(shareId: string, raw: string | string[] | undefined): Promise<{ state: ClaimCheckState; value: string }> {
@@ -53,8 +59,8 @@ export default async function VerifyPage({
 
   // Nothing to verify (unknown share id, a spin with no committed seed, or a
   // creator who may not be shown publicly): a real 404 (batch 6 N2), with the
-  // explanation in ./not-found.tsx.
-  if (!v) notFound();
+  // explanation rendered by the root not-found (WA-02).
+  if (!v) linkNotFound("verify", shareId);
 
   if(v.parent) {
     const parent=await getSpinVerification(v.parent.shareId);
@@ -241,7 +247,7 @@ export default async function VerifyPage({
           <ClaimCheck {...claim} />
         </div>
       </div>
-      <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
+      <footer className="relative z-[1] mt-8 text-xs tracking-wide text-muted">
         Powered by FanFunnel · provably-fair spins
       </footer>
       <LegalLinks className="relative z-[1] mt-2" />

@@ -1,9 +1,25 @@
-import { notFound } from "next/navigation";
+import { cache } from "react";
+import type { Metadata } from "next";
 import LegalLinks from "@/components/LegalLinks";
 import { getLeaderboard } from "@/lib/data";
 import { brandVars } from "@/lib/theme";
+import { linkNotFound } from "@/lib/fan/linkNotFound";
 
 export const dynamic = "force-dynamic";
+
+// One read shared by the metadata and the page.
+const board = cache(getLeaderboard);
+
+// WA-07 / WA-11 / WA-06: the fan's board, not creator marketing; by link only; not an app.
+export async function generateMetadata({ params }: { params: Promise<{ creatorId: string }> }): Promise<Metadata> {
+  const view = await board((await params).creatorId);
+  return {
+    title: view ? `${view.creatorTitle} · Leaderboard` : "Leaderboard · FanFunnel",
+    description: "Top fans by plays and rare wins, by board name only.",
+    robots: { index: false, follow: false },
+    manifest: null,
+  };
+}
 
 export default async function LeaderboardPage({
   params,
@@ -11,9 +27,9 @@ export default async function LeaderboardPage({
   params: Promise<{ creatorId: string }>;
 }) {
   const { creatorId } = await params;
-  const view = await getLeaderboard(creatorId);
-  // L5: an unknown, suspended or unapproved creator has no board.
-  if (!view) notFound();
+  const view = await board(creatorId);
+  // L5: an unknown, suspended or unapproved creator has no board (WA-02: the branded 404).
+  if (!view) linkNotFound("leaderboard", creatorId);
 
   return (
     <main
@@ -64,7 +80,7 @@ export default async function LeaderboardPage({
           </ol>
         )}
       </div>
-      <footer className="relative z-[1] mt-10 text-[11px] tracking-wide text-muted/70">
+      <footer className="relative z-[1] mt-10 text-xs tracking-wide text-muted">
         Powered by FanFunnel
       </footer>
       <LegalLinks className="relative z-[1] mt-2" />

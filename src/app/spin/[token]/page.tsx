@@ -1,7 +1,7 @@
 import { cache } from "react";
 import type { Metadata, Viewport } from "next";
-import { notFound } from "next/navigation";
 import { headers } from "next/headers";
+import { linkAttemptsBlocked, linkNotFound } from "@/lib/fan/linkNotFound";
 import { clientIpFromHeaders } from "@/lib/api/clientIp";
 import { fanMissBlockedFor, noteFanMiss } from "@/lib/api/fanMiss";
 import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass, getPausedFanWins } from "@/lib/data";
@@ -26,7 +26,8 @@ export const dynamic = "force-dynamic";
 const appInfo = cache(getFanAppInfo);
 // C2: the per-address budget for link lookups that miss (src/lib/api/fanMiss.ts).
 const visitorIp = cache(async () => clientIpFromHeaders(await headers()));
-const missBlocked = cache(async () => fanMissBlockedFor(await visitorIp()) > 0);
+const blockedForMs = cache(async () => fanMissBlockedFor(await visitorIp()));
+const missBlocked = cache(async () => (await blockedForMs()) > 0);
 
 export async function generateMetadata({
   params,
@@ -41,6 +42,9 @@ export async function generateMetadata({
   if (!info) return { robots, manifest: null };
   const paths = fanAppPaths(token);
   return {
+    // WA-07: the fan's tab reads as their game, not as creator marketing.
+    title: `${info.creatorTitle} · Play`,
+    description: "Your personal prize game. Every play lands on a prize.",
     robots,
     manifest: paths.manifest,
     icons: { apple: `${paths.icon("180")}?v=${iconVersion(info)}` },
@@ -64,7 +68,8 @@ export default async function SpinPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  if (await missBlocked()) notFound();
+  // WF-03: an address over its link-attempt budget gets an honest page.
+  if (await missBlocked()) linkAttemptsBlocked(await blockedForMs());
   const pass = await getFanPass(token);
   if (!pass) {
     // T3: a link the fan paused is permanent, but keeps a read-only list of
@@ -73,11 +78,12 @@ export default async function SpinPage({
     if (paused) return <PausedWins token={token} view={paused} />;
     // A link whose creator left, or whose fan deleted their data, says so.
     // Anything else (switched off, blocked by a suspension, unknown) is the
-    // 404, which still offers the fan's data controls (./not-found.tsx).
+    // branded 404 (src/app/not-found.tsx, WA-02), which still offers the
+    // fan's data controls.
     const status = await getFanLinkStatus(token);
     if (!status) {
       await noteFanMiss(await visitorIp());
-      notFound();
+      linkNotFound("spin", token);
     }
     return <LinkGone status={status} />;
   }
@@ -98,7 +104,8 @@ export default async function SpinPage({
     >
       <ThemeBackdrop bgUrl={look.bgUrl} heavyGrain={plan.grains.length > 1} />
       <div className="relative z-40 w-full max-w-md"><NoScriptNote /></div>
-      <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null}>
+      {/* RF-13: the server's clock, so countdowns ignore a phone that is minutes off. */}
+      <LinkPauseProvider initialBreakUntil={pass.play?.breakUntil ?? null} serverNow={new Date().toISOString()}>
         {/* z-40: the fan UI (and every fixed overlay inside it: reward reveal,
             saved-reward and break dialogs) paints above the backdrop and above
             the Preview-only EnvBadge (z-30), which must never cover a fan's
