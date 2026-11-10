@@ -41,7 +41,8 @@ db.rpcHandlers.reset_creator_content = (args) => {
   const a = args as Record<string, unknown>;
   resets.push(a);
   if (a.p_context !== CONTEXT || a.p_actor !== a.p_creator) return "forbidden";
-  for (const t of ["campaigns", "wheels"]) db.tables[t] = db.rows(t).filter((r) => r.creator_id !== a.p_creator);
+  // 0073 (CC-01): the reset deletes the fans itself, under its pre-locks.
+  for (const t of ["fans", "campaigns", "wheels"]) db.tables[t] = db.rows(t).filter((r) => r.creator_id !== a.p_creator);
   return "ok";
 };
 
@@ -92,13 +93,13 @@ async function main() {
     check(`${t} rows are gone`, db.rows(t).length === 0);
   }
   check("the three pref resets ran", rpcCalls.length === 3);
-  check("campaigns and games go through reset_creator_content, never a session DELETE",
-    db.statements.every((s) => !((s.table === "campaigns" || s.table === "wheels") && s.op === "delete")) && resets.length === 2);
+  check("fans, campaigns and games go through reset_creator_content, never a session DELETE (0073 CC-01)",
+    db.statements.every((s) => !((s.table === "fans" || s.table === "campaigns" || s.table === "wheels") && s.op === "delete")) && resets.length === 2);
   check("the reset names the caller as both creator and actor, with the context it minted for itself",
     resets.every((r) => r.p_creator === CREATOR && r.p_actor === CREATOR && r.p_context === CONTEXT)
       && contexts.every((c) => JSON.stringify(c) === JSON.stringify({ p_creator: CREATOR, p_permission: "edit_wheel" })));
   const order = db.rpcCalls.map((c) => c.name).filter((n) => n === "reset_creator_content");
-  check("fans are deleted before the reset", order.length === 2 && db.statements.some((s) => s.table === "fans" && s.op === "delete"));
+  check("the reset ran once per wipe and no session statement touched fans", order.length === 2 && !db.statements.some((s) => s.table === "fans"));
 
   // --- a refused reset stops the wipe before the standalone tables ------------
   db.seed("wheels", { creator_id: CREATOR, is_active: true });

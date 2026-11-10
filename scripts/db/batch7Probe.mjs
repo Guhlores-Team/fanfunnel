@@ -266,10 +266,12 @@ export function probeBatch7(db, psql) {
 
   // ── DB-11: the game version is compared under the lock ───────────────────
   refused("DB-11: save_wheel_prizes with a stale updated_at is game_changed", service(`select public.save_wheel_prizes('${WA}', '${A}', ${prizes}, now() - interval '1 hour');`), /game_changed/);
-  expect("DB-11: save_wheel_prizes with the current updated_at saves and stamps updated_at itself",
+  expect("DB-11: save_wheel_prizes with the current updated_at saves; a stock-only edit keeps the version (and the fans' contexts), a label edit advances it",
     `update public.wheels set updated_at = now() - interval '1 minute' where id = '${WA}';
-     ${service(`select public.save_wheel_prizes('${WA}', '${A}', ${prizes}, (select updated_at from public.wheels where id = '${WA}'));`)}
-     select 'stamped:' || (updated_at > now() - interval '10 seconds')::text from public.wheels where id = '${WA}';`, ["stamped:true"]);
+     ${service(`select public.save_wheel_prizes('${WA}', '${A}', ${prizes.replace('"stock":null},{"id"', '"stock":7},{"id"')}, (select updated_at from public.wheels where id = '${WA}'));`)}
+     select 'stock-only:' || (updated_at < now() - interval '30 seconds')::text || ',' || (select stock from public.prizes where id = '${PA1}') from public.wheels where id = '${WA}';
+     ${service(`select public.save_wheel_prizes('${WA}', '${A}', ${prizes.replace('"label":"one"', '"label":"uno"')}, (select updated_at from public.wheels where id = '${WA}'));`)}
+     select 'stamped:' || (updated_at > now() - interval '10 seconds')::text from public.wheels where id = '${WA}';`, ["stock-only:true,7", "stamped:true"]);
 
   // ── DB-12: a bingo draft is saved unready and inactive ───────────────────
   expect("DB-12: save_game_wheel(p_ready => false) stores a draft without the readiness check",

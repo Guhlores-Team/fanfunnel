@@ -15271,6 +15271,7 @@ begin
      and (select date_trunc('milliseconds', updated_at) from public.wheels where id = p_wheel) is distinct from date_trunc('milliseconds', p_expected_updated_at) then
     raise exception 'game_changed' using errcode = '22023';
   end if;
+  perform set_config('fanfunnel.prize_set', coalesce((select jsonb_agg(to_jsonb(pr) - 'stock' order by pr.id)::text from public.prizes pr where pr.wheel_id = p_wheel), '[]'), true);
   if exists(select 1 from public.wheels where id=p_wheel and game_kind='bingo') and current_setting('fanfunnel.game_configuration',true) is distinct from p_wheel::text then raise exception 'use actor-bound game saver' using errcode='42501';end if;
   if p_prizes is null or jsonb_typeof(p_prizes) <> 'array' or jsonb_array_length(p_prizes) not between 2 and 50 then
     raise exception 'invalid prize count' using errcode = '22023';
@@ -15311,7 +15312,10 @@ begin
     v_order := v_order + 1;
   end loop;
   delete from public.prizes where wheel_id=p_wheel and not(id=any(v_ids));
-  update public.wheels set updated_at = now() where id = p_wheel;
+  if coalesce((select jsonb_agg(to_jsonb(pr) - 'stock' order by pr.id)::text from public.prizes pr where pr.wheel_id = p_wheel), '[]')
+     is distinct from current_setting('fanfunnel.prize_set', true) then
+    update public.wheels set updated_at = now() where id = p_wheel;
+  end if;
 end;
 $$;
 revoke execute on function public.save_wheel_prizes(uuid, uuid, jsonb, timestamptz) from public, anon, authenticated;
@@ -16280,6 +16284,8 @@ begin
  else
   update public.wheels set game_ready=false,is_active=false,active_from=null,active_until=null where id=w.id;
  end if;
+ -- 0073 (DB-11): the game version advances when this save changed the game.
+ if (select to_jsonb(w2)-'updated_at' from public.wheels w2 where w2.id=w.id) is distinct from (to_jsonb(w)-'updated_at') then update public.wheels set updated_at=now() where id=w.id; end if;
  perform set_config('fanfunnel.game_configuration','',true);
 end $$;
 revoke execute on function public.save_game_wheel(uuid, uuid, uuid, jsonb, jsonb, uuid, boolean, timestamptz) from public, anon, authenticated;
