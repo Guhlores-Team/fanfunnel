@@ -41,6 +41,9 @@ permissions:
 jobs:
   supabase:
     runs-on: ubuntu-latest
+    # SC-06: the migration wait is capped at 15 min inside the job; the whole
+    # job never holds a runner for the 360 min default.
+    timeout-minutes: 30
     # Read-only token: the migration wait below only lists PR files and runs.
     permissions:
       contents: read
@@ -162,7 +165,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.test_maintenance_action != 'off'
     needs: supabase
     runs-on: ubuntu-latest
-    environment: test
+    # SC-02: the account-wide Supabase token, VERCEL_TOKEN and the TEST cron
+    # secret live in their own environment (required reviewer, Deployment
+    # branches = dashboard-redesign only), never in `test`, whose secrets any
+    # PR job can reach. Until the owner creates it (docs/GO_LIVE.md section
+    # 2) GitHub auto-creates an empty one and the guards refuse to run.
+    environment: test-maintenance
     timeout-minutes: 10
     permissions:
       contents: read

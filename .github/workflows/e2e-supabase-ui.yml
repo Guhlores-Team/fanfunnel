@@ -45,6 +45,8 @@ permissions:
 jobs:
   login-ui:
     runs-on: ubuntu-latest
+    # SC-06: build + Chromium + one login journey; never the 360 min default.
+    timeout-minutes: 30
     env:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -121,8 +123,9 @@ jobs:
     # fails closed if credentials or exact Preview/source checks are missing.
     if: github.event_name == 'workflow_dispatch' && inputs.preview_url != ''
     runs-on: ubuntu-latest
-    # SUP-5: VERCEL_TOKEN belongs in the `test` environment's secrets.
-    environment: test
+    # SUP-5 / SC-02: VERCEL_TOKEN belongs in the reviewed `test-maintenance`
+    # environment (Deployment branches = dashboard-redesign), not in `test`.
+    environment: test-maintenance
     timeout-minutes: 20
     permissions:
       contents: read
@@ -179,8 +182,9 @@ jobs:
     # Explicit manual opt-in only; existing login-ui and preview-lcp are unchanged.
     if: github.event_name == 'workflow_dispatch' && inputs.preview_smoke_url != ''
     runs-on: ubuntu-latest
-    # SUP-5: VERCEL_TOKEN belongs in the `test` environment's secrets.
-    environment: test
+    # SUP-5 / SC-02: VERCEL_TOKEN belongs in the reviewed `test-maintenance`
+    # environment (Deployment branches = dashboard-redesign), not in `test`.
+    environment: test-maintenance
     timeout-minutes: 20
     permissions:
       contents: read

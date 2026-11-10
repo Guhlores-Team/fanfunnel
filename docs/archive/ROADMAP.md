@@ -1,3 +1,8 @@
+> **Archived (stamped 2026-11-10).** Historical planning document; several lines are stale.
+> In particular the real-Supabase tests are no longer "gated on repo secrets": since batch 3 (A25)
+> missing TEST secrets FAIL the `supabase` and `login-ui` jobs, and only a fork PR skips them
+> visibly. Current state: `docs/handoff/MASTER_TRACKER.md`; current test commands: `README.md`.
+
 # FanFunnel Roadmap
 
 Status of the approved feature set from research + sessions. **Nothing here is

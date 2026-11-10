@@ -18,7 +18,7 @@ const json = v => `${quote(JSON.stringify(v))}::jsonb`;
 const hash = s => createHash("sha256").update(s).digest("hex");
 const canonical = v => v === null || typeof v !== "object" ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(canonical).join(",")}]` : `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
 const uid = (n, suffix) => `${n.toString(16).padStart(8, "0")}-0000-4000-8000-${suffix.padStart(12, "0")}`;
-const TERMS = "2026-10-27";
+const TERMS = "2026-11-11";
 const FIXTURE = join(import.meta.dirname, "interplay-resolution.fixture.json");
 
 export async function probeInterplay(sqlInput, options = {}) {

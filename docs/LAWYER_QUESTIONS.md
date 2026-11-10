@@ -41,3 +41,52 @@
     1099 duties purely the creator's?
 16. **Adult text on public pages.** Now: SFW rule covers photos only (terms:296-299); prize names, taglines, creator notes,
     board names public and ungated (/c/[slug], /leaderboard). Q: age-verification / harmful-to-minors scope? "No 2257 content" enough?
+
+# Added by the batch-7 trust & safety audit (commit 64000ec)
+
+17. **Version discipline.** Terms/Privacy text changed on 2026-11-04 and 2026-11-09 with `LEGAL.version` still "2026-10-27";
+    batch 7 bumped both to 2026-11-11 (re-gating every fan and creator once) and added a hash guard. Were the 11-04/11-09
+    changes material (pause now permanent; closure held while prizes owed)? If yes, was 30-day notice (terms "Changes to
+    these terms") owed, and do the acceptances recorded under 2026-10-27 stand? (TS-01)
+18. **Consent evidence.** Is "someone holding the fan's link ticked two boxes at time T, version V" enough age/terms evidence,
+    given the creator mints and holds every link and can open it first (TS-05)? What extra signal (device nonce, hashed IP +
+    user agent) should be stored, for how long, and may the creator see any of it?
+19. **"Free during the pilot".** The access form now says creator accounts are "free during the pilot" and the Terms "free
+    for creators today", with 30 days' notice before any fee. Is that wording safe without a fee-change clause? (TS-15)
+20. **Impersonation duty.** The Terms now forbid names that present as FanFunnel, its staff or another creator, and the code
+    refuses a reserved list. Do you want a takedown path for look-alike slugs and names of OTHER creators (a similarity
+    check), and should the rule name other platforms' staff too? (TS-03)
+21. **Off-platform contact in public text.** The code now refuses links, e-mail addresses, phone numbers, other-app handles
+    and slurs in prize names/descriptions, taglines, creator notes and display names, and only flags them in chat. May we
+    block outright, or should some fields (the creator note) be report-only? (TS-04; extends Q16)
+22. **Team replies.** Approve the Terms sentence ("may be answered by the creator or by the people they have authorised…")
+    and the chat line "replies may come from them or their team". Should team replies carry a visible "Team" label (built,
+    off by default)? (TS-07; extends Q12)
+23. **Verify page wording.** "A new card began on this paid play" / "tickets" / "draw" on the public verify page: replace, or
+    is a factual proof page exempt from the "no consideration" framing? (TS-02c/d; extends Q1)
+24. **Push processors.** Google, Apple and Mozilla push endpoints are now listed as processors in the Privacy Policy (they
+    receive the push address and an encrypted payload). Correct treatment, and is a transfer mechanism needed for them?
+    (TS-09)
+25. **Fan's tip amounts.** Is `grants.amount_cents` (the amount a creator notes against spins) the fan's personal data for an
+    access request? The fan export omits it and the "blocked" flag today. (TS-13; extends Q4)
+26. **Report free text.** Retention period for `reports.detail` (up to 2,000 characters, may contain third-party personal
+    data): the Privacy Policy says "kept when the law requires"; is an outer bound needed? (TS-08/26)
+27. **Notice mechanism.** The 30-day notice is now a deploy-time notice on fan pages and the dashboard plus a manual e-mail
+    to creators; the Terms say exactly that. Enough? Must past versions be published (git history keeps them today)? (TS-06;
+    extends Q11)
+28. **Creator-attested age gate.** The age gate is the fan's own tick, and the creator attests in the Terms that they only
+    deal with adults. With a creator able to clear the gate on a fan's behalf (Q18), is creator attestation plus the tick a
+    defensible age-assurance posture for an adult-creator audience, or is an age-verification provider required in any
+    target market? (ATK-01)
+29. **Restore notice.** After a database restore from backup, fans' wins since the backup point disappear and spent spins
+    return; reward codes delivered after that point may be handed out again. Is a notice to affected fans required, what
+    must it say, and must affected creators be told? (ops3 Q7)
+30. **Legal entity.** `LEGAL.operator` is the placeholder "FanFunnel" (`src/lib/legal.ts`); the Terms name Massachusetts law
+    but no legal entity or postal address. Acceptable for a first real creator, and what must the pages show once an entity
+    exists (name, registered address, company number)? (walk-anon Q5)
+31. **Games.** (a) Does a fan choosing a box or card (mystery box) change the "tip-to-play with chance" read when the choice
+    has no effect on the odds? (b) Does a weekly bonus count as a "prize for repeated play"? (c) Is the daily-door idea a
+    "periodic drawing" under state sweepstakes law? (product report §6)
+32. **Messages retention.** Chat messages are kept for as long as the creator account and the fan record exist (no
+    age-based deletion). Is a fixed period (e.g. 12 months after the last message on a link) required or advisable? (TS-19;
+    extends Q8)

@@ -6,10 +6,20 @@
 #   - On merge to main -> apply migrations to the PRODUCTION project.
 # So a merged PR ships code AND its schema together — no manual psql, no terminal.
 #
-# IMPORTANT one-time setup before the first real migration PR (see docs):
-#   1. Add the repo secrets listed below.
-#   2. Reconcile migration history: mark 0001-0035 as already-applied in BOTH
-#      the test and prod projects, so `db push` doesn't try to re-run them.
+# LIVE migration-history reconcile status (OPS3-12 D14, recorded 2026-11-10):
+#   TEST (snmcrmhgevfqggxdiomu): reconciled; every PR run of the `test` job
+#     re-reads the history and compares it with this checkout (0001-0072 at
+#     the time of writing).
+#   LIVE (ttlogfmogcccwiraaoae): NOT RECORDED. The three successful `main`
+#     runs of 2026-07-02 reached 0038, and `docs/auto-migration-reconcile.sql`
+#     exists for the hand-pasted 0001-0035 range, but nobody has written down
+#     whether LIVE's `supabase_migrations.schema_migrations` lists 0001-0038.
+#     Before the go-live merge the OWNER runs a read-only
+#     `supabase migration list --linked` against LIVE (docs/GO_LIVE.md
+#     section 5, "Release plan") and pastes the result into the release note;
+#     a history that lists fewer than 0001-0038 means the reconcile SQL must
+#     run first, or `db push` re-runs 0001 against a populated database.
+#   Update this block whenever either project's history is reconciled.
 #
 # Required GitHub repo secrets (Settings -> Secrets and variables -> Actions):
 #   SUPABASE_ACCESS_TOKEN       (Supabase dashboard -> Account -> Access Tokens)
@@ -21,9 +31,11 @@
 #   SUPABASE_PROD_PROJECT_REF   (production project ref)
 #   SUPABASE_PROD_DB_PASSWORD   (production project database password)
 #
-# Optional hardening: define GitHub "Environments" named `test` and `production`
-# (Settings -> Environments) and add a required reviewer to `production` so prod
-# migrations need a human click before they run.
+# Required hardening (docs/GO_LIVE.md section 2): GitHub "Environments" named
+# `test` (TEST-only database secrets) and `production` (PROD secrets + the
+# account token, a required reviewer, Deployment branches = `main` only). The
+# reviewer's click is the manual confirmation before anything touches LIVE;
+# the "Require a recent LIVE backup" step below refuses to push without one.
 #
 # A39 DB-before-code: the `production` job (check name
 # `db-migrations-production`) runs on EVERY push to main, not only on migration
@@ -59,8 +71,12 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     environment: test
+    # SC-06: a hung run must not hold the shared TEST lock for six hours.
+    timeout-minutes: 30
     permissions:
       contents: read
+      # SC-07: the gate below lists this PR's files (read-only).
+      pull-requests: read
     # SUP-6: one TEST migration run at a time across ALL PRs (the workflow
     # group above is per ref). Never cancels a run that has started.
     concurrency:
@@ -80,11 +96,36 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      # SC-07: Dependabot and fork PRs hold no TEST secrets. When such a PR
+      # changes nothing under supabase/ there is nothing to apply, so the job
+      # skips VISIBLY (notice + summary) instead of failing red on every
+      # dependency update. A PR that touches supabase/ always runs and fails
+      # closed. The file list comes from the read-only API, never from the PR.
+      - name: Skip visibly when an untrusted PR changes nothing under supabase/
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.actor }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          CHANGED_FILES="$(gh api --paginate "repos/$REPOSITORY/pulls/$PR/files" --jq '.[].filename')"
+          export CHANGED_FILES
+          node scripts/ci/migration-test-gate.mjs
       - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        if: steps.gate.outputs.run == 'true'
         with:
           # Pinned (not `latest`) so CI is reproducible; bump it deliberately.
-          version: 2.122.0
+          # SC-08: 2.122.1 is the last v2 release (unchanged from 2.122.0, only
+          # security fixes follow). scripts/ci/verify-migrations-applied.mjs
+          # parses this version's `migration list` table; moving to v3 needs a
+          # parser re-check on a PR run first.
+          version: 2.122.1
       - name: Choose TEST credentials
+        if: steps.gate.outputs.run == 'true'
         id: target
         shell: bash
         env:
@@ -102,6 +143,7 @@ jobs:
             echo "mode=token" >> "$GITHUB_OUTPUT"
           fi
       - name: Apply migrations to TEST
+        if: steps.gate.outputs.run == 'true'
         shell: bash
         env:
           MODE: ${{ steps.target.outputs.mode }}
@@ -120,6 +162,7 @@ jobs:
             supabase db push --password "$TEST_DB_PASSWORD"
           fi
       - name: Confirm TEST migration history
+        if: steps.gate.outputs.run == 'true'
         shell: bash
         env:
           MODE: ${{ steps.target.outputs.mode }}
@@ -136,6 +179,7 @@ jobs:
           fi
           node scripts/ci/verify-migrations-applied.mjs --label TEST < "$RUNNER_TEMP/test-migrations.txt"
       - name: Check src/lib/data/db.types.ts matches TEST
+        if: steps.gate.outputs.run == 'true'
         # The committed row types must match the schema the migrations just
         # produced. The comparison ignores whitespace only: the file can come
         # from `npm run gen:types` (this CLI) or Supabase's hosted generator,
@@ -173,6 +217,9 @@ jobs:
     name: db-migrations-production
     runs-on: ubuntu-latest
     environment: production
+    # SC-06: a hung PROD push must not hold `main`'s group (and every later
+    # commit's Deployment Check) for six hours.
+    timeout-minutes: 30
     permissions:
       contents: read
     # The account token and PROD secrets reach only the two CLI steps below
@@ -188,7 +235,25 @@ jobs:
       - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           # Pinned (not `latest`) so CI is reproducible; bump it deliberately.
-          version: 2.122.0
+          # SC-08: 2.122.1 is the last v2 release (unchanged from 2.122.0, only
+          # security fixes follow). scripts/ci/verify-migrations-applied.mjs
+          # parses this version's `migration list` table; moving to v3 needs a
+          # parser re-check on a PR run first.
+          version: 2.122.1
+      # SC-01 / OPS-03: refuse to touch LIVE unless the Management API lists a
+      # completed backup (or a PITR base backup) from the last 36 hours. GET
+      # only, with the account token the next step holds anyway; no new secret.
+      # The only override is the repository VARIABLE PROD_BACKUP_POLICY
+      # (docs/GO_LIVE.md section 5), never a secret and never the job token.
+      - name: Require a recent LIVE backup before touching PRODUCTION
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROD_PROJECT_REF: ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
+          PROD_BACKUP_POLICY: ${{ vars.PROD_BACKUP_POLICY }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/require-prod-backup.mjs
       - name: Apply migrations to PRODUCTION
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

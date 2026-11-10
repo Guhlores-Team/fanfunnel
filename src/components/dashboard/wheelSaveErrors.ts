@@ -1,5 +1,6 @@
 import { MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { MIN_WHEEL_PRIZES, NO_WINNABLE_PRIZE, gameNoun } from "@/lib/games/wheel/validate";
+import { publicTextErrorMessage } from "@/lib/publicText";
 
 /**
  * Creator-facing copy for the `error` codes PUT /api/wheel returns. Pure, so
@@ -24,5 +25,7 @@ const GENERIC = "Couldn't save. Try again.";
 /** `kind` (the game being saved) only changes the noun in too_few_prizes. */
 export function wheelSaveErrorMessage(code: unknown, kind: unknown = "wheel"): string {
   if (code === "too_few_prizes") return `Couldn't save: a ${gameNoun(kind)} needs at least ${MIN_WHEEL_PRIZES} prizes.`;
+  const publicText = publicTextErrorMessage(code);
+  if (publicText) return `Couldn't save: ${publicText.charAt(0).toLowerCase()}${publicText.slice(1)}`;
   return typeof code === "string" && Object.hasOwn(MESSAGES, code) ? MESSAGES[code] : GENERIC;
 }
