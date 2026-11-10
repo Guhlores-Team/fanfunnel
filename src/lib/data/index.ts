@@ -32,7 +32,7 @@ export {
   setActiveWheel,
   setWheelSchedule,
 } from "./wheels";
-export { listWebhooks, createWebhook, deleteWebhook } from "./webhooks";
+export { listWebhooks, createWebhook, deleteWebhook, sendTestWebhook } from "./webhooks";
 export { getFanPass, spin, getSpinAttemptStatus, createPass } from "./spins";
 export { setPlayReminder, takeBreak } from "./playGuard";
 export {

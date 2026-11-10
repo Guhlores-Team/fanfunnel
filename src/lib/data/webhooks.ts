@@ -285,3 +285,63 @@ export async function fireWebhooks(
     /* never throws */
   }
 }
+
+// --- Test delivery (PR-15) -------------------------------------------------------
+
+/** Test deliveries per creator per minute (each one resolves DNS and connects out). */
+export const WEBHOOK_TESTS_PER_MINUTE = 10;
+
+/** The payload a "Send test" delivery carries: shaped like a win, clearly marked. */
+export function webhookTestPayload(event: string, now: Date = new Date()): { event: string } & Record<string, unknown> {
+  const real = event === "all" ? "prize_pending" : event;
+  return {
+    event: real,
+    test: true,
+    at: now.toISOString(),
+    win: { fan: "Sample fan", prize: "Sample prize", rarity: "rare", status: "pending", shareId: null },
+    note: "This is a test delivery from the FanFunnel dashboard. Nothing was won.",
+  };
+}
+
+/**
+ * POST one signed sample delivery to one of the creator's own webhooks and
+ * report the HTTP status (0 = no answer). Owner / 'manage' only, like the
+ * secret; the target is re-vetted and pinned exactly as a real delivery.
+ */
+export async function sendTestWebhook(
+  id: string,
+): Promise<{ ok: true; status: number; signed: boolean; event: string } | { error: "unauthorized" | "forbidden" | "not_found" | "rate_limited" | "blocked_target" | "db_error" }> {
+  if (!isSupabaseConfigured()) {
+    const hook = mockListWebhooks().find((h) => h.id === id);
+    if (!hook) return { error: "not_found" };
+    // Demo: nothing leaves the machine; the dashboard sees a delivered test.
+    return { ok: true, status: 200, signed: true, event: webhookTestPayload(hook.event).event };
+  }
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { error: "unauthorized" };
+  const { data: allowed, error: denied } = await sb.rpc("can_act_for", { target_creator: user.id, perm: "manage" });
+  if (denied || allowed !== true) return { error: "forbidden" };
+  const { data: row, error } = await sb.from("webhooks").select("id, url, event").eq("id", id).eq("creator_id", user.id).maybeSingle();
+  if (error) return { error: "db_error" };
+  const hook = row as { id: string; url: string; event: string } | null;
+  if (!hook) return { error: "not_found" };
+  if (!(await rateLimitShared(`webhooks:test:${user.id}`, WEBHOOK_TESTS_PER_MINUTE, 60_000)).ok) return { error: "rate_limited" };
+  const target = await resolveWebhookTarget(hook.url);
+  if (!target.ok) return { error: "blocked_target" };
+  const secret = await readOrCreateSecret(createServiceClient(), user.id).catch(() => null);
+  const payload = webhookTestPayload(hook.event);
+  const deliveryId = randomUUID();
+  const body = JSON.stringify({ ...payload, id: deliveryId });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": "FanFunnel-Webhooks/1",
+    "X-FanFunnel-Event": payload.event,
+    "X-FanFunnel-Delivery": deliveryId,
+    "X-FanFunnel-Test": "1",
+    ...(secret ? { "X-FanFunnel-Signature": webhookSignature(secret, body, timestamp) } : {}),
+  };
+  const status = await postPinned(target, headers, body);
+  return { ok: true, status, signed: !!secret, event: payload.event };
+}

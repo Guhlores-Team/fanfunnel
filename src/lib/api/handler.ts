@@ -116,6 +116,8 @@ export function statusForError(code: string): number {
       return 410;
     case "rate_limited":
       return 429;
+    case "blocked_target":
+      return 422;
     default:
       return 400;
   }

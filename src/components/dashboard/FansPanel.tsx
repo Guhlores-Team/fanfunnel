@@ -694,6 +694,10 @@ export default function FansPanel({
           <button type="button" onClick={() => setManagingMessages(true)} className={ghostBtn}>
             Manage messages
           </button>
+          {/* PR-07: every fan as a spreadsheet (server-side, formula-safe). */}
+          <a href="/api/fans/export" download className={ghostBtn} data-testid="fans-export">
+            Export CSV
+          </a>
         </div>
       </div>
 

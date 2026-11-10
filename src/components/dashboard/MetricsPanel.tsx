@@ -121,6 +121,11 @@ export default function MetricsPanel({
             />
           ))}
         </dl>
+        {/* PR-07: the daily series as a spreadsheet. */}
+        <p className="text-xs text-muted">
+          <a href={`/api/metrics/export?days=${days}`} download className="font-semibold text-brand underline-offset-2 hover:underline" data-testid="metrics-export">Download the last {days} days as CSV</a>
+          {" "}— one row per UTC day: spins and tips recorded.
+        </p>
         {overview?.gamePlays ? <dl aria-label="Plays by game" className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
           <div className="flex gap-2"><dt className="text-muted">Wheel plays</dt><dd className="font-semibold tabular-nums">{overview.gamePlays.wheel.toLocaleString()}</dd></div>
           <div className="flex gap-2"><dt className="text-muted">Scratch plays</dt><dd className="font-semibold tabular-nums">{overview.gamePlays.scratch.toLocaleString()}</dd></div>

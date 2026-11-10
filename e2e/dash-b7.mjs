@@ -16,6 +16,12 @@
 //  WG-12    reactivate / demote ask first (admin demo accounts).
 //  PA-03/PR-11 the Fans list is paged and searched on the server; sort and
 //           "Needs a top-up" apply to the loaded rows; obligations are one read.
+//  PR-04    a locked game type can be asked for; the admin bell lists it
+//           until the feature is on.
+//  PR-13    one link can be switched off (paused page) and on again without
+//           blocking the fan.
+//  PR-15    "Send test" delivers a marked sample to a webhook.
+//  PR-07    fans, wins and daily numbers download as formula-safe CSV.
 // Steps that answer API calls with errors run on their own page with no error
 // sink: the failures are the point of the step. Every fixture is removed again.
 import { randomUUID } from "node:crypto";
@@ -348,6 +354,98 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     } finally {
       await page.close().catch(() => {});
       for (const fan of made) await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+    }
+  });
+
+  await step("b7 PR-04: a locked game type shows \"Ask to enable\"; the request reaches the admin bell until the feature is on", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    try {
+      await json(await request.post(BASE + "/api/admin/account", { data: { id: "acc-you", features: { scratch: false } } }), "lock scratch");
+      await goto(page, "/dashboard?section=editor", 1200);
+      await page.getByRole("button", { name: "New game", exact: true }).click();
+      const locked = page.getByTestId("new-game-locked-scratch");
+      await locked.waitFor({ timeout: 10000 });
+      assert((await page.getByTestId("new-game-kind-scratch").count()) === 0, "a locked type is not a selectable radio");
+      await locked.getByRole("button", { name: "Ask to enable" }).click();
+      await page.getByTestId("toast").filter({ hasText: /Asked/ }).first().waitFor({ timeout: 10000 });
+      await page.waitForFunction(() => /Asked — you'll see it here once it's on/.test(document.body.innerText), null, { timeout: 5000 });
+      const feed = await json(await request.get(BASE + "/api/notifications"), "admin bell");
+      const item = (feed.items ?? []).find((i) => i.kind === "game_unlock_request");
+      assert(item && /scratch tickets/.test(item.title) && item.target?.section === "admin", "the admin bell lists the request, naming the game");
+      const again = await json(await request.post(BASE + "/api/me/game-unlock", { data: { game: "scratch" } }), "ask again");
+      assert(again.ok === true && again.already === true, "asking twice is answered as the earlier request");
+      assert((await request.post(BASE + "/api/me/game-unlock", { data: { game: "poker" } })).status() === 400, "an unknown game is a 400");
+      await json(await request.post(BASE + "/api/admin/account", { data: { id: "acc-you", features: { scratch: true } } }), "enable scratch");
+      const after = await json(await request.get(BASE + "/api/notifications"), "admin bell after enabling");
+      assert(!(after.items ?? []).some((i) => i.kind === "game_unlock_request" && /scratch/.test(i.title)), "once the feature is on the request leaves the bell");
+      const enabled = await request.post(BASE + "/api/me/game-unlock", { data: { game: "scratch" } });
+      assert(enabled.status() === 409 && (await enabled.json()).error === "already_enabled", "asking for a game that is on is refused as already_enabled");
+    } finally {
+      await page.close().catch(() => {});
+      await request.post(BASE + "/api/admin/account", { data: { id: "acc-you", features: { scratch: true } } }).catch(() => {});
+    }
+  });
+
+  await step("b7 PR-13: one link can be switched off (the fan sees the paused page) and on again; the fan is never blocked", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const name = `b7 link ${randomUUID().slice(0, 6)}`;
+    const fan = await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name, spins: 2 } }), "create fan");
+    try {
+      assert((await request.get(BASE + `/spin/${fan.token}`)).status() === 200, "the fresh link opens");
+      const off = await json(await request.post(BASE + `/api/fans/${fan.fanId}/links`, { data: { token: fan.token, active: false } }), "switch off");
+      assert(off.ok === true, "the switch answers ok");
+      assert((await request.get(BASE + `/spin/${fan.token}`)).status() === 404, "a switched-off link no longer opens");
+      const detail = await json(await request.get(BASE + `/api/fans/${fan.fanId}`), "fan detail");
+      assert(detail.blocked === false && detail.passes?.[0]?.isActive === false, "the fan is not blocked; the pass reads as switched off");
+      assert((await request.post(BASE + `/api/fans/${fan.fanId}/links`, { data: { token: "nope", active: true } })).status() === 404, "an unknown token is a 404");
+      assert((await request.post(BASE + `/api/fans/${fan.fanId}/links`, { data: { token: fan.token, active: "yes" } })).status() === 400, "a non-boolean active is a 400");
+
+      await goto(page, `/dashboard?section=fans&fan=${encodeURIComponent(fan.fanId)}`, 1200);
+      const sw = page.getByTestId("link-switch").first();
+      await sw.waitFor({ timeout: 10000 });
+      assert((await sw.getAttribute("data-active")) === "false" && /Switched off/.test(await sw.innerText()), "the drawer shows the link as switched off");
+      await sw.getByRole("button", { name: "Switch this link on" }).click();
+      await page.getByTestId("toast").filter({ hasText: /Link switched on/ }).first().waitFor({ timeout: 10000 });
+      await page.waitForFunction(() => document.querySelector("[data-testid='link-switch']")?.getAttribute("data-active") === "true", null, { timeout: 10000 });
+      assert((await request.get(BASE + `/spin/${fan.token}`)).status() === 200, "the link opens again");
+    } finally {
+      await page.close().catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+    }
+  });
+
+  await step("b7 PR-15 + PR-07: a webhook gets a test delivery; fans, wins and daily numbers download as formula-safe CSV", async () => {
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const hook = await json(await request.post(BASE + "/api/webhooks", { data: { url: "https://example.com/b7-hook", event: "all" } }), "add webhook");
+    const evil = await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "=HYPERLINK(\"http://evil\")", spins: 1 } }), "create formula-named fan");
+    try {
+      const fired = await json(await request.post(BASE + `/api/webhooks/${hook.webhook.id}/test`), "test delivery");
+      assert(fired.ok === true && fired.event === "prize_pending" && typeof fired.status === "number", "the test delivery answers with the receiver's status");
+      await goto(page, "/dashboard?section=boosts", 1200);
+      const btn = page.getByTestId("webhook-test").first();
+      await btn.waitFor({ timeout: 10000 });
+      await btn.click();
+      await page.getByTestId("toast").filter({ hasText: /Delivered|answered|No answer/ }).first().waitFor({ timeout: 10000 });
+
+      const fans = await request.get(BASE + "/api/fans/export");
+      const csv = await fans.text();
+      assert(fans.status() === 200 && /text\/csv/.test(fans.headers()["content-type"] ?? "") && /attachment/.test(fans.headers()["content-disposition"] ?? ""), "the fans export is a CSV attachment");
+      assert(csv.includes("\"'=HYPERLINK(\"\"http://evil\"\")\"") && !/\r\n"=HYPERLINK/.test(csv), "a formula-looking name is neutralised in the file");
+      const wins = await request.get(BASE + "/api/redemptions/export?status=pending");
+      assert(wins.status() === 200 && (await wins.text()).startsWith('\uFEFF"Fan","Prize"'), "the queue export starts with its header");
+      assert((await request.get(BASE + "/api/redemptions/export?status=bogus")).status() === 400, "an unknown status is refused");
+      const dailyRes = await request.get(BASE + "/api/metrics/export?days=14");
+      const daily = (await dailyRes.text()).trim().split("\r\n");
+      assert(dailyRes.status() === 200 && daily.length === 15, "the daily export has 14 rows and a header");
+      await goto(page, "/dashboard?section=fans", 1200);
+      assert((await page.getByTestId("fans-export").getAttribute("href")) === "/api/fans/export", "the Fans tab offers the export");
+    } finally {
+      await page.close().catch(() => {});
+      await request.delete(BASE + `/api/webhooks/${hook.webhook.id}`).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { data: { token: evil.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 }

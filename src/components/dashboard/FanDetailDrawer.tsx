@@ -719,6 +719,7 @@ export default function FanDetailDrawer({
                           onLinkGameChanged={onSaved}
                         />
                         <LinkRow url={`${origin}/spin/${p.token}`} newest={false} bare />
+                        <LinkSwitch fanId={fanId} pass={p} onChanged={onSaved} />
                       </li>
                     ))}
                   </ul>
@@ -1239,6 +1240,54 @@ function CopyDmMenu({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * PR-13: switch one link off (the fan sees the paused page on it) or back on,
+ * without blocking the fan: their account, chat and other links stay.
+ */
+function LinkSwitch({ fanId, pass, onChanged }: { fanId: string; pass: FanAccountSummary["passes"][number]; onChanged?: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const off = pass.isActive === false;
+  const pausedByFan = !!pass.selfExcludedAt;
+  async function set(active: boolean) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/fans/${fanId}/links`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: pass.token, active }) });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast(data.error === "forbidden" ? "Your seat can't switch links for this creator." : "Couldn't change that link. Try again.", { tone: "error" });
+        return;
+      }
+      toast(active ? "Link switched on." : "Link switched off — the fan sees it as paused. Their account and other links are untouched.", {
+        tone: "success",
+        key: `link-switch-${pass.token}`,
+        action: { label: active ? "Switch off again" : "Undo", onClick: () => void set(!active) },
+      });
+      onChanged?.();
+    } catch {
+      toast("Couldn't change that link. Check your connection.", { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="link-switch" data-active={off ? "false" : "true"}>
+      {off && <span className="rounded-full border border-amber-300/40 px-2 py-[2px] text-[11px] font-semibold text-amber-200">Switched off</span>}
+      {pausedByFan && !off && <span className="rounded-full border border-line px-2 py-[2px] text-[11px] font-semibold text-muted">Paused by the fan</span>}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void set(off)}
+        className="min-h-11 rounded-[9px] border border-line px-3 text-[12px] font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+      >
+        {busy ? "…" : off ? "Switch this link on" : "Switch this link off"}
+      </button>
+      {!off && <span className="text-[11.5px] text-muted">Stops this one link only — no block, chat stays open.</span>}
     </div>
   );
 }

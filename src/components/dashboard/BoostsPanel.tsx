@@ -912,6 +912,38 @@ function WebhooksCard() {
     }
   };
 
+  // PR-15: one signed sample delivery; the receiver's answer is the toast.
+  const [testing, setTesting] = useState<string | null>(null);
+  const sendTest = async (id: string) => {
+    if (testing) return;
+    setTesting(id);
+    try {
+      const res = await fetch(`/api/webhooks/${id}/test`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { status?: number; signed?: boolean; error?: string };
+      if (!res.ok) {
+        toast(
+          data.error === "blocked_target" ? "That address can't be reached from FanFunnel (private or unresolvable host)." :
+          data.error === "rate_limited" ? "Slow down — at most 10 test deliveries a minute." :
+          data.error === "forbidden" ? "Only the account owner can send test deliveries." :
+          "Couldn't send the test delivery. Try again.",
+          { tone: "error" },
+        );
+        return;
+      }
+      const status = data.status ?? 0;
+      toast(
+        status === 0 ? "No answer from that address (timed out or refused). Check the URL and that it accepts POST." :
+        status >= 200 && status < 300 ? `Delivered — the receiver answered HTTP ${status}${data.signed ? " (signed)" : " (unsigned: no secret yet)"}.` :
+        `The receiver answered HTTP ${status}. Check its logs for the test payload.`,
+        { tone: status >= 200 && status < 300 ? "success" : "error", key: `wh-test-${id}` },
+      );
+    } catch {
+      toast("Couldn't send the test delivery. Check your connection.", { tone: "error" });
+    } finally {
+      setTesting(null);
+    }
+  };
+
   const remove = async (id: string) => {
     // Optimistically drop the row, then roll it back to its original position
     // if the delete fails so the UI never silently diverges from the server.
@@ -1004,6 +1036,16 @@ function WebhooksCard() {
                 {WEBHOOK_EVENT_LABEL[h.event] ?? h.event}
               </span>
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">{h.url}</span>
+              <button
+                type="button"
+                disabled={testing === h.id}
+                onClick={() => void sendTest(h.id)}
+                aria-label={`Send a test delivery to ${h.url}`}
+                className="min-h-11 rounded-[9px] border border-line px-3 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+                data-testid="webhook-test"
+              >
+                {testing === h.id ? "Sending…" : "Send test"}
+              </button>
               <RemoveConfirm
                 id={`wh-${h.id}`}
                 label={`Remove webhook ${h.url}`}

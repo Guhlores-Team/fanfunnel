@@ -227,10 +227,16 @@ export default function PrizesPanel({
           <span aria-hidden="true" className="h-4 w-[3px] rounded-sm bg-[var(--brand)]" />
           Prize queue
         </h2>
-        <button type="button" onClick={refresh} className={ghostBtn}>
-          <Glyph d={P.refresh} size={14} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* PR-07: the queue (current status filter) as a spreadsheet. */}
+          <a href={`/api/redemptions/export${filter === "all" ? "" : `?status=${filter}`}`} download className={ghostBtn} data-testid="queue-export">
+            Export CSV
+          </a>
+          <button type="button" onClick={refresh} className={ghostBtn}>
+            <Glyph d={P.refresh} size={14} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="mb-3.5 flex flex-wrap items-center gap-2">
