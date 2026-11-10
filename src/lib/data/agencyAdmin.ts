@@ -4,7 +4,7 @@
 // explicit check: the caller's own id (close account) or isActiveAdmin().
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
-import { recordAudit } from "./audit";
+import { recordAudit, type AuditInput } from "./audit";
 import { publicCreatorName } from "@/lib/publicCreator";
 
 type Service = ReturnType<typeof createServiceClient>;
@@ -63,26 +63,23 @@ async function leaveAgencyNotices(svc: Service, kind: "agency_dissolved" | "agen
   }
 }
 
-/** WG-04: record (audit + notices) that an owner's deletion dissolved their agency. Call BEFORE the delete. */
-export async function recordAgencyDissolution(svc: Service, ownerId: string, actorId: string | null, by: "self_close" | "admin_delete" | "admin_dissolve"): Promise<AgencyImpact | null> {
+/** WG-04: the notices and the audit entry for an owner's agency being dissolved. Call BEFORE the delete. */
+export async function prepareAgencyDissolution(svc: Service, ownerId: string, actorId: string | null, by: "self_close" | "admin_delete" | "admin_dissolve"): Promise<{ impact: AgencyImpact; audit: AuditInput } | null> {
   const impact = await agencyImpactForOwner(svc, ownerId);
   if (!impact) return null;
   const notified = await leaveAgencyNotices(svc, "agency_dissolved", impact.orgName, [...new Set([...impact.memberIds, ...impact.creatorIds])]);
-  await recordAudit({
-    actorId,
-    action: "org.dissolve",
-    targetType: "org",
-    targetId: impact.orgId,
-    details: { by, seats: impact.seats, creators: impact.creators, notified },
-  });
-  return impact;
+  return {
+    impact,
+    audit: { actorId, action: "org.dissolve", targetType: "org", targetId: impact.orgId, details: { by, seats: impact.seats, creators: impact.creators, notified } },
+  };
 }
 
-/** WG-13: tell every seat that the owner's suspension paused the agency. */
-export async function noticeAgencyOwnerSuspended(svc: Service, ownerId: string): Promise<void> {
-  const impact = await agencyImpactForOwner(svc, ownerId);
-  if (!impact) return;
-  await leaveAgencyNotices(svc, "agency_owner_suspended", impact.orgName, impact.memberIds);
+/** prepareAgencyDissolution + the audit row, for routes that own no other audit write. */
+export async function recordAgencyDissolution(svc: Service, ownerId: string, actorId: string | null, by: "self_close" | "admin_delete" | "admin_dissolve"): Promise<AgencyImpact | null> {
+  const prepared = await prepareAgencyDissolution(svc, ownerId, actorId, by);
+  if (!prepared) return null;
+  await recordAudit(prepared.audit);
+  return prepared.impact;
 }
 
 // --- Admin view (WG-09) ------------------------------------------------------
@@ -147,7 +144,8 @@ export type AdminAgencyAction =
   | { action: "dissolve"; orgId: string; confirmName: string };
 
 /** Admin levers against an agency, each audited. Suspending the owner uses the ordinary account suspend. */
-export async function adminAgencyAction(input: AdminAgencyAction): Promise<{ ok: true } | { error: string }> {
+/** Removes a seat or dissolves an agency; the caller (the admin route) writes the returned audit entry. */
+export async function adminAgencyAction(input: AdminAgencyAction): Promise<{ ok: true; audit: AuditInput } | { error: string }> {
   if (!isSupabaseConfigured()) return { error: "demo_only" };
   const sb = await createClient();
   if (!(await isActiveAdmin(sb))) return { error: "unauthorized" };
@@ -160,16 +158,15 @@ export async function adminAgencyAction(input: AdminAgencyAction): Promise<{ ok:
     if (!m) return { error: "not_found" };
     const { error } = await svc.from("org_members").delete().eq("id", m.id);
     if (error) return { error: "db_error" };
-    await recordAudit({ actorId, action: "org.remove_member", targetType: "org", targetId: m.org_id, details: { by: "admin", member: m.id } });
-    return { ok: true };
+    return { ok: true, audit: { actorId, action: "org.remove_member", targetType: "org", targetId: m.org_id, details: { by: "admin", member: m.id } } };
   }
   const { data: org } = await svc.from("orgs").select("id, name, owner_id").eq("id", input.orgId).maybeSingle();
   const o = org as { id: string; name: string; owner_id: string } | null;
   if (!o) return { error: "not_found" };
   if (o.name.trim().toLowerCase() !== input.confirmName.trim().toLowerCase()) return { error: "name_mismatch" };
-  await recordAgencyDissolution(svc, o.owner_id, actorId, "admin_dissolve");
+  const prepared = await prepareAgencyDissolution(svc, o.owner_id, actorId, "admin_dissolve");
   // Managed creators are detached by the FK (profiles.org_id → on delete set null); seats and invites cascade.
   const { error } = await svc.from("orgs").delete().eq("id", o.id);
   if (error) return { error: "db_error" };
-  return { ok: true };
+  return { ok: true, audit: prepared?.audit ?? { actorId, action: "org.dissolve", targetType: "org", targetId: o.id, details: { by: "admin_dissolve" } } };
 }

@@ -223,10 +223,11 @@ function SeatPrizes({ creatorId, onError }: { creatorId: string; onError: (m: st
     setBusy(item.id);
     setConfirmId(null);
     try {
+      const id = item.id;
       const r = await fetch("/api/redemptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: item.id, status, creatorId }),
+        body: status === "fulfilled" ? JSON.stringify({ id, status: "fulfilled", creatorId }) : JSON.stringify({ id, status: "pending", creatorId }),
       });
       if (!r.ok) return onError(status === "fulfilled" ? "That prize could not be marked fulfilled." : "That prize could not be reopened.");
       setUndo(status === "fulfilled" ? item : null);

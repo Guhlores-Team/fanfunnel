@@ -49,6 +49,22 @@ export default function WheelSwitcher({
   onOpenCampaigns?: () => void;
 }) {
   const toast = useToast();
+  // PR-04: "Ask to enable" for a locked game type.
+  const requestUnlock = useCallback(async (game: "scratch" | "bingo"): Promise<"sent" | "already" | "failed"> => {
+    try {
+      const res = await fetch("/api/me/game-unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ game }) });
+      const body = (await res.json().catch(() => ({}))) as { already?: boolean; error?: string };
+      if (!res.ok) {
+        toast(body.error === "already_enabled" ? "That game is already enabled — close and reopen New game." : "Couldn't send the request. Try again.", { tone: "error" });
+        return "failed";
+      }
+      toast(body.already ? "Already asked — it's with the team." : "Asked. The team will enable it for your account.", { tone: "success" });
+      return body.already ? "already" : "sent";
+    } catch {
+      toast("Couldn't send the request. Check your connection and try again.", { tone: "error" });
+      return "failed";
+    }
+  }, [toast]);
   const [wheels, setWheels] = useState<GameSummary[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -372,7 +388,7 @@ export default function WheelSwitcher({
   return (
     <section aria-label="Game switcher">
       {loadError && <p role="alert" className="mb-2 text-xs text-amber-200">{loadError} <button type="button" className="font-semibold underline" disabled={busy} onClick={() => void load().catch(() => setLoadError("Saved games still couldn't load."))}>Check games again</button></p>}
-      {newOpen && <NewGameDialog features={features} busy={busy} error={newError} onClose={() => { setNewOpen(false); setNewError(""); }} onCreate={(kind, name) => leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void createWheel(kind, name); }, { scope: "game-management", consequence: "Creating a game discards this unsaved schedule. Existing game prize edits are kept until you choose whether to open the new game." })} />}
+      {newOpen && <NewGameDialog features={features} busy={busy} error={newError} onRequestUnlock={requestUnlock} onClose={() => { setNewOpen(false); setNewError(""); }} onCreate={(kind, name) => leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void createWheel(kind, name); }, { scope: "game-management", consequence: "Creating a game discards this unsaved schedule. Existing game prize edits are kept until you choose whether to open the new game." })} />}
       {takeover && selected && (
         <Modal
           onClose={() => setTakeover(null)}

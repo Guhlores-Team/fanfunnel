@@ -45,12 +45,14 @@ export {
   deleteFan,
   setFanBlocked,
   setFanLinkGame,
+  setFanLinkActive,
   reportCreator,
   selfExclude,
   updateFanMeta,
   ackFan,
 } from "./fans";
 export { getCreatorObligations, obligationsFrom } from "./obligations";
+export { requestGameUnlock, listGameUnlockRequests } from "./gameUnlock";
 export {
   createCampaign,
   listCampaigns,

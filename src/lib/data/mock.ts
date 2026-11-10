@@ -194,6 +194,8 @@ interface MockPass {
   spinsRemaining: number;
   spinsGrantedTotal: number;
   createdAt: string;
+  /** PR-13: the creator switched this one link off (default on). */
+  isActive?: boolean;
 }
 
 interface MockFan {
@@ -1187,6 +1189,9 @@ export async function mockGetFanPass(
   ensurePasses(fan);
   // Per-wheel: this token's pass decides the wheel + the balance shown.
   const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
+  // PR-13: a link the creator switched off shows the paused page (parity
+  // with the Supabase path, which reads is_active = true only).
+  if (pass && pass.isActive === false) return null;
   const wheelId = pass ? mockResolvedSpinWheelId(pass) : mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
   if (wheel.gameReady === false) return null;
@@ -2027,6 +2032,8 @@ export function mockListFans(): FanAccountSummary[] {
       campaignName: p.campaignId ? campaignName.get(p.campaignId) ?? null : null,
       spinsRemaining: p.spinsRemaining,
       createdAt: p.createdAt,
+      isActive: p.isActive !== false,
+      selfExcludedAt: f.selfExcludedAt ?? null,
     }));
     return {
       fanId: f.id,
@@ -2049,7 +2056,7 @@ export function mockListFans(): FanAccountSummary[] {
       // Supabase path (ties go to the later-created pass).
       activeToken: f.selfExcludedAt
         ? null
-        : ([...f.passes].reverse().sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.token ?? null),
+        : ([...f.passes].reverse().filter((p) => p.isActive !== false).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.token ?? null),
       // RM-6: only the break state, never the fan's reminder or counts.
       breakUntil: isOnBreak(f.breakUntil) ? f.breakUntil ?? null : null,
       visits7: visitsLast7(checkinDays(f.id), new Date()),
@@ -3155,6 +3162,16 @@ export function mockSetFanBlocked(fanId: string, blocked: boolean): { ok: true }
 }
 
 /** Demo twin of setFanLinkGame (0065): pin one link to one playable game, or null to follow again. */
+export function mockSetFanLinkActive(fanId: string, token: string, active: boolean): { ok: true } | { error: string } {
+  const fan = store.fans.get(fanId);
+  if (!fan) return { error: "not_found" };
+  ensurePasses(fan);
+  const pass = fan.passes.find((p) => p.token === token);
+  if (!pass) return { error: "not_found" };
+  pass.isActive = active;
+  return { ok: true };
+}
+
 export function mockSetFanLinkGame(fanId: string, token: string, wheelId: string | null): { ok: true } | { error: string } {
   const fan = store.fans.get(fanId);
   if (!fan) return { error: "not_found" };
@@ -3434,7 +3451,21 @@ export function mockGetNotificationSources(): NotificationSources {
     lowStock,
     outOfSpins,
     fanDeletions: mockGetFanDeletionNotices(),
+    gameUnlockRequests: mockListGameUnlockRequests().map((r) => ({ id: r.id, creatorName: r.creatorName, game: r.game === "scratch" ? "scratch tickets" : "bingo", at: r.at })),
   });
+}
+
+// PR-04: demo "Ask to enable" requests (the demo account is its own admin).
+const gUnlock = globalThis as unknown as { __ffUnlock?: { id: string; creatorId: string; creatorName: string | null; game: "scratch" | "bingo"; at: string }[] };
+const unlockRequests = (gUnlock.__ffUnlock ??= []);
+export function mockRequestGameUnlock(game: "scratch" | "bingo"): { ok: true; recorded: boolean; already: boolean } | { error: "already_enabled" } {
+  if (mockGameFeatures()[game] === true) return { error: "already_enabled" };
+  if (unlockRequests.some((r) => r.creatorId === "acc-you" && r.game === game)) return { ok: true, recorded: true, already: true };
+  unlockRequests.unshift({ id: genId("unlock"), creatorId: "acc-you", creatorName: CREATOR_TITLE, game, at: new Date().toISOString() });
+  return { ok: true, recorded: true, already: false };
+}
+export function mockListGameUnlockRequests(): { id: string; creatorId: string; creatorName: string | null; game: "scratch" | "bingo"; at: string }[] {
+  return structuredClone(unlockRequests.filter((r) => mockGameFeatures()[r.game] !== true));
 }
 
 export function mockGetNotificationsSeenAt(): string | null {

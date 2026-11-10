@@ -31,7 +31,9 @@ export async function POST(req: Request) {
   // WC-01: a new fan needs a real handle; a nameless live link cannot be told
   // apart from another. Top-ups (fanId) carry no name.
   const name = String(body.name ?? "").trim();
-  if (!body.fanId && !name) return badRequest("name_required");
+  // RD-05: a handle that was typed blank is refused (the form never sends
+  // one); a request without the field keeps the data layer's default.
+  if (!body.fanId && body.name !== undefined && !name) return badRequest("name_required");
   if (name.length > 80) return badRequest("name_too_long");
 
   const spins = Number(body.spins ?? 0);

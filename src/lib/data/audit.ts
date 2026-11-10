@@ -46,7 +46,6 @@ export type AuditAction =
   | "org.leave"
   | "org.seat_self"
   | "org.dissolve"
-  | "org.suspend_owner"
   | "admin.chat_read";
 
 export interface AuditInput {

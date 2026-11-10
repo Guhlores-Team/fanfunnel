@@ -328,6 +328,10 @@ export interface FanPassInfo {
   spinsRemaining: number;
   /** When the link was made: a top-up credits the oldest link per stored game. */
   createdAt?: string;
+  /** PR-13: false once the creator switched this one link off (absent on older readers). */
+  isActive?: boolean;
+  /** The fan paused this link themselves (self-exclusion). */
+  selfExcludedAt?: string | null;
 }
 
 /** A persistent fan account with its links — for the creator's Fans tab. */

@@ -18,6 +18,7 @@ import {
   mockSelfExclude,
   mockSetFanBlocked,
   mockSetFanLinkGame,
+  mockSetFanLinkActive,
   mockReportCreator,
 } from "./mock";
 import { campaignPinError, isMissingRpc, isUuid } from "./shared";
@@ -362,6 +363,8 @@ async function assembleFans(sb: Sb, creatorId: string, cores: FanCore[]): Promis
         campaignName: p.campaign?.name ?? null,
         spinsRemaining: p.spins_remaining ?? 0,
         createdAt: p.created_at,
+        isActive: p.is_active !== false,
+        selfExcludedAt: p.self_excluded_at ?? null,
       }));
     return {
       fanId: r.id,
@@ -682,7 +685,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   // Every pass, oldest first in editGrant's order: the links list (newest
   // first) and each grant's preview balance come from this one read.
   const [passRowsWithoutTokens, tokens] = await Promise.all([
-    readScopedRows<{ created_at: string; is_active: boolean; spins_remaining: number; wheel_id?: string; campaign_id?: string | null; pinned_wheel_id?: string | null; wheel: { title: string } | null; campaign?: { name: string } | null }>(sb, "fan_passes", "created_at, is_active, spins_remaining, wheel_id, campaign_id, pinned_wheel_id, wheel:wheels!fan_passes_wheel_id_fkey(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff),
+    readScopedRows<{ created_at: string; is_active: boolean; spins_remaining: number; wheel_id?: string; campaign_id?: string | null; pinned_wheel_id?: string | null; self_excluded_at?: string | null; wheel: { title: string } | null; campaign?: { name: string } | null }>(sb, "fan_passes", "created_at, is_active, spins_remaining, wheel_id, campaign_id, pinned_wheel_id, self_excluded_at, wheel:wheels!fan_passes_wheel_id_fkey(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff),
     servedLinkTokens(sb, user.id, fanId),
   ]);
   // 0068: the link itself comes from creator_link_tokens; a pass this session
@@ -702,6 +705,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     wheel_id?: string;
     campaign_id?: string | null;
     pinned_wheel_id?: string | null;
+    self_excluded_at?: string | null;
     wheel?: { title: string } | null;
     campaign?: { name: string } | null;
   }[]).map((p) => ({ ...p, isActive: p.is_active }));
@@ -723,6 +727,8 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
       campaignName: p.campaign?.name ?? null,
       spinsRemaining: p.spins_remaining ?? 0,
       createdAt: p.created_at,
+      isActive: p.is_active !== false,
+      selfExcludedAt: p.self_excluded_at ?? null,
     }));
 
   // This fan's grants, newest first, with campaign name resolved via a join.
@@ -914,6 +920,37 @@ export async function setFanLinkGame(
   const result = await economicRpc("set_fan_pass_game", { p_context: context, p_creator: pass.creator_id, p_pass: pass.id, p_wheel: wheelId, p_actor: user.id });
   if (result?.status === "ok") return { ok: true };
   return { error: ["forbidden", "not_found", "game_not_playable"].includes(String(result?.status)) ? String(result?.status) : "db_error" };
+}
+
+/**
+ * PR-13: switch one link off (or back on) without blocking the fan. The fan
+ * keeps their account, chat and other links; the switched-off link shows
+ * the paused page. Owner / 'grant' seats only (fan_passes_write RLS).
+ */
+export async function setFanLinkActive(
+  fanId: string,
+  token: string,
+  active: boolean
+): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured()) return mockSetFanLinkActive(fanId, token, active);
+  if (!isUuid(fanId) || typeof token !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(token)) return { error: "not_found" };
+  const sb = await createClient();
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  const served = await resolveServedLink(sb, token);
+  if (served === "db_error") return { error: "db_error" };
+  if (!served || served.fan_id !== fanId) return { error: "not_found" };
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: served.creator_id, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "forbidden" };
+  const { data: updated, error } = await sb
+    .from("fan_passes")
+    .update({ is_active: active })
+    .eq("id", served.id)
+    .eq("creator_id", served.creator_id)
+    .select("id");
+  if (error) return { error: "db_error" };
+  if (!updated || updated.length === 0) return { error: "not_found" };
+  return { ok: true };
 }
 
 /** A fan reports the creator behind their token (service-role; fans aren't authed). */

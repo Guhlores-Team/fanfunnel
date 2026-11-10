@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { adminAgencyAction, listAgenciesForAdmin } from "@/lib/data/agencyAdmin";
+import { recordAudit } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
 import { isUuid } from "@/lib/data/shared";
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
   if (rateLimited) return rateLimited;
   const body = await parseJsonBody<{ action?: unknown; memberId?: unknown; orgId?: unknown; confirmName?: unknown }>(req);
   if (body === BAD_REQUEST || body === null || typeof body !== "object") return badRequest();
-  let result: { ok: true } | { error: string };
+  let result: Awaited<ReturnType<typeof adminAgencyAction>>;
   if (body.action === "remove_seat") {
     if (typeof body.memberId !== "string" || !isUuid(body.memberId)) return badRequest();
     result = await adminAgencyAction({ action: "remove_seat", memberId: body.memberId });
@@ -38,5 +39,7 @@ export async function POST(req: Request) {
     return badRequest("unknown_action");
   }
   if ("error" in result) return errorResponse(result.error);
-  return NextResponse.json(result);
+  // Every mutating admin route writes the activity log itself.
+  await recordAudit(result.audit);
+  return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });
 }

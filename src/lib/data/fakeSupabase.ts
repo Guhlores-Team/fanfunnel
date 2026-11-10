@@ -54,8 +54,10 @@ const TABLE_DEFAULTS: Record<string, Row> = {
   campaigns: { pinned_wheel_id: null },
 };
 
-/** RPCs economicRpc() models; any other name answers PGRST202 (not on the database). */
-const MODELLED_RPCS = new Set(["creator_link_tokens", "creator_link_pass", "grant_pass_spins", "create_pass_grant", "edit_pass_grant", "award_fan_referral"]);
+/** An rpc name economicRpc() does not model: answered as PGRST202 (not on the database). */
+class NotModelledRpc extends Error {
+  constructor(name: string) { super(`fakeSupabase: rpc ${name} is not modelled`); this.name = "NotModelledRpc"; }
+}
 
 export class FakeSupabase {
   readonly tables: Record<string, Row[]> = {
@@ -139,11 +141,11 @@ export class FakeSupabase {
         this.rpcCalls.push({ name, args: args as Row });
         const handler = this.rpcHandlers[name];
         if (handler) return { data: handler(args) ?? null, error: null };
-        // A function the database does not have answers as PostgREST does
-        // (PGRST202), so RPC-first readers take their pre-migration path.
-        if (!MODELLED_RPCS.has(name)) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } };
         try { return { data: this.economicRpc(name, args as Row), error: null }; }
         catch (error) {
+          // A function the database does not have answers as PostgREST does
+          // (PGRST202), so RPC-first readers take their pre-migration path.
+          if (error instanceof NotModelledRpc) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } };
           if (error && typeof error === "object" && "message" in error) return { data: null, error: { code: "P0001", ...error } };
           throw error;
         }
@@ -180,7 +182,7 @@ export class FakeSupabase {
       return this.rows("fan_passes").filter(p => p.token === args.p_token && (p.creator_id === this.userId || this.permissions[String(p.creator_id)] === true))
         .map(p => ({ id: p.id, creator_id: p.creator_id, fan_id: p.fan_id, campaign_id: p.campaign_id ?? null, is_active: p.is_active !== false }));
     }
-    if (!MODELLED_RPCS.has(name)) throw new Error(`fakeSupabase: rpc ${name} is not modelled`);
+    if (!["grant_pass_spins", "create_pass_grant", "edit_pass_grant", "award_fan_referral"].includes(name)) throw new NotModelledRpc(name);
     const creator = args.p_creator;
     if (name === "award_fan_referral") {
       const fan = this.rows("fans").find(f => f.id === args.p_fan && f.creator_id === creator);

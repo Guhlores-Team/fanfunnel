@@ -108,6 +108,7 @@ export function statusForError(code: string): number {
     case "account_cleanup_pending":
     case "slug_taken":
     case "name_taken":
+    case "already_enabled":
     case "already_submitted":
     case "already_approved":
       return 409;

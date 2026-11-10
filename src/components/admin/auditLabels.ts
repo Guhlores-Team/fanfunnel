@@ -35,7 +35,6 @@ const ACTION_LABELS: Record<string, string> = {
   "org.leave": "left an agency",
   "org.seat_self": "took a seat in their own agency",
   "org.dissolve": "dissolved an agency",
-  "org.suspend_owner": "suspended an agency owner",
   "admin.chat_read": "opened a fan conversation as admin",
 };
 

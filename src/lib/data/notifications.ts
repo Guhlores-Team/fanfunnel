@@ -10,6 +10,7 @@
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { dueDateValue, parseDueDay } from "@/lib/dueDate";
 import { readFansOnBreak } from "./playGuard";
+import { listGameUnlockRequests } from "./gameUnlock";
 import type { AnyClient } from "./shared";
 import {
   mockGetNotificationSources,
@@ -76,7 +77,10 @@ export async function getNotifications(): Promise<NotificationFeed | null> {
   if (!user) return null;
 
   const { sources, seenAt, prefs } = await loadNotificationSources(sb, user.id);
-  sources.applications = await loadPendingApplications(sb, user.id);
+  const [applications, unlockRequests] = await Promise.all([loadPendingApplications(sb, user.id), listGameUnlockRequests(sb)]);
+  sources.applications = applications;
+  // PR-04: creators asking for scratch / bingo (empty for anyone but an admin).
+  sources.gameUnlockRequests = unlockRequests.map((r) => ({ id: r.id, creatorName: r.creatorName, game: r.game === "scratch" ? "scratch tickets" : "bingo", at: r.at }));
   return buildNotificationFeed(sources, seenAt, prefs);
 }
 

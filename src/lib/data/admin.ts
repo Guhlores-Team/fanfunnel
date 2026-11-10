@@ -395,7 +395,6 @@ async function auditAgencyAction(sb: Awaited<ReturnType<typeof createClient>>, c
       case "org_remove_creator": await recordAudit({ actorId, action: "org.remove_creator", targetType: "profile", targetId: String(a.p_creator), details: { org: org ?? "" } }); break;
       case "org_remove_member": await recordAudit({ actorId, action: "org.remove_member", targetType: "org", targetId: null, details: { member: String(a.p_member).slice(0, 36) } }); break;
       case "org_scope_creator": await recordAudit({ actorId, action: "org.scope_change", targetType: "profile", targetId: String(a.p_creator), details: { member: String(a.p_member).slice(0, 36), on: a.p_on === true } }); break;
-      case "org_leave": await recordAudit({ actorId, action: "org.leave", targetType: "org", targetId: org }); break;
     }
   } catch {
     // recordAudit reports its own failures; an audit miss never fails the action.
@@ -715,34 +714,39 @@ export async function updateMyCreatorApplication(input: ApplicationInput): Promi
   } = await sb.auth.getUser();
   if (!user) return { error: "unauthorized" };
   const svc = createServiceClient();
-  const { data: current } = await svc.from("creator_applications").select("status").eq("profile_id", user.id).maybeSingle();
-  const status = (current as { status?: string } | null)?.status;
-  if (status !== "pending" && status !== "rejected") return { error: "not_found" };
-  // WG-11: a rejected request can be fixed and sent again; it goes back to
-  // the queue (profile first, so the server-controlled status leads) and the
-  // admins hear about it like a new request.
-  const reapply = status === "rejected";
-  if (reapply) {
-    const { data: prof, error: pErr } = await svc
-      .from("profiles")
-      .update({ approval_status: "pending" })
-      .eq("id", user.id)
-      .eq("approval_status", "rejected")
-      .select("id")
-      .maybeSingle();
-    if (pErr) return { error: "db_error" };
-    if (!prof) return { error: "not_found" };
-  }
   const { data, error } = await svc
     .from("creator_applications")
-    .update({ ...applicationRow(input), ...(reapply ? { status: "pending", decided_at: null } : {}) })
+    .update(applicationRow(input))
     .eq("profile_id", user.id)
-    .in("status", ["pending", "rejected"])
+    .eq("status", "pending")
     .select("id")
     .maybeSingle();
   if (error) return { error: "db_error" };
-  if (!data) return { error: "not_found" };
-  if (reapply) runAfterResponse(async () => reportAccountMail("application_alert", await sendApplicationAlert()));
+  if (data) return { ok: true };
+  // WG-11: a rejected request can be fixed and sent again; it goes back to
+  // the queue (profile first, so the server-controlled status leads) and the
+  // admins hear about it like a new request.
+  const { data: rejected } = await svc.from("creator_applications").select("id").eq("profile_id", user.id).eq("status", "rejected").maybeSingle();
+  if (!rejected) return { error: "not_found" };
+  const { data: prof, error: pErr } = await svc
+    .from("profiles")
+    .update({ approval_status: "pending" })
+    .eq("id", user.id)
+    .eq("approval_status", "rejected")
+    .select("id")
+    .maybeSingle();
+  if (pErr) return { error: "db_error" };
+  if (!prof) return { error: "not_found" };
+  const { data: reapplied, error: reErr } = await svc
+    .from("creator_applications")
+    .update({ ...applicationRow(input), status: "pending", decided_at: null })
+    .eq("profile_id", user.id)
+    .eq("status", "rejected")
+    .select("id")
+    .maybeSingle();
+  if (reErr) return { error: "db_error" };
+  if (!reapplied) return { error: "not_found" };
+  runAfterResponse(async () => reportAccountMail("application_alert", await sendApplicationAlert()));
   return { ok: true };
 }
 
