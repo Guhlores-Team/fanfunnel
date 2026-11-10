@@ -153,6 +153,12 @@ check("PR-04: one open unlock request per creator and game is a unique partial i
   && migration.includes("check (kind <> 'game_unlock_request' or jsonb_typeof(details -> 'game') is not distinct from 'string');"));
 check("PR-04: turning the game on removes the request (the only way it is resolved before retention)", /delete from public\.creator_notices n\s*where n\.creator_id = new\.id and n\.kind = 'game_unlock_request'\s*and new\.features -> \(n\.details ->> 'game'\) = 'true'::jsonb;/.test(lastDef(migration, "_resolve_unlock_requests"))
   && /create trigger ag_unlock_request_resolved after update of features on public\.profiles/.test(migration) && migration.includes("revoke execute on function public._resolve_unlock_requests() from public, anon, authenticated, service_role;"));
+// Suspended accounts: the two writes that were still open, and the listed rest.
+const rename = lastDef(migration, "set_display_name");
+check("suspended: set_display_name writes only for an active own row and still not behind the approval gate", /update public\.profiles set display_name = v where id = auth\.uid\(\) and is_active = true and public\._session_mfa_satisfied\(\);/.test(rename) && !/current_user_active\(\)/.test(rename));
+check("suspended: an access request needs the caller's own active profile", /create policy creator_apps_insert on public\.creator_applications for insert\s*with check \(\s*profile_id = \(select auth\.uid\(\)\)\s*and exists \(select 1 from public\.profiles p where p\.id = \(select auth\.uid\(\)\) and p\.is_active\)\s*\);/.test(migration)
+  && migration.includes("drop policy if exists creator_apps_insert on public.creator_applications;") && !/create policy \w+ on public\.creator_applications for (update|all)/.test(migration.slice(migration.indexOf("(8b)"))));
+for (const fn of ["set_notification_prefs", "set_onboarding_dismissed", "set_notifications_seen", "org_leave", "issue_creator_actor_context"]) check(`suspended: ${fn} is listed in the header as a deliberate own-row write`, migration.slice(0, migration.indexOf("-- ── (1)")).includes(fn));
 check("no new policy is wide open", !/using \(true\)|with check \(true\)/.test(migration));
 
 console.log(`migration 0073 guard: ${passed} checks passed`);

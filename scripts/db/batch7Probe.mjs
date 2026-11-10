@@ -522,5 +522,23 @@ export function probeBatch7(db, psql) {
     + service(`update public.profiles set features = '{}'::jsonb where id = '${A}';` + ask(A, "bingo")) + `select 'again:' || count(*) from public.creator_notices where kind = 'game_unlock_request' and creator_id = '${A}';`,
     ["open:3", `resolved:${[`${A}/scratch`, `${B}/bingo`].sort().join(",")}`, "others:2", "again:2"]);
 
+  // What a suspended account can still write: the name and the access request.
+  expect("suspended: set_display_name is skipped without an error and writes nothing; an active creator and a pending applicant still rename",
+    `update public.profiles set display_name = 'Before' where id in ('${A}', '${X}'); update public.profiles set is_active = false where id = '${A}';`
+    + as(A, `select 'suspended:' || public.set_display_name('Renamed while suspended')::text || 'void';`)
+    + `select 'kept:' || display_name from public.profiles where id = '${A}'; update public.profiles set is_active = true where id = '${A}';`
+    + as(A, `select 'active:' || public.set_display_name('Renamed')::text || 'void';`) + as(X, `select public.set_display_name('Applicant');`)
+    + `select 'now:' || string_agg(display_name, ',' order by display_name) from public.profiles where id in ('${A}', '${X}');`,
+    ["suspended:void", "kept:Before", "active:void", "now:Applicant,Renamed"]);
+  refused("suspended: an account that is not active cannot file an access request", `update public.profiles set is_active = false where id = '${X}';` + as(X, `insert into public.creator_applications (profile_id, note) values ('${X}', 'let me in');`), /new row violates row-level security policy for table "creator_applications"/);
+  expect("suspended: the refused request stores nothing; an active applicant still files one and cannot change it afterwards",
+    `update public.profiles set is_active = false where id = '${X}'; savepoint s;`
+    + as(X, `do $$ begin insert into public.creator_applications (profile_id, note) values ('${X}', 'let me in'); exception when insufficient_privilege then null; end $$;`)
+    + `select 'stored:' || count(*) from public.creator_applications where profile_id = '${X}'; update public.profiles set is_active = true where id = '${X}';`
+    + as(X, `insert into public.creator_applications (profile_id, note) values ('${X}', 'let me in'); update public.creator_applications set note = 'edited', status = 'approved' where profile_id = '${X}';`)
+    + `select 'active:' || note || ',' || status from public.creator_applications where profile_id = '${X}';`,
+    ["stored:0", "active:let me in,pending"]);
+  same("suspended: an applicant has no UPDATE policy on its request (admin only)", q(`select string_agg(polname, ',' order by polname) from pg_policy where polrelid = 'public.creator_applications'::regclass and polcmd in ('w', '*')`), "creator_apps_admin_update");
+
   return { bad, checks };
 }

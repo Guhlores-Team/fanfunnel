@@ -14576,6 +14576,16 @@ comment on function public.schema_version() is 'Migration level of this database
 -- over a small table) and adds one policy on orgs. Function redefinitions and
 -- the search_path ALTERs lock nothing a play holds. Apply outside the nightly
 -- job window.
+--
+-- What a suspended account (profiles.is_active = false) can still write, on
+-- purpose: its own notification switches (set_notification_prefs), its own
+-- onboarding flag (set_onboarding_dismissed), its own "seen" time
+-- (set_notifications_seen), leaving an agency (org_leave), and minting an
+-- actor context (issue_creator_actor_context), which carries no authority:
+-- every use re-checks the seat and the account. All are own-row and change
+-- nothing a fan, another creator or an admin sees. Everything else refuses a
+-- suspended account: set_display_name and the access-request insert were the
+-- last two gaps and are closed below (the name update and section (8b)).
 
 -- ── (1) DB-07: the 0052 ledger CHECKs are re-asserted and must validate ──
 -- 0052 dropped a CHECK with a warning when a row violated it, so a LIVE
@@ -14846,7 +14856,10 @@ begin
   if public._reserved_name(v) then
     raise exception 'reserved display name' using errcode = '22023';
   end if;
-  update public.profiles set display_name = v where id = auth.uid() and public._session_mfa_satisfied();
+  -- 0073: a suspended account cannot rename itself (the write is skipped, as
+  -- in the sibling setters). The test is is_active on the own row only: an
+  -- applicant who is not approved yet still edits its application name.
+  update public.profiles set display_name = v where id = auth.uid() and is_active = true and public._session_mfa_satisfied();
 end $$;
 revoke execute on function public.set_display_name(text) from public, anon;
 grant execute on function public.set_display_name(text) to authenticated, service_role;
@@ -16877,6 +16890,20 @@ end $$;
 revoke execute on function public.set_active_wheel(uuid) from public, anon;
 grant execute on function public.set_active_wheel(uuid) to authenticated, service_role;
 comment on function public.set_active_wheel(uuid) is 'Makes one game the creator''s live game and clears the flag on its others in a single UPDATE (0073, CC-06). Runs as the caller under the wheels policies (can_act_for(creator, edit_wheel) or is_admin()). Answers ok, not_found (unknown or archived), forbidden (visible, not editable) or game_not_ready.';
+
+-- A suspended account cannot file an access request (it used to: the policy
+-- only pinned the row to the caller, and each new request mails the admins).
+-- The applicant is not approved yet, so the test is is_active on the caller's
+-- own profile row, read through profiles_select (own row), which refers to no
+-- policy of this table. An applicant has no UPDATE policy at all
+-- (creator_apps_admin_update is admin-only; the app edits a pending request
+-- with the service role after its own checks).
+drop policy if exists creator_apps_insert on public.creator_applications;
+create policy creator_apps_insert on public.creator_applications for insert
+  with check (
+    profile_id = (select auth.uid())
+    and exists (select 1 from public.profiles p where p.id = (select auth.uid()) and p.is_active)
+  );
 
 -- ── (9) closing check: browser roles reach only the reviewed functions, and
 -- every creator-owned table carries the immutability trigger ────────────────

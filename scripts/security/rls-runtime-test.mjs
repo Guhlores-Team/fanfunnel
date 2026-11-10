@@ -1395,6 +1395,17 @@ async function main() {
     check(second.error?.code === "23505", `0073 a second request by the same account is refused (${code(second)})`);
     const appDelete = await app.from("creator_applications").delete().eq("profile_id", APP.id).select("id");
     check(appDelete.error?.code === "42501", `0073 an applicant cannot DELETE its request (${code(appDelete)})`);
+    // A suspended account files no access request and cannot rename itself.
+    const SUS = await makeUser("sus73");
+    const sus = await signedClient(SUS.email);
+    const susBefore = must(await admin.from("profiles").update({ is_active: false }).eq("id", SUS.id).select("display_name").single(), "0073 suspend the applicant");
+    const susApp = await sus.from("creator_applications").insert({ profile_id: SUS.id, note: "let me in" }).select("id").single();
+    check(susApp.error?.code === "42501", `0073 a suspended account cannot file an access request (${code(susApp)})`);
+    const susRows = await admin.from("creator_applications").select("id").eq("profile_id", SUS.id);
+    check(!susRows.error && (susRows.data?.length ?? 0) === 0, `0073 the refused request stores nothing (${susRows.error?.message ?? susRows.data?.length})`);
+    const susRename = await sus.rpc("set_display_name", { p_name: `Suspended ${RUN}` });
+    const susAfter = must(await admin.from("profiles").select("display_name").eq("id", SUS.id).single(), "0073 the suspended account's name");
+    check(!susRename.error && susAfter.display_name === susBefore.display_name, `0073 a suspended account cannot rename itself (${susRename.error?.message ?? susAfter.display_name})`);
     // TS-03: reserved display names and slugs.
     const reservedName = await a.rpc("set_display_name", { p_name: "FanFunnel Support" });
     check(/reserved display name/.test(reservedName.error?.message ?? ""), `0073 a display name impersonating the product is refused (${reservedName.error?.message ?? "accepted"})`);
