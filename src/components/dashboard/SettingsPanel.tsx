@@ -13,10 +13,19 @@ import HomeScreenIconCard from "./HomeScreenIconCard";
 import LookAndFeelCard from "./LookAndFeelCard";
 import ThemedProfilePreview from "./ThemedProfilePreview";
 import type { ThemePreviewValue } from "./lookAndFeel";
-import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecurityCards";
+import { CloseAccountCard, DataExportCard, OtherDevicesCard, TwoFactorCard } from "./PrivacySecurityCards";
 import ClearDataCard from "./ClearDataCard";
 import PushNotificationsCard from "./PushNotificationsCard";
 import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profileErrors";
+import LoadFailed from "./LoadFailed";
+import { loadJson } from "@/lib/hooks/loadJson";
+import { publicTextCheck } from "@/lib/publicText";
+import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
+import { slugHint } from "@/lib/data/publicSlug";
+import { isAcceptablePassword, PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
+import PasswordInput from "./PasswordInput";
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
+import { BRAND_TOO_DARK_MESSAGE, brandColorContrastOk } from "@/lib/theme";
 
 /**
  * Settings (Command Center). Two groups:
@@ -49,51 +58,57 @@ export default function SettingsPanel({
   // C14: only once the saved profile is in can unsaved Public page text be
   // told apart from it (and kept for this tab across section switches).
   const [profileLoaded, setProfileLoaded] = useState(false);
+  // PR-10: "I usually deliver within N days" (shown on the fan page; the
+  // default due date of new wins once 0073 lands).
+  const [delivery, setDelivery] = useState<DeliveryState>({ supported: false, days: "", saved: "" });
+
+  // RD-01 / RD-09: a failed read is shown as a failed read with Retry, never
+  // as empty fields that a later Save would write back over the real values.
+  const [accountError, setAccountError] = useState<unknown>(null);
+  const [profileError, setProfileError] = useState<unknown>(null);
+
+  const loadAccount = useCallback(async () => {
+    try {
+      const d = await loadJson<{ email?: string | null; displayName?: string; notifications?: NotificationPrefs }>("/api/account");
+      setAccountError(null);
+      setAccount((a) => ({
+        ...a,
+        loaded: true,
+        email: d.email ?? null,
+        displayName: d.displayName ?? "",
+        savedName: d.displayName ?? "",
+        ...(d.notifications ? { notif: d.notifications, savedNotif: d.notifications } : {}),
+      }));
+    } catch (e) {
+      setAccountError(e);
+    }
+  }, []);
+  const loadProfile = useCallback(async () => {
+    try {
+      const p = await loadJson<Partial<ProfileFields> & { deliveryDays?: number | null }>("/api/public-profile");
+      setProfileError(null);
+      // PR-10: the field exists only once the database carries the column.
+      setDelivery(p.deliveryDays === undefined ? { supported: false, days: "", saved: "" } : { supported: true, days: p.deliveryDays === null ? "" : String(p.deliveryDays), saved: p.deliveryDays === null ? "" : String(p.deliveryDays) });
+      const next: ProfileFields = {
+        slug: p.slug ?? "",
+        tipUrl: p.tipUrl ?? "",
+        tagline: p.tagline ?? "",
+        note: p.note ?? "",
+        avatarUrl: p.avatarUrl ?? "",
+      };
+      setProfile({ ...next, ...readPublicDraft() });
+      setSavedProfile(next);
+      setProfileLoaded(true);
+    } catch (e) {
+      setProfileError(e);
+    }
+  }, []);
 
   useEffect(() => {
-    let live = true;
-    fetch("/api/account", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!live) return;
-        setAccount((a) => ({
-          ...a,
-          loaded: true,
-          ...(d
-            ? {
-                email: d.email ?? null,
-                displayName: d.displayName ?? "",
-                savedName: d.displayName ?? "",
-                ...(d.notifications
-                  ? { notif: d.notifications, savedNotif: d.notifications }
-                  : {}),
-              }
-            : {}),
-        }));
-      })
-      .catch(() => {
-        if (live) setAccount((a) => ({ ...a, loaded: true }));
-      });
-    fetch("/api/public-profile", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((p) => {
-        if (!live || !p) return;
-        const next: ProfileFields = {
-          slug: p.slug ?? "",
-          tipUrl: p.tipUrl ?? "",
-          tagline: p.tagline ?? "",
-          note: p.note ?? "",
-          avatarUrl: p.avatarUrl ?? "",
-        };
-        setProfile({ ...next, ...readPublicDraft() });
-        setSavedProfile(next);
-        setProfileLoaded(true);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
+    void loadAccount();
+    void loadProfile();
+  }, [loadAccount, loadProfile]);
 
   const patchAccount = useCallback(
     (p: Partial<AccountState>) => setAccount((a) => ({ ...a, ...p })),
@@ -119,6 +134,8 @@ export default function SettingsPanel({
         <div className="max-w-[680px] space-y-[18px]">
           <ProfileCard
             account={account}
+            loadError={accountError}
+            onRetryLoad={loadAccount}
             patchAccount={patchAccount}
             profile={profile}
             savedAvatar={savedProfile.avatarUrl}
@@ -128,7 +145,8 @@ export default function SettingsPanel({
           />
           <SecurityCard />
           <TwoFactorCard />
-          <NotificationsCard account={account} patchAccount={patchAccount} />
+          <OtherDevicesCard />
+          <NotificationsCard account={account} patchAccount={patchAccount} loadError={accountError} onRetryLoad={loadAccount} />
           <PushNotificationsCard focusNonce={pushFocus} />
         </div>
       </section>
@@ -141,12 +159,16 @@ export default function SettingsPanel({
         />
         <PublicPageSection
           loaded={profileLoaded}
+          loadError={profileError}
+          onRetryLoad={loadProfile}
           profile={profile}
           savedProfile={savedProfile}
           displayName={account.displayName}
           patchProfile={patchProfile}
           markSaved={markSaved}
           onBrandColorChange={onBrandColorChange}
+          delivery={delivery}
+          setDelivery={setDelivery}
         />
       </section>
 
@@ -299,6 +321,8 @@ const EMPTY_PROFILE: ProfileFields = { slug: "", tipUrl: "", tagline: "", note: 
 // ---------------------------------------------------------------------------
 function ProfileCard({
   account,
+  loadError,
+  onRetryLoad,
   patchAccount,
   profile,
   savedAvatar,
@@ -307,6 +331,8 @@ function ProfileCard({
   onDisplayNameChange,
 }: {
   account: AccountState;
+  loadError: unknown;
+  onRetryLoad: () => Promise<void>;
   patchAccount: (p: Partial<AccountState>) => void;
   profile: ProfileFields;
   savedAvatar: string;
@@ -325,12 +351,14 @@ function ProfileCard({
   // One "Save profile": the name goes to /api/account/profile, the avatar lives
   // on the public profile so it goes to /api/public-profile (avatarUrl only —
   // the route updates just the fields it is sent).
+  const [nameError, setNameError] = useState<string | null>(null);
   async function save() {
     const name = displayName.trim();
     if (nameDirty && !name) {
-      toast("Enter a display name.", { tone: "error" });
+      setNameError("Enter a display name.");
       return;
     }
+    setNameError(null);
     setBusy(true);
     let ok = true;
     try {
@@ -349,7 +377,7 @@ function ProfileCard({
           onDisplayNameChange?.(name);
         } catch (e) {
           ok = false;
-          toast(displayNameErrorMessage(e instanceof Error ? e.message : ""), { tone: "error" });
+          setNameError(withSuspendedReason(displayNameErrorMessage(e instanceof Error ? e.message : "")));
         }
       }
       if (avatarDirty) {
@@ -383,6 +411,9 @@ function ProfileCard({
   return (
     <Card>
       <CardTitle icon={P.user} title="Profile" hint="Shown to fans on your public page and spin links." />
+      {loadError != null && !loaded && (
+        <LoadFailed error={loadError} what="your account details" onRetry={onRetryLoad} compact testId="settings-account-load-failed" />
+      )}
 
       <div className="flex flex-wrap items-center gap-3.5">
         <Avatar url={profile.avatarUrl} name={displayName} size={56} />
@@ -390,13 +421,17 @@ function ProfileCard({
       </div>
 
       <div className="grid gap-3.5 sm:grid-cols-2">
-        <Field label="Display name">
+        <Field label="Display name" error={nameError}>
           <input
             className="ff-input w-full"
             value={displayName}
             maxLength={80}
             disabled={!loaded}
-            onChange={(e) => patchAccount({ displayName: e.target.value })}
+            aria-invalid={nameError !== null || undefined}
+            onChange={(e) => {
+              setNameError(null);
+              patchAccount({ displayName: e.target.value });
+            }}
             placeholder="Your creator name"
           />
         </Field>
@@ -448,7 +483,7 @@ function Avatar({ url, name, size }: { url: string; name: string; size: number }
     <span
       aria-hidden="true"
       style={style}
-      className="text-brand grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-lg font-bold"
+      className="text-[color-mix(in_oklab,var(--brand-text)_72%,white)] grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-lg font-bold"
     >
       {initialsOf(name)}
     </span>
@@ -468,18 +503,23 @@ function EmailBlock({
   const [busy, setBusy] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  // WU-04: /auth/confirm sends the creator here with ?emailChange=half after
+  // the first of the two links (Secure email change): say what is left.
+  const halfDone = useSyncExternalStore(noSubscribe, () => new URLSearchParams(window.location.search).get("emailChange") === "half", () => false);
   useCreatorDraft("settings-email", "an e-mail change", email.trim() !== "" || current !== "", busy);
+  const [fieldError, setFieldError] = useState<{ field: "email" | "current"; message: string } | null>(null);
 
   async function save() {
     const next = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) {
-      toast("Enter a valid email address.", { tone: "error" });
+      setFieldError({ field: "email", message: "Enter a valid email address." });
       return;
     }
     if (!current) {
-      toast("Enter your current password to confirm.", { tone: "error" });
+      setFieldError({ field: "current", message: "Enter your current password to confirm." });
       return;
     }
+    setFieldError(null);
     setBusy(true);
     try {
       const res = await fetch("/api/account/email", {
@@ -509,7 +549,7 @@ function EmailBlock({
       setPending(next);
       setEmail("");
       setCurrent("");
-      toast("Check your inbox to confirm the new email.", { tone: "success" });
+      toast("Two links are on their way: one to your current address, one to the new one. Open both to finish.", { tone: "success", duration: 8000 });
     } catch {
       toast("Couldn't start the email change.", { tone: "error" });
     } finally {
@@ -528,7 +568,7 @@ function EmailBlock({
         </h4>
         <p className="mt-1 text-xs text-muted">
           Current: <span className="break-all font-semibold text-ink">{currentEmail ?? "—"}</span>.
-          Changing it sends a confirmation link to the new address; it applies once you confirm.
+          Changing it e-mails a link to your current address AND the new one. Open both, on any device; the change applies after the second, and you keep signing in with your current e-mail until then.
         </p>
       </div>
       {pending && (
@@ -536,30 +576,46 @@ function EmailBlock({
           role="status"
           className="rounded-lg border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_10%,transparent)] px-3 py-2 text-xs text-ink"
         >
-          Pending confirmation: <span className="break-all font-semibold">{pending}</span>
+          Pending confirmation: <span className="break-all font-semibold">{pending}</span> — open the link in BOTH inboxes.
+        </p>
+      )}
+      {halfDone && (
+        <p
+          role="status"
+          data-testid="email-change-half"
+          className="rounded-lg border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-xs text-ink text-pretty"
+        >
+          Step 1 of 2 done — now open the link we sent to your other address. Your e-mail changes once both links have been opened.
         </p>
       )}
       <CreatorMfaRecovery required={mfaRequired} destination="settings" />
       <div className="grid gap-3.5 sm:grid-cols-2">
-        <Field label="New email">
+        <Field label="New email" error={fieldError?.field === "email" ? fieldError.message : null}>
           <input
             type="email"
             autoComplete="email"
             className="ff-input w-full"
             value={email}
             disabled={disabled}
-            onChange={(e) => setEmail(e.target.value)}
+            aria-invalid={fieldError?.field === "email" || undefined}
+            onChange={(e) => {
+              setFieldError(null);
+              setEmail(e.target.value);
+            }}
             placeholder="you@example.com"
           />
         </Field>
-        <Field label="Current password">
-          <input
-            type="password"
+        <Field label="Current password" error={fieldError?.field === "current" ? fieldError.message : null}>
+          <PasswordInput
+            label="Current password"
             autoComplete="current-password"
-            className="ff-input w-full"
             value={current}
             disabled={disabled}
-            onChange={(e) => setCurrent(e.target.value)}
+            invalid={fieldError?.field === "current"}
+            onChange={(v) => {
+              setFieldError(null);
+              setCurrent(v);
+            }}
             placeholder="Confirm it's you"
           />
         </Field>
@@ -587,16 +643,18 @@ function SecurityCard() {
   const [busy, setBusy] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   useCreatorDraft("settings-password", "a password change", current !== "" || next !== "" || confirm !== "", busy);
+  const [fieldError, setFieldError] = useState<{ field: "next" | "confirm"; message: string } | null>(null);
 
   async function save() {
-    if (next.length < 8) {
-      toast("New password must be at least 8 characters.", { tone: "error" });
+    if (!isAcceptablePassword(next)) {
+      setFieldError({ field: "next", message: PASSWORD_RULE_MESSAGE });
       return;
     }
     if (next !== confirm) {
-      toast("New passwords don't match.", { tone: "error" });
+      setFieldError({ field: "confirm", message: "New passwords don't match." });
       return;
     }
+    setFieldError(null);
     setBusy(true);
     try {
       const res = await fetch("/api/account/password", {
@@ -613,12 +671,14 @@ function SecurityCard() {
           setConfirm("");
           return;
         }
+        if (d.error === "weak_password") {
+          setFieldError({ field: "next", message: PASSWORD_RULE_MESSAGE });
+          return;
+        }
         toast(
           d.error === "wrong_password"
             ? "Your current password is incorrect."
-            : d.error === "weak_password"
-              ? "New password must be at least 8 characters."
-              : d.error === "demo_mode"
+            : d.error === "demo_mode"
                 ? "Password changes need Supabase configured (demo mode)."
                 : "Couldn't change your password.",
           { tone: "error" }
@@ -628,7 +688,7 @@ function SecurityCard() {
       setCurrent("");
       setNext("");
       setConfirm("");
-      toast("Password updated", { tone: "success" });
+      toast(d.othersSignedOut === false ? "Password updated. Other devices could not be signed out; use Sign out other devices below." : "Password updated. Every other device was signed out.", { tone: "success", duration: 6000 });
     } catch {
       toast("Couldn't change your password.", { tone: "error" });
     } finally {
@@ -641,35 +701,35 @@ function SecurityCard() {
       <CardTitle
         icon={P.lock}
         title="Security"
-        hint="You’ll re-enter your current password to confirm it’s you. Use at least 8 characters."
+        hint={`You’ll re-enter your current password to confirm it’s you. ${PASSWORD_RULE_MESSAGE} Changing it signs out every other device.`}
       />
       <CreatorMfaRecovery required={mfaRequired} destination="settings" />
       <div className="grid gap-3.5 sm:grid-cols-2">
         <Field label="Current password" full>
-          <input
-            type="password"
-            autoComplete="current-password"
-            className="ff-input w-full"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-          />
+          <PasswordInput label="Current password" autoComplete="current-password" value={current} onChange={setCurrent} />
         </Field>
-        <Field label="New password">
-          <input
-            type="password"
+        <Field label="New password" error={fieldError?.field === "next" ? fieldError.message : null}>
+          <PasswordInput
+            label="New password"
             autoComplete="new-password"
-            className="ff-input w-full"
             value={next}
-            onChange={(e) => setNext(e.target.value)}
+            invalid={fieldError?.field === "next"}
+            onChange={(v) => {
+              setFieldError(null);
+              setNext(v);
+            }}
           />
         </Field>
-        <Field label="Confirm new">
-          <input
-            type="password"
+        <Field label="Confirm new" error={fieldError?.field === "confirm" ? fieldError.message : null}>
+          <PasswordInput
+            label="Confirm new"
             autoComplete="new-password"
-            className="ff-input w-full"
             value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
+            invalid={fieldError?.field === "confirm"}
+            onChange={(v) => {
+              setFieldError(null);
+              setConfirm(v);
+            }}
           />
         </Field>
       </div>
@@ -697,9 +757,13 @@ const NOTIF_LABELS: { key: keyof NotificationPrefs; label: string; hint: string 
 function NotificationsCard({
   account,
   patchAccount,
+  loadError,
+  onRetryLoad,
 }: {
   account: AccountState;
   patchAccount: (p: Partial<AccountState>) => void;
+  loadError: unknown;
+  onRetryLoad: () => Promise<void>;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -731,6 +795,9 @@ function NotificationsCard({
   return (
     <Card>
       <CardTitle icon={P.bell} title="Notifications" hint="Choose what you want to hear about." />
+      {loadError != null && !loaded && (
+        <LoadFailed error={loadError} what="your notification settings" onRetry={onRetryLoad} compact testId="settings-notifications-load-failed" />
+      )}
       <div className="flex flex-col">
         {NOTIF_LABELS.map((n, i) => {
           const on = value[n.key];
@@ -787,7 +854,11 @@ const browserOrigin = () => window.location.origin;
 const serverOrigin = () => "";
 
 const PUBLIC_DRAFT_KEY = "public-page";
+/** The note cap the route and the database (0073) enforce. */
+const MAX_CREATOR_NOTE = 2000;
 type PublicDraft = Pick<ProfileFields, "slug" | "tipUrl" | "tagline" | "note">;
+/** PR-10: `supported` is false until the delivery_days column is readable. */
+type DeliveryState = { supported: boolean; days: string; saved: string };
 /** The unsaved Public page text held for this tab, if any (sessionDrafts). */
 function readPublicDraft(): Partial<PublicDraft> {
   const held = readSessionDraft(PUBLIC_DRAFT_KEY);
@@ -804,20 +875,28 @@ function readPublicDraft(): Partial<PublicDraft> {
 
 function PublicPageSection({
   loaded,
+  loadError,
+  onRetryLoad,
   profile,
   savedProfile,
   displayName,
   patchProfile,
   markSaved,
   onBrandColorChange,
+  delivery,
+  setDelivery,
 }: {
   loaded: boolean;
+  loadError: unknown;
+  onRetryLoad: () => Promise<void>;
   profile: ProfileFields;
   savedProfile: ProfileFields;
   displayName: string;
   patchProfile: (p: Partial<ProfileFields>) => void;
   markSaved: (p: Partial<ProfileFields>) => void;
   onBrandColorChange?: (color: string) => void;
+  delivery: DeliveryState;
+  setDelivery: (next: DeliveryState) => void;
 }) {
   const toast = useToast();
   const { copy, copied } = useClipboard();
@@ -838,7 +917,8 @@ function PublicPageSection({
     slug !== savedProfile.slug ||
     tipUrl !== savedProfile.tipUrl ||
     tagline !== savedProfile.tagline ||
-    note !== savedProfile.note;
+    note !== savedProfile.note ||
+    delivery.days !== delivery.saved;
   // C14: the tagline / note / links typed here survive leaving Settings and
   // coming back (this tab only); a reload or sign-out asks first.
   useEffect(() => {
@@ -867,12 +947,30 @@ function PublicPageSection({
 
   // Saves the link-in-bio fields. The avatar is saved from the Profile card.
   const save = async () => {
+    // TS-04: the same public-text screen the API applies, before any request.
+    for (const [value, field] of [[tagline, "tagline"], [note, "creatorNote"]] as const) {
+      const text = publicTextCheck(value, { field });
+      if (!text.ok) {
+        toast(text.message, { tone: "error", duration: 8000 });
+        return;
+      }
+    }
+    if (note.length > MAX_CREATOR_NOTE) {
+      toast(`Keep the note to ${MAX_CREATOR_NOTE} characters or fewer.`, { tone: "error" });
+      return;
+    }
+    // PR-10: the delivery promise is a whole number of days (1–60) or blank.
+    const deliveryDays = delivery.days.trim() === "" ? null : Number(delivery.days);
+    if (delivery.supported && deliveryDays !== null && (!Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > MAX_DELIVERY_DAYS)) {
+      toast(`Delivery days must be a whole number from 1 to ${MAX_DELIVERY_DAYS}, or left blank.`, { tone: "error" });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/public-profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, tipUrl, tagline, note }),
+        body: JSON.stringify({ slug, tipUrl, tagline, note, ...(delivery.supported ? { deliveryDays } : {}) }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -884,6 +982,7 @@ function PublicPageSection({
       const normalized = fresh.slug ?? "";
       patchProfile({ slug: normalized });
       markSaved({ slug: normalized, tipUrl, tagline, note });
+      if (delivery.supported) setDelivery({ ...delivery, saved: delivery.days });
     } catch (e) {
       toast(publicProfileErrorMessage(e instanceof Error ? e.message : ""), { tone: "error" });
     } finally {
@@ -900,17 +999,21 @@ function PublicPageSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ color: brandColor }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: unknown };
+        throw new Error(d.error === "brand_too_dark" ? BRAND_TOO_DARK_MESSAGE : "");
+      }
       setSavedBrand(brandColor);
       onBrandColorChange?.(brandColor);
       toast("Brand color saved", { tone: "success" });
-    } catch {
-      toast("Couldn't save brand color.", { tone: "error" });
+    } catch (e) {
+      toast(e instanceof Error && e.message ? e.message : "Couldn't save brand color.", { tone: "error", duration: 8000 });
     } finally {
       setSavingBrand(false);
     }
   };
 
+  const hint = slugHint(slug, savedProfile.slug);
   const url = slug ? `${origin}/c/${slug}` : "";
   const onCopy = async () => {
     if (!url) return;
@@ -923,6 +1026,9 @@ function PublicPageSection({
       <div className="min-w-0 space-y-[18px]">
         <Card>
           <CardTitle icon={P.link} title="Link-in-bio" />
+          {loadError != null && !loaded && (
+            <LoadFailed error={loadError} what="your public page" onRetry={onRetryLoad} compact testId="settings-public-load-failed" />
+          )}
           <Field label="Your public link">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="tnum shrink-0 break-all text-sm text-muted">{origin}/c/</span>
@@ -931,9 +1037,25 @@ function PublicPageSection({
                 onChange={(e) => patchProfile({ slug: e.target.value })}
                 className="ff-input min-w-0 flex-1 basis-40"
                 placeholder="your-name"
+                aria-invalid={hint.problem !== null || undefined}
+                aria-describedby="public-slug-hint"
               />
             </div>
           </Field>
+          {/* WC-30: what a save would store, and what it would break, while typing. */}
+          <div id="public-slug-hint" data-testid="public-slug-hint" className="-mt-2 space-y-1 text-xs empty:hidden">
+            {hint.problem !== null && <p className="text-[#fca5a5]">{publicProfileErrorMessage(hint.problem)}</p>}
+            {hint.savedAs !== null && (
+              <p className="text-muted">
+                Will be saved as <span className="tnum break-all text-ink">/c/{hint.savedAs}</span>
+              </p>
+            )}
+            {hint.retires !== null && (
+              <p data-testid="public-slug-retires" className="text-amber-200 text-pretty">
+                Your current link <span className="tnum break-all">/c/{hint.retires}</span> will stop working when you save. Update it wherever you have posted it.
+              </p>
+            )}
+          </div>
           <Field label="Tagline">
             <input
               value={tagline}
@@ -953,13 +1075,32 @@ function PublicPageSection({
           <Field label="Personal note to fans (shown atop their spin page)">
             <input
               value={note}
+              maxLength={MAX_CREATOR_NOTE}
               onChange={(e) => patchProfile({ note: e.target.value })}
               className="ff-input w-full"
               placeholder="Hey you 😘 spin away — every spin wins!"
             />
           </Field>
+          <p className="-mt-2 text-xs text-muted">No links, phone numbers or @handles in the tagline or note: fans reach you through your tip link.</p>
+          {delivery.supported && (
+            <Field label="I usually deliver prizes within (days)">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={MAX_DELIVERY_DAYS}
+                step={1}
+                value={delivery.days}
+                onChange={(e) => setDelivery({ ...delivery, days: e.target.value })}
+                className="ff-input w-24"
+                data-testid="delivery-days"
+                aria-describedby="delivery-days-hint"
+              />
+              <p id="delivery-days-hint" className="mt-1 text-xs text-muted">Shown to fans when they win, and used as the expected-by date on new wins. Leave blank for no promise.</p>
+            </Field>
+          )}
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={save} disabled={busy} className={primaryBtn}>
+            <button type="button" onClick={save} disabled={busy || !loaded} className={primaryBtn}>
               {busy ? "Saving…" : "Save"}
             </button>
             {url && (
@@ -1010,6 +1151,9 @@ function PublicPageSection({
             </button>
             {brandColor !== savedBrand && <Unsaved />}
           </div>
+          {!brandColorContrastOk(brandColor) && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(brandColor.trim()) && (
+            <p role="alert" data-testid="brand-too-dark" className="text-xs text-amber-200 text-pretty">{BRAND_TOO_DARK_MESSAGE}</p>
+          )}
         </Card>
         <LookAndFeelCard displayName={displayName} brandColor={brandColor} onPreviewChange={setLook} />
 

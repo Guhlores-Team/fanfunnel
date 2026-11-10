@@ -11,7 +11,10 @@ export async function GET(req: Request) {
   // A36: the demo has no agencies; the page says so rather than offering a
   // create form that keeps nothing.
   if (!isSupabaseConfigured()) return NextResponse.json({ org: null, demo: true });
-  const overview = await getAgencyOverview();
+  // WG-03: `?org=<id>` picks which of the caller's agencies to show.
+  const requested = new URL(req.url).searchParams.get("org");
+  if (requested !== null && requested.length > 64) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+  const overview = await getAgencyOverview({ orgId: requested });
   if (overview) return NextResponse.json(overview);
   // A45: a creator an agency manages has no console of its own; the page
   // explains what the agency can do instead of offering to start one, and

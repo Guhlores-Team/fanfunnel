@@ -182,7 +182,7 @@ function ProfitSection() {
         title={`Profit & prize costs · ${basis.title} · 90 days`}
         hint={
           <>
-            Revenue is what fans paid. {basis.hint} Line bonuses are included. The table shows
+            Tips recorded are the amounts you logged when granting spins; FanFunnel never takes payments. {basis.hint} Line bonuses are included. The table shows
             prize costs as a share of revenue.
           </>
         }
@@ -205,7 +205,7 @@ function ProfitSection() {
         profit && (
           <>
             <dl className={`${hairGrid} grid-cols-2 sm:grid-cols-4`}>
-              <StatCell label="Revenue" value={formatCents(profit.revenueCents)} />
+              <StatCell label="Tips recorded" value={formatCents(profit.revenueCents)} />
               <StatCell label="Estimated prize cost" value={profit.costsComplete ? formatCents(profit.costCents) : "—"} />
               <StatCell label="Estimated profit" value={profit.costsComplete ? formatCents(profit.profitCents) : "—"} />
               <StatCell label="Estimated margin" value={profit.costsComplete ? `${Math.round(profit.marginPct * 100)}%` : "—"} />

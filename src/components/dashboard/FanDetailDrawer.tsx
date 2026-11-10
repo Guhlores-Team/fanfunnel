@@ -24,6 +24,9 @@ import { CampaignGameSelect, FOLLOW_LIVE, GameName } from "./GameChoice";
 import { KIND_SHORT, gameOptionLabel, kindOf, linkGame, liveExplanation, pinUnavailableReason, type ChoiceGame } from "./gameAssignment";
 import { publicCreatorName } from "@/lib/publicCreator";
 import { linkNames, newLinkPin, spinsText, topUpOutcome, topUpTargets, type NewLinkPin } from "./topUpTargets";
+import { GrantRefusedError, parseSpinCount } from "./grantErrors";
+import { useNow } from "@/lib/hooks/useNow";
+import { formatWhen } from "@/lib/localTime";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -46,7 +49,7 @@ const well = "rounded-[10px] border border-[var(--hair)] [background:var(--s2)]"
 const actionBtn =
   "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-[13px] text-[13.5px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]";
 const smallBtn =
-  "inline-flex min-h-7 shrink-0 items-center rounded-[7px] border border-line px-[11px] text-[11.5px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]";
+  "inline-flex min-h-7 shrink-0 items-center rounded-[7px] border border-line px-[11px] text-[11.5px] max-sm:min-h-11 font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="mb-2.5 text-[13px] font-bold text-ink">{children}</h3>;
@@ -718,6 +721,7 @@ export default function FanDetailDrawer({
                           onLinkGameChanged={onSaved}
                         />
                         <LinkRow url={`${origin}/spin/${p.token}`} newest={false} bare />
+                        <LinkSwitch fanId={fanId} pass={p} onChanged={onSaved} />
                       </li>
                     ))}
                   </ul>
@@ -852,7 +856,9 @@ function TopUpForm({
     return (existing.find((t) => t.token === share) ?? existing[0] ?? fresh[0])?.key ?? "";
   });
   const target = targets.find((t) => t.key === targetKey) ?? null;
-  const [spins, setSpins] = useState(3);
+  // Held as text so the field can be cleared; parsed (integer ≥ 1) on submit.
+  const [spinsInput, setSpinsInput] = useState("3");
+  const spins = parseSpinCount(spinsInput) ?? 0;
   // Per-spin price as its own state so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
   const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
@@ -862,7 +868,7 @@ function TopUpForm({
   const [packUnits, setPackUnits] = useState(1);
   const [error, setError] = useState("");
   const [uncertain, setUncertain] = useState(false);
-  useCreatorDraft(`fan-topup:${fanId}`, "this top-up selection", spins !== 3 || perSpin !== "" || !!packId, toppingUp || uncertain);
+  useCreatorDraft(`fan-topup:${fanId}`, "this top-up selection", spinsInput !== "3" || perSpin !== "" || !!packId, toppingUp || uncertain);
 
   // A new link is stored on the chosen game but would play the live (or
   // campaign) game: set it to play the chosen one. Never re-point a link the
@@ -893,10 +899,10 @@ function TopUpForm({
   // fan's links now (the grant has committed) and let the server's rule pick.
   async function currentPasses(): Promise<FanAccountSummary["passes"] | null> {
     try {
-      const res = await fetch("/api/fans", { cache: "no-store" });
+      // PA-03: the list is paged now; the fan's own detail carries its links.
+      const res = await fetch(`/api/fans/${fanId}`, { cache: "no-store" });
       if (!res.ok) return null;
-      const fans = ((await res.json()) as { fans?: FanAccountSummary[] }).fans ?? [];
-      return fans.find((f) => f.fanId === fanId)?.passes ?? null;
+      return ((await res.json()) as { passes?: FanAccountSummary["passes"] }).passes ?? null;
     } catch { return null; }
   }
 
@@ -904,6 +910,10 @@ function TopUpForm({
     // In-flight guard: a double-click, or collapsing and reopening the form
     // mid-request, must not double-grant spins/spend.
     if (isToppingUp(fanId) || engagementBlocked || (summary && !target)) return;
+    if (parseSpinCount(spinsInput) === null) {
+      setError("Spins must be a whole number from 1 to 1,000,000.");
+      return;
+    }
     onToppingUp(fanId, true);
     setError("");
     let confirmed = false;
@@ -931,7 +941,9 @@ function TopUpForm({
     } catch (error) {
       const unknown = error instanceof Error && error.message === "grant_unconfirmed";
       setUncertain(unknown);
-      setError(confirmed ? "The top-up was confirmed, but the fan's refreshed status couldn't load. Refresh before making another grant." : unknown ? "The top-up couldn't be confirmed. Keep this selection and retry to check the same request." : "No top-up was confirmed. Review the selection and try again.");
+      // RD-05 / RD-10: a refusal names its reason and never locks the form.
+      const refused = error instanceof GrantRefusedError ? error.message : null;
+      setError(confirmed ? "The top-up was confirmed, but the fan's refreshed status couldn't load. Refresh before making another grant." : unknown ? "The top-up couldn't be confirmed. Keep this selection and retry to check the same request." : refused ?? "No top-up was confirmed. Review the selection and try again.");
     } finally {
       onToppingUp(fanId, false);
     }
@@ -947,10 +959,12 @@ function TopUpForm({
           <input
             type="number"
             min={1}
+            step={1}
+            inputMode="numeric"
             className="ff-input tnum w-full"
-            value={spins}
+            value={spinsInput}
             onChange={(e) => {
-              setSpins(Math.max(1, Number(e.target.value)));
+              setSpinsInput(e.target.value);
               setPackId(null);
             }}
           />
@@ -1020,7 +1034,7 @@ function TopUpForm({
             campaignId={campaignId}
             onModifierPick={onModifierPick}
             onPick={(p: CampaignPack, units: number) => {
-              setSpins(p.spins);
+              setSpinsInput(String(p.spins));
               setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
               setPackId(p.id);
               setPackUnits(units);
@@ -1039,7 +1053,7 @@ function TopUpForm({
           onClick={submit}
           className="btn-brand min-h-9 rounded-[9px] px-4 text-[13px] font-bold disabled:opacity-50"
         >
-          {toppingUp ? "Checking…" : uncertain ? "Check this top-up again" : `Grant ${spins} spin${spins === 1 ? "" : "s"}`}
+          {toppingUp ? (uncertain ? "Checking…" : "Granting…") : uncertain ? "Check this top-up again" : `Grant ${spins} spin${spins === 1 ? "" : "s"}`}
         </button>
       </div>
       <CreatorRequestRecovery scope={`topup:${fanId}`} guardScope={`fan-topup:${fanId}`} kind="pass" refreshKey={toppingUp} disabled={toppingUp} onFound={() => setUncertain(true)} onBusyChange={(busy) => onToppingUp(fanId, busy)} onResolved={async (outcome, { pin }) => {
@@ -1227,6 +1241,106 @@ function CopyDmMenu({
             ))
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * PR-13: switch one link off (the fan sees the paused page on it) or back on,
+ * without blocking the fan: their account, chat and other links stay.
+ */
+function LinkSwitch({ fanId, pass, onChanged }: { fanId: string; pass: FanAccountSummary["passes"][number]; onChanged?: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const off = pass.isActive === false;
+  const pausedByFan = !!pass.selfExcludedAt;
+  // PR-13: expiry shows only when the server could read it (absent = not yet).
+  const now = useNow(60_000);
+  const expirySupported = pass.expiresAt !== undefined;
+  const expired = !!pass.expiresAt && now !== null && Date.parse(pass.expiresAt) <= now;
+  async function setExpiry(days: number | null) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const expiresAt = days === null ? null : new Date(Date.now() + days * 86_400_000).toISOString();
+      const res = await fetch(`/api/fans/${fanId}/links`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: pass.token, expiresAt }) });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast(data.error === "forbidden" ? "Your seat can't change links for this creator." : "Couldn't change when that link expires. Try again.", { tone: "error" });
+        return;
+      }
+      toast(days === null ? "This link no longer expires." : `This link stops working in ${days} day${days === 1 ? "" : "s"}. The fan's account and other links are untouched.`, { tone: "success", key: `link-expiry-${pass.token}` });
+      onChanged?.();
+    } catch {
+      toast("Couldn't change that link. Check your connection.", { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function set(active: boolean) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/fans/${fanId}/links`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: pass.token, active }) });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast(data.error === "forbidden" ? "Your seat can't switch links for this creator." : "Couldn't change that link. Try again.", { tone: "error" });
+        return;
+      }
+      toast(active ? "Link switched on." : "Link switched off — the fan sees it as paused. Their account and other links are untouched.", {
+        tone: "success",
+        key: `link-switch-${pass.token}`,
+        action: { label: active ? "Switch off again" : "Undo", onClick: () => void set(!active) },
+      });
+      onChanged?.();
+    } catch {
+      toast("Couldn't change that link. Check your connection.", { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="link-switch" data-active={off ? "false" : "true"}>
+      {off && <span className="rounded-full border border-amber-300/40 px-2 py-[2px] text-[11px] font-semibold text-amber-200">Switched off</span>}
+      {pausedByFan && !off && <span className="rounded-full border border-line px-2 py-[2px] text-[11px] font-semibold text-muted">Paused by the fan</span>}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void set(off)}
+        className="min-h-11 rounded-[9px] border border-line px-3 text-[12px] font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+      >
+        {busy ? "…" : off ? "Switch this link on" : "Switch this link off"}
+      </button>
+      {!off && <span className="text-[11.5px] text-muted">Stops this one link only — no block, chat stays open.</span>}
+      {expirySupported && (
+        <span className="flex w-full flex-wrap items-center gap-2" data-testid="link-expiry" data-expires={pass.expiresAt ?? ""}>
+          {expired ? (
+            <span className="rounded-full border border-amber-300/40 px-2 py-[2px] text-[11px] font-semibold text-amber-200">Expired</span>
+          ) : pass.expiresAt ? (
+            <span className="text-[11.5px] text-muted">Expires <time dateTime={pass.expiresAt}>{formatWhen(pass.expiresAt)}</time></span>
+          ) : (
+            <span className="text-[11.5px] text-muted">Never expires</span>
+          )}
+          <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
+            <span className="sr-only">When this link expires</span>
+            <select
+              className="ff-input min-h-11 py-1 text-[12px]"
+              disabled={busy}
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) void setExpiry(v === "never" ? null : Number(v));
+              }}
+            >
+              <option value="">{pass.expiresAt ? "Change expiry…" : "Set an expiry…"}</option>
+              <option value="1">In 1 day</option>
+              <option value="7">In 7 days</option>
+              <option value="30">In 30 days</option>
+              {pass.expiresAt && <option value="never">Never</option>}
+            </select>
+          </label>
+        </span>
       )}
     </div>
   );

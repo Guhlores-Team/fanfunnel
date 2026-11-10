@@ -37,6 +37,9 @@ export async function POST(req: Request) {
   }
   if (typeof body.isActive === "boolean") {
     await recordAudit({ ...target, action: body.isActive ? "account.reactivate" : "account.suspend" });
+    // WG-13: the seats of a suspended agency owner are told by the database
+    // (0073 proposal: an AFTER UPDATE trigger on profiles.is_active writes
+    // agency_owner_suspended notices); this route stays a session-only write.
     // L5: /c/<slug> is ISR (60s); drop the cached pages now so a suspended
     // creator's page (and tip link) goes at once, not up to a minute later.
     try {

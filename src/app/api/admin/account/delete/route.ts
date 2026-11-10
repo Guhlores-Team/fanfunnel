@@ -7,6 +7,7 @@ import {
 import { requireAdminRoute } from "@/lib/auth/admin";
 import { deleteAccountAndTombstoneLinks } from "@/lib/account/deleteAccount";
 import { recordAudit } from "@/lib/data";
+import { recordAgencyDissolution } from "@/lib/data/agencyAdmin";
 
 /**
  * Hard-delete a creator account and ALL of its tenant data — irreversible.
@@ -89,6 +90,10 @@ export async function POST(req: Request) {
   // failed delete the shared helper restores an admin target's role (the
   // reservation above demoted it); on success each fan link gets a "this
   // creator has left" tombstone.
+  // WG-04: deleting an agency owner dissolves the agency; record it and tell
+  // the seats and managed creators before the cascade.
+  await recordAgencyDissolution(svc, id, callerId, "admin_delete");
+
   const deleted = await deleteAccountAndTombstoneLinks(svc, id, {
     wasAdmin: target.role === "admin",
     actorId: callerId,

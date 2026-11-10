@@ -1,5 +1,6 @@
 import { formatCents } from "@/lib/format";
 import { contactToken } from "@/lib/engagement";
+import type { FanAccountSummary } from "@/lib/data/types";
 
 /**
  * The fan row's meta line (everything before the coloured "last won" part):
@@ -51,4 +52,18 @@ export function noLinkMessage(a: { blocked: boolean; selfExcluded: boolean; link
   if (a.selfExcluded) return "This fan paused their link, so there's no link to share.";
   if (a.links.length > 0) return "This fan has no active link — top up to mint one.";
   return "No link yet — top up this fan to mint one.";
+}
+
+export type FanSort = "newest" | "spent" | "lastActive" | "spinsLeft" | "fewestSpins";
+/** PR-11: order the loaded fans; "newest" keeps the server's order. */
+export function sortFans(fans: FanAccountSummary[], by: FanSort): FanAccountSummary[] {
+  if (by === "newest") return fans;
+  const at = (f: FanAccountSummary) => (f.lastWin?.at ? Date.parse(f.lastWin.at) : 0);
+  const cmp: Record<Exclude<FanSort, "newest">, (a: FanAccountSummary, b: FanAccountSummary) => number> = {
+    spent: (a, b) => b.totalSpent - a.totalSpent,
+    lastActive: (a, b) => at(b) - at(a),
+    spinsLeft: (a, b) => b.spinsRemaining - a.spinsRemaining,
+    fewestSpins: (a, b) => a.spinsRemaining - b.spinsRemaining,
+  };
+  return fans.slice().sort(cmp[by]);
 }

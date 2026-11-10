@@ -8,7 +8,8 @@ import { LEGAL } from "@/lib/legal";
  * The /mfa page body. "challenge": the account has an authenticator, so the
  * session must pass a code (aal2) before the dashboard. "enrol": an admin
  * without one must set it up before the admin area opens (anyone else can set
- * it up here or in Settings › Security).
+ * it up here or in Settings › Security); enrolling is never forced on the
+ * dashboard itself, so "Not now" is always offered.
  *
  * After success it does a full navigation (not a client route change) so the
  * server, the proxy and RLS all see the upgraded session cookie at once.
@@ -51,8 +52,10 @@ export default function MfaClient({
         )}
       </div>
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 text-xs text-muted">
-        {mode === "enrol" && reason === "admin" ? (
-          <Link href="/dashboard" className="underline underline-offset-4 hover:text-ink">
+        {mode === "enrol" ? (
+          // WU-14: enrolment is optional for everyone (an admin without it gets
+          // the dashboard minus the Admin section), so "Not now" always shows.
+          <Link href={reason === "admin" ? "/dashboard" : next} className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-ink">
             Not now: go to my dashboard
           </Link>
         ) : (

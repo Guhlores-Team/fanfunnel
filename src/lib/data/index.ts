@@ -32,23 +32,28 @@ export {
   setActiveWheel,
   setWheelSchedule,
 } from "./wheels";
-export { listWebhooks, createWebhook, deleteWebhook } from "./webhooks";
+export { listWebhooks, createWebhook, deleteWebhook, sendTestWebhook } from "./webhooks";
 export { getFanPass, spin, getSpinAttemptStatus, createPass } from "./spins";
 export { setPlayReminder, takeBreak } from "./playGuard";
 export {
   editGrant,
   grantSpins,
   listFans,
+  listFansPage,
   getCreatorCrm,
   getFanDetail,
   deleteFan,
   setFanBlocked,
   setFanLinkGame,
+  setFanLinkActive,
+  updateFanLink,
   reportCreator,
   selfExclude,
   updateFanMeta,
   ackFan,
 } from "./fans";
+export { getCreatorObligations, obligationsFrom } from "./obligations";
+export { requestGameUnlock, listGameUnlockRequests } from "./gameUnlock";
 export {
   createCampaign,
   listCampaigns,
@@ -74,6 +79,7 @@ export {
   listThreads,
   hasThreadWith,
   getThread,
+  getThreadPage,
   markThreadRead,
   sendCreatorMessage,
   getChatSettings,
@@ -129,6 +135,7 @@ export {
   removeOrgMember,
   scopeOrgCreator,
   leaveOrg,
+  resendOrgInvite,
   getMyInvites,
   updateAccount,
   inviteCreatorAccount,

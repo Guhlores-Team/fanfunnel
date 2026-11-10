@@ -283,16 +283,23 @@ export default function TodayPanel({
     }
   };
 
+  // RD-14: the card leaves at once; if the server did not record the
+  // dismissal it comes back with a reason instead of reappearing unexplained
+  // on the next poll.
   const dismiss = async (key: string, snoozeDays?: number) => {
+    const before = cards;
     setCards((cs) => (cs ? cs.filter((c) => c.key !== key) : cs));
     const snoozeUntil = snoozeDays
       ? new Date(Date.now() + snoozeDays * 86400000).toISOString()
       : undefined;
-    await fetch("/api/autopilot", {
+    const res = await fetch("/api/autopilot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, snoozeUntil }),
-    });
+    }).catch(() => null);
+    if (res?.ok) return;
+    setCards(before);
+    toast(snoozeDays ? "Couldn't snooze that card. Try again." : "Couldn't dismiss that card. Try again.", { tone: "error" });
   };
 
   const m = overview?.metrics;
@@ -330,7 +337,7 @@ export default function TodayPanel({
       <section aria-label="Today's pulse" className="relative grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-3.5">
         <PulseCard
           icon={P.dollar}
-          label="Revenue today (UTC)"
+          label="Tips today (UTC)"
           value={extra ? formatCents(lastValue(cents)) : dash}
           chip={firstRun ? muted : <TrendChip trend={trendVsAvg(cents)} />}
           note={extraFailed ? "couldn't load" : firstRun ? "get spinning" : "vs 14-day avg"}

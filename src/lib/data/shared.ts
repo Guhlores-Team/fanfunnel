@@ -42,6 +42,12 @@ export type { FanPassView } from "./types";
 export type SpinError = { error: "not_found" | "no_spins" | "no_prizes" | "rate_limited" | "blocked" | "on_break" | "needs_ack" | "db_error" | "spin_pending" };
 
 /** True if `s` is a canonical UUID — used to keep raw ids out of filter strings. */
+/** PostgREST's answer when an RPC is not on the database yet (a migration not applied). */
+export function isMissingRpc(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function|does not exist/i.test(error.message ?? "");
+}
+
 export function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }

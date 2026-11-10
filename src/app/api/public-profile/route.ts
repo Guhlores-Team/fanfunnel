@@ -1,23 +1,23 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getMyPublicProfile, normalizePublicSlug, setMyPublicProfile } from "@/lib/data";
+import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
 import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
 import { isReservedName } from "@/lib/reservedNames";
 import { publicTextCheck } from "@/lib/publicText";
+import { MAX_SLUG_LEN, SLUG_INPUT_RE } from "@/lib/data/publicSlug";
 
 // Field limits and slug shape enforced before persistence. The slug is further
 // normalized in the data layer, so we only need to reject oversized/illegal
 // raw input here. The tip URL is validated against its normalized form (see
 // `externalUrl`) so bare domains stay valid while non-HTTP(S) schemes such as
 // `mailto:`, `tel:`, or `javascript:` are rejected.
-const MAX_SLUG_LEN = 64;
 const MAX_TAGLINE_LEN = 200;
 const MAX_NOTE_LEN = 2000;
 const MAX_TIP_URL_LEN = 2048;
-const SLUG_RE = /^[A-Za-z0-9 _-]*$/;
 
 function isValidTipUrl(raw: string): boolean {
   if (raw === "") return true;
@@ -74,8 +74,13 @@ export async function PUT(req: Request) {
     tagline?: string;
     note?: string;
     avatarUrl?: string;
+    deliveryDays?: unknown;
   }>(req);
   if (body === BAD_REQUEST) return badRequest();
+  // PR-10: a whole number of days (1..60) or null for no promise.
+  if (body.deliveryDays !== undefined && body.deliveryDays !== null && (!Number.isInteger(body.deliveryDays) || (body.deliveryDays as number) < 1 || (body.deliveryDays as number) > MAX_DELIVERY_DAYS)) {
+    return NextResponse.json({ error: "invalid_delivery_days" }, { status: 400 });
+  }
   if (body.avatarUrl !== undefined && !isTrustedAvatarUrl(body.avatarUrl)) {
     return NextResponse.json({ error: "invalid_avatar_url" }, { status: 400 });
   }
@@ -83,7 +88,7 @@ export async function PUT(req: Request) {
     body.slug !== undefined &&
     (typeof body.slug !== "string" ||
       body.slug.length > MAX_SLUG_LEN ||
-      !SLUG_RE.test(body.slug))
+      !SLUG_INPUT_RE.test(body.slug))
   ) {
     return NextResponse.json({ error: "invalid_slug" }, { status: 400 });
   }
@@ -135,6 +140,7 @@ export async function PUT(req: Request) {
     ...(body.tagline !== undefined ? { tagline: body.tagline } : {}),
     ...(body.note !== undefined ? { note: body.note } : {}),
     ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
+    ...(body.deliveryDays !== undefined ? { deliveryDays: body.deliveryDays as number | null } : {}),
   });
   if ("error" in result) return errorResponse(result.error);
   if (touchesPublicPage) {

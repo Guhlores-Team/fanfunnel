@@ -3,6 +3,7 @@ import { BAD_REQUEST, badRequest, parseJsonBody } from "@/lib/api/handler";
 import { setActiveWheelBrandColor } from "@/lib/data";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 import { limitRoute } from "@/lib/api/limit";
+import { brandColorContrastOk } from "@/lib/theme";
 
 // Set the brand color of the creator's active wheel — the public /c/[slug] page
 // derives its brand color from that wheel, so this drives the Settings → Public
@@ -17,6 +18,8 @@ export async function PUT(req: Request) {
 
   const color = typeof body.color === "string" ? body.color.trim() : "";
   if (!HEX.test(color)) return NextResponse.json({ error: "bad_color" }, { status: 400 });
+  // PA-01: a color the fan page's button and focus rings would vanish in.
+  if (!brandColorContrastOk(color)) return NextResponse.json({ error: "brand_too_dark" }, { status: 400 });
 
   const result = await setActiveWheelBrandColor(color);
   if ("error" in result) {

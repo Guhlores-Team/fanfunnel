@@ -17,10 +17,15 @@ function check(label: string, cond: unknown) {
 let configured = true;
 let user: { id: string; email: string } | null = { id: "u1", email: "applicant@example.com" };
 let status = "pending";
+// b6 C9 / WC-07: the sign-up name (profiles.display_name) pre-fills the request.
+let displayName: string | null = "Sunny";
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => configured,
-    createClient: async () => ({ auth: { getUser: async () => ({ data: { user } }) } }),
+    createClient: async () => ({
+      auth: { getUser: async () => ({ data: { user } }) },
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { display_name: displayName } }) }) }) }),
+    }),
     createServiceClient: () => { throw new Error("/pending must not use the service role"); },
   },
 });
@@ -57,6 +62,12 @@ async function main() {
   status = "pending";
   let out = await render();
   check("pending applicant: the control is offered", out.html?.includes(CONTROL));
+  check("the sign-up name pre-fills the request (b6 C9)", /value="Sunny"/.test(out.html ?? ""));
+  check("…and the page says it is step 3 of 3 (WC-07)", /Step 3 of 3/.test(out.html ?? ""));
+  displayName = "applicant@example.com";
+  out = await render();
+  check("an e-mail-shaped legacy name is treated as blank", !/value="applicant@example.com"/.test(out.html ?? ""));
+  displayName = "Sunny";
   check("…and it goes through the existing close confirmations", out.html?.includes("DELETE MY ACCOUNT") && out.html?.includes("Current password"));
 
   status = "rejected";

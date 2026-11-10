@@ -349,7 +349,7 @@ export function TopBar({
           {title}
         </h1>
         {/* Two lines on a phone rather than an ellipsis mid-phrase (QA b5 polish). */}
-        <p className="mt-[3px] line-clamp-2 text-[13px] leading-snug text-muted text-pretty lg:truncate" suppressHydrationWarning>
+        <p className="mt-[3px] line-clamp-2 text-[13px] leading-snug text-muted text-pretty lg:truncate">
           {subtitle}
         </p>
       </div>

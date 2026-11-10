@@ -91,7 +91,7 @@ export default function CrmPanel({ leading }: { leading?: ReactNode }) {
         title="Whales — your top spenders"
         hint="Nurture these relationships: VIP perks, personal attention, first dibs on rare drops."
         fans={crm?.whales ?? []}
-        empty="No paid fans yet."
+        empty="No fans with recorded tips yet."
         onCopy={copyLink}
         failed={failed}
         onRetry={retry}

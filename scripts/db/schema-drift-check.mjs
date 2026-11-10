@@ -335,7 +335,7 @@ const SIGNED_IN_ONLY = [
   "org_add_member(uuid, text, public.org_role)",
   "org_remove_member(uuid)",
   "org_scope_creator(uuid, uuid, boolean)",
-  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid, uuid)",
+  "creator_redemption_queue(text, text, timestamp with time zone, uuid, integer, uuid, uuid, uuid)",
   "creator_inbox_threads(timestamp with time zone, uuid, integer, uuid)",
   "my_seat_creators(integer)",
 ];

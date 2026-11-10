@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ChatMessage, FanThread, RedemptionItem } from "@/lib/data/types";
 import { seatPath, seatTabs, type SeatCreatorView, type SeatTab } from "./seatWorkspace";
+import LoadFailed from "@/components/dashboard/LoadFailed";
+import { loadJson } from "@/lib/hooks/loadJson";
 
 // A19: where a staff seat does its job for the creators it is scoped to. A
 // chatter gets that creator's inbox only, a fulfiller the prize queue only, a
@@ -14,28 +16,48 @@ export default function SeatWorkspace() {
   const [creatorId, setCreatorId] = useState("");
   const [tab, setTab] = useState<SeatTab>("inbox");
   const [msg, setMsg] = useState("");
+  // WG-08: a half-written reply is not thrown away by a creator switch.
+  const draftRef = useRef("");
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
 
-  useEffect(() => {
-    let live = true;
-    void fetch("/api/agency/seats", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { seats: [] }))
-      .then((d: { seats?: SeatCreatorView[] }) => {
-        if (!live) return;
-        const list = Array.isArray(d.seats) ? d.seats : [];
-        setSeats(list);
-        if (list[0]) {
-          setCreatorId(list[0].creatorId);
-          setTab(seatTabs(list[0])[0] ?? "inbox");
-        }
-      })
-      .catch(() => live && setSeats([]));
-    return () => {
-      live = false;
-    };
+  // RD-04: "no seats" and "the read failed" are different states; a failed
+  // read shows an error with Retry instead of a vanished workspace.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const loadSeats = useCallback(async () => {
+    try {
+      const d = await loadJson<{ seats?: SeatCreatorView[] }>("/api/agency/seats");
+      setLoadError(null);
+      const list = Array.isArray(d.seats) ? d.seats : [];
+      setSeats(list);
+      if (list[0]) {
+        setCreatorId((c) => (list.some((s) => s.creatorId === c) ? c : list[0].creatorId));
+        setTab(seatTabs(list[0])[0] ?? "inbox");
+      }
+    } catch (e) {
+      setLoadError(e);
+    }
   }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
+    void loadSeats();
+  }, [loadSeats]);
 
+  if (!seats && loadError != null) {
+    return (
+      <section className="mt-8">
+        <LoadFailed error={loadError} what="your seat" onRetry={loadSeats} testId="seat-load-failed" />
+      </section>
+    );
+  }
   if (!seats || seats.length === 0) return null;
   const seat = seats.find((s) => s.creatorId === creatorId) ?? seats[0];
+  const switchCreator = (nextId: string) => {
+    const next = seats.find((s) => s.creatorId === nextId);
+    setPendingSwitch(null);
+    setCreatorId(nextId);
+    if (next) setTab(seatTabs(next)[0] ?? "inbox");
+    setMsg("");
+  };
   const tabs = seatTabs(seat);
   const active = tabs.includes(tab) ? tab : tabs[0];
 
@@ -49,10 +71,8 @@ export default function SeatWorkspace() {
           <select
             value={seat.creatorId}
             onChange={(e) => {
-              const next = seats.find((s) => s.creatorId === e.target.value);
-              setCreatorId(e.target.value);
-              if (next) setTab(seatTabs(next)[0] ?? "inbox");
-              setMsg("");
+              if (draftRef.current.trim()) { setPendingSwitch(e.target.value); return; }
+              switchCreator(e.target.value);
             }}
             className="ff-input mt-1 w-auto"
           >
@@ -76,15 +96,22 @@ export default function SeatWorkspace() {
           ))}
         </div>
       </div>
+      {pendingSwitch && (
+        <div role="group" aria-label="Unsaved reply" data-testid="seat-switch-guard" className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/5 px-3.5 py-3 text-sm text-ink">
+          <p className="min-w-0 flex-1 basis-60">You have an unsent reply for {seat.displayName}. Switching creators discards it.</p>
+          <button type="button" onClick={() => { draftRef.current = ""; switchCreator(pendingSwitch); }} className="min-h-10 rounded-lg border border-line px-3 text-[12.5px] font-semibold">Discard and switch</button>
+          <button type="button" autoFocus onClick={() => setPendingSwitch(null)} className="btn-brand min-h-10 rounded-lg px-3 text-[12.5px] font-bold">Keep writing</button>
+        </div>
+      )}
       <div className="mt-4" role="tabpanel">
-        {active === "inbox" ? <SeatInbox key={seat.creatorId} creatorId={seat.creatorId} onError={setMsg} /> : <SeatPrizes key={seat.creatorId} creatorId={seat.creatorId} onError={setMsg} />}
+        {active === "inbox" ? <SeatInbox key={seat.creatorId} creatorId={seat.creatorId} onError={setMsg} onDraft={(d) => { draftRef.current = d; }} /> : <SeatPrizes key={seat.creatorId} creatorId={seat.creatorId} onError={setMsg} />}
       </div>
       <p role="status" aria-live="polite" className="mt-3 text-sm text-amber-300">{msg}</p>
     </section>
   );
 }
 
-function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: string) => void }) {
+function SeatInbox({ creatorId, onError, onDraft }: { creatorId: string; onError: (m: string) => void; onDraft?: (draft: string) => void }) {
   const [threads, setThreads] = useState<FanThread[] | null>(null);
   const [fanId, setFanId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -124,6 +151,7 @@ function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: str
       });
       if (!r.ok) return onError("The reply was not sent.");
       setDraft("");
+      onDraft?.("");
       await loadThread(fanId);
     } finally {
       setBusy(false);
@@ -158,7 +186,7 @@ function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: str
             ))}
           </ol>
           <label htmlFor={replyId} className="mt-3 block text-sm text-muted">Reply</label>
-          <textarea id={replyId} value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={2000} rows={2} className="ff-input mt-1 w-full text-sm" />
+          <textarea id={replyId} value={draft} onChange={(e) => { setDraft(e.target.value); onDraft?.(e.target.value); }} maxLength={2000} rows={2} className="ff-input mt-1 w-full text-sm" />
           <button type="button" onClick={() => void send()} disabled={busy || !draft.trim()} className="mt-2 btn-brand rounded-lg px-3 py-2 text-sm font-semibold">
             {busy ? "Sending…" : "Send"}
           </button>
@@ -171,6 +199,15 @@ function SeatInbox({ creatorId, onError }: { creatorId: string; onError: (m: str
 function SeatPrizes({ creatorId, onError }: { creatorId: string; onError: (m: string) => void }) {
   const [items, setItems] = useState<RedemptionItem[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // WG-08: "Mark fulfilled" asks first, then keeps an Undo for a while, so a
+  // mis-tap never tells the fan "delivered" for a prize they never got.
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [undo, setUndo] = useState<RedemptionItem | null>(null);
+  useEffect(() => {
+    if (!undo) return;
+    const t = setTimeout(() => setUndo(null), 15_000);
+    return () => clearTimeout(t);
+  }, [undo]);
   const load = useCallback(async () => {
     const r = await fetch(seatPath("/api/redemptions?status=pending", creatorId), { cache: "no-store" });
     if (!r.ok) return onError("This prize queue is not available to your seat.");
@@ -181,16 +218,19 @@ function SeatPrizes({ creatorId, onError }: { creatorId: string; onError: (m: st
     void load();
   }, [load]);
 
-  async function fulfil(id: string) {
+  async function setState(item: RedemptionItem, status: "fulfilled" | "pending") {
     if (busy) return;
-    setBusy(id);
+    setBusy(item.id);
+    setConfirmId(null);
     try {
+      const id = item.id;
       const r = await fetch("/api/redemptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status: "fulfilled", creatorId }),
+        body: status === "fulfilled" ? JSON.stringify({ id, status: "fulfilled", creatorId }) : JSON.stringify({ id, status: "pending", creatorId }),
       });
-      if (!r.ok) return onError("That prize could not be marked fulfilled.");
+      if (!r.ok) return onError(status === "fulfilled" ? "That prize could not be marked fulfilled." : "That prize could not be reopened.");
+      setUndo(status === "fulfilled" ? item : null);
       await load();
     } finally {
       setBusy(null);
@@ -198,17 +238,36 @@ function SeatPrizes({ creatorId, onError }: { creatorId: string; onError: (m: st
   }
 
   if (!items) return <p className="text-sm text-muted">Loading…</p>;
-  if (items.length === 0) return <p className="text-sm text-muted">Nothing waiting to be fulfilled.</p>;
   return (
-    <ul className="space-y-2">
-      {items.map((it) => (
-        <li key={it.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface px-3 py-2 text-sm">
-          <span><span className="font-semibold">{it.prizeLabel}</span> for {it.fanName}</span>
-          <button type="button" onClick={() => void fulfil(it.id)} disabled={busy !== null} className="rounded-lg border border-line px-3 py-1 font-semibold disabled:opacity-50" aria-label={`Mark ${it.prizeLabel} for ${it.fanName} fulfilled`}>
-            {busy === it.id ? "Saving…" : "Mark fulfilled"}
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div>
+      {undo && (
+        <p role="status" data-testid="seat-fulfil-undo" className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm">
+          <span className="min-w-0 flex-1">Marked fulfilled: {undo.prizeLabel} for {undo.fanName}. The fan now sees it as delivered.</span>
+          <button type="button" onClick={() => void setState(undo, "pending")} disabled={busy !== null} className="min-h-9 rounded-lg border border-line px-3 font-semibold disabled:opacity-50">Undo</button>
+        </p>
+      )}
+      {items.length === 0 ? <p className="text-sm text-muted">Nothing waiting to be fulfilled.</p> : (
+      <ul className="space-y-2">
+        {items.map((it) => (
+          <li key={it.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface px-3 py-2 text-sm">
+            <span><span className="font-semibold">{it.prizeLabel}</span> for {it.fanName}</span>
+            {confirmId === it.id ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-muted">Tell the fan it was delivered?</span>
+                <button type="button" onClick={() => void setState(it, "fulfilled")} disabled={busy !== null} className="btn-brand min-h-9 rounded-lg px-3 font-semibold disabled:opacity-50">
+                  {busy === it.id ? "Saving…" : "Yes, fulfilled"}
+                </button>
+                <button type="button" autoFocus onClick={() => setConfirmId(null)} className="min-h-9 rounded-lg border border-line px-3 font-semibold">Not yet</button>
+              </span>
+            ) : (
+              <button type="button" onClick={() => setConfirmId(it.id)} disabled={busy !== null} className="min-h-9 rounded-lg border border-line px-3 font-semibold disabled:opacity-50" aria-label={`Mark ${it.prizeLabel} for ${it.fanName} fulfilled`}>
+                Mark fulfilled
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      )}
+    </div>
   );
 }

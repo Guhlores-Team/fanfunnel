@@ -84,6 +84,8 @@ export interface WheelConfig {
   gameReady?: boolean;
   /** Read-only: first credited play locks the kind. The server ignores client values. */
   gameKindLocked?: boolean;
+  /** Read-only game version (wheels.updated_at) on the creator's own reads; the editor sends it back as the expected version. */
+  updatedAt?: string;
   /** Short line shown under the title on the fan page. */
   subtitle?: string;
   brandColor?: string;

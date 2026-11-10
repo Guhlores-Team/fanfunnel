@@ -110,6 +110,42 @@ check("TS-05: consent evidence is a service-written, admin-read table", migratio
 check("TS-06: the Terms notice is a policy-protected singleton", migration.includes("create table if not exists public.legal_terms_notice (") && /create policy legal_terms_notice_admin_write on public\.legal_terms_notice for update\s*using \(public\.is_admin\(\)\) with check \(public\.is_admin\(\)\)/.test(migration));
 check("0073 adds no signed-in SECURITY DEFINER function (the 0072 closing check must replay)", !/security definer[\s\S]{0,400}grant execute on function public\.(creator_obligations|creator_fan_summaries|creator_analytics_summary|legal_terms_upcoming|set_legal_terms_notice)\([^)]*\) to authenticated/.test(migration) && /legal_terms_upcoming\(\)\s*returns jsonb language sql stable security invoker/.test(migration));
 check("DB-15: every function pinning 'public' alone gains pg_temp", /p\.proconfig = array\['search_path=public'\][\s\S]*set search_path = public, pg_temp/.test(migration));
+// (8b) dashboard follow-ups: delivery promise, expiry read, queue actor, agency
+// notices, seat-scope cleanup, owner state, empty-game delete, set active.
+const wheelsTs = readFileSync(join(ROOT, "src/lib/data/wheels.ts"), "utf8");
+const previous = readFileSync(join(SUPABASE, "migrations", files.at(-2) ?? ""), "utf8");
+const reviewedList = (sql: string) => [...sql.matchAll(/and p\.proname not in \(([\s\S]*?)\);/g)].at(-1)?.[1].match(/'[a-z_]+'/g)?.join() ?? "";
+check("0073 keeps the 0072 list of signed-in SECURITY DEFINER names unchanged", reviewedList(migration).length > 0 && reviewedList(migration) === reviewedList(previous));
+check("PR-10: delivery_days is a checked smallint and no session policy can write a profile", migration.includes("alter table public.profiles add column if not exists delivery_days smallint check (delivery_days between 1 and 60);") && !/create policy \w+ on public\.profiles/.test(migration) && !/grant[^;]*update[^;]*on (table )?public\.profiles to (anon|authenticated)/i.test(migration));
+check("PR-10: only a waiting prize without a date gets the default due date", /if new\.due_at is null and new\.status = 'pending' and new\.fulfilled_at is null then/.test(lastDef(migration, "_default_redemption_due")) && !/for (update|share)/i.test(lastDef(migration, "_default_redemption_due"))
+  && migration.includes("drop trigger if exists ac_delivery_due on public.redemptions;") && /create trigger ac_delivery_due before insert on public\.redemptions/.test(migration));
+check("PR-13: a session reads a link's expiry and still not its token", migration.includes("grant select (expires_at) on public.fan_passes to authenticated;") && !/grant[^;]*\btoken\b[^;]*on public\.fan_passes to (anon|authenticated)/.test(migration));
+const queue = lastDef(migration, "creator_redemption_queue");
+check("WG-07: the queue returns actor_id last and takes p_actor last, under a new signature", /p_fan uuid default null,\s*p_actor uuid default null\s*\)/.test(queue) && /reward_last_viewed_at timestamptz,\s*actor_id uuid\s*\)/.test(queue) && /sr\.last_viewed_at,\s*r\.actor_id/.test(queue)
+  && migration.includes("drop function if exists public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid);")
+  && /can_act_for\(auth\.uid\(\), 'view'\)\s*else public\.can_act_for\(p_creator, 'fulfil'\)/.test(queue));
+check("notices: the kind CHECK lists the five kinds", migration.includes("check (kind in ('fan_deleted_data', 'creator_approved', 'agency_dissolved', 'agency_owner_suspended', 'game_unlock_request'));") && !/grant[^;]*(insert|update|delete)[^;]*on (table )?public\.creator_notices to (anon|authenticated)/i.test(migration));
+const ownerState = lastDef(migration, "_org_owner_state");
+check("WG-13: the owner-state trigger writes notices and the org flag only (no profile write, so no recursion)", /insert into public\.creator_notices \(creator_id, kind, details\)\s*select t\.id, 'agency_owner_suspended'/.test(ownerState) && /if old\.is_active and not new\.is_active then/.test(ownerState)
+  && !/(update|insert into|delete from) public\.profiles/.test(ownerState) && /t\.id <> new\.id/.test(ownerState));
+check("WG-13: orgs.owner_active is recomputed on every org write", /new\.owner_active := coalesce\(\(select p\.is_active and \(p\.approval_status = 'approved' or p\.role = 'admin'\)/.test(ownerState)
+  && /create trigger aa_owner_active before insert or update on public\.orgs/.test(migration) && /create trigger ae_org_owner_state after update of is_active, approval_status, role on public\.profiles/.test(migration));
+check("WG-13: orgs_tie_read shows a session only its own agency", /create policy orgs_tie_read on public\.orgs for select to authenticated\s*using \(\s*\(select public\.can_act_for\(\(select auth\.uid\(\)\), 'view'\)\)\s*and \(\s*id = \(select p\.org_id from public\.profiles p where p\.id = \(select auth\.uid\(\)\)\)\s*or exists \(select 1 from public\.org_members m where m\.org_id = orgs\.id and m\.profile_id = \(select auth\.uid\(\)\)\)/.test(migration)
+  && migration.includes("drop policy if exists orgs_tie_read on public.orgs;"));
+for (const fn of ["org_remove_creator", "org_leave"]) check(`WG-14: ${fn} deletes the creator's seat scopes`, /delete from public\.org_member_creators mc using public\.org_members m\s*where mc\.member_id = m\.id and m\.org_id = p_org and mc\.creator_id = (p_creator|auth\.uid\(\));/.test(lastDef(migration, fn)));
+check("WG-14: org_leave still keeps the owner seat", lastDef(migration, "org_leave").includes("return 'owner_seat'"));
+check("WG-14: any other org_id change drops the stale scopes too", /create trigger af_seat_scope_cleanup after update of org_id on public\.profiles/.test(migration) && /delete from public\.org_member_creators mc\s*where mc\.creator_id = new\.id/.test(lastDef(migration, "_drop_stale_seat_scopes")));
+const deleteWheel = lastDef(migration, "delete_wheel");
+check("WC-09: delete_wheel takes p_only_if_empty and decides not_empty after the locks and the recheck", /delete_wheel\(p_wheel uuid, p_only_if_empty boolean default false\)/.test(deleteWheel)
+  && deleteWheel.indexOf("return 'not_empty'") > deleteWheel.indexOf("0073 (CC-03)") && deleteWheel.indexOf("0073 (CC-03)") > deleteWheel.indexOf("_lock_wheel_lifecycle(p_wheel)")
+  && deleteWheel.indexOf("return 'not_empty'") < deleteWheel.indexOf("delete from public.wheels") && migration.includes("drop function if exists public.delete_wheel(uuid);"));
+const setActive = lastDef(migration, "set_active_wheel");
+check("CC-06: set_active_wheel runs as the caller and flips the creator's games in one UPDATE", /returns text language plpgsql security invoker set search_path = public, pg_temp/.test(setActive)
+  && (setActive.match(/update public\.wheels/g) ?? []).length === 1 && /set is_active = \(w\.id = p_wheel\)\s*where w\.creator_id = v_creator/.test(setActive) && /order by w\.id for no key update/.test(setActive)
+  && !/auth\.uid\(\)/.test(setActive) && migration.includes("revoke execute on function public.set_active_wheel(uuid) from public, anon;"));
+for (const fn of ["_default_redemption_due", "_org_owner_state", "_drop_stale_seat_scopes"]) check(`${fn} is a trigger function no API role can call`, migration.includes(`revoke execute on function public.${fn}() from public, anon, authenticated, service_role;`));
+const setActiveTs = wheelsTs.slice(wheelsTs.indexOf("export async function setActiveWheel"), wheelsTs.indexOf("export async function setWheelSchedule"));
+check("CC-06 (app): setActiveWheel calls set_active_wheel and writes no wheel row itself", /sb\.rpc\("set_active_wheel", \{ p_wheel: id \}\)/.test(setActiveTs) && !/\.update\(/.test(setActiveTs));
 check("no new policy is wide open", !/using \(true\)|with check \(true\)/.test(migration));
 
 console.log(`migration 0073 guard: ${passed} checks passed`);
