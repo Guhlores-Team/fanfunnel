@@ -15,6 +15,8 @@ import { LoadError } from "./analyticsUi";
 import { loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
 import { useCreatorDraft } from "./CreatorDrafts";
+import { useTimeZone, zoneHint } from "@/lib/localTime";
+import { useNow } from "@/lib/hooks/useNow";
 
 /** A list read: loading, loaded, or failed (never shown as an empty list). */
 type ListLoad = "loading" | "ok" | "failed";
@@ -201,7 +203,7 @@ function Card({
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           {/* tabIndex -1: a removed row's focus lands on its card's heading. */}
-          <h3
+          <h2
             id={id}
             tabIndex={-1}
             className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/60 rounded-sm"
@@ -211,7 +213,7 @@ function Card({
               <Glyph d={icon} size={16} />
             </span>
             {title}
-          </h3>
+          </h2>
           {hint && <p className="mt-1 text-[13px] text-muted text-pretty">{hint}</p>}
         </div>
         {aside && <div className="flex shrink-0 items-center gap-2">{aside}</div>}
@@ -310,7 +312,7 @@ function LinkInBioCard({
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline max-sm:min-h-11"
           >
             Preview page <Glyph d={P.external} size={13} />
           </a>
@@ -430,7 +432,7 @@ function LeaderboardToggle({
       onChange?.();
     } catch {
       setOn(!next);
-      toast("Couldn't update leaderboard");
+      toast("Couldn't update leaderboard", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -514,10 +516,15 @@ function HappyHourScheduler() {
   const [wheels, setWheels] = useState<WheelSummary[]>([]);
   const [windows, setWindows] = useState<HappyHour[]>([]);
   const [wheelId, setWheelId] = useState("");
-  const [multiplier, setMultiplier] = useState(2);
+  // RD-18: kept as typed so the field can be cleared; validated on Schedule.
+  const [multiplier, setMultiplier] = useState("2");
   const [startsAt, setStartsAt] = useState("");
+  const zone = useTimeZone();
   const [endsAt, setEndsAt] = useState("");
   const [busy, setBusy] = useState(false);
+  // RD-18: the status pills re-evaluate each minute, so a window that starts
+  // while the panel is open moves from "Scheduled" to "Live".
+  const nowTick = useNow(60_000);
   const [state, setState] = useState<ListLoad>("loading");
   // Whether the lists have ever loaded: a failed refresh keeps the last good
   // lists (and Schedule) and only says the refresh failed.
@@ -567,6 +574,11 @@ function HappyHourScheduler() {
       toast("Enter a complete start and end time");
       return;
     }
+    const boost = Number(multiplier.trim());
+    if (multiplier.trim() === "" || !Number.isFinite(boost) || boost < 1 || boost > MAX_COMBINED_BOOST) {
+      toast(`Boost must be between 1 and ${MAX_COMBINED_BOOST}`, { tone: "error" });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/happy-hours", {
@@ -574,7 +586,7 @@ function HappyHourScheduler() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           wheelId,
-          multiplier,
+          multiplier: boost,
           startsAt: startDate.toISOString(),
           endsAt: endDate.toISOString(),
         }),
@@ -585,7 +597,7 @@ function HappyHourScheduler() {
       toast("Happy hour scheduled");
       await load();
     } catch {
-      toast("Couldn't schedule — check the window");
+      toast("Couldn't schedule — check the window", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -597,7 +609,8 @@ function HappyHourScheduler() {
     document.getElementById("boosts-happy-hours")?.focus();
     const res = await fetch(`/api/happy-hours/${id}`, { method: "DELETE" }).catch(() => null);
     // The reload restores the row if the delete didn't land.
-    toast(res?.ok ? "Happy hour removed" : "Couldn't remove happy hour");
+    if (res?.ok) toast("Happy hour removed", { tone: "success" });
+    else toast("Couldn't remove that happy hour. It is still scheduled.", { tone: "error" });
     load();
   };
 
@@ -641,7 +654,7 @@ function HappyHourScheduler() {
             max={MAX_COMBINED_BOOST}
             step={0.5}
             value={multiplier}
-            onChange={(e) => setMultiplier(Number(e.target.value))}
+            onChange={(e) => setMultiplier(e.target.value)}
             className="ff-input tnum w-full min-w-0 normal-case tracking-normal"
           />
         </label>
@@ -661,8 +674,10 @@ function HappyHourScheduler() {
             value={endsAt}
             onChange={(e) => setEndsAt(e.target.value)}
             className="ff-input w-full min-w-0 normal-case tracking-normal"
+            aria-describedby="happy-hour-zone"
           />
         </label>
+        <p id="happy-hour-zone" className="col-span-2 text-xs normal-case tracking-normal text-muted lg:col-span-5">{zoneHint(zone)}</p>
         {/* Off (disabled) until the lists first load; while a save is in
             flight it is only aria-disabled, so a keyboard user keeps focus. */}
         <button type="submit" disabled={!loaded} aria-disabled={busy || undefined} className={`${primaryBtn} col-span-2 sm:col-span-1 lg:col-span-1`}>
@@ -682,7 +697,7 @@ function HappyHourScheduler() {
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
           {windows.map((w) => {
-            const status = happyHourStatus(w.startsAt, w.endsAt);
+            const status = happyHourStatus(w.startsAt, w.endsAt, nowTick ?? undefined);
             const [pill, label] = HH_STATUS[status];
             return (
               <li key={w.id} className={`flex flex-wrap items-center gap-3 rounded-[11px] px-3.5 py-3 ${recessed}`}>
@@ -898,6 +913,38 @@ function WebhooksCard() {
     }
   };
 
+  // PR-15: one signed sample delivery; the receiver's answer is the toast.
+  const [testing, setTesting] = useState<string | null>(null);
+  const sendTest = async (id: string) => {
+    if (testing) return;
+    setTesting(id);
+    try {
+      const res = await fetch(`/api/webhooks/${id}/test`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { status?: number; signed?: boolean; error?: string };
+      if (!res.ok) {
+        toast(
+          data.error === "blocked_target" ? "That address can't be reached from FanFunnel (private or unresolvable host)." :
+          data.error === "rate_limited" ? "Slow down — at most 10 test deliveries a minute." :
+          data.error === "forbidden" ? "Only the account owner can send test deliveries." :
+          "Couldn't send the test delivery. Try again.",
+          { tone: "error" },
+        );
+        return;
+      }
+      const status = data.status ?? 0;
+      toast(
+        status === 0 ? "No answer from that address (timed out or refused). Check the URL and that it accepts POST." :
+        status >= 200 && status < 300 ? `Delivered — the receiver answered HTTP ${status}${data.signed ? " (signed)" : " (unsigned: no secret yet)"}.` :
+        `The receiver answered HTTP ${status}. Check its logs for the test payload.`,
+        { tone: status >= 200 && status < 300 ? "success" : "error", key: `wh-test-${id}` },
+      );
+    } catch {
+      toast("Couldn't send the test delivery. Check your connection.", { tone: "error" });
+    } finally {
+      setTesting(null);
+    }
+  };
+
   const remove = async (id: string) => {
     // Optimistically drop the row, then roll it back to its original position
     // if the delete fails so the UI never silently diverges from the server.
@@ -917,7 +964,7 @@ function WebhooksCard() {
         next.splice(Math.min(index, next.length), 0, removed);
         return next;
       });
-      toast("Couldn't remove webhook");
+      toast("Couldn't remove webhook", { tone: "error" });
     }
   };
 
@@ -990,6 +1037,16 @@ function WebhooksCard() {
                 {WEBHOOK_EVENT_LABEL[h.event] ?? h.event}
               </span>
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">{h.url}</span>
+              <button
+                type="button"
+                disabled={testing === h.id}
+                onClick={() => void sendTest(h.id)}
+                aria-label={`Send a test delivery to ${h.url}`}
+                className="min-h-11 rounded-[9px] border border-line px-3 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+                data-testid="webhook-test"
+              >
+                {testing === h.id ? "Sending…" : "Send test"}
+              </button>
               <RemoveConfirm
                 id={`wh-${h.id}`}
                 label={`Remove webhook ${h.url}`}
@@ -1051,7 +1108,7 @@ function WebhookSecret() {
         {secret && (
           <button
             type="button"
-            onClick={() => void navigator.clipboard?.writeText(secret).then(() => toast("Secret copied"), () => {})}
+            onClick={() => void copyToClipboard(secret).then((ok) => toast(ok ? "Secret copied" : "Couldn't copy — select the secret and copy it by hand.", ok ? {} : { tone: "error" }))}
             className={secondaryBtn}
           >
             Copy

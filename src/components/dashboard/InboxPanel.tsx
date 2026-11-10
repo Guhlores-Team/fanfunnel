@@ -4,7 +4,7 @@ import { loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
 import { useSessionDraft } from "./sessionDrafts";
 import { useCreatorDraft } from "./CreatorDrafts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, ChatSettings, FanThread } from "@/lib/data/types";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { startPoll } from "@/lib/poll";
@@ -17,6 +17,7 @@ import { toNotificationItem } from "@/lib/data/notificationFeed";
 import { DEFAULT_SHOW_DETAILS } from "@/lib/push/config";
 import { toPushPayload } from "@/lib/push/payload";
 import { currentPushSubscription } from "@/lib/push/browser";
+import { usePushAvailable } from "./usePushAvailable";
 
 /** A few one-tap canned replies the creator can drop into the composer. */
 const QUICK_REPLIES = [
@@ -204,6 +205,8 @@ export default function InboxPanel({
   // Web push replaces the old in-tab "Enable alerts" opt-in: one system, set
   // up in Settings › Notifications. Whether THIS browser already gets pushes.
   const [pushHere, setPushHere] = useState<boolean | null>(null);
+  // WC-29: no opt-in prompt on a site that cannot send push at all.
+  const pushAvailable = usePushAvailable();
   const pushHereRef = useRef(false);
   useEffect(() => {
     let live = true;
@@ -240,11 +243,12 @@ export default function InboxPanel({
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state is set after the read resolves
-    loadThreads();
-
     // Real Supabase Realtime for the authed creator (RLS passes on messages).
     if (isSupabaseConfigured()) {
+      // PA-09: read once here; the demo branch below reads through its poll,
+      // which starts immediately, so it must not also read on mount.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state is set after the read resolves
+      loadThreads();
       const supabase = createClient();
       let channelRef: ReturnType<typeof supabase.channel> | null = null;
       let cancelled = false;
@@ -375,7 +379,7 @@ export default function InboxPanel({
       <div className="flex flex-wrap items-stretch gap-2.5">
         <AutoMessagesCard />
 
-        {pushHere === false && onOpenPushSettings && (
+        {pushHere === false && pushAvailable && onOpenPushSettings && (
           <button
             type="button"
             onClick={onOpenPushSettings}
@@ -544,18 +548,19 @@ function AutoMessagesCard() {
   // C14: edited auto-messages are unsaved work.
   useCreatorDraft("auto-messages", "your auto-messages", !!saved && (intro !== saved.intro || outro !== saved.outro), saving);
 
+  // RD-01: a failed read is a failed read with Retry; Save stays off until the
+  // saved texts are in, so it can never write empty messages over real ones.
+  const [loadError, setLoadError] = useState<unknown>(null);
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/chat-settings", { cache: "no-store" });
-      if (res.ok) {
-        const d = await res.json();
-        const s: ChatSettings = d.settings ?? { intro: null, outro: null };
-        setIntro(s.intro ?? "");
-        setOutro(s.outro ?? "");
-        setSaved({ intro: s.intro ?? "", outro: s.outro ?? "" });
-      }
-    } catch {
-      /* transient */
+      const d = await loadJson<{ settings?: ChatSettings | null }>("/api/chat-settings");
+      setLoadError(null);
+      const s: ChatSettings = d.settings ?? { intro: null, outro: null };
+      setIntro(s.intro ?? "");
+      setOutro(s.outro ?? "");
+      setSaved({ intro: s.intro ?? "", outro: s.outro ?? "" });
+    } catch (e) {
+      setLoadError(e);
     }
   }, []);
 
@@ -576,7 +581,10 @@ function AutoMessagesCard() {
       if (res.ok) {
         setSaved({ intro, outro });
         toast("Auto-messages saved", { tone: "success" });
-      } else toast("Couldn't save auto-messages", { tone: "error" });
+      } else {
+        const d = (await res.json().catch(() => ({}))) as { error?: unknown };
+        toast(d.error === "invalid_chat_settings" ? "Not saved: keep each message to 2,000 characters or fewer, and remove any hidden or unusual characters." : "Couldn't save auto-messages", { tone: "error" });
+      }
     } catch {
       toast("Couldn't save auto-messages", { tone: "error" });
     } finally {
@@ -612,6 +620,9 @@ function AutoMessagesCard() {
 
       {open && (
         <div id="auto-messages-form" className="flex flex-col gap-4 border-t border-[#1f1b27] px-4 pb-4 pt-3.5">
+          {loadError != null && !saved && (
+            <LoadFailed error={loadError} what="your auto-messages" onRetry={load} compact testId="auto-messages-load-failed" />
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.04em] text-muted">
               Greeting — auto-sends when a fan opens chat
@@ -642,7 +653,7 @@ function AutoMessagesCard() {
             <button
               type="button"
               onClick={save}
-              disabled={saving}
+              disabled={saving || !saved}
               className="btn-brand min-h-9 rounded-[9px] px-4 text-[13px] font-bold"
             >
               {saving ? "Saving…" : "Save"}
@@ -672,6 +683,11 @@ function Thread({
   onBack: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // RD-19: pages older than the newest one, loaded on demand and kept while
+  // the newest page keeps polling.
+  const [earlier, setEarlier] = useState<ChatMessage[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   // C14: the half-typed reply is kept per thread for this tab, so switching
   // threads or sections never loses it; a reload asks first (DashboardClient).
@@ -692,6 +708,9 @@ function Thread({
   // Ignore a stale response: if a newer load has started, don't let this older
   // one overwrite messages (e.g. an in-flight poll clobbering a just-sent message).
   const reqId = useRef(0);
+  // RD-11: the parent refetches the inbox list and the whole overview on
+  // onChanged, so a 6 s poll that saw nothing new must stay quiet.
+  const lastSeen = useRef<string | null>(null);
 
   // Resolves false on a failed request so the poll can back off.
   const load = useCallback(async (): Promise<boolean> => {
@@ -699,15 +718,22 @@ function Thread({
     try {
       const res = await fetch(`/api/messages/thread/${fan.fanId}`, { cache: "no-store" });
       if (!res.ok) return false;
-      const list: ChatMessage[] = (await res.json()).messages ?? [];
+      const body = (await res.json()) as { messages?: ChatMessage[]; more?: boolean };
+      const list: ChatMessage[] = body.messages ?? [];
       if (id !== reqId.current) return true;
       setMessages(list);
+      setHasMore(body.more === true);
       // I3: reading is side-effect free; mark what the creator now sees as
       // read with its own POST, then refresh the list's unread counts.
-      if (list.some((m) => m.sender === "fan" && !m.readAt)) {
+      const unread = list.some((m) => m.sender === "fan" && !m.readAt);
+      if (unread) {
         await fetch(`/api/messages/thread/${fan.fanId}`, { method: "POST", cache: "no-store" }).catch(() => null);
       }
-      onChangedRef.current();
+      const seen = `${fan.fanId}:${list.length}:${list[list.length - 1]?.id ?? ""}:${unread ? 1 : 0}`;
+      if (seen !== lastSeen.current) {
+        lastSeen.current = seen;
+        onChangedRef.current();
+      }
       return true;
     } catch {
       return false;
@@ -720,6 +746,33 @@ function Thread({
     const poll = startPoll({ intervalMs: 6000, immediate: true, task: load });
     return () => poll.stop();
   }, [load]);
+  // Another thread: its older pages belong to it.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset per thread
+    setEarlier([]);
+    setHasMore(false);
+  }, [fan.fanId]);
+  const loadEarlier = useCallback(async () => {
+    const oldest = earlier[0] ?? messages[0];
+    if (!oldest || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/messages/thread/${fan.fanId}?before=${encodeURIComponent(oldest.at)}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const body = (await res.json()) as { messages?: ChatMessage[]; more?: boolean };
+      setEarlier((cur) => [...(body.messages ?? []), ...cur]);
+      setHasMore(body.more === true);
+    } catch {
+      /* the button stays; the creator can try again */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [earlier, messages, loadingMore, fan.fanId]);
+  const shownMessages = useMemo(() => {
+    if (earlier.length === 0) return messages;
+    const seen = new Set(messages.map((m) => m.id));
+    return [...earlier.filter((m) => !seen.has(m.id)), ...messages];
+  }, [earlier, messages]);
 
   // Below `lg` the list is hidden once a thread opens, so the focused row is
   // gone; hand focus to the conversation heading instead of letting it drop.
@@ -806,7 +859,7 @@ function Thread({
             {fan.fanName}
           </h3>
           <p className="tnum mt-0.5 truncate text-xs text-muted">
-            {messages.length} {messages.length === 1 ? "message" : "messages"} · {timeAgo(newest)}
+            {shownMessages.length}{hasMore ? "+" : ""} {shownMessages.length === 1 ? "message" : "messages"} · {timeAgo(newest)}
           </p>
         </div>
       </div>
@@ -816,8 +869,13 @@ function Thread({
         aria-label={`Conversation with ${fan.fanName}`}
         className="flex flex-1 flex-col gap-2 overflow-y-auto p-3.5 sm:p-[18px]"
       >
-        {messages.map((m) => (
-          <div key={m.id} className={m.sender === "creator" ? "flex justify-end" : "flex justify-start"}>
+        {hasMore && (
+          <button type="button" onClick={() => void loadEarlier()} disabled={loadingMore} className="self-center rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:text-ink disabled:opacity-50" data-testid="thread-load-earlier">
+            {loadingMore ? "Loading…" : "Load earlier messages"}
+          </button>
+        )}
+        {shownMessages.map((m) => (
+          <div key={m.id} className={m.sender === "creator" ? "flex flex-col items-end" : "flex justify-start"}>
             <span
               className={
                 m.sender === "creator"
@@ -827,6 +885,10 @@ function Thread({
             >
               {m.body}
             </span>
+            {/* WG-07: a reply a team member sent for the creator says who. */}
+            {m.sender === "creator" && m.via && (
+              <span className="mt-0.5 text-[11px] text-muted" data-testid="message-via">via {m.via}</span>
+            )}
           </div>
         ))}
         {/* Optimistic outbound bubbles (pending / failed) render after the
@@ -873,7 +935,7 @@ function Thread({
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
+          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && send()}
           maxLength={2000}
           aria-label="Reply to this fan"
           placeholder="Reply…"

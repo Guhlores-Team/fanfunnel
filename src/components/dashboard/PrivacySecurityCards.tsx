@@ -11,6 +11,8 @@ import { ACCOUNT_CLEANUP_PENDING_MESSAGE, deletionResponseState } from "@/lib/pr
 import { CLOSE_ACCOUNT_PHRASE } from "@/lib/privacy/config";
 import { closeAccountErrorMessage } from "@/lib/privacy/messages";
 import { Field } from "./ui";
+import PasswordInput from "./PasswordInput";
+import CreatorMfaRecovery from "@/components/auth/CreatorMfaRecovery";
 import { sectionHref } from "./dashboardSection";
 
 /**
@@ -263,6 +265,59 @@ export function TwoFactorCard() {
 // ---------------------------------------------------------------------------
 // Download my data
 // ---------------------------------------------------------------------------
+/**
+ * WG-16: end every other session of this account and keep this one. The route
+ * asks for the two-factor step when the account is enrolled; nothing here
+ * grants access, it only removes it.
+ */
+export function OtherDevicesCard() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
+  async function signOutOthers() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/account/sessions", { method: "POST" });
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      if (res.ok) {
+        setMfaRequired(false);
+        toast("Every other device was signed out. This one stays signed in.", { tone: "success", duration: 6000 });
+        return;
+      }
+      if (d.error === "mfa_required") {
+        setMfaRequired(true);
+        return;
+      }
+      toast(
+        d.error === "demo_mode"
+          ? "Signing out other devices needs a real account (demo mode)."
+          : d.error === "rate_limited"
+            ? "Too many tries. Wait a little and try again."
+            : "Couldn't sign out the other devices. Try again.",
+        { tone: "error" }
+      );
+    } catch {
+      toast("Couldn't sign out the other devices. Check your connection and try again.", { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Card
+      id="settings-other-devices"
+      icon={P.shield}
+      title="Other devices"
+      hint="Lost a phone or used a shared computer? This ends every other session; you stay signed in here. Changing your password does the same."
+    >
+      <CreatorMfaRecovery required={mfaRequired} destination="settings" />
+      <button type="button" data-testid="sign-out-others" onClick={() => void signOutOthers()} disabled={busy} className={secondaryBtn}>
+        {busy ? "Signing out…" : "Sign out other devices"}
+      </button>
+    </Card>
+  );
+}
+
 export function DataExportCard() {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -338,6 +393,17 @@ export function CloseAccountCard() {
   const panelId = useId();
   const errId = useId();
   const ready = password.length > 0 && phrase.trim() === CLOSE_ACCOUNT_PHRASE;
+  // WG-04: an agency owner is told that closing dissolves their agency.
+  const [agency, setAgency] = useState<{ orgName: string; seats: number; creators: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    fetch("/api/agency/impact", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { impact?: { orgName: string; seats: number; creators: number } | null } | null) => { if (live) setAgency(d?.impact ?? null); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [open]);
 
   async function close() {
     setBusy(true);
@@ -393,6 +459,12 @@ export function CloseAccountCard() {
           <ul className="list-disc space-y-1 pl-5 text-[13px] text-muted">
             <li>Your wheels, prizes, fans, spins, redemptions, campaigns, messages and settings are deleted.</li>
             <li>Every fan link stops working and shows that you&rsquo;ve left FanFunnel.</li>
+            {agency && (
+              <li data-testid="close-agency-impact" className="text-[#fcd34d]">
+                You run the agency <strong className="text-ink">{agency.orgName}</strong> with {agency.seats} staff {agency.seats === 1 ? "seat" : "seats"} and {agency.creators} managed{" "}
+                {agency.creators === 1 ? "creator" : "creators"}. Closing dissolves it: every seat ends, the creators keep their own accounts, and all of them get a notice.
+              </li>
+            )}
             <li>You&rsquo;re signed out everywhere. The email can sign up again later as a new account.</li>
             <li>
               You can&rsquo;t close while fans are still owed prizes. Deliver or cancel every pending prize in{" "}
@@ -401,14 +473,7 @@ export function CloseAccountCard() {
           </ul>
           <div className="grid gap-3.5 sm:grid-cols-2">
             <Field label="Current password">
-              <input
-                type="password"
-                autoComplete="current-password"
-                className="ff-input w-full"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                aria-describedby={error ? errId : undefined}
-              />
+              <PasswordInput label="Current password" autoComplete="current-password" value={password} onChange={setPassword} describedBy={error ? errId : undefined} />
             </Field>
             <Field label={`Type ${CLOSE_ACCOUNT_PHRASE}`}>
               <input

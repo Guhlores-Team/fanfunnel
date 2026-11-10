@@ -1,7 +1,8 @@
 // Data layer — fulfilment: redemption (won prize) status and notes.
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import type { RedemptionStatus } from "./types";
-import { mockSetRedemptionStatus, mockSetRedemptionMeta, mockIsInstantRedemption } from "./mock";
+import { mockSetRedemptionStatus, mockSetRedemptionMeta, mockIsInstantRedemption,
+  mockDemoCreatorActive } from "./mock";
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { isUuid } from "./shared";
 
@@ -24,6 +25,7 @@ export async function patchRedemption(id: string, patch: RedemptionPatch, creato
   if (!isSupabaseConfigured()) {
     const refused = demoActingCreator(creatorId);
     if (refused) return refused;
+    if (!mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
     if (mockIsInstantRedemption(id) && ((patch.status !== undefined && patch.status !== "fulfilled") || patch.dueAt != null)) return { error: "already_delivered" };
     let stock: "returned" | "taken" | undefined;
     if (patch.status !== undefined) {

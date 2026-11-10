@@ -5,6 +5,7 @@ import TermsCheckbox from "@/components/TermsCheckbox";
 import { LEGAL } from "@/lib/legal";
 import { composeApplicationNote, parseApplicationNote } from "@/lib/onboarding/applicationNote";
 import PendingSelfDelete from "@/components/PendingSelfDelete";
+import { displayNameErrorMessage, displayNameInputError } from "@/lib/profileErrors";
 
 /** The stored request, as the server read it (C21). */
 export interface PendingApplication {
@@ -36,6 +37,7 @@ export default function PendingClient({
   canEmail,
   rejectionReason,
   canSelfDelete = false,
+  signupName = "",
 }: {
   status: "pending" | "rejected";
   email: string;
@@ -44,11 +46,13 @@ export default function PendingClient({
   rejectionReason?: string | null;
   /** T7: offer "Delete my request and account" (only ever true on /pending). */
   canSelfDelete?: boolean;
+  /** The display name typed at sign-up, carried into the request (b6 C9). */
+  signupName?: string;
 }) {
   const extras = parseApplicationNote(application?.note);
   const [stored, setStored] = useState<PendingApplication | null>(application ?? null);
   const [editing, setEditing] = useState(false);
-  const [displayName, setDisplayName] = useState(application?.displayName ?? "");
+  const [displayName, setDisplayName] = useState(application?.displayName ?? signupName);
   const [platform, setPlatform] = useState(extras.platform);
   const [socials, setSocials] = useState(application?.socials ?? "");
   const [audienceSize, setAudienceSize] = useState(application?.audienceSize ?? "");
@@ -59,6 +63,9 @@ export default function PendingClient({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updated, setUpdated] = useState(false);
+  // WG-11: a rejected request can be edited and sent again; once saved it is
+  // back in the queue, so the page shows the pending view.
+  const [reapplied, setReapplied] = useState(false);
 
   // Require the fields we actually vet on (the Terms only on the first submit).
   const ready =
@@ -75,6 +82,13 @@ export default function PendingClient({
           ? "Please fill in your name, main platform, links, and audience size."
           : "Please fill in the required fields and agree to the Terms of Service and Privacy Policy."
       );
+      return;
+    }
+    // The name becomes the public display name on approval: say now what the
+    // database would refuse then (e-mail-shaped, reserved for staff, links).
+    const nameError = displayNameInputError(displayName.trim());
+    if (nameError) {
+      setError(displayNameErrorMessage(nameError));
       return;
     }
     setBusy(true);
@@ -106,6 +120,7 @@ export default function PendingClient({
       });
       setUpdated(editing);
       setEditing(false);
+      if (status === "rejected") setReapplied(true);
     } catch {
       setError(editing ? "Couldn't save your changes. Try again." : "Couldn't submit. Try again.");
     } finally {
@@ -113,7 +128,7 @@ export default function PendingClient({
     }
   };
 
-  if (status === "rejected") {
+  if (status === "rejected" && !editing && !reapplied) {
     return (
       <div className="card rounded-2xl p-7 text-center">
         <div className="text-4xl">🚫</div>
@@ -134,6 +149,23 @@ export default function PendingClient({
             {LEGAL.contactEmail}
           </a>
           .
+        </p>
+        {stored && (
+          <button
+            type="button"
+            data-testid="pending-reapply"
+            onClick={() => {
+              setEditing(true);
+              setUpdated(false);
+              setError(null);
+            }}
+            className="btn-brand mt-5 w-full rounded-2xl py-3 text-sm font-bold"
+          >
+            Edit my request and re-apply
+          </button>
+        )}
+        <p className="mt-2 text-xs text-muted text-pretty">
+          Fix what was missing or unclear and send it again; it goes back into the review queue.
         </p>
         <form action="/auth/signout" method="post" className="mt-6">
           <button className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-muted transition hover:text-ink">
@@ -222,8 +254,10 @@ export default function PendingClient({
         </h1>
         <p className="mt-2 text-sm text-muted text-pretty">
           {editing
-            ? "Change anything below and save. Your place in the queue stays the same."
-            : "FanFunnel creator accounts are approved by hand, and they’re free during the pilot. Tell us about you and we’ll review it shortly."}
+            ? status === "rejected"
+              ? "Fix what was missing and send it again. It goes back into the review queue."
+              : "Change anything below and save. Your place in the queue stays the same."
+            : "Step 3 of 3: your login is confirmed. FanFunnel creator accounts are approved by hand, and they’re free during the pilot. Tell us about you and we’ll review it shortly."}
         </p>
         <p data-testid="pending-seat-note" className="mt-2 text-xs text-muted text-pretty">
           Joining an agency as staff (chatter, fulfiller, manager)? Request access here

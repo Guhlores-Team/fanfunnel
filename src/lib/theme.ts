@@ -113,6 +113,23 @@ export function brandText(color: string, min = 4.5, surface: string = APP_BASE):
   return "#ffffff";
 }
 
+/** PA-01: the least contrast a brand color needs against the dark page (WCAG 1.4.11, UI parts and focus rings). */
+export const MIN_BRAND_UI_CONTRAST = 3;
+
+/**
+ * PA-01: whether a brand color can be seen on the dark app base. The SPIN
+ * button fill, input focus borders and every keyboard focus ring use the
+ * brand color, so one under 3:1 (black, near-black) is refused when a creator
+ * saves it. Anything that is not a hex color is not ok. One rule, shared with
+ * the fan page's own lift (`brandUi`): see `checkBrandColor`.
+ */
+export function brandColorContrastOk(hex: string | null | undefined): boolean {
+  return checkBrandColor(hex).ok;
+}
+
+/** Creator-facing copy for a refused brand color. */
+export const BRAND_TOO_DARK_MESSAGE = "That color is too dark to see on the fan page (its button and focus outlines would vanish). Pick a lighter one.";
+
 /**
  * CSS custom properties to spread into a `style={}` so brand text stays readable.
  * Use everywhere we currently write `style={{ "--brand": color }}`.
@@ -132,7 +149,7 @@ export function brandVars(color: string | null | undefined, surface?: string): C
 }
 
 /** WCAG 1.4.11: non-text UI (focus rings, borders, button fills) needs 3:1 against its surface. */
-export const UI_CONTRAST_MIN = 3;
+export const UI_CONTRAST_MIN = MIN_BRAND_UI_CONTRAST;
 
 /**
  * PA-01: the brand colour as it may be used for NON-TEXT UI on the page
@@ -147,16 +164,18 @@ export function brandUi(color: string, surface: string = APP_BASE): string {
 }
 
 /**
- * For the brand-colour API: whether a colour can be painted as UI on the
- * page as is. `uiColor` is what the fan page will actually paint when it
- * cannot (the colour pushed to 3:1), so the creator can be told honestly.
+ * The one brand-colour rule: whether a colour can be painted as UI on the
+ * page as is (`brandColorContrastOk` is its yes/no). `uiColor` is what the
+ * fan page paints when it cannot (the colour pushed to 3:1, for a colour
+ * saved before the rule existed), so the creator can be told honestly.
  */
-export function checkBrandColor(color: string, surface: string = APP_BASE): { ok: boolean; ratio: number; uiColor: string; reason: string | null } {
+export function checkBrandColor(color: string | null | undefined, surface: string = APP_BASE): { ok: boolean; ratio: number; uiColor: string; reason: string | null } {
   const rgb = parseHex(color);
   if (!rgb) return { ok: false, ratio: 0, uiColor: DEFAULT_BRAND, reason: "not a hex colour" };
   const base = parseHex(surface) ?? parseHex(APP_BASE)!;
-  const ratio = Math.round(contrastRatio(rgb, base) * 100) / 100;
+  const exact = contrastRatio(rgb, base);
+  const ratio = Math.round(exact * 100) / 100;
   const uiColor = brandUi(toHex(rgb), surface);
-  const ok = ratio >= UI_CONTRAST_MIN;
-  return { ok, ratio, uiColor, reason: ok ? null : `too dark on the dark theme (${ratio}:1; buttons and focus rings need ${UI_CONTRAST_MIN}:1), fans will see ${uiColor}` };
+  const ok = exact >= MIN_BRAND_UI_CONTRAST;
+  return { ok, ratio, uiColor, reason: ok ? null : `too dark on the dark theme (${ratio}:1; buttons and focus rings need ${MIN_BRAND_UI_CONTRAST}:1), fans will see ${uiColor}` };
 }

@@ -49,6 +49,8 @@ type QueueRow = {
   prize_label: string;
   prize_rarity: RedemptionItem["rarity"];
   fan_name: string;
+  /** 0073 (DB-10): the fan the prize belongs to; null when the win has no fan. */
+  fan_id?: string | null;
   pool_snapshot: unknown;
   fair_trace: unknown;
   reward_kind: string | null;
@@ -61,6 +63,7 @@ function toItem(r: QueueRow): RedemptionItem {
   return {
     id: r.id,
     fanName: r.fan_name || "Fan",
+    ...(typeof r.fan_id === "string" ? { fanId: r.fan_id } : {}),
     prizeLabel: r.prize_label ?? "Prize",
     rarity: r.prize_rarity ?? "common",
     status: r.status,
@@ -85,6 +88,8 @@ export async function listRedemptionQueue(opts: {
   limit?: number;
   /** A19: another creator's queue, for a seat with can_act_for 'fulfil'. */
   creatorId?: unknown;
+  /** 0073 (DB-10): only this fan's prizes. */
+  fanId?: string | null;
 }): Promise<QueuePage | { error: "unauthorized" | "bad_request" | "forbidden" | "db_error" }> {
   const limit = Math.min(Math.max(1, opts.limit ?? QUEUE_PAGE_SIZE), 100);
   const before = opts.before ? decodeQueueCursor(opts.before) : null;
@@ -96,9 +101,10 @@ export async function listRedemptionQueue(opts: {
   if (!isSupabaseConfigured()) {
     const refused = demoActingCreator(opts.creatorId);
     if (refused) return refused;
-    rows = mockListRedemptionQueue({ status: opts.status, query, before, limit: limit + 1 });
+    rows = mockListRedemptionQueue({ status: opts.status, query, before, limit: limit + 1, fanId: opts.fanId ?? undefined });
   } else {
     if (before && !isUuid(before.id)) return { error: "bad_request" };
+    if (opts.fanId && !isUuid(opts.fanId)) return { error: "bad_request" };
     const sb = await createClient();
     const {
       data: { user },
@@ -113,6 +119,7 @@ export async function listRedemptionQueue(opts: {
       p_before_id: before?.id,
       p_limit: limit + 1,
       ...(acting.creatorId !== user.id ? { p_creator: acting.creatorId } : {}),
+      ...(opts.fanId ? { p_fan: opts.fanId } : {}),
     });
     if (error) return { error: "db_error" };
     rows = ((data ?? []) as unknown as QueueRow[]).map(toItem);

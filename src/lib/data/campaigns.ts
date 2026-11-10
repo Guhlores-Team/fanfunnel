@@ -19,10 +19,16 @@ import {
   mockDeleteCampaign,
   mockGetUncategorizedStats,
   mockListWheels,
+  mockDemoCreatorActive,
 } from "./mock";
 import { campaignPinError, creatorOwnsCampaign, isUuid } from "./shared";
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { wheelSummariesFor } from "./wheels";
+
+/** A literal for PostgREST `ilike`: its wildcards and escape are escaped. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
 
 // ---------------------------------------------------------------------------
 // Campaigns: named groupings of links a creator can compare against each other.
@@ -62,11 +68,14 @@ export async function createCampaign(
   pinnedWheelId?: string | null,
   creatorId?: unknown
 ): Promise<{ campaign: Campaign } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     const refused = demoActingCreator(creatorId);
     if (refused) return refused;
     const pinError = mockCampaignPinError(pinnedWheelId);
-    return pinError ? { error: pinError } : { campaign: mockCreateCampaign(name, pinnedWheelId) };
+    if (pinError) return { error: pinError };
+    if (mockListCampaigns().some((c) => c.name.toLowerCase() === name.toLowerCase())) return { error: "name_taken" };
+    return { campaign: mockCreateCampaign(name, pinnedWheelId) };
   }
 
   const acting = await campaignActingSession(creatorId);
@@ -78,6 +87,17 @@ export async function createCampaign(
   // setCampaignPinnedWheel and the PATCH route).
   const pinError = await campaignPinError(sb, acting.creatorId, pinnedWheelId);
   if (pinError) return { error: pinError };
+
+  // RD-13: the Fans tab filters by campaign name, so two campaigns with the
+  // same name (any case) would merge there; refuse the second.
+  const { data: clash, error: clashError } = await sb
+    .from("campaigns")
+    .select("id")
+    .eq("creator_id", acting.creatorId)
+    .ilike("name", escapeLike(name))
+    .limit(1);
+  if (clashError) return { error: "db_error" };
+  if (clash && clash.length > 0) return { error: "name_taken" };
 
   const { data, error } = await sb
     .from("campaigns")
@@ -391,6 +411,16 @@ export async function renameCampaign(
 
   const acting = await campaignActingSession(creatorId);
   if ("error" in acting) return acting;
+  // RD-13: same uniqueness rule as createCampaign (another campaign, same name).
+  const { data: clash, error: clashError } = await acting.sb
+    .from("campaigns")
+    .select("id")
+    .eq("creator_id", acting.creatorId)
+    .ilike("name", escapeLike(trimmed))
+    .neq("id", campaignId)
+    .limit(1);
+  if (clashError) return { error: "db_error" };
+  if (clash && clash.length > 0) return { error: "name_taken" };
   const { data: updated, error } = await acting.sb
     .from("campaigns")
     .update({ name: trimmed })

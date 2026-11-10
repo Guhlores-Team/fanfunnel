@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
-import { loadJson } from "@/lib/hooks/loadJson";
+import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
-import { shareOrCopy } from "./shareLink";
+import { shareOrCopy, webShareAvailable } from "./shareLink";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { CampaignPack, DmTemplate, FanAccountSummary, WheelSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
@@ -13,7 +13,7 @@ import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { useOrigin } from "@/lib/hooks/useOrigin";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { CloseButton, Field, initialsOf } from "./ui";
-import { copyLinkToken, fanRowMeta, noLinkMessage, threadFanIds } from "./fansHelpers";
+import { copyLinkToken, fanRowMeta, noLinkMessage, sortFans, threadFanIds, type FanSort } from "./fansHelpers";
 import { fanFromSearch, fanHref, sectionHref } from "./dashboardSection";
 import { TEMPLATE_TOKENS } from "@/lib/winback/template";
 import FanDetailDrawer from "@/components/dashboard/FanDetailDrawer";
@@ -23,6 +23,7 @@ import { prefersReducedMotion } from "@/lib/sound";
 import { isRegular } from "@/lib/glow/glow";
 import { REGULAR_MIN_VISITS } from "@/lib/glow/config";
 import { creatorIntent, creatorIntentComplete, creatorIntentReceipt } from "./creatorIntent";
+import { GrantRefusedError, grantRefusalMessage, isDefinitiveRefusal, parseSpinCount } from "./grantErrors";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import { GameName } from "./GameChoice";
@@ -31,6 +32,16 @@ import { linkGame, mintPlaysReason } from "./gameAssignment";
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 // Reserve the button's footprint while the code splits in, so the minted card
 // above the list keeps its height and the fresh row's scroll stays put.
+/** One server page of fans (PA-03). */
+interface FanListPage { fans?: FanAccountSummary[]; nextCursor?: string | null; total?: number | null; approximate?: boolean }
+const FAN_PAGE = 50;
+function fansPath(q: string, cursor: string | null, limit: number): string {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (cursor) params.set("cursor", cursor);
+  params.set("limit", String(limit));
+  return `/api/fans?${params.toString()}`;
+}
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), {
   ssr: false,
   loading: () => <span aria-hidden="true" className="inline-flex min-h-9 min-w-[4.5rem] rounded-[9px] border border-transparent" />,
@@ -65,15 +76,26 @@ export default function FansPanel({
 }) {
   const [accounts, setAccounts] = useState<FanAccountSummary[] | null>(null);
   const [accountsError, setAccountsError] = useState<unknown>(null);
+  // PA-03: the list is one server page at a time (newest first), searched on
+  // the server; "Load more" appends the next page.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [fanTotal, setFanTotal] = useState<number | null>(null);
+  const [approximate, setApproximate] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // PR-11: sort and the "needs a top-up" view apply to the fans loaded so far.
+  const [sortBy, setSortBy] = useState<FanSort>("newest");
+  const [needsTopUp, setNeedsTopUp] = useState(false);
   // C12: the link just minted, shown as a card with Copy / Share / QR.
   const [minted, setMinted] = useState<{ fanId: string; name: string; url: string } | null>(null);
   const mintedRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState("");
-  const [spins, setSpins] = useState(3);
+  // Held as text so the field can be cleared; parsed (integer ≥ 1) on submit.
+  const [spins, setSpins] = useState("3");
   // Price the creator types is PER SPIN; it's its own state so typing isn't
   // fought by a derived value. The total is computed from perSpin × spins.
   const [perSpin, setPerSpin] = useState<string>("");
-  const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
+  const spinCount = parseSpinCount(spins) ?? 0;
+  const amount = perSpin && spinCount > 0 ? (Number(perSpin) * spinCount).toFixed(2) : "";
   const [campaignId, setCampaignId] = useState<string>("");
   // Until the creator picks a campaign themselves, new links default to the
   // newest ACTIVE campaign rather than silently landing in "untracked".
@@ -125,7 +147,15 @@ export default function FansPanel({
       ignorePop.current = true;
       window.history.back();
     } else if (fanFromSearch(window.location.search)) {
-      window.history.replaceState({}, "", sectionHref("fans", window.location.pathname));
+      const state = window.history.state as { ffFrom?: unknown } | null;
+      if (typeof state?.ffFrom === "string" && state.ffFrom !== "fans") {
+        // WC-05: opened from another section (the Fulfilment queue): go back
+        // to it. The dashboard's popstate handler switches the section.
+        ignorePop.current = true;
+        window.history.back();
+      } else {
+        window.history.replaceState({}, "", sectionHref("fans", window.location.pathname));
+      }
     }
   }, []);
   useEffect(() => {
@@ -170,10 +200,19 @@ export default function FansPanel({
 
   // A failed load is an error state, never "No fans yet" (C2). Resolves false
   // on failure so a caller can say the list did not refresh.
+  const searchRef = useRef(initialSearch);
+  const loadedRef = useRef(0);
   const load = useCallback(async (): Promise<boolean> => {
     try {
-      const d = await loadJson<{ fans?: FanAccountSummary[] }>("/api/fans");
+      // A refresh after a change re-reads as many rows as were on screen
+      // (one page at least, the server's cap at most) so "Load more" holds.
+      const limit = Math.min(200, Math.max(FAN_PAGE, loadedRef.current));
+      const d = await loadJson<FanListPage>(fansPath(searchRef.current, null, limit));
       setAccounts(d.fans ?? []);
+      setNextCursor(d.nextCursor ?? null);
+      setFanTotal(typeof d.total === "number" ? d.total : null);
+      setApproximate(d.approximate === true);
+      loadedRef.current = d.fans?.length ?? 0;
       setAccountsError(null);
       return true;
     } catch (e) {
@@ -181,6 +220,34 @@ export default function FansPanel({
       return false;
     }
   }, []);
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const d = await loadJson<FanListPage>(fansPath(searchRef.current, nextCursor, FAN_PAGE));
+      setAccounts((cur) => {
+        const seen = new Set((cur ?? []).map((a) => a.fanId));
+        const next = [...(cur ?? []), ...(d.fans ?? []).filter((a) => !seen.has(a.fanId))];
+        loadedRef.current = next.length;
+        return next;
+      });
+      setNextCursor(d.nextCursor ?? null);
+      if (d.approximate) setApproximate(true);
+    } catch (e) {
+      toast(e instanceof LoadError && e.kind === "rate" ? "Slow down a moment, then try \"Load more\" again." : "Couldn't load more fans. Try again.", { tone: "error" });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore, toast]);
+  // The search box asks the server after a short pause; a change mid-flight
+  // is answered by the newest request only (load() reads the ref).
+  useEffect(() => {
+    if (searchRef.current === search.trim()) return;
+    searchRef.current = search.trim();
+    loadedRef.current = 0;
+    const id = setTimeout(() => { void load(); }, 300);
+    return () => clearTimeout(id);
+  }, [search, load]);
   const loadCampaigns = useCallback(async () => {
     const res = await fetch("/api/campaigns", { cache: "no-store" });
     if (!res.ok) return;
@@ -219,12 +286,8 @@ export default function FansPanel({
     setThreadIds(threadFanIds(d.threads ?? []));
   }, []);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load();
-    loadCampaigns();
-    loadTemplates();
-    loadWheels();
-    loadThreads();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state changes only after the responses arrive
+    void Promise.all([load(), loadCampaigns(), loadTemplates(), loadWheels(), loadThreads()]);
   }, [load, loadCampaigns, loadTemplates, loadWheels, loadThreads]);
   // Re-check whenever a drawer opens: a fan may have written since, and an old
   // conversation can sit beyond the Inbox's first page (A13), so ask per fan.
@@ -274,24 +337,31 @@ export default function FansPanel({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, requestId }),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      toast(
-        data.error === "no_wheel"
-          ? "Create and save a wheel first, then generate fan links."
-          : "We couldn't confirm the spins were added. Keep these details and try the same request again.",
-        { tone: "error" }
-      );
+    let data: { error?: unknown; token?: string; fanId?: string; requestId?: string } = {};
+    let parsed = true;
+    try { data = await res.json(); } catch { parsed = false; }
+    if (!res.ok && isDefinitiveRefusal(res.status)) {
+      // RD-05: a refusal is final. Release the receipt and say why, instead of
+      // "couldn't confirm" and a locked form.
+      const code = typeof data.error === "string" ? data.error : "refused";
+      creatorIntentComplete(scope, requestId);
+      const message = grantRefusalMessage(code);
+      toast(message, { tone: "error" });
+      throw new GrantRefusedError(code, message);
+    }
+    if (!res.ok || !parsed) {
+      toast("We couldn't confirm the spins were added. Keep these details and try the same request again.", { tone: "error" });
       throw new Error("grant_unconfirmed");
     }
-    if (!res.ok || !data.token || data.requestId !== requestId) throw new Error("grant_unconfirmed");
+    if (!data.token || data.requestId !== requestId) throw new Error("grant_unconfirmed");
     committed = true;
     // The receipt's pin is the first submission's: a retry after a reload may
     // come from a form that now lists the new link as an existing one.
     const receiptPin = creatorIntentReceipt(scope)?.pin ?? null;
     creatorIntentComplete(scope, requestId);
     return { ...(data as { token: string; fanId: string }), pinWheelId: receiptPin };
-    } catch {
+    } catch (error) {
+      if (error instanceof GrantRefusedError) throw error;
       toast(committed ? "The spins were added, but this browser couldn't finish tidying up. Try the same details again to check it safely." : "We couldn't confirm the spins were added. Keep these details and try the same request again to check.", { tone: "error" });
       throw new Error("grant_unconfirmed");
     }
@@ -299,28 +369,48 @@ export default function FansPanel({
 
   async function createAccount() {
     if (creatingRef.current) return;
+    // WC-01 / RD-05: refuse an empty handle and a non-integer spin count here,
+    // before any request or receipt exists.
+    const fanName = name.trim();
+    if (!fanName && !newFanUncertain) {
+      toast(grantRefusalMessage("name_required"), { tone: "error" });
+      nameRef.current?.focus();
+      return;
+    }
+    const spinCount = parseSpinCount(spins);
+    if (spinCount === null) {
+      toast("Spins must be a whole number from 1 to 1,000,000.", { tone: "error" });
+      return;
+    }
     creatingRef.current = true;
     setCreating(true);
     try {
       const amountDollars = amount ? Number(amount) : undefined;
       const data = await call({
-        name: name.trim(),
-        spins,
+        name: fanName,
+        spins: spinCount,
         campaignId: campaignId || undefined,
         amountDollars: amountDollars || undefined,
         ...(packId ? { packId, packUnits } : {}),
       });
       setNewFanUncertain(false);
       if (data) {
-        const fanName = name.trim();
         setName("");
         setPerSpin("");
         setPackId(null);
         setMinted({ fanId: data.fanId, name: fanName, url: `${origin}/spin/${data.token}` });
-        toast(`Link ready for ${fanName}. Copy it or share it below.`, { tone: "success" });
+        toast(`Link ready for ${fanName}. Copy it or share it from the link card.`, { tone: "success", key: "mint" });
+        // WC-02: on a phone the list grows under the form; bring the card with
+        // Copy / Share / QR into view and put focus on it.
+        requestAnimationFrame(() => {
+          mintedRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+          mintedRef.current?.focus({ preventScroll: true });
+        });
         if (!(await load())) toast("The link was created. Refresh the fan list to see it.", { tone: "error" });
       }
-    } catch { setNewFanUncertain(true);
+    } catch (error) {
+      // A refusal (4xx) releases the form; only an unknown outcome locks it.
+      setNewFanUncertain(!(error instanceof GrantRefusedError));
     } finally {
       creatingRef.current = false;
       setCreating(false);
@@ -367,15 +457,16 @@ export default function FansPanel({
 
   // Client-side filtering over the loaded accounts. NOTE: once accounts
   // paginate, this must move server-side so search/filter cover all fans.
-  const filtered = (accounts ?? []).filter((a) => {
-    const q = search.trim().toLowerCase();
-    const matchesSearch = !q || a.name.toLowerCase().includes(q);
+  // The search itself is answered by the server (name, handle, tags).
+  const filtered = sortFans((accounts ?? []).filter((a) => {
     const matchesCampaign =
       !campaignFilter || a.campaignNames.includes(campaignFilter);
     const matchesTag = !tagFilter || a.tags.includes(tagFilter);
     const matchesVisits = !regularsOnly || isRegular(a.visits7 ?? 0);
-    return matchesSearch && matchesCampaign && matchesTag && matchesVisits;
-  });
+    const matchesTopUp = !needsTopUp || (a.spinsRemaining === 0 && a.totalSpent > 0 && !a.blocked && !a.selfExcluded);
+    return matchesCampaign && matchesTag && matchesVisits && matchesTopUp;
+  }), sortBy);
+  const filtersOn = !!campaignFilter || !!tagFilter || regularsOnly || needsTopUp;
   const openAccount = accounts?.find((a) => a.fanId === openFanId) ?? null;
   const existingFanNames = useMemo(() => (accounts ?? []).map((a) => a.name), [accounts]);
   const mintPlays = useMemo(() => linkGame({ wheelId: "", campaignId: campaignId || null }, campaigns, wheels, now), [campaignId, campaigns, wheels, now]);
@@ -385,10 +476,10 @@ export default function FansPanel({
       {/* Mint form — the name input must stay the FIRST `input.ff-input` on
           this view (e2e selector) and keeps the top-bar focus target. */}
       <section aria-labelledby="mint-fan-link" className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
-        <h3 id="mint-fan-link" className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
+        <h2 id="mint-fan-link" className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
           <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
           Mint a fan link
-        </h3>
+        </h2>
         <p className="mt-1 text-[13px] text-muted text-pretty">
           You create the account; the fan never signs up. Balance and win history
           live on the account, so you can mint fresh links anytime.
@@ -409,10 +500,12 @@ export default function FansPanel({
             <input
               type="number"
               min={1}
+              step={1}
+              inputMode="numeric"
               className="ff-input tnum w-full"
               value={spins}
               onChange={(e) => {
-                setSpins(Math.max(1, Number(e.target.value)));
+                setSpins(e.target.value);
                 setPackId(null);
               }}
             />
@@ -458,7 +551,7 @@ export default function FansPanel({
             disabled={creating}
             className="btn-brand mt-3 min-h-10 rounded-[10px] px-[18px] text-sm font-bold"
           >
-            {creating ? "Checking…" : newFanUncertain ? "Check this link again" : "Create"}
+            {creating ? (newFanUncertain ? "Checking…" : "Creating…") : newFanUncertain ? "Check this link again" : "Create"}
           </button>
         {minted && (
           <MintedLinkCard
@@ -476,15 +569,15 @@ export default function FansPanel({
               {mintPlaysReason(mintPlays)}
             </span>
             {onOpenCampaigns && (
-              <button type="button" onClick={onOpenCampaigns} className="font-semibold text-ink underline underline-offset-2">
+              <button type="button" onClick={onOpenCampaigns} className="inline-flex items-center font-semibold text-ink underline underline-offset-2 max-sm:min-h-11">
                 Change game via a campaign
               </button>
             )}
           </p>
         )}
-        {amount && Number(amount) > 0 && spins > 0 && (
+        {amount && Number(amount) > 0 && spinCount > 0 && (
           <p className="tnum mt-2 text-[11.5px] text-muted">
-            {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
+            {formatCents(Math.round((Number(amount) * 100) / spinCount))}/spin ·{" "}
             {formatCents(Math.round(Number(amount) * 100))} total
           </p>
         )}
@@ -494,7 +587,7 @@ export default function FansPanel({
             <PackPresets
               campaignId={campaignId}
               onPick={(p: CampaignPack, units: number) => {
-                setSpins(p.spins);
+                setSpins(String(p.spins));
                 setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
                 setPackId(p.id);
                 setPackUnits(units);
@@ -516,10 +609,36 @@ export default function FansPanel({
             <Field label="Search">
               <input
                 className="ff-input w-full sm:w-[190px]"
-                placeholder="Name or handle"
+                placeholder="Name, handle or tag"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                data-testid="fans-search"
               />
+            </Field>
+            <Field label="Sort">
+              <select
+                className="ff-input w-full sm:w-44"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as FanSort)}
+                data-testid="fans-sort"
+              >
+                <option value="newest">Newest first</option>
+                <option value="spent">Most tips recorded</option>
+                <option value="lastActive">Last active</option>
+                <option value="spinsLeft">Most spins left</option>
+                <option value="fewestSpins">Fewest spins left</option>
+              </select>
+            </Field>
+            <Field label="Show">
+              <select
+                className="ff-input w-full sm:w-44"
+                value={needsTopUp ? "topup" : ""}
+                onChange={(e) => setNeedsTopUp(e.target.value === "topup")}
+                data-testid="fans-show"
+              >
+                <option value="">All fans</option>
+                <option value="topup">Needs a top-up (0 spins, has tipped)</option>
+              </select>
             </Field>
             <Field label="Campaign">
               <select
@@ -575,6 +694,10 @@ export default function FansPanel({
           <button type="button" onClick={() => setManagingMessages(true)} className={ghostBtn}>
             Manage messages
           </button>
+          {/* PR-07: every fan as a spreadsheet (server-side, formula-safe). */}
+          <a href="/api/fans/export" download className={ghostBtn} data-testid="fans-export">
+            Export CSV
+          </a>
         </div>
       </div>
 
@@ -607,8 +730,11 @@ export default function FansPanel({
       {accounts && accounts.length > 0 && filtered.length === 0 && (
         <FansEmpty
           title="No fans match"
-          body="Nothing matches your search or filters. Clear them, or mint a fresh link above."
+          body={nextCursor && filtersOn ? "None of the fans loaded so far match these filters. Load more fans below, or clear the filters." : "Nothing matches your search or filters. Clear them, or mint a fresh link above."}
         />
+      )}
+      {accounts?.length === 0 && search.trim() !== "" && (
+        <p className="sr-only" role="status">No fans match your search.</p>
       )}
       {filtered.length > 0 && (
         <ul className="flex flex-col gap-2">
@@ -622,6 +748,23 @@ export default function FansPanel({
             />
           ))}
         </ul>
+      )}
+      {accounts && accounts.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3" data-testid="fans-paging">
+          <p className="tnum text-[12.5px] text-muted">
+            {fanTotal !== null && search.trim() === ""
+              ? `Showing ${accounts.length} of ${fanTotal} fan${fanTotal === 1 ? "" : "s"}`
+              : `Showing ${accounts.length} match${accounts.length === 1 ? "" : "es"}`}
+            {filtersOn && filtered.length !== accounts.length ? ` · ${filtered.length} after filters` : ""}
+            {(sortBy !== "newest" || filtersOn) && nextCursor ? " · sorting and filters apply to the fans loaded so far" : ""}
+            {approximate ? " · some totals are approximate until the database upgrade" : ""}
+          </p>
+          {nextCursor && (
+            <button type="button" onClick={() => void loadMore()} disabled={loadingMore} className={ghostBtn} data-testid="fans-load-more" aria-busy={loadingMore}>
+              {loadingMore ? "Loading…" : "Load more fans"}
+            </button>
+          )}
+        </div>
       )}
 
       <FanDetailDrawer
@@ -660,6 +803,8 @@ export default function FansPanel({
   );
 }
 
+const noSubscribe = () => () => {};
+
 /** C12/C13: the link just minted, with Copy, Share and QR. A /spin link holds
  *  one fan's paid balance, so it is said plainly that it is for that fan only. */
 const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
@@ -669,6 +814,8 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
   ref?: React.Ref<HTMLDivElement>;
 }) {
   const toast = useToast();
+  // No share sheet in this browser: Share would only copy, which Copy already does.
+  const canShare = useSyncExternalStore(noSubscribe, webShareAvailable, () => false);
   const copy = async () => {
     if (await copyToClipboard(url)) toast("Link copied", { tone: "success" });
     else toast("Couldn't copy the link. Select it and copy it by hand.", { tone: "error" });
@@ -679,7 +826,7 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
     else if (outcome === "failed") toast("Couldn't share or copy the link. Select it and copy it by hand.", { tone: "error" });
   };
   return (
-    <div ref={ref} data-testid="minted-link" role="status" className="mt-3 rounded-xl border border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] p-3.5 [background:color-mix(in_oklab,var(--brand)_7%,transparent)]">
+    <div ref={ref} data-testid="minted-link" role="status" tabIndex={-1} className="mt-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] border border-[color-mix(in_oklab,var(--brand)_45%,var(--hair))] p-3.5 [background:color-mix(in_oklab,var(--brand)_7%,transparent)]">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[13.5px] font-bold text-ink">Link ready for {name}</p>
@@ -698,7 +845,7 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
       />
       <div className="mt-2.5 flex flex-wrap gap-2">
         <button type="button" onClick={copy} className={ghostBtn}>Copy</button>
-        <button type="button" onClick={share} className={ghostBtn}>Share</button>
+        {canShare && <button type="button" onClick={share} className={ghostBtn}>Share</button>}
         <QrButton url={url} label={`${name} spin link`} className={ghostBtn} />
       </div>
     </div>
@@ -781,7 +928,7 @@ function FanRow({
             <>
               {" "}
               · last won{" "}
-              <span style={{ color: RARITY_COLORS[account.lastWin.rarity] }}>
+              <span style={{ color: `color-mix(in oklab, ${RARITY_COLORS[account.lastWin.rarity]} 62%, white)` }}>
                 {account.lastWin.label}
               </span>
             </>
@@ -798,7 +945,7 @@ function FanRow({
           {account.tags.slice(0, 3).map((t) => (
             <span
               key={t}
-              className="rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] px-2.5 py-[3px] text-[11.5px] font-semibold text-brand"
+              className="rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] px-2.5 py-[3px] text-[11.5px] font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
             >
               {t}
             </span>

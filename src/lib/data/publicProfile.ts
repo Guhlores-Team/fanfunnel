@@ -10,15 +10,24 @@ import type { GameKind } from "@/lib/games/core/gameProof";
 import { publicGameKind } from "@/lib/games/publicCopy";
 import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
-import { mockGetPublicWheelTeaser } from "./mock";
+import { mockGetPublicWheelTeaser,
+  mockDemoCreatorActive,
+} from "./mock";
 import { WHEEL_SELECT, toWheelConfig } from "./shared";
 import { getCreatorThemeView, type CreatorThemeView } from "./creatorTheme";
 import type { DbWheelRow } from "./shared";
 import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
-import { mockGetPublicProfileFields, mockSetPublicProfileFields } from "./mockPublicProfile";
+import { mockGetDeliveryDays, mockGetPublicProfileFields, mockSetDeliveryDays, mockSetPublicProfileFields } from "./mockPublicProfile";
 import { readPublicCreator } from "./publicCreatorRow";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 import { publicProfileRpcError } from "@/lib/profileErrors";
+import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
+import { normalizePublicSlug } from "./publicSlug";
+
+export { normalizePublicSlug };
+
+/** PR-10: the longest delivery promise a creator can make, in days. */
+export { MAX_DELIVERY_DAYS };
 
 // --- Public teaser ----------------------------------------------------------
 
@@ -177,8 +186,10 @@ export async function getMyPublicProfile(): Promise<{
   tagline: string | null;
   note: string | null;
   avatarUrl: string | null;
+  /** PR-10: "I usually deliver within N days"; absent when the database has no such column yet. */
+  deliveryDays?: number | null;
 }> {
-  if (!isSupabaseConfigured()) return mockGetPublicProfileFields();
+  if (!isSupabaseConfigured()) return { ...mockGetPublicProfileFields(), deliveryDays: mockGetDeliveryDays() };
   const sb = await createClient();
   const {
     data: { user },
@@ -196,7 +207,12 @@ export async function getMyPublicProfile(): Promise<{
     creator_note: string | null;
     avatar_url: string | null;
   } | null;
+  // PR-10: read on its own so a database without the column (pre-0073) still
+  // answers the rest; the field is then absent and the setting hidden.
+  const delivery = await sb.from("profiles").select("delivery_days").eq("id", user.id).maybeSingle();
+  const deliveryDays = delivery.error ? undefined : ((delivery.data as { delivery_days?: number | null } | null)?.delivery_days ?? null);
   return {
+    ...(deliveryDays !== undefined ? { deliveryDays } : {}),
     slug: row?.public_slug ?? null,
     tipUrl: row?.tip_url ?? null,
     tagline: row?.public_tagline ?? null,
@@ -227,10 +243,6 @@ function isOurAvatarUrl(value: string): boolean {
 }
 
 /** Creator updates their SFW link-in-bio fields + fan-page personal note. */
-/** The stored form of a public slug (the `/c/<slug>` path segment). */
-export function normalizePublicSlug(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
 
 export async function setMyPublicProfile(input: {
   slug?: string;
@@ -238,7 +250,10 @@ export async function setMyPublicProfile(input: {
   tagline?: string;
   note?: string;
   avatarUrl?: string;
+  /** PR-10: 1..MAX_DELIVERY_DAYS, or null to make no promise. */
+  deliveryDays?: number | null;
 }): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     // A36: keep what was saved, with the same normalization and avatar rule
     // as the database path, so the demo never pretends to save.
@@ -258,6 +273,7 @@ export async function setMyPublicProfile(input: {
       note: input.note,
       avatarUrl: input.avatarUrl,
     });
+    if (input.deliveryDays !== undefined) mockSetDeliveryDays(input.deliveryDays);
     return { ok: true };
   }
   const sb = await createClient();
@@ -304,7 +320,24 @@ export async function setMyPublicProfile(input: {
       p_note: input.note !== undefined ? input.note : null,
       p_avatar: avatar,
     });
-    if (noteError) return { error: "db_error" };
+    // 0073: set_creator_note refuses an over-long note or control characters,
+    // and an avatar that is not one of our own public avatar URLs.
+    if (noteError) return { error: noteError.code !== "22023" ? "db_error" : /avatar/i.test(noteError.message ?? "") ? "invalid_avatar_url" : "invalid_note" };
+  }
+  if (input.deliveryDays !== undefined) {
+    // PR-10: the profiles UPDATE policy is admin-only (AGENTS.md rule 6) and
+    // no new signed-in SECURITY DEFINER setter can be added (0072 closing
+    // check), so this one column is written on the server: the session must
+    // be an active creator acting for itself (can_act_for 'manage'), the row
+    // is its own id, and the value was validated by the route (1..60 or
+    // null). Until profiles.delivery_days exists the answer is not_supported
+    // and the Settings field stays hidden.
+    const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: user.id, perm: "manage" });
+    if (permissionError || allowed !== true) return { error: "forbidden" };
+    const days = input.deliveryDays;
+    if (days !== null && (!Number.isInteger(days) || days < 1 || days > MAX_DELIVERY_DAYS)) return { error: "invalid_delivery_days" };
+    const { error: dErr } = await createServiceClient().from("profiles").update({ delivery_days: days } as never).eq("id", user.id);
+    if (dErr) return { error: dErr.code === "PGRST204" || dErr.code === "42703" ? "not_supported" : "db_error" };
   }
   return { ok: true };
 }

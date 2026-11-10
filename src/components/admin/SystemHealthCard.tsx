@@ -6,7 +6,7 @@ import { btnGhost, raised, SectionTitle } from "./adminUi";
 
 const date = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Not recorded";
 
-export default function SystemHealthCard() {
+export default function SystemHealthCard({ commit }: { /** WG-18: the short commit this build came from. */ commit?: string } = {}) {
   const id = useId();
   const [health, setHealth] = useState<SystemHealthStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,6 +41,7 @@ export default function SystemHealthCard() {
       <SectionTitle id={`${id}-title`}>System health</SectionTitle>
       <div className="space-y-4 p-4 text-sm text-ink sm:p-[18px]">
         <p>{health ? canaryMessage(health.canary.status) : "Loading system health…"}</p>
+        {commit && <p data-testid="build-commit" className="text-xs text-muted">Build: <span className="tnum font-semibold text-ink">{commit}</span>{commit === "unknown" ? " (this deployment did not record its commit)" : ""}</p>}
         {health && (health.maintenance || health.config) && <div data-testid="ops-status" className="space-y-1">
           {health.maintenance && <p data-testid="maintenance-line" data-stale={health.maintenance.stale ? "true" : "false"} className={health.maintenance.stale ? "font-semibold text-[#fca5a5]" : undefined}>{maintenanceLine(health.maintenance)}</p>}
           {health.config && <ul aria-label="Configured services" className="grid gap-0.5 text-xs">

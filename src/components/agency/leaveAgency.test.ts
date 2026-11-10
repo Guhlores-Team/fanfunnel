@@ -61,7 +61,8 @@ check("a client module that never imports the server Supabase helpers", leave.st
 check("posts { orgId } as JSON to /api/agency/leave, like the other agency controls", /fetch\("\/api\/agency\/leave", \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json" \},\s*body: JSON\.stringify\(\{ orgId \}\)/.test(leave));
 const client = read("src/components/agency/AgencyClient.tsx");
 check("/agency decides with leaveKind on the server's answer", /const canLeave = leaveKind\(data\);/.test(client));
-check("the console shows the staff control only for canLeave === \"staff\"", /\{canLeave === "staff" && <LeaveAgency kind="staff"/.test(client) && (client.match(/<LeaveAgency /g) ?? []).length === 2);
+check("the console shows the staff control only for canLeave === \"staff\"", /\{canLeave === "staff" && <LeaveAgency kind="staff"/.test(client) && (client.match(/<LeaveAgency /g) ?? []).length === 3);
+check("other agency ties (WG-02) render a control of their own kind, never a staff control for a creator tie", /<LeaveAgency key=\{tie\.orgId\} kind=\{tie\.kind\}/.test(client) && /tie is Tie & \{ kind: "staff" \| "creator" \}/.test(client));
 check("the managed view gets the id only for canLeave === \"creator\"", /orgId=\{canLeave === "creator" \? data\.orgId \?\? null : null\}/.test(client) && /\{orgId && <LeaveAgency kind="creator"/.test(client));
 check("success replaces the view with the 'You left' confirmation", /if \(left\) return <LeftAgency kind=\{left\} \/>;/.test(client));
 

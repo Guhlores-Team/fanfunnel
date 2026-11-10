@@ -1,6 +1,6 @@
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
 import { storedReportToken } from "@/lib/reports/reportToken";
-import { CompleteReadError, readScopedRows } from "./readPages";
+import { CompleteReadError, MAX_REPORT_PAGES, MAX_REPORT_ROWS, readScopedRows } from "./readPages";
 // Data layer — fans and grants: creator CRM, fan detail, grant edits, fan
 // moderation, and the token-scoped fan actions (ack, self-exclude, report).
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
@@ -9,17 +9,21 @@ import type { FanAccountSummary, FanCampaignBreakdown, FanDetail, Grant } from "
 import {
   mockGrantSpins,
   mockListFans,
+  mockListFansPage,
   mockGetFanDetail,
-  mockDeleteFan,
+  mockDeleteFanWithTombstones,
   mockUpdateFanMeta,
   mockEditGrant,
   mockAckFan,
   mockSelfExclude,
   mockSetFanBlocked,
   mockSetFanLinkGame,
+  mockUpdateFanLink,
   mockReportCreator,
+  mockDemoCreatorActive,
 } from "./mock";
 import { campaignPinError, isUuid } from "./shared";
+import { creatorSummary } from "./creatorSummaries";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
 import { isOnBreak } from "@/lib/play/playGuard";
@@ -139,6 +143,7 @@ export async function grantSpins(
 ): Promise<{ spinsRemaining: number } | { error: string }> {
   if (!Number.isFinite(n) || n > 1_000_000 || !isUuid(requestId)) return { error: "invalid" };
   const add = Math.max(1, Math.floor(n) || 0);
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     try {
       const remaining = mockGrantSpins(token, add, requestId);
@@ -168,19 +173,291 @@ export async function grantSpins(
   return result.status === "granted" && typeof result.balance === "number" ? { spinsRemaining: result.balance } : { error: result.status === "conflict" ? "conflict" : "not_found" };
 }
 
+/** One page of the Fans list (PA-03): bounded, searchable, keyset-paged. */
+export interface FanListPage {
+  fans: FanAccountSummary[];
+  /** Cursor for the next page; null when this was the last one. */
+  nextCursor: string | null;
+  /** The creator's unfiltered fan count (null when the count could not be read). */
+  total: number | null;
+  /**
+   * Set when the pre-0073 fallback had to cap the per-fan spin/grant reads
+   * for this page, so a fan's "last win" or "tips recorded" may be missing.
+   */
+  approximate?: boolean;
+}
+export interface FanListOptions {
+  /** Case-insensitive match over display name, handle and tags. */
+  query?: string | null;
+  /** The previous page's nextCursor. */
+  cursor?: string | null;
+  limit?: number;
+}
+export const FAN_PAGE_SIZE = 50;
+const FAN_PAGE_MAX = 200;
+/** Fallback-only caps for the page's own spin / grant reads. */
+const FAN_PAGE_DETAIL_ROWS = 5_000;
+const SAFE_UUID = /^[0-9a-f-]{36}$/i;
+
+export function encodeFanCursor(r: { createdAt: string; fanId: string }): string {
+  return `${r.createdAt}|${r.fanId}`;
+}
+export function decodeFanCursor(raw: string | null | undefined): { createdAt: string; fanId: string } | null {
+  if (!raw) return null;
+  const i = raw.lastIndexOf("|");
+  if (i <= 0) return null;
+  const createdAt = raw.slice(0, i), fanId = raw.slice(i + 1);
+  if (!SAFE_UUID.test(fanId) || Number.isNaN(Date.parse(createdAt)) || createdAt.length > 40) return null;
+  return { createdAt, fanId };
+}
+/** Clamp the page size the way the 0073 RPC does. */
+export function fanPageLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit) || limit === undefined) return FAN_PAGE_SIZE;
+  return Math.min(FAN_PAGE_MAX, Math.max(1, Math.floor(limit)));
+}
+/** The query as PostgREST will see it: trimmed, bounded, wildcards literal. */
+function fanQueryText(query: string | null | undefined): string | null {
+  const q = (query ?? "").trim().slice(0, 80);
+  return q ? q : null;
+}
+function escapeLikeText(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/** What every fan row needs before links and visits are attached. */
+interface FanCore {
+  id: string;
+  display_name: string | null;
+  handle: string | null;
+  spins_remaining: number;
+  spins_granted_total: number;
+  tags: string[] | null;
+  created_at: string;
+  blocked_at: string | null;
+  break_until: string | null;
+  total_spent: number;
+  campaign_names: string[];
+  last_win: { label: string; rarity: Rarity; at: string } | null;
+}
+type PassRow = {
+  id: string; fan_id: string; token?: string; created_at: string; spins_remaining: number; wheel_id: string; campaign_id: string | null;
+  pinned_wheel_id?: string | null; is_active: boolean; self_excluded_at: string | null;
+  wheel: { title: string } | null; campaign: { name: string } | null;
+};
+const PASS_COLUMNS = "id, fan_id, created_at, spins_remaining, wheel_id, campaign_id, pinned_wheel_id, is_active, self_excluded_at, wheel:wheels!fan_passes_wheel_id_fkey(title), campaign:campaigns(name)";
+type Sb = Awaited<ReturnType<typeof createClient>>;
+
+
 /**
- * The creator's persistent fan accounts (+ their links). Loaded by the Fans
- * tab on mount so accounts survive a page refresh.
+ * One page of fan cores through creator_fan_summaries (0073, service role
+ * after a session can_act_for 'manage' check); null when the function is not
+ * there or the session may not act for the creator (the RLS-scoped read
+ * below answers instead).
  */
-export async function listFans(): Promise<FanAccountSummary[]> {
-  if (!isSupabaseConfigured()) return mockListFans();
+async function fanCoresViaRpc(sb: Sb, creatorId: string, opts: { query: string | null; cursor: { createdAt: string; fanId: string } | null; limit: number }): Promise<{ cores: FanCore[]; total: number | null } | null> {
+  const result = await creatorSummary(sb, creatorId, "manage", "creator_fan_summaries", {
+    p_query: opts.query,
+    p_before_created: opts.cursor?.createdAt ?? null,
+    p_before_id: opts.cursor?.fanId ?? null,
+    p_limit: opts.limit,
+  });
+  if (result.status === "error") throw new CompleteReadError();
+  if (result.status !== "ok") return null;
+  const data = result.data;
+  // A set-returning RPC answers an array; anything else means it is not there.
+  if (!Array.isArray(data)) return null;
+  const rows = data as {
+    fan_id: string; display_name: string | null; handle: string | null; spins_remaining: number; spins_granted_total: number; tags: string[] | null;
+    created_at: string; blocked_at: string | null; break_until: string | null; total_spent_cents: number | string | null; campaign_names: string[] | null;
+    last_win_label: string | null; last_win_rarity: Rarity | null; last_win_at: string | null; total_fans: number | string | null;
+  }[];
+  const cores = rows.map((r) => ({
+    id: r.fan_id, display_name: r.display_name, handle: r.handle, spins_remaining: r.spins_remaining ?? 0, spins_granted_total: r.spins_granted_total ?? 0,
+    tags: r.tags, created_at: r.created_at, blocked_at: r.blocked_at, break_until: r.break_until,
+    total_spent: Number(r.total_spent_cents ?? 0), campaign_names: r.campaign_names ?? [],
+    last_win: r.last_win_label && r.last_win_rarity && r.last_win_at ? { label: r.last_win_label, rarity: r.last_win_rarity, at: r.last_win_at } : null,
+  }));
+  const total = rows.length > 0 && rows[0].total_fans != null ? Number(rows[0].total_fans) : null;
+  return { cores, total };
+}
+
+/**
+ * Pre-0073 fallback: one keyset page of fans, then the spins and grants of
+ * only those fans (capped, never refused). The caps make a fan's last win or
+ * tips approximate on a very heavy page; the page itself always loads.
+ */
+async function fanCoresPaged(sb: Sb, creatorId: string, opts: { query: string | null; cursor: { createdAt: string; fanId: string } | null; limit: number }): Promise<{ cores: FanCore[]; total: number | null; approximate: boolean }> {
+  let query = sb
+    .from("fans")
+    .select("id, display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at, break_until")
+    .eq("creator_id", creatorId);
+  if (opts.query) {
+    // PostgREST's `or` grammar: `*` is the ilike wildcard; the value is quoted
+    // so commas and parentheses in a name cannot change the filter.
+    const needle = `"*${escapeLikeText(opts.query).replace(/"/g, "")}*"`;
+    query = query.or(`display_name.ilike.${needle},handle.ilike.${needle}`);
+  }
+  if (opts.cursor) {
+    query = query.or(`created_at.lt.${opts.cursor.createdAt},and(created_at.eq.${opts.cursor.createdAt},id.lt.${opts.cursor.fanId})`);
+  }
+  const [{ data: fanRows, error: fanError }, { count, error: countError }] = await Promise.all([
+    query.order("created_at", { ascending: false }).order("id", { ascending: false }).limit(opts.limit),
+    sb.from("fans").select("id", { count: "exact", head: true }).eq("creator_id", creatorId),
+  ]);
+  if (fanError) throw new CompleteReadError();
+  const fans = (fanRows ?? []) as { id: string; display_name: string | null; handle: string | null; spins_remaining: number; spins_granted_total: number; tags: string[] | null; created_at: string; blocked_at: string | null; break_until: string | null }[];
+  const ids = fans.map((f) => f.id);
+  if (ids.length === 0) return { cores: [], total: countError ? null : count ?? null, approximate: false };
+  const [{ data: spinRows, error: spinError }, { data: grantRows, error: grantError }] = await Promise.all([
+    sb.from("spins").select("fan_id, prize_label, prize_rarity, created_at").eq("creator_id", creatorId).in("fan_id", ids).order("created_at", { ascending: false }).limit(FAN_PAGE_DETAIL_ROWS),
+    sb.from("grants").select("fan_id, amount_cents, campaign_id, campaign:campaigns(name)").eq("creator_id", creatorId).in("fan_id", ids).order("created_at", { ascending: false }).limit(FAN_PAGE_DETAIL_ROWS),
+  ]);
+  if (spinError || grantError) throw new CompleteReadError();
+  const spins = (spinRows ?? []) as { fan_id: string; prize_label: string; prize_rarity: Rarity; created_at: string }[];
+  const grants = (grantRows ?? []) as unknown as { fan_id: string; amount_cents: number; campaign_id: string | null; campaign: { name: string } | null }[];
+  const lastWin = new Map<string, FanCore["last_win"]>();
+  for (const s of spins) if (!lastWin.has(s.fan_id)) lastWin.set(s.fan_id, { label: s.prize_label, rarity: s.prize_rarity, at: s.created_at });
+  const spent = new Map<string, number>();
+  const campaignsByFan = new Map<string, { names: string[]; seen: Set<string> }>();
+  for (const g of grants) {
+    spent.set(g.fan_id, (spent.get(g.fan_id) ?? 0) + (g.amount_cents ?? 0));
+    if (g.campaign_id && g.campaign?.name) {
+      const entry = campaignsByFan.get(g.fan_id) ?? { names: [], seen: new Set<string>() };
+      if (!entry.seen.has(g.campaign_id)) { entry.seen.add(g.campaign_id); entry.names.push(g.campaign.name); }
+      campaignsByFan.set(g.fan_id, entry);
+    }
+  }
+  return {
+    cores: fans.map((f) => ({
+      ...f,
+      total_spent: spent.get(f.id) ?? 0,
+      campaign_names: campaignsByFan.get(f.id)?.names ?? [],
+      last_win: lastWin.get(f.id) ?? null,
+    })),
+    total: countError ? null : count ?? null,
+    approximate: spins.length >= FAN_PAGE_DETAIL_ROWS || grants.length >= FAN_PAGE_DETAIL_ROWS,
+  };
+}
+
+/** Attach the links (tokens this session may hand out) and 7-day visits to a page of cores. */
+async function assembleFans(sb: Sb, creatorId: string, cores: FanCore[]): Promise<FanAccountSummary[]> {
+  if (cores.length === 0) return [];
+  const ids = cores.map((c) => c.id);
+  const [{ data: passData, error: passError }, visits, tokens] = await Promise.all([
+    sb.from("fan_passes").select(PASS_COLUMNS).eq("creator_id", creatorId).in("fan_id", ids).order("created_at", { ascending: false }).limit(FAN_PAGE_DETAIL_ROWS),
+    visitsByFan(sb, creatorId),
+    servedLinkTokens(sb, creatorId),
+  ]);
+  if (passError) throw new CompleteReadError();
+  // 0068: tokens are served by creator_link_tokens (owner / 'grant' seats
+  // only). A link this session may not hand out is left out of the list.
+  const passesByFan = new Map<string, (PassRow & { token: string })[]>();
+  for (const row of (passData ?? []) as unknown as PassRow[]) {
+    const token = tokens.get(row.id);
+    if (!token) continue;
+    (passesByFan.get(row.fan_id) ?? passesByFan.set(row.fan_id, []).get(row.fan_id)!).push({ ...row, token });
+  }
+  return cores.map((r) => {
+    const links = (passesByFan.get(r.id) ?? []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const passes = links
+      .filter((p): p is typeof p & { wheel_id: string } => typeof p.wheel_id === "string")
+      .map((p) => ({
+        token: p.token,
+        wheelId: p.wheel_id,
+        wheelTitle: p.wheel?.title ?? "Wheel",
+        campaignId: p.campaign_id ?? null,
+        pinnedWheelId: p.pinned_wheel_id ?? null,
+        campaignName: p.campaign?.name ?? null,
+        spinsRemaining: p.spins_remaining ?? 0,
+        createdAt: p.created_at,
+        isActive: p.is_active !== false,
+        selfExcludedAt: p.self_excluded_at ?? null,
+      }));
+    return {
+      fanId: r.id,
+      name: r.display_name ?? r.handle ?? "Fan",
+      spinsRemaining: r.spins_remaining,
+      grantedTotal: r.spins_granted_total,
+      primaryToken: links[0]?.token ?? null,
+      totalSpent: r.total_spent,
+      campaignNames: r.campaign_names,
+      tags: r.tags ?? [],
+      links: links.map((p) => ({ token: p.token })),
+      passes,
+      lastWin: r.last_win,
+      blocked: !!r.blocked_at,
+      selfExcluded: links.some((p) => !!p.self_excluded_at),
+      activeToken: links.find((p) => p.is_active === true && !p.self_excluded_at)?.token ?? null,
+      // RM-6: only the break state, never the fan's reminder or counts.
+      breakUntil: isOnBreak(r.break_until) ? r.break_until : null,
+      visits7: visits.get(r.id) ?? 0,
+      createdAt: r.created_at,
+    };
+  });
+}
+
+/**
+ * One page of the creator's fans (PA-03): newest first, searched and paged
+ * on the server. Uses creator_fan_summaries (0073) when the database has it,
+ * otherwise a bounded keyset page that never refuses for size.
+ */
+export async function listFansPage(options: FanListOptions = {}): Promise<FanListPage> {
+  const limit = fanPageLimit(options.limit);
+  const query = fanQueryText(options.query);
+  if (!isSupabaseConfigured()) return mockListFansPage({ query, cursor: options.cursor ?? null, limit });
+  const cursor = decodeFanCursor(options.cursor);
+  if (options.cursor && !cursor) return { fans: [], nextCursor: null, total: null };
 
   const sb = await createClient();
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (!user) return [];
+  if (!user) return { fans: [], nextCursor: null, total: 0 };
 
+  const viaRpc = await fanCoresViaRpc(sb, user.id, { query, cursor, limit });
+  const page = viaRpc ?? (await fanCoresPaged(sb, user.id, { query, cursor, limit }));
+  const fans = await assembleFans(sb, user.id, page.cores);
+  const last = page.cores[page.cores.length - 1];
+  return {
+    fans,
+    nextCursor: page.cores.length === limit && last ? encodeFanCursor({ createdAt: last.created_at, fanId: last.id }) : null,
+    total: page.total,
+    ...("approximate" in page && page.approximate ? { approximate: true } : {}),
+  };
+}
+
+/**
+ * Every fan of the creator, newest first, for server-side reports (the CRM)
+ * that need the whole set. With creator_fan_summaries (0073) it pages the
+ * RPC; before that it is the complete bounded read (CompleteReadError past
+ * MAX_REPORT_ROWS), never an approximate page.
+ */
+export async function listFans(): Promise<FanAccountSummary[]> {
+  if (!isSupabaseConfigured()) return mockListFans();
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return [];
+  const all: FanAccountSummary[] = [];
+  let cursor: { createdAt: string; fanId: string } | null = null;
+  for (let pages = 0; ; pages++) {
+    if (pages >= MAX_REPORT_PAGES || all.length >= MAX_REPORT_ROWS) throw new CompleteReadError("limit");
+    const page = await fanCoresViaRpc(sb, user.id, { query: null, cursor, limit: FAN_PAGE_MAX });
+    if (!page) return pages === 0 ? listFansComplete(sb, user) : all;
+    all.push(...(await assembleFans(sb, user.id, page.cores)));
+    const last = page.cores[page.cores.length - 1];
+    if (page.cores.length < FAN_PAGE_MAX || !last) return all;
+    cursor = { createdAt: last.created_at, fanId: last.id };
+  }
+}
+
+/**
+ * Pre-0073 complete read of every fan (+ links): exact-count id pages with
+ * one fixed cutoff, refused past MAX_REPORT_ROWS (CompleteReadError) so a
+ * report never publishes a partial total.
+ */
+async function listFansComplete(sb: Sb, user: { id: string }): Promise<FanAccountSummary[]> {
   const cutoff = new Date().toISOString();
   const [fanRows, passRowsWithoutTokens, spinRows, grantRows, visits, tokens] = await Promise.all([
     readScopedRows<Record<string, unknown>>(sb, "fans", "display_name, handle, spins_remaining, spins_granted_total, tags, created_at, blocked_at, break_until", q => q.eq("creator_id", user.id), cutoff),
@@ -415,7 +692,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   // Every pass, oldest first in editGrant's order: the links list (newest
   // first) and each grant's preview balance come from this one read.
   const [passRowsWithoutTokens, tokens] = await Promise.all([
-    readScopedRows<{ created_at: string; is_active: boolean; spins_remaining: number; wheel: { title: string } | null }>(sb, "fan_passes", "created_at, is_active, spins_remaining, wheel:wheels!fan_passes_wheel_id_fkey(title)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff),
+    readScopedRows<{ created_at: string; is_active: boolean; spins_remaining: number; wheel_id?: string; campaign_id?: string | null; pinned_wheel_id?: string | null; self_excluded_at?: string | null; wheel: { title: string } | null; campaign?: { name: string } | null }>(sb, "fan_passes", "created_at, is_active, spins_remaining, wheel_id, campaign_id, pinned_wheel_id, self_excluded_at, wheel:wheels!fan_passes_wheel_id_fkey(title), campaign:campaigns(name)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff),
     servedLinkTokens(sb, user.id, fanId),
   ]);
   // 0068: the link itself comes from creator_link_tokens; a pass this session
@@ -425,6 +702,11 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     return token ? [{ ...row, token }] : [];
   });
   passRows.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  // PR-13: link expiry is its own read. Until sessions may select
+  // fan_passes.expires_at the read is refused and the drawer hides the
+  // expiry control (the links themselves always load).
+  const expiryRead = await sb.from("fan_passes").select("id, expires_at").eq("creator_id", user.id).eq("fan_id", fanId);
+  const expiries = expiryRead.error ? null : new Map(((expiryRead.data ?? []) as unknown as { id: string; expires_at: string | null }[]).map((row) => [row.id, row.expires_at ?? null]));
 
   const passesOldestFirst = ((passRows ?? []) as unknown as {
     id: string;
@@ -432,13 +714,35 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     created_at: string;
     is_active: boolean;
     spins_remaining: number;
+    wheel_id?: string;
+    campaign_id?: string | null;
+    pinned_wheel_id?: string | null;
+    self_excluded_at?: string | null;
     wheel?: { title: string } | null;
+    campaign?: { name: string } | null;
   }[]).map((p) => ({ ...p, isActive: p.is_active }));
 
   const links = passesOldestFirst
     .slice()
     .reverse()
     .map((p) => ({ token: p.token, createdAt: p.created_at }));
+  const passes = passesOldestFirst
+    .slice()
+    .reverse()
+    .filter((p): p is typeof p & { wheel_id: string } => typeof p.wheel_id === "string")
+    .map((p) => ({
+      token: p.token,
+      wheelId: p.wheel_id,
+      wheelTitle: p.wheel?.title ?? "Wheel",
+      campaignId: p.campaign_id ?? null,
+      pinnedWheelId: p.pinned_wheel_id ?? null,
+      campaignName: p.campaign?.name ?? null,
+      spinsRemaining: p.spins_remaining ?? 0,
+      createdAt: p.created_at,
+      isActive: p.is_active !== false,
+      selfExcludedAt: p.self_excluded_at ?? null,
+      ...(expiries ? { expiresAt: expiries.get(p.id) ?? null } : {}),
+    }));
 
   // This fan's grants, newest first, with campaign name resolved via a join.
   const grantRows = await readScopedRows<{ created_at: string } & Record<string, unknown>>(sb, "grants", "fan_pass_id, spins, amount_cents, bonus_spins, campaign_id, created_at, campaign:campaigns(name)", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff);
@@ -542,6 +846,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     winsByRarity,
     pendingPrizes,
     links,
+    passes,
     grants,
     byCampaign,
     visits7: await fanVisitsLast7(sb, fanId),
@@ -559,7 +864,7 @@ export async function deleteFan(
   fanId: string
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) {
-    return mockDeleteFan(fanId) ? { ok: true } : { error: "not_found" };
+    return (await mockDeleteFanWithTombstones(fanId)) ? { ok: true } : { error: "not_found" };
   }
 
   const sb = await createClient();
@@ -581,6 +886,7 @@ export async function setFanBlocked(
   fanId: string,
   blocked: boolean
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetFanBlocked(fanId, blocked);
   const sb = await createClient();
   const {
@@ -628,6 +934,66 @@ export async function setFanLinkGame(
   const result = await economicRpc("set_fan_pass_game", { p_context: context, p_creator: pass.creator_id, p_pass: pass.id, p_wheel: wheelId, p_actor: user.id });
   if (result?.status === "ok") return { ok: true };
   return { error: ["forbidden", "not_found", "game_not_playable"].includes(String(result?.status)) ? String(result?.status) : "db_error" };
+}
+
+/**
+ * PR-13: switch one link off (or back on) without blocking the fan. The fan
+ * keeps their account, chat and other links; the switched-off link shows
+ * the paused page. Owner / 'grant' seats only (fan_passes_write RLS).
+ */
+export async function setFanLinkActive(
+  fanId: string,
+  token: string,
+  active: boolean
+): Promise<{ ok: true } | { error: string }> {
+  return updateFanLink(fanId, token, { active });
+}
+
+/** A link can live at most this long from now when an expiry is set. */
+export const MAX_LINK_EXPIRY_DAYS = 365;
+
+/**
+ * PR-13: switch one link off/on and/or set when it expires (0073:
+ * fan_passes.expires_at; every play path treats an expired link as paused).
+ * Owner / 'grant' seats only: the session proves can_act_for and the
+ * fan_passes_write RLS policy scopes the update.
+ */
+export async function updateFanLink(
+  fanId: string,
+  token: string,
+  patch: { active?: boolean; expiresAt?: string | null }
+): Promise<{ ok: true } | { error: string }> {
+  const update: { is_active?: boolean; expires_at?: string | null } = {};
+  if (typeof patch.active === "boolean") update.is_active = patch.active;
+  if (patch.expiresAt !== undefined) {
+    if (patch.expiresAt === null) update.expires_at = null;
+    else {
+      const at = Date.parse(patch.expiresAt);
+      if (!Number.isFinite(at) || at <= Date.now() || at > Date.now() + MAX_LINK_EXPIRY_DAYS * 86_400_000) return { error: "bad_request" };
+      update.expires_at = new Date(at).toISOString();
+    }
+  }
+  if (Object.keys(update).length === 0) return { error: "bad_request" };
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
+  if (!isSupabaseConfigured()) return mockUpdateFanLink(fanId, token, { active: update.is_active, expiresAt: update.expires_at });
+  if (!isUuid(fanId) || typeof token !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(token)) return { error: "not_found" };
+  const sb = await createClient();
+  const { data: { user }, error: authError } = await sb.auth.getUser();
+  if (authError || !user) return { error: "unauthorized" };
+  const served = await resolveServedLink(sb, token);
+  if (served === "db_error") return { error: "db_error" };
+  if (!served || served.fan_id !== fanId) return { error: "not_found" };
+  const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: served.creator_id, perm: "grant" });
+  if (permissionError || allowed !== true) return { error: "forbidden" };
+  const { data: updated, error } = await sb
+    .from("fan_passes")
+    .update(update)
+    .eq("id", served.id)
+    .eq("creator_id", served.creator_id)
+    .select("id");
+  if (error) return { error: "db_error" };
+  if (!updated || updated.length === 0) return { error: "not_found" };
+  return { ok: true };
 }
 
 /** A fan reports the creator behind their token (service-role; fans aren't authed). */

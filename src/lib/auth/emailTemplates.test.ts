@@ -39,7 +39,11 @@ for (const [file, { type, next }] of Object.entries(LINK_TEMPLATES)) {
   const html = readFileSync(join(TEMPLATES, file), "utf8");
   const problems = templateLinkProblems(html, type, next);
   check(`${file}: ${problems.join("; ") || "ok"}`, problems.length === 0);
-  check(`${file}: has the same-device fallback note`, html.includes("Open this link on the device you&rsquo;re using to sign in."));
+  // WU-03: the token_hash link works anywhere, so no template may send the
+  // reader back to "the device you used"; every one says what the landing
+  // page does (WU-02: nothing happens until the Continue button is tapped).
+  check(`${file}: never says same device/browser`, !/same (device|browser)|device you&rsquo;re using|device you're using/i.test(html));
+  check(`${file}: explains the any-device Continue page`, html.includes("This link works on any device or browser.") && html.includes("Continue button"));
 }
 // Negative: the previous (RedirectTo-based) template shape must fail the check.
 const legacy =
@@ -50,6 +54,13 @@ const good = '{{ $link := printf "%s/auth/confirm?token_hash=%s&type=recovery&ne
 check("the Site URL shape passes", templateLinkProblems(good, "recovery", "/reset-password").length === 0);
 check("an extra .RedirectTo href fails", templateLinkProblems(good + '<a href="{{ .RedirectTo }}">x</a>', "recovery", "/reset-password").length > 0);
 check("the confirmation e-mail mentions the approval step", readFileSync(join(TEMPLATES, "confirmation.html"), "utf8").includes("approved by hand"));
+// WU-04: the same e-mail goes to both addresses; it must say so and tell a
+// reader who did not ask for it what to do.
+const emailChange = readFileSync(join(TEMPLATES, "email_change.html"), "utf8");
+check("the e-mail change template says both addresses get a link", /current address and the new one/.test(emailChange) && /both/.test(emailChange));
+check("…and names the new address", emailChange.includes("{{ .NewEmail }}"));
+check("…and tells an unexpected reader not to tap it", /don't tap the button/.test(emailChange));
+check("the README describes the Continue landing page", /Continue\*\* button/.test(readFileSync(join(TEMPLATES, "README.md"), "utf8")));
 check("the README no longer says there is no MFA", !/no\s+phone auth, linked identities or MFA/.test(readFileSync(join(TEMPLATES, "README.md"), "utf8")));
 
 // The app still passes redirectTo/emailRedirectTo (Supabase only uses it for the

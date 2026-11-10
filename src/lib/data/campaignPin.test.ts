@@ -58,6 +58,12 @@ async function main() {
   check("create cannot point at another creator's game", "error" in crossCreate && crossCreate.error === "not_found" && db.rows("campaigns").length === before);
   res = await POST(new Request("http://localhost/api/campaigns", json({ name: "Steal", pinnedWheelId: FOREIGN })));
   check("create route refuses another creator's game", res.status === 404 && db.rows("campaigns").length === before);
+  // RD-13: the Fans tab filters by campaign name, so a second "summer" (any
+  // case) is refused as 409 name_taken; a name that only looks alike is fine.
+  res = await POST(new Request("http://localhost/api/campaigns", json({ name: "summer" })));
+  check("create route refuses a duplicate campaign name", res.status === 409 && (await res.json()).error === "name_taken" && db.rows("campaigns").length === before);
+  const underscore = await createCampaign("S_mmer", null);
+  check("ilike wildcards are escaped (S_mmer is not Summer)", "campaign" in underscore);
   const campaignId = "campaign" in created ? created.campaign.id : "";
   const patch = (id: string, body: unknown) => PATCH(new Request(`http://localhost/api/campaigns/${id}`, { ...json(body), method: "PATCH" }), { params: Promise.resolve({ id }) });
   res = await patch(String(campaignId), { pinnedWheelId: FOREIGN });
@@ -99,6 +105,8 @@ async function main() {
   check("demo create with game", "campaign" in demo && demo.campaign.pinnedWheelId === demoGame.id);
   const demoMissing = await createCampaign("Demo missing", "no-such-game");
   check("demo refuses unknown game", "error" in demoMissing && demoMissing.error === "not_found");
+  const demoDup = await createCampaign("demo", null);
+  check("demo refuses a duplicate campaign name", "error" in demoDup && demoDup.error === "name_taken");
   console.log(`campaign game choice: ${passed} checks passed`);
 }
 main().catch((error) => { console.error(error); process.exit(1); });

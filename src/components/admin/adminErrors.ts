@@ -17,6 +17,8 @@ export function inviteErrorMessage(err: unknown): string {
   if (code === "rate_limited") return "Too many attempts — wait a moment and try again.";
   if (code === "bad_request" || code === "create_failed") return "Couldn't create account. Try again.";
   if (code === "email_taken") return "An account with that email already exists.";
+  if (code === "name_looks_like_email") return "The display name can't be an e-mail address. Give the creator a name fans will see.";
+  if (code === "name_required" || code === "name_too_long" || code === "name_invalid") return "Enter a display name of 1 to 80 characters (no e-mail address).";
   if (code === "invalid_email") return "That email address doesn't look right.";
   if (code === "weak_password") {
     return `Password needs ${MIN_PASSWORD_LENGTH}+ characters with a letter and a number.`;

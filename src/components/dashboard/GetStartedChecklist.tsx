@@ -1,6 +1,7 @@
 "use client";
 
-import { FIRST_STEPS_TOTAL, buildFirstSteps, firstStepsAllDone, type FirstStepSignals } from "./firstSteps";
+import { useState } from "react";
+import { FIRST_STEPS_TOTAL, buildFirstSteps, firstStepsAllDone, orderFirstSteps, type FirstStepSignals } from "./firstSteps";
 
 /**
  * "Your first steps": the first-run checklist that lives inside Today (RD-5).
@@ -24,8 +25,9 @@ export default function GetStartedChecklist({
   onDismiss: () => void;
   onGoTo: (tab: string) => void;
 }) {
+  const [confirming, setConfirming] = useState(false);
   if (dismissed || firstStepsAllDone(signals)) return null;
-  const steps = buildFirstSteps(signals);
+  const steps = orderFirstSteps(buildFirstSteps(signals));
   const doneCount = steps.filter((s) => s.done).length;
 
   return (
@@ -80,13 +82,37 @@ export default function GetStartedChecklist({
         ))}
       </ol>
 
-      <button
-        type="button"
-        onClick={onDismiss}
-        className="-mx-1 mt-2.5 px-1 py-2 text-xs font-semibold text-muted transition-colors hover:text-ink"
-      >
-        Dismiss — I&rsquo;ll explore on my own
-      </button>
+      {confirming ? (
+        <div role="group" aria-label="Hide the first steps" data-testid="first-steps-confirm" className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-muted">
+          <p className="min-w-0 flex-1 basis-52">Hide the first steps? You can bring them back under More › Get started.</p>
+          <button
+            type="button"
+            autoFocus
+            onClick={() => {
+              setConfirming(false);
+              onDismiss();
+            }}
+            className="min-h-9 rounded-lg border border-[var(--hair)] px-3 font-semibold text-ink transition-colors hover:bg-white/5 max-sm:min-h-11"
+          >
+            Hide them
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            className="min-h-9 rounded-lg px-3 font-semibold text-muted transition-colors hover:text-ink max-sm:min-h-11"
+          >
+            Keep them
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="-mx-1 mt-2.5 px-1 py-2 text-xs font-semibold text-muted transition-colors hover:text-ink max-sm:min-h-11"
+        >
+          Dismiss — I&rsquo;ll explore on my own
+        </button>
+      )}
     </section>
   );
 }

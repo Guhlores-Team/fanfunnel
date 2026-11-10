@@ -38,7 +38,7 @@ export default function TemplateLibrary({
   refreshSignal,
 }: {
   onApplyWheelTemplate: (templateId: string) => void;
-  onSaveCurrentWheelAsTemplate: (name: string) => void;
+  onSaveCurrentWheelAsTemplate: (name: string) => void | Promise<unknown>;
   onApplyPrizeTemplate: (t: PrizeTemplate) => void;
   onSaveCurrentPrizesToLibrary?: () => void | Promise<void>;
   /**
@@ -96,14 +96,14 @@ export default function TemplateLibrary({
     void loadPrizes();
   }, [refreshSignal, loadPrizes]);
 
-  function saveCurrentWheel() {
+  async function saveCurrentWheel() {
     const trimmed = name.trim();
     if (!trimmed) return;
-    onSaveCurrentWheelAsTemplate(trimmed);
     setName("");
-    // The parent owns the POST; refetch shortly so a newly-saved template shows.
-    // We optimistically refetch — the parent should have persisted by then.
-    void loadWheels();
+    // RD-16: the parent owns the POST; wait for it before refetching so the
+    // list cannot overtake the save and miss the new template.
+    await onSaveCurrentWheelAsTemplate(trimmed);
+    await loadWheels();
   }
 
   async function deleteWheelTemplate(id: string) {
@@ -166,7 +166,7 @@ export default function TemplateLibrary({
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  saveCurrentWheel();
+                  void saveCurrentWheel();
                 }
               }}
               aria-label="New game template name"

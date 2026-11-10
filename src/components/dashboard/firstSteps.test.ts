@@ -5,6 +5,7 @@ import {
   firstStepsAllDone,
   firstStepsDone,
   isFirstRun,
+  orderFirstSteps,
   profileStepDone,
   type FirstStepSignals,
 } from "./firstSteps";
@@ -55,6 +56,20 @@ check("the prior three steps alone are not 'all done' any more (fulfil remains)"
 check("5 of 6 done when only fulfil is left", firstStepsDone(priorDone) === 5);
 check("all six done", firstStepsAllDone({ ...priorDone, fulfilled: 1 }));
 check("everything but the profile is not all done", !firstStepsAllDone({ ...priorDone, fulfilled: 1, profileSet: false }));
+
+// --- WC-22: order by state, and no "build your first game" under a ticked mint step
+{
+  const demo = { ...fresh, fans: 1, spins: 1 };
+  const ordered = orderFirstSteps(buildFirstSteps(demo));
+  const firstOpen = ordered.findIndex((x) => !x.done);
+  check("finished steps are listed before open ones", ordered.slice(firstOpen).every((x) => !x.done));
+  check("the order within each group is unchanged", ordered.map((x) => x.key).join() === "account,profile,fan,share,wheel,fulfil");
+  check("a fresh account keeps the original order", orderFirstSteps(buildFirstSteps(fresh)).map((x) => x.key).join() === "account,profile,wheel,fan,share,fulfil");
+  check("still six steps", ordered.length === 6);
+  check("a fan on the sample game is told so", step(demo, "wheel").title === "Make the game yours" && /sample game/.test(step(demo, "wheel").body));
+  check("a fresh account still reads 'Build your first game'", step(fresh, "wheel").title === "Build your first game");
+  check("a saved game keeps the original title", step({ ...demo, wheelSaved: true }, "wheel").title === "Build your first game");
+}
 
 // --- first-run detection -------------------------------------------------------
 check("no fans + no spins is first run", isFirstRun({ fans: 0, spins: 0 }));
