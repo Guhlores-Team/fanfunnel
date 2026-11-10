@@ -158,6 +158,7 @@ jobs:
               exit 1 ;;
           esac
           node scripts/security/rls-runtime-test.mjs
+          npx tsx scripts/security/link-session-runtime-test.mjs
 
   test-maintenance:
     # Existing Supabase/RLS/spin tests above always run unchanged, including
