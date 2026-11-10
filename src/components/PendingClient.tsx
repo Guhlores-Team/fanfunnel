@@ -5,6 +5,7 @@ import TermsCheckbox from "@/components/TermsCheckbox";
 import { LEGAL } from "@/lib/legal";
 import { composeApplicationNote, parseApplicationNote } from "@/lib/onboarding/applicationNote";
 import PendingSelfDelete from "@/components/PendingSelfDelete";
+import { displayNameErrorMessage, displayNameInputError } from "@/lib/profileErrors";
 
 /** The stored request, as the server read it (C21). */
 export interface PendingApplication {
@@ -36,6 +37,7 @@ export default function PendingClient({
   canEmail,
   rejectionReason,
   canSelfDelete = false,
+  signupName = "",
 }: {
   status: "pending" | "rejected";
   email: string;
@@ -44,11 +46,13 @@ export default function PendingClient({
   rejectionReason?: string | null;
   /** T7: offer "Delete my request and account" (only ever true on /pending). */
   canSelfDelete?: boolean;
+  /** The display name typed at sign-up, carried into the request (b6 C9). */
+  signupName?: string;
 }) {
   const extras = parseApplicationNote(application?.note);
   const [stored, setStored] = useState<PendingApplication | null>(application ?? null);
   const [editing, setEditing] = useState(false);
-  const [displayName, setDisplayName] = useState(application?.displayName ?? "");
+  const [displayName, setDisplayName] = useState(application?.displayName ?? signupName);
   const [platform, setPlatform] = useState(extras.platform);
   const [socials, setSocials] = useState(application?.socials ?? "");
   const [audienceSize, setAudienceSize] = useState(application?.audienceSize ?? "");
@@ -78,6 +82,13 @@ export default function PendingClient({
           ? "Please fill in your name, main platform, links, and audience size."
           : "Please fill in the required fields and agree to the Terms of Service and Privacy Policy."
       );
+      return;
+    }
+    // The name becomes the public display name on approval: say now what the
+    // database would refuse then (e-mail-shaped, reserved for staff, links).
+    const nameError = displayNameInputError(displayName.trim());
+    if (nameError) {
+      setError(displayNameErrorMessage(nameError));
       return;
     }
     setBusy(true);
@@ -246,7 +257,7 @@ export default function PendingClient({
             ? status === "rejected"
               ? "Fix what was missing and send it again. It goes back into the review queue."
               : "Change anything below and save. Your place in the queue stays the same."
-            : "FanFunnel creator accounts are approved by hand, and they’re free during the pilot. Tell us about you and we’ll review it shortly."}
+            : "Step 3 of 3: your login is confirmed. FanFunnel creator accounts are approved by hand, and they’re free during the pilot. Tell us about you and we’ll review it shortly."}
         </p>
         <p data-testid="pending-seat-note" className="mt-2 text-xs text-muted text-pretty">
           Joining an agency as staff (chatter, fulfiller, manager)? Request access here

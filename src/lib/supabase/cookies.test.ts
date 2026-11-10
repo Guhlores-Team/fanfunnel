@@ -24,10 +24,11 @@ const read = (p: string) => readFileSync(p, "utf8");
 const NEEDS_SESSION_COOKIE = [
   "src/components/LoginForm.tsx", // signInWithPassword / signUp write the cookie
   "src/components/dashboard/InboxPanel.tsx", // auth.getUser + Realtime channel
-  "src/app/forgot-password/page.tsx", // resetPasswordForEmail
+  "src/components/auth/ForgotPasswordForm.tsx", // resetPasswordForEmail
+  "src/components/auth/ResendConfirmation.tsx", // auth.resend (the sign-up confirmation again)
   "src/components/auth/totp.tsx", // mfa.enroll / challengeAndVerify upgrade the session to aal2
   "src/components/dashboard/PrivacySecurityCards.tsx", // mfa.listFactors / AAL / refresh after removal
-  "src/components/auth/NewPasswordForm.tsx", // getSession / updateUser on the recovery or invite link
+  "src/components/auth/NewPasswordForm.tsx", // getSession on the recovery or invite link (the password itself is set by the reset route)
 ];
 
 let passed = 0;

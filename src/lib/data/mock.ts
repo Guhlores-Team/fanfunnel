@@ -3393,6 +3393,7 @@ export function mockGetMyAccount(): {
   email: string | null;
   displayName: string | null;
   notifications: { newSpin: boolean; lowBalance: boolean; messages: boolean };
+  isActive: boolean;
 } {
   return {
     features: mockGameFeatures(),
@@ -3403,6 +3404,9 @@ export function mockGetMyAccount(): {
       lowBalance: store.notifyLowBalance,
       messages: store.notifyMessages,
     },
+    // Parity with getMyAccount (profiles.is_active): the dashboard's suspended
+    // banner (WU-01) shows in the demo too once creator-status suspends it.
+    isActive: mockDemoCreatorActive(),
   };
 }
 

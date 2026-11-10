@@ -63,14 +63,28 @@ The app still passes `redirectTo` / `emailRedirectTo` (always
 it; it only matters for a project whose templates are not pasted yet (the old
 `{{ .ConfirmationURL }}` uses it).
 
-`/auth/confirm` (and `/auth/callback`) verify the hash on the server
-(`verifyOtp`, `src/lib/auth/authLink.ts`) and redirect only within this site
-(`safeNext`), so the link works on any device. They still accept the old
-`?code=` links, so mail already sent, and a project whose templates are not
-pasted yet, keep working (same-browser only) until the owner pastes these.
-A link that fails for any reason lands on `/login?error=auth_link`, which
-explains it and offers a new link.
+`/auth/confirm` is a small page with a **Continue** button (batch 7, WU-02):
+mail scanners (Microsoft Safe Links, corporate URL sandboxes, chat previews)
+fetch every link in a message, and a `token_hash` is single-use, so a GET must
+never spend it. The button's form POSTs the token to `/auth/confirm/verify`,
+the only place `verifyOtp` runs (`src/lib/auth/authLink.ts`); it then redirects
+within this site only (`safeNext`). `/auth/callback` still exchanges the old
+`?code=` links (same browser only; a scanner cannot use a code without the
+requesting browser's cookie) and sends any `token_hash` it receives to the
+landing page unspent. A link that fails lands on
+`/login?error=auth_link&type=<type>&reason=<expired|invalid|malformed>`, which
+explains it per link type and offers the matching next step (sign in, resend
+the confirmation, a new reset link, ask for a new invitation).
+
+The secure e-mail change sends `email_change.html` to BOTH addresses and both
+links must be opened; after the first one `/auth/confirm/verify` lands on
+`/auth/email-change` ("step 1 of 2 done, now open the other link"), never on
+the dashboard as if the change were complete (WU-04).
 
 Owner step: set the Site URL and Redirect URLs as above, then paste the five updated link templates into **TEST now** and into
 **LIVE at go-live** (docs/GO_LIVE.md §3). Admin "New account" invites need the
-updated `invite.html` (the old one could not finish an invite).
+updated `invite.html` (the old one could not finish an invite). Also in
+Authentication → Settings: **Email OTP expiry** (1 h by default, up to 24 h; the e-mails and pages say
+"for a limited time", so either value is consistent), keep **Secure email change**
+ON (the app's copy assumes both links), and configure **custom SMTP** (the
+built-in mailer sends 2 e-mails per hour for the whole project).
