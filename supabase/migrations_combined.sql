@@ -16636,6 +16636,25 @@ end;
 $$;
 revoke execute on function public.guard_message_writes() from public, anon, authenticated, service_role;
 
+-- ── (8z) a deleted creator's request receipts (pre-existing since 0059) ──────
+-- Deleting a grant marks its receipt 'gone'. When the grant goes because its
+-- creator's account is being deleted, the receipt is about to be deleted by the
+-- same cascade; updating it first made Postgres re-check its creator key when
+-- the receipt had already been touched in this transaction (for example its
+-- actor set to null because a seat account was deleted earlier in the same
+-- transaction), and the whole deletion failed. Receipts of a creator that no
+-- longer exists are left to the cascade.
+create or replace function public._creator_request_grant_erased()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+ update public.creator_request_journal j
+    set state='gone', error='gone', grant_id=null, finished_at=coalesce(j.finished_at, now())
+  where j.grant_id = old.id
+    and exists (select 1 from public.profiles p where p.id = j.creator_id);
+ return old;
+end $$;
+revoke execute on function public._creator_request_grant_erased() from public, anon, authenticated, service_role;
+
 -- ── (9) closing check: browser roles reach only the reviewed functions,
 -- every creator-owned table carries the immutability trigger, the retired
 -- signatures are gone, every table has row security and a real policy, the

@@ -768,5 +768,16 @@ export function probeBatch7(db, psql) {
     ["ob:0,0,0", "fan:1,0", "live:5,1", "fan-live:1,1"]);
   same("INFO: a function owned by another role is skipped by the search_path loop, not altered", q(`select position('pg_has_role(p.proowner, ''USAGE'')' in $m$${MIGRATION.slice(MIGRATION.indexOf("-- \u2500\u2500 (8) DB-15"), MIGRATION.indexOf("-- \u2500\u2500 DB-14"))}$m$) > 0`), "t");
 
+  // 8z: the receipt trigger now leaves a deleted creator's receipts to the cascade; an ordinary grant deletion
+  // still marks its receipt gone. (The app deletes one account per transaction, through Auth's deleteUser.)
+  {
+    const J2 = id("93"), G2 = id("94");
+    const receipt = (jid, actor, grant) => `insert into public.creator_request_journal (id, creator_id, actor_id, kind, request_hash, state, finished_at, grant_id) values ('${jid}', '${A}', '${actor}', 'grant', '${HEX}', 'committed', now(), '${grant}');`;
+    expect("8z: a grant deleted while its creator exists marks its receipt gone",
+      `insert into public.grants (id, creator_id, fan_id, spins) values ('${G2}', '${A}', '${FA}', 1); ${receipt(J2, MG, G2)} delete from public.grants where id = '${G2}';
+       select 'receipt:' || state || ',' || coalesce(grant_id::text, 'null') from public.creator_request_journal where id = '${J2}';`,
+      ["receipt:gone,null"]);
+  }
+
   return { bad, checks };
 }
