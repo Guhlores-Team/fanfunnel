@@ -119,9 +119,12 @@ export async function authB7Journey(browser, { step, assert }, sink, ctx) {
   await step("b7 auth A2/A5: the real Continue button passes in Chromium and submits once; a real cross-site form is refused", async () => {
     const page = await ctx.newPage();
     try {
-      // Hold the POST for a moment so a second tap can be tried while it is on its way.
+      // Hold the POST for a moment. The page itself reports the button's state as soon as the first tap
+      // disables it, then taps again and submits again, all while the first POST is held (a page in the
+      // middle of a form navigation cannot be read from outside reliably, so it reports through a binding).
       let posts = 0;
       const sent = [];
+      let inFlight = null;
       await page.route("**/auth/confirm/verify", async (route) => {
         if (route.request().method() === "POST") {
           posts++;
@@ -130,21 +133,30 @@ export async function authB7Journey(browser, { step, assert }, sink, ctx) {
         }
         await route.continue();
       });
+      await page.exposeFunction("__authContinueReport", (state) => { inFlight = inFlight ?? state; });
       await goto(page, LANDING, 400);
       await page.waitForFunction(() => document.querySelector('[data-testid="auth-continue"]')?.dataset.enhanced === "1", null, { timeout: 8000 });
-      const button = page.getByTestId("auth-continue-button");
-      await button.click();
-      await page.waitForFunction(() => document.querySelector('[data-testid="auth-continue-button"]')?.disabled === true, null, { timeout: 3000 });
-      assert(/Checking your link/.test(await button.innerText()), `the button shows progress after the first tap (${await button.innerText()})`);
-      assert((await button.getAttribute("aria-busy")) === "true", "…and is marked busy");
-      // A second tap (and a second submit by keyboard) while the first is on its way.
-      await button.click({ force: true, timeout: 1000 }).catch(() => {});
-      const swallowed = await page.evaluate(() => {
+      await page.evaluate(() => {
+        const b = document.querySelector('[data-testid="auth-continue-button"]');
         const form = document.querySelector('[data-testid="auth-continue"]');
-        return form ? !form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) : false;
+        const obs = new MutationObserver(() => {
+          if (!b.disabled) return;
+          obs.disconnect();
+          setTimeout(() => {
+            b.click();
+            const swallowed = !form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+            window.__authContinueReport({ disabled: b.disabled, text: b.innerText, busy: b.getAttribute("aria-busy"), swallowed });
+          }, 50);
+        });
+        obs.observe(b, { attributes: true, childList: true, subtree: true, characterData: true });
       });
-      assert(swallowed, "a second submit while the first is on its way is swallowed");
+      await page.getByTestId("auth-continue-button").click({ noWaitAfter: true });
       await page.waitForURL(`${BASE}/login`, { timeout: 10000 });
+      assert(inFlight && !inFlight.error, `the page could be read while the first POST was on its way (${JSON.stringify(inFlight)})`);
+      assert(inFlight.disabled, "the button is disabled after the first tap");
+      assert(/Checking your link/.test(inFlight.text), `the button shows progress after the first tap (${inFlight.text})`);
+      assert(inFlight.busy === "true", "…and is marked busy");
+      assert(inFlight.swallowed, "a second submit while the first is on its way is swallowed");
       assert(posts === 1, `exactly one POST left the page (${posts})`);
       assert(sent[0]?.origin === BASE, `Chromium sent Origin: ${sent[0]?.origin} with the form POST`);
       await page.unroute("**/auth/confirm/verify");
