@@ -585,7 +585,7 @@ function AutoMessagesCard() {
   };
 
   const well =
-    "w-full rounded-[10px] border border-line bg-base px-3 py-2 text-sm text-ink outline-none transition-colors focus:border-[var(--brand)]";
+    "w-full rounded-[10px] border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none transition-colors focus:border-[var(--brand)]";
 
   return (
     <div className={`min-w-0 flex-1 basis-[260px] rounded-xl ${raised}`}>
@@ -877,7 +877,7 @@ function Thread({
           maxLength={2000}
           aria-label="Reply to this fan"
           placeholder="Reply…"
-          className="min-w-0 flex-1 rounded-full border border-line bg-base px-4 py-2.5 text-sm text-ink outline-none transition-colors focus:border-[var(--brand)]"
+          className="min-w-0 flex-1 rounded-full border border-line bg-canvas px-4 py-2.5 text-sm text-ink outline-none transition-colors focus:border-[var(--brand)]"
         />
         <button
           type="button"

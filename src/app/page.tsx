@@ -65,7 +65,7 @@ export default function Home() {
               ["You set the odds", "Tune rarity and limited stock so the best prizes feel rare."],
               ["Free for creators", "FanFunnel never takes payments. Tips stay on your own platform, and every spin lands on one of your prizes."],
             ].map(([t, d]) => (
-              <div key={t} className="bg-base p-5">
+              <div key={t} className="bg-canvas p-5">
                 <dt className="text-sm font-semibold text-ink">{t}</dt>
                 <dd className="mt-1.5 text-sm leading-relaxed text-muted">{d}</dd>
               </div>

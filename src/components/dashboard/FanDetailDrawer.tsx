@@ -416,7 +416,7 @@ export default function FanDetailDrawer({
               {/* Stat grid */}
               <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-[#1f1b27] bg-[#1f1b27]">
                 {stats.map((s) => (
-                  <div key={s.label} className="bg-base px-[15px] py-[13px]">
+                  <div key={s.label} className="bg-canvas px-[15px] py-[13px]">
                     <dd className="tnum text-[19px] font-bold leading-tight text-ink">
                       {pending ? (
                         <span className="skeleton inline-block h-5 w-10 rounded align-middle" />

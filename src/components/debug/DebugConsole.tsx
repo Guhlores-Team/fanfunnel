@@ -272,7 +272,7 @@ export default function DebugConsole() {
                       </p>
                     )}
                     {e.stack && (
-                      <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-base/60 p-2 text-[11px] leading-relaxed text-muted">
+                      <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-canvas/60 p-2 text-[11px] leading-relaxed text-muted">
                         {e.stack}
                       </pre>
                     )}

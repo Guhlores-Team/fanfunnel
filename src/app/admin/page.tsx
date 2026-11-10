@@ -20,7 +20,7 @@ export default async function AdminPage() {
       // Not admin yet — offer the env-guarded one-time bootstrap instead of a
       // dead redirect, so the owner can claim admin without touching the DB.
       return (
-        <main className="grid min-h-[100dvh] place-items-center overflow-x-clip bg-base px-4">
+        <main className="grid min-h-[100dvh] place-items-center overflow-x-clip bg-canvas px-4">
           <AdminClaim />
         </main>
       );

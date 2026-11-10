@@ -1038,7 +1038,7 @@ function WebhookSecret() {
         the timestamp, a dot and the raw body, made with this secret. Check it before trusting a request.
       </p>
       {secret ? (
-        <code className="break-all rounded-lg bg-base/60 p-2 font-mono text-xs text-ink" aria-label="Signing secret">
+        <code className="break-all rounded-lg bg-canvas/60 p-2 font-mono text-xs text-ink" aria-label="Signing secret">
           {secret}
         </code>
       ) : null}

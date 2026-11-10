@@ -66,7 +66,7 @@ export default async function DashboardPage({
 
   return (
     <main
-      className="min-h-[100dvh] overflow-x-clip bg-base"
+      className="min-h-[100dvh] overflow-x-clip bg-canvas"
       style={brandVars(initialWheel.brandColor)}
     >
       {adminNeedsMfa && <AdminMfaBanner />}

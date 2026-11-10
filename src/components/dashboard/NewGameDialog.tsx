@@ -13,7 +13,7 @@ export default function NewGameDialog({ features, busy, error, onCreate, onClose
   const leave = useCreatorLeave();
   useCreatorDraft("new-game", "this new game form", kind !== "wheel" || name !== "", busy);
   const close = () => leave(onClose, { scope: "new-game", consequence: "Closing discards this new game form. It does not undo a game already created." });
-  return <Modal label="Create a game" onClose={() => { if (!busy) close(); }} dismissable={!busy} initialFocus={initial} className="w-full max-w-md rounded-2xl border border-line bg-base p-5 text-ink shadow-[var(--lift)]">
+  return <Modal label="Create a game" onClose={() => { if (!busy) close(); }} dismissable={!busy} initialFocus={initial} className="w-full max-w-md rounded-2xl border border-line bg-canvas p-5 text-ink shadow-[var(--lift)]">
     <h2 className="text-lg font-bold">Create a game</h2>
     <form className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); if (!busy && canCreateGame(kind, features)) void onCreate(kind, name); }}>
       <fieldset data-testid="game-kind-picker" disabled={busy} className="space-y-2">

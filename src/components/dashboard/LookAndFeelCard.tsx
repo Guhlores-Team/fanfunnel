@@ -260,7 +260,7 @@ export default function LookAndFeelCard({
             <p className="mt-1 text-xs leading-relaxed text-muted">These photos are public, including on your link-in-bio page. Add only safe-for-work photos you have permission to share.</p>
           </div>
           {!view.photosEnabled && <p className="text-xs text-muted">Photo uploads are currently unavailable.</p>}
-          {view.photosEnabled && <form onSubmit={upload} className="space-y-3 rounded-xl border border-line bg-base/40 p-3" aria-label="Add a public gallery photo">
+          {view.photosEnabled && <form onSubmit={upload} className="space-y-3 rounded-xl border border-line bg-canvas/40 p-3" aria-label="Add a public gallery photo">
             <fieldset disabled={locked || view.media.length >= view.maxMedia} className="min-w-0 space-y-3">
               <label className="block space-y-1 text-xs font-semibold text-muted">
                 <span>Choose photo</span>
@@ -332,7 +332,7 @@ function PhotoEditor({ photo, index, count, locked, isBackground, onCaption, onR
   const [confirm, setConfirm] = useState(false);
   const id = useId();
   return (
-    <li className="min-w-0 rounded-xl border border-line bg-base/40 p-3" onDragOver={onDragOver} onDrop={onDrop} data-testid="theme-photo-item" data-media-id={photo.id}>
+    <li className="min-w-0 rounded-xl border border-line bg-canvas/40 p-3" onDragOver={onDragOver} onDrop={onDrop} data-testid="theme-photo-item" data-media-id={photo.id}>
       <div className="flex min-w-0 items-start gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element -- public, processed gallery photo */}
         <img src={photo.url} alt={photo.caption || `Gallery photo ${index + 1}`} width={photo.width} height={photo.height} loading="lazy" className="h-24 w-20 shrink-0 rounded-lg border border-line object-cover" />

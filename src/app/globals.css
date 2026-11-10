@@ -10,7 +10,7 @@
    generated — our hand-written CSS below relies on var(--color-*). */
 @theme {
   /* Tinted-dark neutrals (one consistent warm/plum hue, not cool+warm mixed) */
-  --color-base: #0c0a0e;
+  --color-canvas: #0c0a0e;
   --color-surface: #16131c;
   --color-surface-2: #1f1b27;
   --color-ink: #f4f1f6;
@@ -41,7 +41,7 @@
   /* --- Elevation system (redesign command-center) -------------------------
      Surfaces read as RAISED via an inset top-highlight + soft drop shadow, not
      a flat fill. Primary cards use --s1 + --lift; nested wells use --s2 (no
-     shadow). --hair is the card hairline; inputs sit on the --color-base well. */
+     shadow). --hair is the card hairline; inputs sit on the --color-canvas well. */
   --s1: linear-gradient(180deg, #1c1825, #16131d); /* raised card */
   --s2: #100d16; /* recessed well / nested block */
   --hair: #241f2e; /* card hairline border */
@@ -101,7 +101,7 @@ body {
 .brand-glow {
   background:
     radial-gradient(60% 50% at 50% 12%, color-mix(in oklab, var(--brand) 24%, transparent), transparent 70%),
-    var(--color-base);
+    var(--color-canvas);
 }
 
 /* Form inputs — refined, brand focus ring, accessible. */

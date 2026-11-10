@@ -301,7 +301,7 @@ function ErrorRow({
             <pre
               tabIndex={0}
               aria-label="Stack trace (redacted)"
-              className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-base/60 p-3 font-mono text-[11px] leading-relaxed text-muted"
+              className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-canvas/60 p-3 font-mono text-[11px] leading-relaxed text-muted"
             >
               {item.stack}
             </pre>

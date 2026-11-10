@@ -1,4 +1,5 @@
 import type { Prize, WheelConfig } from "./types";
+import { hasOwn } from "@/lib/fan/uuid";
 
 // Pure wheel validation shared by the editor (inline errors) and PUT /api/wheel
 // (the authoritative check). No React, no server imports: safe in both bundles.
@@ -73,7 +74,7 @@ export const ZERO_TICKETS_NOTE =
 export type GameNounKind = "wheel" | "scratch" | "bingo";
 const GAME_NOUN: Record<GameNounKind, string> = { wheel: "wheel", scratch: "scratch ticket", bingo: "bingo game" };
 export function gameNoun(kind: unknown): string {
-  return typeof kind === "string" && Object.hasOwn(GAME_NOUN, kind) ? GAME_NOUN[kind as GameNounKind] : GAME_NOUN.wheel;
+  return typeof kind === "string" && hasOwn(GAME_NOUN, kind) ? GAME_NOUN[kind as GameNounKind] : GAME_NOUN.wheel;
 }
 
 export function prizeCountError(count: number, kind: unknown = "wheel"): string | null {

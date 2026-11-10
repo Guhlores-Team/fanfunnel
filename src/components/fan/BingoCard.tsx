@@ -36,7 +36,7 @@ export default function BingoCard({ card, presentation, prizeLabel, savedPlay = 
           const index = row * 3 + column;
           const marked = !!(state.markedMask & (1 << index));
           return <td key={cell.id} data-testid="bingo-cell" data-prize-id={cell.id} data-marked={String(marked)}
-            className={`h-32 border border-line px-1 py-3 align-middle ${marked ? "bg-[color-mix(in_oklab,var(--brand)_15%,var(--color-base))]" : "bg-base"}`}>
+            className={`h-32 border border-line px-1 py-3 align-middle ${marked ? "bg-[color-mix(in_oklab,var(--brand)_15%,var(--color-canvas))]" : "bg-canvas"}`}>
             {/* PA-12: a td takes no aria-label; the position is read as text instead. */}
             <span className="sr-only">Row {row + 1}, column {column + 1}: </span>
             <span className="block text-2xl" aria-hidden="true">{cell.emoji ?? "🎁"}</span>
@@ -44,7 +44,7 @@ export default function BingoCard({ card, presentation, prizeLabel, savedPlay = 
             <span className={`mt-2 block text-xs font-bold ${marked ? "text-[var(--brand-text)]" : "text-muted"}`}><span aria-hidden="true">{marked ? "✓ " : "○ "}</span>{marked ? "Marked" : "Unmarked"}</span>
           </td>;
         })}</tr>)}</tbody>
-      </table> : <p className="rounded-xl border border-line bg-base p-6 text-center text-sm text-ink" data-testid="bingo-new-card">{engaged ? "Your first play creates your own card and awards its drawn prize." : "No card yet. A card is created by a play."}</p>}
+      </table> : <p className="rounded-xl border border-line bg-canvas p-6 text-center text-sm text-ink" data-testid="bingo-new-card">{engaged ? "Your first play creates your own card and awards its drawn prize." : "No card yet. A card is created by a play."}</p>}
       {state?.markedMask === 511 && <p className="mt-3 text-sm font-semibold text-ink" data-testid="bingo-full-card">{engaged ? "Card complete. Your next play starts a new card." : "Card complete."}</p>}
       <p role="status" aria-live="polite" aria-atomic="true" className="mt-3 text-sm text-muted" data-testid="bingo-announcement">{announcement}</p>
     </section>

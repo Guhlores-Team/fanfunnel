@@ -900,12 +900,12 @@ function ManageMessages({
           <div>
             <h2 className="text-[17px] font-bold text-ink">DM templates</h2>
             <p className="mt-0.5 text-xs text-muted">
-              Use <code className="rounded bg-base px-1">{"{link}"}</code> where the
+              Use <code className="rounded bg-canvas px-1">{"{link}"}</code> where the
               fan&rsquo;s spin link should go. Also:{" "}
               {TEMPLATE_TOKENS.filter((t) => t !== "{link}").map((t, i) => (
                 <span key={t}>
                   {i > 0 && " "}
-                  <code className="rounded bg-base px-1">{t}</code>
+                  <code className="rounded bg-canvas px-1">{t}</code>
                 </span>
               ))}
               .

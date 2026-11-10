@@ -283,7 +283,7 @@ export default function AdminClient() {
           className="lift-in grid grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-[#1f1b27] bg-[#1f1b27] sm:grid-cols-4"
         >
           {tiles.map((t) => (
-            <div key={t.label} className="bg-base px-[18px] py-4">
+            <div key={t.label} className="bg-canvas px-[18px] py-4">
               <dd className="tnum m-0 text-[22px] font-bold leading-none tracking-[-0.02em] text-ink">
                 {loading ? <span className="text-muted">—</span> : t.value.toLocaleString()}
               </dd>

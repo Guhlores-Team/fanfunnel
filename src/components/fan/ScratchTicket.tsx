@@ -114,7 +114,7 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
       <div className="relative overflow-hidden rounded-xl border border-line">
         <table aria-label="Committed scratch ticket symbols" aria-hidden={!revealed} className="w-full table-fixed border-collapse text-center" data-testid="scratch-face">
           <tbody>{[0,1,2].map(row => <tr key={row}>{presentation.cells.slice(row * 3, row * 3 + 3).map((cell, column) => (
-            <td key={`${row}-${column}`} className="h-28 border border-line bg-base px-1 py-3 align-middle" data-testid="scratch-cell" data-cell-kind={cell.kind} data-symbol-id={cell.id}>
+            <td key={`${row}-${column}`} className="h-28 border border-line bg-canvas px-1 py-3 align-middle" data-testid="scratch-cell" data-cell-kind={cell.kind} data-symbol-id={cell.id}>
               <span className="block text-2xl" aria-hidden="true">{cell.emoji ?? "◇"}</span>
               <span className="mt-2 block break-words text-xs font-semibold leading-snug text-ink [overflow-wrap:anywhere]">{cell.label}</span>
             </td>

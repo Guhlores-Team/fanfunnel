@@ -14,7 +14,7 @@
 
 import type { CSSProperties } from "react";
 
-/** App's darkest surface (globals.css --color-base) — what brand-as-text sits on. */
+/** App's darkest surface (globals.css --color-canvas) — what brand-as-text sits on. */
 export const APP_BASE = "#0c0a0e";
 /** Fallback brand if a creator's value is missing/invalid (globals.css default). */
 export const DEFAULT_BRAND = "#ec4899";
@@ -92,7 +92,7 @@ export function readableInk(color: string): string {
 
 /**
  * The brand color adjusted so it's legible as TEXT on the dark app surface.
- * Returns it unchanged when it already meets `min` contrast on --color-base;
+ * Returns it unchanged when it already meets `min` contrast on --color-canvas;
  * otherwise mixes it toward white (preserving hue) until it does. This is what
  * fixes brand-colored accent text (odds, weights, ×multiplier) going invisible
  * when a creator picks a dark brand color. `surface` defaults to the app base;
