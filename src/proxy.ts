@@ -4,7 +4,6 @@ import { buildCsp, createNonce, usesStrictCsp } from "@/lib/security/csp";
 import { isCrossOriginWrite } from "@/lib/security/sameOrigin";
 import { limitRoute } from "@/lib/api/limit";
 import { MAINTENANCE_HEADERS, maintenanceBlocksWrite, maintenanceOn } from "@/lib/ops/maintenance";
-import { NOT_FOUND_KIND_HEADER, NOT_FOUND_PREFIX, NOT_FOUND_RETRY_HEADER, parseNotFoundPath } from "@/lib/fan/linkNotFound";
 
 // Next 16 renamed the `middleware` file convention to `proxy` (same behavior).
 // This refreshes the Supabase session before the auth pages render. It runs
@@ -25,21 +24,6 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.json({ error: "bad_request" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
   const path = request.nextUrl.pathname;
-  // WA-02: a dead fan/share/verify/creator link was sent to this unmatched
-  // path so the root not-found renders with a real 404 and real markup (see
-  // src/lib/fan/linkNotFound.ts). The kind travels on a request header the
-  // root not-found.tsx reads; nothing here looks anything up.
-  if (path.startsWith(NOT_FOUND_PREFIX + "/")) {
-    const parsed = parseNotFoundPath(path);
-    const headers = new Headers(request.headers);
-    headers.delete(NOT_FOUND_KIND_HEADER);
-    headers.delete(NOT_FOUND_RETRY_HEADER);
-    if (parsed) {
-      headers.set(NOT_FOUND_KIND_HEADER, parsed.kind);
-      if (parsed.kind === "busy" && parsed.detail && /^\d{1,5}$/.test(parsed.detail)) headers.set(NOT_FOUND_RETRY_HEADER, parsed.detail);
-    }
-    return NextResponse.next({ request: { headers } });
-  }
   // I4: a cookie-carrying write to the API must come from this origin. Only
   // cookie-carrying /api requests reach here (matcher); they never refresh
   // the session here, so a slow Supabase can't delay the API.
@@ -87,7 +71,6 @@ export const config = {
   // Must be literals: Next reads these statically.
   matcher: [
     "/(.*%.*)",
-    "/not-found/:path*",
     { source: "/api/:path*", has: [{ type: "header", key: "cookie" }] },
     "/leaderboard/:path*",
     "/dashboard/:path*",

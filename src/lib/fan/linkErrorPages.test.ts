@@ -42,4 +42,20 @@ check("WF-17: the verify page reads no code from the URL", !/searchParams[^\n]*c
 const form = read("src/app/verify/[shareId]/ClaimCheck.tsx");
 check("WF-17: the form posts to the route (never GET)", form.includes('method="post"') && form.includes('action="/api/public/claim-check"') && !form.includes('method="get"'));
 
+// WA-02: the root not-found is serialised into every page as its not-found
+// boundary, so it must stay free of request APIs or the ISR creator page
+// (/c/[slug], revalidate = 60) answers 500 at runtime.
+const notFound = read("src/app/not-found.tsx");
+check("the root not-found reads no request data (headers/cookies/searchParams)", !/next\/headers|cookies\(|headers\(|searchParams|connection\(|draftMode/.test(notFound));
+check("the root not-found is a plain (non-async) static component", /export default function NotFound\(\)/.test(notFound));
+for (const id of ["nf-link", "nf-verify", "nf-busy"]) check(`the root not-found carries the ${id} explanation`, notFound.includes(`id="${id}"`));
+const kinds = read("src/components/fan/NotFoundKinds.tsx");
+check("the kind is applied after hydration from the path, never from a request header", /^"use client";/.test(kinds) && kinds.includes("useSyncExternalStore") && kinds.includes("window.location.pathname"));
+const css = read("src/app/globals.css");
+check("the fragment shows a section without script", css.includes(".nf-kinds > .nf-kind:target { display: block; }"));
+check("the creator page stays cached (ISR)", /export const revalidate = 60;/.test(read("src/app/c/[slug]/page.tsx")));
+check("no proxy branch tags not-found requests any more", !read("src/proxy.ts").includes("not-found"));
+for (const f of ["src/app/spin/[token]/page.tsx", "src/app/share/[shareId]/page.tsx", "src/app/verify/[shareId]/page.tsx", "src/app/c/[slug]/page.tsx", "src/app/leaderboard/[creatorId]/page.tsx"]) {
+  check(`${f} sends a dead link to the branded 404`, read(f).includes("linkNotFound("));
+}
 console.log(`linkErrorPages.test: ${passed} checks passed`);

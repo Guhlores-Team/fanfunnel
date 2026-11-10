@@ -1,13 +1,28 @@
+"use client";
+
+import { useSyncExternalStore } from "react";
 import { LEGAL } from "@/lib/legal";
 import LegalLinks from "@/components/LegalLinks";
+import { busyRetrySeconds } from "@/lib/fan/linkNotFound";
 
 /**
  * WF-03: the address is over its link-attempt budget (someone behind the same
  * carrier, campus or event address guessed too many links). An honest page
- * with the wait, instead of telling a real fan their link is mistyped.
+ * with the wait, instead of telling a real fan their link is mistyped. The
+ * wait travels in the path (/not-found/busy/<seconds>) and is read in the
+ * browser, so the static not-found page needs no request data (WA-02).
  */
-export default function LinkAttemptsBlocked({ retrySeconds }: { retrySeconds: number | null }) {
-  const wait = retrySeconds && retrySeconds > 0 ? (retrySeconds >= 90 ? `${Math.ceil(retrySeconds / 60)} minutes` : `${retrySeconds} seconds`) : "a minute";
+const noSubscribe = () => () => {};
+const fromPath = () => busyRetrySeconds(window.location.pathname);
+const unknown = () => null;
+
+/** "58 seconds", "3 minutes", or "a minute" when the wait is unknown. */
+export function retryWording(retrySeconds: number | null): string {
+  return retrySeconds && retrySeconds > 0 ? (retrySeconds >= 90 ? `${Math.ceil(retrySeconds / 60)} minutes` : `${retrySeconds} seconds`) : "a minute";
+}
+
+export default function LinkAttemptsBlocked() {
+  const wait = retryWording(useSyncExternalStore(noSubscribe, fromPath, unknown));
   return (
     <main className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center px-5 py-10" data-testid="link-attempts-blocked">
       <div className="card relative z-[1] w-full max-w-sm rounded-2xl p-6 text-center">

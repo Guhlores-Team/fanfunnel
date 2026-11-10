@@ -56,7 +56,7 @@ export default function TopUpMoment({
         </p>
       ) : (
         <p className="mt-1 text-sm text-muted">
-          More spins come from {creatorTitle}: fans can&rsquo;t buy them here.
+          More spins come from {creatorTitle}: fans can&rsquo;t get them here.
         </p>
       )}
       {tipUrl ? (

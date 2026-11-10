@@ -97,6 +97,18 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
+/* WA-02: the static not-found page holds three explanations; the URL fragment
+   (#nf-verify, #nf-busy) shows one without script, and once hydrated the
+   path sets data-kind (src/components/fan/NotFoundKinds.tsx). Without either,
+   the generic link page shows. */
+.nf-kinds > .nf-kind:not(.nf-default) { display: none; }
+.nf-kinds > .nf-kind:target { display: block; }
+.nf-kinds:has(> .nf-kind:not(.nf-default):target) > .nf-default { display: none; }
+.nf-kinds[data-kind] > .nf-kind { display: none; }
+.nf-kinds[data-kind="nf-link"] > #nf-link,
+.nf-kinds[data-kind="nf-verify"] > #nf-verify,
+.nf-kinds[data-kind="nf-busy"] > #nf-busy { display: block; }
+
 /* Radial brand glow used behind hero / wheel for atmosphere + depth. */
 .brand-glow {
   background:

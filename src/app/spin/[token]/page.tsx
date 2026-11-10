@@ -110,7 +110,7 @@ export default async function SpinPage({
             saved-reward and break dialogs) paints above the backdrop and above
             the Preview-only EnvBadge (z-30), which must never cover a fan's
             action. Those overlays' own z-index only orders them inside here. */}
-        <div className="relative z-40 flex w-full justify-center">
+        <div className="relative z-[41] flex w-full justify-center">
           <SpinClient
             pass={pass}
             gallery={look.media.length ? <PhotoGallery media={look.media} creatorTitle={pass.creatorTitle} /> : null}

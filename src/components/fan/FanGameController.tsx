@@ -80,6 +80,7 @@ import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
 import { readCommittedGame, readFanGameKind, readGameCard, currentGameCard, readCardSource, readPassGameKind, type CommittedGameView } from "./gameOutcome";
 import type { BingoState } from "@/lib/games/bingo/engine";
 import OpenInBrowser from "./OpenInBrowser";
+import InAppHint from "./InAppHint";
 import { currentInAppBrowser } from "./inAppBrowser";
 
 const noSubscribe = () => () => {};
@@ -785,6 +786,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           />
         )}
         <InstallNudge armed={reveal && won !== null && engaged} />
+        <InAppHint />
       </div>
 
       <LimitedStockRow prizes={prizes} />
