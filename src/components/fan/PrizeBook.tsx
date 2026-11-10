@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { PublicPrize } from "@/lib/games/wheel/types";
-import { RARITY_COLORS } from "@/lib/games/wheel/types";
+import { RARITY_COLORS, RARITY_LABEL } from "@/lib/games/wheel/types";
+import { formatFanChance } from "@/lib/games/wheel/publicOdds";
 import type { WonPrize } from "@/lib/data/types";
 import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
 import { hasStockToShow, stockLabel } from "./stockDisplay";
@@ -14,7 +15,7 @@ import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
  * honest stock counts on limited prizes. Collection psychology — "gotta get them
  * all" — without any fake scarcity. Collapsed by default to keep the wheel hero.
  * RM-2: counts appear only when the wheel shows stock; a sold-out prize reads
- * "Claimed ✨" either way (it has 0% odds, see isPublicPrizeAvailable).
+ * "Sold out" either way (it has 0% odds, see isPublicPrizeAvailable).
  */
 export default function PrizeBook({
   prizes,
@@ -35,6 +36,8 @@ export default function PrizeBook({
 
   return (
     <div className="w-full">
+      {/* WF-16: a heading a screen reader can jump to; the button toggles it. */}
+      <h2 className="m-0">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between rounded-2xl border border-line bg-surface/60 px-4 py-3"
@@ -48,6 +51,7 @@ export default function PrizeBook({
         </span>
         <span className="text-sm text-muted">{open ? "Hide ▲" : "Show ▼"}</span>
       </button>
+      </h2>
 
       {open && (
         <div className="mt-2 grid grid-cols-2 gap-2">
@@ -86,11 +90,12 @@ export default function PrizeBook({
                   <p className="break-words text-xs font-semibold text-ink" data-testid="prize-book-name">
                     {p.label}
                   </p>
-                  {!won && !target && <p className="text-[10px] text-muted">Not won yet</p>}
+                  {/* PA-10: the rarity in words, not only in the colour. */}
+                  <p className="text-xs text-muted" data-testid="prize-book-rarity">{RARITY_LABEL[p.rarity] ?? p.rarity}{!won && !target ? " · Not won yet" : ""}</p>
                   {target && <p className="text-xs font-semibold text-[var(--brand-text)]">{focus?.kind === "chase" ? "Chase target" : "Focus target"}</p>}
-                  <p className="tnum text-xs text-muted" data-testid="fan-prize-odds">{typeof chance === "number" && Number.isFinite(chance) && chance >= 0 && chance <= 1 ? `${(chance * 100).toLocaleString(undefined, { maximumFractionDigits: 3 })}% chance` : "Odds unavailable"}</p>
+                  <p className="tnum text-xs text-muted" data-testid="fan-prize-odds">{typeof chance === "number" && Number.isFinite(chance) && chance >= 0 && chance <= 1 ? `${formatFanChance(chance)} chance` : "Odds unavailable"}</p>
                   {limited && (
-                    <p className="tnum text-[10px] text-muted">{stockLabel(p)}</p>
+                    <p className="tnum text-xs text-muted">{stockLabel(p)}</p>
                   )}
                 </div>
               </div>

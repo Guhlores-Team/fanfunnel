@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { deliveryLabel, firstEmbedded, toWinDelivery, winDate } from "./delivery";
+import { deliveryLabel, firstEmbedded, toWinDelivery, winDate, winDateLocal } from "./delivery";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -24,6 +24,8 @@ check("labels: cancelled", deliveryLabel({ status: "cancelled", at: null }) === 
 
 check("dates are UTC calendar days", winDate("2026-01-31T23:59:59Z") === "January 31, 2026");
 check("a bad date is blank, never a throw", winDate("nope") === "");
+check("RF-10: the local day follows the viewer's zone", winDateLocal("2026-01-31T23:30:00Z", "en-US", "Pacific/Auckland") === "February 1, 2026" && winDateLocal("2026-01-31T23:30:00Z", "en-US", "America/Los_Angeles") === "January 31, 2026");
+check("RF-10: a bad local date is blank", winDateLocal("nope") === "");
 
 check("embeds: object", firstEmbedded({ a: 1 })?.a === 1);
 check("embeds: array", firstEmbedded([{ a: 2 }])?.a === 2);

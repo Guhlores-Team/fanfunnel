@@ -26,6 +26,8 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
   const [done, setDone] = useState<string | null>(null);
+  // RF-05: a failed report stays on the form (the typed detail is kept).
+  const [reportError, setReportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { markPaused } = useLinkPause();
   // Inline failure on the pause confirm step so the fan can retry in place.
@@ -63,13 +65,17 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
   const report = async () => {
     if (!reason.trim()) return;
     setBusy(true);
+    setReportError(null);
     try {
       const res = await fetch("/api/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, reason, detail }),
       });
-      setDone(res.ok ? "Thanks — your report was sent to FanFunnel." : "Couldn't send. Try again.");
+      if (res.ok) setDone("Thanks — your report was sent to FanFunnel.");
+      else setReportError(res.status === 429 ? "Too many reports from your network right now. Try again in a minute." : "Couldn't send. Try again.");
+    } catch {
+      setReportError("Couldn't send — check your connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -111,7 +117,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
           setExportNote(null);
           setInlineData(null);
         }}
-        className="text-[11px] text-muted underline-offset-4 transition hover:text-muted hover:underline"
+        className="inline-flex min-h-11 items-center px-2 text-xs text-muted underline-offset-4 transition hover:text-muted hover:underline"
       >
         Safety &amp; privacy
       </button>
@@ -194,7 +200,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                 >
                   Cancel
                 </button>
-                <LegalLinks className="mt-3" />
+                <LegalLinks className="mt-3" landmark={false} />
               </>
             ) : mode === "delete" ? (
               <FanDeleteFlow
@@ -228,6 +234,11 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                   value={detail}
                   onChange={(e) => setDetail(e.target.value)}
                 />
+                {reportError && (
+                  <p role="alert" data-testid="report-error" className="mt-3 text-center text-xs text-amber-300">
+                    {reportError}
+                  </p>
+                )}
                 <button
                   onClick={report}
                   disabled={busy || !reason}

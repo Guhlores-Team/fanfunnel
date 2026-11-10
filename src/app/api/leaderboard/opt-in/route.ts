@@ -3,6 +3,7 @@ import { withFanMissLimit } from "@/lib/api/fanMiss";
 import { setFanLeaderboardOptIn } from "@/lib/data";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { refuseCreatorSession } from "@/lib/fan/creatorGuard";
 
 /** Allow-list for a public board name: ASCII letters/digits plus `_ . -`. */
 const HANDLE_ALLOWED = /^[a-zA-Z0-9_.-]+$/;
@@ -44,6 +45,9 @@ export async function POST(req: Request) {
 
     const limited = await rateLimitOr429("lb-optin:" + body.token, 10, 60_000);
     if (limited) return limited;
+    // ATK-01: publishing a fan on the board is the fan's consent, not the creator's.
+    const refused = await refuseCreatorSession(body.token);
+    if (refused) return refused;
 
     // Opting IN requires a board name: without one the only thing the public
     // board could show is the fan's real name, which it must never do. Opting

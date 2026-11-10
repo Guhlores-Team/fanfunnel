@@ -5,7 +5,7 @@ import { isLowStock, limitedRowPrizes, stockLabel } from "./stockDisplay";
 
 /**
  * RM-2 · the slim "Limited" row under the wheel: one chip per limited prize
- * with its real count ("📸 Signed Polaroid · 3 left"), or "Claimed ✨" once it
+ * with its real count ("📸 Signed Polaroid · 3 left"), or "Sold out" once it
  * is gone. Renders nothing when the wheel hides its stock (no counts arrive).
  */
 export default function LimitedStockRow({ prizes }: { prizes: PublicPrize[] }) {

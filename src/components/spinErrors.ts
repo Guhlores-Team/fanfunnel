@@ -19,7 +19,7 @@ export interface SpinErrorInfo {
 const GENERIC: SpinErrorInfo = { message: "Something went wrong. Try again." };
 
 const MESSAGES: Record<string, SpinErrorInfo> = {
-  no_spins: { message: "You're out of spins! Tip your creator to get more. 💖" },
+  no_spins: { message: "You're out of spins. More come from your creator — fans can't get them here." },
   rate_limited: { message: "Whoa, slow down a sec — try again in a moment. 😅" },
   blocked: { message: "This link isn't active. Reach out to your creator." },
   on_break: { message: "You're taking a break. Your spins and prizes are safe. 💖", refreshPlay: true },

@@ -7,7 +7,8 @@ import type { DeliveredReward } from "@/lib/rewards/config";
 import { timeAgo } from "@/lib/format";
 import { useNow } from "@/lib/hooks/useNow";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
-import { readableInk } from "@/lib/theme";
+import { brandText, readableInk } from "@/lib/theme";
+import WinCodes from "./WinCodes";
 import InstantReward from "./InstantReward";
 import InstantRewardHistory from "./InstantRewardHistory";
 import WinDeliveryList from "./WinDeliveryList";
@@ -89,8 +90,8 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
   return (
     <div className="w-full">
       <div className="mb-3 flex items-baseline justify-between">
-        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted">Your wins</p>
-        <p className="text-[11px] text-muted">
+        <h2 className="text-xs font-medium uppercase tracking-[0.18em] text-muted">Your wins</h2>
+        <p className="text-xs text-muted">
           {history.length} total{rareCount > 0 ? ` · ${rareCount} rare+` : ""}
         </p>
       </div>
@@ -109,7 +110,7 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
             >
               {g.count > 1 && (
                 <span
-                  className="absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[10px] font-extrabold"
+                  className="absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[11px] font-extrabold"
                   style={{ backgroundColor: c, color: readableInk(c) }}
                 >
                   ×{g.count}
@@ -128,13 +129,14 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
                 {g.label}
               </p>
               <div className="mt-1 flex items-center justify-between gap-1">
+                {/* PA-06: the rarity colour as text, lifted to 4.5:1 (common grey failed). */}
                 <span
-                  className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-                  style={{ color: c, backgroundColor: `color-mix(in oklab, ${c} 16%, transparent)` }}
+                  className="rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide"
+                  style={{ color: brandText(c, 4.5), backgroundColor: `color-mix(in oklab, ${c} 16%, transparent)` }}
                 >
                   {RARITY_LABEL[g.rarity] ?? g.rarity}
                 </span>
-                <span className="shrink-0 text-[10px] text-muted">
+                <span className="shrink-0 text-[11px] text-muted">
                   {now === null ? "" : ago(g.latest, now)}
                 </span>
               </div>
@@ -174,6 +176,7 @@ export default function WinsGallery({ history, token, historyNonce = 0 }: { hist
           );
         })}
       </div>
+      <WinCodes history={history} />
       <WinDeliveryList history={history} />
       {token && <InstantRewardHistory token={token} onView={(win, label) => void openReward(win, label)} />}
       {view && (

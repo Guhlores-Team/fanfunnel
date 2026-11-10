@@ -108,11 +108,12 @@ export async function getPublicProfileBySlug(
         avatarUrl: saved.avatarUrl || null,
         prizes: teaserPrizes(live?.prizes ?? []),
         odds: publicGameKind(live?.gameKind) === "bingo" ? [] : publicBaseOdds(live?.prizes ?? []),
-        hasTipUrl: true,
+        // PR-19: no "#" call to action in the demo; a saved link or none.
+        hasTipUrl: !!saved.tipUrl,
         gameKind: publicGameKind(live?.gameKind),
         look: await getCreatorThemeView(null),
       },
-      tipUrl: saved.tipUrl || "#",
+      tipUrl: saved.tipUrl || null,
     };
   }
   const sb = createServiceClient();

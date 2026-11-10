@@ -94,6 +94,7 @@ export function statusForError(code: string): number {
       return 403;
     case "not_found":
       return 404;
+    case "prize_owed":
     case "game_kind_locked":
     case "game_in_use":
     case "game_not_ready":

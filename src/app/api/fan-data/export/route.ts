@@ -6,6 +6,7 @@ import { BAD_REQUEST, parseJsonBody } from "@/lib/api/handler";
 import { LIMITS } from "@/lib/privacy/config";
 import { exportFileName } from "@/lib/privacy/exportTypes";
 import { jsonDownload, privateError, tokenKey } from "@/lib/privacy/respond";
+import { CREATOR_SESSION_ERROR, creatorActsForFan } from "@/lib/fan/creatorGuard";
 
 // A fan downloads their own data. Body: { token }. The token is the fan's only
 // credential, so the export is exactly the records that token resolves to
@@ -22,6 +23,8 @@ export async function POST(req: Request) {
     const byToken = await rateLimitOr429(await tokenKey("fanexport", body.token), ...LIMITS.fanExportPerToken);
     if (byToken) return byToken;
 
+    // ATK-01: the export is the fan's; the creator has their own data export.
+    if (await creatorActsForFan(body.token)) return privateError(CREATOR_SESSION_ERROR, 403);
     const data = await exportFanData(body.token);
     if (!data) return privateError("not_found", 404);
     return jsonDownload(data, exportFileName("fan", new Date()));

@@ -274,9 +274,10 @@ export async function getSpinVerification(
 
 export async function addWishlist(
   token: string,
-  prizeLabel: string
+  prizeLabel: string,
+  prizeId: string | null = null
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockAddWishlist(token, prizeLabel);
+  if (!isSupabaseConfigured()) return mockAddWishlist(token, prizeLabel, prizeId);
 
   const sb = createServiceClient();
   const resolved = await resolveFanByToken(sb, token);
@@ -284,15 +285,14 @@ export async function addWishlist(
   if (resolved.blocked) return { error: "blocked" };
   if (resolved.needsAck) return { error: "needs_ack" };
 
-  // The label must exist on the fan's resolved wheel; snapshot its rarity.
-  const { data: prize } = await sb
-    .from("prizes")
-    .select("id, rarity")
-    .eq("wheel_id", resolved.wheelId)
-    .eq("label", prizeLabel)
-    .maybeSingle();
-  const p = prize as { id: string; rarity: Rarity } | null;
-  if (!p) return { error: "invalid_prize" };
+  // The prize must exist on the fan's resolved wheel; snapshot its rarity.
+  // RF-15: by id when the page sent one (two prizes may share a label), the
+  // label is then checked against that row; by label for older pages.
+  let query = sb.from("prizes").select("id, label, rarity").eq("wheel_id", resolved.wheelId);
+  query = prizeId ? query.eq("id", prizeId) : query.eq("label", prizeLabel);
+  const { data: prizeRows } = await query.limit(1);
+  const p = (prizeRows as { id: string; label: string; rarity: Rarity }[] | null)?.[0] ?? null;
+  if (!p || (prizeId && p.label !== prizeLabel)) return { error: "invalid_prize" };
 
   const { error } = await sb
     .from("wishlists")
@@ -311,7 +311,8 @@ export async function addWishlist(
 
 export async function removeWishlist(
   token: string,
-  prizeLabel: string
+  prizeLabel: string,
+  _prizeId: string | null = null
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return mockRemoveWishlist(token, prizeLabel);
 

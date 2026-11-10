@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FAB_AVOID_SELECTOR, shouldStepAside } from "./fabOverlap";
+import { FAB_AVOID_SELECTOR, fabNudge } from "./fabOverlap";
 import type { ChatMessage } from "@/lib/data/types";
 import { startPoll } from "@/lib/poll";
 import { blockedFanMessage } from "./blockedFan";
@@ -35,10 +35,13 @@ export default function ChatPanel({
   token,
   unlocked,
   creatorTitle,
+  openRequest = null,
 }: {
   token: string;
   unlocked: boolean;
   creatorTitle: string;
+  /** WF-10: open the chat with a draft ready (the win card's "Message" action). */
+  openRequest?: { nonce: number; draft: string } | null;
 }) {
   const [open, setOpenState] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -99,7 +102,18 @@ export default function ChatPanel({
     requestAnimationFrame(() => fabRef.current?.focus());
   }, [setOpen]);
   const dialogRef = useFocusTrap<HTMLDivElement>({ active: open && modal, onEscape: closeChat, initialFocus: unlocked ? inputRef : undefined, restoreFocus: false });
-  const [stepAside, setStepAside] = useState(false);
+  // WF-10: the win card asked for the chat, with the win and its code drafted.
+  const lastRequest = useRef<number | null>(null);
+  useEffect(() => {
+    if (!openRequest || openRequest.nonce === lastRequest.current) return;
+    lastRequest.current = openRequest.nonce;
+    setDraft(openRequest.draft);
+    setModal(true);
+    setOpen(true);
+  }, [openRequest, setOpen]);
+  // WF-10: the button moves up to clear a play control instead of vanishing.
+  const [nudge, setNudge] = useState<{ up: number; hide: boolean }>({ up: 0, hide: false });
+  const stepAside = nudge.hide;
   // Guard so the auto-intro is only requested once per mount.
   const introRequested = useRef(false);
 
@@ -288,7 +302,8 @@ export default function ChatPanel({
       const fab = fabRef.current;
       const controls = Array.from(document.querySelectorAll(FAB_AVOID_SELECTOR), (el) => el.getBoundingClientRect());
       const inUse = open || (!!fab && document.activeElement === fab);
-      setStepAside(shouldStepAside(fab?.getBoundingClientRect() ?? null, controls, inUse));
+      const next = fabNudge(fab?.getBoundingClientRect() ?? null, controls, inUse);
+      setNudge((prev) => (prev.up === next.up && prev.hide === next.hide ? prev : next));
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
     measure();
@@ -315,6 +330,8 @@ export default function ChatPanel({
         }}
         data-testid="chat-fab"
         data-step-aside={stepAside ? "true" : undefined}
+        data-nudged={nudge.up > 0 ? "true" : undefined}
+        style={nudge.up > 0 ? { transform: `translateY(-${nudge.up}px)` } : undefined}
         className={`fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-ink shadow-lg transition hover:border-[var(--brand)] ${stepAside ? "invisible opacity-0" : ""}`}
         aria-label="Message creator"
       >
@@ -352,14 +369,14 @@ export default function ChatPanel({
 
           {!unlocked ? (
             <div className="flex flex-1 items-center justify-center px-4 py-10 text-center text-sm text-muted">
-              Top up from {creatorTitle} to start a conversation. 💖
+              Chat opens once {creatorTitle} grants you spins.
             </div>
           ) : (
             <>
               <div className="flex-1 space-y-2 overflow-y-auto py-2">
                 {messages.length === 0 && (
                   <p className="py-8 text-center text-sm text-muted">
-                    Say hi to {creatorTitle} 👋
+                    Say hi to {creatorTitle} 👋 — replies may come from them or their team.
                   </p>
                 )}
                 {messages.map((m) => (

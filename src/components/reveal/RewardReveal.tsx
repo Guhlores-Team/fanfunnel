@@ -7,6 +7,7 @@ import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { copyToClipboard } from "@/lib/hooks/useClipboard";
 import { prefersReducedMotion } from "@/lib/sound";
 import { resolveRevealTier, type RevealTierConfig } from "./revealTiers";
+import { withArticle } from "@/components/fan/wheelLanding";
 
 /**
  * F3 · the shared win card. Every game opens this once the server has decided
@@ -34,6 +35,7 @@ export default function RewardReveal({
   entrance,
   confetti,
   claim,
+  message = null,
   onClose,
 }: {
   prize: PublicPrize;
@@ -52,6 +54,8 @@ export default function RewardReveal({
   /** FD-12: who won and when, shown on the card a fan screenshots to claim. */
   /** `code`: the server's claim code for this win (C4, src/lib/rewards/claimCode.ts). */
   claim?: { fanName: string | null; at: string | null; code?: string | null };
+  /** WF-10: "Message {creator}" with the code ready to send (null: chat not available). */
+  message?: { label: string; onClick: () => void } | null;
   onClose: () => void;
 }) {
   const [reduced] = useState(() => prefersReducedMotion());
@@ -72,16 +76,25 @@ export default function RewardReveal({
   const [announce, setAnnounce] = useState("");
   useEffect(() => {
     const t = setTimeout(
-      () => setAnnounce(`You won ${prize.label}, a ${tier.label} prize.`),
+      // WF-12: "an Uncommon prize", "a Rare prize".
+      () => setAnnounce(`You won ${prize.label}, ${withArticle(tier.label)} prize.`),
       60
     );
     return () => clearTimeout(t);
   }, [prize.label, tier.label]);
 
+  // WF-01: a claim code is proof the fan may still need. Escape asks first;
+  // the backdrop never closes the card (RF-14): the button does.
+  const [confirmClose, setConfirmClose] = useState(false);
+  const askBeforeClose = !instant && !!claim?.code;
+  const requestClose = () => {
+    if (askBeforeClose && !confirmClose) { setConfirmClose(true); return; }
+    onClose();
+  };
   // Focus the primary action on open, close on Escape, trap Tab inside.
   const dialogRef = useFocusTrap<HTMLDivElement>({
     active: true,
-    onEscape: onClose,
+    onEscape: requestClose,
     initialFocus: primaryRef,
   });
 
@@ -129,7 +142,6 @@ export default function RewardReveal({
   return (
     <div
       className="fixed inset-0 z-50 flex overflow-y-auto p-4"
-      onClick={onClose}
       data-testid="reward-reveal"
       data-tier={tier.rarity}
       data-entrance={mode}
@@ -172,7 +184,7 @@ export default function RewardReveal({
         >
           <span
             id="reveal-rarity"
-            className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+            className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.14em]"
             style={{ backgroundColor: tier.color, color: readableInk(tier.color) }}
           >
             {tier.label}
@@ -214,9 +226,21 @@ export default function RewardReveal({
           <p className="mt-5 text-sm text-muted">
             {instant
               ? "Your reward is delivered. You can reopen it from Your wins."
-              : "Screenshot this and send it to your creator to claim your prize!"}
+              : claim?.code
+                ? "Screenshot this and send it to your creator to claim your prize! Your code also stays under Your wins."
+                : "Screenshot this and send it to your creator to claim your prize!"}
           </p>
           {!instant && claim && <WinProof fanName={claim.fanName} at={claim.at} code={claim.code ?? null} />}
+          {message && !instant && (
+            <button
+              type="button"
+              onClick={() => { message.onClick(); onClose(); }}
+              data-testid="reveal-message"
+              className="mt-4 w-full rounded-2xl border border-line py-3 font-semibold text-ink transition hover:brightness-110"
+            >
+              💬 {message.label}
+            </button>
+          )}
           {instant && shareId && <p className="mt-2 text-xs text-muted">Your reward stays private when you share your win.</p>}
           {shareBtn}
           {manualUrl && (
@@ -233,9 +257,14 @@ export default function RewardReveal({
               />
             </div>
           )}
+          {confirmClose && (
+            <p role="status" data-testid="reveal-close-confirm" className="mt-4 rounded-xl border border-line px-3 py-2 text-xs text-muted text-pretty">
+              Close this card? Your code <span className="font-mono font-semibold text-ink">{claim?.code}</span> stays under Your wins on this page.
+            </p>
+          )}
           <button
             ref={shareFirst ? undefined : primaryRef}
-            onClick={onClose}
+            onClick={confirmClose ? onClose : requestClose}
             className={
               shareFirst
                 ? "mt-3 w-full rounded-2xl border border-line py-3 font-semibold text-ink transition hover:brightness-110"
@@ -243,7 +272,7 @@ export default function RewardReveal({
             }
             style={shareFirst ? undefined : brandVars(prizeColor)}
           >
-            Awesome!
+            {confirmClose ? "Yes, close" : "Awesome!"}
           </button>
         </div>
       </div>

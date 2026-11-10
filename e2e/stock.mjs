@@ -8,7 +8,7 @@
 import { goto, clickTab, BASE, waitForSpinAcknowledged } from "./harness.mjs";
 import { createRevealFan, spinAndTime, clearForcedRarity } from "./reveal.mjs";
 
-const SOLD_OUT = "Claimed ✨";
+const SOLD_OUT = "Sold out";
 /** A JSON key "stock" with a number, raw or escaped inside the page's serialized props. */
 const STOCK_COUNT = /\\?"stock\\?"\s*:\s*-?\d/;
 

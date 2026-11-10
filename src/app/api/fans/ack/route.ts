@@ -4,18 +4,24 @@ import { ackFan } from "@/lib/data";
 import { clientIp } from "@/lib/api/clientIp";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
+import { tokenKey } from "@/lib/privacy/respond";
+import { refuseCreatorSession } from "@/lib/fan/creatorGuard";
 
 // A fan acknowledges the age-gate / ToS. Token-gated (fans aren't authed).
 export async function POST(req: Request) {
   return withFanMissLimit(req, async () => {
-    const limited = await rateLimitOr429("ack:" + clientIp(req), 20, 60_000);
-    if (limited) return limited;
-
     const body = await parseJsonBody<{ token?: string }>(req);
     if (body === BAD_REQUEST) return badRequest();
-    if (typeof body.token !== "string" || !body.token) {
+    if (typeof body.token !== "string" || !body.token || body.token.length > 256) {
       return badRequest();
     }
+    // WF-03: keyed on the address AND the link, so a crowd behind one carrier
+    // address (21 fans opening a drop together) is not one bucket.
+    const limited = await rateLimitOr429(await tokenKey("ack:" + clientIp(req), body.token), 20, 60_000);
+    if (limited) return limited;
+    // ATK-01: consent is the fan's own; the creator's session cannot stamp it.
+    const refused = await refuseCreatorSession(body.token);
+    if (refused) return refused;
     const result = await ackFan(body.token);
     if ("error" in result) return errorResponse(result.error);
     return NextResponse.json(result);

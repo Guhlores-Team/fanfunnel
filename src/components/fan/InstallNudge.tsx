@@ -5,6 +5,7 @@ import { fanEngagementAllowed } from "@/lib/play/playGuard";
 import { useFanBreak, useLinkPause } from "./LinkPauseProvider";
 import { installNudgeSnoozed, isIosDevice, snoozeInstallNudge } from "./installNudge";
 import { currentInAppBrowser } from "./inAppBrowser";
+import { NEUTRAL_APP_NAME } from "@/lib/pwa/config";
 
 /** Chrome's install event (not in the DOM lib types). */
 interface BeforeInstallPromptEvent extends Event {
@@ -115,7 +116,8 @@ export default function InstallNudge({ armed }: { armed: boolean }) {
       }}
     >
       <h2 id={titleId} className="text-sm font-extrabold text-ink">
-        Add {name} to your home screen <span aria-hidden="true">⭐</span>
+        {/* WF-14: the neutral install name means nothing to a fan; say "this page". */}
+        Add {name === NEUTRAL_APP_NAME ? "this page" : name} to your home screen <span aria-hidden="true">⭐</span>
       </h2>
       <p className="mt-1 text-sm text-muted text-pretty">
         Open this page in one tap, like an app.

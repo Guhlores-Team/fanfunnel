@@ -5,6 +5,7 @@ import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, parseJsonBody, statusForError } from "@/lib/api/handler";
 import { FAN_DELETE_PHRASE, LIMITS } from "@/lib/privacy/config";
 import { privateError, privateJson, tokenKey } from "@/lib/privacy/respond";
+import { CREATOR_SESSION_ERROR, creatorActsForFan } from "@/lib/fan/creatorGuard";
 
 // A fan permanently deletes their own data. Body: { token, confirm }, where
 // confirm is the word the page asked them to type. Same semantics as the
@@ -23,6 +24,8 @@ export async function POST(req: Request) {
     const byToken = await rateLimitOr429(await tokenKey("fandelete", body.token), ...LIMITS.fanDeletePerToken);
     if (byToken) return byToken;
 
+    // ATK-01: erasure is the fan's right; the creator deletes fans from the dashboard.
+    if (await creatorActsForFan(body.token)) return privateError(CREATOR_SESSION_ERROR, 403);
     const result = await deleteFanData(body.token);
     if ("error" in result) return privateError(result.error, statusForError(result.error));
     return privateJson({ ok: true, spinsKept: result.spinsKept });

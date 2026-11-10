@@ -15,7 +15,8 @@ export function glowClass(level: GlowLevel | undefined): string {
 
 /** Sits beside the spins chip: the tag at full glow, else a screen-reader note. */
 export function GlowTag({ glow }: { glow: FanGlow | null }) {
-  if (!glow || glow.level === 0) return null;
+  // WF-15: nothing to say on a first visit ("1 of the last 7 days" reads as surveillance).
+  if (!glow || glow.level === 0 || glow.visits < 2) return null;
   const note = `Visit glow: you've stopped by on ${glow.visits} of the last ${GLOW_WINDOW_DAYS} days`;
   if (glow.level < 3) return <span className="sr-only">{note}</span>;
   return (

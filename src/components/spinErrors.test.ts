@@ -61,7 +61,7 @@ for (const bad of [undefined, null, 42, {}, "", "totally_new_code"]) {
 }
 
 // Existing messages are preserved verbatim.
-check("no_spins message unchanged", spinErrorInfo("no_spins").message === "You're out of spins! Tip your creator to get more. 💖");
+check("C1: no_spins message names the creator as the only source, no tip ask", spinErrorInfo("no_spins").message === "You're out of spins. More come from your creator — fans can't get them here.");
 check("rate_limited message unchanged", spinErrorInfo("rate_limited").message === "Whoa, slow down a sec — try again in a moment. 😅");
 check("blocked message unchanged", spinErrorInfo("blocked").message === "This link isn't active. Reach out to your creator.");
 

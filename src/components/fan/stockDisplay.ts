@@ -7,8 +7,8 @@ import { isPublicPrizeAvailable } from "@/lib/games/wheel/publicView";
 
 /** A limited prize with this many or fewer left gets the low-stock emphasis. */
 export const LOW_STOCK_EMPHASIS_AT = 3;
-/** What a sold-out limited prize reads as (the prize book, the Limited row, the public page). */
-export const SOLD_OUT_LABEL = "Claimed ✨";
+/** WF-04: what a sold-out limited prize reads as (the prize book, the Limited row, the public page). */
+export const SOLD_OUT_LABEL = "Sold out";
 /** The most chips the Limited row under the wheel shows; the prize book lists the rest. */
 export const LIMITED_ROW_MAX = 6;
 /** The out-of-spins teaser adds "only N left" when its target has this many or fewer. */

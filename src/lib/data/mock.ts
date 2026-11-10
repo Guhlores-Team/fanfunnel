@@ -3255,7 +3255,8 @@ export function mockReportParties(creatorId: string, fanId: string | null): {
 
 export function mockAddWishlist(
   token: string,
-  prizeLabel: string
+  prizeLabel: string,
+  prizeId: string | null = null
 ): { ok: true } | { error: string } {
   const fan = fanForToken(token);
   if (!fan) return { error: "not_found" };
@@ -3266,7 +3267,8 @@ export function mockAddWishlist(
 
   // Validate the label exists on the fan's active wheel; snapshot its rarity.
   const wheel = store.wheels.get(mockResolveActiveWheelId()) ?? activeWheel();
-  const prize = wheel.prizes.find((p) => p.label === label);
+  // RF-15: by id when sent (two prizes may share a label), else by label.
+  const prize = prizeId ? wheel.prizes.find((p) => p.id === prizeId && p.label === label) : wheel.prizes.find((p) => p.label === label);
   if (!prize) return { error: "unknown_prize" };
 
   // Idempotent: don't double-add the same label for the same fan.
@@ -3963,6 +3965,11 @@ function mockFanByAnyToken(token: string): { fan: MockFan; pass: MockPass | null
   return fan ? { fan, pass: fan.passes?.find((p) => p.token === token) ?? null } : null;
 }
 
+/** ATK-01: whether a token belongs to any demo fan (the demo creator owns them all). */
+export function mockTokenHasCreator(token: string): boolean {
+  return mockFanByAnyToken(token) !== null;
+}
+
 /** Why a link no longer opens, when its tombstone says (else null → 404). */
 export async function mockGetFanLinkStatus(
   token: string
@@ -4086,6 +4093,8 @@ export async function mockDeleteFanData(
   if (!hit) return { error: "not_found" };
   const { fan } = hit;
   if (fan.id === "demo-fan") return { error: "not_allowed" };
+  // ATK-01 (widened): a prize still owed is settled before the fan is erased.
+  if (store.redemptions.some((r) => r.fanId === fan.id && (r.status === "pending" || r.status === "in_progress"))) return { error: "prize_owed" };
   const tokens = new Set([...store.tokens].filter(([, id]) => id === fan.id).map(([t]) => t));
   for (const p of fan.passes ?? []) tokens.add(p.token);
   const spinsKept = fan.wins.length;

@@ -144,9 +144,9 @@ export default function FanLeaderboard({
 
   return (
     <div className="w-full">
-      <p className="mb-2 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
+      <h2 className="mb-2 text-center text-xs font-medium uppercase tracking-[0.18em] text-muted">
         🏆 Top spinners
-      </p>
+      </h2>
 
       {view.entries.length === 0 ? (
         // Enabled but nobody has opted in yet: invite instead of hiding — the
@@ -325,7 +325,7 @@ function LeaderboardOptIn({
           aria-describedby={hintId}
           disabled={busy}
           onClick={() => void save(!on, draft)}
-          className="shrink-0 rounded-full border border-line p-0.5 transition disabled:opacity-60"
+          className="shrink-0 rounded-full border border-line p-2.5 transition disabled:opacity-60"
         >
           <span
             className={`relative block h-6 w-11 rounded-full transition ${on ? "bg-[var(--brand)]" : "bg-line"}`}

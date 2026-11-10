@@ -63,7 +63,7 @@ async function openGate(browser, sink, device, token, textPercent) {
   attachSink(page, sink);
   if (textPercent) await page.addInitScript(largeText, textPercent);
   await goto(page, `/spin/${token}`, 600);
-  const gate = page.getByRole("dialog", { name: "Before you spin" });
+  const gate = page.getByRole("dialog", { name: "Before you play" });
   await gate.waitFor({ timeout: 8000 });
   await page.getByTestId("agegate-enter").waitFor({ timeout: 8000 });
   await page.waitForFunction(() => !document.querySelector("[role='dialog'] input[type='checkbox']")?.disabled, null, { timeout: 15000 });
@@ -248,7 +248,7 @@ export async function fanDevicesJourney(browser, { step, assert }, sink, ctx) {
         await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 2000, downloadThroughput: (500e3 / 8) * 0.8, uploadThroughput: (500e3 / 8) * 0.8 });
         await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
         await page.goto(`${BASE}/spin/${fan.token}`, { waitUntil: "commit", timeout: 60000 });
-        const gate = page.getByRole("dialog", { name: "Before you spin" });
+        const gate = page.getByRole("dialog", { name: "Before you play" });
         await gate.waitFor({ timeout: 30000 });
         const first = gate.getByRole("checkbox").first();
         const early = await page.evaluate(() => {
@@ -362,9 +362,9 @@ const gateState = (pct) => async (page) => {
   if (pct) await page.addInitScript(largeText, pct);
   const token = await a11yFan(page, "A11y gate " + (pct || "landscape"), false);
   await goto(page, `/spin/${token}`, 1400);
-  await page.getByRole("dialog", { name: "Before you spin" }).waitFor({ timeout: 8000 });
+  await page.getByRole("dialog", { name: "Before you play" }).waitFor({ timeout: 8000 });
   await page.waitForFunction(() => !document.querySelector("[role='dialog'] input[type='checkbox']")?.disabled, null, { timeout: 15000 });
-  await assertReachable(page, page.getByRole("dialog", { name: "Before you spin" }).getByRole("checkbox").first(), "the gate's first checkbox");
+  await assertReachable(page, page.getByRole("dialog", { name: "Before you play" }).getByRole("checkbox").first(), "the gate's first checkbox");
   await assertReachable(page, page.getByTestId("agegate-enter"), "the gate's enter button");
 };
 const safetyState = (pct) => async (page) => {

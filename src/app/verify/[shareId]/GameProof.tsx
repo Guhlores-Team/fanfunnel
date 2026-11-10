@@ -42,7 +42,7 @@ export function GameProof({ replay }: { replay: GameReplay }) {
       ) : (
         <>
           <p className="mt-3 text-xs text-ink">
-            {presentation.newCard ? "A new card began on this paid play." : "The existing card continued."}{" "}
+            {presentation.newCard ? "A new card began on this play." : "The existing card continued."}{" "}
             {presentation.markedIndex === null ? "The drawn prize is outside this card." : `Square ${presentation.markedIndex + 1} matches the drawn prize.`}
           </p>
           <table className="mt-3 w-full table-fixed border-separate border-spacing-1 text-center text-xs">
@@ -69,24 +69,24 @@ export function GameProof({ replay }: { replay: GameReplay }) {
             </ul>
           ) : <p className="mt-3 text-xs text-muted">No new line completed on this play.</p>}
           {bonusPool ? <details className="mt-4 rounded-lg border border-line p-3 text-xs text-ink">
-            <summary className="cursor-pointer py-2 font-medium">Line bonus pool and draw order</summary>
+            <summary className="cursor-pointer py-2 font-medium">Line bonus prizes and order</summary>
             <p className="mt-2 text-muted">{bonusPool.selected
-              ? `Configured reward: ${bonusPool.selected.label}. It is awarded directly when available (ordinary base tickets: ${bonusPool.selected.w}).`
+              ? `Configured reward: ${bonusPool.selected.label}. It is awarded directly when available (ordinary base weight: ${bonusPool.selected.w}).`
               : "The configured reward was unavailable when this play was prepared, so new lines use the weighted fallback."}</p>
             <table className="mt-3 w-full table-fixed text-left text-[11px]">
               <caption className="sr-only">Committed rare-or-better fallback pool, before ordered stock failures</caption>
-              <thead><tr className="border-b border-line"><th scope="col" className="w-[65%] py-2 pr-2">Fallback reward</th><th scope="col" className="py-2 text-right">Base tickets</th></tr></thead>
+              <thead><tr className="border-b border-line"><th scope="col" className="w-[65%] py-2 pr-2">Fallback reward</th><th scope="col" className="py-2 text-right">Base weight</th></tr></thead>
               <tbody>{bonusPool.fallback.map((p) => <tr key={p.id} className="border-b border-line/60">
-                <th scope="row" className="break-words py-2 pr-2 font-normal">{p.label}<span className="block text-[10px] text-muted">{p.unlimited ? "Unlimited" : "Finite inventory"}</span></th>
+                <th scope="row" className="break-words py-2 pr-2 font-normal">{p.label}<span className="block text-[11px] text-muted">{p.unlimited ? "Unlimited" : "Finite inventory"}</span></th>
                 <td className="py-2 text-right align-top">{p.w}</td>
               </tr>)}</tbody>
             </table>
             <p className="mt-3 text-muted">Lines are checked in this order: three rows, three columns, then the two diagonals. A failed finite candidate is excluded from that line onward; earlier rewards stay the same.</p>
           </details> : null}
-          <p className="mt-3 text-xs text-muted">An available configured line prize is awarded directly, even if its ordinary weight is zero. If it sold out, the fallback uses positive rare-or-better base tickets with no happy hour, pity, focus or chase. Bonuses do not mark more squares or use another play credit.</p>
+          <p className="mt-3 text-xs text-muted">An available configured line prize is awarded directly, even if its ordinary weight is zero. If it sold out, the fallback uses rare-or-better prizes with a base weight, with no happy hour, pity, focus or chase. Bonuses do not mark more squares or use another play credit.</p>
         </>
       )}
-      <p className="mt-3 break-all font-mono text-[10px] text-muted">Rules: {replay.snapshot.gameRules}</p>
+      <p className="mt-3 break-all font-mono text-[11px] text-muted">Rules: {replay.snapshot.gameRules}</p>
     </section>
   );
 }

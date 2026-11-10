@@ -3,6 +3,7 @@ import { getFanReward, isShareIdShape } from "@/lib/data";
 import { withFanToken } from "@/lib/api/fanToken";
 import { badRequest, errorResponse } from "@/lib/api/handler";
 import { REWARD_VIEW_LIMIT, REWARD_VIEW_WINDOW_MS } from "@/lib/rewards/config";
+import { refuseCreatorSession } from "@/lib/fan/creatorGuard";
 
 // #26: a fan reopens an instant reward they won. Body: { token, shareId }.
 // The link token is the only credential (F5): the spin must belong to the
@@ -16,6 +17,9 @@ export async function POST(req: Request) {
     { scope: "fan-reward", limit: REWARD_VIEW_LIMIT, windowMs: REWARD_VIEW_WINDOW_MS },
     async (token, body) => {
       if (!isShareIdShape(body.shareId)) return badRequest();
+      // ATK-01: a reward view is logged as the fan's; the creator reads it in Fulfilment.
+      const refused = await refuseCreatorSession(token);
+      if (refused) return refused;
       const result = await getFanReward(token, body.shareId);
       if ("error" in result) {
         if (result.error === "unavailable") {

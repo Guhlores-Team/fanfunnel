@@ -278,6 +278,16 @@ export async function deleteFanData(
   if (!who) return { error: "not_found" };
   const { fanId, creatorId } = who;
 
+  // ATK-01 (widened): a prize still owed to this fan would vanish with the
+  // fan row (its redemption cascades); the fan is told to settle it first.
+  const { count: owed, error: owedError } = await svc
+    .from("redemptions")
+    .select("id", { count: "exact", head: true })
+    .eq("fan_id", fanId)
+    .in("status", ["pending", "in_progress"]);
+  if (owedError) return { error: "db_error" };
+  if ((owed ?? 0) > 0) return { error: "prize_owed" };
+
   const [{ data: passRows }, { count }] = await Promise.all([
     svc.from("fan_passes").select("token").eq("fan_id", fanId).eq("creator_id", creatorId),
     svc
