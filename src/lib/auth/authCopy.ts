@@ -97,6 +97,83 @@ export function authLinkNotice(type: string | null, reason: string | null): Auth
 
 export const SUPPORT_EMAIL = LEGAL.contactEmail;
 
+/**
+ * Review A4: the fixed sentences around an e-mail link that changes which
+ * account this browser is signed in to. The e-mail is always the one the Auth
+ * server returned for the session (getUser), never a query parameter.
+ */
+export function switchedAccountNotice(email: string): { title: string; body: string } {
+  return {
+    title: `You're now signed in as ${email}`,
+    body: "The link you opened belongs to this account, so this browser was switched to it. The account that was signed in here before has been signed out of this browser.",
+  };
+}
+
+/** Review A4: on the Continue page, when this browser already has a session. */
+export function alreadySignedInNotice(email: string): string {
+  return `You're signed in as ${email}. Continuing will switch this browser to the account this link belongs to.`;
+}
+
+/**
+ * Review A6: what a visitor who is ALREADY signed in is told when an e-mail
+ * link failed (they never see the sign-in page's notice: the proxy sends a
+ * signed-in visitor on). Shown above the dashboard or the request page; the
+ * query flags only choose among these fixed sentences.
+ */
+export function signedInLinkNotice(type: string | null, reason: string | null): { title: string; body: string } {
+  if (reason === "busy") {
+    return {
+      title: "We couldn't check your link just now",
+      body: "That was a problem on our side or with the connection, not with your link: it is still good. Wait a few minutes, then open it from your e-mail again. Nothing was changed.",
+    };
+  }
+  if (reason === "malformed") {
+    return {
+      title: "That link was incomplete",
+      body: "Part of the link was missing, so nothing was changed. A mail app may have cut it: copy the whole link from the e-mail and open it again.",
+    };
+  }
+  if (reason === "banned") {
+    return {
+      title: "That link's account can't sign in right now",
+      body: `Sign-in is blocked for the account the link belongs to, so nothing was changed here. If you think that's a mistake, write to ${LEGAL.contactEmail}.`,
+    };
+  }
+  switch (type) {
+    case "email_change":
+      return {
+        title: "That e-mail change link was already used or has expired",
+        body: "Nothing was changed by it. Check the address in Settings › Account: if it isn't the new one, start the change again there.",
+      };
+    case "recovery":
+      return {
+        title: "That password reset link was already used or has expired",
+        body: "Your password wasn't changed by it. You can change it in Settings › Security, or request a new reset link from the sign-in page.",
+      };
+    case "invite":
+      return {
+        title: "That invitation link was already used or has expired",
+        body: "Nothing was changed by it. If it was for this account, you're already in; to choose a password, use Settings › Security.",
+      };
+    case "signup":
+    case "email":
+      return {
+        title: "That confirmation link was already used or has expired",
+        body: "Nothing was changed by it. If it was for this account, your e-mail is already confirmed and there is nothing more to do.",
+      };
+    case "magiclink":
+      return {
+        title: "That sign-in link was already used or has expired",
+        body: "Nothing was changed by it; you're still signed in.",
+      };
+    default:
+      return {
+        title: "That link didn't work",
+        body: "It was already used or has expired, so nothing was changed; you're still signed in.",
+      };
+  }
+}
+
 /** A 429 from Supabase Auth: the wait, when the response says how long. */
 export function retryAfterMinutes(err: unknown): number {
   const headers = (err as { headers?: unknown } | null)?.headers;

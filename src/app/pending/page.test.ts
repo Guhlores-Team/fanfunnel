@@ -40,10 +40,10 @@ mock.module("@/lib/data", {
 
 const CONTROL = "Delete my request and account";
 
-async function render(): Promise<{ html?: string; redirect?: string }> {
+async function render(query: Record<string, string> = {}): Promise<{ html?: string; redirect?: string }> {
   const { default: PendingPage } = await import("./page");
   try {
-    const el = await PendingPage();
+    const el = await PendingPage({ searchParams: Promise.resolve(query) });
     return { html: renderToStaticMarkup(el ?? createElement("div")) };
   } catch (e) {
     const digest = (e as { digest?: string }).digest ?? "";
@@ -77,6 +77,24 @@ async function main() {
   status = "approved";
   out = await render();
   check("approved creator: redirected to the dashboard, no shortcut", out.redirect === "/dashboard" && !out.html);
+
+  // Review A4 / A6: the fixed-text notice flags follow an approved account to
+  // the dashboard and show on the request page for everyone else.
+  out = await render({ switched: "1", auth_link: "expired", type: "email_change", section: "admin", next: "https://evil.example" });
+  check("approved creator: the notice flags (and only they) travel to the dashboard", out.redirect === "/dashboard?switched=1&auth_link=expired&type=email_change");
+  out = await render({ auth_link: "<script>", type: "x" });
+  check("unknown flag values are dropped", out.redirect === "/dashboard");
+  status = "pending";
+  out = await render({ switched: "1" });
+  check("A4: a switched account is named from the session, not the URL", /data-testid="account-switched"/.test(out.html ?? "") && /You(&#x27;|')re now signed in as applicant@example\.com/.test(out.html ?? ""));
+  out = await render({ switched: "1", email: "attacker@evil.example" });
+  check("…a query parameter cannot change the name", !(out.html ?? "").includes("attacker@evil.example"));
+  out = await render({ auth_link: "expired", type: "email_change" });
+  check("A6: a failed e-mail change link says why nothing changed", /data-testid="signed-in-link-notice"/.test(out.html ?? "") && /e-mail change link was already used or has expired/.test(out.html ?? "") && /Nothing was changed/.test(out.html ?? ""));
+  out = await render({ auth_link: "busy", type: "recovery" });
+  check("A6: a transient failure says the link is still good", /still good/.test(out.html ?? "") && !/used|expired/.test((out.html ?? "").match(/data-testid="signed-in-link-notice"[^>]*>(.*?)<a /)?.[1] ?? "x used"));
+  out = await render({});
+  check("no flags, no notice", !/account-switched|signed-in-link-notice/.test(out.html ?? ""));
 
   status = "none";
   out = await render();

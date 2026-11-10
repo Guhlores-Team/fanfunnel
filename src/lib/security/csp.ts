@@ -2,7 +2,8 @@
 //
 // - "strict" (per request, set by src/proxy.ts): the signed-in pages the
 //   proxy already runs on (STRICT_CSP_PAGES below: /dashboard, /admin,
-//   /agency, /pending, /login, /mfa). They are dynamically rendered, so Next
+//   /agency, /pending, /login, /mfa and the e-mail link landing page
+//   /auth/confirm). They are dynamically rendered, so Next
 //   reads the nonce from the request's CSP header and stamps it on its own
 //   scripts. Only nonced scripts (and what they load, via 'strict-dynamic')
 //   run: an injected <script> or inline handler is refused. Unknown paths
@@ -27,7 +28,7 @@ export type CspMode = "strict" | "public";
  *  dynamically rendered). Exact paths only: an unknown path under them (say
  *  /dashboard/x or /signup) is answered by the prerendered not-found page,
  *  whose scripts carry no nonce, so it keeps the public policy. */
-export const STRICT_CSP_PAGES: readonly string[] = ["/dashboard", "/admin", "/agency", "/pending", "/login", "/mfa"];
+export const STRICT_CSP_PAGES: readonly string[] = ["/dashboard", "/admin", "/agency", "/pending", "/login", "/mfa", "/auth/confirm"];
 
 export function usesStrictCsp(pathname: string): boolean {
   return STRICT_CSP_PAGES.includes(pathname);

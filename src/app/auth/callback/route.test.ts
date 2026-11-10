@@ -33,6 +33,7 @@ mock.module("@/lib/api/limit", {
       limiterCalls.push({ scope, tier });
       return limited ? Response.json({ error: "rate_limited" }, { status: 429 }) : null;
     },
+    hasSessionCookie: (req: Request) => /(?:^|;\s*)sb-[A-Za-z0-9_-]+-auth-token(?:\.\d+)?=/.test(req.headers.get("cookie") ?? ""),
   },
 });
 let verifyThrows: unknown = null;
@@ -40,16 +41,40 @@ let exchangeOk = true;
 let verifyResult: { error: { code?: string; status?: number; name?: string; message: string } | null; session?: object | null } = { error: null, session: { access_token: "t" } };
 const verified: { type: string; token_hash: string }[] = [];
 let clientsBuilt = 0;
+// Review A4 / A5: who was signed in on this browser before the link is spent,
+// and which account the link belongs to.
+let currentUser: { id: string; email: string } | null = null;
+let verifiedUserId = "u";
+let getUserCalls = 0;
+let getUserThrows = false;
+const logouts: { url: string; authorization: string | null; apikey: string | null }[] = [];
+let logoutFails = false;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input instanceof Request ? input.url : input);
+  if (!url.includes("/auth/v1/logout")) throw new Error(`unexpected fetch ${url}`);
+  const headers = new Headers(init?.headers);
+  logouts.push({ url, authorization: headers.get("authorization"), apikey: headers.get("apikey") });
+  if (logoutFails) throw new TypeError("fetch failed");
+  return new Response(null, { status: 204 });
+}) as typeof fetch;
+process.env.NEXT_PUBLIC_SUPABASE_URL = "https://ref.supabase.co";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => true,
     createClient: async () => (clientsBuilt++, {
       auth: {
         exchangeCodeForSession: async () => ({ error: exchangeOk ? null : { message: "bad" } }),
+        getUser: async () => {
+          getUserCalls++;
+          if (getUserThrows) throw new Error("auth server unreachable");
+          return { data: { user: currentUser }, error: null };
+        },
+        getSession: async () => ({ data: { session: currentUser ? { access_token: `token-of-${currentUser.id}` } : null }, error: null }),
         verifyOtp: async (p: { type: string; token_hash: string }) => {
           verified.push(p);
           if (verifyThrows) throw verifyThrows;
-          return { data: { user: verifyResult.session ? { id: "u" } : null, session: verifyResult.session ?? null }, error: verifyResult.error };
+          return { data: { user: verifyResult.session && !verifyResult.error ? { id: verifiedUserId } : null, session: verifyResult.error ? null : verifyResult.session ?? null }, error: verifyResult.error };
         },
       },
     }),
@@ -80,6 +105,14 @@ async function main() {
   exchangeOk = false;
   check("bad code (other browser) → login error (invalid, typed)", (await go("?code=c&type=recovery")) === `${O}/login?error=auth_link&type=recovery&reason=invalid`);
   exchangeOk = true;
+  // INFO: Supabase's own error redirect of a legacy link is a refused link, not a cut one.
+  check("legacy ?error=access_denied&error_code=otp_expired → the expired copy", (await go("?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired&type=recovery")) === `${O}/login?error=auth_link&type=recovery&reason=expired`);
+  check("…with no type → still expired, not 'incomplete'", (await go("?error=access_denied&error_code=otp_expired&error_description=x")) === `${O}/login?error=auth_link&reason=expired`);
+  check("an older server's error=unauthorized_client&error_code=401 with the sentence → expired", (await go("?error=unauthorized_client&error_code=401&error_description=Email+link+is+invalid+or+has+expired")) === `${O}/login?error=auth_link&reason=expired`);
+  check("legacy error_code=user_banned → banned", (await go("?error=access_denied&error_code=user_banned&error_description=User+is+banned")) === `${O}/login?error=auth_link&reason=banned`);
+  check("legacy server_error → the 'still good' copy", (await go("?error=server_error&error_code=unexpected_failure&error_description=x")) === `${O}/login?error=auth_link&reason=busy`);
+  check("another legacy error → invalid", (await go("?error=access_denied&error_code=bad_oauth_state&error_description=x")) === `${O}/login?error=auth_link&reason=invalid`);
+  check("a code wins over an error parameter", (await go("?code=c&error=access_denied&next=/reset-password")) === `${O}/reset-password`);
 
   // A token_hash on GET is never spent: it goes to the landing page as is.
   const before = verified.length;
@@ -210,13 +243,74 @@ async function main() {
   check("the verify POST is rate-limited per client on the costly tier", limiterCalls.length === 1 && limiterCalls[0].scope === "auth-confirm-verify:POST" && limiterCalls[0].tier === "costly" && verified.length === calls + 1);
   limited = true;
   calls = verified.length;
-  let built = clientsBuilt;
+  const built = clientsBuilt;
   r = await post(RECOVERY);
   check("over the limit → back to the Continue page (still good), Supabase never called", r.status === 303 && r.location === BUSY && verified.length === calls && clientsBuilt === built);
   limited = false;
   limiterCalls.length = 0;
   await post(RECOVERY, { origin: "https://evil.example" });
   check("a cross-site POST does not spend the visitor's limiter budget", limiterCalls.length === 0);
+
+  // --- A4: a link for another account than the one signed in here ----------
+  const COOKIE = { ...OWN_PAGE, cookie: "sb-ref-auth-token.0=base64-xyz" };
+  verifyResult = { error: null, session: { access_token: "t" } };
+  getUserCalls = 0;
+  r = await post(RECOVERY);
+  check("no session cookie → nobody is looked up, plain landing", getUserCalls === 0 && r.location === `${O}/reset-password` && logouts.length === 0);
+  currentUser = { id: "alice", email: "alice@example.com" };
+  verifiedUserId = "alice";
+  r = await post(RECOVERY, COOKIE);
+  check("signed in, link for the SAME account → plain landing, nobody signed out", getUserCalls === 1 && r.location === `${O}/reset-password` && logouts.length === 0);
+  verifiedUserId = "bob";
+  r = await post(RECOVERY, COOKIE);
+  check("signed in as alice, link for bob → lands with the fixed-text flag", r.status === 303 && r.location === `${O}/reset-password?switched=1`);
+  check("…and alice's session is ended at the Auth server with her own token (scope local, anon key)", logouts.length === 1 && logouts[0].url === "https://ref.supabase.co/auth/v1/logout?scope=local" && logouts[0].authorization === "Bearer token-of-alice" && logouts[0].apikey === "anon-key");
+  check("…the flag carries no name: the page reads the e-mail from the session", !/alice|bob|example\.com/.test(new URL(r.location!).search));
+  r = await post({ token_hash: "abcdef123456", type: "email_change", next: "/dashboard?section=settings" }, COOKIE);
+  check("the flag is added to an existing query", r.location === `${O}/dashboard?section=settings&switched=1`);
+  logouts.length = 0;
+  logoutFails = true;
+  r = await post(RECOVERY, COOKIE);
+  check("a failed sign-out of the old session never blocks the landing", r.location === `${O}/reset-password?switched=1` && logouts.length === 1);
+  logoutFails = false;
+  logouts.length = 0;
+  verifyResult = { error: null, session: null };
+  r = await post({ token_hash: "abcdef123456", type: "email_change" }, COOKIE);
+  check("the first e-mail change link (no new session) switches nothing", r.location === `${O}/auth/email-change` && logouts.length === 0);
+  verifyResult = { error: null, session: { access_token: "t" } };
+  getUserThrows = true;
+  r = await post(RECOVERY, COOKIE);
+  check("an unreachable Auth server on the lookup → treated as signed out, link still works", r.location === `${O}/reset-password` && logouts.length === 0);
+  getUserThrows = false;
+
+  // --- A5 / A6: a failed link while a session already exists ---------------
+  const EXPIRED = { code: "otp_expired", status: 403, message: "Email link is invalid or has expired" };
+  verifyResult = { error: EXPIRED };
+  r = await post(RECOVERY, COOKIE);
+  check("double tap / Back then Continue on a reset link → the new-password page decides, not /login", r.status === 303 && r.location === `${O}/reset-password`);
+  r = await post({ token_hash: "abcdef123456", type: "invite" }, COOKIE);
+  check("…an invitation → /set-password", r.location === `${O}/set-password`);
+  r = await post({ token_hash: "abcdef123456", type: "recovery", next: "/dashboard?section=admin" }, COOKIE);
+  check("…a crafted next cannot skip the new-password page's rule", r.location === `${O}/reset-password`);
+  r = await post({ token_hash: "abcdef123456", type: "email_change", next: "/dashboard" }, COOKIE);
+  check("an expired e-mail change while signed in → the dashboard says why nothing changed", r.location === `${O}/dashboard?auth_link=expired&type=email_change`);
+  r = await post({ token_hash: "abcdef123456", type: "signup", next: "/pending" }, COOKIE);
+  check("an expired confirmation while signed in → the dashboard notice (forwarded to /pending when unapproved)", r.location === `${O}/dashboard?auth_link=expired&type=signup`);
+  verifyResult = { error: { code: "validation_failed", status: 422, message: "nope" } };
+  r = await post({ token_hash: "abcdef123456", type: "magiclink" }, COOKIE);
+  check("another refusal while signed in → the dashboard notice with its reason", r.location === `${O}/dashboard?auth_link=invalid&type=magiclink`);
+  verifyResult = { error: { code: "user_banned", status: 403, message: "User is banned" } };
+  r = await post(RECOVERY, COOKIE);
+  check("a blocked account's link while signed in as someone else → the dashboard notice, not the reset page", r.location === `${O}/dashboard?auth_link=banned&type=recovery`);
+  verifyResult = { error: EXPIRED };
+  check("nobody is signed out by a failed link", logouts.length === 0);
+  currentUser = null;
+  r = await post(RECOVERY, COOKIE);
+  check("a stale cookie with no session → the sign-in page's explanation, as before", r.location === `${O}/login?error=auth_link&type=recovery&reason=expired`);
+  r = await post(RECOVERY);
+  check("signed out → the sign-in page's explanation, as before", r.location === `${O}/login?error=auth_link&type=recovery&reason=expired`);
+  verifyResult = { error: null, session: { access_token: "t" } };
+  verifiedUserId = "u";
 
   // WU-04: the secure e-mail change's first link answers with no session.
   verifyResult = { error: null, session: null };

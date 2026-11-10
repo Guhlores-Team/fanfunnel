@@ -111,7 +111,7 @@ async function main() {
   const { needsSessionRefresh } = await import("../supabase/middleware");
   const event = { waitUntil() {} } as unknown as Parameters<typeof proxy>[1];
   const seen = new Set<string>();
-  for (const path of ["/dashboard", "/admin", "/agency", "/pending", "/login", "/mfa", "/dashboard"]) {
+  for (const path of ["/dashboard", "/admin", "/agency", "/pending", "/login", "/mfa", "/auth/confirm", "/dashboard"]) {
     const res = await proxy(new NextRequest(`https://fanfunnel.test${path}`), event);
     const header = res.headers.get("content-security-policy") ?? "";
     const n = getScriptNonceFromHeader(header);
@@ -119,7 +119,7 @@ async function main() {
     check(`${path}: the same policy is forwarded to Next's renderer`, res.headers.get("x-middleware-request-content-security-policy") === header);
     seen.add(n!);
   }
-  check("every request gets its own nonce", seen.size === 7);
+  check("every request gets its own nonce", seen.size === 8);
   // Valid percent paths on public routes, and unknown paths under the proxied
   // ones: those are answered by prerendered HTML (its scripts have no nonce).
   for (const path of ["/c/caf%C3%A9", "/spin/a%20b", "/dashboard/settings", "/admin/x", "/signup", "/dashboard%20x"]) {

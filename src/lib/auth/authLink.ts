@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { isOwnPagePost } from "@/lib/security/sameOrigin";
-import { limitRoute } from "@/lib/api/limit";
+import { hasSessionCookie, limitRoute } from "@/lib/api/limit";
 import { safeNext } from "./safeNext";
+import { defaultNextFor, OTP_TYPES, signedInLinkFailurePath, withQueryFlag } from "./linkNotice";
+import { revokeSession, verifiedSession } from "./sessions";
+
+export { defaultNextFor, OTP_TYPES };
 
 // Every e-mail link lands on this site through /auth/confirm (the current
 // templates, supabase/templates/*.html, which link to
@@ -31,7 +35,6 @@ import { safeNext } from "./safeNext";
 // /login?error=auth_link&type=<type>&reason=<reason>, where the sign-in page
 // says what happened for that kind of link and offers the right next step.
 
-export const OTP_TYPES: ReadonlySet<string> = new Set(["signup", "invite", "magiclink", "recovery", "email_change", "email"]);
 export const TOKEN_HASH = /^[A-Za-z0-9_-]{8,256}$/;
 
 /**
@@ -45,14 +48,6 @@ export const TOKEN_HASH = /^[A-Za-z0-9_-]{8,256}$/;
  *              Continue page, and the sign-in page words it for old URLs
  */
 export type AuthLinkReason = "expired" | "invalid" | "malformed" | "banned" | "busy";
-
-/** Where a link of this type goes when it carries no (usable) `next`. */
-export function defaultNextFor(type: string | null): string {
-  if (type === "recovery") return "/reset-password";
-  if (type === "invite") return "/set-password";
-  if (type === "signup" || type === "email") return "/pending";
-  return "/dashboard";
-}
 
 /** The sign-in page path that explains a failed link of this type. */
 export function authLinkFailurePath(type: string | null, reason: AuthLinkReason): string {
@@ -146,6 +141,9 @@ export async function verifyAuthLink(req: Request): Promise<NextResponse> {
   if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`, { status: 303 });
 
   const supabase = await createClient();
+  // A4 / A5: who (if anyone) this browser is signed in as before the link is
+  // spent. Asked of the Auth server (getUser), never read from a cookie alone.
+  const previous = hasSessionCookie(req) ? await verifiedSession(supabase) : null;
   let data: Awaited<ReturnType<typeof supabase.auth.verifyOtp>>["data"] | null = null;
   let failure: ReturnType<typeof verifyFailureFor> | null = null;
   try {
@@ -156,7 +154,12 @@ export async function verifyAuthLink(req: Request): Promise<NextResponse> {
     failure = "busy";
   }
   if (failure === "busy") return busy();
-  if (failure) return NextResponse.redirect(authLinkFailureUrl(origin, link.type, failure), { status: 303 });
+  if (failure) {
+    // A5 / A6: a visitor who is already signed in is not sent to the sign-in
+    // page (the proxy would bounce them to the dashboard with no explanation).
+    const to = previous ? signedInLinkFailurePath(link.type, failure, link.next) : authLinkFailurePath(link.type, failure);
+    return NextResponse.redirect(`${origin}${to}`, { status: 303 });
+  }
   // Secure e-mail change: the first of the two links answers with no session
   // (auth-js documents it: "Some /verify responses (e.g. secure email_change
   // first-confirmation) return only { msg, code }"). The change is NOT done
@@ -164,7 +167,35 @@ export async function verifyAuthLink(req: Request): Promise<NextResponse> {
   if (link.type === "email_change" && !data?.session) {
     return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`, { status: 303 });
   }
+  // A4: the link belonged to a different account than the one signed in here.
+  // The cookies now hold the new session; end the old one at the Auth server
+  // too, and tell the landing page to say whose session this is (the page
+  // reads the e-mail from the session; the flag only switches the sentence on).
+  const newUserId = data?.user?.id ?? data?.session?.user?.id ?? null;
+  if (previous && newUserId && previous.userId !== newUserId) {
+    await revokeSession(previous.accessToken);
+    return NextResponse.redirect(`${origin}${withQueryFlag(link.next, "switched", "1")}`, { status: 303 });
+  }
   return NextResponse.redirect(`${origin}${link.next}`, { status: 303 });
+}
+
+/**
+ * Supabase's own redirect when a legacy {{ .ConfirmationURL }} link fails at
+ * its /verify endpoint: `?error=access_denied&error_code=otp_expired&
+ * error_description=…` on the app's redirect URL. That is a refused link, not
+ * a cut one, so it gets the matching reason instead of "incomplete". Null when
+ * the URL carries no such error. (The implicit flow puts the same fields in
+ * the #fragment, which no server sees; the app only uses PKCE.)
+ */
+export function legacyErrorReason(params: URLSearchParams): AuthLinkReason | null {
+  const code = params.get("error_code");
+  const error = params.get("error");
+  if (!code && !error) return null;
+  if (code === "user_banned") return "banned";
+  // Older Auth servers: error=unauthorized_client&error_code=401 with only the sentence.
+  if (code === "otp_expired" || /invalid or has expired/i.test(params.get("error_description") ?? "")) return "expired";
+  if (code === "over_request_rate_limit" || code === "over_email_send_rate_limit" || code === "unexpected_failure" || code === "request_timeout" || error === "server_error" || error === "temporarily_unavailable") return "busy";
+  return "invalid";
 }
 
 /**
@@ -187,6 +218,9 @@ export async function completeAuthLink(req: Request): Promise<NextResponse> {
   }
 
   if (searchParams.get("message")) return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`);
+
+  const legacy = code ? null : legacyErrorReason(searchParams);
+  if (legacy) return NextResponse.redirect(authLinkFailureUrl(origin, type, legacy));
 
   // The demo has no accounts: nothing to exchange (and no client to build).
   if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`);
