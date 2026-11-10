@@ -1191,7 +1191,8 @@ export default function WheelEditor({
                                 : Math.round(Number(e.target.value) * 100),
                           })
                         }
-                        aria-label="Cost (your cost, dollars)"
+                        aria-label="Cost (what this prize costs you, in dollars)"
+                        title="What this prize costs you to deliver. It only feeds your profit numbers in Analytics; fans never see it."
                       />
                     </Lbl>
                     <div className="flex min-w-0 flex-col gap-1.5">

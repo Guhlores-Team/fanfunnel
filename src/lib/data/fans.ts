@@ -11,7 +11,7 @@ import {
   mockListFans,
   mockListFansPage,
   mockGetFanDetail,
-  mockDeleteFan,
+  mockDeleteFanWithTombstones,
   mockUpdateFanMeta,
   mockEditGrant,
   mockAckFan,
@@ -861,7 +861,7 @@ export async function deleteFan(
   fanId: string
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) {
-    return mockDeleteFan(fanId) ? { ok: true } : { error: "not_found" };
+    return (await mockDeleteFanWithTombstones(fanId)) ? { ok: true } : { error: "not_found" };
   }
 
   const sb = await createClient();

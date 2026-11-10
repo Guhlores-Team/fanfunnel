@@ -4135,6 +4135,19 @@ export function mockExportFanData(token: string): FanDataExport | null {
   return safeExportValue(structuredClone(out), true) as FanDataExport;
 }
 
+/** DB-06 parity (0073 scrub_fan_traces): whoever deletes a fan, each of their
+ *  links keeps a tombstone, so a saved link says "your data was deleted"
+ *  instead of a bare 404. */
+export async function mockDeleteFanWithTombstones(fanId: string): Promise<boolean> {
+  const fan = store.fans.get(fanId);
+  if (!fan) return false;
+  const tokens = new Set([...store.tokens].filter(([, id]) => id === fanId).map(([t]) => t));
+  for (const p of fan.passes ?? []) tokens.add(p.token);
+  if (!mockDeleteFan(fanId)) return false;
+  for (const t of tokens) privacy.tombstones.set(await sha256Hex(t), "fan_deleted");
+  return true;
+}
+
 /** "Delete my data" in the demo: the creator-side delete, plus a tombstone per
  *  link and a notice for the creator. The seeded demo fan can't be deleted
  *  (every demo journey uses its link). */
@@ -4145,11 +4158,8 @@ export async function mockDeleteFanData(
   if (!hit) return { error: "not_found" };
   const { fan } = hit;
   if (fan.id === "demo-fan") return { error: "not_allowed" };
-  const tokens = new Set([...store.tokens].filter(([, id]) => id === fan.id).map(([t]) => t));
-  for (const p of fan.passes ?? []) tokens.add(p.token);
   const spinsKept = fan.wins.length;
-  mockDeleteFan(fan.id);
-  for (const t of tokens) privacy.tombstones.set(await sha256Hex(t), "fan_deleted");
+  await mockDeleteFanWithTombstones(fan.id);
   privacy.notices.unshift({ id: crypto.randomUUID(), spinsKept, at: new Date().toISOString() });
   return { ok: true, spinsKept };
 }

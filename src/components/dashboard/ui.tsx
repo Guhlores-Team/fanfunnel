@@ -127,15 +127,23 @@ function Field({
   label,
   children,
   full,
+  error,
 }: {
   label: string;
   children: React.ReactNode;
   full?: boolean;
+  /** WC-18: what is wrong with this field, said under it (and announced). */
+  error?: string | null;
 }) {
   return (
     <label className={`flex min-w-0 flex-col gap-1 ${full ? "sm:col-span-2" : ""}`}>
       <span className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</span>
       {children}
+      {error && (
+        <span role="alert" data-testid="field-error" className="text-xs font-semibold text-[#fca5a5] text-pretty">
+          {error}
+        </span>
+      )}
     </label>
   );
 }

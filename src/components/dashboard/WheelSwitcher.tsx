@@ -14,6 +14,7 @@ import { formatWhen, isPlayableGame, scheduleTakeover } from "@/lib/games/liveGa
 import { KindBadge, GameName } from "./GameChoice";
 import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
 import { scheduleHint } from "./scheduleHint";
+import { abandonedEmptyGame, emptyGameNotice } from "./emptyGame";
 import { useTimeZone, zoneHint } from "@/lib/localTime";
 
 type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
@@ -134,6 +135,45 @@ export default function WheelSwitcher({
   const selectedCampaigns = selected && campaigns ? campaignsUsing(selected.id, campaigns) : [];
   const scheduleDirty = from !== toLocalInput(selected?.activeFrom ?? null) || until !== toLocalInput(selected?.activeUntil ?? null);
   useCreatorDraft("game-management", "this game schedule", scheduleDirty, busy);
+  // WC-09: a game created here and left without a single prize is pointed out,
+  // with a one-tap removal, instead of lingering as a nameless empty draft.
+  const freshGameRef = useRef<string | null>(null);
+  const offerEmptyGameRemoval = useCallback(async (currentId: string | null) => {
+    const freshId = freshGameRef.current;
+    if (!freshId || freshId === currentId) return;
+    freshGameRef.current = null;
+    const res = await fetch("/api/wheels?archived=1", { cache: "no-store" }).catch(() => null);
+    if (!res?.ok) return;
+    const data = (await res.json().catch(() => null)) as { wheels?: GameSummary[] } | null;
+    const game = abandonedEmptyGame(freshId, currentId, data?.wheels ?? []);
+    if (!game) return;
+    toast(emptyGameNotice(game.title), {
+      tone: "info",
+      duration: 8000,
+      key: `empty-game:${game.id}`,
+      action: {
+        label: "Remove it",
+        onClick: () => {
+          void (async () => {
+            const gone = await fetch(`/api/wheels/${game.id}?hard=1`, { method: "DELETE" }).catch(() => null);
+            if (gone?.ok) toast(`Removed "${game.title}".`, { tone: "success" });
+            else toast("Couldn't remove that game. You can delete it from its Manage menu.", { tone: "error" });
+            await load().catch(() => {});
+            onChanged?.();
+          })();
+        },
+      },
+    });
+  }, [toast, load, onChanged]);
+  useEffect(() => {
+    void offerEmptyGameRemoval(currentWheelId);
+  }, [currentWheelId, offerEmptyGameRemoval]);
+  const offerRef = useRef(offerEmptyGameRemoval);
+  useEffect(() => {
+    offerRef.current = offerEmptyGameRemoval;
+  }, [offerEmptyGameRemoval]);
+  // Leaving the Games section counts as leaving the game.
+  useEffect(() => () => void offerRef.current(null), []);
   function openGame(id: string) {
     leave(() => { setFrom(toLocalInput(selected?.activeFrom ?? null)); setUntil(toLocalInput(selected?.activeUntil ?? null)); void onEdit(id); }, { scope: "game-management", consequence: "Switching games discards the unsaved schedule. It does not undo a request already sent." });
   }
@@ -208,7 +248,8 @@ export default function WheelSwitcher({
       toast(gameKind === "bingo" ? "Inactive bingo draft created" : "Game created", { tone: "success" });
       setNewOpen(false);
       await load();
-      await onEdit(data.wheel.id);
+      const opened = await onEdit(data.wheel.id);
+      if (opened !== false) freshGameRef.current = data.wheel.id;
       onChanged?.();
     } catch {
       setNewError("The result couldn't be confirmed. Close this form and check the game list before creating another.");

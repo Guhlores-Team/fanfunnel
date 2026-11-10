@@ -504,10 +504,10 @@ function CampaignCard({
   const plays = campaignGame(campaign, wheels, now);
   const cells = stats && [
     { label: "Tips recorded", value: formatCents(stats.revenue) },
-    { label: "ARPU", value: formatCents(stats.arpu) },
+    { label: "Tips per fan", value: formatCents(stats.arpu) },
     { label: "Spins granted", value: stats.spinsBought },
     { label: "Spins played", value: stats.spinsPlayed },
-    { label: "Play-through", value: `${Math.round(stats.playThroughPct * 100)}%` },
+    { label: "Spins used", value: `${Math.round(stats.playThroughPct * 100)}%` },
     { label: "Unique fans", value: stats.uniqueFans },
     { label: "Fulfilled", value: stats.fulfilled },
     { label: "Pending", value: stats.pending },

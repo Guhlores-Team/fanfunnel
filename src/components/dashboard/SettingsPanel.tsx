@@ -347,12 +347,14 @@ function ProfileCard({
   // One "Save profile": the name goes to /api/account/profile, the avatar lives
   // on the public profile so it goes to /api/public-profile (avatarUrl only —
   // the route updates just the fields it is sent).
+  const [nameError, setNameError] = useState<string | null>(null);
   async function save() {
     const name = displayName.trim();
     if (nameDirty && !name) {
-      toast("Enter a display name.", { tone: "error" });
+      setNameError("Enter a display name.");
       return;
     }
+    setNameError(null);
     setBusy(true);
     let ok = true;
     try {
@@ -371,7 +373,7 @@ function ProfileCard({
           onDisplayNameChange?.(name);
         } catch (e) {
           ok = false;
-          toast(displayNameErrorMessage(e instanceof Error ? e.message : ""), { tone: "error" });
+          setNameError(displayNameErrorMessage(e instanceof Error ? e.message : ""));
         }
       }
       if (avatarDirty) {
@@ -415,13 +417,17 @@ function ProfileCard({
       </div>
 
       <div className="grid gap-3.5 sm:grid-cols-2">
-        <Field label="Display name">
+        <Field label="Display name" error={nameError}>
           <input
             className="ff-input w-full"
             value={displayName}
             maxLength={80}
             disabled={!loaded}
-            onChange={(e) => patchAccount({ displayName: e.target.value })}
+            aria-invalid={nameError !== null || undefined}
+            onChange={(e) => {
+              setNameError(null);
+              patchAccount({ displayName: e.target.value });
+            }}
             placeholder="Your creator name"
           />
         </Field>
@@ -497,17 +503,19 @@ function EmailBlock({
   // the first of the two links (Secure email change): say what is left.
   const halfDone = useSyncExternalStore(noSubscribe, () => new URLSearchParams(window.location.search).get("emailChange") === "half", () => false);
   useCreatorDraft("settings-email", "an e-mail change", email.trim() !== "" || current !== "", busy);
+  const [fieldError, setFieldError] = useState<{ field: "email" | "current"; message: string } | null>(null);
 
   async function save() {
     const next = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) {
-      toast("Enter a valid email address.", { tone: "error" });
+      setFieldError({ field: "email", message: "Enter a valid email address." });
       return;
     }
     if (!current) {
-      toast("Enter your current password to confirm.", { tone: "error" });
+      setFieldError({ field: "current", message: "Enter your current password to confirm." });
       return;
     }
+    setFieldError(null);
     setBusy(true);
     try {
       const res = await fetch("/api/account/email", {
@@ -578,25 +586,33 @@ function EmailBlock({
       )}
       <CreatorMfaRecovery required={mfaRequired} destination="settings" />
       <div className="grid gap-3.5 sm:grid-cols-2">
-        <Field label="New email">
+        <Field label="New email" error={fieldError?.field === "email" ? fieldError.message : null}>
           <input
             type="email"
             autoComplete="email"
             className="ff-input w-full"
             value={email}
             disabled={disabled}
-            onChange={(e) => setEmail(e.target.value)}
+            aria-invalid={fieldError?.field === "email" || undefined}
+            onChange={(e) => {
+              setFieldError(null);
+              setEmail(e.target.value);
+            }}
             placeholder="you@example.com"
           />
         </Field>
-        <Field label="Current password">
+        <Field label="Current password" error={fieldError?.field === "current" ? fieldError.message : null}>
           <input
             type="password"
             autoComplete="current-password"
             className="ff-input w-full"
             value={current}
             disabled={disabled}
-            onChange={(e) => setCurrent(e.target.value)}
+            aria-invalid={fieldError?.field === "current" || undefined}
+            onChange={(e) => {
+              setFieldError(null);
+              setCurrent(e.target.value);
+            }}
             placeholder="Confirm it's you"
           />
         </Field>
@@ -624,16 +640,18 @@ function SecurityCard() {
   const [busy, setBusy] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   useCreatorDraft("settings-password", "a password change", current !== "" || next !== "" || confirm !== "", busy);
+  const [fieldError, setFieldError] = useState<{ field: "next" | "confirm"; message: string } | null>(null);
 
   async function save() {
     if (next.length < 8) {
-      toast("New password must be at least 8 characters.", { tone: "error" });
+      setFieldError({ field: "next", message: "New password must be at least 8 characters." });
       return;
     }
     if (next !== confirm) {
-      toast("New passwords don't match.", { tone: "error" });
+      setFieldError({ field: "confirm", message: "New passwords don't match." });
       return;
     }
+    setFieldError(null);
     setBusy(true);
     try {
       const res = await fetch("/api/account/password", {
@@ -691,22 +709,30 @@ function SecurityCard() {
             onChange={(e) => setCurrent(e.target.value)}
           />
         </Field>
-        <Field label="New password">
+        <Field label="New password" error={fieldError?.field === "next" ? fieldError.message : null}>
           <input
             type="password"
             autoComplete="new-password"
             className="ff-input w-full"
             value={next}
-            onChange={(e) => setNext(e.target.value)}
+            aria-invalid={fieldError?.field === "next" || undefined}
+            onChange={(e) => {
+              setFieldError(null);
+              setNext(e.target.value);
+            }}
           />
         </Field>
-        <Field label="Confirm new">
+        <Field label="Confirm new" error={fieldError?.field === "confirm" ? fieldError.message : null}>
           <input
             type="password"
             autoComplete="new-password"
             className="ff-input w-full"
             value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
+            aria-invalid={fieldError?.field === "confirm" || undefined}
+            onChange={(e) => {
+              setFieldError(null);
+              setConfirm(e.target.value);
+            }}
           />
         </Field>
       </div>

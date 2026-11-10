@@ -243,11 +243,12 @@ export default function InboxPanel({
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state is set after the read resolves
-    loadThreads();
-
     // Real Supabase Realtime for the authed creator (RLS passes on messages).
     if (isSupabaseConfigured()) {
+      // PA-09: read once here; the demo branch below reads through its poll,
+      // which starts immediately, so it must not also read on mount.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount; state is set after the read resolves
+      loadThreads();
       const supabase = createClient();
       let channelRef: ReturnType<typeof supabase.channel> | null = null;
       let cancelled = false;
