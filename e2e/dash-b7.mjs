@@ -30,7 +30,8 @@
 //           change shows it is being saved.
 //  PR-13    a link can be given an expiry and made permanent again.
 //  WG-18    Admin search, request ages and the build commit.
-//  PA-01/12 + WC-18/19/23/30 too-dark brand colours are refused; skip link,
+//  PA-01/12 + WC-18/19/23/30 any hex brand colour saves, a very dark one
+//           with a hint that it is shown lighter; skip link,
 //           field errors, the handle hint and the discard list.
 //  WU-01    a suspended creator keeps the dashboard with the banner; every
 //           save is refused in plain words and nothing is written.
@@ -44,6 +45,10 @@ import { json } from "./focus.mjs";
 import { gameFeatureSettings, setGameFeatures } from "./games.mjs";
 
 const path = (p) => (url) => url.pathname === p;
+// Fixture fans are deleted from the journey's own addresses: a fan's delete is
+// budgeted per address (ten an hour), and the default one belongs to the
+// privacy journey and the a11y scan that follow on the same server.
+const tidyFrom = () => ({ "x-real-ip": `192.0.2.${1 + Math.floor(Math.random() * 250)}` });
 const answer = (status, error = status === 429 ? "rate_limited" : "boom") => (route) => route.fulfill({ status, json: { error } });
 
 export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
@@ -204,7 +209,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       assert(after.redemptions.find((r) => r.id === win.id)?.status === "pending", "Undo put the win back to pending");
     } finally {
       await page.close().catch(() => {});
-      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 
@@ -225,7 +230,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       const after = await statsFor();
       assert(after.pending === 1, `pending drops to 1 after a cancel (got ${after.pending})`);
     } finally {
-      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
       if (campaignId) await request.delete(BASE + `/api/campaigns/${campaignId}`).catch(() => {});
     }
   });
@@ -294,7 +299,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     } finally {
       await page.close().catch(() => {});
       if (dupId) await request.delete(BASE + `/api/wheels/${dupId}?hard=1`).catch(() => {});
-      if (token) await request.post(BASE + "/api/fan-data/delete", { data: { token, confirm: "DELETE" } }).catch(() => {});
+      if (token) await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 
@@ -368,7 +373,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       assert(/Showing 3 matches/.test(await page.getByTestId("fans-paging").innerText()), "the paging line counts the matches");
     } finally {
       await page.close().catch(() => {});
-      for (const fan of made) await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+      for (const fan of made) await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 
@@ -428,7 +433,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       assert((await request.get(BASE + `/spin/${fan.token}`)).status() === 200, "the link opens again");
     } finally {
       await page.close().catch(() => {});
-      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 
@@ -461,7 +466,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     } finally {
       await page.close().catch(() => {});
       await request.delete(BASE + `/api/webhooks/${hook.webhook.id}`).catch(() => {});
-      await request.post(BASE + "/api/fan-data/delete", { data: { token: evil.token, confirm: "DELETE" } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: evil.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 
@@ -519,7 +524,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     } finally {
       await page.close().catch(() => {});
       await request.put(BASE + "/api/public-profile", { data: { deliveryDays: before.deliveryDays ?? null } }).catch(() => {});
-      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 
@@ -654,7 +659,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     } finally {
       await page.close().catch(() => {});
       if (createdId) await request.delete(BASE + `/api/wheels/${createdId}?hard=1`).catch(() => {});
-      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 
@@ -688,7 +693,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       assert((await pass()).expiresAt === null, "Never clears the expiry");
     } finally {
       await page.close().catch(() => {});
-      await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
+      await request.post(BASE + "/api/fan-data/delete", { headers: tidyFrom(), data: { token: fan.token, confirm: "DELETE" } }).catch(() => {});
     }
   });
 

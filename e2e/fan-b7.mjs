@@ -18,9 +18,10 @@ const SE_PORTRAIT = { viewport: { width: 320, height: 568 }, isMobile: true, has
 const SE_LANDSCAPE = { viewport: { width: 568, height: 320 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const TIKTOK_ANDROID_UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230805.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36 trill_2023 musical_ly_31.0.3 JsSdk/1.0 NetType/WIFI Channel/googleplay AppName/musical_ly app_version/31.0.3 ByteLocale/en ByteFullLocale/en Region/US";
 const ip = () => `198.51.100.${1 + Math.floor(Math.random() * 250)}`;
-// A second documentation range for calls that must never meet an address the
-// link-budget step (WF-03) has used up.
-const quietIp = () => `203.0.113.${1 + Math.floor(Math.random() * 250)}`;
+// A documentation range no journey spends a budget on, for calls that must
+// never meet a used-up address: WF-03 uses up one in 198.51.100.x, and the
+// attack journey blocks one in 203.0.113.x for a minute just before this one.
+const quietIp = () => `192.0.2.${1 + Math.floor(Math.random() * 250)}`;
 
 async function json(res, what) {
   if (!res.ok()) throw new Error(`${what} failed (${res.status()}) ${(await res.text()).slice(0, 160)}`);
@@ -309,7 +310,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
       ];
       for (const [path, data] of routes) {
         const r = await request.post(BASE + path, { headers: cookie, data });
-        assert(r.status() === 403, `${path} with a creator cookie → 403 (${r.status()})`);
+        assert(r.status() === 403, `${path} with a creator cookie → 403 (${r.status()} from ${from["x-real-ip"]})`);
         const body = await r.json();
         assert(body.error === "creator_session", `${path} names the refusal (${body.error})`);
       }
