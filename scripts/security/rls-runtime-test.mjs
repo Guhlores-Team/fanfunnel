@@ -1493,6 +1493,21 @@ async function main() {
     const firstAsk = await admin.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
     const secondAsk = await admin.from("creator_notices").insert({ creator_id: A.id, kind: "game_unlock_request", details: { game: "bingo" } });
     check(!firstAsk.error && secondAsk.error?.code === "23505", `0073 a second open unlock request for the same game is a unique violation (${firstAsk.error?.message ?? "ok"} / ${code(secondAsk)})`);
+    // TS-17: the fan's mute is server-written, creator-readable, and stops creator messages.
+    const muted = await admin.rpc("set_fan_chat_mute", { p_token: liveLink.token, p_muted: true });
+    check(muted.data?.status === "ok" && muted.data?.muted === true, `0073 the fan path mutes the creator's messages (${muted.error?.message ?? JSON.stringify(muted.data)})`);
+    const creatorMute = await a.rpc("set_fan_chat_mute", { p_token: liveLink.token, p_muted: false });
+    check(creatorMute.error?.code === "42501", `0073 a creator cannot call set_fan_chat_mute (${deniedCode(creatorMute)})`);
+    const forgedUnmute = await a.from("fans").update({ chat_muted_at: null }).eq("id", liveFan.id).select("id");
+    check(forgedUnmute.error?.code === "42501", `0073 a creator cannot unmute its fan (${code(forgedUnmute)})`);
+    const mutedRead = await a.from("fans").select("chat_muted_at").eq("id", liveFan.id).single();
+    check(!mutedRead.error && typeof mutedRead.data?.chat_muted_at === "string", `0073 a creator reads that its fan muted it (${mutedRead.error?.message ?? mutedRead.data?.chat_muted_at})`);
+    const mutedReply = await a.from("messages").insert({ creator_id: A.id, fan_id: liveFan.id, sender: "creator", body: `muted ${RUN}` }).select("id");
+    check(mutedReply.error?.code === "42501" && mutedReply.error?.message === "muted", `0073 a creator's message to a muted fan is refused with 'muted' (${mutedReply.error?.message ?? "accepted"})`);
+    const unmuted = await admin.rpc("set_fan_chat_mute", { p_token: liveLink.token, p_muted: false });
+    check(unmuted.data?.status === "ok" && unmuted.data?.muted === false, `0073 the fan path unmutes (${unmuted.error?.message ?? JSON.stringify(unmuted.data)})`);
+    const pausedMute = await admin.rpc("set_fan_chat_mute", { p_token: A.token, p_muted: true });
+    check(pausedMute.data?.status === "unavailable", `0073 a self-excluded link cannot change the mute (${pausedMute.error?.message ?? JSON.stringify(pausedMute.data)})`);
     const queueShape = await a.rpc("creator_redemption_queue", { p_limit: 1 });
     check(!queueShape.error && (queueShape.data ?? []).every((row) => "actor_id" in row && "fan_id" in row), `0073 the queue carries fan_id and actor_id (${queueShape.error?.message ?? "ok"})`);
     }

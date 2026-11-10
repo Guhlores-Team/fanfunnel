@@ -260,11 +260,19 @@ revoke execute on function public.set_creator_note(text, text) from public, anon
 grant execute on function public.set_creator_note(text, text) to authenticated;
 
 -- ── TS-03 / ATK N-B: nobody is "FanFunnel", "Support" or "admin" ─────────
--- One reserved list (mirrored by src/lib/reservedNames.ts): a name whose
--- normalized form (lower-case, spaces and _ . - removed, a leading @ dropped)
--- equals an entry, whose words include a staff/operator word, or which
--- contains the product name is refused by set_display_name, set_public_profile
--- (slug) and the public-fields trigger (direct writes).
+-- One reserved list (mirrored by src/lib/reservedNames.ts). A name is refused
+-- by set_display_name, set_public_profile (slug) and the public-fields trigger
+-- (direct writes) when
+--   * its normalized form (lower-case, spaces and _ . - removed, a leading @
+--     dropped, digits trimmed from both ends) is one reserved word or up to
+--     three of them joined ("support", "admin1", "officialsupport",
+--     "Security Team"),
+--   * it contains the product name, or
+--   * one of its separate words is a staff word (admin, administrator,
+--     support, staff, moderator, mod): "Alice Support", "mod_dan".
+-- official, system, root, security, billing and abuse are reserved as a name
+-- (alone, digit-padded or joined), not as one word of a longer name: "Jane
+-- Official", "Root Beer Fan", "System Shock" and "Security Sam" are people.
 create or replace function public._reserved_name(p text)
 returns boolean language sql immutable set search_path = public, pg_temp as $$
   with n as (
@@ -272,11 +280,9 @@ returns boolean language sql immutable set search_path = public, pg_temp as $$
            regexp_split_to_array(lower(regexp_replace(coalesce(p, ''), '[^[:alnum:]]+', ' ', 'g')), '\s+') as words
   )
   select coalesce(p, '') <> '' and (
-       n.whole in ('fanfunnel', 'easysimplesites', 'support', 'admin', 'administrator', 'staff', 'official', 'moderator', 'mod',
-                   'help', 'security', 'billing', 'verify', 'team', 'system', 'root', 'api', 'www', 'mail', 'abuse', 'legal',
-                   'privacy', 'terms')
+       regexp_replace(n.whole, '^[0-9]+|[0-9]+$', '', 'g') ~ '^(fanfunnel|easysimplesites|support|admin|administrator|staff|official|moderator|mod|help|security|billing|verify|team|system|root|api|www|mail|abuse|legal|privacy|terms){1,3}$'
     or n.whole like '%fanfunnel%' or n.whole like '%easysimplesites%'
-    or n.words && array['admin', 'administrator', 'support', 'staff', 'official', 'moderator', 'mod', 'security', 'billing', 'abuse', 'system', 'root'])
+    or n.words && array['admin', 'administrator', 'support', 'staff', 'moderator', 'mod'])
   from n
 $$;
 revoke execute on function public._reserved_name(text) from public, anon, authenticated, service_role;
@@ -2346,6 +2352,100 @@ create policy creator_apps_insert on public.creator_applications for insert
     profile_id = (select auth.uid())
     and exists (select 1 from public.profiles p where p.id = (select auth.uid()) and p.is_active)
   );
+
+-- TS-17: a fan can mute a creator's messages and undo it. fans.chat_muted_at
+-- is set only through set_fan_chat_mute (service role; the fan route calls it
+-- with the link token). It resolves the token and decides liveness exactly as
+-- record_fan_ack does (fan row first, then the link read again), so a paused,
+-- expired or self-excluded link, a blocked fan or a suspended creator answers
+-- unavailable and nothing changes. The creator and its seats read the column
+-- through fans_select (fans is granted per table); no session can write it:
+-- guard_fan_consent refuses a signed-in INSERT or UPDATE that sets or changes
+-- it. A creator message to a muted fan is refused where it is inserted
+-- (guard_message_writes, for every role: the creator's reply, a seat's reply
+-- and the server's automatic intro / outro alike), with the message 'muted'.
+alter table public.fans add column if not exists chat_muted_at timestamptz;
+comment on column public.fans.chat_muted_at is 'When the fan muted this creator''s messages (0073, TS-17); null = not muted. Written only by set_fan_chat_mute (service role).';
+
+create or replace function public.set_fan_chat_mute(p_token text, p_muted boolean)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare p public.fan_passes%rowtype; v_at timestamptz;
+begin
+  if p_token is null or p_muted is null then
+    raise exception 'invalid mute' using errcode = '22023';
+  end if;
+  select * into p from public.fan_passes where token = p_token;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  perform 1 from public.fans where id = p.fan_id and creator_id = p.creator_id for update;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  select * into p from public.fan_passes where id = p.id;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  if not p.is_active or (p.expires_at is not null and p.expires_at <= now()) or p.self_excluded_at is not null
+     or exists (select 1 from public.fans f where f.id = p.fan_id and f.blocked_at is not null)
+     or not exists (select 1 from public.profiles c where c.id = p.creator_id and c.is_active) then
+    return jsonb_build_object('status', 'unavailable');
+  end if;
+  -- Muting again keeps the first time; unmuting clears it.
+  update public.fans set chat_muted_at = case when p_muted then coalesce(chat_muted_at, now()) end
+   where id = p.fan_id returning chat_muted_at into v_at;
+  return jsonb_build_object('status', 'ok', 'muted', v_at is not null);
+end $$;
+revoke execute on function public.set_fan_chat_mute(text, boolean) from public, anon, authenticated;
+grant execute on function public.set_fan_chat_mute(text, boolean) to service_role;
+comment on function public.set_fan_chat_mute(text, boolean) is 'Mutes or unmutes the creator''s messages for the fan behind a live link (0073, TS-17). Answers {status: ok, muted}, {status: not_found} or {status: unavailable} (nothing written). Service role only.';
+
+create or replace function public.guard_fan_consent()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  if current_user in ('anon', 'authenticated') then
+    if tg_op = 'INSERT' then
+      if new.leaderboard_opt_in or new.acked_at is not null or new.acked_terms_version is not null or new.chat_muted_at is not null then
+        raise exception 'fan consent is recorded by the fan only' using errcode = '42501';
+      end if;
+    elsif new.leaderboard_opt_in is distinct from old.leaderboard_opt_in
+       or new.handle is distinct from old.handle
+       or new.acked_at is distinct from old.acked_at
+       or new.acked_terms_version is distinct from old.acked_terms_version
+       or new.chat_muted_at is distinct from old.chat_muted_at then
+      raise exception 'fan consent is recorded by the fan only' using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function public.guard_fan_consent() from public, anon, authenticated, service_role;
+
+create or replace function public.guard_message_writes()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  if tg_op = 'DELETE' then
+    if current_user in ('anon', 'authenticated') and old.sender <> 'creator' then
+      raise exception 'a fan message cannot be deleted by the creator' using errcode = '42501';
+    end if;
+    return old;
+  end if;
+  if not exists (select 1 from public.fans f where f.id = new.fan_id and f.creator_id = new.creator_id) then
+    raise exception 'message references another creator' using errcode = '42501';
+  end if;
+  -- 0073 (TS-17): nothing from the creator's side reaches a fan who muted it.
+  if tg_op = 'INSERT' and new.sender = 'creator'
+     and exists (select 1 from public.fans f where f.id = new.fan_id and f.chat_muted_at is not null) then
+    raise exception 'muted' using errcode = '42501';
+  end if;
+  if current_user in ('anon', 'authenticated') then
+    if tg_op = 'INSERT' and new.sender <> 'creator' then
+      raise exception 'a creator writes only creator messages' using errcode = '42501';
+    end if;
+    if tg_op = 'UPDATE' and (
+         (to_jsonb(new) - 'read_at') <> (to_jsonb(old) - 'read_at')
+         or (old.read_at is not null and new.read_at is distinct from old.read_at)) then
+      raise exception 'messages are append-only (read receipts excepted)' using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function public.guard_message_writes() from public, anon, authenticated, service_role;
 
 -- ── (9) closing check: browser roles reach only the reviewed functions, and
 -- every creator-owned table carries the immutability trigger ────────────────

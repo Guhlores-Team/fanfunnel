@@ -68,7 +68,7 @@ check("DB-03: set_creator_note refuses over-long or non-printable text", /invali
 const reserved = lastDef(migration, "_reserved_name");
 check("TS-03: the whole name is compared with separators stripped ('fan-funnel', 'fan_funnel', 'fan.funnel' are 'fanfunnel')", /regexp_replace\(regexp_replace\(coalesce\(p, ''\), '\^\\s\*@', ''\), '\[\\s\._-\]\+', '', 'g'\)/.test(reserved) && /n\.whole like '%fanfunnel%'/.test(reserved));
 for (const word of ["fanfunnel", "support", "admin", "administrator", "staff", "official", "moderator", "mod", "help", "security", "billing", "verify", "team", "system", "root", "api", "www", "mail", "abuse", "legal", "privacy", "terms"]) {
-  check(`TS-03: '${word}' is reserved`, new RegExp(`'${word}'`).test(reserved));
+  check(`TS-03: '${word}' is reserved`, new RegExp(`['(|]${word}['|)]`).test(reserved));
 }
 check("TS-03: set_display_name refuses a reserved name", /reserved display name/.test(lastDef(migration, "set_display_name")));
 check("TS-03: set_public_profile and the profile guard refuse a reserved slug", /reserved slug/.test(lastDef(migration, "set_public_profile")) && /reserved slug/.test(lastDef(migration, "_guard_profile_public_fields")));
@@ -159,6 +159,20 @@ check("suspended: set_display_name writes only for an active own row and still n
 check("suspended: an access request needs the caller's own active profile", /create policy creator_apps_insert on public\.creator_applications for insert\s*with check \(\s*profile_id = \(select auth\.uid\(\)\)\s*and exists \(select 1 from public\.profiles p where p\.id = \(select auth\.uid\(\)\) and p\.is_active\)\s*\);/.test(migration)
   && migration.includes("drop policy if exists creator_apps_insert on public.creator_applications;") && !/create policy \w+ on public\.creator_applications for (update|all)/.test(migration.slice(migration.indexOf("(8b)"))));
 for (const fn of ["set_notification_prefs", "set_onboarding_dismissed", "set_notifications_seen", "org_leave", "issue_creator_actor_context"]) check(`suspended: ${fn} is listed in the header as a deliberate own-row write`, migration.slice(0, migration.indexOf("-- ── (1)")).includes(fn));
+// TS-03 (word rule) and TS-17 (mute).
+const reservedRule = lastDef(migration, "_reserved_name");
+check("TS-03: the six name-only words left the word-level list and stay in the name list", /n\.words && array\['admin', 'administrator', 'support', 'staff', 'moderator', 'mod'\]/.test(reservedRule)
+  && ["official", "system", "root", "security", "billing", "abuse"].every((w) => new RegExp(`[(|]${w}[|)]`).test(reservedRule)) && /\{1,3\}\$'/.test(reservedRule));
+const muteFn = lastDef(migration, "set_fan_chat_mute");
+check("TS-17: set_fan_chat_mute is service-role only, pins pg_temp, locks the fan first and checks the link is live before it writes", /returns jsonb language plpgsql security definer set search_path = public, pg_temp/.test(muteFn)
+  && migration.includes("revoke execute on function public.set_fan_chat_mute(text, boolean) from public, anon, authenticated;") && migration.includes("grant execute on function public.set_fan_chat_mute(text, boolean) to service_role;")
+  && muteFn.indexOf("for update") > 0 && muteFn.indexOf("for update") < muteFn.indexOf("'unavailable'") && muteFn.indexOf("'unavailable'") < muteFn.indexOf("update public.fans set chat_muted_at")
+  && /if not p\.is_active or \(p\.expires_at is not null and p\.expires_at <= now\(\)\) or p\.self_excluded_at is not null/.test(muteFn));
+check("TS-17: no session can set or change chat_muted_at", /new\.chat_muted_at is not null then/.test(lastDef(migration, "guard_fan_consent")) && /or new\.chat_muted_at is distinct from old\.chat_muted_at then/.test(lastDef(migration, "guard_fan_consent"))
+  && !/grant[^;]*\(chat_muted_at\)[^;]*to (anon|authenticated)/.test(migration));
+const messageGuard = lastDef(migration, "guard_message_writes");
+check("TS-17: a creator message to a muted fan is refused for every role, before the session-only rules", /if tg_op = 'INSERT' and new\.sender = 'creator'\s*and exists \(select 1 from public\.fans f where f\.id = new\.fan_id and f\.chat_muted_at is not null\) then\s*raise exception 'muted' using errcode = '42501';/.test(messageGuard)
+  && messageGuard.indexOf("'muted'") < messageGuard.lastIndexOf("if current_user in ('anon', 'authenticated') then") && messageGuard.includes("message references another creator") && messageGuard.includes("messages are append-only"));
 check("no new policy is wide open", !/using \(true\)|with check \(true\)/.test(migration));
 
 console.log(`migration 0073 guard: ${passed} checks passed`);

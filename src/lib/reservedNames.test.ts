@@ -45,8 +45,10 @@ const refused = [
   "Supp0rt", "0fficial", "Adm1n", "Sta ff", "Suppоrt", "SUPPORT!!", "admin-bot", "verify.team", "Official Admin Team",
   "N0 Reply", "Billing Support", "Customer Service", "fanfunnel.help",
   // a staff word as one of the name's words (the database's word rule)
-  "Alice Support", "Official Jane", "jane-official", "Jane (Official)", "mod_dan", "The Admin Guy", "Security Sam", "Staff Pick Fan",
-  "Root Beer Fan", "System Shock", "Billing Bob", "Abuse Report", "jane.mods", "Team Admins",
+  "Alice Support", "mod_dan", "The Admin Guy", "Staff Pick Fan", "jane.mods", "Team Admins",
+  // official, system, root, security, billing, abuse: reserved as the name, digit-padded or joined, not as one word of many
+  "official", "Official", "official2", "Official Support", "officialsupport", "Security Team", "security team", "System Admin", "Root", "root1",
+  "Billing Team", "Abuse Team", "Official Security",
   // whole names the database also reserves
   "api", "www", "mail", "Terms", "@support", "@Admin",
 ];
@@ -58,6 +60,7 @@ const allowed = [
   "Rooted Ray", "Systematic Sue", "Mailman Mike", "Apiary Anna", "Terms And Tea",
   "Administrative Assistant", "Verify Vicky Wins", "Bot Fan 99", "Infographic", "Contactless", "Legally Blonde Fan",
   "Sam", "x", "Secure Sally", "Billie", "Pay Pal", "The Owner Of Cats", "Funnel Cake", "Fan of Funnels",
+  "Jane Official", "Official Jane", "jane-official", "Jane (Official)", "Root Beer Fan", "System Shock", "Security Sam", "Billing Bob", "Abuse Report",
   "mo", "a1", "", "   ",
 ];
 for (const name of allowed) check(`allowed: "${name}"`, !isReservedName(name));
@@ -71,20 +74,30 @@ const sql = readdirSync(MIGRATIONS).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sor
 const def = [...sql.matchAll(/create or replace function public\._reserved_name\(p text\)[\s\S]*?\$\$;/g)].at(-1)?.[0] ?? "";
 check("a migration defines public._reserved_name(text)", def.length > 0);
 const quoted = (text: string) => [...text.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-const SQL_WHOLE = quoted(/n\.whole in \(([\s\S]*?)\)/.exec(def)?.[1] ?? "");
+// One reserved word, or up to three joined, after digits are trimmed from both ends.
+const SQL_JOINED = /n\.whole, '\^\[0-9\]\+\|\[0-9\]\+\$', '', 'g'\) ~ '\^\(([a-z|]+)\)\{1,3\}\$'/.exec(def)?.[1] ?? "";
+const SQL_WHOLE = SQL_JOINED.split("|").filter(Boolean);
+const SQL_JOINED_RE = new RegExp(`^(?:${SQL_WHOLE.join("|")}){1,3}$`);
 const SQL_LIKE = quoted([...def.matchAll(/n\.whole like ('%[^']+%')/g)].map((m) => m[1]).join(" ")).map((l) => l.replace(/%/g, ""));
 const SQL_WORDS = quoted(/n\.words && array\[([\s\S]*?)\]/.exec(def)?.[1] ?? "");
 check("the SQL whole-name list was read", SQL_WHOLE.length >= 20 && SQL_WHOLE.includes("fanfunnel") && SQL_WHOLE.includes("terms"));
 check("the SQL contains-list was read", SQL_LIKE.includes("fanfunnel") && SQL_LIKE.includes("easysimplesites"));
-check("the SQL word list was read", SQL_WORDS.length >= 12 && SQL_WORDS.includes("admin") && SQL_WORDS.includes("root"));
-check("the SQL normalisation is the one this port copies", def.includes("'^\\s*@'") && def.includes("'[\\s._-]+'") && def.includes("'[^[:alnum:]]+'"));
+check("the SQL word list was read", SQL_WORDS.length >= 6 && SQL_WORDS.includes("admin") && SQL_WORDS.includes("mod"));
+for (const word of ["official", "system", "root", "security", "billing", "abuse"]) {
+  check(`"${word}" is reserved as a name in SQL and here, and is a word-level refusal in neither`, SQL_WHOLE.includes(word) && !SQL_WORDS.includes(word)
+    && (RESERVED_WORDS as readonly string[]).includes(word) && !(RESERVED_WORD_TOKENS as readonly string[]).includes(word));
+}
+check("every SQL word-level refusal is one here too", SQL_WORDS.every((w) => (RESERVED_WORD_TOKENS as readonly string[]).includes(w)));
+check("every SQL reserved name is a reserved word or a brand word here", SQL_WHOLE.every((w) => (RESERVED_WORDS as readonly string[]).includes(w) || (RESERVED_BRAND_WORDS as readonly string[]).includes(w)));
+check("the SQL normalisation is the one this port copies", def.includes("'^\\s*@'") && def.includes("'[\\s._-]+'") && def.includes("'[^[:alnum:]]+'") && def.includes("'^[0-9]+|[0-9]+$'"));
 
 /** The SQL rule; `ascii` picks how [:alnum:] splits words (C locale vs a UTF-8 locale). */
 function sqlReserved(p: string, ascii: boolean): boolean {
   if (p === "") return false;
   const whole = p.replace(/^\s*@/, "").replace(/[\s._-]+/g, "").toLowerCase();
   const words = p.replace(ascii ? /[^A-Za-z0-9]+/g : /[^\p{L}\p{N}]+/gu, " ").toLowerCase().split(/\s+/);
-  return SQL_WHOLE.includes(whole) || SQL_LIKE.some((l) => whole.includes(l)) || words.some((w) => SQL_WORDS.includes(w));
+  const bare = whole.replace(/^[0-9]+|[0-9]+$/g, "");
+  return SQL_JOINED_RE.test(bare) || SQL_LIKE.some((l) => whole.includes(l)) || words.some((w) => SQL_WORDS.includes(w));
 }
 
 // The SQL rule's own cases, as fixtures: [name, the database refuses it].
@@ -93,12 +106,17 @@ const SQL_CASES: [string, boolean][] = [
   ["support", true], ["Support", true], ["@support", true], ["  @Admin", true], ["s.u.p.p.o.r.t", true], ["ad-min", true],
   ["help", true], ["verify", true], ["team", true], ["legal", true], ["privacy", true], ["terms", true], ["api", true], ["www", true],
   ["mail", true], ["abuse", true], ["system", true], ["root", true], ["Mod", true], ["official", true],
-  ["Alice Support", true], ["Official Jane", true], ["jane-official", true], ["Jane (Official)", true], ["mod_dan", true],
-  ["The Admin Guy", true], ["Security Sam", true], ["Staff Pick Fan", true], ["Root Beer Fan", true], ["System Shock", true],
-  ["Billing Bob", true], ["Abuse Report", true], ["Support!", true], ["ADMINISTRATOR x", true], ["Official Moderator", true],
+  ["Alice Support", true], ["mod_dan", true], ["The Admin Guy", true], ["Staff Pick Fan", true],
+  ["Support!", true], ["ADMINISTRATOR x", true], ["Official Moderator", true],
+  // reserved as a name, digit-padded or joined: the whole-name rule
+  ["admin1", true], ["2support", true], ["official2", true], ["officialsupport", true], ["Official Support", true],
+  ["Security Team", true], ["security_team", true], ["Team Mail Help", true], ["System Admin", true], ["rootroot", true],
+  // official, system, root, security, billing, abuse as one word of a longer name
+  ["Jane Official", false], ["Official Jane", false], ["jane-official", false], ["Jane (Official)", false], ["Security Sam", false],
+  ["Root Beer Fan", false], ["System Shock", false], ["Billing Bob", false], ["Abuse Report", false], ["Team Mail Help Api", false],
   // …and what it lets through
   ["Alice", false], ["Alice Adminton", false], ["JaneOfficial", false], ["supportive_fan", false], ["Help Desk", false],
-  ["Team Jane", false], ["Verify Vicky", false], ["Legal Eagle", false], ["Supp0rt", false], ["admin1", false], ["Mods", false],
+  ["Team Jane", false], ["Verify Vicky", false], ["Legal Eagle", false], ["Supp0rt", false], ["Mods", false], ["123", false],
   ["mailman", false], ["apiary", false], ["Terms And Tea", false], ["", false],
 ];
 for (const [name, refused] of SQL_CASES) {

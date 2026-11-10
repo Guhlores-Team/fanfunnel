@@ -34,11 +34,16 @@ export const RESERVED_WORDS = [
 
 /**
  * Words that reserve a name when they appear as a SEPARATE word in it
- * ("Alice Support", "jane-official", "mod_dan"), the database's word rule.
- * The first twelve are the SQL list; the plurals are this side's addition.
+ * ("Alice Support", "The Admin Guy", "mod_dan"), the database's word rule.
+ * The first six are the SQL list; the plurals are this side's addition.
+ * official, system, root, security, billing and abuse are NOT here: they
+ * are reserved as a name (alone, digit-padded or joined to another reserved
+ * word, see RESERVED_WORDS), so "Jane Official", "Root Beer Fan", "System
+ * Shock" and "Security Sam" are allowed while "Official Support" and
+ * "Security Team" are not.
  */
 export const RESERVED_WORD_TOKENS = [
-  "admin", "administrator", "support", "staff", "official", "moderator", "mod", "security", "billing", "abuse", "system", "root",
+  "admin", "administrator", "support", "staff", "moderator", "mod",
   "admins", "administrators", "moderators", "mods",
 ] as const;
 const TOKENS = new Set<string>(RESERVED_WORD_TOKENS);

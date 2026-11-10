@@ -540,5 +540,56 @@ export function probeBatch7(db, psql) {
     ["stored:0", "active:let me in,pending"]);
   same("suspended: an applicant has no UPDATE policy on its request (admin only)", q(`select string_agg(polname, ',' order by polname) from pg_policy where polrelid = 'public.creator_applications'::regclass and polcmd in ('w', '*')`), "creator_apps_admin_update");
 
+  // TS-03: official, system, root, security, billing, abuse are reserved as a
+  // name (alone, digit-padded, joined), not as one word of a longer name.
+  for (const name of ["Jane Official", "Root Beer Fan", "System Shock", "Security Sam"]) {
+    expect(`TS-03: "${name}" is an ordinary display name`, as(A, `select public.set_display_name('${name}'); select 'name:' || display_name from public.profiles where id = '${A}';`), [`name:${name}`]);
+  }
+  for (const name of ["Official Support", "Security Team", "official", "officialsupport", "official2", "admin1", "Alice Support", "The Admin Guy"]) {
+    refused(`TS-03: "${name}" is refused as a display name`, as(A, `select public.set_display_name('${name}');`), /reserved display name/);
+  }
+  refused("TS-03: a slug of joined reserved words is refused", as(A, `select public.set_public_profile('security-team', null, null);`), /reserved slug/);
+  expect("TS-03: a slug with one of the six words inside a longer name is kept", as(A, `select public.set_public_profile('root-beer-fan', null, null); select 'slug:' || public_slug from public.profiles where id = '${A}';`), ["slug:root-beer-fan"]);
+  // TS-17: the fan's reversible mute.
+  const mute = (on) => `select public.set_fan_chat_mute('${TOKEN_A}', ${on})`;
+  same("TS-17: fans.chat_muted_at exists and set_fan_chat_mute is service-role only", q(`select (select data_type from information_schema.columns where table_schema = 'public' and table_name = 'fans' and column_name = 'chat_muted_at') || ',' || has_function_privilege('service_role', p.oid, 'EXECUTE') || ',' || has_function_privilege('authenticated', p.oid, 'EXECUTE') || ',' || has_function_privilege('anon', p.oid, 'EXECUTE') || ',' || p.prosecdef || ',' || p.proconfig::text from pg_proc p where p.oid = 'public.set_fan_chat_mute(text,boolean)'::regprocedure`), `timestamp with time zone,true,false,false,true,{"search_path=public, pg_temp"}`);
+  expect("TS-17: the fan mutes and unmutes; muting twice keeps the first time; the creator and its seat read the state, another creator does not",
+    service(`select 'mute:' || (${mute(true)})::text;`) + `update public.fans set chat_muted_at = '2026-01-01T00:00:00Z' where id = '${FA}';`
+    + service(`select 'again:' || (${mute(true)})::text;`) + `select 'first:' || to_char(chat_muted_at at time zone 'utc', 'YYYY-MM-DD') from public.fans where id = '${FA}';`
+    + as(A, `select 'creator:' || (chat_muted_at is not null) from public.fans where id = '${FA}';`) + as(CH, `select 'seat:' || (chat_muted_at is not null) from public.fans where id = '${FA}';`)
+    + as(B, `select 'other:' || count(*) from public.fans where id = '${FA}';`)
+    + service(`select 'unmute:' || (${mute(false)})::text;`) + `select 'cleared:' || (chat_muted_at is null) from public.fans where id = '${FA}';`
+    + service(`select 'unknown:' || (public.set_fan_chat_mute('no-such-token', true))::text;`),
+    [`mute:{"muted": true, "status": "ok"}`, `again:{"muted": true, "status": "ok"}`, "first:2026-01-01", "creator:true", "seat:true", "other:0", `unmute:{"muted": false, "status": "ok"}`, "cleared:true", `unknown:{"status": "not_found"}`]);
+  for (const [label, state] of [
+    ["paused", `update public.fan_passes set is_active = false where id = '${PASS_A}';`],
+    ["expired", `update public.fan_passes set expires_at = now() - interval '1 minute' where id = '${PASS_A}';`],
+    ["self-excluded", `update public.fan_passes set self_excluded_at = now(), is_active = false where id = '${PASS_A}';`],
+    ["blocked", `update public.fans set blocked_at = now() where id = '${FA}';`],
+    ["suspended creator", `update public.profiles set is_active = false where id = '${A}';`],
+  ]) {
+    expect(`TS-17: set_fan_chat_mute answers unavailable for a ${label} link and writes nothing`,
+      state + service(`select '${label}:' || (${mute(true)})::text;`) + `select 'state:' || (chat_muted_at is null) from public.fans where id = '${FA}';`,
+      [`${label}:{"status": "unavailable"}`, "state:true"]);
+  }
+  refused("TS-17: a creator session cannot call set_fan_chat_mute", as(A, `${mute(true)};`), /permission denied for function set_fan_chat_mute/);
+  refused("TS-17: anon cannot call set_fan_chat_mute", `set local role anon; ${mute(true)};`, /permission denied for function set_fan_chat_mute/);
+  refused("TS-17: a mute without a value is refused", service(`select public.set_fan_chat_mute('${TOKEN_A}', null);`), /invalid mute/);
+  refused("TS-17: a creator session cannot unmute its fan", service(`${mute(true)};`) + as(A, `update public.fans set chat_muted_at = null where id = '${FA}';`), /fan consent is recorded by the fan only/);
+  refused("TS-17: a creator session cannot mute its fan", as(A, `update public.fans set chat_muted_at = now() where id = '${FA}';`), /fan consent is recorded by the fan only/);
+  refused("TS-17: a manager seat cannot change the mute either", service(`${mute(true)};`) + as(MG, `update public.fans set chat_muted_at = null where id = '${FA}';`), /fan consent is recorded by the fan only/);
+  refused("TS-17: a creator cannot add a fan that is already muted", as(A, `insert into public.fans (creator_id, display_name, chat_muted_at) values ('${A}', 'born muted', now());`), /fan consent is recorded by the fan only/);
+  expect("TS-17: a creator still edits its fan's notes while the fan is muted, and the mute stays",
+    service(`${mute(true)};`) + as(A, `update public.fans set notes = 'vip' where id = '${FA}';`) + `select 'notes:' || notes || ',' || (chat_muted_at is not null) from public.fans where id = '${FA}';`, ["notes:vip,true"]);
+  const say = (who) => `insert into public.messages (creator_id, fan_id, sender, body) values ('${A}', '${FA}', '${who}', 'hello from ${who}');`;
+  refused("TS-17: the creator's reply to a muted fan is refused with 'muted'", service(`${mute(true)};`) + as(A, say("creator")), /ERROR:\s+muted/);
+  refused("TS-17: a chat seat's reply to a muted fan is refused with 'muted'", service(`${mute(true)};`) + as(CH, say("creator")), /ERROR:\s+muted/);
+  refused("TS-17: the server's automatic creator message to a muted fan is refused with 'muted'", service(`${mute(true)};` + say("creator")), /ERROR:\s+muted/);
+  expect("TS-17: the muted fan still writes; nothing from the creator was stored; after unmuting the creator's reply goes through",
+    service(`${mute(true)};` + say("fan")) + `savepoint s;` + as(A, `do $$ begin ${say("creator")} exception when insufficient_privilege then null; end $$;`)
+    + `select 'stored:' || count(*) filter (where sender = 'fan' and body = 'hello from fan') || ',' || count(*) filter (where sender = 'creator') from public.messages where fan_id = '${FA}';`
+    + service(`${mute(false)};`) + as(A, say("creator")) + `select 'after:' || count(*) from public.messages where fan_id = '${FA}' and sender = 'creator';`,
+    ["stored:1,0", "after:1"]);
+
   return { bad, checks };
 }
