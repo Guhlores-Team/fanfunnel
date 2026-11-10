@@ -22,6 +22,7 @@ import {
   mockReportCreator,
 } from "./mock";
 import { campaignPinError, isMissingRpc, isUuid } from "./shared";
+import { creatorSummary } from "./creatorSummaries";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
 import { isOnBreak } from "@/lib/play/playGuard";
@@ -244,19 +245,22 @@ const PASS_COLUMNS = "id, fan_id, created_at, spins_remaining, wheel_id, campaig
 type Sb = Awaited<ReturnType<typeof createClient>>;
 
 
-/** One page of fan cores through creator_fan_summaries (0073); null when the RPC is absent. */
+/**
+ * One page of fan cores through creator_fan_summaries (0073, service role
+ * after a session can_act_for 'manage' check); null when the function is not
+ * there or the session may not act for the creator (the RLS-scoped read
+ * below answers instead).
+ */
 async function fanCoresViaRpc(sb: Sb, creatorId: string, opts: { query: string | null; cursor: { createdAt: string; fanId: string } | null; limit: number }): Promise<{ cores: FanCore[]; total: number | null } | null> {
-  const { data, error } = await sb.rpc("creator_fan_summaries", {
-    p_creator: creatorId,
+  const result = await creatorSummary(sb, creatorId, "manage", "creator_fan_summaries", {
     p_query: opts.query,
     p_before_created: opts.cursor?.createdAt ?? null,
     p_before_id: opts.cursor?.fanId ?? null,
     p_limit: opts.limit,
   });
-  if (error) {
-    if (isMissingRpc(error)) return null;
-    throw new CompleteReadError();
-  }
+  if (result.status === "error") throw new CompleteReadError();
+  if (result.status !== "ok") return null;
+  const data = result.data;
   // A set-returning RPC answers an array; anything else means it is not there.
   if (!Array.isArray(data)) return null;
   const rows = data as {

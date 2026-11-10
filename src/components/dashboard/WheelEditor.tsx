@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import GamePreview from "./GamePreview";
 import GameSettingsEditor from "./GameSettingsEditor";
-import { gameSaveFeatureAllowed, editableGamePayload, gameDraftIssues, gameRefusalMessage, type CreatorGameWheel } from "./gameEditor";
+import { canSaveBingoDraft, gameSaveFeatureAllowed, editableGamePayload, gameDraftIssues, gameRefusalMessage, type CreatorGameWheel } from "./gameEditor";
 import { useGameFeatures } from "./useGameFeatures";
 import { useCreatorDraft } from "./CreatorDrafts";
 import { prizeOdds } from "@/lib/games/wheel/engine";
@@ -257,8 +257,10 @@ export default function WheelEditor({
   // the saved snapshot), so the guard holds while another section is open.
   const validation = useMemo(() => {
     const base = validateWheelDraft(wheel);
-    return { ...base, issues: gameDraftIssues(wheel as CreatorGameWheel, base.issues) };
+    return { ...base, baseIssues: base.issues, issues: gameDraftIssues(wheel as CreatorGameWheel, base.issues) };
   }, [wheel]);
+  // WC-11: an unfinished, never-published bingo game saves as a draft.
+  const draftOnly = canSaveBingoDraft(gameWheel, savedJson, validation.baseIssues);
   // Errors show for a field once it has been left (blur) or after a save
   // attempt, so a half-typed hex isn't flagged mid-keystroke.
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -304,14 +306,21 @@ export default function WheelEditor({
   }
   function attemptSave() {
     if (deliveryPending || saving || featureBlocked) return;
-    if (validation.issues.length > 0) {
+    if (validation.issues.length > 0 && !draftOnly) {
       setSubmitted(true);
       focusFirstIssue();
       return;
     }
-    void save();
+    void save(draftOnly);
   }
 
+  /** The game version this editor loaded (0073): the save's expected version. */
+  function loadedVersion(): string | null {
+    try {
+      const saved = JSON.parse(savedJson) as WheelConfig;
+      return saved.id === wheel.id && typeof saved.updatedAt === "string" ? saved.updatedAt : null;
+    } catch { return null; }
+  }
   function loadedStock(): Record<string, number | null> {
     try {
       const saved = JSON.parse(savedJson) as WheelConfig;
@@ -348,7 +357,7 @@ export default function WheelEditor({
       setReloading(false);
     }
   }
-  async function save() {
+  async function save(draft = false) {
     // TS-04: the subtitle is public text; prize names and descriptions are
     // screened by the inline field errors.
     const subtitleText = publicTextCheck(wheel.subtitle, { field: "pageText" });
@@ -384,10 +393,19 @@ export default function WheelEditor({
         headers: { "Content-Type": "application/json" },
         // The stock each saved prize had when loaded: SQL applies a stock edit
         // as a delta over the live value, so fans' spins are never un-decremented.
-        body: JSON.stringify({ wheel: editableGamePayload(gameWheel), expectedStock: loadedStock() }),
+        // The loaded version: SQL refuses the save (game_changed) when the
+        // game was saved elsewhere since, atomically with the write.
+        body: JSON.stringify({ wheel: editableGamePayload(gameWheel), expectedStock: loadedStock(), expectedUpdatedAt: loadedVersion(), ...(draft ? { draft: true } : {}) }),
       });
       const data = await res.json();
+      if (!res.ok && data.error === "game_changed") {
+        setStale(true);
+        setSaveError(STALE_GAME_MESSAGE);
+        toast(STALE_GAME_MESSAGE, { tone: "error" });
+        return;
+      }
       if (res.ok && data.wheel) {
+        if (data.wheel.gameReady === false) toast("Draft saved. Finish the bingo checklist to make it available to fans.", { tone: "success", key: "game-draft-saved" });
         setWheel(data.wheel);
         setSavedJson(JSON.stringify(data.wheel));
         setSubmitted(false);
@@ -706,7 +724,7 @@ export default function WheelEditor({
           aria-describedby={showErrors ? SAVE_SUMMARY_ID : undefined}
           className="btn-brand min-h-[38px] rounded-[9px] px-5 text-[13.5px] font-bold"
         >
-          {saving ? "Saving…" : "Save game"}
+          {saving ? "Saving…" : draftOnly ? "Save draft" : "Save game"}
         </button>
         <div id={SAVE_SUMMARY_ID} role="alert" className="w-full empty:hidden">
           {saveError && (

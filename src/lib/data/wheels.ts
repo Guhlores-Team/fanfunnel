@@ -211,7 +211,7 @@ export async function getWheel(): Promise<WheelConfig | null> {
 
   const { data } = await sb
     .from("wheels")
-    .select(WHEEL_SELECT)
+    .select(CREATOR_WHEEL_SELECT)
     .eq("id", wheelId)
     .maybeSingle();
 
@@ -221,7 +221,14 @@ export async function getWheel(): Promise<WheelConfig | null> {
   // null into toWheelConfig (which dereferences `.prizes` and crashes the render).
   if (!data) return null;
   const { count, error: historyError } = await sb.from("spins").select("id", { count: "exact", head: true }).eq("wheel_id", (data as unknown as DbWheelRow).id);
-  return { ...toWheelConfig(data as unknown as DbWheelRow), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
+  return { ...toWheelConfig(data as unknown as DbWheelRow), ...wheelVersion(data), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
+}
+
+/** The creator's own read of a game also carries its version (0073, DB-11). */
+const CREATOR_WHEEL_SELECT = `updated_at, ${WHEEL_SELECT}`;
+function wheelVersion(row: unknown): { updatedAt?: string } {
+  const at = (row as { updated_at?: unknown } | null)?.updated_at;
+  return typeof at === "string" ? { updatedAt: at } : {};
 }
 
 /** The stock each prize had when the editor loaded it, by prize id (null =
@@ -229,11 +236,21 @@ export async function getWheel(): Promise<WheelConfig | null> {
  *  value (spins that landed meanwhile are never un-decremented) and refuses a
  *  limited/unlimited switch the creator did not see with `stock_changed`. */
 export type ExpectedStock = Record<string, number | null>;
+/**
+ * `expectedUpdatedAt` (0073, DB-11): the game version the editor loaded. A
+ * save over a newer version is refused with `game_changed`, in SQL, so two
+ * tabs or a team member can never silently replace each other's game.
+ * `draft` (0073, DB-12 / WC-11): an unpublished bingo game that is not
+ * complete yet is stored as an inactive draft instead of being refused.
+ */
+export interface SaveWheelOptions { expectedStock?: ExpectedStock; expectedUpdatedAt?: string | null; draft?: boolean }
 export async function saveWheel(
   config: WheelConfig,
-  options: { expectedStock?: ExpectedStock } = {}
+  options: SaveWheelOptions = {}
 ): Promise<{ wheel: WheelConfig } | { error: string }> {
   const expectedStock = options.expectedStock ?? {};
+  const expectedMs = options.expectedUpdatedAt ? Date.parse(options.expectedUpdatedAt) : NaN;
+  const expectedUpdatedAt = Number.isFinite(expectedMs) ? new Date(expectedMs).toISOString() : null;
   const withExpectedStock = <T extends { id: string | null }>(row: T, prizeId: string) =>
     Object.hasOwn(expectedStock, prizeId) && isUuid(prizeId) ? { ...row, expected_stock: expectedStock[prizeId] } : row;
   // The editor's wheel rules (≥ 2 prizes, every prize named, one prize with
@@ -244,7 +261,7 @@ export async function saveWheel(
   if (rule) return { error: rule };
 
   if (!isSupabaseConfigured()) {
-    try { return { wheel: mockSaveWheel(config, expectedStock) }; } catch(error) { return { error: error instanceof Error ? error.message : "db_error" }; }
+    try { return { wheel: mockSaveWheel(config, expectedStock, { expectedUpdatedAt, draft: options.draft === true }) }; } catch(error) { return { error: error instanceof Error ? error.message : "db_error" }; }
   }
 
   const sb = await createClient();
@@ -266,9 +283,11 @@ export async function saveWheel(
 
   const existing = await getWheelById(wheelId);
   if (!existing) return { error: "not_found" };
+  // WC-11: only a game that was never published can be saved as a draft.
+  const allowDraft = options.draft === true && existing.gameReady === false;
   let settings;
   try {
-    settings = gameSettings(config.gameKind ?? existing.gameKind ?? "wheel", config.gameConfig ?? existing.gameConfig);
+    settings = gameSettings(config.gameKind ?? existing.gameKind ?? "wheel", config.gameConfig ?? existing.gameConfig, allowDraft);
     const kindChanged=settings.gameKind !== (existing.gameKind ?? "wheel");
     if(kindChanged && existing.gameKindLocked !== false)return {error:"game_kind_locked"};
     if(kindChanged || (settings.gameKind === "bingo" && existing.gameReady === false))await requireGameFeature(sb,user.id,settings.gameKind);
@@ -288,7 +307,6 @@ export async function saveWheel(
       config.labelSize && ["s", "l", "xl"].includes(config.labelSize)
         ? config.labelSize
         : null,
-    updated_at: new Date().toISOString(),
   };
   // Persist lifecycle/schedule fields only when present on the incoming config.
   if (typeof config.isActive === "boolean") upd.is_active = config.isActive;
@@ -300,16 +318,20 @@ export async function saveWheel(
   if (settings.gameKind === "bingo") {
     const normalized = { ...config, gameKind: "bingo" as const, gameConfig: settings.gameConfig };
     const invalid = bingoReadyError(normalized);
-    if (invalid) return { error: invalid };
+    if (invalid && !allowDraft) return { error: invalid };
     const ids=new Map(config.prizes.map(prize=>[prize.id,isUuid(prize.id)?prize.id:crypto.randomUUID()]));
-    const gameConfig={size:3,linePrizeId:ids.get((settings.gameConfig as {linePrizeId:string}).linePrizeId)!};
+    const linePrizeId=(settings.gameConfig as {linePrizeId:string|null}).linePrizeId;
+    const gameConfig={size:3,linePrizeId:(linePrizeId?ids.get(linePrizeId):null)??null};
     const payload = config.prizes.map((prize,index) => withExpectedStock({ ...prizeRow(wheelId,prize,index), id:ids.get(prize.id)! }, prize.id));
     // Metadata/readiness and the real prize IDs publish together. Never set
     // game_ready=true on an incomplete draft before the inventory transaction.
     const context = await issueCreatorActorContext(sb, user.id, "edit_wheel");
     if (!context) return { error: "db_error" };
     const { error } = await createServiceClient().rpc("save_game_wheel", {p_wheel:wheelId,p_creator:user.id,p_actor:user.id,p_context:context,p_prizes:payload as unknown as Json,
-      p_config:{title:upd.title,subtitle:upd.subtitle,brand_color:upd.brand_color,label_color:upd.label_color,label_size:upd.label_size,show_stock:showsStock(config),game_kind:"bingo",game_config:gameConfig} as unknown as Json});
+      p_config:{title:upd.title,subtitle:upd.subtitle,brand_color:upd.brand_color,label_color:upd.label_color,label_size:upd.label_size,show_stock:showsStock(config),game_kind:"bingo",game_config:gameConfig} as unknown as Json,
+      // 0073: an incomplete, never-published game is stored as an inactive
+      // draft; the version check runs under the wheel lock.
+      p_ready:!invalid,p_expected_updated_at:expectedUpdatedAt});
     if(error)return {error:gameWriteError(error)};
     const saved=await getWheelById(wheelId);
     return saved?{wheel:saved}:{error:"db_error"};
@@ -317,15 +339,24 @@ export async function saveWheel(
 
   // The RLS-scoped client only sees the creator's own wheels, so this verifies
   // ownership: a foreign/unknown id matches no row.
-  const { data: updated, error: wErr } = await sb
+  // 0073 (DB-11): the version advances only when something other than stock
+  // changed (a stock-only save must not invalidate a fan's held play), so the
+  // settings stamp it here only when they differ; save_wheel_prizes stamps
+  // it for the prizes. With an expected version the update is the
+  // compare-and-set: no row means another save got there first.
+  if (wheelSettingsChanged(existing, upd)) upd.updated_at = new Date().toISOString();
+  let settingsUpdate = sb
     .from("wheels")
     .update(upd)
     .eq("id", wheelId)
-    .eq("creator_id", user.id)
-    .select("id")
-    .maybeSingle();
+    .eq("creator_id", user.id);
+  if (expectedUpdatedAt) {
+    settingsUpdate = settingsUpdate.gte("updated_at", expectedUpdatedAt).lt("updated_at", new Date(expectedMs + 1).toISOString());
+  }
+  const { data: updated, error: wErr } = await settingsUpdate.select("id, updated_at").maybeSingle();
   if (wErr) return { error: gameWriteError(wErr) };
-  if (!updated) return { error: "not_found" };
+  if (!updated) return { error: expectedUpdatedAt ? "game_changed" : "not_found" };
+  const versionAfterSettings = expectedUpdatedAt ? ((updated as { updated_at?: string | null }).updated_at ?? null) : null;
 
   // Replace prizes wholesale. Spin history is safe because spins snapshot the
   // prize label/rarity and prizes.prize_id is ON DELETE SET NULL.
@@ -364,11 +395,32 @@ export async function saveWheel(
   const payload = config.prizes.map((p, i) => withExpectedStock({ ...rows[i], id: isUuid(p.id) ? p.id : null }, p.id));
   const { error: saveError } = await svc.rpc("save_wheel_prizes", {
     p_wheel: wheelId, p_creator: user.id, p_prizes: payload as unknown as Json,
+    p_expected_updated_at: versionAfterSettings,
   });
   if (saveError) return { error: gameWriteError(saveError) };
 
   const saved = await getWheelById(wheelId);
   return saved ? { wheel: saved } : { error: "db_error" };
+}
+
+/**
+ * Whether a save changes the game's own settings (not its prizes). Lifecycle
+ * fields count as a change whenever they are sent: the loaded config does not
+ * carry them. Exported for wheelVersion.test.ts.
+ */
+export function wheelSettingsChanged(existing: WheelConfig, upd: Record<string, unknown>): boolean {
+  return (
+    upd.game_kind !== (existing.gameKind ?? "wheel") ||
+    JSON.stringify(upd.game_config ?? {}) !== JSON.stringify(existing.gameConfig ?? {}) ||
+    existing.gameReady === false ||
+    upd.title !== existing.title ||
+    (upd.subtitle ?? null) !== (existing.subtitle ?? null) ||
+    upd.brand_color !== (existing.brandColor ?? "#ec4899") ||
+    (upd.label_color ?? null) !== (existing.labelColor ?? null) ||
+    (upd.label_size ?? null) !== (existing.labelSize ?? null) ||
+    ("show_stock" in upd && upd.show_stock !== existing.showStock) ||
+    "is_active" in upd || "active_from" in upd || "active_until" in upd
+  );
 }
 
 // Exported for the weight round-trip test (prizeWeights.test.ts).
@@ -410,13 +462,13 @@ export async function getWheelById(id: string): Promise<WheelConfig | null> {
 
   const { data } = await sb
     .from("wheels")
-    .select(WHEEL_SELECT)
+    .select(CREATOR_WHEEL_SELECT)
     .eq("id", id)
     .eq("creator_id", user.id)
     .maybeSingle();
   if (!data) return null;
   const { count, error: historyError } = await sb.from("spins").select("id", { count: "exact", head: true }).eq("wheel_id", (data as unknown as DbWheelRow).id);
-  return { ...toWheelConfig(data as unknown as DbWheelRow), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
+  return { ...toWheelConfig(data as unknown as DbWheelRow), ...wheelVersion(data), gameKindLocked: historyError ? true : count == null ? true : count > 0 };
 }
 
 /** All the creator's wheels (newest first), with a prize count each. */

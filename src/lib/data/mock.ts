@@ -869,7 +869,7 @@ function fanGrants(fanId: string): MockGrant[] {
 
 export function mockGetWheel(): WheelConfig {
   const wheel = activeWheel();
-  return { ...structuredClone(wheel), gameKind: wheel.gameKind ?? "wheel", gameConfig: wheel.gameConfig ?? {}, gameReady: wheel.gameReady !== false, gameKindLocked: wheel.gameKindLocked === true };
+  return { ...structuredClone(wheel), gameKind: wheel.gameKind ?? "wheel", gameConfig: wheel.gameConfig ?? {}, gameReady: wheel.gameReady !== false, gameKindLocked: wheel.gameKindLocked === true, updatedAt: wheelMeta.get(wheel.id)?.updatedAt };
 }
 
 /**
@@ -898,15 +898,21 @@ function replaceFields<T extends object>(target: T, source: T): T {
   return Object.assign(target, source);
 }
 
-export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Record<string, number | null>> = {}): WheelConfig {
+export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Record<string, number | null>> = {}, options: { expectedUpdatedAt?: string | null; draft?: boolean } = {}): WheelConfig {
   // Save by id into the wheels map. If the id matches no existing wheel, treat
   // the save as targeting the active wheel (preserving its stable id).
   const targetId = store.wheels.has(config.id) ? config.id : activeWheel().id;
   const existing = store.wheels.get(targetId);
+  // 0073 (DB-11): a save over a newer version of the game is refused.
+  const loadedVersion = options.expectedUpdatedAt ? Date.parse(options.expectedUpdatedAt) : NaN;
+  const currentVersion = Date.parse(wheelMeta.get(targetId)?.updatedAt ?? "");
+  if (Number.isFinite(loadedVersion) && Number.isFinite(currentVersion) && loadedVersion !== currentVersion) throw new Error("game_changed");
+  // 0073 (DB-12): only a never-published game can be stored as a draft.
+  const allowDraft = options.draft === true && existing?.gameReady === false;
   // Resolve stock against the live store first, so a refused save changes nothing.
   const stocks = config.prizes.map((prize) => mockSavedStock(prize, existing, expectedStock));
   config = { ...config, prizes: config.prizes.map((prize, i) => ({ ...prize, stock: stocks[i] })) };
-  const settings = gameSettings(config.gameKind ?? existing?.gameKind, config.gameConfig ?? existing?.gameConfig);
+  const settings = gameSettings(config.gameKind ?? existing?.gameKind, config.gameConfig ?? existing?.gameConfig, allowDraft);
   const kindChanged=settings.gameKind !== (existing?.gameKind ?? "wheel");
   if(kindChanged && existing?.gameKindLocked)throw new Error("game_kind_locked");
   if((kindChanged || (settings.gameKind === "bingo" && existing?.gameReady === false)) && !mockGameFeatures()[settings.gameKind])throw new Error("feature_disabled");
@@ -915,25 +921,28 @@ export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Recor
   const protectedCard=mockBingoEditError(targetId,candidate);if(protectedCard)throw new Error(protectedCard);
   const activeCards=[...mockBingoStore().cards.values()].some(card=>card.wheelId===targetId&&card.state.markedMask!==BINGO_FULL_MASK);
   if(activeCards&&JSON.stringify(existing?.gameConfig)!==JSON.stringify(candidate.gameConfig))throw new Error("bingo_active_card");
-  if(settings.gameKind==="bingo"){const error=bingoReadyError(candidate);if(error)throw new Error(error);}
+  let draft = false;
+  if(settings.gameKind==="bingo"){const error=bingoReadyError(candidate);if(error&&!allowDraft)throw new Error(error);draft=!!error;}
   for (const focus of mockFocusState().focuses.values()) {
     const target = config.prizes.find(prize => prize.id === focus.prize_id);
     if (focus.wheel_id === targetId && !target) mockCancelFanFocus(focus.fan_id);
   }
   const saved: WheelConfig = {
     ...structuredClone(config),
-    ...settings, gameReady: true, gameKindLocked: existing?.gameKindLocked === true,
+    ...settings, gameReady: !draft, gameKindLocked: existing?.gameKindLocked === true,
     // Mirror the int4 weight column (see prizeRow): round, positive stays ≥ 1.
     prizes: config.prizes.map((p) => ({ ...structuredClone(p), weight: storedWeight(p.weight) })),
     id: targetId,
     // Preserve lifecycle/schedule fields unless the incoming config sets them.
-    isActive: config.isActive ?? existing?.isActive,
+    isActive: draft ? false : config.isActive ?? existing?.isActive,
     // RM-2: same rule as saveWheel — only a real boolean changes the switch.
     showStock: typeof config.showStock === "boolean" ? config.showStock : existing?.showStock,
-    activeFrom: config.activeFrom ?? existing?.activeFrom ?? null,
-    activeUntil: config.activeUntil ?? existing?.activeUntil ?? null,
+    activeFrom: draft ? null : config.activeFrom ?? existing?.activeFrom ?? null,
+    activeUntil: draft ? null : config.activeUntil ?? existing?.activeUntil ?? null,
     archivedAt: config.archivedAt ?? existing?.archivedAt ?? null,
   };
+  // The version lives in wheelMeta, never in the stored game.
+  delete saved.updatedAt;
   // Keep the stored wheel and prize objects, updated in place. A spin, a
   // Chase grant or a cancel in flight holds them across an await and takes or
   // returns a unit on them afterwards (a spin re-checks only non-stock fields);
@@ -949,7 +958,7 @@ export function mockSaveWheel(config: WheelConfig, expectedStock: Readonly<Recor
   const now = new Date().toISOString();
   if (meta) meta.updatedAt = now;
   else wheelMeta.set(targetId, { createdAt: now, updatedAt: now });
-  return structuredClone(stored);
+  return { ...structuredClone(stored), updatedAt: now };
 }
 
 // --- Wheel management (multi-wheel) ----------------------------------------
@@ -966,7 +975,7 @@ export function mockListWheels(includeArchived = false): WheelSummary[] {
 /** A single wheel's full config by id, or null. */
 export function mockGetWheelById(id: string): WheelConfig | null {
   const w = store.wheels.get(id);
-  return w ? { ...structuredClone(w), gameKind: w.gameKind ?? "wheel", gameConfig: w.gameConfig ?? {}, gameReady: w.gameReady !== false, gameKindLocked: w.gameKindLocked === true } : null;
+  return w ? { ...structuredClone(w), gameKind: w.gameKind ?? "wheel", gameConfig: w.gameConfig ?? {}, gameReady: w.gameReady !== false, gameKindLocked: w.gameKindLocked === true, updatedAt: wheelMeta.get(id)?.updatedAt } : null;
 }
 
 /**
@@ -1137,8 +1146,7 @@ export function mockSetWheelSchedule(
   }
   wheel.activeFrom = activeFrom;
   wheel.activeUntil = activeUntil;
-  const meta = wheelMeta.get(id);
-  if (meta) meta.updatedAt = new Date().toISOString();
+  // As in SQL, a schedule is not an edit: the game version does not advance.
   return { ok: true };
 }
 

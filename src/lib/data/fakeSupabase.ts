@@ -420,6 +420,9 @@ class Query implements PromiseLike<Result> {
   gt(col: string, val: string) {
     this.filters.push({ col, operator: "gt", value: val, test: row => String(row[col]) > val }); return this;
   }
+  lt(col: string, val: string) {
+    this.filters.push({ col, operator: "lt", value: val, test: row => String(row[col]) < val }); return this;
+  }
   gte(col: string, val: string) {
     this.filters.push({ col, operator: "gte", value: val, test: row => String(row[col]) >= val }); return this;
   }

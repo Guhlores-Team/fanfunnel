@@ -12,12 +12,13 @@ const check = (label: string, cond: unknown) => { assert.ok(cond, label); passed
 
 type Call = { table: string; ops: { name: string; args: unknown[] }[] };
 let calls: Call[] = [];
-let rpcCalls: { name: string; args: Record<string, unknown> }[] = [];
+let rpcCalls: { name: string; args: Record<string, unknown>; service?: boolean }[] = [];
+let canManage = true;
 let TABLES: Record<string, unknown[]> = {};
 let rpcAnswer: (name: string, args: Record<string, unknown>) => { data: unknown; error: unknown } = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } });
 let useSupabase = true;
 
-function fakeClient() {
+function fakeClient(service = false) {
   const from = (table: string) => {
     const call: Call = { table, ops: [] };
     calls.push(call);
@@ -43,7 +44,10 @@ function fakeClient() {
   return {
     from,
     rpc: async (name: string, args: Record<string, unknown>) => {
-      rpcCalls.push({ name, args });
+      rpcCalls.push({ name, args, service });
+      // 0073: the session proves can_act_for; only the service role may call the summary.
+      if (name === "can_act_for") return { data: service ? false : canManage, error: null };
+      if (name === "creator_fan_summaries" && !service) throw new Error("the session must not call creator_fan_summaries");
       if (name === "creator_link_tokens") return { data: (TABLES.fan_passes ?? []).map((p) => ({ pass_id: (p as { id: string }).id, token: `tok-${(p as { id: string }).id}` })), error: null };
       return rpcAnswer(name, args);
     },
@@ -51,7 +55,7 @@ function fakeClient() {
   };
 }
 mock.module("@/lib/supabase/server", {
-  namedExports: { isSupabaseConfigured: () => useSupabase, createClient: async () => fakeClient(), createServiceClient: () => fakeClient() },
+  namedExports: { isSupabaseConfigured: () => useSupabase, createClient: async () => fakeClient(), createServiceClient: () => fakeClient(true) },
 });
 
 async function main() {
@@ -75,6 +79,8 @@ async function main() {
   let page = await listFansPage({ query: "  fan ", limit: 2 });
   const rpc = rpcCalls.find((c) => c.name === "creator_fan_summaries");
   check("the RPC gets the trimmed query and the clamped limit", rpc?.args.p_query === "fan" && rpc.args.p_limit === 2 && rpc.args.p_before_id === null);
+  const proof = rpcCalls.findIndex((c) => c.name === "can_act_for" && !c.service && c.args.perm === "manage" && c.args.target_creator === "creator-1");
+  check("the session proves can_act_for manage before the service role is used", proof >= 0 && proof < rpcCalls.indexOf(rpc!) && rpc?.service === true && rpc.args.p_creator === "creator-1");
   check("rows map to the list shape (tips, last win, campaign names, tags)", page.fans.length === 2 && page.fans[0].totalSpent === 100 && page.fans[0].lastWin?.label === "Shoutout" && page.fans[1].lastWin === null && page.fans[0].campaignNames[0] === "Launch" && page.fans[0].tags[0] === "vip");
   check("links come from fan_passes of only the page's fans", page.fans[0].links.length === 1 && page.fans[0].primaryToken === "tok-p1" && page.fans[1].links.length === 0 && calls.some((c) => c.table === "fan_passes" && c.ops.some((o) => o.name === "in" && (o.args[1] as string[]).length === 2)));
   check("total and the next cursor come back", page.total === 1234 && page.nextCursor === encodeFanCursor({ createdAt: fanRow(2).created_at, fanId: fanRow(2).fan_id }));
@@ -86,6 +92,13 @@ async function main() {
   rpcAnswer = (name) => (name === "creator_fan_summaries" ? { data: [fanRow(3)], error: null } : { data: null, error: { code: "PGRST202", message: "no" } });
   page = await listFansPage({ limit: 2 });
   check("a short page is the last one", page.nextCursor === null);
+
+  // Negative: without can_act_for the service role is never called; RLS answers.
+  canManage = false;
+  rpcCalls = [];
+  page = await listFansPage({ limit: 2 });
+  check("a refused can_act_for never reaches creator_fan_summaries", !rpcCalls.some((c) => c.name === "creator_fan_summaries") && page.total !== 1234);
+  canManage = true;
 
   // --- pre-0073 fallback: a bounded page, never a refusal ----------------------
   rpcAnswer = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.creator_fan_summaries" } });

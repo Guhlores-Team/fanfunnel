@@ -1,7 +1,7 @@
 import "server-only";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/server";
 import { CompleteReadError } from "./readPages";
-import { isMissingRpc } from "./shared";
+import { creatorSummary } from "./creatorSummaries";
 import { getOverview } from "./analytics";
 import { listFans } from "./fans";
 import { mockGetOverview, mockListFans } from "./mock";
@@ -14,9 +14,11 @@ export async function getCreatorObligations(): Promise<CreatorObligations | null
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
-  const { data, error } = await sb.rpc("creator_obligations", { p_creator: user.id });
-  if (error && !isMissingRpc(error)) throw new CompleteReadError();
-  if (!error && data && typeof data === "object") {
+  // 0073: service role only, after the session proves can_act_for 'view'.
+  const result = await creatorSummary(sb, user.id, "view", "creator_obligations");
+  if (result.status === "error") throw new CompleteReadError();
+  const data = result.status === "ok" ? result.data : null;
+  if (data && typeof data === "object") {
     const o = data as Record<string, unknown>;
     const n = (key: string) => (typeof o[key] === "number" ? (o[key] as number) : Number(o[key] ?? 0) || 0);
     return {
