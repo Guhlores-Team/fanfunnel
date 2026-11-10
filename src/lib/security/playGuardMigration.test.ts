@@ -90,7 +90,10 @@ for (const [name, sql] of [
       const blocked = text.indexOf("p.self_excluded_at is not null or f.blocked_at is not null");
       const unavailable = text.indexOf("return jsonb_build_object('status','unavailable')", blocked);
       const broken = text.indexOf("f.break_until>now()");
-      const decline = text.indexOf("update public.spin_attempts set state='declined'");
+      // 0073 (CC-02) declines a prepared attempt whose link went away as
+      // 'blocked' inside the unavailable branch above, so the break / consent /
+      // credit decline is the first one AFTER the break check.
+      const decline = text.indexOf("update public.spin_attempts set state='declined'", broken);
       const terminal = rpc === "prepare_spin_attempt"
         ? text.indexOf("return public.get_spin_attempt_status(p_attempt,p_token,p_request_hash);", decline)
         : text.indexOf("return jsonb_build_object('status','declined','error',v_error);", decline);
