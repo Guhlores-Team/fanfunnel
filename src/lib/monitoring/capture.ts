@@ -175,6 +175,21 @@ export async function captureNow(input: CaptureInput): Promise<void> {
   if (outcome) runAfterResponse(() => alertFor(e, outcome));
 }
 
+/**
+ * RS-03: store AND alert before returning. For the one caller that runs
+ * outside a request scope (instrumentation.ts onRequestError): there `after()`
+ * throws and the fallback is a dangling promise that a serverless host may
+ * freeze once the 500 is sent, so the first "new server error" e-mail was never
+ * guaranteed to go out. Next awaits onRequestError, and alertFor is bounded by
+ * the 8 s Resend timeout, so awaiting here costs nothing a fan can see.
+ */
+export async function captureInline(input: CaptureInput): Promise<void> {
+  const e = cleanError(input);
+  if (!e) return;
+  const outcome = await storeError(e);
+  if (outcome) await alertFor(e, outcome);
+}
+
 /** Fire-and-forget: store and alert entirely after the response. */
 export function captureAfterResponse(input: CaptureInput): void {
   const e = cleanError(input);
@@ -206,7 +221,8 @@ export async function captureServerError(
     // A hot failure loop must not become a write storm (per instance).
     if (!rateLimit("monitoring:server-capture", SERVER_CAPTURE_PER_WINDOW, 60_000).ok) return;
     const ua = request.headers?.["user-agent"];
-    await captureNow({
+    // Awaited end to end, never deferred: see captureInline.
+    await captureInline({
       source: "server",
       message,
       stack: typeof e?.stack === "string" ? e.stack : null,

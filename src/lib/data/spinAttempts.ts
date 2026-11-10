@@ -53,11 +53,16 @@ type Receipt = {
   gameKind?: "wheel" | "scratch" | "bingo"; presentation?: unknown; bonusWins?: {line:number;shareId:string;prize:Prize;spin:SpinRow;stockAfter?:number|null;reward?:Receipt["reward"]}[];
   reward?: { kind: DeliveredReward["kind"]; cipher: string; iv: string; keyVersion: number } | null;
 };
-export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" } | { status: "declined"; error: SpinError["error"] };
+export type SpinAttemptStatus = { status: "committed"; result: SpinResult } | { status: "absent" | "pending" | "conflict" | "unavailable" | "not_found" } | { status: "declined"; error: SpinError["error"] };
 const ERROR_CODES: ReadonlySet<string> = new Set(["not_found", "no_spins", "no_prizes", "rate_limited", "blocked", "on_break", "needs_ack", "db_error", "spin_pending"]);
 // prepare_spin_attempt declines `no_wheel` when no playable game resolves for
 // the link: to the fan that is the same as a wheel with nothing left to win.
-function spinError(error: unknown): SpinError { if (error === "no_wheel") return { error: "no_prizes" }; return { error: typeof error === "string" && ERROR_CODES.has(error) ? error as SpinError["error"] : "db_error" }; }
+// CC-08 (0073): the nightly cleanup finishes an attempt left pending for over a
+// day as declined/`stale`. It moved no credit, stock or seed, so to the fan it
+// is a lost attempt: a terminal decline (the browser drops the saved request
+// and the next play is a new one), never `spin_pending`, which would keep the
+// fan checking a spin that can no longer happen.
+export function spinError(error: unknown): SpinError { if (error === "no_wheel") return { error: "no_prizes" }; if (error === "stale") return { error: "db_error" }; return { error: typeof error === "string" && ERROR_CODES.has(error) ? error as SpinError["error"] : "db_error" }; }
 async function call(sb: Service, name: string, args: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   try {
     const { data, error } = await (sb as unknown as RpcClient).rpc(name, args);
@@ -115,6 +120,9 @@ export async function readSpinAttempt(token: string, intent: SpinIntent, sb = cr
     catch { return { status: "pending" }; }
   }
   if (reply.status === "declined") return { status: "declined", ...spinError(reply.error) };
+  // RS-01 (0073): no link carries this token at all. The route answers 404,
+  // which also spends the caller's fan-token miss budget (no free oracle).
+  if (reply.status === "not_found") return { status: "not_found" };
   return { status: reply.status === "absent" || reply.status === "pending" || reply.status === "conflict" ? reply.status : "unavailable" };
 }
 type ExpectedReward = { delivery: PrizeDelivery; codeId?: string; cipher?: string; iv?: string; keyVersion?: number };
@@ -150,6 +158,8 @@ async function declineAttempt(sb: Service, token: string, intent: SpinIntent, er
       return await refreshReceipt(token,receipt,intent.requestId,sb);
     } catch { return { error: "spin_pending" }; }
   }
+  // CC-02: the link, fan or creator became inactive before the cancel: a clear refusal.
+  if (reply?.status === "unavailable") return { error: "blocked" };
   return reply?.status === "declined" ? spinError(reply.error) : { error: "spin_pending" };
 }
 
@@ -234,6 +244,10 @@ export async function commitSpinAttempt(token:string,intent:SpinIntent,sb=create
         continue;
       }
       if(reply.status==="declined")return spinError(reply.error);
+      // CC-02: the pass was paused, the fan blocked/deleted or the creator
+      // suspended between prepare and commit. Nothing was spent; the fan gets
+      // the truthful refusal, never "couldn't confirm, check this saved spin".
+      if(reply.status==="unavailable")return {error:"blocked"};
       if(reply.status!=="committed")return {error:"spin_pending"};
       const receipt=reply as Receipt;
       if(receipt.replayed!==true){

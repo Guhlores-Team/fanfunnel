@@ -152,10 +152,12 @@ export async function fanDevicesJourney(browser, { step, assert }, sink, ctx) {
         assert(res.status() === 403 && (await res.json()).error === "blocked", "the spin is refused as blocked, not left pending");
         await page.waitForFunction((key) => localStorage.getItem(key) === null, spinIntentKey(fan.token), { timeout: 5000 });
         assert(await page.getByTestId("spin-recovery-controls").count() === 0, "no 'check this spin' loop");
-        // A fresh load is the "link not active" page: no wheel, balance or tip link.
+        // A fresh load is the "link is closed" page (WC-13): says so in words,
+        // and shows no wheel, balance or tip link.
         const direct = await request.get(`${BASE}/spin/${fan.token}`);
-        assert(direct.status() === 404, `the link answers 404 like a paused link (saw ${direct.status()})`);
+        assert(direct.status() === 200, `the link answers the closed page, not a 404 (saw ${direct.status()})`);
         const html = await direct.text();
+        assert(html.includes("This link is closed right now"), "the page says the link is closed");
         assert(!html.includes('data-testid="fan-game"') && !html.includes('data-testid="fan-spin"') && !html.includes('data-testid="spins-chip"'),
           "no game, balance or tip link on the page");
         assert((await request.get(`${BASE}/spin/${fan.token}/manifest`)).status() === 404, "no install manifest either");

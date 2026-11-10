@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseUrl } from "./url";
-import { sessionCookieOptions } from "./cookies";
+import { serverRequestProtocol, sessionCookieOptions } from "./cookies";
 import { aalFromAccessToken, hasVerifiedFactor } from "@/lib/auth/assurance";
 
 /**
@@ -54,8 +54,10 @@ export async function updateSession(request: NextRequest) {
 
   const supabase = createServerClient(supabaseUrl(), anon, {
     // Same attributes as server.ts/client.ts; see cookies.ts for why not httpOnly.
+    // RS-09: the same first-hop rule as server.ts, so a multi-hop proxy
+    // (`https,http`) never yields two cookies that disagree on Secure.
     cookieOptions: sessionCookieOptions(
-      request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol
+      serverRequestProtocol(request.headers.get("x-forwarded-proto") || request.nextUrl.protocol)
     ),
     cookies: {
       getAll() {

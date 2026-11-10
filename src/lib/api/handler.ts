@@ -113,6 +113,7 @@ export function statusForError(code: string): number {
     case "already_enabled":
     case "already_submitted":
     case "already_approved":
+    case "prize_owed":
       return 409;
     case "expired":
       return 410;

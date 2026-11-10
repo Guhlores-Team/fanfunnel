@@ -133,8 +133,9 @@ check("POST /api/errors answers 204 with no body", /new NextResponse\(null, \{ s
 // The data layer: service role only for the two write RPCs; reads/resolve use
 // the cookie-bound client so RLS applies.
 const data = read("lib/data/appErrors.ts");
-const svcUses = [...data.matchAll(/createServiceClient\(\)\.rpc\("(\w+)"/g)].map((m) => m[1]);
-check("data layer: service role is used only for record_app_error + claim_app_error_alert + release_app_error_alert (A27)", JSON.stringify(svcUses.sort()) === '["claim_app_error_alert","record_app_error","release_app_error_alert"]' && (data.match(/createServiceClient\(\)/g) ?? []).length === 4);
+// RS-03: the three RPCs run inside an awaited capture, so their client is bounded.
+const svcUses = [...data.matchAll(/createServiceClient\(\{ timeoutMs: APP_ERROR_DB_TIMEOUT_MS \}\)\.rpc\("(\w+)"/g)].map((m) => m[1]);
+check("data layer: service role is used only for record_app_error + claim_app_error_alert + release_app_error_alert (A27)", JSON.stringify(svcUses.sort()) === '["claim_app_error_alert","record_app_error","release_app_error_alert"]' && (data.match(/createServiceClient\(/g) ?? []).length === 4 && !/createServiceClient\(\)\.rpc\(/.test(data));
 // C3 (batch 6): the one other service-role use is clientRowAllowed's read-only
 // quota check (app_errors is admin-only under RLS); it never writes.
 const quota = data.slice(data.indexOf("export async function clientRowAllowed"), data.indexOf("export interface AlertClaim"));

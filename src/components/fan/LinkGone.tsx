@@ -12,6 +12,10 @@ const COPY: Record<FanLinkStatus, { title: string; body: string }> = {
     title: "This creator has left FanFunnel",
     body: "They closed their account, so this link doesn't work any more and the data behind it has been deleted.",
   },
+  creator_paused: {
+    title: "This link is closed right now",
+    body: "This creator's links aren't open at the moment. Nothing was spent, and anything you won is still recorded for you.",
+  },
   fan_deleted: {
     title: "This link was deleted",
     body: "You deleted your data, so this link doesn't work any more. If you want to play again, ask the creator for a new link.",
@@ -24,7 +28,7 @@ export default function LinkGone({ status }: { status: FanLinkStatus }) {
     <main className="grain brand-glow relative flex min-h-[100dvh] flex-col items-center justify-center overflow-x-clip px-5 py-10">
       <div className="card relative z-[1] w-full max-w-sm rounded-2xl p-6 text-center">
         <span aria-hidden="true" className="text-3xl">
-          {status === "creator_closed" ? "👋" : "🗑️"}
+          {status === "creator_closed" ? "👋" : status === "creator_paused" ? "⏸️" : "🗑️"}
         </span>
         <h1 className="mt-3 text-lg font-bold text-ink">{copy.title}</h1>
         <p className="mt-2 text-sm text-muted">{copy.body}</p>

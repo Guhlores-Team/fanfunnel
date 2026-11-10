@@ -8,12 +8,13 @@ mock.module("@/lib/supabase/server", { namedExports: { isSupabaseConfigured: () 
 mock.module("@/lib/operations/canary", { namedExports: { readCanary: async () => { reads++; return { status: "missing" }; }, initializeCanaryForAdmin: async () => { inits++; return initialized; } } });
 let schemaReads = 0;
 mock.module("@/lib/operations/runtime", { namedExports: { readHealthSummary: async () => null, readSchemaVersion: async () => { schemaReads++; return { status: "behind", applied: 66, expected: 67 }; }, reportOperationalFailure: async () => undefined, runOperationalChecks: async () => { runs++; return { ok: false, canary: { status: "mismatch" } }; } } });
-mock.module("@/lib/api/limit", { namedExports: { rateLimitOr429: async () => null } });
+mock.module("@/lib/api/limit", { namedExports: { rateLimitOr429: async () => null, limitRoute: async () => null } });
 mock.module("@/lib/data/audit", { namedExports: { recordAudit: async () => { audits++; } } });
 let passed = 0;
 const check = (label: string, value: unknown) => { assert.ok(value, label); passed++; };
 async function main() {
-  const { GET, POST } = await import("./route");
+  const { GET: get, POST } = await import("./route");
+  const GET = () => get(new Request("http://localhost/api/admin/system-health"));
   const post = (body: unknown) => POST(new Request("http://localhost/api/admin/system-health", { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body) }));
   for (const status of [401, 403]) {
     denial = status;

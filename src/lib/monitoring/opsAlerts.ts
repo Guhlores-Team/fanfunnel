@@ -41,6 +41,20 @@ export function reportRateLimitFallback(capture: Capture = captureAfterResponse)
   capture({ source: "server", message: RATE_LIMIT_FALLBACK, route: RATE_LIMIT_FALLBACK_ROUTE });
 }
 
+export const HEARTBEAT_FAILED = "Heartbeat ping was not accepted: check HEARTBEAT_URL and the monitor (the daily job itself ran)";
+export const HEARTBEAT_ROUTE = "/heartbeat";
+/** OPS3-08: the daily job ran but its heartbeat ping failed. */
+export function reportHeartbeatFailed(capture: Capture = captureAfterResponse): void {
+  capture({ source: "server", message: HEARTBEAT_FAILED, route: HEARTBEAT_ROUTE });
+}
+
+export const MAINTENANCE_STEPS = ["cleanup", "applicants", "health", "deletions", "storage", "push", "digest"] as const;
+export type MaintenanceStep = (typeof MAINTENANCE_STEPS)[number];
+/** OPS3-10: one fixed message per step, so the alert names what failed. */
+export function maintenanceStepFailedMessage(step: MaintenanceStep, how: "failed" | "timed_out"): string {
+  return `Maintenance step ${how === "timed_out" ? "timed out" : "failed"}: ${step} (the rest of the run continued)`;
+}
+
 export const MAINTENANCE_STALE = "Maintenance job has not run for over 30 hours: check the Vercel cron and CRON_SECRET";
 /** OPS-08: the daily cron stopped. At most once an hour per instance. */
 export function reportMaintenanceStale(capture: Capture = captureAfterResponse, allow: () => boolean = () => rateLimit("ops-alert:maintenance-stale", 1, 60 * 60_000).ok): void {
