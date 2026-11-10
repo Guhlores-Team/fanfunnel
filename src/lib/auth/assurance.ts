@@ -50,31 +50,50 @@ function decodeClaims(token: string | null | undefined): unknown {
 /**
  * The `amr` claim (authentication method references) of a Supabase access
  * token: one entry per method the session used, newest first, each with the
- * Auth server's own timestamp. "recovery" and "invite" mean the session was
- * opened by the matching e-mail link (verifyOtp). Like the aal claim it is
- * signed by the Auth server; read it only from a token getUser() accepted.
+ * Auth server's own timestamp. Like the aal claim it is signed by the Auth
+ * server; read it only from a token getUser() accepted. Entries that are not
+ * `{ method, timestamp }` objects are dropped (a custom access-token hook may
+ * emit bare strings, which carry no time and so prove nothing here).
  */
 export function amrFromAccessToken(token: string | null | undefined): { method: string; timestamp: number }[] {
   const claims = decodeClaims(token) as { amr?: unknown } | null;
   if (!claims || !Array.isArray(claims.amr)) return [];
   return claims.amr
     .filter((e): e is { method: string; timestamp?: unknown } => !!e && typeof e === "object" && typeof (e as { method?: unknown }).method === "string")
-    .map((e) => ({ method: e.method, timestamp: typeof e.timestamp === "number" ? e.timestamp : 0 }));
+    .map((e) => ({ method: e.method, timestamp: typeof e.timestamp === "number" && Number.isFinite(e.timestamp) ? e.timestamp : 0 }));
 }
 
 /** How long an e-mail link's session may set a password without the current one. */
-export const LINK_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+export const LINK_SESSION_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * The amr methods that mean "this session was opened from the account's
+ * mailbox" (an e-mail link or e-mail code), not by a password:
+ *   otp        what Supabase Auth records for every `verifyOtp` (POST /verify),
+ *              whatever the link's type; this is the method the current
+ *              templates' token_hash links produce (review A1)
+ *   recovery   the legacy {{ .ConfirmationURL }} PKCE code exchange of a
+ *   invite     recovery / invite / magic link, where the Auth server keeps
+ *   magiclink  the link's own type
+ * `password`, `totp` (and every `mfa/*`), `oauth`, `sso/saml`, `anonymous`,
+ * `token_refresh` and `email/signup` are deliberately absent.
+ * scripts/security/link-session-runtime-test.mjs holds the hosted Auth server
+ * to this list.
+ */
+export const LINK_SESSION_METHODS: ReadonlySet<string> = new Set(["otp", "recovery", "invite", "magiclink"]);
 
 /**
  * WU-06: /reset-password and /set-password may set a password without the
- * current one only on a session that an e-mail link opened recently
- * ("recovery" or "invite" in amr, within LINK_SESSION_MAX_AGE_MS). Any other
- * session (a creator's ordinary sign-in on an unlocked laptop) must give the
- * current password, exactly as Settings › Security does.
+ * current one only on a session that an e-mail link (or e-mail code) opened
+ * recently: a LINK_SESSION_METHODS entry in amr whose own timestamp is within
+ * LINK_SESSION_MAX_AGE_MS. Any other session (a creator's ordinary password
+ * sign-in on an unlocked laptop, with or without a two-factor code) must give
+ * the current password, exactly as Settings › Security does. Fails closed: no
+ * token, no amr, an entry without a positive numeric timestamp → false.
  */
 export function openedByRecentLink(token: string | null | undefined, now = Date.now()): boolean {
   return amrFromAccessToken(token).some(
-    (e) => (e.method === "recovery" || e.method === "invite") && e.timestamp > 0 && now - e.timestamp * 1000 <= LINK_SESSION_MAX_AGE_MS
+    (e) => LINK_SESSION_METHODS.has(e.method) && e.timestamp > 0 && now - e.timestamp * 1000 <= LINK_SESSION_MAX_AGE_MS
   );
 }
 
