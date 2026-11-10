@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LEGAL, acceptedCurrentTerms, fanNeedsAck, formatLegalDate } from "./legal";
+import { LEGAL, acceptedCurrentTerms, activeLegalChangeNotice, fanNeedsAck, formatLegalDate } from "./legal";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -66,5 +66,35 @@ for (const dir of ["src", "e2e"]) {
   }
 }
 check(`no file but legal.ts hard-codes the contact email (found: ${hardCoded.join(", ") || "none"})`, hardCoded.length === 0);
+
+// TS-06: the announced-change notice shows only for a later version whose
+// effective date is still ahead (end of that day, UTC), never for the version
+// in force or after the date has passed.
+const later = { version: "2099-01-31", effectiveDate: "2099-01-31", summary: "Prizes section rewritten." };
+check("no notice when nothing is announced", activeLegalChangeNotice(new Date("2026-11-10T00:00:00Z"), null) === null);
+check("a later version with a future date shows", activeLegalChangeNotice(new Date("2098-12-20T00:00:00Z"), later) === later);
+check("it still shows on the effective day itself", activeLegalChangeNotice(new Date("2099-01-31T23:00:00Z"), later) === later);
+check("it stops after the effective day", activeLegalChangeNotice(new Date("2099-02-01T00:00:00Z"), later) === null);
+check("the version already in force never shows", activeLegalChangeNotice(new Date("2000-01-01T00:00:00Z"), { ...later, version: LEGAL.version }) === null);
+check("an older version never shows", activeLegalChangeNotice(new Date("2000-01-01T00:00:00Z"), { ...later, version: "2000-01-01" }) === null);
+check("a malformed date never shows", activeLegalChangeNotice(new Date("2000-01-01T00:00:00Z"), { ...later, effectiveDate: "soon" }) === null);
+if (LEGAL.upcoming) {
+  check("an announced change is for a later version", LEGAL.upcoming.version > LEGAL.version);
+  check("an announced change has a date and a summary", /^\d{4}-\d{2}-\d{2}$/.test(LEGAL.upcoming.effectiveDate) && LEGAL.upcoming.summary.length > 0);
+}
+check("the team reply label is a decision switch with a label", typeof LEGAL.teamReplyLabel.enabled === "boolean" && LEGAL.teamReplyLabel.label.length > 0);
+
+// Public-text rule: nothing a fan reads on the legal pages or in the change
+// notice uses purchase or gambling vocabulary. The one allowed phrase names
+// the laws creators must follow ("laws on lotteries, sweepstakes…"), which
+// the Terms have to spell out for creators.
+const BANNED = /\b(buy|buys|bought|paid|purchase|purchases|purchased|gamble|gambling|bet|bets|betting|lottery|lotteries)\b/i;
+const ALLOWED_PHRASES = ["laws on lotteries, sweepstakes, contests and promotions"];
+for (const page of ["app/terms/page.tsx", "app/privacy/page.tsx", "components/LegalPage.tsx", "components/LegalChangeNotice.tsx"]) {
+  let src = readFileSync(join(root, page), "utf8");
+  for (const phrase of ALLOWED_PHRASES) src = src.split(phrase).join("");
+  const hit = BANNED.exec(src);
+  check(`${page} keeps purchase/gambling words out of fan-facing text (found: ${hit?.[0] ?? "none"})`, hit === null);
+}
 
 console.log(`legal: ${passed} checks passed`);

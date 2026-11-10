@@ -1,6 +1,7 @@
 // Data layer — public, unauthenticated reads: the wheel teaser and the
 // link-in-bio profile (plus the creator's editor for it).
 import { publicBaseOdds, type PublicOddsRow } from "@/lib/games/wheel/publicOdds";
+import { isReservedName } from "@/lib/reservedNames";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { externalUrl } from "@/lib/format";
 import type { PublicPrize, PublicWheelConfig } from "@/lib/games/wheel/types";
@@ -95,6 +96,9 @@ function teaserPrizes(prizes: PublicPrize[]): TeaserPrize[] {
 export async function getPublicProfileBySlug(
   slug: string
 ): Promise<{ profile: PublicProfile; tipUrl: string | null } | null> {
+  // TS-03: a reserved slug (/c/admin, /c/fanfunnel) is nobody's page, even if
+  // a row stored one before the rule existed.
+  if (isReservedName(slug)) return null;
   if (!isSupabaseConfigured()) {
     const saved = mockGetPublicProfileFields();
     // Parity with the Supabase path: the demo's live game, fan-safe; an unset

@@ -4,7 +4,8 @@ import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { badRequest, errorResponse, BAD_REQUEST, parseJsonBody, isJsonObject } from "@/lib/api/handler";
 import type { ExpectedStock } from "@/lib/data/wheels";
-import { normalizeWheelPayload } from "@/lib/games/wheel/validate";
+import { MAX_PRIZE_DESCRIPTION, MAX_PRIZE_LABEL, normalizeWheelPayload } from "@/lib/games/wheel/validate";
+import { publicTextCheck, type PublicTextCode } from "@/lib/publicText";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 import { limitRoute } from "@/lib/api/limit";
 
@@ -18,7 +19,8 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
     (p) =>
       p != null &&
       typeof p.label === "string" &&
-      p.label.length <= 120 &&
+      p.label.length <= MAX_PRIZE_LABEL &&
+      (p.description == null || (typeof p.description === "string" && p.description.length <= MAX_PRIZE_DESCRIPTION)) &&
       RARITY_ORDER.includes(p.rarity) &&
       Number.isFinite(p.weight) &&
       p.weight >= 0 &&
@@ -26,6 +28,19 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
       (p.imageUrl == null ||
         (typeof p.imageUrl === "string" && isValidHttpUrl(p.imageUrl))),
   );
+}
+
+// TS-04: prize names and descriptions are public text (spin page, /c, share
+// and verify pages): no links, e-mail addresses, phone numbers, other-app
+// handles or slurs. The editor shows the same refusal inline (labelError).
+function prizeTextCode(prizes: WheelConfig["prizes"]): PublicTextCode | null {
+  for (const p of prizes) {
+    const label = publicTextCheck(p.label, { field: "prizeLabel" });
+    if (!label.ok) return label.code;
+    const description = publicTextCheck(p.description, { field: "prizeDescription" });
+    if (!description.ok) return description.code;
+  }
+  return null;
 }
 
 // Validate that a string is a well-formed https URL. A weak regex can be
@@ -83,6 +98,8 @@ export async function PUT(req: Request) {
   if (!config || !Array.isArray(config.prizes) || !prizesValid(config.prizes)) {
     return badRequest();
   }
+  const textCode = prizeTextCode(config.prizes);
+  if (textCode) return badRequest(textCode);
   const checked = normalizeWheelPayload(config);
   if ("error" in checked) return badRequest(checked.error);
 

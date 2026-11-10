@@ -16,8 +16,8 @@ const SUMMARY = [
     or a personal bingo card. You must be {AGE} or older to use it.
   </>,
   <>
-    {OP} does not take payments. Tips and purchases happen on the creator’s own platforms and links, and
-    the creator, not {OP}, decides who gets spins.
+    {OP} does not take payments. Tips happen on the creator’s own platforms and links, and the creator,
+    not {OP}, decides who gets spins.
   </>,
   <>
     Creators supply and deliver every prize. {OP} is not part of the deal between a creator and a fan
@@ -89,8 +89,8 @@ const SECTIONS: LegalSection[] = [
         <ul>
           <li>
             <strong>We do not process payments.</strong> No money changes hands on {OP}. If a creator
-            invites you to tip them or buy anything, that happens on the creator’s own platform or link,
-            under that platform’s terms.
+            invites you to tip or support them, that happens on the creator’s own platform or link, under
+            that platform’s terms.
           </li>
           <li>
             <strong>We are not a party to creator–fan dealings.</strong> Any promise, sale, tip, prize or
@@ -147,6 +147,17 @@ const SECTIONS: LegalSection[] = [
           time from the spin page. Pausing is permanent for that link and its records: it can no longer play
           or chat, though you can still see your wins on it.
         </p>
+        <p>
+          Messages you send through chat may be answered by the creator or by the people they have authorised
+          to work on their account, such as an agency or team member. They act for the creator, and the
+          creator stays responsible for them.
+        </p>
+        <h3>Names</h3>
+        <p>
+          A display name, public page address or board name may not present you as {OP}, its staff or
+          another creator, and may not carry a link, phone number, e-mail address or a username for another
+          app. We refuse these names when they are saved and may rename or remove any that slip through.
+        </p>
       </>
     ),
   },
@@ -202,13 +213,13 @@ const SECTIONS: LegalSection[] = [
     body: (
       <>
         <p>
-          A creator may show a tip or purchase link on their spin page or public page. Those links lead to
-          other services that {OP} does not run or control. Any payment, subscription, refund or chargeback
+          A creator may show a tip link on their spin page or public page. Those links lead to other
+          services that {OP} does not run or control. Any payment, subscription, refund or chargeback
           is between you, the creator and that service, under its terms.
         </p>
         <p>
           Creators can record amounts next to the spins they grant, for their own bookkeeping. That record
-          is not a payment, a receipt or proof of purchase, and we do not check it.
+          is not a payment, a receipt or proof of anything, and we do not check it.
         </p>
       </>
     ),
@@ -301,6 +312,11 @@ const SECTIONS: LegalSection[] = [
             this rule, including after a fan reports it.
           </li>
           <li>
+            <strong>Your public text stays on {OP}.</strong> Prize names and descriptions, your tagline, your
+            note to fans and your display name may not carry links, e-mail addresses, phone numbers or
+            usernames for other apps, or slurs. We refuse them when you save. Your tip link has its own field.
+          </li>
+          <li>
             <strong>You only deal with adults.</strong> Never send a spin link to anyone you know or suspect
             is under {AGE}.
           </li>
@@ -323,7 +339,10 @@ const SECTIONS: LegalSection[] = [
           <li>break the law, or help anyone else break it;</li>
           <li>involve anyone under {AGE}, or share any sexual content involving a minor;</li>
           <li>share content without the consent of the people in it, or that you have no right to share;</li>
-          <li>harass, threaten, exploit, defraud or impersonate anyone;</li>
+          <li>
+            harass, threaten, exploit, defraud or impersonate anyone, including by choosing a name that
+            presents you as {OP}, its staff or another creator;
+          </li>
           <li>send spam or unwanted messages through chat or webhooks;</li>
           <li>
             scrape the Service, spin automatically, get around rate limits, blocks or a paused link, or try
@@ -477,8 +496,8 @@ const SECTIONS: LegalSection[] = [
         <p>
           To the fullest extent the law allows, {OP} will not be liable for indirect, incidental, special,
           consequential or punitive losses, or for lost profits, revenue, data or goodwill. Our total
-          liability for any claim about the Service is limited to the greater of the amount you paid {OP} in
-          the 12 months before the claim and US$100.
+          liability for any claim about the Service is limited to the greater of any fees {OP} received from
+          you in the 12 months before the claim and US$100.
         </p>
         <p>
           Nothing in these Terms limits liability that cannot be limited by law, such as for fraud, or for
@@ -525,11 +544,12 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         We may update these Terms. When we do, we will post the new version here and change the “Last
-        updated” date. If a change is material, we will tell creators by e-mail and show a notice on the spin page at
-        least {LEGAL.changeNoticeDays} days before it takes effect. When it takes effect, the app asks creators (in
-        the dashboard) and fans (on their spin page) to agree to the new version before they continue. A
-        change required by law, or needed to keep the Service secure, may take effect sooner. If you keep using the Service after a change
-        takes effect, the updated Terms apply. If you do not agree, stop using the Service.
+        updated” date. If a change is material, we will show a notice on the spin page and in the dashboard,
+        with the date it takes effect, at least {LEGAL.changeNoticeDays} days before, and e-mail creators
+        about it. When it takes effect, the app asks creators (in the dashboard) and fans (on their spin
+        page) to agree to the new version before they continue. A change required by law, or needed to keep
+        the Service secure, may take effect sooner. If you keep using the Service after a change takes
+        effect, the updated Terms apply. If you do not agree, stop using the Service.
       </p>
     ),
   },
