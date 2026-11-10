@@ -182,8 +182,6 @@ export interface AgencyOverview {
   isOwner: boolean;
   /** The signed-in user, so the console can tell their own seat apart. */
   viewerId: string;
-  /** WG-02: the owner has a seat row (org_members) and so can act for creators. */
-  viewerHasSeat: boolean;
   /** WG-13: false when the owner's account is suspended and every seat is frozen; null when unknown to this viewer. */
   ownerActive: boolean | null;
   ties: AgencyTie[];
@@ -240,7 +238,6 @@ export async function getAgencyOverview(opts: { orgId?: string | null } = {}): P
   const org = (opts.orgId && consoles.find((o) => o.id === opts.orgId)) || owned || seats[0]?.org || null;
   if (!org) return null;
   const isOwner = !!owned && owned.id === org.id;
-  const viewerHasSeat = seats.some((st) => st.org.id === org.id);
 
   // WG-13: the owner's account state (profiles RLS shows other rows to admins only; null = unknown).
   let ownerActive: boolean | null = null;
@@ -325,7 +322,6 @@ export async function getAgencyOverview(opts: { orgId?: string | null } = {}): P
     org,
     isOwner,
     viewerId: user.id,
-    viewerHasSeat,
     ownerActive,
     ties,
     totals: {
@@ -512,23 +508,6 @@ export async function resendOrgInvite(inviteId: string): Promise<InviteOutcome> 
   return fresh;
 }
 
-/**
- * WG-02 (until 0073 seats the owner in org_create): the owner takes a seat
- * in their own agency so can_act_for grants them the inbox, queue and
- * campaigns of the creators they manage. org_add_member's owner branch
- * inserts the seat directly (no invitation) for the owner's own address.
- */
-export async function seatOrgOwner(orgId: string): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return { error: "demo_only" };
-  const sb = await createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user?.email) return { error: "unauthorized" };
-  const { data: owned } = await sb.from("orgs").select("id").eq("id", orgId).eq("owner_id", user.id).maybeSingle();
-  if (!owned) return { error: "not_owner" };
-  const result = await agencyRpc({ fn: "org_add_member", args: { p_org: orgId, p_email: user.email.trim().toLowerCase(), p_role: "manager" } });
-  if ("ok" in result) await recordAudit({ actorId: user.id, action: "org.seat_self", targetType: "org", targetId: orgId });
-  return result;
-}
 export const removeOrgMember = (memberId: string) =>
   agencyRpc({ fn: "org_remove_member", args: { p_member: memberId } });
 export const scopeOrgCreator = (memberId: string, creatorId: string, on: boolean) =>

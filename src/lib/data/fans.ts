@@ -18,10 +18,10 @@ import {
   mockSelfExclude,
   mockSetFanBlocked,
   mockSetFanLinkGame,
-  mockSetFanLinkActive,
+  mockUpdateFanLink,
   mockReportCreator,
 } from "./mock";
-import { campaignPinError, isMissingRpc, isUuid } from "./shared";
+import { campaignPinError, isUuid } from "./shared";
 import { creatorSummary } from "./creatorSummaries";
 import { resolveWheelId } from "./wheels";
 import { pickGrantPass } from "./grantPass";
@@ -699,6 +699,11 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     return token ? [{ ...row, token }] : [];
   });
   passRows.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  // PR-13: link expiry is its own read. Until sessions may select
+  // fan_passes.expires_at the read is refused and the drawer hides the
+  // expiry control (the links themselves always load).
+  const expiryRead = await sb.from("fan_passes").select("id, expires_at").eq("creator_id", user.id).eq("fan_id", fanId);
+  const expiries = expiryRead.error ? null : new Map(((expiryRead.data ?? []) as unknown as { id: string; expires_at: string | null }[]).map((row) => [row.id, row.expires_at ?? null]));
 
   const passesOldestFirst = ((passRows ?? []) as unknown as {
     id: string;
@@ -733,6 +738,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
       createdAt: p.created_at,
       isActive: p.is_active !== false,
       selfExcludedAt: p.self_excluded_at ?? null,
+      ...(expiries ? { expiresAt: expiries.get(p.id) ?? null } : {}),
     }));
 
   // This fan's grants, newest first, with campaign name resolved via a join.
@@ -936,7 +942,35 @@ export async function setFanLinkActive(
   token: string,
   active: boolean
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isSupabaseConfigured()) return mockSetFanLinkActive(fanId, token, active);
+  return updateFanLink(fanId, token, { active });
+}
+
+/** A link can live at most this long from now when an expiry is set. */
+export const MAX_LINK_EXPIRY_DAYS = 365;
+
+/**
+ * PR-13: switch one link off/on and/or set when it expires (0073:
+ * fan_passes.expires_at; every play path treats an expired link as paused).
+ * Owner / 'grant' seats only: the session proves can_act_for and the
+ * fan_passes_write RLS policy scopes the update.
+ */
+export async function updateFanLink(
+  fanId: string,
+  token: string,
+  patch: { active?: boolean; expiresAt?: string | null }
+): Promise<{ ok: true } | { error: string }> {
+  const update: { is_active?: boolean; expires_at?: string | null } = {};
+  if (typeof patch.active === "boolean") update.is_active = patch.active;
+  if (patch.expiresAt !== undefined) {
+    if (patch.expiresAt === null) update.expires_at = null;
+    else {
+      const at = Date.parse(patch.expiresAt);
+      if (!Number.isFinite(at) || at <= Date.now() || at > Date.now() + MAX_LINK_EXPIRY_DAYS * 86_400_000) return { error: "bad_request" };
+      update.expires_at = new Date(at).toISOString();
+    }
+  }
+  if (Object.keys(update).length === 0) return { error: "bad_request" };
+  if (!isSupabaseConfigured()) return mockUpdateFanLink(fanId, token, { active: update.is_active, expiresAt: update.expires_at });
   if (!isUuid(fanId) || typeof token !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(token)) return { error: "not_found" };
   const sb = await createClient();
   const { data: { user }, error: authError } = await sb.auth.getUser();
@@ -948,7 +982,7 @@ export async function setFanLinkActive(
   if (permissionError || allowed !== true) return { error: "forbidden" };
   const { data: updated, error } = await sb
     .from("fan_passes")
-    .update({ is_active: active })
+    .update(update)
     .eq("id", served.id)
     .eq("creator_id", served.creator_id)
     .select("id");

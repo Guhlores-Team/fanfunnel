@@ -8,7 +8,6 @@ import {
   removeOrgMember,
   scopeOrgCreator,
   resendOrgInvite,
-  seatOrgOwner,
   type OrgRole,
 } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
@@ -49,9 +48,6 @@ export async function POST(req: Request) {
       break;
     case "resend_invite": // WG-06
       result = await resendOrgInvite(s("inviteId"));
-      break;
-    case "seat_self": // WG-02 (owner takes a seat in their own agency)
-      result = await seatOrgOwner(s("orgId"));
       break;
     default:
       return badRequest("unknown_action");

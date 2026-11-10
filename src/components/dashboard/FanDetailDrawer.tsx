@@ -25,6 +25,8 @@ import { KIND_SHORT, gameOptionLabel, kindOf, linkGame, liveExplanation, pinUnav
 import { publicCreatorName } from "@/lib/publicCreator";
 import { linkNames, newLinkPin, spinsText, topUpOutcome, topUpTargets, type NewLinkPin } from "./topUpTargets";
 import { GrantRefusedError, parseSpinCount } from "./grantErrors";
+import { useNow } from "@/lib/hooks/useNow";
+import { formatWhen } from "@/lib/localTime";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -1253,6 +1255,29 @@ function LinkSwitch({ fanId, pass, onChanged }: { fanId: string; pass: FanAccoun
   const [busy, setBusy] = useState(false);
   const off = pass.isActive === false;
   const pausedByFan = !!pass.selfExcludedAt;
+  // PR-13: expiry shows only when the server could read it (absent = not yet).
+  const now = useNow(60_000);
+  const expirySupported = pass.expiresAt !== undefined;
+  const expired = !!pass.expiresAt && now !== null && Date.parse(pass.expiresAt) <= now;
+  async function setExpiry(days: number | null) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const expiresAt = days === null ? null : new Date(Date.now() + days * 86_400_000).toISOString();
+      const res = await fetch(`/api/fans/${fanId}/links`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: pass.token, expiresAt }) });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast(data.error === "forbidden" ? "Your seat can't change links for this creator." : "Couldn't change when that link expires. Try again.", { tone: "error" });
+        return;
+      }
+      toast(days === null ? "This link no longer expires." : `This link stops working in ${days} day${days === 1 ? "" : "s"}. The fan's account and other links are untouched.`, { tone: "success", key: `link-expiry-${pass.token}` });
+      onChanged?.();
+    } catch {
+      toast("Couldn't change that link. Check your connection.", { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
   async function set(active: boolean) {
     if (busy) return;
     setBusy(true);
@@ -1288,6 +1313,35 @@ function LinkSwitch({ fanId, pass, onChanged }: { fanId: string; pass: FanAccoun
         {busy ? "…" : off ? "Switch this link on" : "Switch this link off"}
       </button>
       {!off && <span className="text-[11.5px] text-muted">Stops this one link only — no block, chat stays open.</span>}
+      {expirySupported && (
+        <span className="flex w-full flex-wrap items-center gap-2" data-testid="link-expiry" data-expires={pass.expiresAt ?? ""}>
+          {expired ? (
+            <span className="rounded-full border border-amber-300/40 px-2 py-[2px] text-[11px] font-semibold text-amber-200">Expired</span>
+          ) : pass.expiresAt ? (
+            <span className="text-[11.5px] text-muted">Expires <time dateTime={pass.expiresAt}>{formatWhen(pass.expiresAt)}</time></span>
+          ) : (
+            <span className="text-[11.5px] text-muted">Never expires</span>
+          )}
+          <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
+            <span className="sr-only">When this link expires</span>
+            <select
+              className="ff-input min-h-11 py-1 text-[12px]"
+              disabled={busy}
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) void setExpiry(v === "never" ? null : Number(v));
+              }}
+            >
+              <option value="">{pass.expiresAt ? "Change expiry…" : "Set an expiry…"}</option>
+              <option value="1">In 1 day</option>
+              <option value="7">In 7 days</option>
+              <option value="30">In 30 days</option>
+              {pass.expiresAt && <option value="never">Never</option>}
+            </select>
+          </label>
+        </span>
+      )}
     </div>
   );
 }

@@ -44,7 +44,6 @@ export type AuditAction =
   | "org.remove_member"
   | "org.scope_change"
   | "org.leave"
-  | "org.seat_self"
   | "org.dissolve"
   | "admin.chat_read";
 

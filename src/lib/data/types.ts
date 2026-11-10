@@ -47,7 +47,7 @@ export interface HappyHour { id: string; wheelId: string; multiplier: number; st
 export interface HappyHourStatus { active: boolean; multiplier: number; endsAt: string | null }
 export type MessageSender = "fan" | "creator";
 /** Phase 3: a single chat message between a fan and a creator. */
-export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null }
+export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null; /** WG-07, creator side only: the team member who sent this reply for the creator. Never sent to fans. */ via?: string }
 /** Phase 3: a creator's inbox thread with one fan. */
 export interface FanThread { fanId: string; fanName: string; lastBody: string; lastAt: string; unread: number }
 /** Wave 3: a creator's editable auto intro/outro chat messages. */
@@ -312,6 +312,8 @@ export interface RedemptionItem {
   dueAt?: string | null; // ISO timestamp
   /** #26: auto-delivered instantly (link / text / code); never the value. */
   auto?: { kind: "link" | "text" | "code"; views: number; lastViewedAt: string | null };
+  /** WG-07: the team member who last changed this prize's status for the creator. */
+  via?: string;
 }
 
 /** One per-wheel link under a fan: its own spin balance + which wheel/campaign. */
@@ -332,6 +334,8 @@ export interface FanPassInfo {
   isActive?: boolean;
   /** The fan paused this link themselves (self-exclusion). */
   selfExcludedAt?: string | null;
+  /** PR-13 (0073): when this link stops working; null = never. Absent when the column cannot be read yet. */
+  expiresAt?: string | null;
 }
 
 /** A persistent fan account with its links — for the creator's Fans tab. */

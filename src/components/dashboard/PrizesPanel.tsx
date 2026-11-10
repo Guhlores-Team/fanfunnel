@@ -509,6 +509,12 @@ function RedemptionRow({
                 {formatWhen(r.at)}
               </time>
             </p>
+            {/* WG-07: a status a team member set for the creator says who. */}
+            {r.via && r.status !== "pending" && (
+              <p data-testid="redemption-via" className="mt-1 break-words text-xs text-muted">
+                {r.status === "fulfilled" ? "Marked fulfilled" : r.status === "cancelled" ? "Cancelled" : "Started"} by {r.via}
+              </p>
+            )}
             {r.auto && (
               <p data-testid="reward-view-count" className="mt-1 break-words text-xs text-muted">
                 {r.auto.views > 0 ? `Viewed by fan · ${r.auto.views}×` : "Not viewed by fan yet"}

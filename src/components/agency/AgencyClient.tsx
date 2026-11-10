@@ -54,7 +54,6 @@ interface Overview {
   orgId?: string | null;
   isOwner: boolean;
   viewerId?: string;
-  viewerHasSeat?: boolean;
   ownerActive?: boolean | null;
   ties?: Tie[];
   totals: { creators: number; fans: number; spins: number; pending: number; revenue: number | null };
@@ -91,6 +90,7 @@ const errLabel = (e: string) =>
     already_in_org: "That creator is already in another agency.",
     expired: "That invitation has expired. Send a new invitation.",
     not_owner: "Only the agency owner can do that.",
+    owner_seat: "That is the owner's own seat. It stays for as long as the agency exists.",
     not_found: "That item no longer exists — refresh and try again.",
     invalid_role: "Pick a valid staff role.",
     db_error: "Something went wrong on our end — please try again.",
@@ -248,22 +248,6 @@ export default function AgencyClient() {
         <p role="alert" data-testid="agency-owner-suspended" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200 text-pretty">
           This agency&apos;s owner account is suspended, so every seat here is paused: inboxes, prize queues and campaigns can&apos;t be opened until FanFunnel reactivates the owner. Creators the agency manages keep their own dashboards.
         </p>
-      )}
-
-      {isOwner && !data.viewerHasSeat && (
-        <div data-testid="owner-no-seat" className="mt-4 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-3 text-sm text-ink text-pretty">
-          <p>
-            You own this agency but don&apos;t hold a seat in it yet, so you can&apos;t open your creators&apos; inboxes, prize queues or campaigns yourself.
-          </p>
-          <button
-            type="button"
-            onClick={() => runGuarded("seat-self", { action: "seat_self", orgId: org.id })}
-            disabled={busyKeys.has("seat-self")}
-            className="btn-brand mt-2 min-h-10 rounded-lg px-4 text-sm font-bold disabled:opacity-50"
-          >
-            {busyKeys.has("seat-self") ? "Adding…" : "Add yourself as a seat"}
-          </button>
-        </div>
       )}
 
       <SeatWorkspace />

@@ -39,6 +39,8 @@ export function leaveErrorMessage(code: string): string {
       return "Your session has ended. Sign in again, then leave the agency.";
     case "forbidden":
       return "This page is out of date. Refresh it and try again.";
+    case "owner_seat":
+      return "You own this agency, so your own seat stays. Write to support to close the agency.";
     default:
       return "Couldn't leave the agency. Please try again.";
   }

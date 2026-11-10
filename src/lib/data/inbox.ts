@@ -1,5 +1,6 @@
 // Data layer — inbox: DM templates, fan <-> creator chat threads and the
 // auto intro / outro messages.
+import { actorNames } from "./actorNames";
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
 import { recordAudit } from "./audit";
@@ -402,18 +403,30 @@ export async function getThreadPage(fanId: string, creatorId?: unknown, opts: { 
 
   // One page, newest-first with one extra row to know whether an older page
   // exists, then presented oldest-first.
+  // The creator-side read also carries actor_id (0073, WG-07): who wrote a
+  // reply. The fan-side reads use MESSAGE_SELECT and never see it.
   let query = sb
     .from("messages")
-    .select(MESSAGE_SELECT)
+    .select(`${MESSAGE_SELECT}, actor_id`)
     .eq("creator_id", owner)
     .eq("fan_id", fanId);
   if (before) query = query.lt("created_at", before);
   const { data } = await query.order("created_at", { ascending: false }).limit(limit + 1);
-  const rows = ((data ?? []) as Parameters<typeof toChatMessage>[0][]).slice();
+  const rows = ((data ?? []) as (Parameters<typeof toChatMessage>[0] & { actor_id?: string | null })[]).slice();
   const more = rows.length > limit;
   if (more) rows.length = limit;
   rows.reverse();
-  return { messages: rows.map(toChatMessage), more };
+  // can_act_for was proved above (resolveActingCreator), so the names of the
+  // creator's own team may be read for the "via <name>" line.
+  const staffReplies = rows.filter((r) => r.sender === "creator" && r.actor_id && r.actor_id !== owner);
+  const names = staffReplies.length ? await actorNames(owner, staffReplies.map((r) => r.actor_id)) : null;
+  return {
+    messages: rows.map((r) => {
+      const via = r.sender === "creator" && r.actor_id ? names?.get(r.actor_id) : undefined;
+      return via ? { ...toChatMessage(r), via } : toChatMessage(r);
+    }),
+    more,
+  };
 }
 
 /**
@@ -542,7 +555,9 @@ export async function setChatSettings(input: {
     p_intro: intro ?? "",
     p_outro: outro ?? "",
   });
-  return error ? { error: "db_error" } : { ok: true };
+  // 0073: set_chat_settings refuses over-long text and control characters.
+  if (error) return { error: error.code === "22023" ? "invalid_chat_settings" : "db_error" };
+  return { ok: true };
 }
 
 /**

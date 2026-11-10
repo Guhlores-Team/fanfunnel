@@ -1,3 +1,4 @@
+import { actorNames } from "./actorNames";
 import { CompleteReadError, readScopedRows, visitScopedRows } from "./readPages";
 import { readGamePlayCounts } from "./gameAnalytics";
 import { focusTag } from "./focusTag";
@@ -63,7 +64,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     sb
       .from("redemptions")
       .select(
-        `id, status, created_at, notes, due_at,
+        `id, status, created_at, notes, due_at, actor_id,
        spin:spins(pool_snapshot, fair_trace, prize_label, prize_rarity, fan:fans(id, display_name, handle), reward:spin_rewards(kind, views, last_viewed_at))`
       )
       .eq("creator_id", user.id)
@@ -117,6 +118,7 @@ export async function getOverview(): Promise<CreatorOverview> {
     created_at: string;
     notes: string | null;
     due_at: string | null;
+    actor_id?: string | null;
     spin: {
       pool_snapshot?: unknown;
       fair_trace?: unknown;
@@ -128,8 +130,13 @@ export async function getOverview(): Promise<CreatorOverview> {
     } | null;
   }[];
 
+  // WG-07: a prize whose status a team member changed says who (the session
+  // is the creator itself, so its own team's names may be read).
+  const staffMoves = rows.filter((r) => r.status !== "pending" && r.actor_id && r.actor_id !== user.id);
+  const actors = staffMoves.length ? await actorNames(user.id, staffMoves.map((r) => r.actor_id)) : null;
   const redemptions: RedemptionItem[] = rows.map((r) => ({
     id: r.id,
+    ...(r.status !== "pending" && r.actor_id && actors?.get(r.actor_id) ? { via: actors.get(r.actor_id) } : {}),
     ...(r.spin?.fan?.id ? { fanId: r.spin.fan.id } : {}),
     fanName: r.spin?.fan?.display_name ?? r.spin?.fan?.handle ?? "Fan",
     prizeLabel: r.spin?.prize_label ?? "Prize",

@@ -64,10 +64,6 @@ const SIGNED_IN_ONLY = [
   "delete_campaign",
   // 0064: SECURITY INVOKER queue/inbox reads, pinned to auth.uid().
   "creator_redemption_queue",
-  // 0073: dashboard summaries and the single-UPDATE active-game switch.
-  "creator_fan_summaries",
-  "creator_obligations",
-  "set_active_wheel",
   "creator_inbox_threads",
   // 0065: SECURITY DEFINER archive/delete in the play lock order, gated by the
   // same can_act_for('edit_wheel') / is_admin() rule as the wheels_write policy.
@@ -165,9 +161,6 @@ for (const [name, sql] of [
     /grant execute on function public\.import_fans_durable\([^;]+\) to service_role;/.test(sql) && acl.get("import_fans_durable")?.service === true &&
     !/grant execute on function public\.import_fans_durable\([^;]+\) to (?:public|anon|authenticated)\b/.test(sql));
   for (const fn of SIGNED_IN_ONLY) {
-    // A function this migration set does not define yet (0073's summaries
-    // land with the DB builder) cannot be executed by anyone from it.
-    if (!acl.has(fn)) continue;
     const a = acl.get(fn) ?? { anon: true, authenticated: true, service: true };
     check(`${name}: anon cannot execute ${fn}`, !a.anon);
     check(`${name}: authenticated can execute ${fn}`, a.authenticated);

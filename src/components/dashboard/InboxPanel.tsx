@@ -577,7 +577,10 @@ function AutoMessagesCard() {
       if (res.ok) {
         setSaved({ intro, outro });
         toast("Auto-messages saved", { tone: "success" });
-      } else toast("Couldn't save auto-messages", { tone: "error" });
+      } else {
+        const d = (await res.json().catch(() => ({}))) as { error?: unknown };
+        toast(d.error === "invalid_chat_settings" ? "Not saved: keep each message to 2,000 characters or fewer, and remove any hidden or unusual characters." : "Couldn't save auto-messages", { tone: "error" });
+      }
     } catch {
       toast("Couldn't save auto-messages", { tone: "error" });
     } finally {
@@ -868,7 +871,7 @@ function Thread({
           </button>
         )}
         {shownMessages.map((m) => (
-          <div key={m.id} className={m.sender === "creator" ? "flex justify-end" : "flex justify-start"}>
+          <div key={m.id} className={m.sender === "creator" ? "flex flex-col items-end" : "flex justify-start"}>
             <span
               className={
                 m.sender === "creator"
@@ -878,6 +881,10 @@ function Thread({
             >
               {m.body}
             </span>
+            {/* WG-07: a reply a team member sent for the creator says who. */}
+            {m.sender === "creator" && m.via && (
+              <span className="mt-0.5 text-[11px] text-muted" data-testid="message-via">via {m.via}</span>
+            )}
           </div>
         ))}
         {/* Optimistic outbound bubbles (pending / failed) render after the

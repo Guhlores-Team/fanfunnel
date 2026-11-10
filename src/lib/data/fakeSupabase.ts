@@ -417,6 +417,9 @@ class Query implements PromiseLike<Result> {
     this.filters.push({ col, operator: "eq", value: val, test: (r) => r[col] === val });
     return this;
   }
+  in(col: string, vals: readonly unknown[]) {
+    this.filters.push({ col, operator: "in", value: vals, test: row => vals.includes(row[col]) }); return this;
+  }
   gt(col: string, val: string) {
     this.filters.push({ col, operator: "gt", value: val, test: row => String(row[col]) > val }); return this;
   }

@@ -196,6 +196,8 @@ interface MockPass {
   createdAt: string;
   /** PR-13: the creator switched this one link off (default on). */
   isActive?: boolean;
+  /** PR-13: when the link stops working (null/absent = never). */
+  expiresAt?: string | null;
 }
 
 interface MockFan {
@@ -1199,7 +1201,7 @@ export async function mockGetFanPass(
   const pass = fan.passes.find((p) => p.token === token) ?? fan.passes[0];
   // PR-13: a link the creator switched off shows the paused page (parity
   // with the Supabase path, which reads is_active = true only).
-  if (pass && pass.isActive === false) return null;
+  if (pass && (pass.isActive === false || mockPassExpired(pass))) return null;
   const wheelId = pass ? mockResolvedSpinWheelId(pass) : mockResolveWheelId({ campaignId: campaignForFan(fan) });
   const wheel = store.wheels.get(wheelId) ?? activeWheel();
   if (wheel.gameReady === false) return null;
@@ -2041,6 +2043,7 @@ export function mockListFans(): FanAccountSummary[] {
       spinsRemaining: p.spinsRemaining,
       createdAt: p.createdAt,
       isActive: p.isActive !== false,
+      expiresAt: p.expiresAt ?? null,
       selfExcludedAt: f.selfExcludedAt ?? null,
     }));
     return {
@@ -2280,11 +2283,13 @@ export function mockListRedemptionQueue(opts: {
   query?: string;
   before?: { at: string; id: string } | null;
   limit: number;
+  fanId?: string;
 }): RedemptionItem[] {
   const q = (opts.query ?? "").trim().toLowerCase();
   const before = opts.before;
   return store.redemptions
     .filter((r) => !opts.status || r.status === opts.status)
+    .filter((r) => !opts.fanId || r.fanId === opts.fanId)
     .filter((r) => !q || r.fanName.toLowerCase().includes(q) || r.prizeLabel.toLowerCase().includes(q))
     .filter((r) => !before || r.at < before.at || (r.at === before.at && r.id < before.id))
     .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
@@ -2292,6 +2297,7 @@ export function mockListRedemptionQueue(opts: {
     .map((r) => structuredClone({
       id: r.id,
       fanName: r.fanName,
+      ...(r.fanId ? { fanId: r.fanId } : {}),
       prizeLabel: r.prizeLabel,
       rarity: r.rarity,
       emoji: r.emoji,
@@ -3170,15 +3176,18 @@ export function mockSetFanBlocked(fanId: string, blocked: boolean): { ok: true }
 }
 
 /** Demo twin of setFanLinkGame (0065): pin one link to one playable game, or null to follow again. */
-export function mockSetFanLinkActive(fanId: string, token: string, active: boolean): { ok: true } | { error: string } {
+export function mockUpdateFanLink(fanId: string, token: string, patch: { active?: boolean; expiresAt?: string | null }): { ok: true } | { error: string } {
   const fan = store.fans.get(fanId);
   if (!fan) return { error: "not_found" };
   ensurePasses(fan);
   const pass = fan.passes.find((p) => p.token === token);
   if (!pass) return { error: "not_found" };
-  pass.isActive = active;
+  if (typeof patch.active === "boolean") pass.isActive = patch.active;
+  if (patch.expiresAt !== undefined) pass.expiresAt = patch.expiresAt;
   return { ok: true };
 }
+/** PR-13: an expired link reads like a switched-off one. */
+const mockPassExpired = (pass: { expiresAt?: string | null }) => !!pass.expiresAt && Date.parse(pass.expiresAt) <= Date.now();
 
 export function mockSetFanLinkGame(fanId: string, token: string, wheelId: string | null): { ok: true } | { error: string } {
   const fan = store.fans.get(fanId);

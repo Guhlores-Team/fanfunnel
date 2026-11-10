@@ -11,7 +11,7 @@ import { publicGameKind } from "@/lib/games/publicCopy";
 import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
 import { mockGetPublicWheelTeaser } from "./mock";
-import { WHEEL_SELECT, isMissingRpc, toWheelConfig } from "./shared";
+import { WHEEL_SELECT, toWheelConfig } from "./shared";
 import { getCreatorThemeView, type CreatorThemeView } from "./creatorTheme";
 import type { DbWheelRow } from "./shared";
 import { getActiveHappyHour, resolveActiveWheelId } from "./wheels";
@@ -314,14 +314,24 @@ export async function setMyPublicProfile(input: {
       p_note: input.note !== undefined ? input.note : null,
       p_avatar: avatar,
     });
-    if (noteError) return { error: "db_error" };
+    // 0073: set_creator_note refuses an over-long note or control characters,
+    // and an avatar that is not one of our own public avatar URLs.
+    if (noteError) return { error: noteError.code !== "22023" ? "db_error" : /avatar/i.test(noteError.message ?? "") ? "invalid_avatar_url" : "invalid_note" };
   }
   if (input.deliveryDays !== undefined) {
-    // PR-10: creators cannot UPDATE profiles directly (AGENTS.md rule 6), so
-    // the promise goes through set_delivery_days (0073 proposal). Without it
-    // the answer is not_supported and the Settings field stays hidden.
-    const { error: dErr } = await sb.rpc("set_delivery_days", { p_days: input.deliveryDays });
-    if (dErr) return { error: isMissingRpc(dErr) ? "not_supported" : "db_error" };
+    // PR-10: the profiles UPDATE policy is admin-only (AGENTS.md rule 6) and
+    // no new signed-in SECURITY DEFINER setter can be added (0072 closing
+    // check), so this one column is written on the server: the session must
+    // be an active creator acting for itself (can_act_for 'manage'), the row
+    // is its own id, and the value was validated by the route (1..60 or
+    // null). Until profiles.delivery_days exists the answer is not_supported
+    // and the Settings field stays hidden.
+    const { data: allowed, error: permissionError } = await sb.rpc("can_act_for", { target_creator: user.id, perm: "manage" });
+    if (permissionError || allowed !== true) return { error: "forbidden" };
+    const days = input.deliveryDays;
+    if (days !== null && (!Number.isInteger(days) || days < 1 || days > MAX_DELIVERY_DAYS)) return { error: "invalid_delivery_days" };
+    const { error: dErr } = await createServiceClient().from("profiles").update({ delivery_days: days } as never).eq("id", user.id);
+    if (dErr) return { error: dErr.code === "PGRST204" || dErr.code === "42703" ? "not_supported" : "db_error" };
   }
   return { ok: true };
 }

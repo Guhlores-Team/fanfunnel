@@ -26,7 +26,7 @@ import {
   mockSetActiveWheel,
   mockSetWheelSchedule,
 } from "./mock";
-import { WHEEL_SELECT, clampInt, isMissingRpc, isUuid, toWheelConfig } from "./shared";
+import { WHEEL_SELECT, clampInt, isUuid, toWheelConfig } from "./shared";
 import type { Json } from "./db.types";
 import type { AnyClient, DbWheelRow } from "./shared";
 import { copyTitle, newGameTitle } from "@/lib/games/copyTitle";
@@ -859,26 +859,24 @@ export async function setActiveWheel(
   if (!target) return { error: "not_found" };
   if(target.game_ready === false)return {error:"game_not_ready"};
 
-  // CC-06: the switch is one statement (`set_active_wheel`, 0073), so no fan
-  // ever plays with no live game or two live games. Until that RPC is on the
-  // database, fall back to the two session updates.
-  const viaRpc = await sb.rpc("set_active_wheel", { p_wheel: id });
-  if (!viaRpc.error) return viaRpc.data === "ok" || viaRpc.data === true || viaRpc.data == null ? { ok: true } : { error: String(viaRpc.data) };
-  if (!isMissingRpc(viaRpc.error)) return { error: gameWriteError(viaRpc.error) };
-
-  // Clear every flag for this creator, then set the chosen wheel.
-  const { error: clearErr } = await sb
-    .from("wheels")
-    .update({ is_active: false })
-    .eq("creator_id", user.id);
-  if (clearErr) return { error: "db_error" };
-
+  // CC-06: flag the chosen game first, then clear the others. The old order
+  // (clear all, then set) left a moment with no live game, when a fan's page
+  // fell back to the oldest game. With this order there is always a live
+  // game; for an instant two are flagged and the resolver picks one of them,
+  // both of which the creator made live. A failed first step changes nothing.
   const { error } = await sb
     .from("wheels")
     .update({ is_active: true })
     .eq("id", id)
     .eq("creator_id", user.id);
-  return error ? { error: gameWriteError(error) } : { ok: true };
+  if (error) return { error: gameWriteError(error) };
+
+  const { error: clearErr } = await sb
+    .from("wheels")
+    .update({ is_active: false })
+    .eq("creator_id", user.id)
+    .neq("id", id);
+  return clearErr ? { error: "db_error" } : { ok: true };
 }
 
 /** Set (or clear) a wheel's scheduled active window. */
