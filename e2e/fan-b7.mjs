@@ -593,7 +593,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
     });
 
     await step("b7 fan WA-02: unknown spin, share, verify, creator and leaderboard links are real 404s with the branded page, JS or not", async () => {
-      const paths = [`/spin/nope${randomBytes(4).toString("hex")}`, `/share/nope${randomBytes(4).toString("hex")}`, `/verify/nope${randomBytes(4).toString("hex")}`, `/c/nope-${randomBytes(4).toString("hex")}`, `/leaderboard/nope${randomBytes(4).toString("hex")}`];
+      const paths = [`/spin/nope${randomBytes(4).toString("hex")}`, `/share/nope${randomBytes(4).toString("hex")}`, `/verify/nope${randomBytes(4).toString("hex")}`, "/c/admin", `/leaderboard/nope${randomBytes(4).toString("hex")}`];
       const nojs = await browser.newContext({ javaScriptEnabled: false });
       try {
         for (const path of paths) {

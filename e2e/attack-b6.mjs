@@ -87,7 +87,7 @@ export async function attackB6Journey(page, { step, assert }, ctx) {
       const posted = await request.post(`${BASE}/api/public/claim-check`, { form: { shareId: a.shareId, code: b.claimCode }, maxRedirects: 0 });
       const location = posted.headers().location ?? "";
       assert(posted.status() === 303 && location.endsWith(`/verify/${a.shareId}?claimed=mismatch`), `a plain form post comes back with the verdict only (${posted.status()} ${location})`);
-      const shown = await (await request.get(`${BASE}${location}`)).text();
+      const shown = await (await request.get(new URL(location, BASE).toString())).text();
       assert(shown.includes('data-state="mismatch"') && !shown.includes(b.claimCode), "the page shows the verdict and never the code");
       assert(!(await (await request.get(`${BASE}/verify/${a.shareId}?code=${a.claimCode}`)).text()).includes('data-state="match"'), "a code in the URL is ignored");
     });

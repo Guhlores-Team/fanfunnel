@@ -118,7 +118,8 @@ export async function playJourney(page, { step, assert }, ctx) {
     const hours = (Date.parse(breakUntil) - Date.now()) / 3_600_000;
     assert(hours > 23.5 && hours <= 24, `it ends in 24 hours (${hours.toFixed(2)}h)`);
     const btn = spinButton(page);
-    await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "On a break" && b.disabled), null, { timeout: 4000 });
+    // PA-04: the play button is switched off with aria-disabled (it keeps keyboard focus), not the disabled attribute.
+    await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent === "On a break" && (b.disabled || b.getAttribute("aria-disabled") === "true")), null, { timeout: 4000 });
     assert(await btn.isDisabled(), "SPIN is disabled");
     const status = await page.getByTestId("break-status").innerText();
     assert(/taking a break until .+\. Your spins and prizes are safe\./.test(status), `the status names the end (${status})`);

@@ -19,13 +19,15 @@ export default function ScratchTicket({ presentation, onReveal, reducedMotion = 
   const strokes = useRef<ScratchPoint[][]>([]);
   const completed = useRef(false);
   const revealAll = useRef<HTMLButtonElement>(null);
-  // PLAY is disabled while the ticket arrives, which drops focus to <body>;
-  // the next Tab would then skip Reveal all (it sits above PLAY). Land the
-  // keyboard on Reveal all instead, unless focus already moved elsewhere.
+  // PLAY is switched off while the ticket arrives (aria-disabled, PA-04: it
+  // keeps focus rather than dropping it to <body>); the next Tab would then
+  // skip Reveal all (it sits above PLAY). Land the keyboard on Reveal all
+  // instead, unless focus already moved elsewhere.
   useEffect(() => {
     if (reducedMotion) return;
     const active = document.activeElement;
-    if (!active || active === document.body || (active instanceof HTMLButtonElement && active.disabled)) revealAll.current?.focus({ preventScroll: true });
+    const off = active instanceof HTMLButtonElement && (active.disabled || active.getAttribute("aria-disabled") === "true");
+    if (!active || active === document.body || off) revealAll.current?.focus({ preventScroll: true });
   }, [reducedMotion]);
   const reveal = useCallback(() => {
     if (completed.current) return;

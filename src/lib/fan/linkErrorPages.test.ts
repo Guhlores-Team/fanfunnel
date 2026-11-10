@@ -36,7 +36,8 @@ check("WA-04: no placeholder prize in the image", !og.includes('"A prize"'));
 
 const route = read("src/app/api/public/claim-check/route.ts");
 check("WF-17: the claim check is a POST route at the costly tier", route.includes("export async function POST(") && route.includes('limitRoute(req, "public/claim-check:POST", "costly")'));
-check("WF-17: a form post redirects with only the verdict", route.includes('to.searchParams.set("claimed", state)') && route.includes("status: 303"));
+check("WF-17: a form post redirects with only the verdict, to a path on the same site",
+  route.includes("Location: `/verify/${encodeURIComponent(shareId)}?claimed=${state}`") && route.includes("status: 303") && !/Location:[^\n]*\$\{code/.test(route) && !route.includes("req.url"));
 const page = read("src/app/verify/[shareId]/page.tsx");
 check("WF-17: the verify page reads no code from the URL", !/searchParams[^\n]*code/.test(page) && !page.includes("verifyClaimCode") && page.includes("claimedState("));
 const form = read("src/app/verify/[shareId]/ClaimCheck.tsx");

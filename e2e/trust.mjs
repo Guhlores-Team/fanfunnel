@@ -23,11 +23,17 @@ async function newFan(request, name, { ack = true } = {}) {
   return { name, token: fan.token, fanId: fan.fanId };
 }
 
-async function hasLegalLinks(page) {
-  const nav = page.getByRole("navigation", { name: "Legal" }).last();
-  await nav.waitFor({ timeout: 8000 });
-  return (await nav.getByRole("link", { name: "Terms" }).getAttribute("href")) === "/terms"
-    && (await nav.getByRole("link", { name: "Privacy" }).getAttribute("href")) === "/privacy";
+/**
+ * The Terms and Privacy links of a page (its one "Legal" landmark) or, with
+ * `landmark: false`, of a dialog: its copy is a plain group so the page never
+ * has two "Legal" navigation landmarks (PA-12).
+ */
+async function hasLegalLinks(scope, { landmark = true } = {}) {
+  const holder = landmark ? scope.getByRole("navigation", { name: "Legal" }).last() : scope;
+  const terms = holder.getByRole("link", { name: "Terms", exact: true }).last();
+  await terms.waitFor({ timeout: 8000 });
+  return (await terms.getAttribute("href")) === "/terms"
+    && (await holder.getByRole("link", { name: "Privacy", exact: true }).last().getAttribute("href")) === "/privacy";
 }
 
 export async function trustJourney(page, { step, assert }, ctx) {
@@ -72,7 +78,7 @@ export async function trustJourney(page, { step, assert }, ctx) {
     await page.getByRole("button", { name: "Safety & privacy" }).click();
     const dialog = page.getByRole("dialog", { name: "Safety and privacy" });
     await dialog.waitFor({ timeout: 5000 });
-    assert(await hasLegalLinks(dialog), "T11: the Safety menu links the Terms and Privacy");
+    assert(await hasLegalLinks(dialog, { landmark: false }), "T11: the Safety menu links the Terms and Privacy");
     await dialog.getByRole("button", { name: /Pause my link/ }).click();
     assert(/permanently stops your link.*can't be undone/s.test(await dialog.innerText()), "the warning is plain");
     await dialog.getByRole("button", { name: "Back" }).click();

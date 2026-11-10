@@ -36,9 +36,9 @@ export async function POST(req: Request) {
 
   if (form) {
     // 303: the browser GETs the page; the typed code is not in the location.
-    const to = new URL(`/verify/${encodeURIComponent(shareId)}`, req.url);
-    to.searchParams.set("claimed", state);
-    return NextResponse.redirect(to, { status: 303, headers: { "Cache-Control": "no-store" } });
+    // A path, not an absolute URL: the browser resolves it against the page
+    // it posted from, whatever host a proxy handed this function.
+    return new NextResponse(null, { status: 303, headers: { Location: `/verify/${encodeURIComponent(shareId)}?claimed=${state}`, "Cache-Control": "no-store" } });
   }
   if (limited) return limited;
   return NextResponse.json({ state }, { headers: { "Cache-Control": "no-store" } });

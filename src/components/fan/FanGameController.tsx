@@ -1007,6 +1007,11 @@ function AgeGate({
   const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const openLegal = (e: React.MouseEvent<HTMLAnchorElement>, href: "/terms" | "/privacy", title: string) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    onLegal(href, title);
+  };
   // FD-8: server-rendered checkboxes would accept ticks that hydration then
   // wipes, so they stay disabled (and say so) until the page can respond.
   const hydrated = useSyncExternalStore(noSubscribe, () => true, () => false);
@@ -1092,12 +1097,15 @@ function AgeGate({
             />
             <span className="text-ink">
               I agree to the{" "}
-              {/* WF-11: opened in a sheet over the gate (a new tab had no way back). */}
-              <a href="/terms" onClick={(e) => { e.preventDefault(); onLegal("/terms", "Terms of Service"); }} className="underline underline-offset-2">
+              {/* WF-11: a tap opens the text in a sheet over the gate (a new
+                  tab had no way back). The link itself still goes to a new
+                  tab with no Referer (the URL holds the fan's token) for a
+                  tap before the page can respond, or a deliberate new-tab click. */}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" onClick={(e) => openLegal(e, "/terms", "Terms of Service")} className="underline underline-offset-2">
                 Terms of Service
               </a>{" "}
               (see the{" "}
-              <a href="/privacy" onClick={(e) => { e.preventDefault(); onLegal("/privacy", "Privacy Policy"); }} className="underline underline-offset-2">
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={(e) => openLegal(e, "/privacy", "Privacy Policy")} className="underline underline-offset-2">
                 Privacy Policy
               </a>
               ) and acknowledge prizes are subject to the creator&rsquo;s fulfilment.
