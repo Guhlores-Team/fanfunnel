@@ -268,5 +268,18 @@ export async function probeLockOrder(db, psqlAsync) {
     check((await sql(`select (select count(*) from public.org_members where id=${quote(seat)})||','||(select spins_remaining from public.fan_passes where id=${quote(who.pass)});`)).trim() === "0,13", "F10 the grant landed before the seat went");
     await sql(`delete from public.creator_actor_contexts where id=${quote(context)};`);
   });
+  // F11 (CC-06): "Set active" is one UPDATE under the creator's games taken
+  // in id order. Twelve switches over four games at once neither deadlock nor
+  // leave two live games (or none).
+  await guard("F11", async () => {
+    const c = await addCreator(), games = [];
+    for (let i = 0; i < 4; i++) games.push((await addWheel(c)).id);
+    for (let round = 0; round < 3; round++) {
+      const runs = await Promise.all(Array.from({ length: 12 }, (_, i) => psqlAsync(db, asCreator(c, `select public.set_active_wheel(${quote(games[(i + round) % 4])});`))));
+      const errors = runs.map((r) => (r.stderr || "").trim().split("\n").find((l) => /ERROR/.test(l))).filter(Boolean);
+      check(errors.length === 0 && runs.every((r) => (r.stdout || "").trim().split("\n").at(-1) === "ok"), `F11 round ${round + 1}: twelve concurrent switches all answer ok (${errors[0] ?? "-"})`);
+      check((await sql(`select count(*) filter (where is_active) from public.wheels where creator_id=${quote(c)};`)).trim() === "1", `F11 round ${round + 1}: exactly one game is live afterwards`);
+    }
+  });
   return { bad, checks };
 }

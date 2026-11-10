@@ -80,6 +80,9 @@ const SIGNED_IN_ONLY = [
   "creator_link_tokens",
   "creator_link_pass",
   "wipe_my_spin_attempts",
+  // 0073 (CC-06): SECURITY INVOKER "set active" in one UPDATE; the wheels
+  // policies (can_act_for(creator, 'edit_wheel') / is_admin()) decide each row.
+  "set_active_wheel",
 ];
 // RLS policies call these. 0044 left them anon-callable so an anon read that
 // evaluated a policy returned no rows instead of an error; since 0068 anon
