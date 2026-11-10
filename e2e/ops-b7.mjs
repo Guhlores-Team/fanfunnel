@@ -7,10 +7,11 @@
 //        /api/health keeps its own header, the public wheel teaser stays cacheable.
 //  WA-08 a path with an empty segment (//admin, what `/\admin` becomes) is a
 //        400 from the proxy, not an unmonitored 500.
+//  RS-04 an /api answer the page never reads still finishes loading.
 // Requests that spend a limit carry their own x-real-ip, so no other journey's
 // budget is touched. The closed-link page (WC-13) is proved in fan-devices.mjs.
 import { randomBytes, randomUUID } from "node:crypto";
-import { BASE } from "./harness.mjs";
+import { attachSink, BASE, goto } from "./harness.mjs";
 
 const ip = () => `198.51.100.${1 + Math.floor(Math.random() * 250)}`;
 
@@ -66,6 +67,27 @@ export async function opsB7Journey(browser, { step, assert }, sink, ctx) {
     assert(/^public, s-maxage=60/.test(teaser.headers()["cache-control"] ?? ""), `the public teaser stays cacheable (got "${teaser.headers()["cache-control"]}")`);
     const wins = await request.get(BASE + "/api/recent-wins/demo-creator", { headers: { "x-real-ip": ip() } });
     assert(wins.status() === 200 && /^public, s-maxage=10/.test(wins.headers()["cache-control"] ?? ""), `recent wins stay cacheable (${wins.status()}, "${wins.headers()["cache-control"]}")`);
+  });
+
+  await step("b7 RS-04: an /api answer the page never reads still finishes loading (its body can be read)", async () => {
+    // A no-store response whose body the page ignores stays pending in
+    // Chromium; a journey that then reads that body used to wait for ever
+    // (the full run hung in play.mjs). src/lib/api/drainResponses.ts reads a
+    // clone of every such answer, installed before hydration.
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    try {
+      await goto(page, "/", 400);
+      const [res] = await Promise.all([
+        page.waitForResponse((r) => new URL(r.url()).pathname === "/api/health", { timeout: 8000 }),
+        page.evaluate(async () => (await fetch("/api/health")).ok),
+      ]);
+      assert(/no-store/.test(res.headers()["cache-control"] ?? ""), "the answer is no-store");
+      const body = await Promise.race([res.json(), new Promise((_, reject) => setTimeout(() => reject(new Error("the body read hung for 8 s")), 8000))]);
+      assert(body.ok === true, "the unread answer's body is readable");
+    } finally {
+      await page.close();
+    }
   });
 
   await step("b7 WA-08: a path with an empty segment never reaches a 500 (normalised or refused)", async () => {
