@@ -22,9 +22,14 @@ applies `supabase/migrations/` to **TEST** on every PR (`test` job) and to **LIV
 `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN` (the
 `production` job). The PROD values and the account token belong in the **`production`
 environment's** secrets, not the repository's: a repository secret reaches every same-repo PR
-workflow (supply-chain audit SUP-1). Owner steps: [`docs/GO_LIVE.md` section 2](docs/GO_LIVE.md#supply-chain-settings-batch-6-audit).
+workflow (supply-chain audit SUP-1). The manual TEST jobs (`test-maintenance`, `preview-lcp`,
+`preview-feature-smoke`) read `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN` and
+`FANFUNNEL_TEST_CRON_SECRET` from a separate **`test-maintenance`** environment restricted to
+`dashboard-redesign` (batch 7, SC-02). Owner steps: [`docs/GO_LIVE.md` section 2](docs/GO_LIVE.md#supply-chain-settings-batch-6-audit).
 If a project was set up by pasting SQL before the workflow existed, run
-`docs/auto-migration-reconcile.sql` on it once first.
+`docs/auto-migration-reconcile.sql` on it once first. The `production` job refuses to push unless
+the Management API lists a LIVE backup from the last 36 hours
+(`scripts/ci/require-prod-backup.mjs`; override and reconcile status: `docs/GO_LIVE.md` section 5).
 
 Manual paths (a brand-new project, or recovery):
 - **Brand-new project:** run `supabase/schema.sql` in the SQL Editor. It is the complete current
@@ -42,23 +47,41 @@ key (`NEXT_PUBLIC_SUPABASE_ANON_KEY`), service_role key (`SUPABASE_SERVICE_ROLE_
 
 ## 2. Supabase Auth settings (both projects)
 
-Every auth email link (sign-up confirm, password reset, email change) comes back to
-`<site>/auth/callback?next=…`, built from the page's own origin
-(`src/components/LoginForm.tsx`, `src/app/forgot-password/page.tsx`,
-`src/app/api/account/email/route.ts`). Supabase only follows a link whose target is on its allow
-list, so set, under **Authentication → URL Configuration**:
+Every auth e-mail link (sign-up confirmation, password reset, invitation, e-mail change) is built
+by the pasted templates from the project's **Site URL** only:
+`{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=…&next=<fixed page>`
+(`supabase/templates/*.html`, batch 6, A1). The requester's origin is never used, so a link opened
+on another device or in a mail app's browser works, and a `*` host in the allow-list would only
+help an outsider who registers a matching Vercel host. Set, under **Authentication → URL
+Configuration**:
 
-| Project | Site URL | Redirect URLs |
+| Project | Site URL | Redirect URLs (exact origins only, no `*` in a host) |
 |---|---|---|
-| LIVE `ttlogfmogcccwiraaoae` | `https://fanfunnel.vercel.app` | `https://fanfunnel.vercel.app/**` |
-| TEST `snmcrmhgevfqggxdiomu` | the Preview URL, e.g. `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` | `https://fanfunnel-*-easy-simple-sites.vercel.app/**` (every branch Preview) and `http://localhost:3000/**` |
+| LIVE `ttlogfmogcccwiraaoae` | `https://fanfunnel.vercel.app` (the custom domain once it exists) | `https://fanfunnel.vercel.app/**` |
+| TEST `snmcrmhgevfqggxdiomu` | `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` (the stable Preview alias) | that alias with `/**`, and `http://localhost:3000/**` for local work |
 
-Also, in both projects:
-- **Authentication → Emails → Templates:** paste the 5 link templates and turn on and paste the 2
-  security notices from `supabase/templates/` (see its `README.md`).
-- **Authentication → Providers → Email:** keep **Confirm email ON**. Turn on **leaked-password
-  protection**.
-- Enable **MFA** for the admin account.
+Remove any existing entry such as `https://*.vercel.app/**` or
+`https://fanfunnel-*-easy-simple-sites.vercel.app/**`.
+
+Also, in both projects (the owner's ordered list is `docs/handoff/OWNER_STEPS.md` Stage 2):
+- **Authentication → Emails → Templates:** paste the 5 link templates (recovery, confirmation,
+  magic link, invite, e-mail change) and turn on and paste the 2 security notices ("Password
+  changed", "Email address changed") from `supabase/templates/` (see its `README.md`). Until the
+  link templates are pasted, Supabase's default `{{ .ConfirmationURL }}` links are PKCE links that
+  only work in the browser that asked for them.
+- **Authentication → Emails → SMTP settings:** custom SMTP through Resend. The built-in mailer
+  sends at most 2 e-mails per hour for the whole project; past that, resets and confirmations
+  silently never arrive.
+- **Authentication → Providers → Email:** keep **Confirm email ON**; **Minimum password length
+  = 8** (the app checks 8+ with a letter and a digit in the browser only; the project default of 6
+  would accept a weaker password sent straight to the auth API).
+- **Authentication → Providers → Email:** **Email OTP expiration** — the default 1 hour also expires admin
+  invitations; raise it (up to 24 h) or send invitations to people at their keyboard.
+  **Secure email change** — leave ON (both the old and the new address must confirm; the app
+  shows "step 1 of 2" after the first link) unless the owner decides otherwise.
+- **Authentication → Settings → Password security:** turn on **leaked-password protection** (may
+  need the Pro plan).
+- Enable **MFA** for the admin accounts (the database refuses admin work without it).
 
 ---
 
@@ -75,22 +98,27 @@ Development = TEST.
 | `ADMIN_EMAILS` | owner email(s) | same | Comma-separated allowlist for the one-time admin claim (see step 4). Unset = nobody can claim admin. |
 | `FF_REQUIRE_SUPABASE` | `1` | `1` | Fail closed instead of falling back to the in-memory demo. `VERCEL_ENV=production` already forces this on Vercel. |
 | `NEXT_PUBLIC_ENABLE_DEBUG` | **unset** | `1` | Turns on the `?debug=1` error console and the "PREVIEW · TEST database" badge. Must never be set on Production. |
-| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | set by the Upstash integration | same | Shared rate-limit counters across instances (`src/lib/rateLimit.ts`). `UPSTASH_REDIS_REST_URL`/`_TOKEN` also work. Unset = per-instance in-memory limits; **required on Production**: without it the daily maintenance cron records "Rate limits are per instance in production" in Admin › Errors and Admin › System health says so. |
-| `VAPID_PUBLIC_KEY` | separate public key | separate public key | Web push; see setup below. `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is accepted as an alternative name. |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | set by the Upstash integration | same | Shared rate-limit counters across instances (`src/lib/rateLimit.ts`). `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` also work (no trailing slash on the URL). Unset = per-instance in-memory limits; **required on Production**: without it the daily maintenance cron records "Rate limits are per instance in production" in Admin › Errors and Admin › System health says so. |
+| `VAPID_PUBLIC_KEY` | separate public key | separate public key | Web push; see setup below. |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | — | — | Alias of `VAPID_PUBLIC_KEY` (public half only); set one of the two, not both. |
 | `VAPID_PRIVATE_KEY` | private key (Sensitive) | private key (Sensitive) | Server-only; never a `NEXT_PUBLIC_*` variable. |
 | `VAPID_SUBJECT` | `mailto:you@yourdomain` | same | Contact for browser push services. |
 | `NEXT_PUBLIC_SITE_URL` | optional | optional | Only for self-hosting behind a proxy that strips the scheme. Also the origin used for links in alert e-mails. |
-| `CRON_SECRET` | random secret (Sensitive) | optional | Authorizes the daily retention cron (`vercel.json` → `/api/cron/retention`). At least 16 characters; generate with `openssl rand -hex 32`. Unset or too short: the cron refuses to run (fails closed) and records a "Retention cron is not configured" error in Admin › Errors, which e-mails `ALERT_EMAIL_TO`. Vercel only runs crons on Production. |
+| `CRON_SECRET` | random secret (Sensitive) | required only for the TEST maintenance scheduler (`docs/handoff/TEST_MAINTENANCE.md`: it must equal the GitHub secret `FANFUNNEL_TEST_CRON_SECRET`); otherwise unset | Authorizes the daily retention cron (`vercel.json` → `/api/cron/retention`). At least 16 characters; generate with `openssl rand -hex 32`. Unset or too short: the cron refuses to run (fails closed) and records a "Retention cron is not configured" error in Admin › Errors, which e-mails `ALERT_EMAIL_TO`. Vercel only runs crons on Production. |
 | `REWARD_ENCRYPTION_KEY` | 32 random bytes, base64 (Sensitive) | separate key (Sensitive) | Encrypts instant-delivery codes, links and texts (#26, `src/lib/rewards/crypto.ts`). Generate with `openssl rand -base64 32`. **Never rotate or replace it** without re-encrypting stored rewards: old codes become unreadable. Back up the original securely. Unset: instant-delivery prizes can't be saved or delivered. |
 | `REWARD_ENCRYPTION_KEY_VERSION` | optional, integer | optional | The key version stamped on new ciphertexts (default `1`). Only changes as part of a planned re-encryption. |
+| `REWARD_ENCRYPTION_KEY_PREVIOUS` | only during a key rotation (Sensitive) | same | The key that was current before the rotation, so rewards sealed with it still open (`src/lib/rewards/crypto.ts` keyring). Procedure: `docs/GO_LIVE.md` section 4. Unset otherwise; a reward sealed under an older version than the previous one is refused, never mis-decrypted. |
+| `REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION` | only during a key rotation | same | The previous key's version, when it is not exactly one below `REWARD_ENCRYPTION_KEY_VERSION`. |
 | `REWARD_CODE_FINGERPRINT_KEY` | 32 random bytes, base64 (Sensitive) | separate key (Sensitive) | Keeps reward codes unique across pastes (keyed fingerprint). Generate with `openssl rand -base64 32`, independent of the encryption key. **Never rotate it**: erased codes could be pasted and handed out again. |
 | `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM`, `ALERT_ENVIRONMENTS` | **required**: `RESEND_API_KEY` + `ALERT_EMAIL_TO` (see Monitoring) | optional | Error alerts, urgent safety-report alerts and creator account mail (approval, invitations, new-request notes). Without the key on Production, no creator gets the "you're approved" e-mail and System health shows **Alert e-mails: OFF** in red. Details under **Monitoring** below. |
+| `ACCOUNT_EMAIL_FROM` | optional | optional | Sender of creator account mail (approval, invitations). Default `FanFunnel <account@domain of the alert sender>` (`src/lib/account/accountMail.ts`). Must be an address on a domain verified in Resend. |
 | `HEARTBEAT_URL` | recommended: a heartbeat monitor's `https://` ping URL | unset | After each successful daily maintenance run the cron sends one GET (3 s timeout; a failure is logged, never fatal). When pings stop, the monitor e-mails you, even if our database or e-mail is down. Never logged or shown; System health only says whether it is set. |
-| `FF_MAINTENANCE` | unset; `1` pauses the site | unset | Maintenance mode (`src/lib/ops/maintenance.ts`). Redeploy after changing it. Fans see a "back soon, nothing was spent" page, API writes answer 503, and `/dashboard`, `/admin`, `/login`, `/api/admin/*` and `/api/health` stay reachable. See `docs/RUNBOOK.md`. |
+| `FF_MAINTENANCE` | unset; `1` pauses the site | unset | Maintenance mode (`src/lib/ops/maintenance.ts`). **A redeploy is mandatory** after changing it: the page rewrites are built in, so a runtime-only change pauses API writes but not pages. Fans see a "back soon, nothing was spent" page, API writes answer 503. The complete list of what stays open and what is paused is in `docs/RUNBOOK.md` § Pause the site. |
 | `NEXT_PUBLIC_COMMIT_SHA` | unset | set only by CLI archive deploys | Short commit shown on the Preview badge when `VERCEL_GIT_COMMIT_SHA` is absent (`docs/PREVIEW_DEPLOY.md`). |
 
-Add the TEST trio as GitHub secrets too (same names), so the `E2E (real Supabase)` workflow and
-`scripts/security/rls-runtime-test.mjs` run instead of skipping.
+Add the TEST trio as GitHub secrets too (same names, and again as Dependabot secrets): since
+batch 3 (A25) the `supabase` and `login-ui` jobs **fail** when they are missing; only a pull
+request from a fork skips them, visibly.
 
 **Deployment Protection** (Settings → Deployment Protection): keep Vercel Authentication on
 **Standard Protection** (`all_except_custom_domains`), so Previews need a Vercel login and the
@@ -103,8 +131,13 @@ production domain is public.
 1. Work on a branch off `main`. Push it: Vercel builds a Preview on the TEST database, and CI
    applies the branch's migrations to TEST.
 2. Test the change on the Preview with real clicks.
-3. When CI is green (`verify`, `schema-drift`, `supabase`, `login-ui`) **and** the Preview has been
-   tested, merge the PR to `main`. CI migrates LIVE, and Vercel deploys Production.
+3. When CI is green (required: `verify`, `supabase`, `login-ui`; also `schema-drift` and the
+   migration `test` job, which the owner adds to the ruleset, `docs/GO_LIVE.md` section 2) **and**
+   the Preview has been tested, the **owner** merges the PR to `main` (`docs/GO_LIVE.md` section 8).
+   The merge starts `db-migrations-production`, which waits for the owner's approval in the
+   `production` environment, checks a LIVE backup exists, applies the migrations and verifies the
+   history; Vercel builds Production at once but, with the Deployment Check configured, promotes
+   the build only after that job is green.
 
 First run on a fresh LIVE project: sign up at `/login`, confirm the email, then open `/admin`
 and use **Claim admin** (works only for an `ADMIN_EMAILS` address). No SQL is needed.
@@ -113,9 +146,15 @@ and use **Claim admin** (works only for an `ADMIN_EMAILS` address). No SQL is ne
 
 Incident steps for the owner are in [`docs/RUNBOOK.md`](docs/RUNBOOK.md) § Roll back a deploy. In order:
 
-1. **Instant Rollback first.** Vercel → Deployments → the previous Production deployment →
-   **Instant Rollback**. Traffic moves back within seconds, with no build and no migration job. It
-   bypasses the `db-migrations-production` Deployment Check on purpose: the database is not changed.
+1. **Instant Rollback first — except for the first release.** Vercel → Deployments → the previous
+   Production deployment → **Instant Rollback**. Traffic moves back within seconds, with no build
+   and no migration job. It bypasses the `db-migrations-production` Deployment Check on purpose:
+   the database is not changed. **Warning for the go-live release:** the previous Production
+   deployment is the pre-0039 code, and 0039–0072 are not expand-only for it (0069 revokes
+   `INSERT` on `redemptions` from sessions, 0071 revokes `DELETE` on wheels and campaigns, 0070
+   changes the spin RPCs). Rolling that code back onto the new schema breaks fulfilment and
+   spins. For the first release, rollback = **pause the site** (`FF_MAINTENANCE=1`, see
+   `docs/RUNBOOK.md`) and fix forward.
 2. **Then a revert PR.** Revert the bad merge on a branch, open a PR, wait for CI to go green, and
    merge it. The merge re-runs `db-migrations-production`, which needs the reviewer's approval. It is
    a verified no-op when no migration changed. This makes `main` match what is serving, so the next
@@ -190,7 +229,8 @@ the Preview is tested and PROD before (or at) the merge to `main`. Only admins
 - Instant-delivery prizes (#26) need `REWARD_ENCRYPTION_KEY` and `REWARD_CODE_FINGERPRINT_KEY`
   (see the table in section 3). Back both up before any real reward is stored.
 - Every variable the code reads is listed in section 3 and, with how to generate it, in
-  `.env.example`. Values never go in the repo.
+  `.env.example`; `scripts/test/env-inventory.test.mjs` (CI `verify`) fails when a `process.env`
+  read under `src/` is missing from either. Values never go in the repo.
 - Web push is off until the three `VAPID_*` variables are set. The Inbox alert
   link opens the same opt-in in Settings › Notifications.
 

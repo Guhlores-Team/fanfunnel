@@ -61,32 +61,46 @@ These account settings finish it. Do them in this order; none of them needs a co
       **`production`**: Required reviewers = you ("Prevent self-review" off, you are the only owner);
       Deployment branches and tags = **Selected branches and tags** → add `main`. Then **Add environment
       secret** for `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD` and `SUPABASE_ACCESS_TOKEN`.
-- [ ] **OWNER** (SUP-1, SUP-5): same page → **`test`**: add environment secrets `SUPABASE_TEST_PROJECT_REF`,
-      `SUPABASE_TEST_DB_PASSWORD`, `VERCEL_TOKEN` and `FANFUNNEL_TEST_CRON_SECRET`. Optionally require your
-      review (SUP-6; PR migration runs then wait for your click).
-- [ ] **OWNER** (SUP-1, SUP-5): only after both environments hold their copies, delete the repository-level
-      `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN` and `VERCEL_TOKEN` in
+- [ ] **OWNER** (SUP-1): same page → **`test`**: add environment secrets `SUPABASE_TEST_PROJECT_REF` and
+      `SUPABASE_TEST_DB_PASSWORD` only (TEST-only database access; every PR job can reach this environment).
+      Optionally require your review (SUP-6; PR migration runs then wait for your click).
+- [ ] **OWNER** (SC-02, batch 7): same page → **New environment `test-maintenance`**: Required reviewers = you;
+      Deployment branches and tags = **Selected** → `dashboard-redesign` only. Add environment secrets
+      `SUPABASE_ACCESS_TOKEN` (the same account token as `production`), `VERCEL_TOKEN` and
+      `FANFUNNEL_TEST_CRON_SECRET`. The three manual jobs (`test-maintenance`, `preview-lcp`,
+      `preview-feature-smoke`) read them from here since batch 7; until the environment exists they
+      refuse to run. Why: the account token reaches LIVE, and the old `test` environment handed it to a
+      `workflow_dispatch` job whose only guards lived in the dispatching branch's own script.
+- [ ] **OWNER** (SUP-1, SUP-5): only after the environments hold their copies, delete the repository-level
+      `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN` and
+      `FANFUNNEL_TEST_CRON_SECRET` in
       [Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions). Keep the
       repository-level TEST trio (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-      `SUPABASE_SERVICE_ROLE_KEY`): the `supabase` and `login-ui` jobs use them. Known limit: the manual
-      `test-maintenance` job still needs the account token, and it runs in the `test` environment.
+      `SUPABASE_SERVICE_ROLE_KEY`): the `supabase` and `login-ui` jobs use them.
 - [ ] **OWNER** (SUP-1): in [Supabase access tokens](https://supabase.com/dashboard/account/tokens) revoke the
-      token CI used until now and create a new one, stored only in the `production` (and, for
-      `test-maintenance`, `test`) environment secrets.
+      token CI used until now and create a new one, stored only in the `production` and `test-maintenance`
+      environment secrets.
 - [ ] **OWNER** (SUP-5): in [Vercel tokens](https://vercel.com/account/settings/tokens) replace the CI
       `VERCEL_TOKEN` with one scoped to the `easy-simple-sites` team with the shortest expiry that covers the
-      planned Preview measurements, stored only as the `test` environment secret.
+      planned Preview measurements, stored only as the `test-maintenance` environment secret.
+- [ ] **OWNER** (SC-02c): close the stale PR #42 (the `eager-volta-l8juq7` branch, still carrying the old
+      unhardened workflow with a job-level account token) and delete stale remote branches; tag `archive/*`
+      instead of keeping branches. Any push to such a branch runs its own old workflow with the `test`
+      environment.
 - [ ] **OWNER** (SUP-4): [Actions settings](https://github.com/Guhlores-Team/fanfunnel/settings/actions) →
       Workflow permissions = **Read repository contents and packages permissions**; untick "Allow GitHub
       Actions to create and approve pull requests"; Fork pull request workflows = **Require approval for
       all external contributors**; Actions permissions = allow actions by GitHub plus `supabase/setup-cli@*`,
       and tick **Require actions to be pinned to a full-length commit SHA** (every workflow already is).
-- [ ] **OWNER** (SUP-4): [Rulesets](https://github.com/Guhlores-Team/fanfunnel/settings/rules) → new branch
-      ruleset for `main` (require a pull request, block force pushes and deletions; required checks
-      stay `verify`, `supabase`, `login-ui`) and one for `dashboard-redesign` (block force pushes and deletions).
-- [ ] **OWNER** (SUP-3): [Security analysis](https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis) →
+- [ ] **OWNER** (SUP-4, OPS3-03): [Rulesets](https://github.com/Guhlores-Team/fanfunnel/settings/rules) → new branch
+      ruleset for `main` (require a pull request, block force pushes and deletions; **required checks =
+      `verify`, `schema-drift`, `supabase`, `login-ui` and the migration `test` job**; before batch 7 only the
+      first three were required, so a PR could merge with the drift check or the TEST migration run red) and
+      one for `dashboard-redesign` (block force pushes and deletions).
+- [ ] **OWNER** (SUP-3, SC-03): [Security analysis](https://github.com/Guhlores-Team/fanfunnel/settings/security_analysis) →
       enable Dependabot alerts, Dependabot security updates, Secret scanning, Push protection and Private
-      vulnerability reporting.
+      vulnerability reporting (checked 2026-11-10: all still off; `.github/dependabot.yml` now waits 7 days
+      after a release before proposing it, so a hijacked package is not proposed the day it ships).
 - [ ] **OWNER** (SUP-2): give Preview its own rate-limit store. In [Vercel storage](https://vercel.com/easy-simple-sites/~/stores)
       create a second Upstash Redis database and connect it to `fanfunnel` for **Preview** only; then in
       [Environment Variables](https://vercel.com/easy-simple-sites/fanfunnel/settings/environment-variables)
@@ -97,8 +111,13 @@ These account settings finish it. Do them in this order; none of them needs a co
       Node.js Version = **22.x** (matches `package.json` `engines`, CI and local builds; the project shows 24.x
       and Vercel already follows `engines` with a build warning). The Install Command needs no dashboard
       change: `vercel.json` sets `npm ci`, which overrides it.
-- [ ] **OWNER** (SUP-8, Q4): [Git settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/git) → confirm
-      **Git Fork Protection** is on. `vercel.json` already disables builds for `dependabot/**`.
+- [ ] **OWNER** (SUP-8, SC-04, Q4): [Git settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/git) → confirm
+      **Git Fork Protection** is on. `vercel.json` is now an allow-list (only `main` builds from Git;
+      `docs/PREVIEW_DEPLOY.md`); prove on the first code-only push to `main` that a Production deployment is
+      still created.
+- [ ] **OWNER** (OPS3-01, RS-05): [Functions settings](https://vercel.com/easy-simple-sites/fanfunnel/settings/functions) →
+      confirm **Fluid compute** is on (the 300 s default duration the maintenance cron and slow-database
+      paths rely on) and record the setting.
 - [ ] **OWNER** (SUP-9): after real-phone Preview testing, [Deployment Protection](https://vercel.com/easy-simple-sites/fanfunnel/settings/deployment-protection) →
       Vercel Authentication (Standard Protection) for Previews. Until then Previews serve
       `X-Robots-Tag: noindex, nofollow` and a disallow-all `robots.txt`.
@@ -114,7 +133,7 @@ e-mails should open, and the Redirect URL allow-list holds exact team-owned orig
 (no `*` in a host). Prepared templates are not proof of delivery or correct redirects.
 
 - [ ] **OWNER + AGENT**: Review [TEST URL configuration](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu/auth/url-configuration). Its intended Site URL is `https://fanfunnel-git-dashboard-redesign-easy-simple-sites.vercel.app` (the Preview alias: every e-mail link opens there); inspect the actual value, and cut the Redirect URLs to exact origins the team owns (remove any entry with `*` in the host, e.g. `https://*.vercel.app/**`). Never substitute the LIVE ref.
-- [ ] **OWNER**: Review email confirmation and leaked-password protection; record unavailable plan features without purchasing anything. Keep confirmation ON.
+- [ ] **OWNER**: Review email confirmation and leaked-password protection; record unavailable plan features without purchasing anything. Keep confirmation ON. Also (batch 7, WU-11): custom SMTP through Resend in both projects (the built-in mailer sends 2 e-mails per hour project-wide), minimum password length 8, Email OTP expiry raised so admin invitations do not expire over lunch (max 24 h), the "Password changed" / "Email address changed" notices turned on, and the Secure email change decision recorded. The exact clicks: `docs/handoff/OWNER_STEPS.md` Stage 2.
 - [ ] **OWNER**: Verify configured SMTP and the five [link templates](../supabase/templates/README.md): recovery, confirmation, magic link, invite and email change; review password/email security notices too. Do not blindly replace working settings merely because files exist.
 - [ ] **OWNER**: Paste the five updated link templates (recovery, confirmation, magic link, invite, email change; batch 6, C1) into TEST **now** and into LIVE **at go-live** (Authentication → Emails → Templates). They link with `{{ .TokenHash }}`, verified by `/auth/callback` or `/auth/confirm`, so a link opened on another device or in a mail/Instagram in-app browser works. Until they are pasted, the old `{{ .ConfirmationURL }}` (PKCE) links keep working in the browser that asked for them, and a link opened elsewhere lands on `/login` with an explanation and a "new link" action. Admin "New account" invites need the updated `invite.html`. Then check on TEST: request a reset on one device and open the link on another; it must reach the new-password page.
 - [ ] **OWNER**: Perform reset and email-change checks using a disposable TEST address you control, or explicitly authorize a defined TEST send. Confirm branded receipt, required confirmation links and return to TEST. An agent must not send real email without that authorization.
@@ -213,14 +232,34 @@ Owner setup, once (nothing in the repo can turn it on):
 
 - [ ] **OWNER**: In [Vercel → Settings → Build and Deployment → Deployment Checks](https://vercel.com/easy-simple-sites/fanfunnel/settings/build-and-deployment#deployment-checks), select **Add Checks** → **GitHub** and require exactly `db-migrations-production`.
 - [ ] **OWNER**: In [Vercel → Settings → Environments → Production](https://vercel.com/easy-simple-sites/fanfunnel/settings/environments/production), confirm automatic aliasing for Production is ON (Deployment Checks only promote with it on).
-- [ ] **OWNER + AGENT**: Prove it on the first merge after setup: the new Production deployment shows the check as pending and stays un-aliased until `db-migrations-production` is green, then is promoted. Record the deployment and run links.
+- [ ] **OWNER + AGENT**: Prove it on a **code-only** merge first (a one-line PR to `main` that changes no migration, before the real release): the new Production deployment shows the check as pending and stays un-aliased until `db-migrations-production` is approved and green, then is promoted. Vercel's documentation describes the hold for "custom production domains"; LIVE today is the default `fanfunnel.vercel.app` alias, so this proof must show that alias held too. If it is not held, the release merge needs `FF_MAINTENANCE=1` for the window between the merge and the green job (`RUNBOOK.md` § Pause the site). Record the deployment and run links.
 - [ ] **OWNER**: The `production` environment's required reviewer now applies to every `main` push. Approving a code-only run is approving a verified no-op; rejecting it keeps the old deployment live.
+
+### The backup gate (batch 7, SC-01 / OPS-03)
+
+The job's first real step, `Require a recent LIVE backup before touching PRODUCTION`
+(`scripts/ci/require-prod-backup.mjs`), reads the Management API's backup list
+for the LIVE project with the account token the job already holds and refuses
+to run `supabase db push` unless a `COMPLETED` backup, or a PITR base backup,
+is at most 36 hours old. Nothing in the CLI can take a backup without new
+secrets (a `db dump` on a public-repository runner would only copy fan data
+into a job log), so the gate verifies instead of creating. Pinned by
+`scripts/test/prod-backup-gate.test.mjs`.
+
+- [ ] **OWNER**: Before approving each `db-migrations-production` run, confirm today's backup is listed in Supabase → Database → Backups (Pro plan: daily, 7 kept). The gate checks the same list; approving a run that will fail the gate only costs a re-run. Put "approve only after today's backup is listed" in the `production` environment's description so the approval card says it.
+- [ ] **OWNER**: The only override is the repository **variable** (Settings → Secrets and variables → Actions → Variables, not a secret) `PROD_BACKUP_POLICY` = `accept-no-backup`. It turns the refusal into a warning. Set it only knowingly (for example on a plan without backups, after a written decision), and delete it again afterwards. Nothing else bypasses the gate short of editing the workflow on `main`.
 
 Residual gaps, stated plainly:
 
 - **Owner setting.** Until the Deployment Check is configured in Vercel, this
   is not enforced; the repo cannot verify the setting. **Force Promote**,
   Instant Rollback, `vercel --prod` and a manual redeploy bypass it.
+- **The first release is not expand-only.** `main` serves pre-0039 code;
+  0069 revokes `INSERT` on `redemptions` from sessions, 0071 revokes `DELETE`
+  on wheels and campaigns, 0070 changes the spin RPCs. Once 0039–0072 are
+  applied, an **Instant Rollback to that old deployment breaks fulfilment and
+  spins**. For this release, rollback means pausing the site and fixing
+  forward (`RUNBOOK.md` § Roll back a deploy).
 - **Old code meets the new schema.** The previous deployment keeps serving
   while migrations apply, so every migration must stay compatible with the
   code already live (expand, then contract in a later release). The check
@@ -249,6 +288,21 @@ Residual gaps, stated plainly:
   order). The app keeps serving either way: a maintenance page was rejected
   because a false "behind" (a transient read error) would take the site down.
 - [ ] **OWNER + AGENT**: After every LIVE migration, open **Admin › System health** on LIVE and confirm the schema line reads "as this release expects" (or "newer"), then **Run checks now**. A "behind" line means the code is live without its migration: roll the deployment back or apply the reviewed migration before relying on the new features.
+- [ ] **OWNER**: Within the hour after the go-live promotion, as an admin on LIVE, **initialize the reward canary** (Admin › System health → **Run checks now**, and follow the key-protection prompt the first time). Until it exists the startup check alerts, the nightly job answers 503 and the heartbeat stays silent, so the monitors report a false "down".
+
+### Merge-day checklist (OPS3-03: where a mistake is possible, and what prevents it)
+
+Work through it in order on the day; every line names the mistake it prevents.
+
+- [ ] **OWNER**: The ruleset requires `verify`, `schema-drift`, `supabase`, `login-ui` and the migration `test` job (section 2); a PR cannot merge with the drift check red.
+- [ ] **OWNER**: Production env vars complete (`docs/handoff/GO_LIVE_KEYS.md`): the Supabase trio, `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE`, `CRON_SECRET`, the two reward keys, the VAPID trio, `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `HEARTBEAT_URL`. A missing or mistyped key builds and deploys fine and then answers 500 on every database page; only the Vercel function log says why ("FanFunnel is misconfigured").
+- [ ] **OWNER**: Read-only `supabase migration list --linked` against LIVE (or ask the agent for the exact command with the password entered by you): the Remote column must list 0001–0038. If it lists fewer, `docs/auto-migration-reconcile.sql` runs first, or `db push` re-runs 0001 against a populated database. Paste the result into the release note and update the status block at the top of `.github/workflows/supabase-migrations.yml`.
+- [ ] **OWNER + AGENT**: The multi-agency check (SQL below) returns no rows, and the 0072 browser-role check has been rehearsed on a fresh TEST clone of LIVE's schema: a failure at 0071 leaves 0039–0070 applied with no rollback, while the old code keeps serving.
+- [ ] **OWNER**: Today's LIVE backup is listed (the gate checks it too).
+- [ ] **OWNER**: Merge the PR (section 8). Vercel builds Production; the migration job waits for your approval.
+- [ ] **OWNER**: Approve `db-migrations-production` only after the lines above. Watch it: backup gate → `db push` → history read-back → green. The Production deployment must stay un-aliased until then (Deployment Check) and be promoted after.
+- [ ] **OWNER**: Admin › System health on LIVE: schema "as this release expects", **Run checks now**, initialize the canary (above). Open one fan link and one `/verify/<id>` link.
+- [ ] **OWNER**: Do **not** use Instant Rollback for this release (the previous deployment is pre-0039 code). If something is wrong: pause the site, then fix forward.
 
 ### Release plan before any merge
 
@@ -271,7 +325,7 @@ establish ordering; the Deployment Check above does, once configured.
   - **No rows** ("Success. No rows returned"): this step is done.
   - **One or more rows**: stop, do not merge. Each row is an account (`owner_id`) and how many agencies it owns. Contact that owner, agree which agency they keep, and with their approval merge the extra agencies into it or remove them. Then run the check again, and continue only when it returns no rows.
 - [ ] **OWNER + AGENT**: 0072 ends with a check that stops it (nothing is applied) if a browser role (`anon`, or `authenticated` outside the reviewed list in the migration header) can still execute a SECURITY DEFINER function on LIVE; the error names each one. TEST showed one such drift (`org_add_creator`), which 0072 revokes itself. If LIVE names another, compare it with the migrations before deciding; do not widen the list to make it pass. Leaked-password protection is a Supabase Auth setting the owner turns on in TEST and LIVE (Authentication, Settings); no migration covers it.
-- [ ] **OWNER**: Only after explicit approval for that exact Production operation, use the pinned supported Supabase CLI from the final checked source, verify the selected project is LIVE, inspect `supabase migration list --linked` and the pending migration plan, then perform the reviewed `supabase db push --linked` in strict numeric order. Credentials go through secure operator controls, not chat, saved scripts or command logs. Review configured Vault/seed/role behavior and supported CLI flags rather than adding broad include/reset flags. This runbook is not an instruction to execute those commands now.
+- [ ] **OWNER**: **One story on who applies LIVE migrations (batch 7, OPS3-03 D7):** the workflow does, not a person. The owner merges the PR, then approves the `db-migrations-production` run in the `production` environment; that run verifies a LIVE backup, runs the pinned CLI's `supabase db push` in strict numeric order and reads the history back. Nobody runs `db push` from a laptop, nobody pastes SQL, and the agent never holds LIVE credentials. The only hand-run command on LIVE before merge day is the read-only `supabase migration list --linked` in the merge-day checklist above (and the reconcile SQL if it shows a gap). This runbook is not an instruction to execute anything now.
 - [ ] **OWNER + AGENT**: Record actual completed application, re-read history and compare generated database types/schema with the exact release contract. Check Advisors and relevant invariants/security expectations. A success message or manually inserted history record is not enough. Failed, partial or uncertain application stops release pending inspection.
 - [ ] **OWNER**: Confirm the reviewed DB-before-code plan is complete and authorizes admission of the new code only after every prerequisite is verified.
 
@@ -339,7 +393,7 @@ runs both.
 
 - [ ] **AGENT**: Report the full checked SHA, both verification rounds, actual exact-SHA CI/TEST results, final audit status, hosted/manual evidence and outstanding limits. Confirm the branch has not advanced since the accepted Preview.
 - [ ] **OWNER**: Explicitly approve that exact release only after sections1–7 and the DB-before-code plan are complete. Any new code/schema change invalidates the affected sign-off and requires its checks again.
-- [ ] **OWNER**: Perform the reviewed merge to `main`; the coding agent does not merge or push main. Confirm which Production deployment serves traffic and its exact source.
+- [ ] **OWNER**: Perform the reviewed merge to `main` (the GitHub "Merge pull request" button, on your explicit decision); the coding agent does not merge or push `main`. `docs/handoff/OWNER_STEPS.md` Stage 8 says the same. Confirm which Production deployment serves traffic and its exact source.
 - [ ] **OWNER**: Inspect the Production migration job (`db-migrations-production`, which runs on every `main` push) and approve it only under the reviewed plan. If migrations were safely pre-applied it is a verified no-op. Confirm the Vercel deployment stayed un-aliased until the check passed, then confirm genuine history/types before admitting new traffic.
 
 ## 9. Owner-operated LIVE smoke checks after separate release approval
@@ -353,13 +407,15 @@ an agent permission to exercise Production.
 - [ ] **OWNER**: If authorized, request and complete a controlled password reset; confirm branded receipt and return to the LIVE domain. Review final Terms/Privacy and actual alert/maintenance evidence.
 - [ ] **OWNER**: Point an uptime monitor (UptimeRobot or similar) at `https://<live domain>/api/health`, not at `/` (the home page is CDN-cached and stays green while the database is down). It must read `200 {"ok":true}`; alert to your e-mail. Set `HEARTBEAT_URL` on Production to a heartbeat monitor's ping URL so a maintenance cron that stops is reported from outside ([runbook](RUNBOOK.md#watch-it-before-anything-breaks)).
 - [ ] **OWNER**: Send a test e-mail to the support address (`LEGAL.contactEmail`, today `support@easysimplesites.org`) from an outside account and confirm it arrives in the mailbox someone watches. It is the address for data-rights requests, lost authenticators, suspensions and legal notices; until the domain has inbound mail (MX), mail to it bounces.
+- [ ] **OWNER**: Within the hour after promotion, initialize the reward canary (Admin › System health → **Run checks now**; section 5). Without it the nightly job answers 503 and the heartbeat monitor reports "down" the next morning.
 - [ ] **OWNER**: The day after go-live, open Admin › System health and confirm **Maintenance job: last ran …** shows a run from the last 24 hours (not red), **Alert e-mails: ON**, and that the heartbeat monitor received its first ping.
-- [ ] **OWNER**: Before approving each `db-migrations-production` run, confirm today's LIVE backup is listed in Supabase → Database → Backups. The job runs `supabase db push` with no backup step of its own.
+- [ ] **OWNER**: Before approving each `db-migrations-production` run, confirm today's LIVE backup is listed in Supabase → Database → Backups. The job checks the same list before `supabase db push` and refuses without one (section 5, "The backup gate").
+- [ ] **OWNER**: From now on follow `docs/OWNER_CHECKLIST.md` (every morning, every week, before every release, incident map).
 - [ ] **OWNER**: Record the outcome and any required incident response. TEST success does not waive these LIVE checks.
 
 ## 10. Rollback and recovery
 
 - [ ] **OWNER + AGENT**: Before release, identify the exact safe rollback deployment and prove its compatibility with the new database/auth contracts on TEST. Do not assume an older build is compatible with retired RPCs or that code rollback restores schema/data.
-- [ ] **OWNER**: If a release fails, follow the rollback recipe in [`DEPLOY.md` § Rollback](../DEPLOY.md#rollback) and the [runbook](RUNBOOK.md#roll-back-a-deploy): Vercel Instant Rollback first, then a revert PR on main, then the old-code/new-schema check. Both are owner operations; preserve evidence and prevent an automatic redeploy of known-unsafe code.
+- [ ] **OWNER**: If a release fails, follow the rollback recipe in [`DEPLOY.md` § Rollback](../DEPLOY.md#rollback) and the [runbook](RUNBOOK.md#roll-back-a-deploy): Vercel Instant Rollback first, then a revert PR on main, then the old-code/new-schema check. **Exception, the go-live release:** the previous deployment is pre-0039 code, so Instant Rollback is wrong; pause the site and fix forward. Both are owner operations; preserve evidence and prevent an automatic redeploy of known-unsafe code.
 - [ ] **OWNER**: Do not reverse migrations, reset LIVE, rotate reward keys or repair economic records as a shortcut. Follow the [runbook's restore steps](RUNBOOK.md#restore-from-backup-do-not-improvise) if data recovery is needed; record exactly what was restored and re-verify invariants before reopening traffic.
 - [ ] **AGENT**: Reproduce/fix on a branch Preview with TEST data, repeat affected full verification/audit/hosted gates, then prepare a new concrete release for owner approval.

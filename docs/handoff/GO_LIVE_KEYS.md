@@ -28,8 +28,11 @@ Golden rules:
 | `REWARD_ENCRYPTION_KEY`, `REWARD_CODE_FINGERPRINT_KEY` | ❌ **missing** (step 3) | ✅ set |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | ❌ **missing** (step 5) | ✅ set |
 | `ADMIN_EMAILS`, `FF_REQUIRE_SUPABASE` | ❌ **missing** (step 2) | ✅ set |
-| `CRON_SECRET` | ❌ **missing** (step 4) | — not needed |
+| `CRON_SECRET` | ❌ **missing** (step 4) | needed only for the TEST maintenance scheduler (`TEST_MAINTENANCE.md`: it must equal the GitHub `FANFUNNEL_TEST_CRON_SECRET`); otherwise leave it unset |
 | `RESEND_API_KEY`, `ALERT_EMAIL_TO` | ❌ **missing** (step 6, **required**: creator e-mail) | ❌ missing (recommended for testing creator e-mail) |
+| `HEARTBEAT_URL` | ❌ **missing** (step 6b) | — not needed |
+| `FF_MAINTENANCE` | correctly **absent** (set to `1` only to pause the site, `docs/RUNBOOK.md`) | absent |
+| `REWARD_ENCRYPTION_KEY_PREVIOUS`, `REWARD_ENCRYPTION_KEY_PREVIOUS_VERSION` | correctly **absent** (only during a planned key rotation, `docs/GO_LIVE.md` §4) | absent |
 
 ---
 
@@ -143,7 +146,9 @@ Both are free, and both still warn you when our own database or e-mail is down.
 | `HEARTBEAT_URL` | the ping URL | **yes** |
 
 After each successful nightly maintenance run, the app pings it. If the pings stop, the
-monitor e-mails you.
+monitor e-mails you. Create both monitor accounts (UptimeRobot, Healthchecks.io) under the
+owner's e-mail with two-factor on, and note them in OWNER_STEPS Stage 5; what a "down" e-mail
+means and what to do: `docs/RUNBOOK.md` § The heartbeat monitor says "down".
 
 ## Step 7: Separate the Preview rate-limit store (Preview + Production)
 
@@ -172,15 +177,24 @@ In short, at **[GitHub → Environments](https://github.com/Guhlores-Team/fanfun
 
 1. **`test`** → **Add environment secret** `SUPABASE_TEST_DB_URL`: the TEST **Session pooler** string from
    **[Supabase TEST → Connect](https://supabase.com/dashboard/project/snmcrmhgevfqggxdiomu?showConnect=true)**
-   (port 5432) with the TEST database password filled in. Also add `SUPABASE_TEST_PROJECT_REF`,
-   `SUPABASE_TEST_DB_PASSWORD`, `VERCEL_TOKEN`, `FANFUNNEL_TEST_CRON_SECRET` here.
-2. **`production`** → Required reviewers = you; Deployment branches = **Selected** → `main`; add
-   `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`.
-3. Then, at **[Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions)**, delete the
-   repository copies of `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`
-   and `VERCEL_TOKEN`. Keep the three TEST app secrets there.
-4. **[Supabase access tokens](https://supabase.com/dashboard/account/tokens)**: revoke the old CI token and
-   use a fresh one for step 2.
+   (port 5432) with the TEST database password filled in. Also add `SUPABASE_TEST_PROJECT_REF` and
+   `SUPABASE_TEST_DB_PASSWORD` here. Nothing else: every PR job can reach this environment.
+2. **`production`** → Required reviewers = you; Deployment branches = **Selected** → `main`; description
+   "Approve only after today's LIVE backup is listed"; add `SUPABASE_PROD_PROJECT_REF`,
+   `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`. **Where `SUPABASE_ACCESS_TOKEN` lives:** here,
+   and in `test-maintenance` (next line); never as a repository secret and never in `test`.
+3. **`test-maintenance`** (new, batch 7) → Required reviewers = you; Deployment branches = **Selected** →
+   `dashboard-redesign`; add `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN` and `FANFUNNEL_TEST_CRON_SECRET`.
+   The manual TEST jobs read them from here.
+4. Then, at **[Actions secrets](https://github.com/Guhlores-Team/fanfunnel/settings/secrets/actions)**, delete the
+   repository copies of `SUPABASE_PROD_DB_PASSWORD`, `SUPABASE_PROD_PROJECT_REF`, `SUPABASE_ACCESS_TOKEN`,
+   `VERCEL_TOKEN` and `FANFUNNEL_TEST_CRON_SECRET`. Keep the three TEST app secrets there.
+5. Optional, same page, tab **Variables** (not secrets): `PROD_BACKUP_POLICY` = `accept-no-backup` only if
+   the LIVE project is on a plan without backups and you have decided to release anyway. Otherwise do not
+   create it: the production migration job refuses to run without a backup from the last 36 hours
+   (`docs/GO_LIVE.md` §5).
+6. **[Supabase access tokens](https://supabase.com/dashboard/account/tokens)**: revoke the old CI token and
+   use a fresh one for steps 2 and 3.
 
 ## Step 10: Tell me you're done
 
@@ -199,7 +213,12 @@ Just say **"keys are in"**. Don't send any values. I will then:
 - **GitHub secrets** (OWNER_STEPS 14a): add the TEST trio as Dependabot secrets so automated update
   checks run the database tests instead of failing.
 - **Vercel Deployment Check** (OWNER_STEPS 14b, `docs/GO_LIVE.md` §5): makes Vercel hold a Production
-  release until the database migrations have been confirmed. I'll walk you through it at go-live.
+  release until the database migrations have been confirmed. I'll walk you through it at go-live; it is
+  proven on a code-only merge first.
+- **Fluid compute** (Vercel → Settings → Functions): confirm it is on; the nightly job and slow-database
+  paths rely on its 300-second default duration (batch 7, OPS3-01 / RS-05).
+- **Secure email change, OTP expiry, custom SMTP, minimum password length, the two security notices**
+  (Supabase → Authentication, both projects): the ordered clicks are `OWNER_STEPS.md` Stage 2.
 - **Vercel Toolbar on Previews:** the new security policy blocks it. Turn it off in Vercel
   (Settings → General → Vercel Toolbar) or ignore the "CSP blocked … vercel.live" lines in Admin › Errors.
 - **Supabase Auth URLs and e-mail templates** (both projects, Authentication → URL Configuration
