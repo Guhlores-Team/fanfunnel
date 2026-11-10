@@ -34,6 +34,8 @@
 //           field errors, the handle hint and the discard list.
 //  WU-01    a suspended creator keeps the dashboard with the banner; every
 //           save is refused in plain words and nothing is written.
+//  WU-08/09 + WG-16 the password rule, show/hide toggles and "Sign out
+//           other devices".
 // Steps that answer API calls with errors run on their own page with no error
 // sink: the failures are the point of the step. Every fixture is removed again.
 import { randomUUID } from "node:crypto";
@@ -737,15 +739,15 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
 
       // WC-18: a password problem is said under its field, as an alert, with no error toast.
       const security = page.locator("div").filter({ has: page.getByRole("button", { name: "Update password" }) }).last();
-      await security.getByLabel("Current password").fill("whatever-1");
-      await security.getByLabel("New password").fill("longenough-1");
-      await security.getByLabel("Confirm new").fill("different-1");
+      await security.getByLabel("Current password", { exact: true }).fill("whatever-1");
+      await security.getByLabel("New password", { exact: true }).fill("longenough-1");
+      await security.getByLabel("Confirm new", { exact: true }).fill("different-1");
       await security.getByRole("button", { name: "Update password" }).click();
       const fieldError = security.getByTestId("field-error");
       await fieldError.waitFor({ timeout: 5000 });
       assert(/don.t match/.test(await fieldError.innerText()) && (await fieldError.getAttribute("role")) === "alert", "the mismatch is an alert under the field");
       assert((await page.locator('[data-testid="toast"][data-tone="error"]').count()) === 0, "no error toast for a field problem");
-      await security.getByLabel(/^Confirm new/).fill("longenough-1x");
+      await security.getByLabel("Confirm new", { exact: true }).fill("longenough-1x");
       await fieldError.waitFor({ state: "detached", timeout: 5000 });
 
       // WC-30: the handle field says what a save stores and what it breaks.
@@ -851,5 +853,45 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     }
     const back = await request.put(BASE + "/api/public-profile", { data: { tagline: profile.tagline ?? "" } });
     assert(back.ok(), "a reactivated creator can save again");
+  });
+
+  await step("b7 WU-08/09 + WG-16: the password card states the shared rule, fields can be shown, and other devices can be signed out", async () => {
+    // No sink: the demo answers the sign-out with 400 demo_mode on purpose.
+    const page = await ctx.newPage();
+    try {
+      await goto(page, "/dashboard?section=settings", 1500);
+      const security = page.locator("div").filter({ has: page.getByRole("button", { name: "Update password" }) }).last();
+      await security.waitFor({ timeout: 10000 });
+      assert(/8\+ characters with a letter and a number/.test(await security.innerText()), "the card states the password rule");
+      assert(/signs out every other device/.test(await security.innerText()), "it says a change signs out the other devices");
+      const next = security.getByLabel("New password", { exact: true });
+      await security.getByLabel("Current password", { exact: true }).fill("whatever-1");
+      await next.fill("onlyletters");
+      await security.getByLabel("Confirm new", { exact: true }).fill("onlyletters");
+      await security.getByRole("button", { name: "Update password" }).click();
+      const fieldError = security.getByTestId("field-error");
+      await fieldError.waitFor({ timeout: 5000 });
+      assert(/8\+ characters with a letter and a number/.test(await fieldError.innerText()), "a password without a number is refused under the field with the rule");
+      assert((await next.getAttribute("type")) === "password", "the new password is hidden by default");
+      const toggles = security.getByRole("button", { name: "Show password" });
+      assert((await toggles.count()) === 3, "each password field has its own show/hide toggle");
+      await toggles.nth(1).click();
+      assert((await next.getAttribute("type")) === "text" && (await next.inputValue()) === "onlyletters", "Show reveals what was typed");
+      await security.getByRole("button", { name: "Hide password" }).click();
+      assert((await next.getAttribute("type")) === "password", "Hide masks it again");
+
+      const others = page.getByTestId("sign-out-others");
+      await others.scrollIntoViewIfNeeded();
+      const card = page.locator('section[aria-labelledby="settings-other-devices"]');
+      assert(/you stay signed in here/.test(await card.innerText()), "the card says this device stays signed in");
+      const answered = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/account/sessions" && r.request().method() === "POST");
+      await others.click();
+      const res = await answered;
+      assert(res.status() === 400 && (await res.json()).error === "demo_mode", "the demo has no sessions to end and says so");
+      await page.locator('[data-testid="toast"][data-tone="error"]').filter({ hasText: /needs a real account/ }).first().waitFor({ timeout: 5000 });
+      assert(await others.isEnabled(), "the button is usable again after the answer");
+    } finally {
+      await page.close().catch(() => {});
+    }
   });
 }
