@@ -16523,6 +16523,317 @@ drop function if exists public.edit_pass_grant(uuid, uuid, uuid, jsonb, uuid);
 drop function if exists public.grant_focus_pack(uuid, uuid, uuid, uuid, uuid, uuid, uuid);
 drop function if exists public.import_fans_durable(uuid, uuid, text, jsonb, uuid);
 
+-- ── (8b) dashboard follow-ups: delivery promise, link expiry read, queue
+-- actor, agency notices, seat-scope cleanup, owner state, empty-game delete,
+-- one-statement "set active" ───────────────────────────────────────────────
+-- Still no new signed-in SECURITY DEFINER name: the two changed signed-in
+-- functions keep their names (creator_redemption_queue, delete_wheel) under a
+-- new signature, set_active_wheel runs as the caller, and everything else is a
+-- column, a grant, a policy or a trigger.
+
+-- PR-10: the creator's delivery promise, 1..60 days (null = none). Read by the
+-- creator on its own row (profiles_select; profiles is granted per table, so
+-- the column needs no grant of its own), written only by the server: the
+-- route checks can_act_for(self, 'manage') on the session, then updates this
+-- one column with the service role (profiles_update stays admin-only, so no
+-- creator session can write its own profile row).
+alter table public.profiles add column if not exists delivery_days smallint check (delivery_days between 1 and 60);
+comment on column public.profiles.delivery_days is 'The creator''s delivery promise in days, 1..60 (0073, PR-10). Null = no promise. Server-written only.';
+
+-- A prize that waits for the creator gets its due date from that promise when
+-- it is won. A plain read of the creator's profile: no row lock is taken, so
+-- the play's lock order (fan → link → game → prize) is unchanged.
+create or replace function public._default_redemption_due()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_days smallint;
+begin
+  if new.due_at is null and new.status = 'pending' and new.fulfilled_at is null then
+    select p.delivery_days into v_days from public.profiles p where p.id = new.creator_id;
+    if v_days is not null then
+      new.due_at := coalesce(new.created_at, now()) + make_interval(days => v_days);
+    end if;
+  end if;
+  return new;
+end $$;
+revoke execute on function public._default_redemption_due() from public, anon, authenticated, service_role;
+drop trigger if exists ac_delivery_due on public.redemptions;
+create trigger ac_delivery_due before insert on public.redemptions
+  for each row execute function public._default_redemption_due();
+
+-- PR-13: the creator reads when a link runs out (the token stays unreadable).
+grant select (expires_at) on public.fan_passes to authenticated;
+
+-- WG-07: the fulfilment queue says who last moved each prize (actor_id, the
+-- last column) and can be narrowed to one account (p_actor, the last
+-- argument). A changed row type needs a new signature; this replaces the
+-- seven-argument queue defined in (7).
+drop function if exists public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid);
+create or replace function public.creator_redemption_queue(
+  p_status text default null,
+  p_query text default null,
+  p_before_at timestamptz default null,
+  p_before_id uuid default null,
+  p_limit integer default 50,
+  p_creator uuid default null,
+  p_fan uuid default null,
+  p_actor uuid default null
+)
+returns table (
+  id uuid,
+  status public.redemption_status,
+  created_at timestamptz,
+  notes text,
+  due_at timestamptz,
+  prize_label text,
+  prize_rarity public.prize_rarity,
+  fan_name text,
+  fan_id uuid,
+  pool_snapshot jsonb,
+  fair_trace jsonb,
+  reward_kind text,
+  reward_views integer,
+  reward_last_viewed_at timestamptz,
+  actor_id uuid
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  with target as (
+    select coalesce(p_creator, auth.uid()) as id
+     where case when p_creator is null or p_creator = auth.uid()
+                then public.can_act_for(auth.uid(), 'view')
+                else public.can_act_for(p_creator, 'fulfil') end
+  ), q as (
+    select nullif(btrim(coalesce(p_query, '')), '') as raw
+  ), pattern as (
+    select case when raw is null then null
+      else '%' || replace(replace(replace(left(raw, 100), '\', '\\'), '%', '\%'), '_', '\_') || '%' end as p
+    from q
+  )
+  select r.id, r.status, r.created_at, r.notes, r.due_at,
+         s.prize_label, s.prize_rarity,
+         coalesce(f.display_name, f.handle, 'Fan') as fan_name,
+         f.id as fan_id,
+         s.pool_snapshot, s.fair_trace,
+         sr.kind, sr.views, sr.last_viewed_at,
+         r.actor_id
+    from public.redemptions r
+    join target t on r.creator_id = t.id
+    join public.spins s on s.id = r.spin_id and s.creator_id = r.creator_id
+    left join public.fans f on f.id = s.fan_id and f.creator_id = r.creator_id
+    left join public.spin_rewards sr on sr.spin_id = s.id
+    cross join pattern
+   where (p_status is null or r.status::text = p_status)
+     and (p_fan is null or s.fan_id = p_fan)
+     and (p_actor is null or r.actor_id = p_actor)
+     and (pattern.p is null
+          or s.prize_label ilike pattern.p
+          or f.display_name ilike pattern.p
+          or f.handle ilike pattern.p)
+     and (p_before_at is null or (r.created_at, r.id) < (p_before_at, p_before_id))
+   order by r.created_at desc, r.id desc
+   limit least(greatest(coalesce(p_limit, 50), 1), 100);
+$$;
+revoke execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid, uuid) from public, anon;
+grant execute on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid, uuid) to authenticated, service_role;
+comment on function public.creator_redemption_queue(text, text, timestamptz, uuid, integer, uuid, uuid, uuid) is 'One page of a creator''s won prizes, newest first, with the fan (fan_id, null once deleted) and the account that last moved each one (actor_id); optional status, search, one fan (p_fan) and one actor (p_actor) (0064; 0073). The caller''s own queue needs can_act_for(self, view), another creator''s needs can_act_for(creator, fulfil).';
+
+-- WG-04 / WG-13 / PR-04: the bell also carries "your agency was dissolved",
+-- "your agency's owner was suspended" and a creator's request to unlock a
+-- game. Rows are still written by the server or by a trigger only
+-- (authenticated holds SELECT alone). A replay of the older snapshot text
+-- re-adds the two-kind check first, which validates only while no notice of a
+-- newer kind is stored; replays are for empty or freshly built databases.
+alter table public.creator_notices drop constraint if exists creator_notices_kind_check;
+alter table public.creator_notices add constraint creator_notices_kind_check
+  check (kind in ('fan_deleted_data', 'creator_approved', 'agency_dissolved', 'agency_owner_suspended', 'game_unlock_request'));
+
+-- WG-13: whether the agency's owner can still act (active and approved; the
+-- same test can_act_for applies before it lets any seat through). Stored on
+-- the org so a seat and a managed creator can read it without reading the
+-- owner's profile: the value is recomputed by trigger on every org write and
+-- whenever the owner's account state changes, never taken from the request.
+alter table public.orgs add column if not exists owner_active boolean not null default true;
+comment on column public.orgs.owner_active is 'False while the owner''s account is suspended or unapproved, when every seat is frozen (0073, WG-13). Trigger-maintained.';
+
+create or replace function public._org_owner_state()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_live boolean;
+begin
+  if tg_table_name = 'orgs' then
+    new.owner_active := coalesce((select p.is_active and (p.approval_status = 'approved' or p.role = 'admin')
+                                    from public.profiles p where p.id = new.owner_id), false);
+    return new;
+  end if;
+  -- profiles: the owner's account state changed.
+  v_live := new.is_active and (new.approval_status = 'approved' or new.role = 'admin');
+  update public.orgs set owner_active = v_live where owner_id = new.id and owner_active is distinct from v_live;
+  if old.is_active and not new.is_active then
+    -- One notice for every seat and every managed creator of the agency this
+    -- account owns (never the owner itself), in id order. Only creator_notices
+    -- is written: no profile is updated, so this trigger cannot fire again.
+    insert into public.creator_notices (creator_id, kind, details)
+    select t.id, 'agency_owner_suspended', jsonb_build_object('org_name', left(o.name, 80))
+      from public.orgs o
+      cross join lateral (
+        select p.id from public.profiles p where p.org_id = o.id
+        union
+        select m.profile_id from public.org_members m where m.org_id = o.id
+      ) t
+     where o.owner_id = new.id and t.id <> new.id
+     order by t.id;
+  end if;
+  return null;
+end $$;
+revoke execute on function public._org_owner_state() from public, anon, authenticated, service_role;
+drop trigger if exists aa_owner_active on public.orgs;
+create trigger aa_owner_active before insert or update on public.orgs
+  for each row execute function public._org_owner_state();
+drop trigger if exists ae_org_owner_state on public.profiles;
+create trigger ae_org_owner_state after update of is_active, approval_status, role on public.profiles
+  for each row execute function public._org_owner_state();
+update public.orgs o set owner_active = o.owner_active
+ where o.owner_active is distinct from coalesce((select p.is_active and (p.approval_status = 'approved' or p.role = 'admin')
+                                                    from public.profiles p where p.id = o.owner_id), false);
+
+-- A managed creator, and a seat even while the owner is suspended, read their
+-- own agency's row (name, owner_active). orgs_read still hides the row from a
+-- seat once the owner is suspended; this policy only adds the two ties, each
+-- through the caller's own rows: profiles_select shows a session its own
+-- profile (org_id) and org_members_read its own seats (active accounts only).
+drop policy if exists orgs_tie_read on public.orgs;
+create policy orgs_tie_read on public.orgs for select to authenticated
+  using (
+    (select public.can_act_for((select auth.uid()), 'view'))
+    and (
+      id = (select p.org_id from public.profiles p where p.id = (select auth.uid()))
+      or exists (select 1 from public.org_members m where m.org_id = orgs.id and m.profile_id = (select auth.uid()))
+    )
+  );
+
+-- WG-14: a creator that leaves an agency (or is removed from it) takes its
+-- seat scopes with it. Before, the org_member_creators rows stayed: they gave
+-- nothing while the creator was outside the agency (can_act_for joins on
+-- profiles.org_id), but a chatter or fulfiller got its old access back, with
+-- no new grant by the owner, the moment the creator joined that agency again.
+create or replace function public.org_remove_creator(p_org uuid, p_creator uuid)
+returns text language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if not public._owns_org(p_org) then return 'not_owner'; end if;
+  update public.profiles set org_id = null where id = p_creator and org_id = p_org;
+  delete from public.org_member_creators mc using public.org_members m
+   where mc.member_id = m.id and m.org_id = p_org and mc.creator_id = p_creator;
+  return 'ok';
+end;
+$$;
+revoke execute on function public.org_remove_creator(uuid, uuid) from public, anon;
+grant execute on function public.org_remove_creator(uuid, uuid) to authenticated;
+
+create or replace function public.org_leave(p_org uuid)
+returns text language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_seats integer := 0; v_creator integer := 0;
+begin
+  if auth.uid() is null or p_org is null or not public._session_mfa_satisfied() then return 'not_member'; end if;
+  -- 0073 (WG-02): an owner does not leave its own agency (its seat stays).
+  if exists (select 1 from public.orgs o where o.id = p_org and o.owner_id = auth.uid()) then return 'owner_seat'; end if;
+  -- Leaving a seat removes its scopes with it (org_member_creators cascades).
+  delete from public.org_members where org_id = p_org and profile_id = auth.uid();
+  get diagnostics v_seats = row_count;
+  update public.profiles set org_id = null where id = auth.uid() and org_id = p_org;
+  get diagnostics v_creator = row_count;
+  -- Leaving as a managed creator removes every seat's scope on this creator.
+  delete from public.org_member_creators mc using public.org_members m
+   where mc.member_id = m.id and m.org_id = p_org and mc.creator_id = auth.uid();
+  return case when v_seats + v_creator > 0 then 'ok' else 'not_member' end;
+end $$;
+revoke execute on function public.org_leave(uuid) from public, anon;
+grant execute on function public.org_leave(uuid) to authenticated, service_role;
+comment on function public.org_leave(uuid) is 'The caller leaves an agency: its own seat and, as a member creator, the org and every seat scope on it (0071; 0073).';
+
+-- The same rule for every other writer of profiles.org_id (a server update,
+-- the SET NULL of a deleted org): scopes never outlive the membership.
+create or replace function public._drop_stale_seat_scopes()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.org_id is distinct from old.org_id then
+    delete from public.org_member_creators mc
+     where mc.creator_id = new.id
+       and not exists (select 1 from public.org_members m where m.id = mc.member_id and m.org_id = new.org_id);
+  end if;
+  return null;
+end $$;
+revoke execute on function public._drop_stale_seat_scopes() from public, anon, authenticated, service_role;
+drop trigger if exists af_seat_scope_cleanup on public.profiles;
+create trigger af_seat_scope_cleanup after update of org_id on public.profiles
+  for each row execute function public._drop_stale_seat_scopes();
+delete from public.org_member_creators mc
+ where not exists (select 1 from public.org_members m join public.profiles p on p.org_id = m.org_id
+                    where m.id = mc.member_id and p.id = mc.creator_id);
+
+-- WC-09: removing an abandoned, still empty game is one atomic call. With
+-- p_only_if_empty the delete is refused with 'not_empty' as soon as the game
+-- holds a prize or any play, decided under the same locks as the delete. The
+-- one-argument function defined above is replaced by this signature.
+drop function if exists public.delete_wheel(uuid);
+create or replace function public.delete_wheel(p_wheel uuid, p_only_if_empty boolean default false)
+returns text language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_creator uuid;
+begin
+ select creator_id into v_creator from public.wheels where id=p_wheel;
+ if v_creator is null or not (public.can_act_for(v_creator,'edit_wheel') or public.is_admin()) then return 'not_found'; end if;
+ perform public._lock_wheel_lifecycle(p_wheel);
+  -- 0073 (CC-03): the caller's authority is evaluated again once every lock is
+  -- held, so a seat removed while this call waited cannot complete the write.
+  if not (public.can_act_for(v_creator,'edit_wheel') or public.is_admin()) then return 'not_found'; end if;
+ if coalesce(p_only_if_empty,false) and (exists(select 1 from public.prizes where wheel_id=p_wheel)
+   or exists(select 1 from public.spins where wheel_id=p_wheel)
+   or exists(select 1 from public.bingo_cards where wheel_id=p_wheel)) then return 'not_empty'; end if;
+ -- A game with play history is archived, never deleted (spins and
+ -- redemptions are revenue and analytics records), and so is a game any fan
+ -- link is stored on: fan_passes.wheel_id cascades, so the delete would erase
+ -- the link and its balance even when the link now plays another game. Under
+ -- the wheel lock no new link can reference it (its foreign-key check waits).
+ if exists(select 1 from public.spins where wheel_id=p_wheel)
+   or exists(select 1 from public.fan_passes where wheel_id=p_wheel) then return 'has_history'; end if;
+ delete from public.wheels where id=p_wheel;
+ return 'ok';
+end $$;
+revoke execute on function public.delete_wheel(uuid, boolean) from public,anon;
+grant execute on function public.delete_wheel(uuid, boolean) to authenticated,service_role;
+comment on function public.delete_wheel(uuid, boolean) is 'Deletes a game that has no play history and no fan link stored on it (else has_history); with p_only_if_empty also refuses (not_empty) a game that holds a prize or any play (0065; 0073). Checks can_act_for(creator, edit_wheel) or is_admin() on the caller, again once the locks are held.';
+
+-- CC-06: "Set active" is one statement. The dashboard used to flag the chosen
+-- game and then clear the others in a second request, so two games were live
+-- in between, and for good when the second request failed. This function runs
+-- as the caller (wheels_select / wheels_write decide every row): it takes the
+-- creator's games in id order, so two switches queue instead of crossing, and
+-- flips them in a single UPDATE. A creator has one live game across all kinds,
+-- which is what _creator_default_wheel resolves.
+create or replace function public.set_active_wheel(p_wheel uuid)
+returns text language plpgsql security invoker set search_path = public, pg_temp as $$
+declare v_creator uuid; v_hit integer; v_ready boolean; v_archived timestamptz;
+begin
+  select w.creator_id into v_creator from public.wheels w where w.id = p_wheel;
+  if v_creator is null then return 'not_found'; end if;
+  -- FOR NO KEY UPDATE passes only rows the caller may also update: a caller
+  -- that can see the game but not edit it (a chat seat, a suspended creator)
+  -- locks nothing and is refused.
+  select count(*) filter (where l.id = p_wheel) into v_hit
+    from (select w.id from public.wheels w where w.creator_id = v_creator order by w.id for no key update) l;
+  if v_hit = 0 then return 'forbidden'; end if;
+  select w.game_ready, w.archived_at into v_ready, v_archived from public.wheels w where w.id = p_wheel;
+  if v_archived is not null then return 'not_found'; end if;
+  if not v_ready then return 'game_not_ready'; end if;
+  update public.wheels w set is_active = (w.id = p_wheel)
+   where w.creator_id = v_creator and w.is_active is distinct from (w.id = p_wheel);
+  return 'ok';
+end $$;
+revoke execute on function public.set_active_wheel(uuid) from public, anon;
+grant execute on function public.set_active_wheel(uuid) to authenticated, service_role;
+comment on function public.set_active_wheel(uuid) is 'Makes one game the creator''s live game and clears the flag on its others in a single UPDATE (0073, CC-06). Runs as the caller under the wheels policies (can_act_for(creator, edit_wheel) or is_admin()). Answers ok, not_found (unknown or archived), forbidden (visible, not editable) or game_not_ready.';
+
 -- ── (9) closing check: browser roles reach only the reviewed functions, and
 -- every creator-owned table carries the immutability trigger ────────────────
 do $$
@@ -16548,8 +16859,8 @@ begin
        'org_scope_creator', 'set_chat_settings', 'set_creator_note', 'set_creator_theme', 'set_display_name',
        'set_leaderboard_enabled', 'set_notification_prefs', 'set_notifications_seen', 'set_onboarding_dismissed',
        'set_public_profile', 'set_pwa_icon_mode', 'set_redemption_state', 'wipe_my_spin_attempts');
-       -- 0073 adds no signed-in SECURITY DEFINER function: the 0072 list above
-       -- must still hold when the snapshots are replayed over this schema.
+       -- 0073 adds no signed-in SECURITY DEFINER function name: the 0072 list
+       -- above must still hold when the snapshots are replayed over this schema.
   if v_bad is not null then
     raise exception '0073: authenticated can execute SECURITY DEFINER functions outside the reviewed list: %', v_bad;
   end if;

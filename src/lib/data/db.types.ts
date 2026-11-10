@@ -1947,6 +1947,7 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          owner_active: boolean
           owner_id: string
         }
         Insert: {
@@ -1954,6 +1955,7 @@ export type Database = {
           created_at?: string
           id?: string
           name: string
+          owner_active?: boolean
           owner_id: string
         }
         Update: {
@@ -1961,6 +1963,7 @@ export type Database = {
           created_at?: string
           id?: string
           name?: string
+          owner_active?: boolean
           owner_id?: string
         }
         Relationships: [
@@ -2202,6 +2205,7 @@ export type Database = {
           chat_outro: string | null
           created_at: string
           creator_note: string | null
+          delivery_days: number | null
           display_name: string | null
           email: string | null
           features: Json
@@ -2230,6 +2234,7 @@ export type Database = {
           chat_outro?: string | null
           created_at?: string
           creator_note?: string | null
+          delivery_days?: number | null
           display_name?: string | null
           email?: string | null
           features?: Json
@@ -2258,6 +2263,7 @@ export type Database = {
           chat_outro?: string | null
           created_at?: string
           creator_note?: string | null
+          delivery_days?: number | null
           display_name?: string | null
           email?: string | null
           features?: Json
@@ -3444,6 +3450,7 @@ export type Database = {
       creator_obligations: { Args: { p_creator?: string }; Returns: Json }
       creator_redemption_queue: {
         Args: {
+          p_actor?: string
           p_before_at?: string
           p_before_id?: string
           p_creator?: string
@@ -3453,6 +3460,7 @@ export type Database = {
           p_status?: string
         }
         Returns: {
+          actor_id: string | null
           created_at: string
           due_at: string
           fair_trace: Json
@@ -3548,7 +3556,7 @@ export type Database = {
         Args: { p_campaign: string; p_creator: string }
         Returns: string
       }
-      delete_wheel: { Args: { p_wheel: string }; Returns: string }
+      delete_wheel: { Args: { p_only_if_empty?: boolean; p_wheel: string }; Returns: string }
       edit_pass_grant:
         | {
             Args: {
@@ -3845,6 +3853,7 @@ export type Database = {
       schema_version: { Args: never; Returns: number }
       scrub_fan_reward_values: { Args: { p_fan: string }; Returns: undefined }
       self_exclude_pass: { Args: { p_token: string }; Returns: string }
+      set_active_wheel: { Args: { p_wheel: string }; Returns: string }
       set_chat_settings: {
         Args: { p_intro: string; p_outro: string }
         Returns: undefined
