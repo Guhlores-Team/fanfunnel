@@ -488,5 +488,39 @@ export function probeBatch7(db, psql) {
     ["draft:game_not_ready", `live:${WA}`]);
   refused("CC-06: anon cannot call set_active_wheel", `set local role anon; select public.set_active_wheel('${WA}');`, /permission denied for function set_active_wheel/);
 
+  // TS-05: record_fan_ack decides for itself that the link is live.
+  const ackState = `select (public.record_fan_ack('${TOKEN_A}', '${HEX}', null)->>'status') || ',' || (select coalesce(acked_at::text, 'null') from public.fans where id = '${FA}') || ',' || (select count(*) from public.fan_consent_evidence where fan_id = '${FA}')`;
+  for (const [label, state] of [
+    ["paused", `update public.fan_passes set is_active = false where id = '${PASS_A}';`],
+    ["expired", `update public.fan_passes set expires_at = now() - interval '1 minute' where id = '${PASS_A}';`],
+    ["self-excluded", `update public.fan_passes set self_excluded_at = now(), is_active = false where id = '${PASS_A}';`],
+    ["blocked", `update public.fans set blocked_at = now() where id = '${FA}';`],
+    ["suspended creator", `update public.profiles set is_active = false where id = '${A}';`],
+  ]) {
+    expect(`TS-05: record_fan_ack answers unavailable for a ${label} link and writes nothing`,
+      `update public.fans set acked_at = null, acked_terms_version = null where id = '${FA}'; ${state}` + service(`select '${label}:' || (${ackState});`),
+      [`${label}:unavailable,null,0`]);
+  }
+  expect("TS-05: record_fan_ack still stamps a live link, also one that expires later, and an unknown token is not_found",
+    `update public.fans set acked_at = null, acked_terms_version = null where id = '${FA}'; update public.fan_passes set expires_at = now() + interval '1 hour' where id = '${PASS_A}';`
+    + service(`select 'live:' || (public.record_fan_ack('${TOKEN_A}', '${HEX}', null)->>'status');
+      select 'stamped:' || (acked_at is not null)::text || ',' || acked_terms_version || ',' || (select count(*) from public.fan_consent_evidence where fan_id = '${FA}') from public.fans where id = '${FA}';
+      select 'unknown:' || (public.record_fan_ack('no-such-token')->>'status');`),
+    ["live:ok", "stamped:true,2026-11-11,1", "unknown:not_found"]);
+  // PR-04: one open unlock request per creator and game.
+  same("PR-04: the unlock-request key is a unique partial index on (creator_id, game)", q(`select indisunique::text || ',' || (pg_get_expr(indpred, indrelid) ~ 'game_unlock_request')::text || ',' || (pg_get_indexdef(indexrelid) ~ 'creator_id, \\(\\(details ->> ''game''::text\\)\\)')::text from pg_index where indexrelid = 'public.creator_notices_unlock_request_key'::regclass`), "true,true,true");
+  const ask = (creator, game) => `insert into public.creator_notices (creator_id, kind, details) values ('${creator}', 'game_unlock_request', '{"game":"${game}"}');`;
+  refused("PR-04: a second open request for the same game is a unique violation (23505)", service(ask(A, "bingo") + ask(A, "bingo")), /duplicate key value violates unique constraint "creator_notices_unlock_request_key"/);
+  refused("PR-04: a request without a game is refused", service(`insert into public.creator_notices (creator_id, kind, details) values ('${A}', 'game_unlock_request', '{}');`), /creator_notices_unlock_game_check/);
+  expect("PR-04: another game and another creator may ask; other notice kinds are not limited; turning the game on resolves the request and a later one is accepted",
+    service(ask(A, "bingo") + ask(A, "scratch") + ask(B, "bingo")
+      + `insert into public.creator_notices (creator_id, kind, details) values ('${A}', 'creator_approved', '{"game":"bingo"}'), ('${A}', 'creator_approved', '{"game":"bingo"}');`)
+    + `select 'open:' || count(*) from public.creator_notices where kind = 'game_unlock_request';`
+    + service(`update public.profiles set features = '{"bingo":true}'::jsonb where id = '${A}';`)
+    + `select 'resolved:' || string_agg(creator_id::text || '/' || (details->>'game'), ',' order by creator_id, details->>'game') from public.creator_notices where kind = 'game_unlock_request';
+       select 'others:' || count(*) from public.creator_notices where kind = 'creator_approved';`
+    + service(`update public.profiles set features = '{}'::jsonb where id = '${A}';` + ask(A, "bingo")) + `select 'again:' || count(*) from public.creator_notices where kind = 'game_unlock_request' and creator_id = '${A}';`,
+    ["open:3", `resolved:${[`${A}/scratch`, `${B}/bingo`].sort().join(",")}`, "others:2", "again:2"]);
+
   return { bad, checks };
 }

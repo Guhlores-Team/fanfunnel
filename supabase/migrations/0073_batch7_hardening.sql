@@ -1619,6 +1619,17 @@ begin
   if not found then return jsonb_build_object('status', 'not_found'); end if;
   perform 1 from public.fans where id = p.fan_id and creator_id = p.creator_id for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
+  -- Only a live link is acknowledged, decided here and not left to the
+  -- caller: the link is read again once its fan is held (fan before link, the
+  -- play order) and must be active, unexpired and not self-excluded, its fan
+  -- not blocked and its creator not suspended. Otherwise nothing is written.
+  select * into p from public.fan_passes where id = p.id;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  if not p.is_active or (p.expires_at is not null and p.expires_at <= now()) or p.self_excluded_at is not null
+     or exists (select 1 from public.fans f where f.id = p.fan_id and f.blocked_at is not null)
+     or not exists (select 1 from public.profiles c where c.id = p.creator_id and c.is_active) then
+    return jsonb_build_object('status', 'unavailable');
+  end if;
   update public.fans set acked_at = now(), acked_terms_version = v_version where id = p.fan_id;
   insert into public.fan_consent_evidence (fan_id, creator_id, terms_version, acked_at, ip_hash, ua_hash)
   values (p.fan_id, p.creator_id, v_version, now(), p_ip_hash, p_ua_hash)
@@ -1628,7 +1639,7 @@ begin
 end $$;
 revoke execute on function public.record_fan_ack(text, text, text) from public, anon, authenticated;
 grant execute on function public.record_fan_ack(text, text, text) to service_role;
-comment on function public.record_fan_ack(text, text, text) is 'Stamps the age/terms acknowledgement on the fan behind a link with the current legal_terms_version() and optional consent evidence hashes (0073, TS-05). Service role only.';
+comment on function public.record_fan_ack(text, text, text) is 'Stamps the age/terms acknowledgement on the fan behind a live link with the current legal_terms_version() and optional consent evidence hashes (0073, TS-05). Answers ok, not_found (no such link) or unavailable (paused, expired, self-excluded, blocked fan or suspended creator; nothing written). Service role only.';
 
 -- ── (7) DB-10: the fulfilment queue names the fan (null once deleted) ──────
 -- A changed row type needs a new signature so the snapshots stay replayable:
@@ -2095,6 +2106,35 @@ comment on function public.creator_redemption_queue(text, text, timestamptz, uui
 alter table public.creator_notices drop constraint if exists creator_notices_kind_check;
 alter table public.creator_notices add constraint creator_notices_kind_check
   check (kind in ('fan_deleted_data', 'creator_approved', 'agency_dissolved', 'agency_owner_suspended', 'game_unlock_request'));
+
+-- PR-04: one open unlock request per creator and game is a database rule, so
+-- two requests sent at once cannot both be stored (the app's "did I already
+-- ask" read and its insert are two statements). A request is open while its
+-- row exists: it is removed when an admin turns that game on for the creator
+-- (the trigger below) and otherwise by retention with the other notices. A
+-- second insert fails with 23505 on creator_notices_unlock_request_key.
+alter table public.creator_notices drop constraint if exists creator_notices_unlock_game_check;
+alter table public.creator_notices add constraint creator_notices_unlock_game_check
+  check (kind <> 'game_unlock_request' or jsonb_typeof(details -> 'game') is not distinct from 'string');
+delete from public.creator_notices n using public.creator_notices newer
+ where n.kind = 'game_unlock_request' and newer.kind = 'game_unlock_request' and newer.creator_id = n.creator_id
+   and newer.details ->> 'game' = n.details ->> 'game' and (newer.created_at, newer.id) > (n.created_at, n.id);
+create unique index if not exists creator_notices_unlock_request_key
+  on public.creator_notices (creator_id, (details ->> 'game')) where kind = 'game_unlock_request';
+create or replace function public._resolve_unlock_requests()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.features is distinct from old.features then
+    delete from public.creator_notices n
+     where n.creator_id = new.id and n.kind = 'game_unlock_request'
+       and new.features -> (n.details ->> 'game') = 'true'::jsonb;
+  end if;
+  return null;
+end $$;
+revoke execute on function public._resolve_unlock_requests() from public, anon, authenticated, service_role;
+drop trigger if exists ag_unlock_request_resolved on public.profiles;
+create trigger ag_unlock_request_resolved after update of features on public.profiles
+  for each row execute function public._resolve_unlock_requests();
 
 -- WG-13: whether the agency's owner can still act (active and approved; the
 -- same test can_act_for applies before it lets any seat through). Stored on
