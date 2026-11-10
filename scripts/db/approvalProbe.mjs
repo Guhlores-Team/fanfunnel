@@ -32,7 +32,7 @@ for (const name of ['pending', 'rejected', 'approved', 'inactive']) {
 }
 for (const name of ['pending', 'rejected']) {
   lines.push(as(name, [
-    change(`${name}.import`, `select public.import_fans('${fanImport(name)}'::jsonb)`, 'err:42501'),
+    change(`${name}.import`, `select public.import_fans('${fanImport(name)}'::jsonb)`, 'err:42883'),
     change(`${name}.profile.rpc`, `select public.set_public_profile('approval-${name}',null,null)`, 'ok:1'),
     change(`${name}.application`, `insert into public.creator_applications(profile_id,email) values ('${U[name]}','${email(name)}')`, 'ok:1'),
     change(`${name}.display_name`, "select public.set_display_name('Application name')", 'ok:1'),

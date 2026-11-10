@@ -44,7 +44,8 @@ export async function probeCreatorActorContexts(sql) {
   };
   for(const role of ['anon','authenticated'])for(const [name,args] of Object.entries(publicCalls))check(await refused(`begin;set local role ${role};select public.${name}(p_context=>${q(fresh.context)},${args});commit;`),role+' cannot call new service-only '+name+' overload even with a real capability');
   const retired={reconcile_creator_request:'uuid,uuid,uuid,text,boolean,boolean',grant_pass_spins:'uuid,uuid,uuid,uuid,integer,integer,integer,uuid,uuid',grant_focus_pack:'uuid,uuid,uuid,uuid,uuid,uuid,uuid',create_pass_grant:'uuid,uuid,uuid,uuid,text,integer,integer,integer,uuid,text,uuid,integer,uuid',import_fans_durable:'uuid,uuid,text,jsonb,uuid',edit_pass_grant:'uuid,uuid,uuid,jsonb,uuid',cancel_fan_focus:'uuid,uuid,uuid,uuid',save_game_wheel:'uuid,uuid,jsonb,jsonb,uuid'};
-  for(const [name,args] of Object.entries(retired))check((await sql(`select has_function_privilege('service_role','public.${name}(${args})','execute');`)).trim()==='f','no legacy service overload for '+name);
+  // 0073 (DB-14) dropped most of these overloads: a missing one is as good as a revoked one.
+  for(const [name,args] of Object.entries(retired))check((await sql(`select coalesce(has_function_privilege('service_role',to_regprocedure('public.${name}(${args})'),'execute'),false);`)).trim()==='f','no legacy service overload for '+name);
   for(const role of ['anon','service_role'])check(await refused(`begin;set local role ${role};select public.issue_creator_actor_context(${q(a)},'grant');commit;`),'mint refused to '+role);
   for(const [label,actor,sid,exp] of [['unknown session',a,randomUUID()],['foreign session',b,fresh.sessionId],['expired JWT',a,fresh.sessionId,1]])check(await refused(auth(actor,lowClaims(actor,sid,exp),`select public.issue_creator_actor_context(${q(actor)},'grant')`)),label+' cannot mint');
   const normalHigh=JSON.stringify({...JSON.parse(lowClaims(a,fresh.sessionId)),aal:'aal2'});

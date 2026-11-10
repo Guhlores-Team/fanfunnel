@@ -64,6 +64,25 @@ npm run e2e:supabase                             # live TEST project: RLS + RPC 
   /verify, /leaderboard). These pages render user content only through React's escaping. Moving a
   route onto the nonce policy means adding it to the proxy and keeping it dynamic.
 
+## Reporting a vulnerability
+
+Please report security problems privately, never in a public issue or pull request:
+
+- **GitHub private vulnerability reporting** (Security → Report a vulnerability), once the owner
+  has enabled it (`docs/GO_LIVE.md` section 2, SC-03), or
+- **e-mail** the address in `public/.well-known/security.txt` (`Contact:`), which is `LEGAL.contactEmail`
+  in `src/lib/legal.ts` (until that domain has inbound mail, see `docs/handoff/OWNER_STEPS.md` item 35).
+  `Canonical:` and `Policy:` point at the production site; `Expires:` is one year out and must be
+  renewed before it passes (`e2e/trust.mjs` and `e2e/trust-b7.mjs` check the file).
+- **What to send:** the URL or route, steps to reproduce, and what you could reach. Do not include other
+  people's data, a fan's spin link or a creator's account details beyond what the report needs.
+- **What we do:** acknowledge within 2 working days, keep you informed until the fix ships, and credit
+  you if you want. Please do not test against real creators' pages, run load, or access data that is
+  not yours; the Preview (TEST database) and a local build (`npm run build && npm run e2e`) exist for
+  that. Fan links, codes and keys found during research must not be published.
+- **Child-safety and abuse reports** are not security reports: they go to the same address and are
+  handled first (see the Privacy Policy, "Report abuse or a safety concern", and `docs/RUNBOOK.md`).
+
 ## If you suspect a leak
 1. Run `node scripts/security/rls-runtime-test.mjs` and `npm run e2e:supabase` against the TEST project. They fail loudly and name the table.
 2. Check the offending table's policies in `supabase/migrations_combined.sql`.

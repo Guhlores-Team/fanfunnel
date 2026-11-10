@@ -119,10 +119,13 @@ there you can:
 server — stop it, then `npm run dev` — and the store re-seeds fresh (the
 `demo` wheel, the demo fan link, and the sample admin accounts).
 
-**Production (Supabase):** run [`supabase/reset.sql`](supabase/reset.sql) in
-the Supabase SQL Editor. It truncates all app data (wheels, prizes, fans,
-links, spins, redemptions) but keeps your tables and logins. Optional blocks at
-the bottom let you also delete creator accounts or reset roles/features.
+**TEST project only (Supabase):** run [`supabase/reset.sql`](supabase/reset.sql)
+in the TEST project's SQL Editor. It truncates all app data (wheels, prizes,
+fans, links, spins, redemptions) but keeps your tables and logins. Optional
+blocks at the bottom let you also delete creator accounts or reset roles/features.
+**Never run it on LIVE** (`docs/GO_LIVE.md` section 5): the live site is
+restored only from a backup, by the owner, after a written decision
+(`docs/RUNBOOK.md` § Restore from backup).
 
 To rebuild from scratch, re-run [`supabase/schema.sql`](supabase/schema.sql)
 — it is idempotent (safe to run repeatedly) and already contains every
@@ -140,19 +143,21 @@ export E2E_BASE_URL=http://localhost:3000; npm run e2e && npm run e2e:a11y
 ```
 
 ## Roadmap
-Shipped: creator/admin auth, persisted multi-wheel editor, fulfilment inbox and
-metrics, admin console, agency console (orgs and staff seats), boosts
-(happy hours, webhooks, link-in-bio), provably-fair v3 spins with a public
-verify page, PWA install, in-house error monitoring with email alerts (0053),
-versioned Terms/Privacy (0055), web push (0056), instant reward delivery
+Shipped (migrations 0001–0072, all applied to the TEST project and exercised on
+the Preview): creator/admin auth, persisted multi-wheel editor, fulfilment inbox
+and metrics, admin console, agency console (orgs and staff seats with scopes),
+boosts (happy hours, webhooks, link-in-bio), provably-fair v3 spins with a
+public verify page, PWA install, in-house error monitoring with e-mail alerts
+(0053), versioned Terms/Privacy (0055), web push (0056), instant reward delivery
 (0057), creator theming (0058), Focus and Chase (0059), scratch tickets (0060),
 personal bingo (0061), account security (0062), operational integrity (0063),
-audit batch 1 with fan-report review (0064), per-fan game links and lifecycle
-locks (0065), agency seat scopes and alert release (0066), plus the game and
-campaign switching UX and the go-live tooling (carry-over script, DB-before-code
-check). 0062–0066 are on the `orch/fixes` integration branch and not yet on
-any hosted database.
+fan-report review (0064), per-fan game links and lifecycle locks (0065), agency
+seat scopes and alert release (0066), the runtime schema-version check (0067),
+tenant boundaries (0068), integration hardening (0069), one game resolution per
+play (0070), ledger guards and lock order (0071), advisor hardening (0072), plus
+the go-live tooling (carry-over script, DB-before-code check, LIVE backup gate).
+The LIVE project is still at 0038: the go-live merge applies 0039–0072.
 
-Next: batch 4 (0067 runtime schema-version check, agency seats on campaigns,
-load/abuse harness, QA pass), then the owner's Preview acceptance, the security
-audits and go-live per `docs/GO_LIVE.md`. Live state: `docs/handoff/MASTER_TRACKER.md`.
+Next: the owner's Preview acceptance (`docs/handoff/OWNER_STEPS.md` Stage 7),
+the batch-7 follow-ups and go-live per `docs/GO_LIVE.md`. Live state:
+`docs/handoff/MASTER_TRACKER.md`.

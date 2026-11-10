@@ -1,5 +1,6 @@
 import type { Prize, WheelConfig } from "./types";
 import { hasOwn } from "@/lib/fan/uuid";
+import { publicTextCheck } from "@/lib/publicText";
 
 // Pure wheel validation shared by the editor (inline errors) and PUT /api/wheel
 // (the authoritative check). No React, no server imports: safe in both bundles.
@@ -8,8 +9,10 @@ import { hasOwn } from "@/lib/fan/uuid";
 export const MIN_WHEEL_PRIZES = 2;
 /** Same ceiling the route has always enforced on a prize's tickets. */
 export const MAX_PRIZE_WEIGHT = 1e6;
-/** prizeRow stores labels up to this length. */
+/** prizeRow stores labels up to this length (the one cap: editor, PUT /api/wheel and templates). */
 export const MAX_PRIZE_LABEL = 80;
+/** prizeRow stores descriptions up to this length (wheels.ts truncates at the same point). */
+export const MAX_PRIZE_DESCRIPTION = 280;
 const MAX_STOCK = 2147483647;
 
 const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -63,7 +66,18 @@ export function stockError(value: unknown): string | null {
 export function labelError(value: unknown): string | null {
   if (typeof value !== "string" || value.trim() === "") return "Give this prize a name.";
   if (value.length > MAX_PRIZE_LABEL) return `Keep the name to ${MAX_PRIZE_LABEL} characters or fewer.`;
-  return null;
+  // TS-04: prize names are public (spin page, /c, share and verify pages).
+  const text = publicTextCheck(value, { field: "prizeLabel" });
+  return text.ok ? null : text.message;
+}
+
+/** The optional description: at most MAX_PRIZE_DESCRIPTION characters, no links, numbers or handles. */
+export function descriptionError(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") return "Prize descriptions must be text.";
+  if (value.length > MAX_PRIZE_DESCRIPTION) return `Keep the description to ${MAX_PRIZE_DESCRIPTION} characters or fewer.`;
+  const text = publicTextCheck(value, { field: "prizeDescription" });
+  return text.ok ? null : text.message;
 }
 
 export const NO_WINNABLE_PRIZE = "At least one prize needs more than 0 tickets.";
@@ -83,7 +97,7 @@ export function prizeCountError(count: number, kind: unknown = "wheel"): string 
   return `A ${gameNoun(kind)} needs at least ${MIN_WHEEL_PRIZES} prizes. Add ${more} more to save.`;
 }
 
-export type PrizeField = "label" | "weight" | "stock" | "color";
+export type PrizeField = "label" | "description" | "weight" | "stock" | "color";
 export type PrizeFieldErrors = Partial<Record<PrizeField, string>>;
 
 /** One problem, keyed so the editor can map it to a field. Keys are
@@ -125,6 +139,7 @@ export function validateWheelDraft(wheel: WheelConfig): WheelDraftErrors {
     const errs: PrizeFieldErrors = {};
     const checks: [PrizeField, string | null][] = [
       ["label", labelError(p.label)],
+      ["description", descriptionError(p.description)],
       ["weight", weightError(p.weight) ?? (allZero && i === 0 ? NO_WINNABLE_PRIZE : null)],
       ["stock", stockError(p.stock)],
       ["color", colorError(p.color, { optional: true })],

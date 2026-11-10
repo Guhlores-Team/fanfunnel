@@ -54,6 +54,7 @@ import { dashB6Journey } from "./dash-b6.mjs";
 import { opsB6Journey } from "./ops-b6.mjs";
 import { attackB6Journey } from "./attack-b6.mjs";
 import { fanB7Journey } from "./fan-b7.mjs";
+import { trustB7Journey } from "./trust-b7.mjs";
 
 let server = null;
 let browser = null;
@@ -109,6 +110,7 @@ try {
     await opsB6Journey(browser, runner, sink, ctx); // b6 ops: /api/health, System health config/maintenance lines, admin win lookup (+ cross-site 403), Activity filter
     await attackB6Journey(page, runner, ctx); // b6 attack: demo dashboard APIs, /verify 404, fan-token miss cap, /api/errors limits, server claim codes
     await fanB7Journey(browser, runner, sink, ctx); // b7 fan: land by prize id, game switch, top-up refresh, old browsers, refusals, offline, creator-session refusal, owed prize, claim codes, busy page, in-app hint, tap targets, two tabs, legal sheet, dark brand, real 404s
+    await trustB7Journey(page, runner, ctx); // b7 trust: reserved names, public-text screening, legal page facts, security.txt Canonical/Policy
     await firstRunJourney(page, runner, ctx); // wipes the account → brand-new creator's Today (last)
     journeysCompleted = true;
   } catch (e) {

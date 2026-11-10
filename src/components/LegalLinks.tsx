@@ -1,10 +1,12 @@
 import Link from "next/link";
+import LegalChangeNotice from "@/components/LegalChangeNotice";
 
 /**
  * T11: the Terms and Privacy links every fan-facing and public page carries.
  * Small, muted and wrapped for a phone; each link keeps a 44px tap target
  * (WF-08). `landmark={false}` renders a plain group for a second copy inside a
- * dialog, so a page never has two "Legal" navigation landmarks (PA-12).
+ * dialog, so a page never has two "Legal" navigation landmarks (PA-12) or two
+ * copies of the legal-change notice (TS-06: the page's own footer carries it).
  */
 export default function LegalLinks({ className = "", landmark = true }: { className?: string; landmark?: boolean }) {
   const links = (
@@ -19,5 +21,11 @@ export default function LegalLinks({ className = "", landmark = true }: { classN
     </>
   );
   const classes = `flex flex-wrap items-center justify-center gap-x-2 text-xs text-muted ${className}`;
-  return landmark ? <nav aria-label="Legal" className={classes}>{links}</nav> : <div className={classes}>{links}</div>;
+  if (!landmark) return <div className={classes}>{links}</div>;
+  return (
+    <>
+      <LegalChangeNotice className="mb-2" />
+      <nav aria-label="Legal" className={classes}>{links}</nav>
+    </>
+  );
 }

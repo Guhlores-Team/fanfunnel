@@ -4,6 +4,8 @@ import { setFanLeaderboardOptIn } from "@/lib/data";
 import { rateLimitOr429 } from "@/lib/api/limit";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { refuseCreatorSession } from "@/lib/fan/creatorGuard";
+import { isReservedName } from "@/lib/reservedNames";
+import { publicTextCheck } from "@/lib/publicText";
 
 /** Allow-list for a public board name: ASCII letters/digits plus `_ . -`. */
 const HANDLE_ALLOWED = /^[a-zA-Z0-9_.-]+$/;
@@ -14,15 +16,21 @@ const HANDLE_MAX = 40;
  * Validate a board name exactly as typed (surrounding whitespace trimmed).
  * Returns the handle, or an error code. A name that would need sanitising is
  * rejected rather than silently mangled ("Ålïcé" must not become "lc").
+ * TS-03: a name that presents as FanFunnel or its staff ("FanFunnel",
+ * "Supp0rt", "admin_1") is `handle_reserved`; TS-04: one carrying a web
+ * address ("cash.app"), handle or slur is `handle_not_allowed`. Both are
+ * public on the board and in the recent-wins ticker.
  */
-function validateHandle(
+export function validateHandle(
   raw: unknown
-): { handle: string } | { error: "handle_required" | "handle_invalid" } {
+): { handle: string } | { error: "handle_required" | "handle_invalid" | "handle_reserved" | "handle_not_allowed" } {
   if (typeof raw !== "string" || !raw.trim()) return { error: "handle_required" };
   const handle = raw.trim();
   if (handle.length < HANDLE_MIN || handle.length > HANDLE_MAX) return { error: "handle_invalid" };
   if (!HANDLE_ALLOWED.test(handle)) return { error: "handle_invalid" };
   if (!/[a-zA-Z0-9]/.test(handle)) return { error: "handle_invalid" };
+  if (isReservedName(handle)) return { error: "handle_reserved" };
+  if (!publicTextCheck(handle, { field: "boardName" }).ok) return { error: "handle_not_allowed" };
   return { handle };
 }
 

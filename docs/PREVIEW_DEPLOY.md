@@ -3,8 +3,38 @@
 `dashboard-redesign` deliberately disables automatic Git deployments in
 `vercel.json`. GitHub applies migrations to TEST and verifies generated types
 before the checked source is deployed through the authenticated Vercel CLI.
-This prevents the code and migration workflows from racing. Other branch
-deployment settings, including `main`, are unchanged.
+This prevents the code and migration workflows from racing.
+
+## Which branches Vercel builds (batch 7, SC-04)
+
+`vercel.json` → `git.deploymentEnabled` is an **allow-list**: `"**": false` and
+`"*": false` switch every branch off, `"main": true` keeps Production, and
+`dashboard-redesign` plus the historical `gaps/*`, `orch/fixes` and
+`dependabot/**` entries stay explicitly `false`. Any new branch (`legal/*`,
+`ops/*`, `rm/*`, `archive/*`, an open stale PR, the next batch's `gaps/b8-*`)
+therefore never builds with the Preview scope's secrets
+(`SUPABASE_SERVICE_ROLE_KEY` for TEST, the reward keys, `VAPID_PRIVATE_KEY`
+and, until GO_LIVE_KEYS step 7 splits it, the Upstash token shared with
+Production). The deny-list it replaces had to be edited for every branch and
+missed six.
+
+Why this form is believed safe, from Vercel's own documentation
+([Git configuration](https://vercel.com/docs/project-configuration/git-configuration),
+read 2026-11-10): keys are matched with minimatch syntax ("Matching multiple
+branches"), and "if a branch matches multiple rules and at least one rule is
+`true`, a deployment will occur" ("Branches matching multiple rules"). `**`
+matches a name with a slash (`gaps/b7-ci`), `*` a name without one; `main`
+matches both wildcards and its own `true` rule, which wins. The alternative,
+a dashboard **Ignored Build Step** (`[ "$VERCEL_GIT_COMMIT_REF" = "main" ] ||
+exit 0`), is not in the repository and cannot be reviewed or tested here.
+
+**Not yet proven on this project.** The repository cannot push to Vercel, so the
+owner proves it on the first code-only push to `main` after the merge: a
+Production deployment must still be created for that commit (Vercel →
+Deployments). If none appears, delete the `"**": false` and `"*": false` lines
+and re-push; the explicit `false` entries then act as the old deny-list. A
+branch that must build a Git Preview (none today) gets its own `true` line.
+`scripts/test/workflow-supply-chain.test.mjs` pins the allow-list shape.
 
 This procedure does not authorize a production deployment or a merge to `main`.
 

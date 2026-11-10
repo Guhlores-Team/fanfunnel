@@ -4,6 +4,8 @@ import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
+import { MAX_PRIZE_DESCRIPTION, MAX_PRIZE_LABEL } from "@/lib/games/wheel/validate";
+import { publicTextCheck } from "@/lib/publicText";
 
 // Full prize validation, mirroring the wheel save route (src/app/api/wheel
 // /route.ts): rarity drives the odds defaults and imageUrl is rendered, so a
@@ -16,7 +18,12 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
     (p) =>
       p != null &&
       typeof p.label === "string" &&
-      p.label.length <= 120 &&
+      p.label.length <= MAX_PRIZE_LABEL &&
+      publicTextCheck(p.label, { field: "prizeLabel" }).ok &&
+      (p.description == null ||
+        (typeof p.description === "string" &&
+          p.description.length <= MAX_PRIZE_DESCRIPTION &&
+          publicTextCheck(p.description, { field: "prizeDescription" }).ok)) &&
       RARITY_ORDER.includes(p.rarity) &&
       Number.isFinite(p.weight) &&
       p.weight >= 0 &&

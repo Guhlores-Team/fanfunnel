@@ -131,7 +131,7 @@ export async function probeHardening(db, psql, psqlAsync) {
       check(line('cancellations:') === 'cancellations:recent', `A11: request cancellation fences go after the journal period (${line('cancellations:')})`);
       check(['fan_checkins', 'spin_attempt_contexts', 'declined_spin_attempts', 'creator_request_journal', 'actor_request_cancellations', 'fan_import_batches'].every(k => Number.isInteger(result[k]) && result[k] >= 1), `A11: the cleanup reports every new count (${JSON.stringify(result)})`);
       check(line('checkins:') === 'checkins:60,1', `A11: check-ins older than 90 days go, the glow's 59-day window stays (${line('checkins:')})`);
-      check(line('attempts:').split(':')[1]?.split(',').sort().join(',') === 'committed=false,pending=true,recent=true', `A11: old declined attempts go, old committed attempts lose only their context, pending and recent ones are untouched (${line('attempts:')})`);
+      check(line('attempts:').split(':')[1]?.split(',').sort().join(',') === 'committed=false,pending=false,recent=true', `A11: old declined attempts go, old committed attempts lose only their context, a day-old pending attempt is aged out (0073 CC-08), recent ones are untouched (${line('attempts:')})`);
       check(line('journal:').split(':')[1]?.split(',').sort().join(',') === 'pending,recent', `A11: only settled request journals past 90 days go (${line('journal:')})`);
       check(line('batches:').split(':')[1]?.split(',').sort().join(',') === 'inuse,recent' && line('items:') === 'items:0', `A11: old import batches go with their rows unless a pending request uses them (${line('batches:')} ${line('items:')})`);
     }

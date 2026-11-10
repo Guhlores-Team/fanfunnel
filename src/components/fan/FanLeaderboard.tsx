@@ -289,7 +289,11 @@ function LeaderboardOptIn({
         setNeedName(true);
         setStatus(
           code === "handle_invalid"
-            ? "Board names are 2–40 characters: letters, numbers, _ . or - only."
+            ? "Board names are 2–40 characters: letters, numbers, _ . or - only, and can't impersonate FanFunnel or staff."
+            : code === "handle_reserved"
+              ? "That board name is reserved for FanFunnel and its staff. Pick another."
+              : code === "handle_not_allowed"
+                ? "Board names can't include web addresses, usernames for other apps or slurs."
             : code === "handle_required"
               ? "Pick a board name to join."
               : blockedFanMessage(code) ?? "Couldn't save that — try again."

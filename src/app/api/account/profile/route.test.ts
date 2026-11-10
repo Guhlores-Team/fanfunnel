@@ -43,6 +43,11 @@ async function main() {
     ["a control character", "Demo\u0007Creator", "invalid_display_name"],
     ["81 characters", "x".repeat(81), "name_too_long"],
     ["a blank name", "   ", "name_required"],
+    // TS-03/TS-04: impersonation and contact details are refused before SQL.
+    ["the brand", "FanFunnel Support", "name_reserved"],
+    ["a staff word in leet", "Supp0rt", "name_reserved"],
+    ["an e-mail inside the name", "Demo (me@example.com) Creator", "contains_email"],
+    ["a phone number", "Demo 555-123-4567", "contains_phone"],
   ] as const) {
     calls.length = 0;
     const res = await profile.PUT(put("/api/account/profile", { displayName: name }));
@@ -55,8 +60,9 @@ async function main() {
   calls.length = 0;
   revalidated.length = 0;
   answer = { data: null, error: { code: "22023", message: "display name looks like an e-mail address" } };
-  // Contains the account's own address without being e-mail shaped: only SQL knows.
-  let res = await profile.PUT(put("/api/account/profile", { displayName: "Demo (me@example.com) Creator" }));
+  // The database's own e-mail rule (the account's address in a form the
+  // route's checks do not see): the refusal arrives as the same code.
+  let res = await profile.PUT(put("/api/account/profile", { displayName: "Demo Creator" }));
   let body = await res.json();
   check("22023 'looks like an e-mail' is a 400 name_looks_like_email, not a 500", res.status === 400 && body.error === "name_looks_like_email");
   check("…sent through set_display_name with the trimmed name", calls.length === 1 && calls[0].name === "set_display_name");
