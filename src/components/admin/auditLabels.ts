@@ -24,6 +24,7 @@ const ACTION_LABELS: Record<string, string> = {
   "mfa.factor_removed": "removed a two-factor app",
   "system.canary.initialize": "initialized verified reward key protection",
   "retention.cleanup": "ran the retention cleanup",
+  "legal.notice": "set or withdrew the Terms change notice",
 };
 
 export function auditActionLabel(action: string): string {

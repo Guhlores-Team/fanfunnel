@@ -33,6 +33,7 @@ export type AuditAction =
   | "report.reopen"
   | "mfa.factor_removed"
   | "retention.cleanup"
+  | "legal.notice"
   | "system.canary.initialize";
 
 export interface AuditInput {

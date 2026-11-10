@@ -26,6 +26,7 @@ import { gameSwitchingA11yStates } from "./game-switching-a11y.mjs";
 import { safetyA11yStates } from "./safety-a11y.mjs";
 import { qaB5A11yStates } from "./qa-b5.mjs";
 import { fanDevicesA11yStates } from "./fan-devices.mjs";
+import { trustB7A11yStates } from "./trust-b7.mjs";
 
 const AXE_SRC = readFileSync(new URL("../node_modules/axe-core/axe.min.js", import.meta.url), "utf8");
 
@@ -352,6 +353,7 @@ const PAGES = [
   // b6 fan devices: the age gate and Safety sheet at 200% text and in
   // landscape, each prep proving the primary action is on screen and tappable.
   ...fanDevicesA11yStates(),
+  ...trustB7A11yStates(DASH_ADVISORY), // TS-06: the announced Terms change on fan pages and the dashboard, and the admin card
   { path: "/", name: "landing" },
   { path: "/login", name: "login" },
   { path: "/terms", name: "terms" },
