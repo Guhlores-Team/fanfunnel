@@ -20,6 +20,7 @@ import {
   mockSetFanLinkGame,
   mockUpdateFanLink,
   mockReportCreator,
+  mockDemoCreatorActive,
 } from "./mock";
 import { campaignPinError, isUuid } from "./shared";
 import { creatorSummary } from "./creatorSummaries";
@@ -141,6 +142,7 @@ export async function grantSpins(
 ): Promise<{ spinsRemaining: number } | { error: string }> {
   if (!Number.isFinite(n) || n > 1_000_000 || !isUuid(requestId)) return { error: "invalid" };
   const add = Math.max(1, Math.floor(n) || 0);
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     try {
       const remaining = mockGrantSpins(token, add, requestId);
@@ -883,6 +885,7 @@ export async function setFanBlocked(
   fanId: string,
   blocked: boolean
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetFanBlocked(fanId, blocked);
   const sb = await createClient();
   const {
@@ -970,6 +973,7 @@ export async function updateFanLink(
     }
   }
   if (Object.keys(update).length === 0) return { error: "bad_request" };
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockUpdateFanLink(fanId, token, { active: update.is_active, expiresAt: update.expires_at });
   if (!isUuid(fanId) || typeof token !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(token)) return { error: "not_found" };
   const sb = await createClient();

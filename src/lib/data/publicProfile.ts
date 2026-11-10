@@ -10,7 +10,9 @@ import type { GameKind } from "@/lib/games/core/gameProof";
 import { publicGameKind } from "@/lib/games/publicCopy";
 import { toPublicWheel } from "@/lib/games/wheel/publicView";
 import type { HappyHourStatus } from "./types";
-import { mockGetPublicWheelTeaser } from "./mock";
+import { mockGetPublicWheelTeaser,
+  mockDemoCreatorActive,
+} from "./mock";
 import { WHEEL_SELECT, toWheelConfig } from "./shared";
 import { getCreatorThemeView, type CreatorThemeView } from "./creatorTheme";
 import type { DbWheelRow } from "./shared";
@@ -247,6 +249,7 @@ export async function setMyPublicProfile(input: {
   /** PR-10: 1..MAX_DELIVERY_DAYS, or null to make no promise. */
   deliveryDays?: number | null;
 }): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     // A36: keep what was saved, with the same normalization and avatar rule
     // as the database path, so the demo never pretends to save.

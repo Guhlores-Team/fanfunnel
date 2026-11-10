@@ -1,5 +1,6 @@
 "use client";
 
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
 import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import { STALE_GAME_MESSAGE, staleGameCheck } from "./staleGame";
 import { publicTextCheck } from "@/lib/publicText";
@@ -740,7 +741,7 @@ export default function WheelEditor({
         <div id={SAVE_SUMMARY_ID} role="alert" className="w-full empty:hidden">
           {saveError && (
             <p data-testid="game-save-error" className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-amber-200">
-              <span>{saveError}</span>
+              <span>{withSuspendedReason(saveError)}</span>
               {stale && saveError === STALE_GAME_MESSAGE && (
                 <button
                   type="button"

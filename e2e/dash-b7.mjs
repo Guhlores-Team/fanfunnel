@@ -32,6 +32,8 @@
 //  WG-18    Admin search, request ages and the build commit.
 //  PA-01/12 + WC-18/19/23/30 too-dark brand colours are refused; skip link,
 //           field errors, the handle hint and the discard list.
+//  WU-01    a suspended creator keeps the dashboard with the banner; every
+//           save is refused in plain words and nothing is written.
 // Steps that answer API calls with errors run on their own page with no error
 // sink: the failures are the point of the step. Every fixture is removed again.
 import { randomUUID } from "node:crypto";
@@ -771,5 +773,83 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     } finally {
       await page.close().catch(() => {});
     }
+  });
+
+  await step("b7 WU-01: a suspended creator keeps the dashboard with the banner, and every save is refused in plain words", async () => {
+    // No sink: the refused writes (403) are the behaviour under test.
+    const page = await ctx.newPage();
+    const tag = randomUUID().slice(0, 6);
+    const profile = await json(await request.get(BASE + "/api/public-profile"), "read profile");
+    const account = await json(await request.get(BASE + "/api/account"), "read account");
+    const games = (await json(await request.get(BASE + "/api/wheels"), "list games")).wheels;
+    const live = games.find((w) => w.isActive) ?? games[0];
+    const fansBefore = (await json(await request.get(BASE + "/api/fans?limit=1"), "count fans")).total;
+    const set = await request.post(BASE + "/api/debug/creator-status", { data: { active: false } });
+    assert(set.ok(), `demo creator suspended (${set.status()}; needs NEXT_PUBLIC_ENABLE_DEBUG=1)`);
+    const suspended = /account is suspended, so changes can.t be saved/;
+    try {
+      // The server refuses each kind of write on its own.
+      const refused = [
+        ["public page", await request.put(BASE + "/api/public-profile", { data: { tagline: `b7 sus ${tag}` } })],
+        ["display name", await request.put(BASE + "/api/account/profile", { data: { displayName: `b7 sus ${tag}` } })],
+        ["fan link", await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: `b7 sus ${tag}`, spins: 1 } })],
+        ["new game", await request.post(BASE + "/api/wheels", { data: { name: `b7 sus ${tag}` } })],
+        ["set active", await request.patch(BASE + `/api/wheels/${live.id}`, { data: { isActive: true } })],
+        ["campaign", await request.post(BASE + "/api/campaigns", { data: { name: `b7 sus ${tag}` } })],
+      ];
+      for (const [what, res] of refused) {
+        assert(res.status() === 403 && (await res.json()).error === "forbidden", `${what}: refused with 403 forbidden (${res.status()})`);
+      }
+
+      await goto(page, "/dashboard?section=settings", 1500);
+      const banner = page.getByTestId("suspended-banner");
+      await banner.waitFor({ timeout: 10000 });
+      assert(/suspended/i.test(await banner.innerText()), "the banner says the account is suspended");
+
+      // Public page: an error with the reason, never "saved".
+      const pub = page.locator('section[aria-labelledby="settings-public"]');
+      await pub.getByLabel("Tagline").fill(`b7 sus ${tag}`);
+      await pub.getByRole("button", { name: "Save", exact: true }).click();
+      const toast = page.locator('[data-testid="toast"][data-tone="error"]').filter({ hasText: suspended });
+      await toast.first().waitFor({ timeout: 10000 });
+      assert((await page.getByTestId("toast").filter({ hasText: /Link-in-bio saved/ }).count()) === 0, "no 'saved' toast for a refused save");
+
+      // Display name: the refusal sits under the field.
+      await page.getByPlaceholder("Your creator name").fill(`b7 sus ${tag}`);
+      await page.getByRole("button", { name: "Save profile" }).click();
+      const fieldError = page.getByTestId("field-error").filter({ hasText: suspended });
+      await fieldError.waitFor({ timeout: 10000 });
+      assert((await page.getByTestId("toast").filter({ hasText: /Profile saved/ }).count()) === 0, "no 'Profile saved' toast");
+
+      // A new fan link: refused, the form released, no receipt left behind.
+      await goto(page, "/dashboard?section=fans", 1500);
+      await page.getByPlaceholder("@username").fill(`@b7sus${tag}`);
+      await page.getByRole("button", { name: "Create", exact: true }).click();
+      await page.locator('[data-testid="toast"][data-tone="error"]').filter({ hasText: suspended }).first().waitFor({ timeout: 10000 });
+      assert((await page.getByTestId("minted-link").count()) === 0, "no link card for a refused grant");
+      assert((await page.getByText("This request is not yet confirmed").count()) === 0, "a refusal is not left as an unconfirmed request");
+
+      // A game save: the editor says why, inline.
+      await goto(page, "/dashboard?section=editor", 1500);
+      const title = page.getByLabel("Title", { exact: true });
+      await title.waitFor({ timeout: 10000 });
+      await title.fill(`b7 sus ${tag}`);
+      await page.getByRole("button", { name: "Save game", exact: true }).click();
+      const saveError = page.getByTestId("game-save-error");
+      await saveError.waitFor({ timeout: 10000 });
+      assert(suspended.test(await saveError.innerText()), "the editor names the suspension next to Save");
+
+      // Nothing was written.
+      assert((await json(await request.get(BASE + "/api/public-profile"), "re-read profile")).tagline === profile.tagline, "the tagline is unchanged");
+      assert((await json(await request.get(BASE + "/api/account"), "re-read account")).displayName === account.displayName, "the display name is unchanged");
+      assert((await json(await request.get(BASE + "/api/fans?limit=1"), "re-count fans")).total === fansBefore, "no fan was created");
+      const after = (await json(await request.get(BASE + "/api/wheels"), "re-list games")).wheels;
+      assert(after.length === games.length && after.find((w) => w.id === live.id)?.title === live.title, "no game was created or renamed");
+    } finally {
+      await request.post(BASE + "/api/debug/creator-status", { data: { active: true } }).catch(() => {});
+      await page.close().catch(() => {});
+    }
+    const back = await request.put(BASE + "/api/public-profile", { data: { tagline: profile.tagline ?? "" } });
+    assert(back.ok(), "a reactivated creator can save again");
   });
 }

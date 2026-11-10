@@ -1,5 +1,6 @@
 "use client";
 
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
 import { useRef, useState } from "react";
 import Modal from "@/components/ui/Modal";
 import { canCreateGame, GAME_LABEL, type GameFeatures } from "./gameEditor";
@@ -47,7 +48,7 @@ export default function NewGameDialog({ features, busy, error, onCreate, onClose
       <label className="block text-xs text-muted">Game name (optional)<input disabled={busy} className="ff-input mt-1 w-full" maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="Give this game a name" /></label>
       {kind === "bingo" && <p className="text-xs text-muted">Bingo starts as an inactive draft. Add nine eligible prizes, keep an unlimited rare-or-better fallback, select a line prize and save before using it with fans.</p>}
       {!canCreateGame(kind, features) && <p role="alert" className="text-xs text-amber-200">That game type is no longer enabled. Choose an available type before creating a game.</p>}
-      {error && <p role="alert" className="text-sm text-amber-200">{error}</p>}
+      {error && <p role="alert" className="text-sm text-amber-200">{withSuspendedReason(error)}</p>}
       <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy || !canCreateGame(kind, features)} className="btn-brand min-h-11 rounded-lg px-4 text-sm font-bold">{busy ? "Creating…" : kind === "bingo" ? "Create bingo draft" : "Create game"}</button><button type="button" disabled={busy} onClick={close} className="min-h-11 rounded-lg border border-line px-4 text-sm font-semibold">Cancel</button></div>
     </form>
   </Modal>;

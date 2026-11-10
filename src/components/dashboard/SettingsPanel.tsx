@@ -13,7 +13,7 @@ import HomeScreenIconCard from "./HomeScreenIconCard";
 import LookAndFeelCard from "./LookAndFeelCard";
 import ThemedProfilePreview from "./ThemedProfilePreview";
 import type { ThemePreviewValue } from "./lookAndFeel";
-import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecurityCards";
+import { CloseAccountCard, DataExportCard, OtherDevicesCard, TwoFactorCard } from "./PrivacySecurityCards";
 import ClearDataCard from "./ClearDataCard";
 import PushNotificationsCard from "./PushNotificationsCard";
 import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profileErrors";
@@ -22,6 +22,9 @@ import { loadJson } from "@/lib/hooks/loadJson";
 import { publicTextCheck } from "@/lib/publicText";
 import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
 import { slugHint } from "@/lib/data/publicSlug";
+import { isAcceptablePassword, PASSWORD_RULE_MESSAGE } from "@/lib/api/password";
+import PasswordInput from "./PasswordInput";
+import { withSuspendedReason } from "@/lib/onboarding/suspended";
 import { BRAND_TOO_DARK_MESSAGE, brandColorContrastOk } from "@/lib/theme";
 
 /**
@@ -142,6 +145,7 @@ export default function SettingsPanel({
           />
           <SecurityCard />
           <TwoFactorCard />
+          <OtherDevicesCard />
           <NotificationsCard account={account} patchAccount={patchAccount} loadError={accountError} onRetryLoad={loadAccount} />
           <PushNotificationsCard focusNonce={pushFocus} />
         </div>
@@ -373,7 +377,7 @@ function ProfileCard({
           onDisplayNameChange?.(name);
         } catch (e) {
           ok = false;
-          setNameError(displayNameErrorMessage(e instanceof Error ? e.message : ""));
+          setNameError(withSuspendedReason(displayNameErrorMessage(e instanceof Error ? e.message : "")));
         }
       }
       if (avatarDirty) {
@@ -545,7 +549,7 @@ function EmailBlock({
       setPending(next);
       setEmail("");
       setCurrent("");
-      toast("Check both inboxes: we sent a link to your current address and one to the new address. Open both to finish.", { tone: "success", duration: 8000 });
+      toast("Two links are on their way: one to your current address, one to the new one. Open both to finish.", { tone: "success", duration: 8000 });
     } catch {
       toast("Couldn't start the email change.", { tone: "error" });
     } finally {
@@ -564,7 +568,7 @@ function EmailBlock({
         </h4>
         <p className="mt-1 text-xs text-muted">
           Current: <span className="break-all font-semibold text-ink">{currentEmail ?? "—"}</span>.
-          Changing it e-mails a confirmation link to your current address AND to the new one; open both. The change applies once both are confirmed.
+          Changing it e-mails a link to your current address AND the new one. Open both, on any device; the change applies after the second, and you keep signing in with your current e-mail until then.
         </p>
       </div>
       {pending && (
@@ -602,16 +606,15 @@ function EmailBlock({
           />
         </Field>
         <Field label="Current password" error={fieldError?.field === "current" ? fieldError.message : null}>
-          <input
-            type="password"
+          <PasswordInput
+            label="Current password"
             autoComplete="current-password"
-            className="ff-input w-full"
             value={current}
             disabled={disabled}
-            aria-invalid={fieldError?.field === "current" || undefined}
-            onChange={(e) => {
+            invalid={fieldError?.field === "current"}
+            onChange={(v) => {
               setFieldError(null);
-              setCurrent(e.target.value);
+              setCurrent(v);
             }}
             placeholder="Confirm it's you"
           />
@@ -643,8 +646,8 @@ function SecurityCard() {
   const [fieldError, setFieldError] = useState<{ field: "next" | "confirm"; message: string } | null>(null);
 
   async function save() {
-    if (next.length < 8) {
-      setFieldError({ field: "next", message: "New password must be at least 8 characters." });
+    if (!isAcceptablePassword(next)) {
+      setFieldError({ field: "next", message: PASSWORD_RULE_MESSAGE });
       return;
     }
     if (next !== confirm) {
@@ -668,12 +671,14 @@ function SecurityCard() {
           setConfirm("");
           return;
         }
+        if (d.error === "weak_password") {
+          setFieldError({ field: "next", message: PASSWORD_RULE_MESSAGE });
+          return;
+        }
         toast(
           d.error === "wrong_password"
             ? "Your current password is incorrect."
-            : d.error === "weak_password"
-              ? "New password must be at least 8 characters."
-              : d.error === "demo_mode"
+            : d.error === "demo_mode"
                 ? "Password changes need Supabase configured (demo mode)."
                 : "Couldn't change your password.",
           { tone: "error" }
@@ -683,7 +688,7 @@ function SecurityCard() {
       setCurrent("");
       setNext("");
       setConfirm("");
-      toast("Password updated", { tone: "success" });
+      toast(d.othersSignedOut === false ? "Password updated. Other devices could not be signed out; use Sign out other devices below." : "Password updated. Every other device was signed out.", { tone: "success", duration: 6000 });
     } catch {
       toast("Couldn't change your password.", { tone: "error" });
     } finally {
@@ -696,42 +701,34 @@ function SecurityCard() {
       <CardTitle
         icon={P.lock}
         title="Security"
-        hint="You’ll re-enter your current password to confirm it’s you. Use at least 8 characters."
+        hint={`You’ll re-enter your current password to confirm it’s you. ${PASSWORD_RULE_MESSAGE} Changing it signs out every other device.`}
       />
       <CreatorMfaRecovery required={mfaRequired} destination="settings" />
       <div className="grid gap-3.5 sm:grid-cols-2">
         <Field label="Current password" full>
-          <input
-            type="password"
-            autoComplete="current-password"
-            className="ff-input w-full"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-          />
+          <PasswordInput label="Current password" autoComplete="current-password" value={current} onChange={setCurrent} />
         </Field>
         <Field label="New password" error={fieldError?.field === "next" ? fieldError.message : null}>
-          <input
-            type="password"
+          <PasswordInput
+            label="New password"
             autoComplete="new-password"
-            className="ff-input w-full"
             value={next}
-            aria-invalid={fieldError?.field === "next" || undefined}
-            onChange={(e) => {
+            invalid={fieldError?.field === "next"}
+            onChange={(v) => {
               setFieldError(null);
-              setNext(e.target.value);
+              setNext(v);
             }}
           />
         </Field>
         <Field label="Confirm new" error={fieldError?.field === "confirm" ? fieldError.message : null}>
-          <input
-            type="password"
+          <PasswordInput
+            label="Confirm new"
             autoComplete="new-password"
-            className="ff-input w-full"
             value={confirm}
-            aria-invalid={fieldError?.field === "confirm" || undefined}
-            onChange={(e) => {
+            invalid={fieldError?.field === "confirm"}
+            onChange={(v) => {
               setFieldError(null);
-              setConfirm(e.target.value);
+              setConfirm(v);
             }}
           />
         </Field>

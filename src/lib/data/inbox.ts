@@ -21,6 +21,7 @@ import {
   mockEnsureChatIntro,
   mockSendChatOutro,
   mockFanIdForToken,
+  mockDemoCreatorActive,
 } from "./mock";
 import { resolveFanByToken } from "./fans";
 import { fanNeedsAck } from "@/lib/legal";
@@ -466,6 +467,7 @@ export async function sendCreatorMessage(
   body: string,
   creatorId?: unknown,
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return demoActingCreator(creatorId) ?? mockSendCreatorMessage(fanId, body);
 
   const sb = await createClient();

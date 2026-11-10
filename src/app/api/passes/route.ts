@@ -3,6 +3,8 @@ import { isUuid } from "@/lib/data/shared";
 import { createPass } from "@/lib/data";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
+import { isSupabaseConfigured } from "@/lib/supabase/server";
+import { mockDemoCreatorActive } from "@/lib/data/mock";
 
 // Creates a unique, working fan pass and returns its token. The creator's
 // dashboard calls this so every generated link genuinely opens and spins.
@@ -53,6 +55,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "bad_request" }, { status: 400 });
     }
   }
+
+  // WU-01 parity: the database refuses a suspended creator's grant; so does the demo.
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return errorResponse("forbidden");
 
   const result = await createPass({
     name,

@@ -432,7 +432,7 @@ function LeaderboardToggle({
       onChange?.();
     } catch {
       setOn(!next);
-      toast("Couldn't update leaderboard");
+      toast("Couldn't update leaderboard", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -597,7 +597,7 @@ function HappyHourScheduler() {
       toast("Happy hour scheduled");
       await load();
     } catch {
-      toast("Couldn't schedule — check the window");
+      toast("Couldn't schedule — check the window", { tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -609,7 +609,8 @@ function HappyHourScheduler() {
     document.getElementById("boosts-happy-hours")?.focus();
     const res = await fetch(`/api/happy-hours/${id}`, { method: "DELETE" }).catch(() => null);
     // The reload restores the row if the delete didn't land.
-    toast(res?.ok ? "Happy hour removed" : "Couldn't remove happy hour");
+    if (res?.ok) toast("Happy hour removed", { tone: "success" });
+    else toast("Couldn't remove that happy hour. It is still scheduled.", { tone: "error" });
     load();
   };
 
@@ -963,7 +964,7 @@ function WebhooksCard() {
         next.splice(Math.min(index, next.length), 0, removed);
         return next;
       });
-      toast("Couldn't remove webhook");
+      toast("Couldn't remove webhook", { tone: "error" });
     }
   };
 

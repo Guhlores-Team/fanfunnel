@@ -26,6 +26,7 @@ import {
   mockDeleteWheel,
   mockSetActiveWheel,
   mockSetWheelSchedule,
+  mockDemoCreatorActive,
 } from "./mock";
 import { WHEEL_SELECT, clampInt, isUuid, toWheelConfig } from "./shared";
 import type { Json } from "./db.types";
@@ -271,6 +272,7 @@ export async function saveWheel(
   const rule = wheelRulesError(config.prizes);
   if (rule) return { error: rule };
 
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     if (brandColorRefused(config.brandColor, mockGetWheelById(config.id)?.brandColor)) return { error: "brand_too_dark" };
     try { return { wheel: mockSaveWheel(config, expectedStock, { expectedUpdatedAt, draft: options.draft === true }) }; } catch(error) { return { error: error instanceof Error ? error.message : "db_error" }; }
@@ -565,6 +567,7 @@ export async function createWheel(opts?: {
   gameKind?: unknown;
   gameConfig?: unknown;
 }): Promise<{ wheel: WheelConfig }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) throw new Error("forbidden"); // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockCreateWheel(opts);
 
   const sb = await createClient();
@@ -724,6 +727,7 @@ function lifecycleBusy(error: { code?: string } | null | undefined): boolean {
 export async function archiveWheel(
   id: string
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockArchiveWheel(id);
 
   const sb = await createClient();
@@ -855,6 +859,7 @@ export async function deleteWheel(
 export async function setActiveWheel(
   id: string
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) return mockSetActiveWheel(id);
 
   const sb = await createClient();
@@ -897,6 +902,7 @@ export async function setWheelSchedule(
   id: string,
   { activeFrom, activeUntil }: { activeFrom: string | null; activeUntil: string | null }
 ): Promise<{ ok: true } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured())
     return mockSetWheelSchedule(id, { activeFrom, activeUntil });
 

@@ -12,7 +12,9 @@ import { request as httpsRequest } from "node:https";
 import { isSupabaseConfigured, createServiceClient, createClient } from "@/lib/supabase/server";
 import { rateLimitShared } from "@/lib/rateLimit";
 import type { Webhook } from "./types";
-import { mockListWebhooks, mockCreateWebhook, mockDeleteWebhook, mockFireWebhooks } from "./mock";
+import { mockListWebhooks, mockCreateWebhook, mockDeleteWebhook, mockFireWebhooks,
+  mockDemoCreatorActive,
+} from "./mock";
 import { resolveWebhookTarget, type WebhookTarget } from "./webhookGuard";
 
 /** Events a hook can subscribe to; 'all' receives every win. */
@@ -69,6 +71,7 @@ export async function createWebhook(
   if (!/^https?:\/\//i.test(trimmed)) return { error: "invalid_url" };
   const target = await resolveWebhookTarget(trimmed);
   if (!target.ok) return { error: target.reason };
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     if (mockListWebhooks().length >= WEBHOOK_LIMIT) return { error: "webhook_limit" };
     return mockCreateWebhook(trimmed, event);

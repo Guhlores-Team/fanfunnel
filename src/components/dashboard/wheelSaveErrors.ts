@@ -19,6 +19,7 @@ const MESSAGES: Record<string, string> = {
   stale_editor: "Couldn't save: this editor is out of date. Reload the page and try again.",
   not_found: "Couldn't save: this wheel no longer exists. Reload the page.",
   unauthorized: "Couldn't save. Are you signed in?",
+  forbidden: "Couldn't save: this account can't change games right now.",
 };
 
 const GENERIC = "Couldn't save. Try again.";

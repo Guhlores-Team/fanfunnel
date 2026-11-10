@@ -19,6 +19,7 @@ import {
   mockDeleteCampaign,
   mockGetUncategorizedStats,
   mockListWheels,
+  mockDemoCreatorActive,
 } from "./mock";
 import { campaignPinError, creatorOwnsCampaign, isUuid } from "./shared";
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
@@ -67,6 +68,7 @@ export async function createCampaign(
   pinnedWheelId?: string | null,
   creatorId?: unknown
 ): Promise<{ campaign: Campaign } | { error: string }> {
+  if (!isSupabaseConfigured() && !mockDemoCreatorActive()) return { error: "forbidden" }; // WU-01 parity: a suspended creator cannot write
   if (!isSupabaseConfigured()) {
     const refused = demoActingCreator(creatorId);
     if (refused) return refused;
