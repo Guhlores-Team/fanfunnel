@@ -163,6 +163,10 @@ const SECTIONS: LegalSection[] = [
           </li>
           <li>when you pause your own link;</li>
           <li>
+            You can mute a creator’s messages from the menu on your link; we keep the time you muted them until
+            you unmute or delete your data.
+          </li>
+          <li>
             breaks and play reminders you set: when a break you chose ends, and the daily spin count after
             which you asked to be reminded to stop.
           </li>

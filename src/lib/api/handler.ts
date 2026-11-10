@@ -74,7 +74,8 @@ export function badRequest(code = "bad_request"): NextResponse {
  *    `not_configured`          → 403 (allowed-in-principle but gated)
  *  - `not_found`               → 404
  *  - `has_history`, `conflict`,
- *    `sold_out`, `slug_taken`  → 409
+ *    `sold_out`, `slug_taken`,
+ *    `muted`                   → 409
  *  - `rate_limited`            → 429
  *  - anything else             → 400
  */
@@ -115,6 +116,7 @@ export function statusForError(code: string): number {
     case "already_enabled":
     case "already_submitted":
     case "already_approved":
+    case "muted": // TS-17: the fan muted the creator's messages
       return 409;
     case "expired":
       return 410;

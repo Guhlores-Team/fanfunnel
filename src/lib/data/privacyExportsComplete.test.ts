@@ -17,7 +17,7 @@ const svc = new FakeTables({
   profiles: [{ id: CA, display_name: "Owner" }],
   fans: [{ id: FAN, creator_id: CA, display_name: "Fan", handle: "fan", spins_remaining: 2, spins_granted_total: 7, break_until: "2026-11-01T00:00:00Z", referred_by_fan_id: null, notes: "PRIVATE-NOTES", tags: ["PRIVATE-TAGS"] }],
   fan_passes: [{ id: "000000", token: TOKEN, fan_id: FAN, creator_id: CA, is_active: true }, ...many(2000, (id) => ({ ...owned(id), token: `OTHER-OWN-LINK-${id}`, next_server_seed: "NEXT-SEED-SECRET", is_active: true })), { id: "foreign", token: "FOREIGN-TOKEN", fan_id: OTHER, creator_id: CA }],
-  grants: [...many(2001, (id) => ({ ...owned(id), spins: 1, bonus_spins: 0, amount_cents: 982341 })), { ...owned("bad-grant"), fan_id: OTHER, spins: 999 }, { ...owned("wrong-tenant"), creator_id: CB, spins: 999 }],
+  grants: [...many(2001, (id) => ({ ...owned(id), spins: 1, bonus_spins: 0, amount_cents: 4417 })), { ...owned("bad-grant"), fan_id: OTHER, spins: 999 }, { ...owned("wrong-tenant"), creator_id: CB, spins: 999 }],
   messages: [...many(2001, (id) => ({ ...owned(id), sender: "fan", body: `Own message ${id}` })), { ...owned("wrong-fan"), fan_id: OTHER, sender: "fan", body: "UNRELATED-MESSAGE" }, { ...owned("private-reply"), sender: "creator", body: "CREATOR-REPLY" }],
   wishlists: many(2001, (id) => ({ ...owned(id), prize_label: `Wish ${id}`, prize_rarity: "common" })),
   spins: many(2001, (id) => ({ ...owned(id), prize_label: `Win ${id}`, prize_rarity: "common", server_seed: "spent-seed", pool_snapshot: { prizes: [{ label: "Public", cost_cents: 982341, notes: "SNAPSHOT-PRIVATE" }], cipher: "CIPHER-SECRET" } })),
@@ -72,6 +72,8 @@ async function main() {
   const { exportFanData, exportCreatorData } = await import("./privacy");
   const fan = (await exportFanData(TOKEN))!;
   check("all 2001 top-ups survive the default 1000-row server limit", fan.topUps.length === 2001);
+  // TS-13: a top-up's amount is the fan's own record; a prize's cost (982341 in the pool snapshot) is not.
+  check("each top-up carries its amount", fan.topUps.every((row) => row.amountCents === 4417));
   check("all messages, links, wishes, spins and prize records are paged", fan.messagesYouSent.length === 2001 && fan.links.length === 2001 && fan.wishlist.length === 2001 && fan.spins.length === 2001 && fan.prizes.length === 2001);
   check("all 2001 own instant receipt metadata rows survive paging", fan.instantReceipts?.length === 2001 && fan.instantReceipts[0].views === 3 && fan.instantReceipts[0].erasedAt === at);
   for (const statement of svc.statements.filter((row) => row.table === "spin_rewards")) check("receipts are pinned to the creator and owned spin IDs", eqValue(statement, "creator_id") === CA && !!statement.orders?.some((order) => order.column === "spin_id") && !/cipher|iv|fingerprint|hint|key_version|code_id/.test(statement.columns ?? ""));

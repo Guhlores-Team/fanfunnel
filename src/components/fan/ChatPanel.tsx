@@ -7,6 +7,7 @@ import { startPoll } from "@/lib/poll";
 import { blockedFanMessage } from "./blockedFan";
 import { FAN_STORAGE_PREFIXES, fanStorageKey } from "./fanStorage";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
+import TeamReplyPill from "./TeamReplyPill";
 
 /** The thread read is a POST (0068): the link token stays out of URLs and logs. */
 const fetchThread = (token: string) =>
@@ -383,7 +384,7 @@ export default function ChatPanel({
                   <div
                     key={m.id}
                     className={
-                      m.sender === "fan" ? "flex justify-end" : "flex justify-start"
+                      m.sender === "fan" ? "flex justify-end" : "flex flex-col items-start"
                     }
                   >
                     <span
@@ -396,6 +397,7 @@ export default function ChatPanel({
                     >
                       {m.body}
                     </span>
+                    <TeamReplyPill message={m} />
                   </div>
                 ))}
                 {/* Optimistic outbound bubbles (pending / failed), fan side. */}

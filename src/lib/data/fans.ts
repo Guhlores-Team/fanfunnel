@@ -17,6 +17,7 @@ import {
   mockUpdateFanMeta,
   mockEditGrant,
   mockAckFan,
+  mockSetFanChatMute,
   mockSelfExclude,
   mockSetFanBlocked,
   mockSetFanLinkGame,
@@ -646,12 +647,15 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
   if (fanReadError) throw new CompleteReadError();
   if (!fan) return null;
 
-  const [{ data: spinRows }, breakRes] = await Promise.all([
+  const [{ data: spinRows }, breakRes, muteRes] = await Promise.all([
     readScopedRows<{ prize_label: string; prize_rarity: Rarity; campaign_id: string | null; created_at: string; kind?: "play" | "bonus" }>(sb, "spins", "prize_label, prize_rarity, campaign_id, created_at, kind", q => q.eq("creator_id", user.id).eq("fan_id", fanId), cutoff).then(data => ({ data: data.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)) })),
     // RM-6: read on its own so a DB without 0049 still opens the drawer.
     Promise.resolve(sb.from("fans").select("break_until").eq("id", fanId).maybeSingle()).catch(() => null),
+    // TS-17: read on its own too, so a DB without 0073 still opens the drawer.
+    Promise.resolve(sb.from("fans").select("chat_muted_at").eq("id", fanId).maybeSingle()).catch(() => null),
   ]);
   const breakUntil = (breakRes?.data as { break_until?: string | null } | null)?.break_until ?? null;
+  const chatMuted = (muteRes?.data as { chat_muted_at?: string | null } | null)?.chat_muted_at != null;
 
   const spins = (spinRows ?? []) as {
     prize_label: string;
@@ -838,6 +842,7 @@ export async function getFanDetail(fanId: string): Promise<FanDetail | null> {
     name: fan.display_name ?? fan.handle ?? "Fan",
     blocked: !!(fan as { blocked_at?: string | null }).blocked_at,
     breakUntil: isOnBreak(breakUntil) ? breakUntil : null,
+    chatMuted,
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spins_remaining,
@@ -1107,6 +1112,37 @@ export async function ackFan(
   return status === "not_found" || status === "unavailable" ? { error: "not_found" } : { ok: true };
 }
 
+// --- Chat mute (TS-17) -----------------------------------------------------
+
+/**
+ * The fan behind a token mutes (or unmutes) the creator's messages. Keyed on
+ * the link token only, like ackFan: the same live-link test first
+ * (resolveFanByToken: fanLinkLive + the creator's standing), then
+ * set_fan_chat_mute (0073, service role only), which takes the fan lock and
+ * decides liveness again exactly as record_fan_ack does. `unavailable` (the
+ * link was paused, expired or self-excluded, the fan blocked or the creator
+ * suspended; nothing was written) answers like the paused link it is, the
+ * acknowledgement's answer. While muted, every creator-side insert into the
+ * thread is refused by the database (guard_message_writes, 42501 'muted').
+ */
+export async function setFanChatMute(
+  token: string,
+  muted: boolean,
+): Promise<{ ok: true; muted: boolean } | { error: "not_found" | "db_error" }> {
+  if (!isSupabaseConfigured()) return mockSetFanChatMute(token, muted);
+
+  const sb = createServiceClient();
+  const resolved = await resolveFanByToken(sb, token);
+  if (!resolved) return { error: "not_found" };
+  const { data, error } = await (sb as unknown as {
+    rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { code?: string } | null }>;
+  }).rpc("set_fan_chat_mute", { p_token: token, p_muted: muted });
+  if (error) return { error: "db_error" };
+  const answer = data as { status?: string; muted?: unknown } | null;
+  if (answer?.status === "ok") return { ok: true, muted: answer.muted === true };
+  return answer?.status === "not_found" || answer?.status === "unavailable" ? { error: "not_found" } : { error: "db_error" };
+}
+
 // --- Wishlist ---------------------------------------------------------------
 
 /**
@@ -1126,10 +1162,11 @@ export async function resolveFanByToken(
   wheelId: string;
   blocked: boolean;
   needsAck: boolean;
+  chatMuted: boolean;
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, ${LINK_LIVE}, fan:fans(blocked_at, acked_at, acked_terms_version), ${CREATOR_STANDING}`)
+    .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, ${LINK_LIVE}, fan:fans(blocked_at, acked_at, acked_terms_version, chat_muted_at), ${CREATOR_STANDING}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -1141,7 +1178,7 @@ export async function resolveFanByToken(
     fan_id: string;
     is_active?: boolean | null;
     expires_at?: string | null;
-    fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null;
+    fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null; chat_muted_at?: string | null } | null;
     creator?: CreatorStanding;
   } | null;
   // PR-13 (0073): an expired link answers like a switched-off one.
@@ -1160,5 +1197,7 @@ export async function resolveFanByToken(
     // T2: the same age/terms check the spin uses; callers that let a fan reach
     // the creator refuse with needs_ack until it is confirmed.
     needsAck: fanNeedsAck(pass.fan?.acked_at, pass.fan?.acked_terms_version),
+    // TS-17: the fan muted the creator's messages; the auto intro / outro skip them.
+    chatMuted: pass.fan?.chat_muted_at != null,
   };
 }

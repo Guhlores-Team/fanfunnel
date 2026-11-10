@@ -8,6 +8,8 @@
 //  ATK-01 a creator session is refused on fan-only routes; self-delete waits for an owed prize
 //  a suspended creator's fan routes answer like a link that is not active (chat,
 //        wishlist, board, check-in, gate); the fan's own actions stay open
+//  TS-17 a fan mutes the creator from the Safety menu; the creator's send is
+//        refused with the reason; unmuting lets it through
 //  WF-01…WF-16, PA-01/06/10/11, WA-02/04/06/07/11, PR-19, TS-14 (see each step)
 // Every fan, wheel and address is the journey's own; the demo creator's wheel
 // is restored after each edit.
@@ -310,6 +312,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         ["/api/self-exclude", { token: fan.token }],
         ["/api/fan/reward", { token: fan.token, shareId: win.shareId }],
         ["/api/fan/break", { token: fan.token, duration: "24h" }],
+        ["/api/fan/mute", { token: fan.token, muted: true }],
         ["/api/fan-data/export", { token: fan.token }],
         ["/api/fan-data/delete", { token: fan.token, confirm: "DELETE" }],
       ];
@@ -710,6 +713,72 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
       const bio = await (await request.get(`${BASE}/c/demo-creator`)).text();
       assert(!/href="#"/.test(bio), "the public page has no # call to action (PR-19)");
       assert(!/rel="manifest"/.test(bio), "the public page links no dashboard manifest (WA-06)");
+    });
+
+    await step("b7 fan TS-17: a fan mutes the creator from the Safety menu; the creator's send is refused with the reason; unmuting lets it through", async () => {
+      const name = `B7 mute ${randomBytes(3).toString("hex")}`;
+      const fan = await own(name, 2);
+      const { context, page } = await openFan(browser, sink, fan.token);
+      // The creator's page meets one intended 409 (the refused send), so it
+      // keeps its own error list instead of the shared sink: anything else
+      // (a script error, another failed response) still fails the step.
+      const creator = await ctx.newPage();
+      const creatorErrors = [];
+      creator.on("pageerror", (e) => creatorErrors.push(String(e?.message || e)));
+      creator.on("console", (m) => { if (m.type() === "error" && !/status of 409/.test(m.text())) creatorErrors.push(m.text()); });
+      creator.on("response", (r) => { if (r.status() >= 400 && !(r.status() === 409 && new URL(r.url()).pathname === "/api/messages/creator")) creatorErrors.push(`${r.status()} ${r.url()}`); });
+      const safety = async () => {
+        await page.getByRole("button", { name: "Safety & privacy" }).first().click();
+        const dialog = page.getByRole("dialog", { name: "Safety and privacy" });
+        await dialog.waitFor({ timeout: 5000 });
+        return dialog;
+      };
+      const fanThread = async () => (await json(await request.post(BASE + "/api/messages/fan/thread", { headers: { "x-real-ip": quietIp() }, data: { token: fan.token } }), "the fan reads the thread")).messages;
+      try {
+        let dialog = await safety();
+        let item = dialog.getByTestId("mute-messages");
+        const label = await item.textContent();
+        assert(/Mute messages from Demo Creator/.test(label), `the item names the creator (${label})`);
+        assert(/You won.t get new messages from Demo Creator\. You can still play and message them\./.test(label), "…with a plain explanation");
+        await item.click();
+        await dialog.getByRole("status").filter({ hasText: /^Muted\./ }).waitFor({ timeout: 8000 });
+        await dialog.getByRole("button", { name: "Close" }).click();
+
+        const refused = await request.post(BASE + "/api/messages/creator", { data: { fanId: fan.fanId, body: "b7 api while muted" } });
+        assert(refused.status() === 409 && (await refused.json()).error === "muted", `the creator's send is 409 muted (${refused.status()})`);
+
+        await goto(creator, `/dashboard?section=fans&fan=${encodeURIComponent(fan.fanId)}`, 1200);
+        const drawer = creator.getByRole("dialog", { name: "Fan details" });
+        await drawer.getByTestId("fan-muted-messages").waitFor({ timeout: 10000 });
+        await creator.waitForFunction(() => [...document.querySelectorAll("[role='dialog'] button")].some((b) => b.textContent?.trim() === "Message" && b.getAttribute("data-has-thread") === "false"), null, { timeout: 8000 });
+        await drawer.getByRole("button", { name: "Message" }).click();
+        const compose = drawer.getByTestId("start-conversation");
+        await compose.getByRole("textbox").fill("b7 drawer while muted");
+        await compose.getByRole("button", { name: "Send" }).click();
+        await compose.getByRole("alert").filter({ hasText: "This fan has muted messages from you. They can still play." }).waitFor({ timeout: 8000 });
+        assert((await compose.getByRole("textbox").inputValue()) === "b7 drawer while muted", "the refused message stays in the composer");
+        const quiet = await fanThread();
+        assert(!quiet.some((m) => m.sender === "creator"), "nothing from the creator reached the fan while muted");
+
+        // The menu reads the saved choice after a reload, then the fan unmutes.
+        await page.reload();
+        await page.getByTestId("fan-spin").waitFor({ timeout: 10000 });
+        dialog = await safety();
+        item = dialog.getByTestId("mute-messages");
+        assert(/Unmute messages/.test(await item.textContent()), "after a reload the menu offers Unmute");
+        await item.click();
+        await dialog.getByRole("status").filter({ hasText: /^Unmuted\./ }).waitFor({ timeout: 8000 });
+
+        await compose.getByRole("button", { name: "Send" }).click();
+        await creator.getByRole("list", { name: "Conversations" }).locator("button[aria-current='true']").filter({ hasText: name }).waitFor({ timeout: 10000 });
+        const after = await fanThread();
+        assert(after.some((m) => m.sender === "creator" && m.body === "b7 drawer while muted"), "after unmuting, the creator's message reaches the fan");
+        assert(after.every((m) => !("actor_id" in m) && !("actorId" in m) && !("creator_id" in m)), "the fan's thread carries no account ids (TS-07)");
+        assert(creatorErrors.length === 0, `the creator's page had no other errors (${creatorErrors.join("; ")})`);
+      } finally {
+        await creator.close().catch(() => {});
+        await context.close();
+      }
     });
 
     await step("b7 fan WF-14: the install nudge says \"this page\", never an app name the fan has not heard of", async () => {

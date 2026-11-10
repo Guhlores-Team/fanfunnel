@@ -129,7 +129,7 @@ export default async function SpinPage({
         >
           {/* TS-10: the line names the game this fan plays (spin / ticket / play). */}
           <span>{publicGameCopy(pass.wheel.gameKind).shareFooter}</span>
-          <SafetyMenu token={token} />
+          <SafetyMenu token={token} creatorTitle={pass.creatorTitle} chatMuted={pass.chatMuted === true} />
           <LegalLinks />
         </footer>
       </LinkPauseProvider>

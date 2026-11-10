@@ -27,6 +27,7 @@ import { linkNames, newLinkPin, spinsText, topUpOutcome, topUpTargets, type NewL
 import { GrantRefusedError, parseSpinCount } from "./grantErrors";
 import { useNow } from "@/lib/hooks/useNow";
 import { formatWhen } from "@/lib/localTime";
+import { CREATOR_MUTED_MESSAGE, CREATOR_MUTED_NOTE } from "@/lib/fan/chatMute";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -394,6 +395,14 @@ export default function FanDetailDrawer({
                   {blocked && (
                     <span className="ml-2 rounded-full bg-[#ef4444]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.03em] text-[#fca5a5]">
                       Blocked
+                    </span>
+                  )}
+                  {detail?.chatMuted && (
+                    <span
+                      data-testid="fan-muted-messages"
+                      className="ml-2 inline-block rounded-full border border-line px-2 py-0.5 text-[10px] font-semibold text-ink"
+                    >
+                      {CREATOR_MUTED_NOTE}
                     </span>
                   )}
                   {breakEnd && (
@@ -1092,7 +1101,12 @@ function StartConversation({ id, fanId, name, onSent }: { id: string; fanId: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fanId, body: text }),
       });
-      if (!res.ok) { setError("Couldn't send. Your message is still here; try again."); return; }
+      if (!res.ok) {
+        // TS-17: refused because the fan muted the creator's messages.
+        const refusal = (await res.json().catch(() => ({}))) as { error?: unknown };
+        setError(res.status === 409 && refusal.error === "muted" ? CREATOR_MUTED_MESSAGE : "Couldn't send. Your message is still here; try again.");
+        return;
+      }
       setBody("");
       toast(`Sent. ${name || "This fan"} sees it in the chat on their spin link.`, { tone: "success" });
       setSent(true);

@@ -233,6 +233,8 @@ interface MockFan {
   breakUntil?: string | null;
   playReminderDaily?: number | null;
   spinTimes?: string[];
+  // TS-17 (mirrors fans.chat_muted_at): when the fan muted the creator's messages.
+  chatMutedAt?: string | null;
 }
 
 // Phase 5b (#24): a creator's registered outbound webhook (demo, in-memory).
@@ -1264,6 +1266,7 @@ export async function mockGetFanPass(
     creatorId: "demo-creator",
     leaderboardEnabled: store.leaderboardEnabled,
     leaderboardOptIn: fan.leaderboardOptIn === true,
+    chatMuted: fan.chatMutedAt != null, // TS-17
     // A36: the note the demo creator saved in Settings, else the sample one.
     creatorNote: mockCreatorNote(),
     creatorAvatarUrl: mockGetPublicProfileFields().avatarUrl || null,
@@ -2223,6 +2226,7 @@ export function mockGetFanDetail(fanId: string): FanDetail | null {
     name: fan.name,
     blocked: !!(fan as { blockedAt?: string | null }).blockedAt,
     breakUntil: isOnBreak(fan.breakUntil) ? fan.breakUntil ?? null : null,
+    chatMuted: fan.chatMutedAt != null, // TS-17
     notes: fan.notes ?? null,
     tags: fan.tags ?? [],
     spinsRemaining: fan.spinsRemaining,
@@ -3201,6 +3205,20 @@ export function mockAckFan(token: string): { ok: true } | { error: string } {
 }
 
 /**
+ * TS-17: the fan behind a token mutes or unmutes the creator's messages.
+ * Parity with set_fan_chat_mute (0073) as setFanChatMute reads it: only a
+ * live link of an active creator is changed (fanReachingCreator), a blocked
+ * fan answers like a link that is not there (`unavailable`), and muting again
+ * keeps the first time.
+ */
+export function mockSetFanChatMute(token: string, muted: boolean): { ok: true; muted: boolean } | { error: "not_found" } {
+  const fan = fanReachingCreator(token);
+  if (!fan || fan.blockedAt) return { error: "not_found" };
+  fan.chatMutedAt = muted ? fan.chatMutedAt ?? new Date().toISOString() : null;
+  return { ok: true, muted: fan.chatMutedAt != null };
+}
+
+/**
  * A fan self-excludes (pauses) their own link. Unlike the old no-op, this now
  * records the exclusion so mockSpin actually blocks subsequent spins — matching
  * the Supabase path and giving the demo/tests a real guard to exercise.
@@ -3682,6 +3700,8 @@ export function mockGetFanMessages(token: string): ChatMessage[] | { error: "blo
       body: m.body,
       at: m.at,
       readAt: m.readAt,
+      // TS-07: the demo creator writes every reply itself (no team).
+      fromTeam: false,
     }))
   );
 }
@@ -3724,6 +3744,8 @@ export function mockGetThread(fanId: string): ChatMessage[] {
       body: m.body,
       at: m.at,
       readAt: m.readAt,
+      // TS-07: the demo creator writes every reply itself (no team).
+      fromTeam: false,
     }))
   );
 }
@@ -3740,9 +3762,13 @@ export function mockSendCreatorMessage(
   fanId: string,
   body: string
 ): { ok: true } | { error: string } {
-  if (!store.fans.has(fanId)) return { error: "not_found" };
+  const target = store.fans.get(fanId);
+  if (!target) return { error: "not_found" };
   const text = body.trim();
   if (text.length < 1 || text.length > 2000) return { error: "invalid_body" };
+  // TS-17: parity with guard_message_writes (0073): nothing from the
+  // creator's side reaches a fan who muted it.
+  if (target.chatMutedAt) return { error: "muted" };
   store.messages.push({
     id: genId("msg"),
     fanId,
@@ -3788,7 +3814,8 @@ export function mockEnsureChatIntro(
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const intro = (store.chatIntro ?? "").trim();
-  if (!intro) return { ok: true };
+  // TS-17: a fan who muted the creator gets no greeting (skipped, not an error).
+  if (!intro || fan.chatMutedAt) return { ok: true };
   const hasAny = store.messages.some((m) => m.fanId === fan.id);
   if (hasAny) return { ok: true };
   store.messages.push({
@@ -3815,7 +3842,8 @@ export function mockSendChatOutro(
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
   const outro = (store.chatOutro ?? "").trim();
-  if (!outro) return { ok: true };
+  // TS-17: a fan who muted the creator gets no nudge (skipped, not an error).
+  if (!outro || fan.chatMutedAt) return { ok: true };
   const mine = store.messages
     .filter((m) => m.fanId === fan.id)
     .sort((a, b) => a.at.localeCompare(b.at));
@@ -4117,11 +4145,13 @@ export function mockExportFanData(token: string): FanDataExport | null {
       referralCode: fan.referralCode ?? null,
       joinedThroughAReferral: fan.referredByFanId !== null,
       friendsReferred: store.referrals.filter((r) => r.referrerFanId === fan.id).length,
+      blocked: !!fan.blockedAt,
     },
     consents: {
       ageAndTermsAcceptedAt: fan.ackedAt,
       termsVersion: fan.ackedTermsVersion ?? null,
       leaderboardOptIn: fan.leaderboardOptIn,
+      chatMutedAt: fan.chatMutedAt ?? null,
     },
     links: fan.passes.map((p) => ({
       linkEndsWith: maskToken(p.token),
@@ -4136,7 +4166,7 @@ export function mockExportFanData(token: string): FanDataExport | null {
     })),
     topUps: store.grants
       .filter((g) => g.fanId === fan.id)
-      .map((g) => ({ at: g.at, spins: g.spins, bonusSpins: g.bonusSpins })),
+      .map((g) => ({ at: g.at, spins: g.spins, bonusSpins: g.bonusSpins, amountCents: g.amountCents })),
     spins: wins.map((w) => ({
       kind:w.kind??"play",parentSpinId:w.parentShareId??null,bingoLine:w.bingoLine??null,
       gameKind: w.gameKind ?? "wheel", presentation: (w.presentation ?? null) as unknown as Json,
@@ -4248,6 +4278,7 @@ export function mockExportCreatorData(): CreatorDataExport {
     notes: fan.notes, tags: fan.tags, leaderboard_opt_in: fan.leaderboardOptIn,
     acked_at: fan.ackedAt, acked_terms_version: fan.ackedTermsVersion,
     blocked_at: fan.blockedAt ?? null, break_until: fan.breakUntil ?? null,
+    chat_muted_at: fan.chatMutedAt ?? null,
   }));
   const links = fanList.flatMap((fan) => (fan.passes ?? []).map((pass, index) => ({
     id: `mock-link-${fan.id}-${index}`, fan_id: fan.id, wheel_id: pass.wheelId,

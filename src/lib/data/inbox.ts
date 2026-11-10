@@ -119,12 +119,21 @@ export async function deleteDmTemplate(
 
 // --- Chat (spin-gated; messages are FREE) -----------------------------------
 
-function toChatMessage(r: {
+/**
+ * One stored message as the browser sees it. TS-07: `fromTeam` (a creator
+ * message written by a team member, not the creator) is worked out here on
+ * the server from actor_id (0073: the account that wrote it; null for fan
+ * messages and older rows). The account id itself is never copied into the
+ * result, so neither the fan's thread nor the creator's carries a staff id.
+ */
+export function toChatMessage(r: {
   id: string;
   sender: "fan" | "creator";
   body: string;
   created_at: string;
   read_at: string | null;
+  actor_id?: string | null;
+  creator_id?: string | null;
 }): ChatMessage {
   return {
     id: r.id,
@@ -132,10 +141,16 @@ function toChatMessage(r: {
     body: r.body,
     at: r.created_at,
     readAt: r.read_at,
+    fromTeam: r.sender === "creator" && r.actor_id != null && r.actor_id !== r.creator_id,
   };
 }
 
-const MESSAGE_SELECT = "id, sender, body, created_at, read_at";
+const MESSAGE_SELECT = "id, sender, body, created_at, read_at, actor_id, creator_id";
+
+/** PostgREST's answer when guard_message_writes refuses a creator message to a muted fan (0073, TS-17). */
+export function isMutedRefusal(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  return !!error && error.code === "42501" && /\bmuted\b/.test(error.message ?? "");
+}
 
 export async function sendFanMessage(
   token: string,
@@ -415,16 +430,17 @@ export async function getThreadPage(fanId: string, creatorId?: unknown, opts: { 
 
   // One page, newest-first with one extra row to know whether an older page
   // exists, then presented oldest-first.
-  // The creator-side read also carries actor_id (0073, WG-07): who wrote a
-  // reply. The fan-side reads use MESSAGE_SELECT and never see it.
+  // MESSAGE_SELECT carries actor_id (0073, WG-07): who wrote a reply. Here it
+  // names the team member ("via"); the fan-side read only turns it into
+  // fromTeam, and toChatMessage never copies the id out.
   let query = sb
     .from("messages")
-    .select(`${MESSAGE_SELECT}, actor_id`)
+    .select(MESSAGE_SELECT)
     .eq("creator_id", owner)
     .eq("fan_id", fanId);
   if (before) query = query.lt("created_at", before);
   const { data } = await query.order("created_at", { ascending: false }).limit(limit + 1);
-  const rows = ((data ?? []) as (Parameters<typeof toChatMessage>[0] & { actor_id?: string | null })[]).slice();
+  const rows = ((data ?? []) as Parameters<typeof toChatMessage>[0][]).slice();
   const more = rows.length > limit;
   if (more) rows.length = limit;
   rows.reverse();
@@ -432,7 +448,7 @@ export async function getThreadPage(fanId: string, creatorId?: unknown, opts: { 
   // session proves can_act_for again right before the service read: 'view'
   // for the creator itself, 'chat' (what this read needed) for a seat.
   const staffReplies = rows.filter((r) => r.sender === "creator" && r.actor_id && r.actor_id !== owner);
-  const names = staffReplies.length ? await actorNames(sb, owner, owner === user.id ? "view" : "chat", staffReplies.map((r) => r.actor_id)) : null;
+  const names = staffReplies.length ? await actorNames(sb, owner, owner === user.id ? "view" : "chat", staffReplies.map((r) => r.actor_id!)) : null;
   return {
     messages: rows.map((r) => {
       const via = r.sender === "creator" && r.actor_id ? names?.get(r.actor_id) : undefined;
@@ -512,6 +528,9 @@ export async function sendCreatorMessage(
     sender: "creator",
     body: trimmed,
   });
+  // TS-17: the fan muted this creator's messages; the database refused the
+  // row (nothing stored, nothing to notify). The route answers 409 muted.
+  if (isMutedRefusal(error)) return { error: "muted" };
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -594,6 +613,8 @@ export async function ensureChatIntro(
   if (!resolved) return { error: "not_found" };
   if (resolved.blocked) return { error: "blocked" };
   if (resolved.needsAck) return { error: "needs_ack" };
+  // TS-17: a fan who muted the creator gets no greeting (skipped, no error, no row).
+  if (resolved.chatMuted) return { ok: true };
 
   const { data: profile } = await sb
     .from("profiles")
@@ -616,6 +637,8 @@ export async function ensureChatIntro(
     sender: "creator",
     body: intro,
   });
+  // Muted between the read above and the insert: the database refused it; still a silent skip.
+  if (isMutedRefusal(error)) return { ok: true };
   return error ? { error: "db_error" } : { ok: true };
 }
 
@@ -634,6 +657,8 @@ export async function sendChatOutro(
   if (!resolved) return { error: "not_found" };
   if (resolved.blocked) return { error: "blocked" };
   if (resolved.needsAck) return { error: "needs_ack" };
+  // TS-17: a fan who muted the creator gets no nudge (skipped, no error, no row).
+  if (resolved.chatMuted) return { ok: true };
 
   const { data: profile } = await sb
     .from("profiles")
@@ -660,5 +685,7 @@ export async function sendChatOutro(
     sender: "creator",
     body: outro,
   });
+  // Muted between the read above and the insert: the database refused it; still a silent skip.
+  if (isMutedRefusal(error)) return { ok: true };
   return error ? { error: "db_error" } : { ok: true };
 }
