@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { MAX_CREATOR_NOTE, publicTextCheck, publicTextErrorCode } from "@/lib/publicText";
 import { revalidatePath } from "next/cache";
 import { getMyPublicProfile, normalizePublicSlug, setMyPublicProfile } from "@/lib/data";
 import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
@@ -7,6 +6,8 @@ import { supabaseUrl } from "@/lib/supabase/url";
 import { externalUrl } from "@/lib/format";
 import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api/handler";
 import { limitRoute } from "@/lib/api/limit";
+import { isReservedName } from "@/lib/reservedNames";
+import { publicTextCheck } from "@/lib/publicText";
 
 // Field limits and slug shape enforced before persistence. The slug is further
 // normalized in the data layer, so we only need to reject oversized/illegal
@@ -15,8 +16,7 @@ import { limitRoute } from "@/lib/api/limit";
 // `mailto:`, `tel:`, or `javascript:` are rejected.
 const MAX_SLUG_LEN = 64;
 const MAX_TAGLINE_LEN = 200;
-// TS-04: the note is capped at MAX_CREATOR_NOTE (one constant with the editor).
-const MAX_NOTE_LEN = MAX_CREATOR_NOTE;
+const MAX_NOTE_LEN = 2000;
 const MAX_TIP_URL_LEN = 2048;
 const SLUG_RE = /^[A-Za-z0-9 _-]*$/;
 
@@ -93,6 +93,10 @@ export async function PUT(req: Request) {
   ) {
     return NextResponse.json({ error: "invalid_slug" }, { status: 400 });
   }
+  // TS-03: /c/admin, /c/fanfunnel-support and look-alikes are nobody's page.
+  if (body.slug !== undefined && isReservedName(body.slug)) {
+    return NextResponse.json({ error: "slug_reserved" }, { status: 400 });
+  }
   if (
     body.tipUrl !== undefined &&
     (typeof body.tipUrl !== "string" || !isValidTipUrl(body.tipUrl))
@@ -111,10 +115,12 @@ export async function PUT(req: Request) {
   ) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
   }
-  // TS-04: no links, phone numbers, @handles or slurs in text every fan sees.
-  for (const field of ["tagline", "note"] as const) {
-    const issue = publicTextCheck(body[field]);
-    if (issue) return NextResponse.json({ error: publicTextErrorCode(issue), field }, { status: 400 });
+  // TS-04: no links, e-mail addresses, phone numbers, other-app handles or
+  // slurs in text every visitor to /c/<slug> and the spin page reads.
+  for (const [value, field] of [[body.tagline, "tagline"], [body.note, "creatorNote"]] as const) {
+    if (value === undefined) continue;
+    const text = publicTextCheck(value, { field });
+    if (!text.ok) return badRequest(text.code);
   }
   // /c/<slug> is ISR (revalidate 60). Fields it renders mark the old and new
   // slug's cached page stale, so a rename or bio edit shows on the next visit

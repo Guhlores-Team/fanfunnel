@@ -4,8 +4,8 @@ import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { badRequest, errorResponse, BAD_REQUEST, parseJsonBody, isJsonObject } from "@/lib/api/handler";
 import type { ExpectedStock } from "@/lib/data/wheels";
-import { MAX_PRIZE_LABEL, normalizeWheelPayload } from "@/lib/games/wheel/validate";
-import { publicTextCheck, publicTextErrorCode } from "@/lib/publicText";
+import { MAX_PRIZE_DESCRIPTION, MAX_PRIZE_LABEL, normalizeWheelPayload } from "@/lib/games/wheel/validate";
+import { publicTextCheck, type PublicTextCode } from "@/lib/publicText";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 import { limitRoute } from "@/lib/api/limit";
 
@@ -19,8 +19,8 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
     (p) =>
       p != null &&
       typeof p.label === "string" &&
-      // RD-17 / TS-18: the same cap the editor and prizeRow use (80), never a silent slice.
       p.label.length <= MAX_PRIZE_LABEL &&
+      (p.description == null || (typeof p.description === "string" && p.description.length <= MAX_PRIZE_DESCRIPTION)) &&
       RARITY_ORDER.includes(p.rarity) &&
       Number.isFinite(p.weight) &&
       p.weight >= 0 &&
@@ -28,6 +28,19 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
       (p.imageUrl == null ||
         (typeof p.imageUrl === "string" && isValidHttpUrl(p.imageUrl))),
   );
+}
+
+// TS-04: prize names and descriptions are public text (spin page, /c, share
+// and verify pages): no links, e-mail addresses, phone numbers, other-app
+// handles or slurs. The editor shows the same refusal inline (labelError).
+function prizeTextCode(prizes: WheelConfig["prizes"]): PublicTextCode | null {
+  for (const p of prizes) {
+    const label = publicTextCheck(p.label, { field: "prizeLabel" });
+    if (!label.ok) return label.code;
+    const description = publicTextCheck(p.description, { field: "prizeDescription" });
+    if (!description.ok) return description.code;
+  }
+  return null;
 }
 
 // Validate that a string is a well-formed https URL. A weak regex can be
@@ -82,18 +95,14 @@ export async function PUT(req: Request) {
     return badRequest();
   }
   if (!expectedStock) return badRequest();
-  // TS-04: prize names and the subtitle are public text (no links, phones, handles, slurs).
-  if (config && Array.isArray(config.prizes)) {
-    for (const p of config.prizes) {
-      const issue = p && typeof p === "object" ? publicTextCheck((p as { label?: unknown }).label) : null;
-      if (issue) return NextResponse.json({ error: publicTextErrorCode(issue), field: "label", prizeId: (p as { id?: unknown }).id ?? null }, { status: 400 });
-    }
-    const sub = publicTextCheck((config as { subtitle?: unknown }).subtitle);
-    if (sub) return NextResponse.json({ error: publicTextErrorCode(sub), field: "subtitle" }, { status: 400 });
-  }
   if (!config || !Array.isArray(config.prizes) || !prizesValid(config.prizes)) {
     return badRequest();
   }
+  const textCode = prizeTextCode(config.prizes);
+  if (textCode) return badRequest(textCode);
+  // TS-04: the subtitle is public text too (spin page, /c).
+  const subtitle = publicTextCheck((config as { subtitle?: unknown }).subtitle, { field: "pageText" });
+  if (!subtitle.ok) return badRequest(subtitle.code);
   const checked = normalizeWheelPayload(config);
   if ("error" in checked) return badRequest(checked.error);
 

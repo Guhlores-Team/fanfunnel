@@ -23,7 +23,7 @@ export async function testBingoRuntime({admin,a,anonymous,actorA,makeUser,signed
  const saved=await fixtureCreatorRpc(admin,bg,"save_game_wheel",save);if(saved.error)throw Error(`publish runtime Bingo: ${saved.error.message}`);
  const grant=must(await fixtureCreatorRpc(admin,bg,"create_pass_grant",{p_request:randomUUID(),p_creator:BG.id,p_fan:null,p_wheel:wheel.id,p_name:"Bingo fan",p_spins:20,p_bonus:0,p_amount:100,p_campaign:null,p_actor:BG.id}),"seed paid Bingo fan");
  if(grant.status!=="granted")throw Error(`Bingo grant refused ${grant.status}`);
- must(await admin.from("fans").update({acked_at:new Date().toISOString(),acked_terms_version:"2026-10-27"}).eq("id",grant.fanId).select("id").single(),"ack disposable Bingo fan");
+ must(await admin.from("fans").update({acked_at:new Date().toISOString(),acked_terms_version:"2026-11-11"}).eq("id",grant.fanId).select("id").single(),"ack disposable Bingo fan");
  const play=async target=>{
   const id=randomUUID(),binding=sha(id),prepared=must(await admin.rpc("prepare_spin_attempt",{p_attempt:id,p_token:grant.token,p_request_hash:binding}),"prepare real runtime Bingo");
   if(prepared.status!=="ready")throw Error(`Bingo preparation refused ${prepared.status}`);

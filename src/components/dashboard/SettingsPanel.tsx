@@ -19,7 +19,7 @@ import PushNotificationsCard from "./PushNotificationsCard";
 import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profileErrors";
 import LoadFailed from "./LoadFailed";
 import { loadJson } from "@/lib/hooks/loadJson";
-import { MAX_CREATOR_NOTE, publicTextCheck, publicTextMessage } from "@/lib/publicText";
+import { publicTextCheck } from "@/lib/publicText";
 import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
 
 /**
@@ -829,6 +829,8 @@ const browserOrigin = () => window.location.origin;
 const serverOrigin = () => "";
 
 const PUBLIC_DRAFT_KEY = "public-page";
+/** The note cap the route and the database (0073) enforce. */
+const MAX_CREATOR_NOTE = 2000;
 type PublicDraft = Pick<ProfileFields, "slug" | "tipUrl" | "tagline" | "note">;
 /** PR-10: `supported` is false until the delivery_days column is readable. */
 type DeliveryState = { supported: boolean; days: string; saved: string };
@@ -921,10 +923,10 @@ function PublicPageSection({
   // Saves the link-in-bio fields. The avatar is saved from the Profile card.
   const save = async () => {
     // TS-04: the same public-text screen the API applies, before any request.
-    for (const [field, label] of [["tagline", "The tagline"], ["note", "The note to fans"]] as const) {
-      const issue = publicTextCheck(profile[field]);
-      if (issue) {
-        toast(publicTextMessage(issue, label), { tone: "error", duration: 8000 });
+    for (const [value, field] of [[tagline, "tagline"], [note, "creatorNote"]] as const) {
+      const text = publicTextCheck(value, { field });
+      if (!text.ok) {
+        toast(text.message, { tone: "error", duration: 8000 });
         return;
       }
     }
@@ -947,10 +949,6 @@ function PublicPageSection({
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        if (typeof d.error === "string" && d.error.startsWith("public_text_")) {
-          toast(`${d.field === "note" ? "The note to fans" : "The tagline"} can't be published: it contains ${d.error === "public_text_url" ? "a link" : d.error === "public_text_phone" ? "a phone number" : d.error === "public_text_handle" ? "an @handle" : "a word fans must not see"}.`, { tone: "error", duration: 8000 });
-          return;
-        }
         throw new Error(typeof d.error === "string" ? d.error : "");
       }
       toast("Link-in-bio saved", { tone: "success" });

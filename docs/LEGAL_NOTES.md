@@ -220,6 +220,31 @@ once their thresholds are met.
    address or the exact page wording. Ask whether that is enough to prove assent, and keep old
    versions of both documents (git history does that today) so a given version can be produced.
 
+## Version discipline (binding for every edit to the legal pages)
+
+- **Any edit to `src/app/terms/page.tsx` or `src/app/privacy/page.tsx` bumps `LEGAL.version` and
+  `LEGAL.effectiveDate` in the same commit**, together with `public.legal_terms_version()` in a new
+  migration. No exceptions for "small" wording changes: the stored acceptance records say which
+  version a person read, and a version whose text moved underneath it proves nothing (batch-7 TS-01:
+  the text changed on 2026-11-04 and 2026-11-09 under version 2026-10-27; version 2026-11-11 closed it).
+- The guard: `src/lib/legalText.test.ts` hashes `LEGAL.version` plus both pages' source and compares
+  it with `LEGAL.textHash` (`src/lib/legal.ts`). After editing either page: bump `version` and
+  `effectiveDate`, run `npm test`, paste the hash the failing check prints into `textHash`. The hash
+  includes the version, so a version bump without a fresh hash fails too.
+  `src/lib/legalTermsVersion.test.ts` separately fails while the database's
+  `legal_terms_version()` differs, and `e2e/economic-fixtures.mjs` must carry the same version.
+- Material change (the 30-day promise, TS-06): at least `LEGAL.changeNoticeDays` before the date,
+  set `LEGAL.upcoming = { version, effectiveDate, summary }`; `LegalChangeNotice` then shows one line
+  on every fan page footer (through `LegalLinks`) and at the top of the dashboard until the end of
+  that day (UTC), and e-mail creators the new text (manual step; no mail job exists). On the date:
+  publish the new text, move `version`/`effectiveDate`/`textHash` and the migration, and set
+  `upcoming` back to null. `activeLegalChangeNotice()` never shows a notice for the version already
+  in force or after its date, so a forgotten `upcoming` cannot mislead. Whether an admin-set notice
+  (a `legal_change_notices` table) is wanted instead of a deploy is an owner call; the SQL is in the
+  batch-7 trust report.
+- The Terms and Privacy "Changes" sections now describe exactly this (notice on the spin page and in
+  the dashboard, e-mail to creators), not more. Lawyer question 11/27.
+
 ## Done in the code (kept here for the record)
 
 - Creator clickwrap at sign-up, on the access request and as a one-time dashboard prompt when the
@@ -229,7 +254,7 @@ once their thresholds are met.
 - Fans' acceptance now stores the Terms version (`fans.acked_terms_version`); a new version shows
   the age/terms gate again.
 - The access form no longer mentions payouts.
-- The access form says creator accounts are free for now, and its "not approved" screen gives the
+- The access form says creator accounts are free during the pilot (TS-15), and its "not approved" screen gives the
   contact address (from `LEGAL.contactEmail`).
 - The contact address appears only in `src/lib/legal.ts`; `src/lib/legal.test.ts` fails if any
   other file in `src/` or `e2e/` spells it out. Moving to a FanFunnel domain is a one-line change.
@@ -237,6 +262,22 @@ once their thresholds are met.
   match the error-monitoring work on `ops/error-monitoring` (`src/lib/monitoring/scrub.ts`,
   `APP_ERRORS_MAX_ROWS`) and `docs/DATA_RETENTION.md` on `ops/privacy-safety`. Neither branch is
   on `main` yet; re-check the policy if either changes before it merges.
+- Reserved names (TS-03): `src/lib/reservedNames.ts` refuses a display name, public slug or board name
+  that presents as FanFunnel, its domain or staff (`admin`, `support`, `official`, `mod`, `security`,
+  `billing`, `verify`, `team`…), alone, digit-padded, joined ("support_team") or through leet and
+  look-alike letters ("Supp0rt", Cyrillic "Suppоrt"). `/c/<reserved>` is a 404 even if a row holds
+  it. The same list is mirrored in SQL for `set_display_name` / `set_public_profile` (0073). The
+  Terms state the rule ("Names"), and admins may still name a staff account with a reserved word.
+- Public text (TS-04): `src/lib/publicText.ts` refuses links, bare domains ("t.me", "cash.app",
+  "example dot com"), e-mail addresses, phone numbers (nine or more digits with separators),
+  "@handles" and "ig:/snap:/telegram:" style usernames, and a short slur list in a creator's tagline,
+  note, prize names and descriptions and display name, and in a fan's board name. Chat is never
+  blocked: `flagText()` reports the same findings for a future review queue. The Terms tell creators
+  ("Your public text stays on FanFunnel"). The prize-name cap is one constant, `MAX_PRIZE_LABEL` (80),
+  for the editor, `PUT /api/wheel` and templates.
+- Team replies (TS-07): the Terms say chat may be answered by people the creator authorises.
+  Labelling such replies "Team" in the fan's chat is a switch (`LEGAL.teamReplyLabel`, off) pending
+  the owner's decision; the data side needs `messages.sent_by` (0073 proposal).
 - Resend is the email provider: team alert emails on `ops/error-monitoring` are sent through it,
   and account emails go through Supabase Auth's SMTP settings (configured in the Supabase
   dashboard, not in this repository, so confirm it there).

@@ -21,5 +21,9 @@ check("Expires is a valid date", Number.isFinite(expires));
 check("Expires is in the future (renew the file when this fails)", expires > Date.now());
 check("Expires is at most a year and a bit out", expires - Date.now() < 400 * 86_400_000);
 check("Preferred-Languages is English", field("Preferred-Languages") === "en");
+// WA-17: Canonical names this file's own URL and Policy points at the published
+// disclosure text (the Privacy Policy's report section), both over https.
+check("Canonical is this file's https URL", /^https:\/\/[^\s/]+\/\.well-known\/security\.txt$/.test(field("Canonical") ?? ""));
+check("Policy is an https URL on the same site", /^https:\/\/[^\s/]+\/privacy#report-abuse$/.test(field("Policy") ?? "") && new URL(field("Policy") ?? "").host === new URL(field("Canonical") ?? "").host);
 check("no other address is invented", (text.match(/@/g) ?? []).length === 1);
 console.log(`securityTxt.test: ${passed} checks passed`);

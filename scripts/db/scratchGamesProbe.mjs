@@ -43,7 +43,7 @@ export async function probeScratchGames(sql) {
   const addFan=async(spins=10)=>{
    const id=randomUUID(),out=await rpc("create_pass_grant",[quote(id),quote(owner),"null",quote(wheel),quote("Scratch fixture"),String(spins),"0","0","null"]);
    check(out.status==="granted","fixture fan credited through real durable bootstrap");
-   await query(`update public.fans set acked_at=now(),acked_terms_version='2026-10-27' where id=${quote(out.fanId)};`);
+   await query(`update public.fans set acked_at=now(),acked_terms_version=public.legal_terms_version() where id=${quote(out.fanId)};`);
    return{fan:out.fanId,pass:out.passId,token:out.token};
   };
   const prep=async who=>{const id=randomUUID(),binding=hash(id),v=await rpc("prepare_spin_attempt",[quote(id),quote(who.token),quote(binding)]);check(v.status==="ready"&&v.context.wheel.game_kind==="scratch","prepare derives scratch from authoritative wheel");return{id,binding,...v};};

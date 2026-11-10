@@ -1,4 +1,5 @@
-// Batch-6 supply-chain guard (SUP-1, SUP-4, SUP-5, SUP-6, SUP-7, SUP-8, SUP-10).
+// Batch-6 supply-chain guard (SUP-1, SUP-4, SUP-5, SUP-6, SUP-7, SUP-8, SUP-10)
+// + batch-7 SC-04 (Preview allow-list), SC-06 (job timeouts), SC-12 (CI concurrency).
 //
 //   node scripts/test/workflow-supply-chain.test.mjs
 //
@@ -45,6 +46,15 @@ export function runText(text) {
   return out.join("\n");
 }
 
+/** Every job of a workflow: its id and the header + steps text. @param {string} text */
+export function jobs(text) {
+  const i = text.indexOf("\njobs:\n");
+  if (i < 0) return [];
+  const out = [];
+  for (const m of text.slice(i).matchAll(/\n {2}([A-Za-z0-9_-]+):\n/g)) out.push({ id: m[1], body: jobBlock(text, m[1]) });
+  return out;
+}
+
 /** @param {string} text */
 export function auditWorkflow(text) {
   const problems = [];
@@ -57,6 +67,9 @@ export function auditWorkflow(text) {
     else if (ref !== pin[0] || rest.trim() !== `# ${pin[1]}`) problems.push(`${action} pin differs from the reviewed SHA`);
   }
   if (!/\npermissions:\n {2}contents: read\n/.test(text)) problems.push("no top-level least-privilege permissions");
+  for (const job of jobs(text)) {
+    if (!/\n {4}timeout-minutes: \d+\n/.test(job.body)) problems.push(`job ${job.id} has no timeout-minutes (SC-06)`);
+  }
   if (/:\s*write\b/.test(text.replace(/^\s*#.*$/gm, ""))) problems.push("a job asks for write permission");
   for (const m of text.matchAll(/^( *)- uses: actions\/checkout@.*\n((?:\1  .*\n)*)/gm)) {
     if (!/^ *persist-credentials: false$/m.test(m[2])) problems.push("a checkout persists its credentials");
@@ -76,11 +89,15 @@ const mutations = [
   ["unknown action", ci.replace("      - name: Lint\n", "      - uses: evil/action@" + "b".repeat(40) + " # v1\n      - name: Lint\n")],
   ["no permissions", ci.replace("\npermissions:\n  contents: read\n", "\n")],
   ["write permission", ci.replace("\npermissions:\n  contents: read\n", "\npermissions:\n  contents: write\n")],
+  ["job without timeout", ci.replace("    timeout-minutes: 45\n", "")],
   ["persisted checkout", ci.replace("          persist-credentials: false\n", "")],
   ["secret in run block", ci.replace("        run: npm run lint\n", '        run: |\n          echo "${{ secrets.SUPABASE_PROD_DB_PASSWORD }}" | base64\n')],
   ["secret inline run", ci.replace("        run: npm run lint\n", "        run: echo ${{ secrets.X }}\n")],
 ];
 for (const [label, mutated] of mutations) check(`checker rejects mutation: ${label}`, mutated !== ci && auditWorkflow(mutated).length > 0);
+check("every workflow has at least one job and the job reader finds them all", Object.values(workflows).every((t) => jobs(t).length >= 1) && jobs(ci).map((j) => j.id).join() === "verify,schema-drift");
+// SC-12: a newer PR push cancels the older CI run; main is never cancelled.
+check("ci.yml has a per-ref concurrency group that cancels only PR runs", /\nconcurrency:\n {2}group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}\n/.test(ci));
 check("runText keeps env values out of shell text", !runText("      - env:\n          A: ${{ secrets.A }}\n        run: |\n          echo \"$A\"\n").includes("secrets"));
 
 // --------------------------------------------------- SUP-1 / SUP-6 migrations ---
@@ -93,7 +110,8 @@ check("PROD job runs only on a push to main", prodJob.includes("    if: github.e
 check("PR job has no job-level env (no credential reaches the setup actions)", !/\n {4}env:\n/.test(header(testJob)));
 check("PROD job has no job-level env either", !/\n {4}env:\n/.test(header(prodJob)));
 const testSteps = steps(testJob);
-for (const s of testSteps.filter((s) => /uses: /.test(s))) check(`PR setup action gets no secret: ${s.split("\n")[0].trim()}`, !s.includes("secrets."));
+const code = (s) => s.replace(/^\s*#.*$/gm, "");
+for (const s of testSteps.filter((s) => /uses: /.test(s))) check(`PR setup action gets no secret: ${s.split("\n")[0].trim()}`, !code(s).includes("secrets."));
 const tokenSteps = testSteps.filter((s) => s.includes("SUPABASE_ACCESS_TOKEN:"));
 check("PR job hands the account token only to CLI steps, and only on the legacy path", tokenSteps.length > 0 && tokenSteps.every((s) =>
   s.includes("SUPABASE_ACCESS_TOKEN: ${{ steps.target.outputs.mode == 'token' && secrets.SUPABASE_ACCESS_TOKEN || '' }}") && s.includes("[ -n \"$SUPABASE_ACCESS_TOKEN\" ] || unset SUPABASE_ACCESS_TOKEN")));
@@ -143,7 +161,13 @@ const vercel = JSON.parse(readFileSync(new URL("../../vercel.json", import.meta.
 const enabled = vercel.git?.deploymentEnabled ?? {};
 check("Dependabot branches never build a Vercel Preview", enabled["dependabot/**"] === false);
 check("no rule re-enables a Dependabot branch (a true rule would win)", !Object.entries(enabled).some(([glob, on]) => on === true && /^(\*|\*\*|dependabot)/.test(glob)));
-check("main still deploys", enabled.main !== false && enabled["*"] !== false && enabled["**"] !== false);
+// SC-04: an allow-list, not a deny-list. Vercel matches keys with minimatch and
+// deploys when at least one matching rule is true (docs/PREVIEW_DEPLOY.md), so
+// `**`/`*` off every branch and `main: true` keeps Production.
+check("every branch is off by default (`**` for names with a slash, `*` for the rest)", enabled["**"] === false && enabled["*"] === false);
+check("main is explicitly on (the only true rule)", enabled.main === true && Object.entries(enabled).filter(([, on]) => on === true).map(([g]) => g).join() === "main");
+check("dashboard-redesign stays explicitly off (its Preview is the CLI archive deploy)", enabled["dashboard-redesign"] === false);
+check("no other key re-enables anything", Object.values(enabled).every((v) => v === false || v === true));
 check("Vercel installs exactly the lockfile, like CI", vercel.installCommand === "npm ci");
 
 const ciVerify = jobBlock(ci, "verify");

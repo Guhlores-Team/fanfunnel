@@ -37,6 +37,7 @@ import MobileTabBar from "@/components/dashboard/MobileTabBar";
 import { prefersReducedMotion } from "@/lib/sound";
 import { firstStepsAllDone, isFirstRun, profileStepDone } from "@/components/dashboard/firstSteps";
 import SuspendedBanner from "@/components/account/SuspendedBanner";
+import LegalChangeNotice from "@/components/LegalChangeNotice";
 
 // Code-split the tab-gated panels so the initial dashboard bundle doesn't
 // carry every tab a creator may never open. (QrButton is split in FansPanel.)
@@ -514,6 +515,7 @@ export default function DashboardClient({
         <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
       <SuspendedBanner suspended={account.data?.isActive === false} />
       {email && <InvitesBanner />}
+      <LegalChangeNotice className="mb-4 text-left" />
 
       <div
         ref={panelRef}

@@ -149,15 +149,21 @@ export function probeLedgerGuards(db, psql) {
     ["del-chatter:not_found", "del-stranger:not_found", "del-wrong-creator:not_found", "still:1", "del-manager:ok", "gone:0"]);
 
   // --- (d) a chosen game keeps 2 prizes ------------------------------------
-  refused("H1 the creator deletes a prize of its scheduled game", as("C", `delete from public.prizes where id = '${pz("WS", 1)}';`), /game_needs_prizes/);
-  refused("H1 the creator deletes a prize of a campaign's game", as("C", `delete from public.prizes where id = '${pz("WC", 1)}';`), /game_needs_prizes/);
-  refused("H1 a manager seat deletes a prize of a link's game", as("D", `delete from public.prizes where id = '${pz("WL", 2)}';`), /game_needs_prizes/);
+  // 0073 (DB-05): a session has no direct prize UPDATE/DELETE at all; the
+  // game guard is exercised through the service role (the editors' role).
+  refused("H1 the creator deletes a prize of its scheduled game", as("C", `delete from public.prizes where id = '${pz("WS", 1)}';`), /permission denied for table prizes/);
+  refused("H1 the creator deletes a prize of a campaign's game", as("C", `delete from public.prizes where id = '${pz("WC", 1)}';`), /permission denied for table prizes/);
+  refused("H1 a manager seat deletes a prize of a link's game", as("D", `delete from public.prizes where id = '${pz("WL", 2)}';`), /permission denied for table prizes/);
+  refused("H1 the service role deletes a prize of a scheduled game", asService(`delete from public.prizes where id = '${pz("WS", 1)}';`), /game_needs_prizes/);
+  refused("H1 the service role deletes a prize of a campaign's game", asService(`delete from public.prizes where id = '${pz("WC", 1)}';`), /game_needs_prizes/);
+  refused("H1 the service role deletes a prize of a link's game", asService(`delete from public.prizes where id = '${pz("WL", 2)}';`), /game_needs_prizes/);
   refused("H1 the service role deletes a scheduled game's prizes", asService(`delete from public.prizes where wheel_id = '${wid("WS")}';`), /game_needs_prizes/);
-  refused("H1 the creator moves a prize off its scheduled game", as("C", `update public.prizes set wheel_id = '${wid("WN")}' where id = '${pz("WS", 2)}';`), /game_needs_prizes/);
+  refused("H1 the creator moves a prize off its scheduled game", as("C", `update public.prizes set wheel_id = '${wid("WN")}' where id = '${pz("WS", 2)}';`), /permission denied for table prizes/);
+  refused("H1 the service role moves a prize off its scheduled game", asService(`update public.prizes set wheel_id = '${wid("WN")}' where id = '${pz("WS", 2)}';`), /game_needs_prizes/);
   refused("H1 a game inserted with a schedule and no prizes", as("C", `insert into public.wheels (id, creator_id, title, active_from) values ('${id("19")}', '${uid("C")}', 'new', now()); set constraints all immediate;`), /game_needs_prizes/);
   expect("H1 unchosen and archived games still lose prizes; a full save and a scheduled insert with its prizes pass", `
-    ${as("C", `with d as (delete from public.prizes where id = '${pz("WN", 1)}' returning 1) select 'unchosen:' || count(*) from d;`)}
-    ${as("C", `with d as (delete from public.prizes where id = '${pz("WA", 1)}' returning 1) select 'archived:' || count(*) from d;`)}
+    ${asService(`with d as (delete from public.prizes where id = '${pz("WN", 1)}' returning 1) select 'unchosen:' || count(*) from d;`)}
+    ${asService(`with d as (delete from public.prizes where id = '${pz("WA", 1)}' returning 1) select 'archived:' || count(*) from d;`)}
     ${asService(`select public.save_wheel_prizes('${wid("WS")}', '${uid("C")}', '[{"label":"n1","rarity":"common","weight":1},{"label":"n2","rarity":"common","weight":1}]'::jsonb);`)}
     select 'saved:' || count(*) from public.prizes where wheel_id = '${wid("WS")}';
     ${as("C", `insert into public.wheels (id, creator_id, title, active_from) values ('${id("1a")}', '${uid("C")}', 'new', now()); insert into public.prizes (wheel_id, label, rarity, weight) values ('${id("1a")}', 'a', 'common', 1), ('${id("1a")}', 'b', 'common', 1); set constraints all immediate; select 'sched-insert:ok';`)}`,
