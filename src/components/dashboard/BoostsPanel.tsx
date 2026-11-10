@@ -16,6 +16,7 @@ import { loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
 import { useCreatorDraft } from "./CreatorDrafts";
 import { useTimeZone, zoneHint } from "@/lib/localTime";
+import { useNow } from "@/lib/hooks/useNow";
 
 /** A list read: loading, loaded, or failed (never shown as an empty list). */
 type ListLoad = "loading" | "ok" | "failed";
@@ -515,11 +516,15 @@ function HappyHourScheduler() {
   const [wheels, setWheels] = useState<WheelSummary[]>([]);
   const [windows, setWindows] = useState<HappyHour[]>([]);
   const [wheelId, setWheelId] = useState("");
-  const [multiplier, setMultiplier] = useState(2);
+  // RD-18: kept as typed so the field can be cleared; validated on Schedule.
+  const [multiplier, setMultiplier] = useState("2");
   const [startsAt, setStartsAt] = useState("");
   const zone = useTimeZone();
   const [endsAt, setEndsAt] = useState("");
   const [busy, setBusy] = useState(false);
+  // RD-18: the status pills re-evaluate each minute, so a window that starts
+  // while the panel is open moves from "Scheduled" to "Live".
+  const nowTick = useNow(60_000);
   const [state, setState] = useState<ListLoad>("loading");
   // Whether the lists have ever loaded: a failed refresh keeps the last good
   // lists (and Schedule) and only says the refresh failed.
@@ -569,6 +574,11 @@ function HappyHourScheduler() {
       toast("Enter a complete start and end time");
       return;
     }
+    const boost = Number(multiplier.trim());
+    if (multiplier.trim() === "" || !Number.isFinite(boost) || boost < 1 || boost > MAX_COMBINED_BOOST) {
+      toast(`Boost must be between 1 and ${MAX_COMBINED_BOOST}`, { tone: "error" });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/happy-hours", {
@@ -576,7 +586,7 @@ function HappyHourScheduler() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           wheelId,
-          multiplier,
+          multiplier: boost,
           startsAt: startDate.toISOString(),
           endsAt: endDate.toISOString(),
         }),
@@ -643,7 +653,7 @@ function HappyHourScheduler() {
             max={MAX_COMBINED_BOOST}
             step={0.5}
             value={multiplier}
-            onChange={(e) => setMultiplier(Number(e.target.value))}
+            onChange={(e) => setMultiplier(e.target.value)}
             className="ff-input tnum w-full min-w-0 normal-case tracking-normal"
           />
         </label>
@@ -686,7 +696,7 @@ function HappyHourScheduler() {
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
           {windows.map((w) => {
-            const status = happyHourStatus(w.startsAt, w.endsAt);
+            const status = happyHourStatus(w.startsAt, w.endsAt, nowTick ?? undefined);
             const [pill, label] = HH_STATUS[status];
             return (
               <li key={w.id} className={`flex flex-wrap items-center gap-3 rounded-[11px] px-3.5 py-3 ${recessed}`}>
@@ -1055,7 +1065,7 @@ function WebhookSecret() {
         {secret && (
           <button
             type="button"
-            onClick={() => void navigator.clipboard?.writeText(secret).then(() => toast("Secret copied"), () => {})}
+            onClick={() => void copyToClipboard(secret).then((ok) => toast(ok ? "Secret copied" : "Couldn't copy — select the secret and copy it by hand.", ok ? {} : { tone: "error" }))}
             className={secondaryBtn}
           >
             Copy

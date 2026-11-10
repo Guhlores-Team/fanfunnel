@@ -696,6 +696,9 @@ function Thread({
   // Ignore a stale response: if a newer load has started, don't let this older
   // one overwrite messages (e.g. an in-flight poll clobbering a just-sent message).
   const reqId = useRef(0);
+  // RD-11: the parent refetches the inbox list and the whole overview on
+  // onChanged, so a 6 s poll that saw nothing new must stay quiet.
+  const lastSeen = useRef<string | null>(null);
 
   // Resolves false on a failed request so the poll can back off.
   const load = useCallback(async (): Promise<boolean> => {
@@ -708,10 +711,15 @@ function Thread({
       setMessages(list);
       // I3: reading is side-effect free; mark what the creator now sees as
       // read with its own POST, then refresh the list's unread counts.
-      if (list.some((m) => m.sender === "fan" && !m.readAt)) {
+      const unread = list.some((m) => m.sender === "fan" && !m.readAt);
+      if (unread) {
         await fetch(`/api/messages/thread/${fan.fanId}`, { method: "POST", cache: "no-store" }).catch(() => null);
       }
-      onChangedRef.current();
+      const seen = `${fan.fanId}:${list.length}:${list[list.length - 1]?.id ?? ""}:${unread ? 1 : 0}`;
+      if (seen !== lastSeen.current) {
+        lastSeen.current = seen;
+        onChangedRef.current();
+      }
       return true;
     } catch {
       return false;
@@ -877,7 +885,7 @@ function Thread({
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
+          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && send()}
           maxLength={2000}
           aria-label="Reply to this fan"
           placeholder="Reply…"

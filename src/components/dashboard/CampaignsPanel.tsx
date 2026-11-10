@@ -235,9 +235,11 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
         toast(
           data.error === "unauthorized"
             ? "Couldn't create campaign. Are you signed in?"
-            : data.error === "game_not_playable" || data.error === "not_found" || data.error === "forbidden"
-              ? `Couldn't create campaign. ${pinRefusal(data.error, seat)}`
-              : "Couldn't create campaign. Try again.",
+            : data.error === "name_taken"
+              ? "You already have a campaign with that name. Pick another so the Fans filter can tell them apart."
+              : data.error === "game_not_playable" || data.error === "not_found" || data.error === "forbidden"
+                ? `Couldn't create campaign. ${pinRefusal(data.error, seat)}`
+                : "Couldn't create campaign. Try again.",
           { tone: "error" }
         );
         return;

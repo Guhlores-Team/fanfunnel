@@ -193,7 +193,7 @@ export default function MetricsPanel({
 
       <div className="grid gap-[18px] lg:grid-cols-2">
         <section className={`rounded-2xl p-5 ${raised}`}>
-          <CardHeader title={<>What&rsquo;s landing</>} hint="Most-won prizes across recent spins." />
+          <CardHeader title={<>What&rsquo;s landing</>} hint="Most-won prizes across the newest 200 wins." />
           <ul className="mt-4 flex flex-col gap-[11px]">
             {topPrizes.length === 0 && <li className="text-sm text-muted">No spins yet.</li>}
             {topPrizes.map((p) => {
@@ -219,7 +219,7 @@ export default function MetricsPanel({
         </section>
 
         <section className={`rounded-2xl p-5 ${raised}`}>
-          <CardHeader title="Rarity mix" hint="How rare the wins skew." />
+          <CardHeader title="Rarity mix" hint="How rare the newest 200 wins skew." />
           {rarityMix.length === 0 ? (
             <p className="mt-4 text-sm text-muted">No wins yet.</p>
           ) : (

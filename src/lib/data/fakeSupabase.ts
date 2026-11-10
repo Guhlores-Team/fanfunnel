@@ -418,6 +418,18 @@ class Query implements PromiseLike<Result> {
   lte(col: string, val: string) {
     this.filters.push({ col, operator: "lte", value: val, test: row => String(row[col]) <= val }); return this;
   }
+  /** PostgREST ilike: `%`/`_` wildcards, `\\` escapes, case-insensitive. */
+  ilike(col: string, pattern: string) {
+    let re = "";
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i];
+      if (c === "\\" && i + 1 < pattern.length) { re += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); continue; }
+      re += c === "%" ? ".*" : c === "_" ? "." : c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+    const regex = new RegExp(`^${re}$`, "is");
+    this.filters.push({ col, operator: "ilike", value: pattern, test: (r) => typeof r[col] === "string" && regex.test(r[col] as string) });
+    return this;
+  }
   neq(col: string, val: unknown) {
     this.filters.push({ col, operator: "neq", value: val, test: (r) => r[col] !== val });
     return this;

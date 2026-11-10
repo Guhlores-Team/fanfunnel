@@ -8,7 +8,7 @@ import { SAMPLE_WHEEL } from "@/lib/games/wheel/sample";
 import type { Prize, WheelConfig } from "@/lib/games/wheel/types";
 import { MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { storedWeight } from "@/lib/games/wheel/weights";
-import { wheelRulesError } from "@/lib/games/wheel/validate";
+import { MAX_PRIZE_LABEL, wheelRulesError } from "@/lib/games/wheel/validate";
 import { showsStock } from "@/lib/games/wheel/publicView";
 import { isPlayableGame, pickLiveGame } from "@/lib/games/liveGame";
 import type { WheelSummary, HappyHourStatus } from "./types";
@@ -380,7 +380,7 @@ export async function saveWheel(
 export function prizeRow(wheelId: string, p: Prize, sortOrder: number) {
   return {
     wheel_id: wheelId,
-    label: p.label.slice(0, 80) || "Prize",
+    label: p.label.slice(0, MAX_PRIZE_LABEL) || "Prize",
     description: p.description?.slice(0, 280) ?? null,
     rarity: p.rarity,
     // Round (not truncate) and keep a positive weight ≥ 1: a stored 0 makes
