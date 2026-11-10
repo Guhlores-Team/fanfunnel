@@ -16,6 +16,13 @@ const HEADLINE: Record<string, { title: string; body: string; cta: string }> = {
   signup: { title: "Confirm your e-mail", body: "Tap Continue to confirm your e-mail address and carry on with your creator request.", cta: "Continue and confirm" },
 };
 
+// Fixed sentences for `?retry=<flag>` (the verify route sends a request back
+// here with the token unspent); the flag only picks one, it is never shown.
+const RETRY_NOTICE: Record<string, string> = {
+  origin:
+    "For your safety we only accept this step from this page. Nothing was used up: tap the button below to carry on. If you keep landing here, open the link from your e-mail in Chrome, Safari, Firefox or Edge.",
+};
+
 /**
  * Target of every e-mail template link: {{ .SiteURL }}/auth/confirm with
  * `token_hash` + `type` + a fixed `next` (never built from .RedirectTo; see
@@ -42,12 +49,18 @@ export default async function ConfirmLandingPage({
   const link = parseTokenLink(params);
   if (!link) redirect(authLinkFailurePath(params.get("type"), "malformed"));
   const copy = HEADLINE[link.type] ?? HEADLINE.email;
+  const notice = RETRY_NOTICE[params.get("retry") ?? ""];
 
   return (
     <AuthShell>
       <form method="post" action="/auth/confirm/verify" className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white" data-testid="auth-continue">
         <h1 className="text-lg font-bold">{copy.title}</h1>
         <p className="mt-2 text-sm text-white/60">{copy.body}</p>
+        {notice && (
+          <p role="status" data-testid="auth-continue-notice" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">
+            {notice}
+          </p>
+        )}
         <input type="hidden" name="token_hash" value={link.tokenHash} />
         <input type="hidden" name="type" value={link.type} />
         <input type="hidden" name="next" value={link.next} />

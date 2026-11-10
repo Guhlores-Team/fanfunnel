@@ -10,6 +10,10 @@ import { mock } from "node:test";
 //                        page can word it per link type (WU-03).
 // `next` can never leave the origin. A GET never verifies a token_hash: that
 // is what keeps mail scanners from consuming the one-time link.
+// Review A2: the POST must come from this site's own Continue page
+// (Sec-Fetch-Site same-origin, or an Origin that is ours); a cross-site form,
+// a foreign Origin or a request with neither header is sent back to the
+// Continue page with the token unspent: no client is built, no cookie is set.
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -20,10 +24,11 @@ function check(label: string, cond: boolean) {
 let exchangeOk = true;
 let verifyResult: { error: { code?: string; status?: number; message: string } | null; session?: object | null } = { error: null, session: { access_token: "t" } };
 const verified: { type: string; token_hash: string }[] = [];
+let clientsBuilt = 0;
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => true,
-    createClient: async () => ({
+    createClient: async () => (clientsBuilt++, {
       auth: {
         exchangeCodeForSession: async () => ({ error: exchangeOk ? null : { message: "bad" } }),
         verifyOtp: async (p: { type: string; token_hash: string }) => {
@@ -41,10 +46,12 @@ async function main() {
   const callback = (await import("./route")).GET;
   const verify = (await import("../confirm/verify/route"));
   const go = async (qs: string) => (await callback(new Request(`${O}/auth/callback${qs}`))).headers.get("location");
-  const post = async (fields: Record<string, string>) => {
+  // What a browser sends from our own Continue page.
+  const OWN_PAGE = { "sec-fetch-site": "same-origin", origin: O };
+  const post = async (fields: Record<string, string>, headers: Record<string, string> = OWN_PAGE) => {
     const body = new URLSearchParams(fields);
-    const res = await verify.POST(new Request(`${O}/auth/confirm/verify`, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded" } }));
-    return { status: res.status, location: res.headers.get("location") };
+    const res = await verify.POST(new Request(`${O}/auth/confirm/verify`, { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded", host: "app.example", ...headers } }));
+    return { status: res.status, location: res.headers.get("location"), setCookie: res.headers.get("set-cookie") };
   };
 
   // --- GET /auth/callback -------------------------------------------------
@@ -81,6 +88,45 @@ async function main() {
   check("POST with an off-site next stays on the site", r.location === `${O}/pending`);
   r = await post({ token_hash: "abcdef123456", type: "recovery", next: "/\\evil.example" });
   check("POST with a backslash next stays on the site", r.location === `${O}/reset-password`);
+
+  // --- A2: only our own Continue page may spend a token --------------------
+  const LINK = { token_hash: "abcdef123456", type: "recovery", next: "/reset-password" };
+  const BACK = `${O}/auth/confirm?token_hash=abcdef123456&type=recovery&next=%2Freset-password&retry=origin`;
+  const refused: [string, Record<string, string>][] = [
+    ["a cross-site form (Sec-Fetch-Site: cross-site)", { "sec-fetch-site": "cross-site", origin: "https://evil.example" }],
+    ["Sec-Fetch-Site cross-site with a spoofed matching Origin", { "sec-fetch-site": "cross-site", origin: O }],
+    ["a sibling subdomain (Sec-Fetch-Site: same-site)", { "sec-fetch-site": "same-site", origin: "https://evil.app.example" }],
+    ["Sec-Fetch-Site: none", { "sec-fetch-site": "none" }],
+    ["a foreign Origin with no Sec-Fetch-Site (Origin: https://evil.example)", { origin: "https://evil.example" }],
+    ["Origin: null", { origin: "null" }],
+    ["no Origin and no Sec-Fetch-Site at all", {}],
+    ["no headers, but a session cookie", { cookie: "sb-ref-auth-token=x" }],
+    ["a foreign Origin with a session cookie", { origin: "https://evil.example", cookie: "sb-ref-auth-token=x" }],
+  ];
+  for (const [label, headers] of refused) {
+    const calls = verified.length;
+    const built = clientsBuilt;
+    r = await post(LINK, headers);
+    check(`${label} → back to the Continue page, 303`, r.status === 303 && r.location === BACK);
+    check(`${label} → verifyOtp never called, no client built`, verified.length === calls && clientsBuilt === built);
+    check(`${label} → no cookie set`, r.setCookie === null);
+  }
+  r = await post({ token_hash: "abcdef123456", type: "invite", next: "https://evil.example/x" }, { origin: "https://evil.example" });
+  check("a refused POST keeps next on this site", r.location === `${O}/auth/confirm?token_hash=abcdef123456&type=invite&next=%2Fset-password&retry=origin`);
+  r = await post({ token_hash: "<script>", type: "recovery" }, { origin: "https://evil.example" });
+  check("a refused POST with a malformed token → the malformed explanation, nothing echoed", r.location === `${O}/login?error=auth_link&type=recovery&reason=malformed`);
+  // Same-origin semantics per browser family.
+  let before2 = verified.length;
+  r = await post(LINK, { "sec-fetch-site": "same-origin" });
+  check("Chromium / Firefox / Safari 16.4+ (Sec-Fetch-Site same-origin) → verified", r.location === `${O}/reset-password` && verified.length === before2 + 1);
+  before2 = verified.length;
+  r = await post(LINK, { origin: O });
+  check("older Safari / Firefox (Origin only, ours) → verified", r.location === `${O}/reset-password` && verified.length === before2 + 1);
+  process.env.NEXT_PUBLIC_SITE_URL = "https://www.app.example";
+  before2 = verified.length;
+  r = await post(LINK, { origin: "https://www.app.example" });
+  check("the configured site URL's origin → verified", r.location === `${O}/reset-password` && verified.length === before2 + 1);
+  delete process.env.NEXT_PUBLIC_SITE_URL;
 
   const spent = verified.length;
   r = await post({ token_hash: "<script>", type: "recovery" });

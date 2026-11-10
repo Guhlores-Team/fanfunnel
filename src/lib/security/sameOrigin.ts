@@ -100,10 +100,57 @@ export function isCrossOriginWrite({ method, path, headers, allowedOrigins = [],
   if (origin === null) return false;
   const sent = originOf(origin);
   if (!sent) return true;
-  const sentHost = new URL(sent).host.toLowerCase();
-  const hosts = [forwardedHost(headers, onVercel), headers.get("host")?.trim()]
+  if (ownHosts(headers, onVercel).includes(new URL(sent).host.toLowerCase())) return false;
+  return !allowedOrigins.some((o) => originOf(o) === sent);
+}
+
+/** The host(s) the browser connected to: `Host`, and X-Forwarded-Host only under forwardedHost's rule. */
+function ownHosts(headers: Headers, onVercel: boolean): string[] {
+  return [forwardedHost(headers, onVercel), headers.get("host")?.trim()]
     .filter((h): h is string => !!h)
     .map((h) => h.toLowerCase());
-  if (hosts.includes(sentHost)) return false;
-  return !allowedOrigins.some((o) => originOf(o) === sent);
+}
+
+export interface OwnPagePostInput {
+  headers: Headers;
+  /** The request's own URL (`req.url`); its origin always counts as ours. */
+  requestUrl: string;
+  /** Extra allowed origins (the deployment's configured site URL). */
+  allowedOrigins?: readonly (string | undefined)[];
+  /** The server runs on Vercel (`VERCEL=1`); see forwardedHost. */
+  onVercel?: boolean;
+}
+
+/**
+ * The strict variant (review A2), for a POST that must come from one of this
+ * site's own pages whether or not it carries a cookie. isCrossOriginWrite
+ * lets a cookie-less request through (no session to ride on), which is the
+ * wrong rule for a request that CREATES a session: a cross-site form that
+ * posts an attacker's own e-mail-link token would sign the victim's browser
+ * in as the attacker (login CSRF), and that needs no cookie at all.
+ *
+ * True only when the browser itself says the request came from this origin:
+ *   - `Sec-Fetch-Site` present: only `same-origin` passes. `none` (typed
+ *     URL, bookmark) cannot be a form POST from our page; `same-site` is a
+ *     sibling subdomain; `cross-site` is another site;
+ *   - otherwise `Origin` present (browsers without Sec-Fetch-Site, e.g.
+ *     Safari before 16.4, still send Origin on every form POST): it must be
+ *     the request's own origin, a configured site URL, or `https://` + the
+ *     host the browser connected to (a TLS-terminating proxy may hand the
+ *     server an http:// request URL). `null` never passes;
+ *   - neither header: refused. Unlike the cookie check there is no "not a
+ *     browser" pass: nothing but our own page has a reason to send this.
+ * A page must not be served with `Referrer-Policy: no-referrer`, which makes
+ * browsers send `Origin: null` on its form POSTs (next.config.ts sets
+ * strict-origin-when-cross-origin for every route).
+ */
+export function isOwnPagePost({ headers, requestUrl, allowedOrigins = [], onVercel = false }: OwnPagePostInput): boolean {
+  const site = headers.get("sec-fetch-site");
+  if (site !== null) return site.trim().toLowerCase() === "same-origin";
+  const sent = originOf(headers.get("origin"));
+  if (!sent) return false;
+  if (sent === originOf(requestUrl)) return true;
+  if (allowedOrigins.some((o) => originOf(o) === sent)) return true;
+  const u = new URL(sent);
+  return u.protocol === "https:" && ownHosts(headers, onVercel).includes(u.host.toLowerCase());
 }

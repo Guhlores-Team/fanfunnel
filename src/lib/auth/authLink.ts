@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { isOwnPagePost } from "@/lib/security/sameOrigin";
 import { safeNext } from "./safeNext";
 
 // Every e-mail link lands on this site through /auth/confirm (the current
@@ -17,6 +18,13 @@ import { safeNext } from "./safeNext";
 // verifyOtp. The legacy `code` links (/auth/callback?code=…) are exchanged on
 // GET as before: a code is useless without the code-verifier cookie that only
 // the requesting browser holds, so a scanner cannot consume it.
+//
+// Review A2: that POST creates a session, so it must come from this site's own
+// Continue page (isOwnPagePost: the browser's Sec-Fetch-Site / Origin, with or
+// without cookies). Anything else is sent back to the Continue page with the
+// token UNSPENT, so a human still has to press the button on our page: a
+// cross-site form holding an attacker's own token can never sign a visitor's
+// browser in as the attacker.
 //
 // `next` stays on this site (safeNext). A bad, used or expired link goes to
 // /login?error=auth_link&type=<type>&reason=<reason>, where the sign-in page
@@ -63,6 +71,16 @@ export function parseTokenLink(params: URLSearchParams | FormData): { tokenHash:
   return { tokenHash, type: type as EmailOtpType, next: safeNext(read("next"), defaultNextFor(type)) };
 }
 
+/** What the Continue page says above its button when it was sent back to. */
+export type LandingNotice = "origin";
+
+/** /auth/confirm for this link, token unspent (optionally with a fixed-text notice flag). */
+export function authLinkLandingPath(link: { tokenHash: string; type: string; next: string }, notice?: LandingNotice): string {
+  const q = new URLSearchParams({ token_hash: link.tokenHash, type: link.type, next: link.next });
+  if (notice) q.set("retry", notice);
+  return `/auth/confirm?${q}`;
+}
+
 /** Supabase's "Email link is invalid or has expired" (also a used link). */
 function reasonFor(error: { code?: string; status?: number } | null): AuthLinkReason {
   return error?.code === "otp_expired" || error?.status === 403 ? "expired" : "invalid";
@@ -83,6 +101,18 @@ export async function verifyAuthLink(req: Request): Promise<NextResponse> {
   }
   const link = parseTokenLink(form);
   if (!link) return NextResponse.redirect(authLinkFailureUrl(origin, typeof form.get("type") === "string" ? String(form.get("type")) : null, "malformed"), { status: 303 });
+  // A2: only this site's own Continue page may spend a token. Checked before
+  // anything touches Supabase or a cookie, in the demo too.
+  if (
+    !isOwnPagePost({
+      headers: req.headers,
+      requestUrl: req.url,
+      allowedOrigins: [process.env.NEXT_PUBLIC_SITE_URL],
+      onVercel: process.env.VERCEL === "1",
+    })
+  ) {
+    return NextResponse.redirect(`${origin}${authLinkLandingPath(link, "origin")}`, { status: 303, headers: { "Cache-Control": "no-store" } });
+  }
   // The demo has no accounts: nothing to verify (and no client to build).
   if (!isSupabaseConfigured()) return NextResponse.redirect(`${origin}/login`, { status: 303 });
 
@@ -115,11 +145,7 @@ export async function completeAuthLink(req: Request): Promise<NextResponse> {
   if (searchParams.get("token_hash") !== null) {
     const link = parseTokenLink(searchParams);
     if (!link) return NextResponse.redirect(authLinkFailureUrl(origin, type, "malformed"));
-    const landing = new URL("/auth/confirm", origin);
-    landing.searchParams.set("token_hash", link.tokenHash);
-    landing.searchParams.set("type", link.type);
-    landing.searchParams.set("next", link.next);
-    return NextResponse.redirect(landing);
+    return NextResponse.redirect(`${origin}${authLinkLandingPath(link)}`);
   }
 
   if (searchParams.get("message")) return NextResponse.redirect(`${origin}${EMAIL_CHANGE_HALF_PATH}`);
