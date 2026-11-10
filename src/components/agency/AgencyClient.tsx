@@ -8,6 +8,7 @@ import SeatWorkspace from "./SeatWorkspace";
 import LoadFailed from "@/components/dashboard/LoadFailed";
 import { loadJson } from "@/lib/hooks/loadJson";
 import LeaveAgency, { LeftAgency, leaveKind, type LeaveKind } from "./LeaveAgency";
+import SuspendedBanner from "@/components/account/SuspendedBanner";
 
 interface CreatorStat {
   id: string;
@@ -145,6 +146,19 @@ export default function AgencyClient() {
     void refresh();
   }, [refresh]);
 
+  // WU-01: a suspended seat or owner reads nothing here (the database hides
+  // the agency from a suspended session), which used to look like "you have
+  // no agency, start one". The viewer's own standing says why instead.
+  const [standing, setStanding] = useState<"unknown" | "active" | "suspended">("unknown");
+  useEffect(() => {
+    let live = true;
+    loadJson<{ isActive?: boolean }>("/api/account")
+      .then((account) => { if (live) setStanding(account?.isActive === false ? "suspended" : "active"); })
+      .catch(() => { if (live) setStanding("active"); });
+    return () => { live = false; };
+  }, []);
+  const viewerSuspended = standing === "suspended";
+
   const run = async (body: Record<string, unknown>) => {
     setMsg(null);
     setSent(null);
@@ -175,7 +189,7 @@ export default function AgencyClient() {
     }
   };
 
-  if (loading) return <p className="p-8 text-sm text-muted">Loading…</p>;
+  if (loading || standing === "unknown") return <p className="p-8 text-sm text-muted">Loading…</p>;
 
   if (left) return <LeftAgency kind={left} />;
 
@@ -191,8 +205,16 @@ export default function AgencyClient() {
   const canLeave = leaveKind(data);
 
   if (data && !data.org && data.managed) {
-    return <ManagedByAgency orgId={canLeave === "creator" ? data.orgId ?? null : null} orgName={data.orgName ?? null} ownerActive={data.ownerActive ?? null} onLeft={() => setLeft("creator")} />;
+    return (
+      <>
+        {viewerSuspended && <div className="mx-auto max-w-xl px-5 pt-8"><SuspendedBanner suspended /></div>}
+        <ManagedByAgency orgId={canLeave === "creator" ? data.orgId ?? null : null} orgName={data.orgName ?? null} ownerActive={data.ownerActive ?? null} onLeft={() => setLeft("creator")} />
+      </>
+    );
   }
+
+  // A suspended account with nothing readable: say why, never "start one".
+  if ((!data || !data.org) && viewerSuspended) return <SuspendedAgency />;
 
   // No org yet → let the user create one.
   if (!data || !data.org) {
@@ -216,6 +238,7 @@ export default function AgencyClient() {
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 text-ink">
+      <SuspendedBanner suspended={viewerSuspended} />
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold">{org.name}</h1>
@@ -504,6 +527,23 @@ function ConfirmRemove({
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+/** A suspended seat or owner: the console is paused, and nothing was lost. */
+function SuspendedAgency() {
+  return (
+    <div className="mx-auto max-w-xl px-5 py-16 text-ink" data-testid="agency-suspended">
+      <SuspendedBanner suspended />
+      <h1 className="text-xl font-bold">Agency console paused</h1>
+      <p className="mt-2 text-sm text-muted text-pretty">
+        While this account is suspended it can&apos;t open an agency console or a seat. Nothing has been removed: your agency, seats and
+        invitations are as you left them and come back when the account is reactivated.
+      </p>
+      <Link href="/dashboard" className="mt-5 inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm font-semibold text-muted hover:bg-surface-2 hover:text-ink">
+        ← My dashboard
+      </Link>
     </div>
   );
 }

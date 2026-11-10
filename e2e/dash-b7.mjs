@@ -33,7 +33,10 @@
 //  PA-12 + WC-18/19/23/30 skip link, field errors, the handle hint and the
 //           discard list.
 //  WU-01    a suspended creator keeps the dashboard with the banner; every
-//           save is refused in plain words and nothing is written.
+//           save is refused in plain words and nothing is written; /agency
+//           shows the same banner instead of "Start your agency".
+//  WG-13    a seat and a managed creator are told when the agency's owner
+//           is suspended.
 //  WU-08/09 + WG-16 the password rule, show/hide toggles and "Sign out
 //           other devices".
 // Steps that answer API calls with errors run on their own page with no error
@@ -803,6 +806,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
         ["set active", await request.patch(BASE + `/api/wheels/${live.id}`, { data: { isActive: true } })],
         ["campaign", await request.post(BASE + "/api/campaigns", { data: { name: `b7 sus ${tag}` } })],
         ["game unlock request", await request.post(BASE + "/api/me/game-unlock", { data: { game: "scratch" } })],
+        ["terms acceptance", await request.post(BASE + "/api/account/terms", { data: { accept: true } })],
       ];
       for (const [what, res] of refused) {
         assert(res.status() === 403 && (await res.json()).error === "forbidden", `${what}: refused with 403 forbidden (${res.status()})`);
@@ -846,6 +850,21 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await saveError.waitFor({ timeout: 10000 });
       assert(suspended.test(await saveError.innerText()), "the editor names the suspension next to Save");
 
+      // The agency page says why it is empty: the same banner, a plain
+      // sentence, and never "Start your agency".
+      await goto(page, "/agency", 1200);
+      const paused = page.getByTestId("agency-suspended");
+      await paused.waitFor({ timeout: 10000 });
+      assert(/suspended/i.test(await paused.getByTestId("suspended-banner").innerText()), "the agency page shows the suspended banner");
+      assert(/Nothing has been removed/.test(await paused.innerText()), "it says the agency was not lost");
+      assert((await page.getByRole("button", { name: "Create agency" }).count()) === 0 && (await page.getByText("Start your agency").count()) === 0, "a suspended account is not offered a new agency");
+      // A suspended seat whose console still loads keeps the banner above it.
+      await page.route(path("/api/agency"), (route) => route.fulfill({ json: { org: { id: "0b0b0b0b-0000-4000-8000-00000000000b", name: "B7 Talent" }, isOwner: false, ownerActive: true, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] } }));
+      await goto(page, "/agency", 1200);
+      await page.getByRole("heading", { name: "B7 Talent" }).waitFor({ timeout: 10000 });
+      assert(await page.getByTestId("suspended-banner").isVisible(), "the banner sits above a console that still loads");
+      await page.unroute(path("/api/agency"));
+
       // Nothing was written.
       assert((await json(await request.get(BASE + "/api/public-profile"), "re-read profile")).tagline === profile.tagline, "the tagline is unchanged");
       assert((await json(await request.get(BASE + "/api/account"), "re-read account")).displayName === account.displayName, "the display name is unchanged");
@@ -858,6 +877,40 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
     }
     const back = await request.put(BASE + "/api/public-profile", { data: { tagline: profile.tagline ?? "" } });
     assert(back.ok(), "a reactivated creator can save again");
+  });
+
+  await step("b7 WG-13: a seat and a managed creator are told when the agency's owner is suspended; an account in good standing sees no banner", async () => {
+    // The demo has no agencies, so /api/agency is answered here (the read
+    // itself, orgs.owner_active through orgs_tie_read, is unit-tested).
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const org = { id: "0b0b0b0b-0000-4000-8000-00000000000b", name: "B7 Talent" };
+    const seat = (ownerActive) => ({ org, isOwner: false, ownerActive, totals: { creators: 0, fans: 0, spins: 0, pending: 0, revenue: 0 }, creators: [], members: [], invites: [] });
+    let body = seat(false);
+    try {
+      await page.route(path("/api/agency"), (route) => route.fulfill({ json: body }));
+      await goto(page, "/agency", 1200);
+      const notice = page.getByTestId("agency-owner-suspended");
+      await notice.waitFor({ timeout: 10000 });
+      assert(/owner account is suspended/.test(await notice.innerText()) && /every seat here is paused/.test(await notice.innerText()), "a seat is told the owner is suspended and what that pauses");
+      assert((await page.getByTestId("suspended-banner").count()) === 0, "the viewer's own account is fine: no suspended banner");
+
+      body = seat(true);
+      await goto(page, "/agency", 1200);
+      await page.getByRole("heading", { name: "B7 Talent" }).waitFor({ timeout: 10000 });
+      assert((await notice.count()) === 0, "no notice while the owner is in good standing");
+      body = seat(null);
+      await goto(page, "/agency", 1200);
+      await page.getByRole("heading", { name: "B7 Talent" }).waitFor({ timeout: 10000 });
+      assert((await notice.count()) === 0, "no notice when the owner's standing is unknown");
+
+      body = { org: null, managed: true, orgId: org.id, orgName: org.name, ownerActive: false };
+      await goto(page, "/agency", 1200);
+      await notice.waitFor({ timeout: 10000 });
+      assert(/B7 Talent|agency/.test(await page.locator("body").innerText()), "the managed creator's page names its agency");
+    } finally {
+      await page.close().catch(() => {});
+    }
   });
 
   await step("b7 WU-08/09 + WG-16: the password card states the shared rule, fields can be shown, and other devices can be signed out", async () => {
