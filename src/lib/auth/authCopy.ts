@@ -200,6 +200,54 @@ export function isRateLimited(err: unknown): boolean {
   return code === "over_email_send_rate_limit" || code === "over_request_rate_limit" || status === 429;
 }
 
+/**
+ * Review A7 / A8: what the forgot-password form and "Resend confirmation"
+ * show for a request that sends an e-mail to a typed address.
+ *
+ * The answer must not tell an account apart from no account. Supabase sends
+ * nothing for an unknown address and answers 200, so every refusal that only
+ * an actual send can trigger is an oracle if the page words it differently:
+ * the per-address 60 second cooldown and the project's hourly e-mail cap both
+ * answer 429 `over_email_send_rate_limit`, and only for an address that
+ * exists. Those get the SAME sentence as a send ("…is on its way. You can ask
+ * again in a minute."), which is also true for the cooldown: an e-mail went
+ * out less than a minute ago.
+ *
+ * Honest wording stays where the refusal does not depend on the address: a
+ * per-network request limit (`over_request_rate_limit`), and a failure to
+ * reach or get an answer from the server at all (offline, a 5xx, a thrown
+ * error), where "check your inbox" would simply be untrue (A8).
+ *
+ * What the app cannot change: the same oracle exists at the Supabase endpoint
+ * itself for anyone holding the public anon key (docs/ACCOUNT_SECURITY.md).
+ */
+export const EMAIL_REQUEST_ANSWER = "If an account exists for that address, an e-mail is on its way. You can ask again in a minute.";
+export const EMAIL_REQUEST_FAILED = "We couldn't send that just now. Check your connection and try again.";
+
+export type EmailRequestOutcome = { kind: "sent" } | { kind: "error"; message: string };
+
+export function emailRequestOutcome(err: unknown): EmailRequestOutcome {
+  if (!err) return { kind: "sent" };
+  const code = (err as { code?: unknown }).code;
+  const status = (err as { status?: unknown }).status;
+  const name = (err as { name?: unknown }).name;
+  const message = String((err as { message?: unknown }).message ?? "");
+  // Only a real send can hit these, so they must look like one.
+  if (code === "over_email_send_rate_limit" || /only request this after|e-?mail rate limit/i.test(message)) return { kind: "sent" };
+  if (code === "over_request_rate_limit" || status === 429) {
+    const minutes = retryAfterMinutes(err);
+    const wait = minutes > 0 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : "a few minutes";
+    return { kind: "error", message: `Too many requests from this network just now. Wait ${wait}, then try again.` };
+  }
+  if (code === "email_address_invalid" || code === "validation_failed") return { kind: "error", message: COMMON.email_address_invalid };
+  // Not an answer from the Auth server at all, or one that says it failed.
+  if (name === "AuthRetryableFetchError" || name === "AuthUnknownError" || typeof status !== "number" || status === 0 || status >= 500) {
+    return { kind: "error", message: EMAIL_REQUEST_FAILED };
+  }
+  // Any other refusal: never more specific than a send.
+  return { kind: "sent" };
+}
+
 export type AuthContext = "signin" | "signup" | "password";
 
 const COMMON: Record<string, string> = {

@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { isRateLimited, tooManyEmailsMessage } from "@/lib/auth/authCopy";
+import { EMAIL_REQUEST_ANSWER, emailRequestOutcome } from "@/lib/auth/authCopy";
 
 /**
  * "Resend confirmation email" for a login whose confirmation link was lost,
- * used or scanned (WU-03, WU-10). Supabase answers the same whether or not the
- * address exists; only a rate limit (WU-05) is reported, and it reveals
- * nothing about the address either.
+ * used or scanned (WU-03, WU-10). The answer is the forgot-password form's,
+ * word for word, for any address: Supabase's per-address cooldown and e-mail
+ * cap only ever answer for an address that has a login, so they are shown as
+ * a send too (review A7). Only a failure that does not depend on the address
+ * (offline, a 5xx, a per-network limit) is worded as one: emailRequestOutcome.
  */
 export default function ResendConfirmation({
   email,
@@ -43,8 +45,9 @@ export default function ResendConfirmation({
     } finally {
       setBusy(false);
     }
-    if (err && isRateLimited(err)) setStatus({ tone: "error", text: tooManyEmailsMessage(err) });
-    else setStatus({ tone: "ok", text: "If that address has an unconfirmed login, a new confirmation link is on its way. Already confirmed? Just sign in." });
+    const outcome = emailRequestOutcome(err);
+    if (outcome.kind === "error") setStatus({ tone: "error", text: outcome.message });
+    else setStatus({ tone: "ok", text: `${EMAIL_REQUEST_ANSWER} Already confirmed? Just sign in.` });
   }
 
   return (
