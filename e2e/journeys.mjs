@@ -669,7 +669,7 @@ export async function creatorExtras(page, { step, assert }, ctx) {
     assert(await drawer.isVisible(), "Esc on the menu leaves the drawer open");
     // Toasts enter transform-only (README motion rule): never an opacity-0 start.
     await drawer.getByRole("button", { name: "Copy link" }).click();
-    const toast = page.locator("[aria-live='polite'] > button").first();
+    const toast = page.locator("[aria-live='polite'] > [data-testid='toast']").first(); // b7 RD-21: a toast is a region, not a button
     await toast.waitFor({ timeout: 4000 });
     const style = await toast.evaluate((el) => ({ opacity: getComputedStyle(el).opacity, name: getComputedStyle(el).animationName }));
     assert(style.opacity === "1" && style.name !== "ff-rise", `the toast is fully opaque from its first frame (${style.opacity}, ${style.name})`);
@@ -679,6 +679,9 @@ export async function creatorExtras(page, { step, assert }, ctx) {
 
   await step("keyboard: the first Tab after load lands on the sidebar's current section", async () => {
     await goto(page, "/dashboard", 1600);
+    await page.keyboard.press("Tab");
+    // b7 PA-12: the skip link is the first stop; the sidebar follows it.
+    assert(await page.evaluate(() => document.activeElement?.getAttribute("data-testid") === "skip-to-content"), "the first Tab stop is the skip link");
     await page.keyboard.press("Tab");
     const focused = await page.evaluate(() => {
       const a = document.activeElement;

@@ -127,7 +127,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       assert((await spins.getAttribute("step")) === "1", "the spins field is a whole-number field");
       await form.getByPlaceholder("@username").fill("b7-decimal");
       await spins.fill("2.5");
-      await form.getByRole("button", { name: "Create" }).click();
+      await page.getByRole("button", { name: "Create", exact: true }).click();
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: /whole number/ });
       await toast.waitFor({ timeout: 5000 });
       assert((await toast.getAttribute("role")) === "alert", "a refusal toast is an alert (RD-21)");
@@ -136,7 +136,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       assert(!(await form.isDisabled()), "the form is not locked");
       await spins.fill("2");
       await form.getByPlaceholder("@username").fill("   ");
-      await form.getByRole("button", { name: "Create" }).click();
+      await page.getByRole("button", { name: "Create", exact: true }).click();
       await page.locator('[data-testid="toast"]').filter({ hasText: /handle or name/ }).waitFor({ timeout: 5000 });
       assert(posts.length === 0, "nothing was sent for an empty handle");
 
@@ -149,11 +149,11 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       // A definitive server refusal: the form is released, the reason named, no receipt kept.
       await page.route(path("/api/passes"), (route) => (route.request().method() === "POST" ? answer(400, "no_wheel")(route) : route.continue()));
       await form.getByPlaceholder("@username").fill("b7-refused");
-      await form.getByRole("button", { name: "Create" }).click();
+      await page.getByRole("button", { name: "Create", exact: true }).click();
       await page.locator('[data-testid="toast"]').filter({ hasText: /Create and save a game first/ }).waitFor({ timeout: 5000 });
       await page.waitForTimeout(500);
       assert((await page.getByText("This request is not yet confirmed").count()) === 0, "a refusal never shows the 'not yet confirmed' lock");
-      assert((await form.getByRole("button", { name: "Create" }).count()) === 1, "the button still says Create, not 'Check this link again'");
+      assert((await page.getByRole("button", { name: "Create", exact: true }).count()) === 1, "the button still says Create, not 'Check this link again'");
       const receipts = await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.includes("creator-intent")));
       assert(receipts.length === 0, `no receipt survives a refusal (${receipts.join(",")})`);
       assert((await page.locator('[data-testid="toast"]').filter({ hasText: /couldn.t confirm/i }).count()) === 0, "no 'couldn't confirm' wording for a refusal (RD-10)");
@@ -254,7 +254,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await goto(page, "/dashboard?section=fans", 1200);
       const form = page.locator("fieldset").filter({ has: page.getByPlaceholder("@username") }).first();
       await form.getByPlaceholder("@username").fill(name);
-      await form.getByRole("button", { name: "Create" }).click();
+      await page.getByRole("button", { name: "Create", exact: true }).click();
       const card = page.getByTestId("minted-link");
       await card.waitFor({ timeout: 10000 });
       await page.waitForTimeout(500);
@@ -379,8 +379,9 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await locked.waitFor({ timeout: 10000 });
       assert((await page.getByTestId("new-game-kind-scratch").count()) === 0, "a locked type is not a selectable radio");
       await locked.getByRole("button", { name: "Ask to enable" }).click();
-      await page.getByTestId("toast").filter({ hasText: /Asked/ }).first().waitFor({ timeout: 10000 });
-      await page.waitForFunction(() => /Asked — you'll see it here once it's on/.test(document.body.innerText), null, { timeout: 5000 });
+      // A re-run on the same demo server finds the earlier request still on file.
+      await page.getByTestId("toast").filter({ hasText: /Asked\.|Already asked/ }).first().waitFor({ timeout: 10000 });
+      await page.waitForFunction(() => /Asked — you'll see it here once it's on|Already asked — it's with the team/.test(document.body.innerText), null, { timeout: 5000 });
       const feed = await json(await request.get(BASE + "/api/notifications"), "admin bell");
       const item = (feed.items ?? []).find((i) => i.kind === "game_unlock_request");
       assert(item && /scratch tickets/.test(item.title) && item.target?.section === "admin", "the admin bell lists the request, naming the game");
@@ -488,12 +489,14 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await page.getByRole("list", { name: "Conversations" }).getByRole("button").filter({ hasText: name }).first().click();
       const more = page.getByTestId("thread-load-earlier");
       await more.waitFor({ timeout: 10000 });
-      assert(await page.getByText("b7 five", { exact: true }).count() === 1 && await page.getByText("b7 two", { exact: true }).count() === 0, "only the newest page is shown at first");
+      const log = page.getByRole("log");
+      await log.getByText("b7 five", { exact: true }).waitFor({ timeout: 10000 });
+      assert(await log.getByText("b7 five", { exact: true }).count() === 1 && await log.getByText("b7 two", { exact: true }).count() === 0, "only the newest page is shown at first");
       await more.click();
-      await page.getByText("b7 two", { exact: true }).waitFor({ timeout: 10000 });
+      await log.getByText("b7 two", { exact: true }).waitFor({ timeout: 10000 });
       await more.click();
-      await page.getByText("b7 one", { exact: true }).waitFor({ timeout: 10000 });
-      assert(await page.getByText("b7 four", { exact: true }).count() === 1, "loading earlier pages never duplicates a message");
+      await log.getByText("b7 one", { exact: true }).waitFor({ timeout: 10000 });
+      assert(await log.getByText("b7 four", { exact: true }).count() === 1, "loading earlier pages never duplicates a message");
 
       // PR-10: the promise is saved from Settings and suggested in the queue.
       assert((await request.put(BASE + "/api/public-profile", { data: { deliveryDays: 99 } })).status() === 400, "a 99-day promise is refused");
@@ -634,6 +637,8 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
         await route.continue();
       });
       await goto(page, "/dashboard?section=prizes", 1200);
+      // "All" keeps the row on screen while its status changes.
+      await page.getByRole("group", { name: "Filter by status" }).getByRole("button", { name: "All", exact: true }).click();
       const row = page.locator("li").filter({ hasText: name }).first();
       await row.waitFor({ timeout: 10000 });
       await row.getByRole("button", { name: /^Start:/ }).click();
@@ -754,7 +759,7 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       assert((await handle.getAttribute("aria-invalid")) === "true", "a handle the save would refuse is marked invalid while typing");
 
       // WC-19: with three unsaved forms the leave dialog lists them.
-      await page.getByLabel("Display name").fill(`b7 name ${Date.now().toString(36)}`);
+      await page.getByPlaceholder("Your creator name").fill(`b7 name ${Date.now().toString(36)}`);
       await page.getByLabel("New email").fill("b7-nobody@example.com");
       await page.locator(NAV_ITEMS).filter({ hasText: /^Today/ }).first().click();
       const list = page.getByTestId("discard-list");
