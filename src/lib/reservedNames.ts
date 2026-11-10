@@ -57,6 +57,14 @@ const CONFUSABLES: Record<string, string> = {
   "τ": "t", "υ": "u", "ω": "w", "ℓ": "l", "ı": "i", "ł": "l", "ø": "o", "ß": "ss", "æ": "ae", "œ": "oe",
 };
 
+/**
+ * Characters nobody sees (zero-width spaces and joiners, direction marks,
+ * variation selectors, fillers, tags). The database drops them before it
+ * splits a name into words (public._reserved_name, 0073), so this side does
+ * too: "mo<zero-width space>d dan" has the word "mod".
+ */
+const INVISIBLE = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{E0000}-\u{E0FFF}]/gu;
+
 /** Digits and symbols used in place of letters. Ambiguous ones list every reading. */
 const LEET: Record<string, readonly string[]> = {
   "0": ["o"], "1": ["i", "l"], "3": ["e"], "4": ["a"], "5": ["s"], "7": ["t"], "8": ["b"], "9": ["g"],
@@ -117,12 +125,13 @@ export function nameKeys(raw: string): string[] {
  * The name's separate words, split the two ways the database can split them
  * (on anything that is not an ASCII letter or digit, and on anything that is
  * not a letter or digit in any script), plus the same with accents and
- * look-alike letters folded.
+ * look-alike letters folded. Invisible characters are dropped first.
  */
 export function nameWords(raw: string): string[] {
-  const lower = raw.toLowerCase();
+  const visible = raw.replace(INVISIBLE, "");
+  const lower = visible.toLowerCase();
   let folded = "";
-  for (const ch of raw.normalize("NFKD").toLowerCase()) {
+  for (const ch of visible.normalize("NFKD").toLowerCase()) {
     if (/\p{M}/u.test(ch)) continue;
     folded += CONFUSABLES[ch] ?? ch;
   }

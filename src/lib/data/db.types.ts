@@ -1837,6 +1837,32 @@ export type Database = {
           },
         ]
       }
+      org_briefs: {
+        Row: {
+          name: string
+          org_id: string
+          owner_active: boolean
+        }
+        Insert: {
+          name: string
+          org_id: string
+          owner_active?: boolean
+        }
+        Update: {
+          name?: string
+          org_id?: string
+          owner_active?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_briefs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "orgs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       org_invites: {
         Row: {
           created_at: string
