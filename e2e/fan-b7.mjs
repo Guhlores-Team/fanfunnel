@@ -6,6 +6,8 @@
 //  RF-05 a failed report says so       RF-06 refusals: needs_ack resumes, 429 cools down
 //  RF-07 offline is named, a spin sent offline is released again
 //  ATK-01 a creator session is refused on fan-only routes; self-delete waits for an owed prize
+//  a suspended creator's fan routes answer like a link that is not active (chat,
+//        wishlist, board, check-in, gate); the fan's own actions stay open
 //  WF-01…WF-16, PA-01/06/10/11, WA-02/04/06/07/11, PR-19, TS-14 (see each step)
 // Every fan, wheel and address is the journey's own; the demo creator's wheel
 // is restored after each edit.
@@ -333,6 +335,44 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
       for (const r of owed) await json(await request.patch(`${BASE}/api/redemptions/${r.id}`, { data: { status: "fulfilled" } }), "fulfil");
       const ok = await request.post(BASE + "/api/fan-data/delete", { headers: from, data: { token: fan.token, confirm: "DELETE" } });
       assert(ok.status() === 200, `once delivered, the fan can erase (${ok.status()})`);
+    });
+
+    await step("b7 fan (suspended creator): chat, wishlist, board, check-in and the gate answer like a link that is not active; the fan's own actions stay open", async () => {
+      const fan = await own("B7 suspended fan", 2);
+      const fresh = await own("B7 suspended unconfirmed", 1, { ack: false });
+      // Its own address: every refusal below is a 404, which the per-address miss budget counts.
+      const from = { "x-real-ip": quietIp() };
+      const post = (path, data, method = "post") => request[method](BASE + path, { headers: from, data });
+      const label = demoWheel.prizes[0].label;
+      const today = new Date().toISOString().slice(0, 10);
+      assert((await post("/api/messages/fan", { token: fan.token, body: "before the suspension" })).status() === 200, "chat works while the creator is active");
+      const set = await request.post(BASE + "/api/debug/creator-status", { data: { active: false } });
+      assert(set.ok(), `the demo creator can be suspended (${set.status()}; needs NEXT_PUBLIC_ENABLE_DEBUG=1)`);
+      try {
+        const refused = [
+          ["chat", await post("/api/messages/fan", { token: fan.token, body: "anyone there" })],
+          ["auto intro", await post("/api/messages/auto-intro", { token: fan.token })],
+          ["auto outro", await post("/api/messages/auto-outro", { token: fan.token })],
+          ["wishlist add", await post("/api/wishlists", { token: fan.token, prizeLabel: label })],
+          ["wishlist remove", await post("/api/wishlists", { token: fan.token, prizeLabel: label }, "delete")],
+          ["board opt-in", await post("/api/leaderboard/opt-in", { token: fan.token, optIn: true, handle: `b7s${randomBytes(3).toString("hex")}` })],
+          ["check-in", await post("/api/fan/checkin", { token: fan.token, localDate: today })],
+          ["age gate", await post("/api/fans/ack", { token: fresh.token })],
+        ];
+        for (const [what, res] of refused) {
+          const body = await res.json().catch(() => null);
+          assert(res.status() === 404 && body?.error === "not_found", `${what} → 404 not_found (got ${res.status()} ${JSON.stringify(body)})`);
+        }
+        assert((await post("/api/leaderboard/opt-in", { token: fan.token, optIn: false })).status() === 200, "leaving the board still works");
+        assert((await post("/api/fan-data/export", { token: fan.token })).status() === 200, "the data download still works");
+        assert((await post("/api/fan/break", { token: fan.token, duration: "24h" })).status() === 200, "a break can still be taken");
+      } finally {
+        const back = await request.post(BASE + "/api/debug/creator-status", { data: { active: true } });
+        assert(back.ok(), "the demo creator is active again");
+      }
+      const thread = await json(await post("/api/messages/fan/thread", { token: fan.token }), "the thread");
+      assert(thread.messages.length === 1 && thread.messages[0].body === "before the suspension", `nothing was stored while suspended (${thread.messages.length} messages)`);
+      assert((await post("/api/fans/ack", { token: fresh.token })).status() === 200, "once reactivated, the gate confirms again");
     });
 
     await step("b7 fan WF-01: each win lists its claim code and a verify link; closing the card by Escape asks first", async () => {

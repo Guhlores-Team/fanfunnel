@@ -315,9 +315,11 @@ const openSafety = (then) => async (page) => {
 };
 const openDeletedLink = async (page) => {
   const token = await mintFanLink(page.request, 1);
-  // From the scan's own address: deletes are budgeted per address (ten an hour),
-  // and the scan may share a server with journeys that delete fans too.
-  const res = await page.request.post(BASE + "/api/fan-data/delete", { headers: { "x-real-ip": "192.0.2.254" }, data: { token, confirm: "DELETE" } });
+  // From an address of this scan's own: deletes are budgeted per address (ten
+  // an hour), so the scan shares no bucket with the journeys or with an
+  // earlier scan on the same server.
+  const from = `198.18.${Math.floor(Math.random() * 256)}.${1 + Math.floor(Math.random() * 254)}`;
+  const res = await page.request.post(BASE + "/api/fan-data/delete", { headers: { "x-real-ip": from }, data: { token, confirm: "DELETE" } });
   if (!res.ok()) throw new Error(`could not delete the scan fan (${res.status()})`);
   await goto(page, `/spin/${token}`, 1200);
   await page.getByRole("heading", { name: "This link was deleted" }).waitFor({ timeout: 8000 });
