@@ -21,10 +21,23 @@ db.seed("orgs", { id: oldOrg, name: "Before 0073", owner_id: "00000000-0000-4000
 let configured = true;
 let signedIn = true;
 let serviceUses = 0;
+let orgCreateError: { code: string; message: string } | null = null;
+const orgCreates: { p_name: string }[] = [];
 mock.module("@/lib/supabase/server", {
   namedExports: {
     isSupabaseConfigured: () => configured,
-    createClient: async () => (signedIn ? db.client() : { ...db.client(), auth: { getUser: async () => ({ data: { user: null }, error: null }) } }),
+    createClient: async () => {
+      const client = signedIn ? db.client() : { ...db.client(), auth: { getUser: async () => ({ data: { user: null }, error: null }) } };
+      // org_create is answered here so a refusal can carry its SQLSTATE.
+      return {
+        ...client,
+        rpc: async (name: string, args: unknown) => {
+          if (name !== "org_create") return client.rpc(name, args);
+          orgCreates.push(args as { p_name: string });
+          return orgCreateError ? { data: null, error: orgCreateError } : { data: org, error: null };
+        },
+      };
+    },
     createServiceClient: () => { serviceUses++; throw new Error("the owner's standing is a session read"); },
   },
 });
@@ -41,6 +54,29 @@ async function main() {
   state = await getManagedOrgState("00000000-0000-4000-8000-0000000000ff");
   check("an agency this session cannot read is unknown", state.ownerActive === null && state.orgName === null);
   check("no agency: nothing to say", (await getManagedOrgState(null)).ownerActive === null);
+
+  // Creating an agency: a refusal is said as what it is, never "db_error".
+  const { createOrg } = await import("./admin");
+  for (const name of ["FanFunnel Support", "Supp0rt Team", "admin"]) {
+    const refused = await createOrg(name);
+    check(`an agency called ${JSON.stringify(name)} is refused as reserved`, "error" in refused && refused.error === "name_reserved");
+  }
+  check("…before the database is asked", orgCreates.length === 0);
+  check("an ordinary agency name is created", "ok" in (await createOrg("Northside Talent")) && orgCreates.length === 1 && orgCreates[0].p_name === "Northside Talent");
+  orgCreateError = { code: "42501", message: "account is not active" };
+  let created = await createOrg("Northside Talent");
+  check("a suspended or unapproved account is refused as forbidden, not a database fault", "error" in created && created.error === "forbidden");
+  orgCreateError = { code: "22023", message: "agency name is reserved" };
+  created = await createOrg("Northside Talent");
+  check("the database's own reserved-name refusal is name_reserved", "error" in created && created.error === "name_reserved");
+  orgCreateError = { code: "22023", message: "invalid agency name" };
+  created = await createOrg("Northside Talent");
+  check("any other refused name is invalid_name", "error" in created && created.error === "invalid_name");
+  orgCreateError = { code: "57014", message: "canceling statement due to statement timeout" };
+  created = await createOrg("Northside Talent");
+  check("a real fault stays db_error", "error" in created && created.error === "db_error");
+  orgCreateError = null;
+
   signedIn = false;
   check("signed out: nothing is read", (await getManagedOrgState(org)).orgName === null);
   signedIn = true;

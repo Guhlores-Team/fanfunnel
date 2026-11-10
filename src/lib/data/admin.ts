@@ -11,6 +11,7 @@ import { leaveApprovalNotice, sendApprovalEmail } from "@/lib/account/approvalNo
 import { sendApplicationAlert } from "@/lib/account/applicationNotice";
 import { deliverAgencyInviteEmail } from "@/lib/agency/inviteEmail";
 import { displayNameInputError } from "@/lib/profileErrors";
+import { isReservedName } from "@/lib/reservedNames";
 import { runAfterResponse } from "@/lib/afterResponse";
 import { reportAccountMail } from "@/lib/monitoring/opsAlerts";
 import { mockGetAdminOverview, mockUpdateAccount, mockCreateAccount } from "./mock";
@@ -358,9 +359,18 @@ export async function getAgencyOverview(opts: { orgId?: string | null } = {}): P
 export async function createOrg(name: string): Promise<{ ok: true } | { error: string }> {
   // A36: the demo has no agencies; say so instead of answering ok and keeping nothing.
   if (!isSupabaseConfigured()) return { error: "demo_only" };
+  // Creators and staff are shown this name with every invitation, so it may
+  // not pose as the operator or its staff (the same rule as a display name;
+  // the database refuses it too).
+  if (isReservedName(name)) return { error: "name_reserved" };
   const sb = await createClient();
   const { error } = await sb.rpc("org_create", { p_name: name });
-  return error ? { error: "db_error" } : { ok: true };
+  if (!error) return { ok: true };
+  // org_create refuses an account that is suspended or not approved (42501)
+  // and a name it will not take (22023); neither is a database fault.
+  if (error.code === "42501") return { error: "forbidden" };
+  if (error.code === "22023") return { error: /reserved/i.test(error.message ?? "") ? "name_reserved" : "invalid_name" };
+  return { error: "db_error" };
 }
 
 type OrgRpc =

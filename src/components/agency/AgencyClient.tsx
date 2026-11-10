@@ -101,6 +101,9 @@ const errLabel = (e: string) =>
     demo_only: "Demo only: agencies need a connected database, so nothing was saved.",
     network: "Couldn't reach the server. Check your connection and try again.",
     inactive: "That account is suspended, so it can't hold a seat right now.",
+    name_reserved: "That agency name is reserved for FanFunnel and its staff. Pick another.",
+    invalid_name: "That agency name can't be used. Use letters, numbers and ordinary punctuation.",
+    forbidden: "This account can't do that right now. If it is suspended or still waiting for approval, that is why.",
   })[e] ?? "Couldn't complete that — please try again.";
 
 // WG-06: the line names what happened to the invitation, never whether the
