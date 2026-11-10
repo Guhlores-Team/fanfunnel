@@ -1508,8 +1508,8 @@ export type Database = {
           acked_at: string | null
           acked_terms_version: string | null
           blocked_at: string | null
-          chat_muted_at: string | null
           break_until: string | null
+          chat_muted_at: string | null
           created_at: string
           creator_id: string
           display_name: string | null
@@ -1532,8 +1532,8 @@ export type Database = {
           acked_at?: string | null
           acked_terms_version?: string | null
           blocked_at?: string | null
-          chat_muted_at?: string | null
           break_until?: string | null
+          chat_muted_at?: string | null
           created_at?: string
           creator_id: string
           display_name?: string | null
@@ -1556,8 +1556,8 @@ export type Database = {
           acked_at?: string | null
           acked_terms_version?: string | null
           blocked_at?: string | null
-          chat_muted_at?: string | null
           break_until?: string | null
+          chat_muted_at?: string | null
           created_at?: string
           creator_id?: string
           display_name?: string | null
@@ -3247,6 +3247,7 @@ export type Database = {
       _owns_org: { Args: { p_org: string }; Returns: boolean }
       _owns_org_seat: { Args: { p_member: string }; Returns: boolean }
       _release_fan_focus: { Args: { p_fan: string }; Returns: Json }
+      _reserved_name: { Args: { p: string }; Returns: boolean }
       _resolved_spin_wheel: { Args: { p_pass: string }; Returns: string }
       _reward_crypto_inventory: {
         Args: never
@@ -3273,6 +3274,10 @@ export type Database = {
       _spin_attempt_receipt: {
         Args: { p_attempt: string; p_replayed: boolean }
         Returns: Json
+      }
+      _text_array_within: {
+        Args: { p_max_each: number; p_max_items: number; p_values: string[] }
+        Returns: boolean
       }
       _valid_public_slug: { Args: { p: string }; Returns: boolean }
       _valid_scratch_presentation: {
@@ -3420,23 +3425,23 @@ export type Database = {
         }
         Returns: {
           active_links: number
-          blocked_at: string | null
-          break_until: string | null
-          campaign_names: string[] | null
+          blocked_at: string
+          break_until: string
+          campaign_names: string[]
           created_at: string
-          display_name: string | null
+          display_name: string
           fan_id: string
           grant_count: number
-          handle: string | null
-          last_visit_day: string | null
-          last_win_at: string | null
-          last_win_label: string | null
-          last_win_rarity: Database["public"]["Enums"]["prize_rarity"] | null
+          handle: string
+          last_visit_day: string
+          last_win_at: string
+          last_win_label: string
+          last_win_rarity: Database["public"]["Enums"]["prize_rarity"]
           links: number
           self_excluded: boolean
           spins_granted_total: number
           spins_remaining: number
-          tags: string[] | null
+          tags: string[]
           total_fans: number
           total_spent_cents: number
           wins: number
@@ -3489,12 +3494,12 @@ export type Database = {
           p_status?: string
         }
         Returns: {
-          actor_id: string | null
+          actor_id: string
           created_at: string
           due_at: string
           fair_trace: Json
+          fan_id: string
           fan_name: string
-          fan_id: string | null
           id: string
           notes: string
           pool_snapshot: Json
@@ -3585,7 +3590,10 @@ export type Database = {
         Args: { p_campaign: string; p_creator: string }
         Returns: string
       }
-      delete_wheel: { Args: { p_only_if_empty?: boolean; p_wheel: string }; Returns: string }
+      delete_wheel: {
+        Args: { p_only_if_empty?: boolean; p_wheel: string }
+        Returns: string
+      }
       edit_pass_grant:
         | {
             Args: {
@@ -3627,20 +3635,19 @@ export type Database = {
         Args: { p_attempt: string; p_request_hash: string; p_token: string }
         Returns: Json
       }
-      grant_focus_pack:
-        | {
-            Args: {
-              p_actor?: string
-              p_context: string
-              p_creator: string
-              p_fan: string
-              p_pack: string
-              p_pass: string
-              p_prize: string
-              p_request: string
-            }
-            Returns: Json
-          }
+      grant_focus_pack: {
+        Args: {
+          p_actor?: string
+          p_context: string
+          p_creator: string
+          p_fan: string
+          p_pack: string
+          p_pass: string
+          p_prize: string
+          p_request: string
+        }
+        Returns: Json
+      }
       grant_pass_spins:
         | {
             Args: {
@@ -3671,18 +3678,17 @@ export type Database = {
             }
             Returns: Json
           }
-      import_fans_durable:
-        | {
-            Args: {
-              p_actor?: string
-              p_batch: string
-              p_context: string
-              p_creator: string
-              p_request_hash: string
-              p_rows: Json
-            }
-            Returns: Json
-          }
+      import_fans_durable: {
+        Args: {
+          p_actor?: string
+          p_batch: string
+          p_context: string
+          p_creator: string
+          p_request_hash: string
+          p_rows: Json
+        }
+        Returns: Json
+      }
       initialize_reward_crypto_canary: {
         Args: {
           p_actor?: string
@@ -3762,19 +3768,18 @@ export type Database = {
         Returns: Json
       }
       read_reward_crypto_canary: { Args: never; Returns: Json }
-      reconcile_creator_request:
-        | {
-            Args: {
-              p_actor: string
-              p_authorized?: boolean
-              p_cancel?: boolean
-              p_context: string
-              p_creator: string
-              p_kind: string
-              p_request: string
-            }
-            Returns: Json
-          }
+      reconcile_creator_request: {
+        Args: {
+          p_actor: string
+          p_authorized?: boolean
+          p_cancel?: boolean
+          p_context: string
+          p_creator: string
+          p_kind: string
+          p_request: string
+        }
+        Returns: Json
+      }
       record_app_error: {
         Args: {
           p_environment: string
@@ -3893,7 +3898,10 @@ export type Database = {
       }
       set_creator_theme: { Args: { p_theme: Json }; Returns: Json }
       set_display_name: { Args: { p_name: string }; Returns: undefined }
-      set_fan_chat_mute: { Args: { p_muted: boolean; p_token: string }; Returns: Json }
+      set_fan_chat_mute: {
+        Args: { p_muted: boolean; p_token: string }
+        Returns: Json
+      }
       set_fan_pass_game: {
         Args: {
           p_actor?: string
@@ -3960,6 +3968,7 @@ export type Database = {
     }
   }
 }
+
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
 type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
