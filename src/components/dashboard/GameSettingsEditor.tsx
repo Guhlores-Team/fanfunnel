@@ -17,7 +17,7 @@ export default function GameSettingsEditor({ wheel, features, disabled, onChange
     onChange({ gameKind: next, gameConfig: next === "wheel" ? {} : next === "scratch" ? { style: "classic" } : { size: 3, linePrizeId: null } });
   }
   return <section data-testid="game-settings" className="mb-4 space-y-3 rounded-xl border border-line p-4">
-    <h3 className="text-sm font-bold text-ink">Game settings</h3>
+    <h2 className="text-sm font-bold text-ink">Game settings</h2>
     {wheel.gameReady === false && <p data-testid="game-draft" role="status" className="text-xs text-amber-200">Inactive draft. Finish the prize pool and line settings, then save before activating it or using it with fan links.</p>}
     <label className="block text-xs text-muted">Game type<select id={kind === "bingo" ? undefined : "wf-game-settings"} data-testid="game-kind" className="ff-input mt-1 w-full" disabled={disabled || wheel.gameKindLocked !== false} value={kind} onChange={(event) => changeKind(event.target.value as GameKind)}>{(["wheel", "scratch", "bingo"] as const).filter((choice) => choice === kind || canCreateGame(choice, features)).map((choice) => <option key={choice} value={choice} disabled={!canCreateGame(choice, features)}>{GAME_LABEL[choice]}</option>)}</select></label>
     <p className="text-xs text-muted">{wheel.gameKindLocked === false ? "This game has no credited plays, so its type can still change before saving." : "Only games without credited plays can change type. Create a new game to use another type."}</p>

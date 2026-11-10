@@ -93,6 +93,7 @@ function submitSignOut(form: HTMLFormElement) {
 interface DashboardLeaveRequest {
   action: () => void;
   what: string;
+  items?: string[];
   consequence: string;
   scope?: CreatorDraftScope;
 }
@@ -201,6 +202,8 @@ export default function DashboardClient({
       const request: DashboardLeaveRequest = {
         action,
         what: [...(intent === "signout" && wheelDirty ? ["your game edits"] : []), ...state.descriptions].join(" and ") || "your changes",
+        // WC-19: three or more unsaved forms read as a list, not a run-on.
+        items: [...(intent === "signout" && wheelDirty ? ["your game edits"] : []), ...state.descriptions],
         consequence: options?.consequence ?? (intent === "signout" ? "Signing out now throws them away." : "Changing sections throws away these unsaved form changes. Your game edits stay here."),
         scope: options?.scope,
       };
@@ -466,6 +469,14 @@ export default function DashboardClient({
         if (action.origin === window.location.origin && action.pathname === "/auth/signout") guardSignOut(event, form);
       }}
     >
+      {/* PA-12: the first Tab stop skips the section nav, search and bell. */}
+      <a
+        href="#dash-content"
+        data-testid="skip-to-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-[var(--brand)] focus:px-4 focus:py-2.5 focus:text-sm focus:font-bold focus:text-[var(--brand-ink)]"
+      >
+        Skip to content
+      </a>
       <Sidebar
         active={tab}
         onSelect={goTab}
@@ -515,7 +526,8 @@ export default function DashboardClient({
           }
         />
 
-        <div className="w-full max-w-[1140px] flex-1 px-4 py-6 sm:p-7">
+        {/* PA-12: the skip link's target; tabIndex -1 so focus can land here. */}
+        <div id="dash-content" tabIndex={-1} className="w-full max-w-[1140px] flex-1 px-4 py-6 outline-none sm:p-7">
       <SuspendedBanner suspended={account.data?.isActive === false} />
       {email && <InvitesBanner />}
       <LegalChangeNotice className="mb-4 text-left" />
@@ -617,6 +629,7 @@ export default function DashboardClient({
         {leaveRequest && (
           <DiscardChangesDialog
             what={leaveRequest.what}
+            items={leaveRequest.items}
             consequence={leaveRequest.consequence}
             onKeep={() => { leaveRequestRef.current = null; setLeaveRequest(null); restoreSectionUrl(); }}
             onDiscard={() => {

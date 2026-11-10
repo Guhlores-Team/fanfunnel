@@ -592,7 +592,7 @@ function AccountRow({
             aria-expanded={open}
             aria-controls={detailsId}
             aria-label={`${open ? "Hide" : "Show"} role and features for ${account.displayName}`}
-            className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:text-ink"
+            className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:text-ink max-sm:h-11 max-sm:w-11"
           >
             <Glyph d={P.chevron} size={16} className={`transition-transform ${open ? "rotate-180" : ""}`} />
           </button>

@@ -203,7 +203,7 @@ function Card({
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           {/* tabIndex -1: a removed row's focus lands on its card's heading. */}
-          <h3
+          <h2
             id={id}
             tabIndex={-1}
             className="flex items-center gap-[9px] text-[15px] font-bold tracking-[-0.01em] text-ink outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/60 rounded-sm"
@@ -213,7 +213,7 @@ function Card({
               <Glyph d={icon} size={16} />
             </span>
             {title}
-          </h3>
+          </h2>
           {hint && <p className="mt-1 text-[13px] text-muted text-pretty">{hint}</p>}
         </div>
         {aside && <div className="flex shrink-0 items-center gap-2">{aside}</div>}
@@ -312,7 +312,7 @@ function LinkInBioCard({
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline max-sm:min-h-11"
           >
             Preview page <Glyph d={P.external} size={13} />
           </a>

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { shareOrCopy, type ShareEnv } from "./shareLink";
+import { shareOrCopy, webShareAvailable, type ShareEnv } from "./shareLink";
 
 const data = { title: "Spin link for @mia", text: "Your personal link, @mia:", url: "https://x.test/spin/abc" };
 const copies: string[] = [];
@@ -25,5 +25,9 @@ const copy = async (t: string) => { copies.push(t); return true; };
 
   const env: ShareEnv = { copy: async () => false };
   assert.equal(await shareOrCopy(data, env), "failed", "no share and no clipboard: failed");
+  // WC-23: the Share button is offered only where a share sheet exists.
+  assert.equal(webShareAvailable({ share: async () => {} }), true, "a browser with navigator.share offers Share");
+  assert.equal(webShareAvailable({}), false, "no navigator.share: no Share button");
+  assert.equal(webShareAvailable(undefined), false, "server render: no Share button");
   console.log("shareLink: all checks passed");
 })().catch((e) => { console.error(e); process.exit(1); });

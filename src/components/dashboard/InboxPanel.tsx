@@ -17,6 +17,7 @@ import { toNotificationItem } from "@/lib/data/notificationFeed";
 import { DEFAULT_SHOW_DETAILS } from "@/lib/push/config";
 import { toPushPayload } from "@/lib/push/payload";
 import { currentPushSubscription } from "@/lib/push/browser";
+import { usePushAvailable } from "./usePushAvailable";
 
 /** A few one-tap canned replies the creator can drop into the composer. */
 const QUICK_REPLIES = [
@@ -204,6 +205,8 @@ export default function InboxPanel({
   // Web push replaces the old in-tab "Enable alerts" opt-in: one system, set
   // up in Settings › Notifications. Whether THIS browser already gets pushes.
   const [pushHere, setPushHere] = useState<boolean | null>(null);
+  // WC-29: no opt-in prompt on a site that cannot send push at all.
+  const pushAvailable = usePushAvailable();
   const pushHereRef = useRef(false);
   useEffect(() => {
     let live = true;
@@ -375,7 +378,7 @@ export default function InboxPanel({
       <div className="flex flex-wrap items-stretch gap-2.5">
         <AutoMessagesCard />
 
-        {pushHere === false && onOpenPushSettings && (
+        {pushHere === false && pushAvailable && onOpenPushSettings && (
           <button
             type="button"
             onClick={onOpenPushSettings}

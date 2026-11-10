@@ -97,6 +97,8 @@ export default function PrizesPanel({
   // be loaded again, so no prize can fall into a gap between the two lists.
   const [older, setOlder] = useState<{ key: string; anchor: string; items: RedemptionItem[]; next: string | null } | null>(null);
   const [olderBusy, setOlderBusy] = useState(false);
+  // WC-26: rows whose status change is on its way, so a second tap cannot race it.
+  const [statusBusy, setStatusBusy] = useState<ReadonlySet<string>>(new Set());
   const [olderError, setOlderError] = useState(false);
   // PR-10: the creator's delivery promise (Settings › Public page), used to
   // suggest an expected-by date on wins that have no due date yet.
@@ -128,6 +130,15 @@ export default function PrizesPanel({
       );
     };
     apply(patch);
+    const statusChange = "status" in patch;
+    const markBusy = (on: boolean) =>
+      setStatusBusy((set) => {
+        const next = new Set(set);
+        if (on) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    if (statusChange) markBusy(true);
     let error: string | null = null;
     try {
       const res = await fetch(`/api/redemptions/${id}`, {
@@ -160,6 +171,7 @@ export default function PrizesPanel({
     } catch {
       error = "network";
     }
+    if (statusChange) markBusy(false);
     if (error !== null) {
       if (before) {
         const restore: Partial<RedemptionItem> = {};
@@ -319,7 +331,7 @@ export default function PrizesPanel({
       {shown.length > 0 && (
         <ul className="flex flex-col gap-2">
           {shown.map((r) => (
-            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} deliveryDays={deliveryDays} />
+            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} deliveryDays={deliveryDays} busy={statusBusy.has(r.id)} />
           ))}
         </ul>
       )}
@@ -400,6 +412,7 @@ function RedemptionRow({
   onOpenFan,
   onMessageFan,
   deliveryDays = null,
+  busy = false,
 }: {
   r: RedemptionItem;
   onSet: (id: string, status: RedemptionStatus) => void;
@@ -408,6 +421,8 @@ function RedemptionRow({
   onMessageFan?: (fanId: string) => void;
   /** PR-10: the creator's delivery promise in days, when one is set. */
   deliveryDays?: number | null;
+  /** A status change for this row is being saved. */
+  busy?: boolean;
 }) {
   const fanId = r.fanId ?? null;
   const color = RARITY_COLORS[r.rarity];
@@ -497,7 +512,7 @@ function RedemptionRow({
                   data-testid="redemption-fan"
                   onClick={() => onOpenFan(fanId)}
                   aria-label={`Open ${r.fanName}'s fan details`}
-                  className="font-semibold text-ink underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                  className="relative font-semibold text-ink underline decoration-dotted underline-offset-2 hover:decoration-solid max-sm:after:absolute max-sm:after:-inset-y-3 max-sm:after:inset-x-0 max-sm:after:content-['']"
                 >
                   {r.fanName}
                 </button>
@@ -540,10 +555,12 @@ function RedemptionRow({
           <button
             type="button"
             onClick={() => onSet(r.id, STATUS_NEXT[r.status])}
+            disabled={busy}
+            aria-busy={busy}
             aria-label={`${STATUS_CTA[r.status]}: ${subject}`}
             className="btn-brand min-h-9 rounded-[9px] px-3.5 text-[12.5px] font-bold"
           >
-            {STATUS_CTA[r.status]}
+            {busy ? "Saving…" : STATUS_CTA[r.status]}
           </button>
           )}
           {fanId && onMessageFan && (

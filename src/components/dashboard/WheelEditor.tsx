@@ -3,6 +3,7 @@
 import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import { STALE_GAME_MESSAGE, staleGameCheck } from "./staleGame";
 import { publicTextCheck } from "@/lib/publicText";
+import { BRAND_TOO_DARK_MESSAGE, brandColorContrastOk } from "@/lib/theme";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import GamePreview from "./GamePreview";
@@ -257,8 +258,18 @@ export default function WheelEditor({
   // the saved snapshot), so the guard holds while another section is open.
   const validation = useMemo(() => {
     const base = validateWheelDraft(wheel);
+    // PA-01: a brand color changed to one that vanishes on the dark fan page
+    // is an error on the field (a stored one never blocks other edits).
+    if (!base.brandColor && wheel.brandColor && !brandColorContrastOk(wheel.brandColor)) {
+      let stored: string | undefined;
+      try { stored = (JSON.parse(savedJson) as WheelConfig).brandColor; } catch { stored = undefined; }
+      if (wheel.brandColor.trim().toLowerCase() !== (stored ?? "").trim().toLowerCase()) {
+        base.brandColor = BRAND_TOO_DARK_MESSAGE;
+        base.issues.push({ key: "brandColor", message: `Brand color: ${BRAND_TOO_DARK_MESSAGE}` });
+      }
+    }
     return { ...base, baseIssues: base.issues, issues: gameDraftIssues(wheel as CreatorGameWheel, base.issues) };
-  }, [wheel]);
+  }, [wheel, savedJson]);
   // WC-11: an unfinished, never-published bingo game saves as a draft.
   const draftOnly = canSaveBingoDraft(gameWheel, savedJson, validation.baseIssues);
   // Errors show for a field once it has been left (blur) or after a save
@@ -1004,28 +1015,29 @@ export default function WheelEditor({
                       : ""
                   }`}
                 >
-                  {/* Corner reorder cluster: ▲▼ (keyboard path) + the drag grip. */}
-                  <div className="absolute right-2.5 top-2.5 z-[1] flex items-center gap-0.5">
-                    <div className="flex flex-col">
+                  {/* Corner reorder cluster: ▲▼ (keyboard and touch path, 32 px
+                      targets: WC-15) + the drag grip. */}
+                  <div className="absolute right-2 top-2 z-[1] flex items-center gap-0.5">
+                    <div className="flex">
                       <button
                         type="button"
                         onClick={() => movePrize(index, index - 1)}
                         disabled={index === 0}
-                        className="grid h-[13px] w-5 place-items-center rounded-[4px] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
                         aria-label="Move prize up"
                         title="Move up"
                       >
-                        <Glyph d={P.up} size={12} strokeWidth={2.4} />
+                        <Glyph d={P.up} size={15} strokeWidth={2.4} />
                       </button>
                       <button
                         type="button"
                         onClick={() => movePrize(index, index + 1)}
                         disabled={index === wheel.prizes.length - 1}
-                        className="grid h-[13px] w-5 place-items-center rounded-[4px] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
+                        className="grid h-8 w-8 place-items-center rounded-[7px] text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-30"
                         aria-label="Move prize down"
                         title="Move down"
                       >
-                        <Glyph d={P.down} size={12} strokeWidth={2.4} />
+                        <Glyph d={P.down} size={15} strokeWidth={2.4} />
                       </button>
                     </div>
                     <button
@@ -1038,13 +1050,13 @@ export default function WheelEditor({
                       onPointerUp={() => setDragArmedIdx((v) => (v === index ? null : v))}
                       aria-label="Drag to reorder prize"
                       title="Drag to reorder (or use the ▲ ▼ buttons)"
-                      className="grid h-[26px] w-[26px] cursor-grab touch-none select-none place-items-center rounded-[7px] bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] active:cursor-grabbing"
+                      className="grid h-8 w-8 cursor-grab touch-none select-none place-items-center rounded-[7px] bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] active:cursor-grabbing"
                     >
                       <Glyph d={P.grip} size={14} />
                     </button>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 pr-[60px]">
+                  <div className="flex flex-wrap items-center gap-2 pr-[106px]">
                     <div className="flex min-w-[170px] flex-1 items-center gap-2">
                       <input
                         aria-label="Emoji"
@@ -1074,7 +1086,8 @@ export default function WheelEditor({
                         title="Change rarity (re-fills tickets from the rarity default)"
                         style={{
                           backgroundColor: `color-mix(in oklab, ${rarityColor} 16%, transparent)`,
-                          color: rarityColor,
+                          // PA-06: lightened so the gray "common" stays readable.
+                          color: `color-mix(in oklab, ${rarityColor} 62%, white)`,
                         }}
                       >
                         {RARITY_ORDER.map((r) => (
@@ -1235,9 +1248,10 @@ export default function WheelEditor({
                     <button
                       type="button"
                       onClick={() => updatePrize(p.id, { color: RARITY_COLORS[p.rarity] })}
-                      className="shrink-0 text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline"
+                      title="Use this rarity's own color"
+                      className="inline-flex shrink-0 items-center text-[11px] font-semibold text-muted underline-offset-2 transition hover:text-ink hover:underline max-sm:min-h-11"
                     >
-                      Reset to rarity
+                      Reset color
                     </button>
                   </div>
                   <FieldError id={errId(k("color"))} message={errFor(k("color"), pe.color)} />
@@ -1270,7 +1284,7 @@ export default function WheelEditor({
                     type="button"
                     onClick={() => setMoreOpen((m) => ({ ...m, [p.id]: !more }))}
                     aria-expanded={more}
-                    className="mt-2.5 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="mt-2.5 inline-flex items-center gap-1 rounded-md text-[11px] font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] max-sm:mt-1 max-sm:min-h-11"
                   >
                     <Glyph
                       d={P.chevron}

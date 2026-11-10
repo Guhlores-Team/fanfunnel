@@ -310,7 +310,7 @@ export default function PushNotificationsCard({ focusNonce = 0 }: { focusNonce?:
         className={`text-[13px] ${blocker === "ios_install" ? "font-semibold text-ink" : "text-muted"}`}
       >
         {blocker === "loading" && "Checking this device…"}
-        {blocker === "unavailable" && "Push notifications aren’t available on this site yet."}
+        {blocker === "unavailable" && "Push notifications aren’t available on this site yet. That is switched on by the FanFunnel team; there is nothing for you to set up, and the bell keeps working."}
         {blocker === "unsupported" &&
           "This browser can’t receive push notifications. Try Chrome, Edge, Firefox or Safari, or the installed app on your phone."}
         {blocker === "denied" &&

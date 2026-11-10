@@ -16,6 +16,11 @@ function browserShareEnv(): ShareEnv {
   };
 }
 
+/** Whether this browser has a share sheet at all (desktop browsers mostly do not). */
+export function webShareAvailable(nav: { share?: unknown } | undefined = typeof navigator === "undefined" ? undefined : navigator): boolean {
+  return typeof nav?.share === "function";
+}
+
 /**
  * Web Share where the browser has it (phones), else copy to the clipboard.
  * A creator closing the share sheet is not an error and copies nothing.

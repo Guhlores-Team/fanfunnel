@@ -30,6 +30,9 @@ export interface FirstStep {
 }
 
 export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
+  // A fan link already exists but the game is still the sample: say so, rather
+  // than "build your first game" under a ticked "mint" step.
+  const sampleInPlay = !s.wheelSaved && s.fans > 0;
   return [
     {
       key: "account",
@@ -46,8 +49,10 @@ export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
     },
     {
       key: "wheel",
-      title: "Build your first game",
-      body: "Set your prizes, odds and brand colour. We started you with a sample.",
+      title: sampleInPlay ? "Make the game yours" : "Build your first game",
+      body: sampleInPlay
+        ? "Your fan links play the sample game we started you with. Set your own prizes, odds and brand colour."
+        : "Set your prizes, odds and brand colour. We started you with a sample.",
       done: s.wheelSaved,
       cta: { label: "Open game editor", go: "editor" },
     },
@@ -76,6 +81,12 @@ export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
 }
 
 export const FIRST_STEPS_TOTAL = 6;
+
+/** Display order: finished steps first, each group in its original order, so a
+ *  ticked step never sits under an open one. */
+export function orderFirstSteps(steps: FirstStep[]): FirstStep[] {
+  return [...steps.filter((x) => x.done), ...steps.filter((x) => !x.done)];
+}
 
 /** C9: the profile step's signal from GET /api/account (display name + handle). */
 export function profileStepDone(account: { displayName?: string | null; publicSlug?: string | null } | null | undefined): boolean {

@@ -9,6 +9,7 @@ import type {
   NotificationKind,
   NotificationTarget,
 } from "@/lib/data/notificationFeed";
+import { usePushAvailable } from "./usePushAvailable";
 
 // Top-bar notification bell (RD-7 / behavior spec #1). The feed and the unread
 // count come from GET /api/notifications (derived server-side, scoped to the
@@ -89,6 +90,8 @@ export default function NotificationBell({
   /** Footer: Settings › Notifications › push (web push opt-in). */
   onOpenPushSettings?: () => void;
 }) {
+  // WC-29: the "on your phone" footer only shows where push can be set up.
+  const pushAvailable = usePushAvailable();
   const feed = useFetch<NotificationFeed>("/api/notifications", {
     pollMs: POLL_MS,
     select: isFeed,
@@ -277,7 +280,7 @@ export default function NotificationBell({
               })}
             </ul>
           )}
-          {onOpenPushSettings && (
+          {onOpenPushSettings && pushAvailable && (
             <div className="border-t border-[var(--hair)] px-4 py-2.5">
               <button
                 type="button"

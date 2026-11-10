@@ -113,6 +113,23 @@ export function brandText(color: string, min = 4.5, surface: string = APP_BASE):
   return "#ffffff";
 }
 
+/** PA-01: the least contrast a brand color needs against the dark page (WCAG 1.4.11, UI parts and focus rings). */
+export const MIN_BRAND_UI_CONTRAST = 3;
+
+/**
+ * PA-01: whether a brand color can be seen on the dark app base. The SPIN
+ * button fill, input focus borders and every keyboard focus ring use the raw
+ * brand color, so one under 3:1 (black, near-black) makes them disappear.
+ * Anything that is not a hex color is not ok.
+ */
+export function brandColorContrastOk(hex: string | null | undefined): boolean {
+  const rgb = parseHex(hex);
+  return !!rgb && contrastRatio(rgb, parseHex(APP_BASE)!) >= MIN_BRAND_UI_CONTRAST;
+}
+
+/** Creator-facing copy for a refused brand color. */
+export const BRAND_TOO_DARK_MESSAGE = "That color is too dark to see on the fan page (its button and focus outlines would vanish). Pick a lighter one.";
+
 /**
  * CSS custom properties to spread into a `style={}` so brand text stays readable.
  * Use everywhere we currently write `style={{ "--brand": color }}`.

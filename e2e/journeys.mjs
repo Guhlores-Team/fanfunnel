@@ -1246,6 +1246,12 @@ export async function firstRunJourney(page, { step, assert }, ctx) {
       page.waitForResponse((r) => r.url().includes("/api/account/onboarding") && r.request().method() === "POST").catch(() => null);
     let wait = persisted();
     await list().getByRole("button", { name: /^Dismiss/ }).click();
+    // b7 WC-22: one inline confirm before the checklist goes away.
+    assert(await list().getByTestId("first-steps-confirm").count(), "dismiss asks first");
+    await list().getByRole("button", { name: "Keep them" }).click();
+    assert(await list().count(), "'Keep them' leaves the checklist in place");
+    await list().getByRole("button", { name: /^Dismiss/ }).click();
+    await list().getByRole("button", { name: "Hide them" }).click();
     await wait;
     await list().waitFor({ state: "hidden", timeout: 4000 }).catch(() => {});
     assert((await list().count()) === 0, "dismiss hides the checklist");

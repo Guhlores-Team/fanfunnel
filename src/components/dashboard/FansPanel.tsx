@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
-import { shareOrCopy } from "./shareLink";
+import { shareOrCopy, webShareAvailable } from "./shareLink";
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { CampaignPack, DmTemplate, FanAccountSummary, WheelSummary } from "@/lib/data/types";
 import { useToast } from "@/components/ui/Toast";
@@ -476,10 +476,10 @@ export default function FansPanel({
       {/* Mint form — the name input must stay the FIRST `input.ff-input` on
           this view (e2e selector) and keeps the top-bar focus target. */}
       <section aria-labelledby="mint-fan-link" className={`lift-in rounded-2xl p-4 sm:p-5 ${raised}`}>
-        <h3 id="mint-fan-link" className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
+        <h2 id="mint-fan-link" className="flex items-center gap-[9px] text-[15px] font-bold text-ink">
           <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
           Mint a fan link
-        </h3>
+        </h2>
         <p className="mt-1 text-[13px] text-muted text-pretty">
           You create the account; the fan never signs up. Balance and win history
           live on the account, so you can mint fresh links anytime.
@@ -551,7 +551,7 @@ export default function FansPanel({
             disabled={creating}
             className="btn-brand mt-3 min-h-10 rounded-[10px] px-[18px] text-sm font-bold"
           >
-            {creating ? "Checking…" : newFanUncertain ? "Check this link again" : "Create"}
+            {creating ? (newFanUncertain ? "Checking…" : "Creating…") : newFanUncertain ? "Check this link again" : "Create"}
           </button>
         {minted && (
           <MintedLinkCard
@@ -569,7 +569,7 @@ export default function FansPanel({
               {mintPlaysReason(mintPlays)}
             </span>
             {onOpenCampaigns && (
-              <button type="button" onClick={onOpenCampaigns} className="font-semibold text-ink underline underline-offset-2">
+              <button type="button" onClick={onOpenCampaigns} className="inline-flex items-center font-semibold text-ink underline underline-offset-2 max-sm:min-h-11">
                 Change game via a campaign
               </button>
             )}
@@ -803,6 +803,8 @@ export default function FansPanel({
   );
 }
 
+const noSubscribe = () => () => {};
+
 /** C12/C13: the link just minted, with Copy, Share and QR. A /spin link holds
  *  one fan's paid balance, so it is said plainly that it is for that fan only. */
 const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
@@ -812,6 +814,8 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
   ref?: React.Ref<HTMLDivElement>;
 }) {
   const toast = useToast();
+  // No share sheet in this browser: Share would only copy, which Copy already does.
+  const canShare = useSyncExternalStore(noSubscribe, webShareAvailable, () => false);
   const copy = async () => {
     if (await copyToClipboard(url)) toast("Link copied", { tone: "success" });
     else toast("Couldn't copy the link. Select it and copy it by hand.", { tone: "error" });
@@ -841,7 +845,7 @@ const MintedLinkCard = function MintedLinkCard({ name, url, onDismiss, ref }: {
       />
       <div className="mt-2.5 flex flex-wrap gap-2">
         <button type="button" onClick={copy} className={ghostBtn}>Copy</button>
-        <button type="button" onClick={share} className={ghostBtn}>Share</button>
+        {canShare && <button type="button" onClick={share} className={ghostBtn}>Share</button>}
         <QrButton url={url} label={`${name} spin link`} className={ghostBtn} />
       </div>
     </div>
@@ -924,7 +928,7 @@ function FanRow({
             <>
               {" "}
               · last won{" "}
-              <span style={{ color: RARITY_COLORS[account.lastWin.rarity] }}>
+              <span style={{ color: `color-mix(in oklab, ${RARITY_COLORS[account.lastWin.rarity]} 62%, white)` }}>
                 {account.lastWin.label}
               </span>
             </>
@@ -941,7 +945,7 @@ function FanRow({
           {account.tags.slice(0, 3).map((t) => (
             <span
               key={t}
-              className="rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] px-2.5 py-[3px] text-[11.5px] font-semibold text-brand"
+              className="rounded-full bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] px-2.5 py-[3px] text-[11.5px] font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
             >
               {t}
             </span>

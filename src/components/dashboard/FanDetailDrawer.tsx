@@ -49,7 +49,7 @@ const well = "rounded-[10px] border border-[var(--hair)] [background:var(--s2)]"
 const actionBtn =
   "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-[13px] text-[13.5px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]";
 const smallBtn =
-  "inline-flex min-h-7 shrink-0 items-center rounded-[7px] border border-line px-[11px] text-[11.5px] font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]";
+  "inline-flex min-h-7 shrink-0 items-center rounded-[7px] border border-line px-[11px] text-[11.5px] max-sm:min-h-11 font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_5%,transparent)]";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="mb-2.5 text-[13px] font-bold text-ink">{children}</h3>;
@@ -1053,7 +1053,7 @@ function TopUpForm({
           onClick={submit}
           className="btn-brand min-h-9 rounded-[9px] px-4 text-[13px] font-bold disabled:opacity-50"
         >
-          {toppingUp ? "Checking…" : uncertain ? "Check this top-up again" : `Grant ${spins} spin${spins === 1 ? "" : "s"}`}
+          {toppingUp ? (uncertain ? "Checking…" : "Granting…") : uncertain ? "Check this top-up again" : `Grant ${spins} spin${spins === 1 ? "" : "s"}`}
         </button>
       </div>
       <CreatorRequestRecovery scope={`topup:${fanId}`} guardScope={`fan-topup:${fanId}`} kind="pass" refreshKey={toppingUp} disabled={toppingUp} onFound={() => setUncertain(true)} onBusyChange={(busy) => onToppingUp(fanId, busy)} onResolved={async (outcome, { pin }) => {

@@ -20,6 +20,9 @@ import { readPublicCreator } from "./publicCreatorRow";
 import { publicCreatorTitle } from "@/lib/publicCreator";
 import { publicProfileRpcError } from "@/lib/profileErrors";
 import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
+import { normalizePublicSlug } from "./publicSlug";
+
+export { normalizePublicSlug };
 
 /** PR-10: the longest delivery promise a creator can make, in days. */
 export { MAX_DELIVERY_DAYS };
@@ -234,10 +237,6 @@ function isOurAvatarUrl(value: string): boolean {
 }
 
 /** Creator updates their SFW link-in-bio fields + fan-page personal note. */
-/** The stored form of a public slug (the `/c/<slug>` path segment). */
-export function normalizePublicSlug(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
 
 export async function setMyPublicProfile(input: {
   slug?: string;

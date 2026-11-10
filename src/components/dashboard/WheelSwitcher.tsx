@@ -468,7 +468,7 @@ export default function WheelSwitcher({
               return (
                 <div
                   key={w.id}
-                  className={`relative inline-flex min-h-[34px] items-center rounded-full border pl-3.5 pr-1 text-[13px] font-semibold transition-colors duration-150 ${
+                  className={`relative inline-flex min-h-[34px] min-w-0 max-w-full items-center rounded-full border pl-3.5 pr-1 text-[13px] font-semibold transition-colors duration-150 ${
                     current
                       ? "border-[color-mix(in_oklab,var(--brand)_45%,transparent)] bg-[color-mix(in_oklab,var(--brand)_14%,transparent)] text-ink"
                       : "border-[var(--hair)] text-muted hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--hair))] hover:text-ink"
@@ -480,14 +480,14 @@ export default function WheelSwitcher({
                     disabled={busy}
                     aria-current={current ? "true" : undefined}
                     title={hint}
-                    className="flex min-h-[32px] max-w-[300px] items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="flex min-h-[32px] min-w-0 max-w-[300px] shrink items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
                     <span
                       aria-hidden="true"
                       className="h-2 w-2 shrink-0 rounded-full"
                       style={{ backgroundColor: w.brandColor }}
                     />
-                    <span className="truncate">{w.title}</span>
+                    <span className="min-w-0 truncate">{w.title}</span>
                     <KindBadge kind={w.gameKind} />
                     {live?.game.id === w.id && (
                       <span className="shrink-0 rounded-full border border-[color-mix(in_oklab,var(--brand)_45%,transparent)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide text-ink">
@@ -537,7 +537,7 @@ export default function WheelSwitcher({
                     aria-expanded={open}
                     aria-label={`Manage ${w.title}`}
                     title="Manage game"
-                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted max-sm:h-10 max-sm:w-10 transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_8%,transparent)] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   >
                     <Icon d="M5 12h.01M12 12h.01M19 12h.01" size={15} />
                   </button>
@@ -705,11 +705,11 @@ export default function WheelSwitcher({
           className="mt-3 rounded-xl border border-[var(--hair)] p-3.5 [background:var(--s2)]"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="flex min-w-0 items-center gap-2 text-sm font-bold text-ink">
+            <h2 className="flex min-w-0 items-center gap-2 text-sm font-bold text-ink">
               <span aria-hidden="true" className="h-3.5 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
               Schedule
               <span className="min-w-0 truncate text-xs font-medium text-muted">{selected.title}</span>
-            </h4>
+            </h2>
             <span className="tnum text-xs text-muted">
               {scheduleHint(selected.activeFrom, selected.activeUntil, selected.isActive, live?.game.id === selected.id ? null : live?.game.title ?? null)}
             </span>

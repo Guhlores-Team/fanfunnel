@@ -57,7 +57,7 @@ function TagEditor({
           {tags.map((t) => (
             <span
               key={t}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--brand)_40%,transparent)] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] py-[3px] pl-[11px] pr-1.5 text-xs font-semibold text-brand"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_oklab,var(--brand)_40%,transparent)] bg-[color-mix(in_oklab,var(--brand)_12%,transparent)] py-[3px] pl-[11px] pr-1.5 text-xs font-semibold text-[color-mix(in_oklab,var(--brand-text)_72%,white)]"
             >
               {t}
               <button
@@ -65,7 +65,7 @@ function TagEditor({
                 disabled={disabled}
                 onClick={() => commit(tags.filter((x) => x !== t))}
                 aria-label={`Remove tag ${t}`}
-                className="grid h-4 w-4 place-items-center rounded-full text-[13px] leading-none text-muted transition hover:text-ink disabled:opacity-50"
+                className="relative grid h-4 w-4 place-items-center rounded-full text-[13px] leading-none text-muted transition hover:text-ink disabled:opacity-50 max-sm:h-6 max-sm:w-6 max-sm:after:absolute max-sm:after:-inset-2.5 max-sm:after:content-['']"
               >
                 ×
               </button>
@@ -84,7 +84,7 @@ function TagEditor({
               disabled={disabled}
               onClick={() => toggle(preset)}
               aria-pressed={active}
-              className={`rounded-full border px-3 py-[3px] text-xs font-semibold transition disabled:opacity-50 ${
+              className={`rounded-full border px-3 py-[3px] text-xs font-semibold transition disabled:opacity-50 max-sm:min-h-11 max-sm:px-3.5 ${
                 active
                   ? "border-[var(--brand)] bg-[var(--brand)] text-[var(--brand-ink)]"
                   : "border-line text-muted hover:text-ink"

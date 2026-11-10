@@ -8,17 +8,16 @@ import { BAD_REQUEST, badRequest, errorResponse, parseJsonBody } from "@/lib/api
 import { limitRoute } from "@/lib/api/limit";
 import { isReservedName } from "@/lib/reservedNames";
 import { publicTextCheck } from "@/lib/publicText";
+import { MAX_SLUG_LEN, SLUG_INPUT_RE } from "@/lib/data/publicSlug";
 
 // Field limits and slug shape enforced before persistence. The slug is further
 // normalized in the data layer, so we only need to reject oversized/illegal
 // raw input here. The tip URL is validated against its normalized form (see
 // `externalUrl`) so bare domains stay valid while non-HTTP(S) schemes such as
 // `mailto:`, `tel:`, or `javascript:` are rejected.
-const MAX_SLUG_LEN = 64;
 const MAX_TAGLINE_LEN = 200;
 const MAX_NOTE_LEN = 2000;
 const MAX_TIP_URL_LEN = 2048;
-const SLUG_RE = /^[A-Za-z0-9 _-]*$/;
 
 function isValidTipUrl(raw: string): boolean {
   if (raw === "") return true;
@@ -89,7 +88,7 @@ export async function PUT(req: Request) {
     body.slug !== undefined &&
     (typeof body.slug !== "string" ||
       body.slug.length > MAX_SLUG_LEN ||
-      !SLUG_RE.test(body.slug))
+      !SLUG_INPUT_RE.test(body.slug))
   ) {
     return NextResponse.json({ error: "invalid_slug" }, { status: 400 });
   }

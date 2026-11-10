@@ -21,6 +21,8 @@ import LoadFailed from "./LoadFailed";
 import { loadJson } from "@/lib/hooks/loadJson";
 import { publicTextCheck } from "@/lib/publicText";
 import { MAX_DELIVERY_DAYS } from "@/lib/deliveryDays";
+import { slugHint } from "@/lib/data/publicSlug";
+import { BRAND_TOO_DARK_MESSAGE, brandColorContrastOk } from "@/lib/theme";
 
 /**
  * Settings (Command Center). Two groups:
@@ -471,7 +473,7 @@ function Avatar({ url, name, size }: { url: string; name: string; size: number }
     <span
       aria-hidden="true"
       style={style}
-      className="text-brand grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-lg font-bold"
+      className="text-[color-mix(in_oklab,var(--brand-text)_72%,white)] grid shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-lg font-bold"
     >
       {initialsOf(name)}
     </span>
@@ -974,17 +976,21 @@ function PublicPageSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ color: brandColor }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: unknown };
+        throw new Error(d.error === "brand_too_dark" ? BRAND_TOO_DARK_MESSAGE : "");
+      }
       setSavedBrand(brandColor);
       onBrandColorChange?.(brandColor);
       toast("Brand color saved", { tone: "success" });
-    } catch {
-      toast("Couldn't save brand color.", { tone: "error" });
+    } catch (e) {
+      toast(e instanceof Error && e.message ? e.message : "Couldn't save brand color.", { tone: "error", duration: 8000 });
     } finally {
       setSavingBrand(false);
     }
   };
 
+  const hint = slugHint(slug, savedProfile.slug);
   const url = slug ? `${origin}/c/${slug}` : "";
   const onCopy = async () => {
     if (!url) return;
@@ -1008,9 +1014,25 @@ function PublicPageSection({
                 onChange={(e) => patchProfile({ slug: e.target.value })}
                 className="ff-input min-w-0 flex-1 basis-40"
                 placeholder="your-name"
+                aria-invalid={hint.problem !== null || undefined}
+                aria-describedby="public-slug-hint"
               />
             </div>
           </Field>
+          {/* WC-30: what a save would store, and what it would break, while typing. */}
+          <div id="public-slug-hint" data-testid="public-slug-hint" className="-mt-2 space-y-1 text-xs empty:hidden">
+            {hint.problem !== null && <p className="text-[#fca5a5]">{publicProfileErrorMessage(hint.problem)}</p>}
+            {hint.savedAs !== null && (
+              <p className="text-muted">
+                Will be saved as <span className="tnum break-all text-ink">/c/{hint.savedAs}</span>
+              </p>
+            )}
+            {hint.retires !== null && (
+              <p data-testid="public-slug-retires" className="text-amber-200 text-pretty">
+                Your current link <span className="tnum break-all">/c/{hint.retires}</span> will stop working when you save. Update it wherever you have posted it.
+              </p>
+            )}
+          </div>
           <Field label="Tagline">
             <input
               value={tagline}
@@ -1106,6 +1128,9 @@ function PublicPageSection({
             </button>
             {brandColor !== savedBrand && <Unsaved />}
           </div>
+          {!brandColorContrastOk(brandColor) && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(brandColor.trim()) && (
+            <p role="alert" data-testid="brand-too-dark" className="text-xs text-amber-200 text-pretty">{BRAND_TOO_DARK_MESSAGE}</p>
+          )}
         </Card>
         <LookAndFeelCard displayName={displayName} brandColor={brandColor} onPreviewChange={setLook} />
 

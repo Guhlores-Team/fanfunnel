@@ -137,6 +137,8 @@ export default function MetricsPanel({
         </p>
       </section>
 
+      {/* PA-12: the cards below are h3; this names their group so no level is skipped. */}
+      <h2 className="sr-only">Trends and breakdowns</h2>
       {/* Trend row: spins, revenue and the conversion funnel (its prior spot). */}
       <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
         {/* Spins trend — the 14d/30d window drives both trend cards. */}
@@ -152,7 +154,7 @@ export default function MetricsPanel({
                     type="button"
                     onClick={() => setDays(d)}
                     aria-pressed={days === d}
-                    className={`tnum rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    className={`tnum rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors max-sm:min-h-11 max-sm:px-3.5 ${
                       days === d
                         ? "bg-[var(--brand)] text-[var(--brand-ink)]"
                         : "border border-line text-muted hover:text-ink"
