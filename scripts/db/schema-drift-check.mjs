@@ -58,6 +58,11 @@
 //
 //   node scripts/db/schema-drift-check.mjs [--keep] [--base-rev <git-rev>] [--base <file>]
 //
+// And the go-live pre-check probe (goLivePrecheckProbe.mjs): the owner's
+// read-only scripts/golive/live-precheck.sql is run against copies of build A
+// as it stood at 0038 (LIVE) and at 0072 (TEST), clean and with one planted
+// violation per check, and 0073 is applied over over-long legacy rows and as
+// a role that is not a superuser.
 // Exit code 0 = all builds load, all catalogs match and the probe passes; 1 otherwise.
 
 import { createHash, randomUUID } from "node:crypto";
@@ -88,6 +93,7 @@ import { probeLedgerGuards } from "./ledgerGuardsProbe.mjs";
 import { probeLockOrder } from "./lockOrderProbe.mjs";
 import { probeAdvisorHardening } from "./advisorHardeningProbe.mjs";
 import { probeBatch7 } from "./batch7Probe.mjs";
+import { probeGoLivePrecheck } from "./goLivePrecheckProbe.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const SUPABASE = join(ROOT, "supabase");
@@ -1487,7 +1493,13 @@ try {
   console.log(`Crypto fixture: pgcrypto in ${CRYPTO_SCHEMA}; API roles cannot CREATE in public/extensions`);
   newDb("ffa");
   loadFile("ffa", "base schema", base);
-  for (const m of migrations) if (!loadFile("ffa", m, join(SUPABASE, "migrations", m))) break;
+  for (const m of migrations) {
+    if (!loadFile("ffa", m, join(SUPABASE, "migrations", m))) break;
+    // The owner's go-live pre-check must run at LIVE's level (0038) and at
+    // TEST's (0072): keep a copy of this build as it stood at each.
+    if (m.startsWith("0038_")) sql("postgres", "create database ffp38 template ffa");
+    if (m.startsWith("0072_")) sql("postgres", "create database ffp72 template ffa");
+  }
 
   console.log("B  = schema.sql");
   newDb("ffb");
@@ -1512,6 +1524,12 @@ try {
   diff("A", A, "B2", catalog("ffb2"));
   diff("A", A, "C", catalog("ffc"));
   diff("A", A, "C2", catalog("ffc2"));
+
+  {
+    const golive = await probeGoLivePrecheck({ psql, psqlAsync, db38: "ffp38", db72: "ffp72", dbLatest: "ffa" });
+    if (golive.bad.length) { failures++; for (const message of golive.bad) console.log(`FAIL  go-live pre-check: ${message}`); }
+    else console.log(`PASS  go-live pre-check: ${golive.checks} checks (scripts/golive/live-precheck.sql is read-only, runs at 0038, 0072 and the newest level, says ok on a clean database and STOP for every planted violation; 0073 applies over an over-long legacy row and as a non-superuser)`);
+  }
 
   for (const db of ["ffa", "ffb", "ffc"]) {
     probeGrants(db);

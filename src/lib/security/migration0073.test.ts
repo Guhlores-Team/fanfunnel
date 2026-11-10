@@ -246,6 +246,19 @@ check("INFO: an expired link is not counted as active by creator_obligations or 
   && /count\(\*\) filter \(where p\.is_active and p\.self_excluded_at is null and \(p\.expires_at is null or p\.expires_at > now\(\)\)\) as active/.test(lastDef(migration, "creator_fan_summaries")));
 check("INFO: a function owned by another role is skipped with a warning by the search_path loop and by the closing check", /pg_has_role\(p\.proowner, 'USAGE'\) as mine/.test(migration) && /raise warning '0073 \(DB-15\): % is owned by another role/.test(migration)
   && /and pg_has_role\(p\.proowner, 'USAGE'\);\s*if v_bad is not null then\s*raise exception '0073: functions still pinning search_path=public only: %', v_bad;/.test(closingR6));
+// M4: the owner's pre-check (scripts/golive/live-precheck.sql). The drift check runs it at 0038 and 0072; here its shape.
+const precheck = readFileSync(join(ROOT, "scripts/golive/live-precheck.sql"), "utf8");
+const precheckCode = precheck.split("\n").filter((l) => !l.startsWith("--")).join("\n");
+check("M4: the pre-check is one read-only statement returning check, rows_found, verdict", /^\s*with known\(names\) as \(/.test(precheckCode)
+  && precheckCode.replace(/'(?:[^']|'')*'/g, "''").split(";").filter((part) => part.trim()).length === 1
+  && /select name as "check", coalesce\(n, 0\) as rows_found,\s*case when n is null then 'ok \(not in this database yet\)' when n = 0 then 'ok' else stop end as verdict/.test(precheckCode)
+  && !/\b(insert into|update public|delete from|alter table|create table|drop |grant |truncate )/i.test(precheckCode));
+const precheckRules = [...migration.slice(rulesAtR6, migration.indexOf(") as t(tbl, con, expr) loop", rulesAtR6)).matchAll(/\('([a-z_]+)', '([a-z_]+)', '((?:[^']|'')*)'\)/g)];
+check("M4: the pre-check has a row for each of the thirty free-text rules, with the rule's own expression", precheckRules.length === 30
+  && precheckRules.every(([, tbl, con, expr]) => con === "fans_tags_shape_check" ? precheckCode.includes("from public.fans where coalesce(array_length(tags, 1), 0) > 50") : precheckCode.includes(`from public.${tbl} where not (${expr})'`)));
+check("M4: the pre-check covers the ledger, the agency, the access request and the catalog checks", ["fans where spins_remaining < 0", "fans where spins_granted_total < 0", "fans where rl_count < 0", "fan_passes where spins_remaining < 0",
+  "fan_passes where spins_granted_total < 0", "prizes where stock < 0", "prizes where cost_cents < 0", "from public.orgs group by owner_id having count(*) > 1", "group by profile_id having count(*) > 1",
+  "not c.relrowsecurity", "pg_get_expr(p.polqual, p.polrelid) = ''true''", "not pg_has_role(f.proowner, ''USAGE'')", "grantee = ''PUBLIC''", "f.prosecdef"].every((t) => precheckCode.includes(t)));
 check("the migration holds no invisible or unexpected non-ASCII character", [...migration].every((ch) => ch.charCodeAt(0) < 128 || "─…→".includes(ch)));
 
 console.log(`migration 0073 guard: ${passed} checks passed`);

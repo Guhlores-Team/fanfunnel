@@ -38,10 +38,12 @@ const TERMS = "2026-11-11";
 const seen = (name, lock) => `do $$ begin for i in 1..1500 loop perform pg_stat_clear_snapshot(); exit when exists(select 1 from pg_stat_activity where application_name='${name}'${lock ? " and wait_event_type='Lock'" : ""}); perform pg_sleep(0.01); end loop; end $$;`;
 const asCreator = (creator, body) => `begin;set local role authenticated;select set_config('request.jwt.claim.sub',${quote(creator)},true);select set_config('request.jwt.claims','{"sub":"${creator}","role":"authenticated","aal":"aal1"}',true);${body}commit;`;
 
-/** @param {string} db @param {(db: string, sql: string) => Promise<{ status: number | null, stdout: string, stderr: string }>} psqlAsync */
-export async function probeLockOrder(db, psqlAsync) {
-  const bad = []; let checks = 0;
-  const check = (ok, label) => { checks++; if (!ok) bad.push(label); };
+/**
+ * The real fixtures of a play (creator, game, fan with ten granted spins,
+ * prepare, a plain-wheel commit), shared with goLivePrecheckProbe.mjs.
+ * @param {string} db @param {(db: string, sql: string) => Promise<{ status: number | null, stdout: string, stderr: string }>} psqlAsync
+ */
+export function playFixtures(db, psqlAsync) {
   const sql = async (q) => { const r = await psqlAsync(db, q); if (r.status !== 0) throw Error(`${q.slice(0, 100)}: ${(r.stderr || "").trim()}`); return r.stdout; };
   const rpc = async (name, args) => withActorContext(sql, name, args, async (bound) => JSON.parse((await sql(`begin;set local role service_role;select public.${name}(${bound.join(",")});commit;`)).trim().split("\n").at(-1) || "null"));
 
@@ -89,6 +91,15 @@ export async function probeLockOrder(db, psqlAsync) {
     const spin = { id: a.id, fan_id: c.fanId, fan_pass_id: c.passId, creator_id: c.creatorId, wheel_id: c.wheelId, campaign_id: c.campaignId, prize_id: p.id, prize_label: p.label, prize_rarity: p.rarity, prize_image_url: p.image_url, server_seed: c.serverSeed, server_seed_hash: c.serverSeedHash, nonce: c.nonce, fair_version: 3, next_pity_counter: c.pityCounter + 1, focus_consumed: false, chase_consumed: false, chase_completed: false, next_focus_spins_left: null, next_chase_counter: null, response_prize: { id: p.id, label: p.label, rarity: p.rarity, weight: p.weight }, response_prize_index: c.prizes.findIndex((x) => x.id === p.id), response_show_stock: c.wheel.show_stock, client_seed: "lock-order", pool_snapshot: snapshot, pool_hash: hash(canonical(snapshot)), fair_trace: { excluded: [], won: p.id } };
     return `begin;set local role service_role;select public.commit_spin_attempt(${quote(a.id)},${quote(who.token)},${quote(a.binding)},${json({ contextHash: c.contextHash })},${json(spin)},${json({ delivery: p.delivery ?? "manual" })},${json({ seed, hash: hash(seed) })});commit;`;
   };
+
+  return { sql, rpc, addCreator, addWheel, addFan, focusOn, prep, commitSql };
+}
+
+/** @param {string} db @param {(db: string, sql: string) => Promise<{ status: number | null, stdout: string, stderr: string }>} psqlAsync */
+export async function probeLockOrder(db, psqlAsync) {
+  const bad = []; let checks = 0;
+  const check = (ok, label) => { checks++; if (!ok) bad.push(label); };
+  const { sql, addCreator, addWheel, addFan, focusOn, prep, commitSql } = playFixtures(db, psqlAsync);
 
   /**
    * Gate holds `gateSql`'s rows; `first` starts and is seen blocked, then

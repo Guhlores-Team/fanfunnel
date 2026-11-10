@@ -1510,6 +1510,26 @@ async function main() {
     check(pausedMute.data?.status === "unavailable", `0073 a self-excluded link cannot change the mute (${pausedMute.error?.message ?? JSON.stringify(pausedMute.data)})`);
     const queueShape = await a.rpc("creator_redemption_queue", { p_limit: 1 });
     check(!queueShape.error && (queueShape.data ?? []).every((row) => "actor_id" in row && "fan_id" in row), `0073 the queue carries fan_id and actor_id (${queueShape.error?.message ?? "ok"})`);
+    // 0073 (independent review): narrower reads and reserved agency names.
+    // A is a managed creator of `org` (not seated there): it reads the brief, not the orgs row.
+    const managedOrg = await a.from("orgs").select("id, owner_id, billing_model").eq("id", org.id);
+    check(!managedOrg.error && (managedOrg.data?.length ?? 0) === 0, `0073 a managed creator cannot read its agency's orgs row (${managedOrg.error?.message ?? managedOrg.data?.length})`);
+    const brief = await a.from("org_briefs").select("org_id, name, owner_active").eq("org_id", org.id);
+    check(!brief.error && brief.data?.length === 1 && brief.data[0].name === `rls ${RUN}` && typeof brief.data[0].owner_active === "boolean", `0073 a managed creator reads its agency's name and owner state from org_briefs (${brief.error?.message ?? JSON.stringify(brief.data)})`);
+    const foreignBrief = await b.from("org_briefs").select("org_id");
+    check(!foreignBrief.error && (foreignBrief.data?.length ?? 0) === 0, `0073 a creator outside the agency reads no brief (${foreignBrief.error?.message ?? foreignBrief.data?.length})`);
+    const anonBrief = await anonClient.from("org_briefs").select("org_id");
+    check(anonBrief.error?.code === "42501", `0073 anon cannot read org_briefs (${code(anonBrief)})`);
+    const forgedBrief = await a.from("org_briefs").update({ name: "forged" }).eq("org_id", org.id).select("org_id");
+    check(forgedBrief.error?.code === "42501", `0073 a session cannot write org_briefs (${code(forgedBrief)})`);
+    const announcer = await a.from("legal_terms_notice").select("announced_by");
+    check(announcer.error?.code === "42501", `0073 a session cannot read who announced the Terms notice (${code(announcer)})`);
+    const noticeCols = await a.from("legal_terms_notice").select("upcoming_version, effective_at, announced_at");
+    check(!noticeCols.error, `0073 a session still reads the notice's own columns (${noticeCols.error?.message ?? "ok"})`);
+    const reservedAgency = await b.rpc("org_create", { p_name: "FanFunnel Support" });
+    check(reservedAgency.error?.code === "22023" && /reserved agency name/.test(reservedAgency.error?.message ?? ""), `0073 an agency cannot be named like the operator (${reservedAgency.error?.message ?? "accepted"})`);
+    const reservedRename = await ownClient.from("orgs").update({ name: "Official Support" }).eq("id", org.id).select("id");
+    check(reservedRename.error?.code === "22023", `0073 an owner cannot rename its agency to a reserved name (${code(reservedRename)})`);
     }
   } finally {
     // Always clean up, even if an error was thrown above, so no disposable
