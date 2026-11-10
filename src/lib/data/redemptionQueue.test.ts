@@ -87,6 +87,8 @@ async function main() {
   check("demo: older pages only hold pending wins", older.every((r) => r.status === "pending"));
   check("demo: no older row repeats a window row", !older.some((r) => overview.redemptions.some((w) => w.id === r.id)));
   check("demo: paging stops", cursor === null);
+  const mine = await listRedemptionQueue({ actorId: "cccccccc-0000-4000-8000-000000000001" });
+  check("demo: no team, so no prize was moved by a team member", !("error" in mine) && mine.items.length === 0 && mine.next === null);
 
   const oldest = older[older.length - 1];
   check("demo: the oldest pending win can be fulfilled", "ok" in (await data.setRedemptionStatus(oldest.id, "fulfilled")));
@@ -165,7 +167,15 @@ async function main() {
     assert.ok(!("error" in named));
     const proof = rpcCalls.filter(([n]) => n === "can_act_for").at(-1);
     check("a prize a team member moved says who", named.items[0].via === "Robin Chatter");
-    check("the creator's own move, a pending prize and an untouched one carry no line", named.items.slice(1).every((i) => i.via === undefined));
+    check("…with that member's id, so the queue can be narrowed to them", named.items[0].viaId === STAFF);
+    check("the creator's own move, a pending prize and an untouched one carry no line", named.items.slice(1).every((i) => i.via === undefined && i.viaId === undefined));
+    // 0073: `actorId` narrows the queue to the prizes one account last moved.
+    await listRedemptionQueue({ actorId: STAFF });
+    check("actorId is passed as p_actor", rpcCalls.filter(([n]) => n === "creator_redemption_queue").at(-1)![1].p_actor === STAFF);
+    await listRedemptionQueue({});
+    check("no actorId → no p_actor", !("p_actor" in rpcCalls.filter(([n]) => n === "creator_redemption_queue").at(-1)![1]));
+    const actorCalls = rpcCalls.length;
+    check("an actorId that is no uuid is refused without a call", JSON.stringify(await listRedemptionQueue({ actorId: "robin" })) === '{"error":"bad_request"}' && rpcCalls.length === actorCalls);
     check("the session proved can_act_for(self, 'view') before the names were read", proof?.[1].perm === "view" && proof?.[1].target_creator === "creator-1" && serviceUses === usesBefore + 1);
     canAct = false;
     usesBefore = serviceUses;

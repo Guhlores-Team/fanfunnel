@@ -138,7 +138,7 @@ export async function getOverview(): Promise<CreatorOverview> {
   const actors = staffMoves.length ? await actorNames(sb, user.id, "view", staffMoves.map((r) => r.actor_id)) : null;
   const redemptions: RedemptionItem[] = rows.map((r) => ({
     id: r.id,
-    ...(r.status !== "pending" && r.actor_id && actors?.get(r.actor_id) ? { via: actors.get(r.actor_id) } : {}),
+    ...(r.status !== "pending" && r.actor_id && actors?.get(r.actor_id) ? { via: actors.get(r.actor_id), viaId: r.actor_id } : {}),
     ...(r.spin?.fan?.id ? { fanId: r.spin.fan.id } : {}),
     fanName: r.spin?.fan?.display_name ?? r.spin?.fan?.handle ?? "Fan",
     prizeLabel: r.spin?.prize_label ?? "Prize",

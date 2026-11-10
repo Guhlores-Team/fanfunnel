@@ -37,6 +37,7 @@
 //           shows the same banner instead of "Start your agency".
 //  WG-13    a seat and a managed creator are told when the agency's owner
 //           is suspended.
+//  WG-07    "by <team member>" on queue rows, and the queue narrowed to them.
 //  WU-08/09 + WG-16 the password rule, show/hide toggles and "Sign out
 //           other devices".
 // Steps that answer API calls with errors run on their own page with no error
@@ -908,6 +909,51 @@ export async function dashB7Journey(browser, { step, assert }, sink, ctx) {
       await goto(page, "/agency", 1200);
       await notice.waitFor({ timeout: 10000 });
       assert(/B7 Talent|agency/.test(await page.locator("body").innerText()), "the managed creator's page names its agency");
+    } finally {
+      await page.close().catch(() => {});
+    }
+  });
+
+  await step("b7 WG-07: a prize a team member moved says who, and the queue can be narrowed to their moves", async () => {
+    // The demo has no team, so two rows of the overview answer are given a
+    // team member here (the names and the p_actor filter are unit-tested).
+    const page = await ctx.newPage();
+    attachSink(page, sink);
+    const robin = "0c0c0c0c-0000-4000-8000-00000000000c";
+    const older = [];
+    page.on("request", (r) => { if (new URL(r.url()).pathname === "/api/redemptions" && r.method() === "GET") older.push(new URL(r.url()).searchParams.get("actor")); });
+    try {
+      await page.route(path("/api/overview"), async (route) => {
+        const res = await route.fetch();
+        const body = await res.json();
+        (body.redemptions ?? []).slice(0, 2).forEach((r) => Object.assign(r, { status: "fulfilled", via: "Robin Chatter", viaId: robin }));
+        await route.fulfill({ response: res, json: body });
+      });
+      await goto(page, "/dashboard?section=prizes", 1200);
+      await page.getByRole("group", { name: "Filter by status" }).getByRole("button", { name: "All", exact: true }).click();
+      const via = page.getByTestId("redemption-via");
+      await via.first().waitFor({ timeout: 10000 });
+      assert((await via.count()) === 2 && /Marked fulfilled by Robin Chatter/.test(await via.first().innerText()), "the two rows say Robin moved them");
+      const rowsBefore = await page.locator("ul > li").filter({ has: page.getByRole("button", { name: /Reopen|Start|Mark fulfilled/ }) }).count();
+      assert(rowsBefore > 2, `the queue shows other rows too (${rowsBefore})`);
+      await page.getByRole("button", { name: "Show only prizes handled by Robin Chatter" }).first().click();
+      const chip = page.getByTestId("queue-actor-filter");
+      await chip.waitFor({ timeout: 5000 });
+      assert(/last handled by Robin Chatter/.test(await chip.innerText()), "the filter names the team member");
+      assert((await via.count()) === 2, "Robin's two rows stay");
+      const rowsAfter = await page.locator("ul > li").filter({ has: page.getByRole("button", { name: /Reopen|Start|Mark fulfilled/ }) }).count();
+      assert(rowsAfter === 2, `only Robin's rows are listed (${rowsAfter})`);
+      assert((await page.getByRole("button", { name: /Show only prizes handled by/ }).count()) === 0, "a narrowed queue does not offer the same filter again");
+      const more = page.getByRole("button", { name: /older/i });
+      if (await more.count()) {
+        await more.first().click();
+        await page.waitForTimeout(800);
+        assert(older.at(-1) === robin, "older pages are asked for that team member only");
+      }
+      await chip.getByRole("button", { name: "Show everyone's" }).click();
+      await chip.waitFor({ state: "detached", timeout: 5000 });
+      const rowsBack = await page.locator("ul > li").filter({ has: page.getByRole("button", { name: /Reopen|Start|Mark fulfilled/ }) }).count();
+      assert(rowsBack === rowsBefore, "clearing the filter brings every row back");
     } finally {
       await page.close().catch(() => {});
     }

@@ -314,6 +314,8 @@ export interface RedemptionItem {
   auto?: { kind: "link" | "text" | "code"; views: number; lastViewedAt: string | null };
   /** WG-07: the team member who last changed this prize's status for the creator. */
   via?: string;
+  /** That team member's account id, so the queue can be narrowed to their moves. */
+  viaId?: string;
 }
 
 /** One per-wheel link under a fan: its own spin balance + which wheel/campaign. */

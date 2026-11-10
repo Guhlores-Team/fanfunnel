@@ -100,6 +100,9 @@ export default function PrizesPanel({
   // WC-26: rows whose status change is on its way, so a second tap cannot race it.
   const [statusBusy, setStatusBusy] = useState<ReadonlySet<string>>(new Set());
   const [olderError, setOlderError] = useState(false);
+  // WG-07: the queue narrowed to the prizes one team member moved (set from
+  // a row's "by <name>" line).
+  const [byActor, setByActor] = useState<{ id: string; name: string } | null>(null);
   // PR-10: the creator's delivery promise (Settings › Public page), used to
   // suggest an expected-by date on wins that have no due date yet.
   const [deliveryDays, setDeliveryDays] = useState<number | null>(null);
@@ -192,6 +195,7 @@ export default function PrizesPanel({
   const q = search.trim().toLowerCase();
   const matched = redemptions
     .filter((r) => filter === "all" || r.status === filter)
+    .filter((r) => !byActor || r.viaId === byActor.id)
     .filter(
       (r) =>
         q === "" ||
@@ -203,10 +207,10 @@ export default function PrizesPanel({
   const capped = redemptions.length >= OVERVIEW_REDEMPTION_WINDOW;
   const windowEnd = redemptions[redemptions.length - 1];
   const anchor = windowEnd ? `${windowEnd.at}|${windowEnd.id}` : "";
-  const olderKey = `${filter}|${q}`;
+  const olderKey = `${filter}|${q}|${byActor?.id ?? ""}`;
   const olderRows =
     older && older.key === olderKey && older.anchor === anchor
-      ? older.items.filter((r) => (filter === "all" || r.status === filter) && !redemptions.some((x) => x.id === r.id))
+      ? older.items.filter((r) => (filter === "all" || r.status === filter) && (!byActor || r.viaId === byActor.id) && !redemptions.some((x) => x.id === r.id))
       : [];
   const olderLive = !!older && older.key === olderKey && older.anchor === anchor;
   const all = [...matched, ...olderRows];
@@ -220,7 +224,7 @@ export default function PrizesPanel({
     setOlderError(false);
     try {
       const cursor = olderLive && older?.next ? older.next : anchor;
-      const qs = new URLSearchParams({ before: cursor, ...(filter === "all" ? {} : { status: filter }), ...(q ? { q } : {}) });
+      const qs = new URLSearchParams({ before: cursor, ...(filter === "all" ? {} : { status: filter }), ...(q ? { q } : {}), ...(byActor ? { actor: byActor.id } : {}) });
       const res = await fetch(`/api/redemptions?${qs}`, { cache: "no-store" });
       if (!res.ok) throw new Error();
       const body = (await res.json()) as { items: RedemptionItem[]; next: string | null };
@@ -306,6 +310,22 @@ export default function PrizesPanel({
         />
       </div>
 
+      {byActor && (
+        <p data-testid="queue-actor-filter" className="mb-3.5 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+          <span className="min-w-0 break-words">Showing prizes last handled by <span className="font-semibold text-ink">{byActor.name}</span>.</span>
+          <button
+            type="button"
+            onClick={() => {
+              setByActor(null);
+              setPage(1);
+            }}
+            className="min-h-9 shrink-0 rounded-full border border-line px-3 text-[12.5px] font-semibold text-muted transition-colors hover:text-ink"
+          >
+            Show everyone&apos;s
+          </button>
+        </p>
+      )}
+
       {loading && (
         <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading the queue">
           {[0, 1, 2].map((i) => (
@@ -331,7 +351,20 @@ export default function PrizesPanel({
       {shown.length > 0 && (
         <ul className="flex flex-col gap-2">
           {shown.map((r) => (
-            <RedemptionRow key={r.id} r={r} onSet={setStatus} onPatch={patchRow} onOpenFan={onOpenFan} onMessageFan={onMessageFan} deliveryDays={deliveryDays} busy={statusBusy.has(r.id)} />
+            <RedemptionRow
+              key={r.id}
+              r={r}
+              onSet={setStatus}
+              onPatch={patchRow}
+              onOpenFan={onOpenFan}
+              onMessageFan={onMessageFan}
+              deliveryDays={deliveryDays}
+              busy={statusBusy.has(r.id)}
+              onFilterActor={byActor ? undefined : (actor) => {
+                setByActor(actor);
+                setPage(1);
+              }}
+            />
           ))}
         </ul>
       )}
@@ -413,7 +446,10 @@ function RedemptionRow({
   onMessageFan,
   deliveryDays = null,
   busy = false,
+  onFilterActor,
 }: {
+  /** WG-07: narrow the queue to one team member's moves (absent while already narrowed). */
+  onFilterActor?: (actor: { id: string; name: string }) => void;
   r: RedemptionItem;
   onSet: (id: string, status: RedemptionStatus) => void;
   onPatch: (id: string, patch: Patch) => void;
@@ -528,6 +564,19 @@ function RedemptionRow({
             {r.via && r.status !== "pending" && (
               <p data-testid="redemption-via" className="mt-1 break-words text-xs text-muted">
                 {r.status === "fulfilled" ? "Marked fulfilled" : r.status === "cancelled" ? "Cancelled" : "Started"} by {r.via}
+                {r.viaId && onFilterActor && (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      onClick={() => onFilterActor({ id: r.viaId as string, name: r.via as string })}
+                      aria-label={`Show only prizes handled by ${r.via}`}
+                      className="font-semibold text-brand underline-offset-2 hover:underline"
+                    >
+                      Only theirs
+                    </button>
+                  </>
+                )}
               </p>
             )}
             {r.auto && (

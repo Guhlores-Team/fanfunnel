@@ -39,7 +39,10 @@ export async function GET(req: Request) {
   // 0073 (DB-10): `fanId` narrows the queue to one fan's prizes.
   const fanId = url.searchParams.get("fanId");
   if (fanId !== null && (fanId.length === 0 || fanId.length > 64)) return badRequest();
-  const page = await listRedemptionQueue({ status: status as RedemptionStatus | undefined, query: q, before, creatorId: creatorId ?? undefined, fanId });
+  // 0073 (WG-07): `actor` narrows it to prizes last moved by one team member.
+  const actorId = url.searchParams.get("actor");
+  if (actorId !== null && (actorId.length === 0 || actorId.length > 64)) return badRequest();
+  const page = await listRedemptionQueue({ status: status as RedemptionStatus | undefined, query: q, before, creatorId: creatorId ?? undefined, fanId, actorId });
   if ("error" in page) return page.error === "db_error" ? NextResponse.json({ error: "db_error" }, { status: 500 }) : errorResponse(page.error);
   return NextResponse.json(page, { headers: { "Cache-Control": "no-store" } });
 }
