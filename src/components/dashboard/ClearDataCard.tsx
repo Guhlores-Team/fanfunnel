@@ -111,7 +111,7 @@ export default function ClearDataCard() {
             <p id={owedId} data-testid="clear-data-owed" className={owed.sentence ? "rounded-xl border border-amber-400/40 bg-amber-400/5 p-3 text-[13px] text-amber-100" : "text-[13px] text-muted"}>
               {owed.sentence
                 ? <>{owed.sentence} Clearing removes these too: deliver the prizes or settle the spins with those fans first.</>
-                : "No fan is waiting on a prize or holding spins they paid for."}
+                : "No fan is waiting on a prize or holding spins you granted them."}
             </p>
           )}
           <label className="flex flex-col gap-1.5 text-sm text-ink">

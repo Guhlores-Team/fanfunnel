@@ -258,7 +258,7 @@ export async function dashB6Journey(browser, { step, assert }, sink, ctx) {
       await owed.waitFor({ timeout: 10000 });
       const text = await owed.innerText();
       assert(/fans? (is|are) owed \d+ prizes?/.test(text), `it says what fans are owed (${text})`);
-      assert(/who paid hold/.test(text) || /who paid holds/.test(text), "and the paid spins still held");
+      assert(/with recorded tips hold/.test(text) || /with recorded tips holds/.test(text), "and the granted spins still held");
       assert(await clear.getByRole("button", { name: "Permanently clear everything" }).isDisabled(), "RESET is still required");
       await clear.getByRole("button", { name: "Cancel" }).click();
     } finally {

@@ -270,7 +270,7 @@ export async function creatorJourney(page, { step, assert }) {
     // funnel is the third card of the trend row (same grid as the two trends).
     const text = await page.locator("body").innerText();
     assert(/Daily spins over time\./.test(text), "spins trend keeps its 'Daily spins over time.' sub-line");
-    assert(/Daily revenue over time\./.test(text), "revenue trend keeps its 'Daily revenue over time.' sub-line");
+    assert(/Daily tips recorded over time\./.test(text), "tips trend keeps its 'Daily tips recorded over time.' sub-line");
     const sameRow = await page.evaluate(() => {
       const h3s = [...document.querySelectorAll("h3")];
       const card = (re) => h3s.find((h) => re.test(h.textContent.trim()))?.closest("section");

@@ -330,8 +330,8 @@ function CampaignsWorkspace({ seat, onOpenGame }: { seat?: Seat; onOpenGame?: (w
           <div className="mt-3">
             <StatGrid
               cells={[
-                { label: "Revenue", value: formatCents(uncat.revenue) },
-                { label: "Spins bought", value: uncat.spinsBought },
+                { label: "Tips recorded", value: formatCents(uncat.revenue) },
+                { label: "Spins granted", value: uncat.spinsBought },
                 { label: "Spins played", value: uncat.spinsPlayed },
                 { label: "Fans", value: uncat.fans },
               ]}
@@ -501,9 +501,9 @@ function CampaignCard({
 
   const plays = campaignGame(campaign, wheels, now);
   const cells = stats && [
-    { label: "Revenue", value: formatCents(stats.revenue) },
+    { label: "Tips recorded", value: formatCents(stats.revenue) },
     { label: "ARPU", value: formatCents(stats.arpu) },
-    { label: "Spins bought", value: stats.spinsBought },
+    { label: "Spins granted", value: stats.spinsBought },
     { label: "Spins played", value: stats.spinsPlayed },
     { label: "Play-through", value: `${Math.round(stats.playThroughPct * 100)}%` },
     { label: "Unique fans", value: stats.uniqueFans },

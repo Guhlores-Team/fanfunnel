@@ -4,7 +4,8 @@ import type { WheelConfig } from "@/lib/games/wheel/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "@/lib/games/wheel/types";
 import { badRequest, errorResponse, BAD_REQUEST, parseJsonBody, isJsonObject } from "@/lib/api/handler";
 import type { ExpectedStock } from "@/lib/data/wheels";
-import { normalizeWheelPayload } from "@/lib/games/wheel/validate";
+import { MAX_PRIZE_LABEL, normalizeWheelPayload } from "@/lib/games/wheel/validate";
+import { publicTextCheck, publicTextErrorCode } from "@/lib/publicText";
 import { revalidateMyPublicPage } from "@/lib/api/publicPage";
 import { limitRoute } from "@/lib/api/limit";
 
@@ -18,7 +19,8 @@ function prizesValid(prizes: WheelConfig["prizes"]): boolean {
     (p) =>
       p != null &&
       typeof p.label === "string" &&
-      p.label.length <= 120 &&
+      // RD-17 / TS-18: the same cap the editor and prizeRow use (80), never a silent slice.
+      p.label.length <= MAX_PRIZE_LABEL &&
       RARITY_ORDER.includes(p.rarity) &&
       Number.isFinite(p.weight) &&
       p.weight >= 0 &&
@@ -80,6 +82,15 @@ export async function PUT(req: Request) {
     return badRequest();
   }
   if (!expectedStock) return badRequest();
+  // TS-04: prize names and the subtitle are public text (no links, phones, handles, slurs).
+  if (config && Array.isArray(config.prizes)) {
+    for (const p of config.prizes) {
+      const issue = p && typeof p === "object" ? publicTextCheck((p as { label?: unknown }).label) : null;
+      if (issue) return NextResponse.json({ error: publicTextErrorCode(issue), field: "label", prizeId: (p as { id?: unknown }).id ?? null }, { status: 400 });
+    }
+    const sub = publicTextCheck((config as { subtitle?: unknown }).subtitle);
+    if (sub) return NextResponse.json({ error: publicTextErrorCode(sub), field: "subtitle" }, { status: 400 });
+  }
   if (!config || !Array.isArray(config.prizes) || !prizesValid(config.prizes)) {
     return badRequest();
   }

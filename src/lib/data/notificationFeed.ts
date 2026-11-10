@@ -229,7 +229,7 @@ export function toNotificationItem<K extends NotificationKind>(
         id: `spins:${f.fanId}`,
         kind: "out_of_spins",
         title: `${f.fanName} is out of spins`,
-        body: "Top them up to keep them playing.",
+        body: "Grant more spins to keep them playing.",
         at: f.at,
         target: { section: "fans", fanName: f.fanName },
       };

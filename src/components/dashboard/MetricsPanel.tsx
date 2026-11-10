@@ -62,7 +62,7 @@ export default function MetricsPanel({
 
   const stats = [
     { label: "Fans", value: m?.fans ?? 0 },
-    { label: "Revenue", value: formatCents(m?.revenue ?? 0) },
+    { label: "Tips recorded", value: formatCents(m?.revenue ?? 0) },
     { label: "Spins played", value: m?.spinsPlayed ?? 0 },
     { label: "To fulfil", value: m?.pending ?? 0 },
     { label: "Delivered", value: m?.fulfilled ?? 0 },
@@ -164,8 +164,8 @@ export default function MetricsPanel({
 
         <section className={`rounded-2xl p-5 ${raised}`}>
           <CardHeader
-            title="Revenue trend"
-            hint="Daily revenue over time."
+            title="Tips trend"
+            hint="Daily tips recorded over time."
             right={
               !extraLoading && extra ? (
                 <span className="tnum shrink-0 text-sm font-bold text-ink">
@@ -180,7 +180,7 @@ export default function MetricsPanel({
                 <Sparkline
                   data={extra.revenueTrend.map((d) => ({ date: d.date, spins: d.cents }))}
                   format={formatCents}
-                  noun="Revenue"
+                  noun="Tips"
                   color="#22c55e"
                 />
               )

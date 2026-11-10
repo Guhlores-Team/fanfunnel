@@ -54,7 +54,7 @@ export function buildFirstSteps(s: FirstStepSignals): FirstStep[] {
     {
       key: "fan",
       title: "Mint your first fan link",
-      body: "Record a fan (and the spins they paid for) to mint their personal link.",
+      body: "Record a fan (and the spins you grant them) to create their personal link.",
       done: s.fans > 0,
       cta: { label: "Mint a link", go: "fans" },
     },

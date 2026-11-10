@@ -19,6 +19,7 @@ import PushNotificationsCard from "./PushNotificationsCard";
 import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profileErrors";
 import LoadFailed from "./LoadFailed";
 import { loadJson } from "@/lib/hooks/loadJson";
+import { MAX_CREATOR_NOTE, publicTextCheck, publicTextMessage } from "@/lib/publicText";
 
 /**
  * Settings (Command Center). Two groups:
@@ -482,6 +483,9 @@ function EmailBlock({
   const [busy, setBusy] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  // WU-04: /auth/confirm sends the creator here with ?emailChange=half after
+  // the first of the two links (Secure email change): say what is left.
+  const halfDone = useSyncExternalStore(noSubscribe, () => new URLSearchParams(window.location.search).get("emailChange") === "half", () => false);
   useCreatorDraft("settings-email", "an e-mail change", email.trim() !== "" || current !== "", busy);
 
   async function save() {
@@ -523,7 +527,7 @@ function EmailBlock({
       setPending(next);
       setEmail("");
       setCurrent("");
-      toast("Check your inbox to confirm the new email.", { tone: "success" });
+      toast("Check both inboxes: we sent a link to your current address and one to the new address. Open both to finish.", { tone: "success", duration: 8000 });
     } catch {
       toast("Couldn't start the email change.", { tone: "error" });
     } finally {
@@ -542,7 +546,7 @@ function EmailBlock({
         </h4>
         <p className="mt-1 text-xs text-muted">
           Current: <span className="break-all font-semibold text-ink">{currentEmail ?? "—"}</span>.
-          Changing it sends a confirmation link to the new address; it applies once you confirm.
+          Changing it e-mails a confirmation link to your current address AND to the new one; open both. The change applies once both are confirmed.
         </p>
       </div>
       {pending && (
@@ -550,7 +554,16 @@ function EmailBlock({
           role="status"
           className="rounded-lg border border-[var(--brand)]/40 bg-[color-mix(in_oklab,var(--brand)_10%,transparent)] px-3 py-2 text-xs text-ink"
         >
-          Pending confirmation: <span className="break-all font-semibold">{pending}</span>
+          Pending confirmation: <span className="break-all font-semibold">{pending}</span> — open the link in BOTH inboxes.
+        </p>
+      )}
+      {halfDone && (
+        <p
+          role="status"
+          data-testid="email-change-half"
+          className="rounded-lg border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-xs text-ink text-pretty"
+        >
+          Step 1 of 2 done — now open the link we sent to your other address. Your e-mail changes once both links have been opened.
         </p>
       )}
       <CreatorMfaRecovery required={mfaRequired} destination="settings" />
@@ -892,6 +905,18 @@ function PublicPageSection({
 
   // Saves the link-in-bio fields. The avatar is saved from the Profile card.
   const save = async () => {
+    // TS-04: the same public-text screen the API applies, before any request.
+    for (const [field, label] of [["tagline", "The tagline"], ["note", "The note to fans"]] as const) {
+      const issue = publicTextCheck(profile[field]);
+      if (issue) {
+        toast(publicTextMessage(issue, label), { tone: "error", duration: 8000 });
+        return;
+      }
+    }
+    if (note.length > MAX_CREATOR_NOTE) {
+      toast(`Keep the note to ${MAX_CREATOR_NOTE} characters or fewer.`, { tone: "error" });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/public-profile", {
@@ -901,6 +926,10 @@ function PublicPageSection({
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
+        if (typeof d.error === "string" && d.error.startsWith("public_text_")) {
+          toast(`${d.field === "note" ? "The note to fans" : "The tagline"} can't be published: it contains ${d.error === "public_text_url" ? "a link" : d.error === "public_text_phone" ? "a phone number" : d.error === "public_text_handle" ? "an @handle" : "a word fans must not see"}.`, { tone: "error", duration: 8000 });
+          return;
+        }
         throw new Error(typeof d.error === "string" ? d.error : "");
       }
       toast("Link-in-bio saved", { tone: "success" });
@@ -981,11 +1010,13 @@ function PublicPageSection({
           <Field label="Personal note to fans (shown atop their spin page)">
             <input
               value={note}
+              maxLength={MAX_CREATOR_NOTE}
               onChange={(e) => patchProfile({ note: e.target.value })}
               className="ff-input w-full"
               placeholder="Hey you 😘 spin away — every spin wins!"
             />
           </Field>
+          <p className="-mt-2 text-xs text-muted">No links, phone numbers or @handles in the tagline or note: fans reach you through your tip link.</p>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={save} disabled={busy || !loaded} className={primaryBtn}>
               {busy ? "Saving…" : "Save"}

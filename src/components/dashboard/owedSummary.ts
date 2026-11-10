@@ -43,7 +43,7 @@ export function owedSentence(s: OwedSummary): string {
     parts.push(`${who} owed ${plural(s.prizes, "prize", "prizes")}`);
   }
   if (s.paidSpins > 0) {
-    const holders = plural(s.payingFans, "fan who paid holds", "fans who paid hold");
+    const holders = plural(s.payingFans, "fan with recorded tips holds", "fans with recorded tips hold");
     parts.push(`${parts.length ? "and " : ""}${parts.length ? holders.charAt(0).toLowerCase() + holders.slice(1) : holders} ${plural(s.paidSpins, "unplayed spin", "unplayed spins")}`);
   }
   return parts.length ? parts.join(", ").replace(", and", " and") + "." : "";

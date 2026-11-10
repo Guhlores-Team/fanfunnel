@@ -2,6 +2,7 @@
 
 import { LoadError, loadJson } from "@/lib/hooks/loadJson";
 import { STALE_GAME_MESSAGE, staleGameCheck } from "./staleGame";
+import { publicTextCheck, publicTextMessage } from "@/lib/publicText";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import GamePreview from "./GamePreview";
@@ -348,6 +349,23 @@ export default function WheelEditor({
     }
   }
   async function save() {
+    // TS-04: the same public-text screen the API applies, before any request.
+    for (const [i, p] of wheel.prizes.entries()) {
+      const issue = publicTextCheck(p.label);
+      if (issue) {
+        const message = publicTextMessage(issue, `Prize ${i + 1}'s name`);
+        setSaveError(message);
+        toast(message, { tone: "error" });
+        return;
+      }
+    }
+    const subtitleIssue = publicTextCheck(wheel.subtitle);
+    if (subtitleIssue) {
+      const message = publicTextMessage(subtitleIssue, "The subtitle");
+      setSaveError(message);
+      toast(message, { tone: "error" });
+      return;
+    }
     setSaving(true);
     setSaveError("");
     setJustSaved(false);
@@ -378,6 +396,12 @@ export default function WheelEditor({
         body: JSON.stringify({ wheel: editableGamePayload(gameWheel), expectedStock: loadedStock() }),
       });
       const data = await res.json();
+      if (!res.ok && typeof data.error === "string" && data.error.startsWith("public_text_")) {
+        const message = `${data.field === "subtitle" ? "The subtitle" : "A prize name"} can't be published: it contains ${data.error === "public_text_url" ? "a link" : data.error === "public_text_phone" ? "a phone number" : data.error === "public_text_handle" ? "an @handle" : "a word fans must not see"}.`;
+        setSaveError(message);
+        toast(message, { tone: "error" });
+        return;
+      }
       if (res.ok && data.wheel) {
         setWheel(data.wheel);
         setSavedJson(JSON.stringify(data.wheel));

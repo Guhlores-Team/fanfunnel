@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { MAX_CREATOR_NOTE, publicTextCheck, publicTextErrorCode } from "@/lib/publicText";
 import { revalidatePath } from "next/cache";
 import { getMyPublicProfile, normalizePublicSlug, setMyPublicProfile } from "@/lib/data";
 import { supabaseUrl } from "@/lib/supabase/url";
@@ -13,7 +14,8 @@ import { limitRoute } from "@/lib/api/limit";
 // `mailto:`, `tel:`, or `javascript:` are rejected.
 const MAX_SLUG_LEN = 64;
 const MAX_TAGLINE_LEN = 200;
-const MAX_NOTE_LEN = 2000;
+// TS-04: the note is capped at MAX_CREATOR_NOTE (one constant with the editor).
+const MAX_NOTE_LEN = MAX_CREATOR_NOTE;
 const MAX_TIP_URL_LEN = 2048;
 const SLUG_RE = /^[A-Za-z0-9 _-]*$/;
 
@@ -102,6 +104,11 @@ export async function PUT(req: Request) {
     (typeof body.note !== "string" || body.note.length > MAX_NOTE_LEN)
   ) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
+  }
+  // TS-04: no links, phone numbers, @handles or slurs in text every fan sees.
+  for (const field of ["tagline", "note"] as const) {
+    const issue = publicTextCheck(body[field]);
+    if (issue) return NextResponse.json({ error: publicTextErrorCode(issue), field }, { status: 400 });
   }
   // /c/<slug> is ISR (revalidate 60). Fields it renders mark the old and new
   // slug's cached page stale, so a rename or bio edit shows on the next visit

@@ -330,7 +330,7 @@ export default function TodayPanel({
       <section aria-label="Today's pulse" className="relative grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-3.5">
         <PulseCard
           icon={P.dollar}
-          label="Revenue today (UTC)"
+          label="Tips today (UTC)"
           value={extra ? formatCents(lastValue(cents)) : dash}
           chip={firstRun ? muted : <TrendChip trend={trendVsAvg(cents)} />}
           note={extraFailed ? "couldn't load" : firstRun ? "get spinning" : "vs 14-day avg"}
