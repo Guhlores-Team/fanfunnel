@@ -20,6 +20,9 @@ import { NoScriptNote } from "@/components/fan/FanGameController";
 
 // Fan-facing page. The token in the URL is the fan's secret pass.
 export const dynamic = "force-dynamic";
+// OPS3-02: the reads behind this page carry their own deadlines (src/lib/data/unavailable.ts);
+// this caps the whole invocation so a stuck one ends with our page, not the platform's.
+export const maxDuration = 15;
 
 // RM-4: this page links ITS OWN manifest (installs this fan's link, not the
 // dashboard app) and is never indexed. One read shared by both exports below.

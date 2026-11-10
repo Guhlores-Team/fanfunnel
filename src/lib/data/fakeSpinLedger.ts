@@ -117,6 +117,8 @@ export class FakeSpinLedger {
   prepareReply: Record<string, unknown> | null = null;
   /** Answer `changed` to the next commit (sealed value edited meanwhile). */
   changedOnce = false;
+  /** Answer every commit (and cancel) with this reply, e.g. `unavailable` when the link/fan/creator went inactive. */
+  commitReply: Record<string, unknown> | null = null;
   /** Answer `retry_context` to the next commit. */
   retryContextOnce = false;
   /** Fail reads of this table once (unknown transport) — the sealed candidate read. */
@@ -254,6 +256,7 @@ export class FakeSpinLedger {
       case "get_spin_attempt_status":
         return ok(this.replay(id) ?? { status: "absent" });
       case "cancel_spin_attempt": {
+        if (this.commitReply) return ok(structuredClone(this.commitReply));
         const done = this.replay(id);
         if (done) return ok(done);
         return ok({ status: "declined", error: args.p_error ?? "no_prizes" });
@@ -275,6 +278,7 @@ export class FakeSpinLedger {
 
   private async commit(id: string, args: Record<string, unknown>): Promise<Reply> {
     if (this.beforeCommit) await this.beforeCommit(args);
+    if (this.commitReply) return ok(structuredClone(this.commitReply));
     const done = this.replay(id);
     if (done) return ok(done);
     if (this.failCommitTransports > 0) { this.failCommitTransports--; return { data: null, error: { code: "PGRST_CONNECTION" } }; }

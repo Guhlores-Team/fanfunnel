@@ -79,6 +79,17 @@ async function main() {
   l.prepareReply = { status: "unavailable" };
   const r = await commitSpinAttempt("tok", { requestId: crypto.randomUUID(), clientSeed: "seed" }, l.client());
   check("prepare unavailable → blocked, not spin_pending", "error" in r && r.error === "blocked");
+  // CC-02: the same refusal when the link/fan/creator went inactive BETWEEN
+  // prepare and commit (commit answers `unavailable`), and on a cancel.
+  const l2 = await new FakeSpinLedger([{ id: "prize-1", weight: 1, stock: null }], { balance: 4 }).init();
+  l2.commitReply = { status: "unavailable" };
+  const r2 = await commitSpinAttempt("tok", { requestId: crypto.randomUUID(), clientSeed: "seed" }, l2.client());
+  check("CC-02: commit unavailable → blocked, never spin_pending", "error" in r2 && r2.error === "blocked");
+  const l3 = await new FakeSpinLedger([{ id: "prize-1", weight: 1, stock: null }], { balance: 4 }).init();
+  l3.prepareReply = { status: "ready", context: { ...(await (async () => { const c = l3.client(); const p = await c.rpc("prepare_spin_attempt", { p_attempt: crypto.randomUUID(), p_token: "tok", p_request_hash: "h" }); return (p.data as { context: unknown }).context as Record<string, unknown>; })()), wheel: { ...(l3.wheel as Record<string, unknown>), game_ready: false } }, balance: 4 };
+  l3.commitReply = { status: "unavailable" };
+  const r3 = await commitSpinAttempt("tok", { requestId: crypto.randomUUID(), clientSeed: "seed" }, l3.client());
+  check("CC-02: cancel unavailable → blocked too", "error" in r3 && r3.error === "blocked");
   const { classifySpinStatus } = await import("@/components/fan/spinIntent");
   check("a declined blocked status releases the saved request", classifySpinStatus({ status: "declined", error: "blocked" }, true).kind === "declined");
   console.log(`fan pass creator standing: ${passed} checks passed`);

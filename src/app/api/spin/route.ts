@@ -4,6 +4,11 @@ import { withFanToken } from "@/lib/api/fanToken";
 import { validSpinIntent } from "@/lib/data/spinAttempts";
 import { withClaimCode } from "@/lib/rewards/claimCode";
 
+// OPS3-02: each RPC on the spin path aborts after SPIN_RPC_TIMEOUT_MS (an
+// aborted call is reported as spin_pending with the request id kept); this
+// caps the whole invocation, retries included.
+export const maxDuration = 30;
+
 export async function POST(req: Request) {
   const response = await withFanToken<{ token?: unknown; requestId?: unknown; clientSeed?: unknown; publishedSeedHash?: unknown }>(req,
     { scope: "spin", limit: 10, windowMs: 10_000 }, async (token, body) => {

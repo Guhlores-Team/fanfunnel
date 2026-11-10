@@ -95,10 +95,26 @@ export async function createClient() {
  * ONLY use server-side for trusted operations like recording a spin where we
  * must atomically decrement spins and stock regardless of the caller.
  */
-export function createServiceClient() {
+export function createServiceClient(options: { timeoutMs?: number } = {}) {
+  const { timeoutMs } = options;
   return createSupabaseClient(
     supabaseUrl(),
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
+    {
+      auth: { persistSession: false },
+      // OPS3-02: a per-call deadline for the fan path, so a slow database makes
+      // a fan page fail fast (the "nothing was spent" page) instead of hanging
+      // until the platform's own timeout. Every query and RPC made through
+      // this client aborts after timeoutMs; the caller maps the error.
+      ...(timeoutMs ? { global: { fetch: timedFetch(timeoutMs) } } : {}),
+    }
   );
+}
+
+function timedFetch(timeoutMs: number): typeof fetch {
+  return (input, init) => {
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const signal = init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    return fetch(input, { ...init, signal });
+  };
 }

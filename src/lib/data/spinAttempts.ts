@@ -150,6 +150,8 @@ async function declineAttempt(sb: Service, token: string, intent: SpinIntent, er
       return await refreshReceipt(token,receipt,intent.requestId,sb);
     } catch { return { error: "spin_pending" }; }
   }
+  // CC-02: the link, fan or creator became inactive before the cancel: a clear refusal.
+  if (reply?.status === "unavailable") return { error: "blocked" };
   return reply?.status === "declined" ? spinError(reply.error) : { error: "spin_pending" };
 }
 
@@ -234,6 +236,10 @@ export async function commitSpinAttempt(token:string,intent:SpinIntent,sb=create
         continue;
       }
       if(reply.status==="declined")return spinError(reply.error);
+      // CC-02: the pass was paused, the fan blocked/deleted or the creator
+      // suspended between prepare and commit. Nothing was spent; the fan gets
+      // the truthful refusal, never "couldn't confirm, check this saved spin".
+      if(reply.status==="unavailable")return {error:"blocked"};
       if(reply.status!=="committed")return {error:"spin_pending"};
       const receipt=reply as Receipt;
       if(receipt.replayed!==true){

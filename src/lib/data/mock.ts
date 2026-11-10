@@ -3957,8 +3957,12 @@ function mockFanByAnyToken(token: string): { fan: MockFan; pass: MockPass | null
 /** Why a link no longer opens, when its tombstone says (else null → 404). */
 export async function mockGetFanLinkStatus(
   token: string
-): Promise<"creator_closed" | "fan_deleted" | null> {
-  return privacy.tombstones.get(await sha256Hex(token)) ?? null;
+): Promise<"creator_closed" | "fan_deleted" | "creator_paused" | null> {
+  const tomb = privacy.tombstones.get(await sha256Hex(token));
+  if (tomb) return tomb;
+  // WC-13 parity: a known live link of the suspended demo creator is "closed".
+  const hit = mockFanByAnyToken(token);
+  return hit && !hit.fan.selfExcludedAt && !mockDemoCreatorActive() ? "creator_paused" : null;
 }
 
 export function mockExportFanData(token: string): FanDataExport | null {
