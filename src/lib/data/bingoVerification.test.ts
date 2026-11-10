@@ -16,7 +16,7 @@ async function main(){const {getSpinVerification}=await import("./boosts");
  bonus.bingo_line=8;check("nonexistent Bingo line is refused",await getSpinVerification("bonus-share")===null);bonus.bingo_line=4;
  parent.kind="bonus";check("a bonus cannot recursively supply another bonus proof",await getSpinVerification("bonus-share")===null);parent.kind="play";
  bonus.kind="play";check("seedless historical play still has no independent proof",await getSpinVerification("bonus-share")===null);bonus.kind="bonus";
- failed=true;check("unavailable public proof remains unknown",await getSpinVerification("bonus-share")===null);
+ failed=true;check("OPS3-06: an unavailable public proof is a read error (error page), never \"nothing to verify\"",await getSpinVerification("bonus-share").then(()=>false,(e:Error)=>e.name==="PublicReadError"));
  console.log(`Bingo public verification: ${passed} checks passed`);
 }
 main().catch(error=>{console.error(error);process.exit(1);});

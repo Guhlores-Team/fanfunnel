@@ -10,13 +10,9 @@ import { GameProof, gameOddsReplay } from "./GameProof";
 import { replayGameV3 } from "@/lib/games/core/replay";
 import { V3_FORMULA } from "./oddsCopy";
 import LocalTime from "./LocalTime";
-import ClaimCheck, { type ClaimCheckState } from "./ClaimCheck";
-import { headers } from "next/headers";
+import ClaimCheck from "./ClaimCheck";
+import { claimedState } from "@/lib/fan/claimCheck";
 import { linkNotFound } from "@/lib/fan/linkNotFound";
-import { clientIpFromHeaders } from "@/lib/api/clientIp";
-import { ROUTE_TIERS } from "@/lib/api/limit";
-import { rateLimitShared } from "@/lib/rateLimit";
-import { claimCodeFor, verifyClaimCode } from "@/lib/rewards/claimCode";
 
 export const dynamic = "force-dynamic";
 
@@ -36,23 +32,12 @@ export const metadata: Metadata = {
   manifest: null,
 };
 
-/** C4: check a claim code a creator typed, per address at the `costly` tier. */
-async function checkClaim(shareId: string, raw: string | string[] | undefined): Promise<{ state: ClaimCheckState; value: string }> {
-  const value = typeof raw === "string" ? raw.slice(0, 12) : "";
-  if (!value.trim()) return { state: "none", value: "" };
-  if (!claimCodeFor(shareId)) return { state: "unavailable", value };
-  const { limit, windowMs } = ROUTE_TIERS.costly;
-  const ip = clientIpFromHeaders(await headers());
-  if (!(await rateLimitShared(`verify-claim:${ip}`, limit, windowMs)).ok) return { state: "limited", value };
-  return { state: verifyClaimCode(shareId, value) ? "match" : "mismatch", value };
-}
-
 export default async function VerifyPage({
   params,
   searchParams,
 }: {
   params: Promise<{ shareId: string }>;
-  searchParams?: Promise<{ code?: string | string[] }>;
+  searchParams?: Promise<{ claimed?: string | string[] }>;
 }) {
   const { shareId } = await params;
   const v = await getSpinVerification(shareId);
@@ -78,7 +63,9 @@ export default async function VerifyPage({
     </main>;
   }
 
-  const claim = await checkClaim(shareId, (await searchParams)?.code);
+  // C4 / WF-17: the check itself happens in /api/public/claim-check (POST);
+  // a no-JS form post comes back here with only its verdict.
+  const claimed = claimedState((await searchParams)?.claimed);
   const color = RARITY_COLORS[v.rarity];
   const commitment = COMMITMENT_COPY[v.commitment ?? "unknown"];
   // fair_version selects the check: a v3 spin is replayed end to end from its
@@ -244,7 +231,7 @@ export default async function VerifyPage({
             it does not re-simulate the full prize pool.
           </p>
           )}
-          <ClaimCheck {...claim} />
+          <ClaimCheck shareId={shareId} initial={claimed} />
         </div>
       </div>
       <footer className="relative z-[1] mt-8 text-xs tracking-wide text-muted">

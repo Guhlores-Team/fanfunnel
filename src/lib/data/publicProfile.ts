@@ -97,6 +97,9 @@ export async function getPublicProfileBySlug(
 ): Promise<{ profile: PublicProfile; tipUrl: string | null } | null> {
   if (!isSupabaseConfigured()) {
     const saved = mockGetPublicProfileFields();
+    // WA-02 parity: only the demo creator's own link name (and the historical
+    // "demo") answers; any other slug is unknown, as in production.
+    if (slug !== saved.slug && slug !== "demo") return null;
     // Parity with the Supabase path: the demo's live game, fan-safe; an unset
     // tagline stays null so the page shows the game's own default line.
     const live = mockGetPublicWheelTeaser()?.wheel;
