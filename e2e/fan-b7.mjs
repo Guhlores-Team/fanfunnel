@@ -1,7 +1,7 @@
 // Batch 7 fan fixes, each with the regression it guards (demo mode):
 //  RF-01 the wheel lands by prize id after the creator edits the prize list
 //  RF-02 a game-kind switch mid-session is told, never crashed into
-//  RF-03 a top-up reaches an open page once it refreshes
+//  RF-03 / WF-06 a top-up reaches an open page: on return to the tab, or by itself when out of spins
 //  RF-04 the page plays without crypto.randomUUID / Object.hasOwn / Array.at
 //  RF-05 a failed report says so       RF-06 refusals: needs_ack resumes, 429 cools down
 //  RF-07 offline is named, a spin sent offline is released again
@@ -44,9 +44,11 @@ async function ownWheel(request, title, prizes, kind = "wheel", extra = {}) {
 const editable = (wheel) => { const { gameKindLocked: _l, gameReady: _r, ...rest } = wheel; return rest; };
 
 /** Open a fan's page in its own context, past the gate, with the sink attached. */
-async function openFan(browser, sink, token, { device = PHONE, ua, init, gate = true, sinkless = false } = {}) {
+async function openFan(browser, sink, token, { device = PHONE, ua, init, gate = true, sinkless = false, clock = false } = {}) {
   const context = await browser.newContext({ ...device, ...(ua ? { userAgent: ua } : {}) });
   if (init) await context.addInitScript(init);
+  // A controllable clock (it still runs in real time until fast-forwarded).
+  if (clock) await context.clock.install();
   const page = await context.newPage();
   const errors = [];
   if (sinkless) page.on("pageerror", (e) => errors.push(String(e?.message || e))); else attachSink(page, sink);
@@ -134,8 +136,27 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await page.evaluate(() => { const real = Date.now; Date.now = () => real() + 40000; document.dispatchEvent(new Event("visibilitychange")); });
         await page.waitForFunction(() => document.querySelector("[data-testid='spins-chip']")?.textContent.replace(/\D/g, "") === "2", null, { timeout: 15000 });
         await page.getByTestId("topup-ask").waitFor({ state: "hidden", timeout: 6000 });
+        const note = await page.getByTestId("topup-note").textContent();
+        assert(/^\+2 spins from /.test(note), `the page says who added the spins (${note})`);
         await spinForCard(page); await closeCard(page);
         assert((await chip(page)) === "1", "the topped-up spins play");
+        assert((await page.getByTestId("topup-note").count()) === 0, "the note is gone once the fan plays");
+      } finally { await context.close(); }
+    });
+
+    await step("b7 fan WF-06: an out-of-spins page left open learns of a top-up by itself, without leaving the tab", async () => {
+      const fan = await own("B7 waiting fan", 1);
+      const { context, page } = await openFan(browser, sink, fan.token, { clock: true });
+      try {
+        await spinForCard(page); await closeCard(page);
+        assert((await chip(page)) === "0", "the only spin is spent");
+        await page.getByTestId("topup-ask").waitFor({ timeout: 6000 });
+        await json(await request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: "B7 waiting fan", spins: 3, fanId: fan.fanId } }), "top up");
+        // No tab switch, no tap: half a minute passes on the open page.
+        await page.clock.fastForward(31000);
+        await page.waitForFunction(() => document.querySelector("[data-testid='spins-chip']")?.textContent.replace(/\D/g, "") === "3", null, { timeout: 15000 });
+        assert(/^\+3 spins from /.test(await page.getByTestId("topup-note").textContent()), "the top-up is announced");
+        await page.getByTestId("topup-ask").waitFor({ state: "hidden", timeout: 6000 });
       } finally { await context.close(); }
     });
 
@@ -238,6 +259,7 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await page.getByRole("button", { name: "Safety & privacy" }).first().click();
         const dialog = page.getByRole("dialog", { name: "Safety and privacy" });
         await dialog.waitFor({ timeout: 5000 });
+        assert((await page.getByRole("navigation", { name: "Legal" }).count()) === 1, "one Legal landmark with the sheet open (PA-12)");
         await dialog.getByRole("button", { name: /Report this creator/ }).click();
         await dialog.getByLabel("Reason for report").selectOption({ index: 1 });
         await dialog.getByRole("button", { name: "Send report" }).click();
@@ -495,6 +517,30 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         await closeCard(page);
         const tiny = await page.evaluate(() => [...document.querySelectorAll("[data-testid='fan-game'] *")].filter((el) => el.childNodes.length && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) && parseFloat(getComputedStyle(el).fontSize) < 11 && getComputedStyle(el).visibility !== "hidden").map((el) => el.tagName + ":" + el.textContent.trim().slice(0, 20)));
         assert(tiny.length === 0, `no fan text under 11 px (${tiny.join(", ")})`);
+      } finally { await context.close(); }
+    });
+
+    await step("b7 fan PA-02: the wheel turns by a transform while it spins and is painted once where it lands", async () => {
+      const fan = await own("B7 smooth fan", 1);
+      const { context, page } = await openFan(browser, sink, fan.token);
+      try {
+        // Count paints of the wheel face from the moment SPIN is tapped.
+        await page.evaluate(() => {
+          const canvas = document.querySelector("[data-testid='fan-game'] canvas");
+          const ctx = canvas.getContext("2d");
+          window.__fills = 0;
+          const fillText = ctx.fillText.bind(ctx);
+          ctx.fillText = (...args) => { window.__fills++; return fillText(...args); };
+        });
+        await page.getByTestId("fan-spin").click();
+        await page.waitForFunction(() => /rotate\(/.test(document.querySelector("[data-testid='fan-game'] canvas")?.style.transform ?? ""), null, { timeout: 8000 });
+        await page.getByTestId("reward-reveal").waitFor({ timeout: 20000 });
+        const after = await page.evaluate(() => ({ fills: window.__fills, transform: document.querySelector("[data-testid='fan-game'] canvas").style.transform }));
+        assert(after.transform === "", `the transform is cleared at the stop (${after.transform})`);
+        // Painting every frame of a multi-second spin is thousands of label
+        // draws; a handful of whole-face paints is a few dozen.
+        assert(after.fills > 0 && after.fills <= 400, `the face was painted a handful of times, not every frame (${after.fills} label draws)`);
+        await closeCard(page);
       } finally { await context.close(); }
     });
 

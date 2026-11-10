@@ -14,6 +14,7 @@ import { detectNearMiss, type NearMiss } from "./nearMiss";
 import { landingIndex, poolForResult } from "./wheelLanding";
 import LegalSheet from "./LegalSheet";
 import { OFFLINE_NOTE, useOnline } from "./useOnline";
+import { BALANCE_POLL_MS, shouldPollBalance, topUpDelta, topUpNote } from "./balanceSync";
 import { lastOfLine, oddsChangedSinceShown } from "./stockDisplay";
 import { spinErrorInfo, ackErrorMessage } from "../spinErrors";
 import {
@@ -400,9 +401,21 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   // reach the open page on refresh only while nothing is in flight; a payload
   // that lands mid-play is dropped (closing the card refreshes again).
   const [syncedPass, setSyncedPass] = useState(pass);
+  // A payload that arrived mid-play may predate the play it interrupted (its
+  // balance would be one too high): it is never adopted, the page reads again.
+  const [skippedPass, setSkippedPass] = useState<FanPassView | null>(null);
+  const [resync, setResync] = useState(0);
+  // WF-06: plays the creator added while this page was open.
+  const [toppedUp, setToppedUp] = useState<number | null>(null);
   const idle = !busy && recovery.phase === "ready" && rv.phase === "idle";
-  if (pass !== syncedPass && idle) {
+  if (pass !== syncedPass) {
+    if (!idle) { if (skippedPass !== pass) setSkippedPass(pass); }
+    else if (skippedPass === pass) { setSyncedPass(pass); setSkippedPass(null); setResync((n) => n + 1); }
+    else adoptPass();
+  }
+  function adoptPass() {
     setSyncedPass(pass);
+    setToppedUp(topUpDelta(spinsRemaining, pass.spinsRemaining));
     setSpinsRemaining(pass.spinsRemaining);
     setNextSpinHash(pass.nextSpinHash ?? null);
     setFocus(pass.focus ?? null);
@@ -412,11 +425,26 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     if (poolOverride && poolOverride.base !== pass.wheel.prizes) setPoolOverride(null);
     setGameSwitched(false);
   }
+  useEffect(() => { if (resync > 0) router.refresh(); }, [resync, router]);
+  // WF-06: out of plays with the page in front of them, the fan is waiting for
+  // a top-up: read the server every half minute, for ten minutes at most.
+  const balancePolls = useRef(0);
+  const balanceStopped = paused || onBreak || pass.blocked === true;
+  useEffect(() => {
+    if (spinsRemaining !== 0 || !idle || balanceStopped) return;
+    const timer = setInterval(() => {
+      if (!shouldPollBalance({ spinsRemaining: 0, idle: true, visible: document.visibilityState === "visible", online: navigator.onLine !== false, stopped: false, polls: balancePolls.current })) return;
+      balancePolls.current++;
+      router.refresh();
+    }, BALANCE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [spinsRemaining, idle, balanceStopped, router]);
   const runSpin = useCallback(async () => {
     if (!canSpin || recovery.locked || !canPresentGame || coolingDown) return;
     if (!muted) { unlockAudio(); haptic(12); }
     void loadWinCard().catch(() => {});
     setError(null);
+    setToppedUp(null);
     setWonReward(null);
     setStage(null);
     tapPoolHash.current = shownPoolHash.current;
@@ -719,6 +747,11 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         </button>
         {!online && (
           <p role="status" data-testid="offline-note" className="text-center text-sm text-muted text-pretty">{OFFLINE_NOTE}</p>
+        )}
+        {toppedUp !== null && (
+          <p role="status" data-testid="topup-note" className="text-center text-sm font-semibold text-ink text-pretty">
+            {topUpNote(toppedUp, pass.creatorTitle, activeGameKind ?? "wheel")} <span aria-hidden>🎉</span>
+          </p>
         )}
         {gameSwitched && (
           <p role="status" data-testid="game-switched" className="text-center text-sm text-muted text-pretty">
