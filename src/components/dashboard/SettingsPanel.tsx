@@ -17,6 +17,8 @@ import { CloseAccountCard, DataExportCard, TwoFactorCard } from "./PrivacySecuri
 import ClearDataCard from "./ClearDataCard";
 import PushNotificationsCard from "./PushNotificationsCard";
 import { displayNameErrorMessage, publicProfileErrorMessage } from "@/lib/profileErrors";
+import LoadFailed from "./LoadFailed";
+import { loadJson } from "@/lib/hooks/loadJson";
 
 /**
  * Settings (Command Center). Two groups:
@@ -50,50 +52,51 @@ export default function SettingsPanel({
   // told apart from it (and kept for this tab across section switches).
   const [profileLoaded, setProfileLoaded] = useState(false);
 
-  useEffect(() => {
-    let live = true;
-    fetch("/api/account", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!live) return;
-        setAccount((a) => ({
-          ...a,
-          loaded: true,
-          ...(d
-            ? {
-                email: d.email ?? null,
-                displayName: d.displayName ?? "",
-                savedName: d.displayName ?? "",
-                ...(d.notifications
-                  ? { notif: d.notifications, savedNotif: d.notifications }
-                  : {}),
-              }
-            : {}),
-        }));
-      })
-      .catch(() => {
-        if (live) setAccount((a) => ({ ...a, loaded: true }));
-      });
-    fetch("/api/public-profile", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((p) => {
-        if (!live || !p) return;
-        const next: ProfileFields = {
-          slug: p.slug ?? "",
-          tipUrl: p.tipUrl ?? "",
-          tagline: p.tagline ?? "",
-          note: p.note ?? "",
-          avatarUrl: p.avatarUrl ?? "",
-        };
-        setProfile({ ...next, ...readPublicDraft() });
-        setSavedProfile(next);
-        setProfileLoaded(true);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
+  // RD-01 / RD-09: a failed read is shown as a failed read with Retry, never
+  // as empty fields that a later Save would write back over the real values.
+  const [accountError, setAccountError] = useState<unknown>(null);
+  const [profileError, setProfileError] = useState<unknown>(null);
+
+  const loadAccount = useCallback(async () => {
+    try {
+      const d = await loadJson<{ email?: string | null; displayName?: string; notifications?: NotificationPrefs }>("/api/account");
+      setAccountError(null);
+      setAccount((a) => ({
+        ...a,
+        loaded: true,
+        email: d.email ?? null,
+        displayName: d.displayName ?? "",
+        savedName: d.displayName ?? "",
+        ...(d.notifications ? { notif: d.notifications, savedNotif: d.notifications } : {}),
+      }));
+    } catch (e) {
+      setAccountError(e);
+    }
   }, []);
+  const loadProfile = useCallback(async () => {
+    try {
+      const p = await loadJson<Partial<ProfileFields>>("/api/public-profile");
+      setProfileError(null);
+      const next: ProfileFields = {
+        slug: p.slug ?? "",
+        tipUrl: p.tipUrl ?? "",
+        tagline: p.tagline ?? "",
+        note: p.note ?? "",
+        avatarUrl: p.avatarUrl ?? "",
+      };
+      setProfile({ ...next, ...readPublicDraft() });
+      setSavedProfile(next);
+      setProfileLoaded(true);
+    } catch (e) {
+      setProfileError(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
+    void loadAccount();
+    void loadProfile();
+  }, [loadAccount, loadProfile]);
 
   const patchAccount = useCallback(
     (p: Partial<AccountState>) => setAccount((a) => ({ ...a, ...p })),
@@ -119,6 +122,8 @@ export default function SettingsPanel({
         <div className="max-w-[680px] space-y-[18px]">
           <ProfileCard
             account={account}
+            loadError={accountError}
+            onRetryLoad={loadAccount}
             patchAccount={patchAccount}
             profile={profile}
             savedAvatar={savedProfile.avatarUrl}
@@ -128,7 +133,7 @@ export default function SettingsPanel({
           />
           <SecurityCard />
           <TwoFactorCard />
-          <NotificationsCard account={account} patchAccount={patchAccount} />
+          <NotificationsCard account={account} patchAccount={patchAccount} loadError={accountError} onRetryLoad={loadAccount} />
           <PushNotificationsCard focusNonce={pushFocus} />
         </div>
       </section>
@@ -141,6 +146,8 @@ export default function SettingsPanel({
         />
         <PublicPageSection
           loaded={profileLoaded}
+          loadError={profileError}
+          onRetryLoad={loadProfile}
           profile={profile}
           savedProfile={savedProfile}
           displayName={account.displayName}
@@ -299,6 +306,8 @@ const EMPTY_PROFILE: ProfileFields = { slug: "", tipUrl: "", tagline: "", note: 
 // ---------------------------------------------------------------------------
 function ProfileCard({
   account,
+  loadError,
+  onRetryLoad,
   patchAccount,
   profile,
   savedAvatar,
@@ -307,6 +316,8 @@ function ProfileCard({
   onDisplayNameChange,
 }: {
   account: AccountState;
+  loadError: unknown;
+  onRetryLoad: () => Promise<void>;
   patchAccount: (p: Partial<AccountState>) => void;
   profile: ProfileFields;
   savedAvatar: string;
@@ -383,6 +394,9 @@ function ProfileCard({
   return (
     <Card>
       <CardTitle icon={P.user} title="Profile" hint="Shown to fans on your public page and spin links." />
+      {loadError != null && !loaded && (
+        <LoadFailed error={loadError} what="your account details" onRetry={onRetryLoad} compact testId="settings-account-load-failed" />
+      )}
 
       <div className="flex flex-wrap items-center gap-3.5">
         <Avatar url={profile.avatarUrl} name={displayName} size={56} />
@@ -697,9 +711,13 @@ const NOTIF_LABELS: { key: keyof NotificationPrefs; label: string; hint: string 
 function NotificationsCard({
   account,
   patchAccount,
+  loadError,
+  onRetryLoad,
 }: {
   account: AccountState;
   patchAccount: (p: Partial<AccountState>) => void;
+  loadError: unknown;
+  onRetryLoad: () => Promise<void>;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -731,6 +749,9 @@ function NotificationsCard({
   return (
     <Card>
       <CardTitle icon={P.bell} title="Notifications" hint="Choose what you want to hear about." />
+      {loadError != null && !loaded && (
+        <LoadFailed error={loadError} what="your notification settings" onRetry={onRetryLoad} compact testId="settings-notifications-load-failed" />
+      )}
       <div className="flex flex-col">
         {NOTIF_LABELS.map((n, i) => {
           const on = value[n.key];
@@ -804,6 +825,8 @@ function readPublicDraft(): Partial<PublicDraft> {
 
 function PublicPageSection({
   loaded,
+  loadError,
+  onRetryLoad,
   profile,
   savedProfile,
   displayName,
@@ -812,6 +835,8 @@ function PublicPageSection({
   onBrandColorChange,
 }: {
   loaded: boolean;
+  loadError: unknown;
+  onRetryLoad: () => Promise<void>;
   profile: ProfileFields;
   savedProfile: ProfileFields;
   displayName: string;
@@ -923,6 +948,9 @@ function PublicPageSection({
       <div className="min-w-0 space-y-[18px]">
         <Card>
           <CardTitle icon={P.link} title="Link-in-bio" />
+          {loadError != null && !loaded && (
+            <LoadFailed error={loadError} what="your public page" onRetry={onRetryLoad} compact testId="settings-public-load-failed" />
+          )}
           <Field label="Your public link">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="tnum shrink-0 break-all text-sm text-muted">{origin}/c/</span>
@@ -959,7 +987,7 @@ function PublicPageSection({
             />
           </Field>
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={save} disabled={busy} className={primaryBtn}>
+            <button type="button" onClick={save} disabled={busy || !loaded} className={primaryBtn}>
               {busy ? "Saving…" : "Save"}
             </button>
             {url && (

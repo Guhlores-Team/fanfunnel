@@ -23,6 +23,7 @@ import { prefersReducedMotion } from "@/lib/sound";
 import { isRegular } from "@/lib/glow/glow";
 import { REGULAR_MIN_VISITS } from "@/lib/glow/config";
 import { creatorIntent, creatorIntentComplete, creatorIntentReceipt } from "./creatorIntent";
+import { GrantRefusedError, grantRefusalMessage, isDefinitiveRefusal, parseSpinCount } from "./grantErrors";
 import { useCreatorDraft, useCreatorLeave } from "./CreatorDrafts";
 import CreatorRequestRecovery from "./CreatorRequestRecovery";
 import { GameName } from "./GameChoice";
@@ -69,11 +70,13 @@ export default function FansPanel({
   const [minted, setMinted] = useState<{ fanId: string; name: string; url: string } | null>(null);
   const mintedRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState("");
-  const [spins, setSpins] = useState(3);
+  // Held as text so the field can be cleared; parsed (integer ≥ 1) on submit.
+  const [spins, setSpins] = useState("3");
   // Price the creator types is PER SPIN; it's its own state so typing isn't
   // fought by a derived value. The total is computed from perSpin × spins.
   const [perSpin, setPerSpin] = useState<string>("");
-  const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
+  const spinCount = parseSpinCount(spins) ?? 0;
+  const amount = perSpin && spinCount > 0 ? (Number(perSpin) * spinCount).toFixed(2) : "";
   const [campaignId, setCampaignId] = useState<string>("");
   // Until the creator picks a campaign themselves, new links default to the
   // newest ACTIVE campaign rather than silently landing in "untracked".
@@ -274,24 +277,31 @@ export default function FansPanel({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, requestId }),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      toast(
-        data.error === "no_wheel"
-          ? "Create and save a wheel first, then generate fan links."
-          : "We couldn't confirm the spins were added. Keep these details and try the same request again.",
-        { tone: "error" }
-      );
+    let data: { error?: unknown; token?: string; fanId?: string; requestId?: string } = {};
+    let parsed = true;
+    try { data = await res.json(); } catch { parsed = false; }
+    if (!res.ok && isDefinitiveRefusal(res.status)) {
+      // RD-05: a refusal is final. Release the receipt and say why, instead of
+      // "couldn't confirm" and a locked form.
+      const code = typeof data.error === "string" ? data.error : "refused";
+      creatorIntentComplete(scope, requestId);
+      const message = grantRefusalMessage(code);
+      toast(message, { tone: "error" });
+      throw new GrantRefusedError(code, message);
+    }
+    if (!res.ok || !parsed) {
+      toast("We couldn't confirm the spins were added. Keep these details and try the same request again.", { tone: "error" });
       throw new Error("grant_unconfirmed");
     }
-    if (!res.ok || !data.token || data.requestId !== requestId) throw new Error("grant_unconfirmed");
+    if (!data.token || data.requestId !== requestId) throw new Error("grant_unconfirmed");
     committed = true;
     // The receipt's pin is the first submission's: a retry after a reload may
     // come from a form that now lists the new link as an existing one.
     const receiptPin = creatorIntentReceipt(scope)?.pin ?? null;
     creatorIntentComplete(scope, requestId);
     return { ...(data as { token: string; fanId: string }), pinWheelId: receiptPin };
-    } catch {
+    } catch (error) {
+      if (error instanceof GrantRefusedError) throw error;
       toast(committed ? "The spins were added, but this browser couldn't finish tidying up. Try the same details again to check it safely." : "We couldn't confirm the spins were added. Keep these details and try the same request again to check.", { tone: "error" });
       throw new Error("grant_unconfirmed");
     }
@@ -299,20 +309,32 @@ export default function FansPanel({
 
   async function createAccount() {
     if (creatingRef.current) return;
+    // WC-01 / RD-05: refuse an empty handle and a non-integer spin count here,
+    // before any request or receipt exists.
+    const fanName = name.trim();
+    if (!fanName && !newFanUncertain) {
+      toast(grantRefusalMessage("name_required"), { tone: "error" });
+      nameRef.current?.focus();
+      return;
+    }
+    const spinCount = parseSpinCount(spins);
+    if (spinCount === null) {
+      toast("Spins must be a whole number from 1 to 1,000,000.", { tone: "error" });
+      return;
+    }
     creatingRef.current = true;
     setCreating(true);
     try {
       const amountDollars = amount ? Number(amount) : undefined;
       const data = await call({
-        name: name.trim(),
-        spins,
+        name: fanName,
+        spins: spinCount,
         campaignId: campaignId || undefined,
         amountDollars: amountDollars || undefined,
         ...(packId ? { packId, packUnits } : {}),
       });
       setNewFanUncertain(false);
       if (data) {
-        const fanName = name.trim();
         setName("");
         setPerSpin("");
         setPackId(null);
@@ -320,7 +342,9 @@ export default function FansPanel({
         toast(`Link ready for ${fanName}. Copy it or share it below.`, { tone: "success" });
         if (!(await load())) toast("The link was created. Refresh the fan list to see it.", { tone: "error" });
       }
-    } catch { setNewFanUncertain(true);
+    } catch (error) {
+      // A refusal (4xx) releases the form; only an unknown outcome locks it.
+      setNewFanUncertain(!(error instanceof GrantRefusedError));
     } finally {
       creatingRef.current = false;
       setCreating(false);
@@ -409,10 +433,12 @@ export default function FansPanel({
             <input
               type="number"
               min={1}
+              step={1}
+              inputMode="numeric"
               className="ff-input tnum w-full"
               value={spins}
               onChange={(e) => {
-                setSpins(Math.max(1, Number(e.target.value)));
+                setSpins(e.target.value);
                 setPackId(null);
               }}
             />
@@ -482,9 +508,9 @@ export default function FansPanel({
             )}
           </p>
         )}
-        {amount && Number(amount) > 0 && spins > 0 && (
+        {amount && Number(amount) > 0 && spinCount > 0 && (
           <p className="tnum mt-2 text-[11.5px] text-muted">
-            {formatCents(Math.round((Number(amount) * 100) / spins))}/spin ·{" "}
+            {formatCents(Math.round((Number(amount) * 100) / spinCount))}/spin ·{" "}
             {formatCents(Math.round(Number(amount) * 100))} total
           </p>
         )}
@@ -494,7 +520,7 @@ export default function FansPanel({
             <PackPresets
               campaignId={campaignId}
               onPick={(p: CampaignPack, units: number) => {
-                setSpins(p.spins);
+                setSpins(String(p.spins));
                 setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
                 setPackId(p.id);
                 setPackUnits(units);

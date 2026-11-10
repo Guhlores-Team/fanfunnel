@@ -15,6 +15,8 @@ import StuckDeletions from "./StuckDeletions";
 import RemoveCreatorPhotosButton from "./RemoveCreatorPhotosButton";
 import AdminActivity from "./AdminActivity";
 import AdminLookup from "./AdminLookup";
+import LoadFailed from "@/components/dashboard/LoadFailed";
+import { LoadError, loadFailureKind } from "@/lib/hooks/loadJson";
 import AdminReports from "./AdminReports";
 import { pendingAgeLabel, pendingAgeOverdue } from "./pendingAge";
 import { useNow } from "@/lib/hooks/useNow";
@@ -66,6 +68,9 @@ export default function AdminClient() {
   const [busyAccounts, setBusyAccounts] = useState<Set<string>>(new Set());
   const toast = useToast();
 
+  // RD-03: a failed read (500 / 429 / network) is a failed read with Retry,
+  // never "No creator accounts yet.".
+  const [loadError, setLoadError] = useState<unknown>(null);
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/admin", { cache: "no-store" });
@@ -75,19 +80,23 @@ export default function AdminClient() {
         setForbidden(body?.error === "mfa_required" ? "mfa" : "other");
         return;
       }
-      if (res.ok) setData(await res.json());
+      if (!res.ok) throw new LoadError(loadFailureKind(res.status), res.status);
+      setData(await res.json());
+      setLoadError(null);
       const ar = await fetch("/api/admin/applications", { cache: "no-store" });
-      if (ar.ok) {
-        const body = (await ar.json()) as { applications?: PendingApp[]; demo?: boolean };
-        setApps(body.applications ?? []);
-        setAppsDemo(body.demo === true);
-      }
+      if (!ar.ok) throw new LoadError(loadFailureKind(ar.status), ar.status);
+      const body = (await ar.json()) as { applications?: PendingApp[]; demo?: boolean };
+      setApps(body.applications ?? []);
+      setAppsDemo(body.demo === true);
+    } catch (e) {
+      setLoadError(e instanceof LoadError ? e : new LoadError("network"));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
     void refresh();
   }, [refresh]);
 
@@ -285,7 +294,7 @@ export default function AdminClient() {
           {tiles.map((t) => (
             <div key={t.label} className="bg-base px-[18px] py-4">
               <dd className="tnum m-0 text-[22px] font-bold leading-none tracking-[-0.02em] text-ink">
-                {loading ? <span className="text-muted">—</span> : t.value.toLocaleString()}
+                {loading || (loadError != null && !data) ? <span className="text-muted">—</span> : t.value.toLocaleString()}
               </dd>
               <dt className="mt-1.5 text-[11px] uppercase tracking-[0.04em] text-muted">{t.label}</dt>
             </div>
@@ -314,7 +323,7 @@ export default function AdminClient() {
             id="admin-accounts"
             extra={
               <span className="flex items-center gap-3">
-                {!loading && (
+                {!loading && loadError == null && (
                   <span className="tnum text-xs text-muted">{accounts.length} total</span>
                 )}
                 <button
@@ -335,6 +344,10 @@ export default function AdminClient() {
               {[0, 1, 2].map((i) => (
                 <div key={i} className="skeleton h-[66px] border-b border-[#1f1b27] last:border-b-0" />
               ))}
+            </div>
+          ) : loadError != null ? (
+            <div className="px-[18px] py-6">
+              <LoadFailed error={loadError} what="the creator accounts" onRetry={refresh} testId="admin-load-failed" />
             </div>
           ) : accounts.length === 0 ? (
             <p className="px-[18px] py-8 text-center text-[13.5px] text-muted">No creator accounts yet.</p>

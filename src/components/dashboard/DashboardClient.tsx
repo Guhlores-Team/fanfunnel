@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTodayLabel } from "@/lib/localTime";
 import dynamic from "next/dynamic";
 import { brandVars } from "@/lib/theme";
 import { isStarterWheel } from "@/lib/games/wheel/sample";
@@ -423,12 +424,15 @@ export default function DashboardClient({
   }, [adminVisible, goTab]);
 
   const [title, subtitleText] = SECTION_META[tab];
+  // RD-08: the date is the browser's, computed only on the client (empty
+  // while hydrating), never the server's UTC day.
+  const today = useTodayLabel();
   // Phones show just the date on Today (the compressed top bar has no room).
   const subtitle =
     tab === "today" ? (
       <>
-        {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
-        <span className="max-lg:hidden"> · {subtitleText}</span>
+        <span data-testid="today-date">{today}</span>
+        <span className={today ? "max-lg:hidden" : undefined}>{today ? " · " : ""}{subtitleText}</span>
       </>
     ) : (
       subtitleText

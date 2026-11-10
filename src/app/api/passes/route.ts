@@ -28,6 +28,12 @@ export async function POST(req: Request) {
 
   if (body.packUnits !== undefined && (!Number.isInteger(body.packUnits) || body.packUnits < 1 || body.packUnits > 1_000_000)) return badRequest();
 
+  // WC-01: a new fan needs a real handle; a nameless live link cannot be told
+  // apart from another. Top-ups (fanId) carry no name.
+  const name = String(body.name ?? "").trim();
+  if (!body.fanId && !name) return badRequest("name_required");
+  if (name.length > 80) return badRequest("name_too_long");
+
   const spins = Number(body.spins ?? 0);
   if (!Number.isInteger(spins) || spins < 0 || spins > 1_000_000) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
@@ -47,7 +53,7 @@ export async function POST(req: Request) {
   }
 
   const result = await createPass({
-    name: String(body.name ?? "").slice(0, 80),
+    name,
     spins,
     fanId: body.fanId,
     wheelId: body.wheelId,

@@ -544,18 +544,19 @@ function AutoMessagesCard() {
   // C14: edited auto-messages are unsaved work.
   useCreatorDraft("auto-messages", "your auto-messages", !!saved && (intro !== saved.intro || outro !== saved.outro), saving);
 
+  // RD-01: a failed read is a failed read with Retry; Save stays off until the
+  // saved texts are in, so it can never write empty messages over real ones.
+  const [loadError, setLoadError] = useState<unknown>(null);
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/chat-settings", { cache: "no-store" });
-      if (res.ok) {
-        const d = await res.json();
-        const s: ChatSettings = d.settings ?? { intro: null, outro: null };
-        setIntro(s.intro ?? "");
-        setOutro(s.outro ?? "");
-        setSaved({ intro: s.intro ?? "", outro: s.outro ?? "" });
-      }
-    } catch {
-      /* transient */
+      const d = await loadJson<{ settings?: ChatSettings | null }>("/api/chat-settings");
+      setLoadError(null);
+      const s: ChatSettings = d.settings ?? { intro: null, outro: null };
+      setIntro(s.intro ?? "");
+      setOutro(s.outro ?? "");
+      setSaved({ intro: s.intro ?? "", outro: s.outro ?? "" });
+    } catch (e) {
+      setLoadError(e);
     }
   }, []);
 
@@ -612,6 +613,9 @@ function AutoMessagesCard() {
 
       {open && (
         <div id="auto-messages-form" className="flex flex-col gap-4 border-t border-[#1f1b27] px-4 pb-4 pt-3.5">
+          {loadError != null && !saved && (
+            <LoadFailed error={loadError} what="your auto-messages" onRetry={load} compact testId="auto-messages-load-failed" />
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.04em] text-muted">
               Greeting — auto-sends when a fan opens chat
@@ -642,7 +646,7 @@ function AutoMessagesCard() {
             <button
               type="button"
               onClick={save}
-              disabled={saving}
+              disabled={saving || !saved}
               className="btn-brand min-h-9 rounded-[9px] px-4 text-[13px] font-bold"
             >
               {saving ? "Saving…" : "Save"}

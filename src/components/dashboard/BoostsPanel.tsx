@@ -15,6 +15,7 @@ import { LoadError } from "./analyticsUi";
 import { loadJson } from "@/lib/hooks/loadJson";
 import LoadFailed from "./LoadFailed";
 import { useCreatorDraft } from "./CreatorDrafts";
+import { useTimeZone, zoneHint } from "@/lib/localTime";
 
 /** A list read: loading, loaded, or failed (never shown as an empty list). */
 type ListLoad = "loading" | "ok" | "failed";
@@ -516,6 +517,7 @@ function HappyHourScheduler() {
   const [wheelId, setWheelId] = useState("");
   const [multiplier, setMultiplier] = useState(2);
   const [startsAt, setStartsAt] = useState("");
+  const zone = useTimeZone();
   const [endsAt, setEndsAt] = useState("");
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState<ListLoad>("loading");
@@ -661,8 +663,10 @@ function HappyHourScheduler() {
             value={endsAt}
             onChange={(e) => setEndsAt(e.target.value)}
             className="ff-input w-full min-w-0 normal-case tracking-normal"
+            aria-describedby="happy-hour-zone"
           />
         </label>
+        <p id="happy-hour-zone" className="col-span-2 text-xs normal-case tracking-normal text-muted lg:col-span-5">{zoneHint(zone)}</p>
         {/* Off (disabled) until the lists first load; while a save is in
             flight it is only aria-disabled, so a keyboard user keeps focus. */}
         <button type="submit" disabled={!loaded} aria-disabled={busy || undefined} className={`${primaryBtn} col-span-2 sm:col-span-1 lg:col-span-1`}>

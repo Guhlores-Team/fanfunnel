@@ -24,6 +24,7 @@ import { CampaignGameSelect, FOLLOW_LIVE, GameName } from "./GameChoice";
 import { KIND_SHORT, gameOptionLabel, kindOf, linkGame, liveExplanation, pinUnavailableReason, type ChoiceGame } from "./gameAssignment";
 import { publicCreatorName } from "@/lib/publicCreator";
 import { linkNames, newLinkPin, spinsText, topUpOutcome, topUpTargets, type NewLinkPin } from "./topUpTargets";
+import { GrantRefusedError, parseSpinCount } from "./grantErrors";
 
 // Code-split the qrcode-pulling QrButton so the dashboard bundle doesn't carry it.
 const QrButton = dynamic(() => import("@/components/dashboard/QrButton"), { ssr: false });
@@ -852,7 +853,9 @@ function TopUpForm({
     return (existing.find((t) => t.token === share) ?? existing[0] ?? fresh[0])?.key ?? "";
   });
   const target = targets.find((t) => t.key === targetKey) ?? null;
-  const [spins, setSpins] = useState(3);
+  // Held as text so the field can be cleared; parsed (integer ≥ 1) on submit.
+  const [spinsInput, setSpinsInput] = useState("3");
+  const spins = parseSpinCount(spinsInput) ?? 0;
   // Per-spin price as its own state so typing two digits works.
   const [perSpin, setPerSpin] = useState<string>("");
   const amount = perSpin && spins > 0 ? (Number(perSpin) * spins).toFixed(2) : "";
@@ -862,7 +865,7 @@ function TopUpForm({
   const [packUnits, setPackUnits] = useState(1);
   const [error, setError] = useState("");
   const [uncertain, setUncertain] = useState(false);
-  useCreatorDraft(`fan-topup:${fanId}`, "this top-up selection", spins !== 3 || perSpin !== "" || !!packId, toppingUp || uncertain);
+  useCreatorDraft(`fan-topup:${fanId}`, "this top-up selection", spinsInput !== "3" || perSpin !== "" || !!packId, toppingUp || uncertain);
 
   // A new link is stored on the chosen game but would play the live (or
   // campaign) game: set it to play the chosen one. Never re-point a link the
@@ -904,6 +907,10 @@ function TopUpForm({
     // In-flight guard: a double-click, or collapsing and reopening the form
     // mid-request, must not double-grant spins/spend.
     if (isToppingUp(fanId) || engagementBlocked || (summary && !target)) return;
+    if (parseSpinCount(spinsInput) === null) {
+      setError("Spins must be a whole number from 1 to 1,000,000.");
+      return;
+    }
     onToppingUp(fanId, true);
     setError("");
     let confirmed = false;
@@ -931,7 +938,9 @@ function TopUpForm({
     } catch (error) {
       const unknown = error instanceof Error && error.message === "grant_unconfirmed";
       setUncertain(unknown);
-      setError(confirmed ? "The top-up was confirmed, but the fan's refreshed status couldn't load. Refresh before making another grant." : unknown ? "The top-up couldn't be confirmed. Keep this selection and retry to check the same request." : "No top-up was confirmed. Review the selection and try again.");
+      // RD-05 / RD-10: a refusal names its reason and never locks the form.
+      const refused = error instanceof GrantRefusedError ? error.message : null;
+      setError(confirmed ? "The top-up was confirmed, but the fan's refreshed status couldn't load. Refresh before making another grant." : unknown ? "The top-up couldn't be confirmed. Keep this selection and retry to check the same request." : refused ?? "No top-up was confirmed. Review the selection and try again.");
     } finally {
       onToppingUp(fanId, false);
     }
@@ -947,10 +956,12 @@ function TopUpForm({
           <input
             type="number"
             min={1}
+            step={1}
+            inputMode="numeric"
             className="ff-input tnum w-full"
-            value={spins}
+            value={spinsInput}
             onChange={(e) => {
-              setSpins(Math.max(1, Number(e.target.value)));
+              setSpinsInput(e.target.value);
               setPackId(null);
             }}
           />
@@ -1020,7 +1031,7 @@ function TopUpForm({
             campaignId={campaignId}
             onModifierPick={onModifierPick}
             onPick={(p: CampaignPack, units: number) => {
-              setSpins(p.spins);
+              setSpinsInput(String(p.spins));
               setPerSpin(p.spins > 0 ? (p.amountCents / 100 / p.spins).toFixed(2) : "");
               setPackId(p.id);
               setPackUnits(units);

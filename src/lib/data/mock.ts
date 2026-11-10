@@ -2656,6 +2656,10 @@ export function mockGetCampaignStats(): CampaignStats[] {
     const fulfilled = store.redemptions.filter(
       (r) => r.status === "fulfilled" && r.campaignId === campaign.id
     ).length;
+    // RD-07: still owed = pending or in progress; a cancelled win is resolved.
+    const pending = store.redemptions.filter(
+      (r) => (r.status === "pending" || r.status === "in_progress") && r.campaignId === campaign.id
+    ).length;
 
     // Top prize: the mode of this campaign's attributed wins (carrying rarity).
     const counts = new Map<string, { label: string; rarity: Rarity; count: number }>();
@@ -2677,7 +2681,7 @@ export function mockGetCampaignStats(): CampaignStats[] {
       spinsPlayed,
       uniqueFans,
       fulfilled,
-      pending: Math.max(0, campaignWins.length - fulfilled),
+      pending,
       playThroughPct: spinsBought > 0 ? spinsPlayed / spinsBought : 0,
       revenue,
       arpu,

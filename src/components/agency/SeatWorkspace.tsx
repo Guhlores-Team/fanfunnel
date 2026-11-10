@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import type { ChatMessage, FanThread, RedemptionItem } from "@/lib/data/types";
 import { seatPath, seatTabs, type SeatCreatorView, type SeatTab } from "./seatWorkspace";
+import LoadFailed from "@/components/dashboard/LoadFailed";
+import { loadJson } from "@/lib/hooks/loadJson";
 
 // A19: where a staff seat does its job for the creators it is scoped to. A
 // chatter gets that creator's inbox only, a fulfiller the prize queue only, a
@@ -15,25 +17,35 @@ export default function SeatWorkspace() {
   const [tab, setTab] = useState<SeatTab>("inbox");
   const [msg, setMsg] = useState("");
 
-  useEffect(() => {
-    let live = true;
-    void fetch("/api/agency/seats", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { seats: [] }))
-      .then((d: { seats?: SeatCreatorView[] }) => {
-        if (!live) return;
-        const list = Array.isArray(d.seats) ? d.seats : [];
-        setSeats(list);
-        if (list[0]) {
-          setCreatorId(list[0].creatorId);
-          setTab(seatTabs(list[0])[0] ?? "inbox");
-        }
-      })
-      .catch(() => live && setSeats([]));
-    return () => {
-      live = false;
-    };
+  // RD-04: "no seats" and "the read failed" are different states; a failed
+  // read shows an error with Retry instead of a vanished workspace.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const loadSeats = useCallback(async () => {
+    try {
+      const d = await loadJson<{ seats?: SeatCreatorView[] }>("/api/agency/seats");
+      setLoadError(null);
+      const list = Array.isArray(d.seats) ? d.seats : [];
+      setSeats(list);
+      if (list[0]) {
+        setCreatorId((c) => (list.some((s) => s.creatorId === c) ? c : list[0].creatorId));
+        setTab(seatTabs(list[0])[0] ?? "inbox");
+      }
+    } catch (e) {
+      setLoadError(e);
+    }
   }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
+    void loadSeats();
+  }, [loadSeats]);
 
+  if (!seats && loadError != null) {
+    return (
+      <section className="mt-8">
+        <LoadFailed error={loadError} what="your seat" onRetry={loadSeats} testId="seat-load-failed" />
+      </section>
+    );
+  }
   if (!seats || seats.length === 0) return null;
   const seat = seats.find((s) => s.creatorId === creatorId) ?? seats[0];
   const tabs = seatTabs(seat);

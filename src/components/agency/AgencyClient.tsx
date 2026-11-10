@@ -5,6 +5,8 @@ import Link from "next/link";
 import { AGENCY_INVITE_TTL_DAYS } from "@/lib/agency/config";
 import { formatCents } from "@/lib/format";
 import SeatWorkspace from "./SeatWorkspace";
+import LoadFailed from "@/components/dashboard/LoadFailed";
+import { loadJson } from "@/lib/hooks/loadJson";
 import LeaveAgency, { LeftAgency, leaveKind, type LeaveKind } from "./LeaveAgency";
 
 interface CreatorStat {
@@ -92,16 +94,22 @@ export default function AgencyClient() {
   // C10: removing a creator or a seat asks first ("creator:<id>" / "member:<id>").
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
+  // RD-02: a failed read is shown as a failed read with Retry, never as
+  // "Start your agency" to an owner or staff member.
+  const [loadError, setLoadError] = useState<unknown>(null);
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/agency", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
+      setData(await loadJson<Overview>("/api/agency"));
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; state changes only after the response arrives
     void refresh();
   }, [refresh]);
 
@@ -137,6 +145,14 @@ export default function AgencyClient() {
   if (loading) return <p className="p-8 text-sm text-muted">Loading…</p>;
 
   if (left) return <LeftAgency kind={left} />;
+
+  if (!data && loadError != null) {
+    return (
+      <div className="mx-auto max-w-xl px-5 py-10">
+        <LoadFailed error={loadError} what="your agency" onRetry={refresh} testId="agency-load-failed" />
+      </div>
+    );
+  }
 
   // Never the owner, the demo or a non-member (leaveKind).
   const canLeave = leaveKind(data);

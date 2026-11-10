@@ -14,6 +14,7 @@ import { formatWhen, isPlayableGame, scheduleTakeover } from "@/lib/games/liveGa
 import { KindBadge, GameName } from "./GameChoice";
 import { campaignsUsing, liveExplanation, type ChoiceCampaign } from "./gameAssignment";
 import { scheduleHint } from "./scheduleHint";
+import { useTimeZone, zoneHint } from "@/lib/localTime";
 
 type GameSummary = WheelSummary & { gameKind?: GameKind; gameReady?: boolean };
 
@@ -65,6 +66,7 @@ export default function WheelSwitcher({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // Local edits to the selected wheel's schedule inputs.
   const [from, setFrom] = useState("");
+  const zone = useTimeZone();
   const [until, setUntil] = useState("");
   // Which chip's "Manage" menu is open.
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -663,7 +665,7 @@ export default function WheelSwitcher({
           {selected.gameReady === false && <p className="mt-2 text-xs text-amber-200">Finish and save this draft before activating it or setting a schedule.</p>}
           {selected.gameReady !== false && selected.prizeCount < MIN_WHEEL_PRIZES && <p data-testid="schedule-needs-prizes" className="mt-2 text-xs text-amber-200">Save at least {MIN_WHEEL_PRIZES} prizes before scheduling this game, or fans would get a game they can&rsquo;t play.</p>}
           <p id="schedule-effect" className="mt-2 text-[12px] text-muted text-pretty">
-            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link that hasn&rsquo;t got its own game from its campaign or from you. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game.
+            While this window is open, this game <strong className="text-ink">replaces your live game</strong> for every fan link that hasn&rsquo;t got its own game from its campaign or from you. Leave both empty to use it only when it&rsquo;s your active game or a campaign&rsquo;s game. {zoneHint(zone)}
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex min-w-0 flex-col gap-1.5">
