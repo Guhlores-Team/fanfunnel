@@ -67,12 +67,12 @@ export default function LoginForm({ params }: { params: LoginParams }) {
           setError("Please agree to the Terms of Service and Privacy Policy.");
           return;
         }
-        // WG-15 / b6 C9: the name carries into the creator request, so it is
-        // checked here the way Settings and the request form check it.
-        const name = displayName.trim();
-        const nameError = name.length < 2 ? "name_required" : displayNameInputError(name);
+        // WG-15 / b6 C9: a typed name carries into the creator request, so it
+        // is checked here the way Settings checks it (e-mail-shaped, reserved
+        // for staff, links). It stays optional: a blank one stays blank (M1).
+        const nameError = displayName.trim() ? displayNameInputError(displayName.trim()) : null;
         if (nameError) {
-          setError(nameError === "name_required" ? "Enter the name fans know you by (2 characters or more)." : displayNameErrorMessage(nameError));
+          setError(displayNameErrorMessage(nameError));
           return;
         }
         // The same rule as reset, Settings and admin invites (api/password.ts).
@@ -84,9 +84,10 @@ export default function LoginForm({ params }: { params: LoginParams }) {
           email,
           password,
           options: {
-            // Display only (M1): the profiles trigger copies it; it never
-            // decides anything (AGENTS.md rule 1).
-            data: { display_name: name },
+            // M1: the name is shown on public pages, so a blank one stays
+            // blank (never the e-mail). Display only: the profiles trigger
+            // copies it; it never decides anything (AGENTS.md rule 1).
+            data: displayName.trim() ? { display_name: displayName.trim() } : {},
             // Only the legacy {{ .ConfirmationURL }} link uses this; the current
             // templates link to the Site URL's /auth/confirm?next=/pending.
             emailRedirectTo: `${window.location.origin}/auth/callback?next=/pending`,
@@ -175,14 +176,12 @@ export default function LoginForm({ params }: { params: LoginParams }) {
         {mode === "signup" && (
           <div>
             <label htmlFor="login-display-name" className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.05em] text-white/60">
-              Display name
+              Display name (optional)
             </label>
             <input
               id="login-display-name"
               name="display_name"
               autoComplete="nickname"
-              required
-              minLength={2}
               maxLength={80}
               aria-label="Display name"
               className="ff-input w-full"
@@ -252,7 +251,7 @@ export default function LoginForm({ params }: { params: LoginParams }) {
       <button
         type="submit"
         disabled={busy || (mode === "signup" && !agreed)}
-        className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-pink-600 py-2.5 font-bold text-white hover:bg-pink-500 disabled:opacity-50"
+        className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl btn-brand py-2.5 font-bold disabled:opacity-50"
       >
         {busy ? "…" : mode === "signin" ? "Sign in" : "Create login & continue"}
       </button>

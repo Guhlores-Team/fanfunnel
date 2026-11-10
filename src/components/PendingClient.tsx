@@ -5,6 +5,7 @@ import TermsCheckbox from "@/components/TermsCheckbox";
 import { LEGAL } from "@/lib/legal";
 import { composeApplicationNote, parseApplicationNote } from "@/lib/onboarding/applicationNote";
 import PendingSelfDelete from "@/components/PendingSelfDelete";
+import { displayNameErrorMessage, displayNameInputError } from "@/lib/profileErrors";
 
 /** The stored request, as the server read it (C21). */
 export interface PendingApplication {
@@ -78,6 +79,13 @@ export default function PendingClient({
           ? "Please fill in your name, main platform, links, and audience size."
           : "Please fill in the required fields and agree to the Terms of Service and Privacy Policy."
       );
+      return;
+    }
+    // The name becomes the public display name on approval: say now what the
+    // database would refuse then (e-mail-shaped, reserved for staff, links).
+    const nameError = displayNameInputError(displayName.trim());
+    if (nameError) {
+      setError(displayNameErrorMessage(nameError));
       return;
     }
     setBusy(true);

@@ -159,6 +159,16 @@ export function authErrorInfo(err: unknown, context: AuthContext): AuthErrorInfo
       raw,
     };
   }
+  // The sign-up trigger refused the profile row (0073: a display name that is
+  // reserved for staff, e-mail-shaped or otherwise unshowable). Supabase only
+  // says "Database error saving new user"; the name is the one thing to change.
+  if (context === "signup" && /database error saving new user/i.test(raw)) {
+    return {
+      code: "signup_profile_refused",
+      message: `We couldn't create your login with that display name. Try another (no e-mail addresses, links or names reserved for FanFunnel staff), or leave it blank and add it later. Still stuck? Write to ${LEGAL.contactEmail}.`,
+      raw,
+    };
+  }
   if (code && COMMON[code]) return { code, message: COMMON[code], raw };
   return { code, message: FALLBACK[context], raw };
 }

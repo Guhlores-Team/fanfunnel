@@ -53,7 +53,7 @@ export default async function ConfirmLandingPage({
         <input type="hidden" name="next" value={link.next} />
         <button
           type="submit"
-          className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-pink-600 px-4 py-2.5 font-bold text-white hover:bg-pink-500"
+          className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl btn-brand px-4 py-2.5 font-bold"
         >
           {copy.cta} →
         </button>

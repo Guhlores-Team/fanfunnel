@@ -27,7 +27,7 @@ export default function EmailChangeHalfPage() {
         </p>
         <Link
           href="/dashboard?section=settings"
-          className="mt-5 inline-flex min-h-11 items-center justify-center rounded-xl bg-pink-600 px-5 py-2.5 font-bold text-white hover:bg-pink-500"
+          className="mt-5 inline-flex min-h-11 items-center justify-center rounded-xl btn-brand px-5 py-2.5 font-bold"
         >
           Back to my dashboard
         </Link>

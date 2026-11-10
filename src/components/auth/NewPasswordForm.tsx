@@ -188,7 +188,7 @@ export default function NewPasswordForm({ variant }: { variant: keyof typeof COP
             </p>
             <Link
               href="/dashboard"
-              className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-pink-600 px-4 py-2 text-sm font-bold text-white hover:bg-pink-500"
+              className="mt-5 inline-flex min-h-11 items-center rounded-xl btn-brand px-4 py-2 text-sm font-bold"
             >
               Open the demo dashboard
             </Link>
@@ -203,7 +203,7 @@ export default function NewPasswordForm({ variant }: { variant: keyof typeof COP
             </p>
             <Link
               href="/forgot-password"
-              className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-pink-600 px-4 py-2 text-sm font-bold text-white hover:bg-pink-500"
+              className="mt-5 inline-flex min-h-11 items-center rounded-xl btn-brand px-4 py-2 text-sm font-bold"
             >
               Send a new link
             </Link>
@@ -268,7 +268,7 @@ export default function NewPasswordForm({ variant }: { variant: keyof typeof COP
             <button
               type="submit"
               disabled={busy}
-              className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-pink-600 py-2.5 font-bold text-white hover:bg-pink-500 disabled:opacity-50"
+              className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl btn-brand py-2.5 font-bold disabled:opacity-50"
             >
               {busy ? "…" : copy.cta}
             </button>

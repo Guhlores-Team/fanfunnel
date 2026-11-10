@@ -45,7 +45,7 @@ export default function ForgotPasswordForm() {
       <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white">
         <h1 className="text-lg font-bold">Password reset isn&rsquo;t available here</h1>
         <p className="mt-2 text-sm text-white/60">This is the demo workspace, which has no accounts or passwords. Open the dashboard to keep exploring.</p>
-        <Link href="/dashboard" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-pink-600 px-4 py-2 text-sm font-bold text-white hover:bg-pink-500">
+        <Link href="/dashboard" className="mt-5 inline-flex min-h-11 items-center rounded-xl btn-brand px-4 py-2 text-sm font-bold">
           Open the demo dashboard
         </Link>
       </div>
@@ -99,7 +99,7 @@ export default function ForgotPasswordForm() {
       <button
         type="submit"
         disabled={busy}
-        className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-pink-600 py-2.5 font-bold text-white hover:bg-pink-500 disabled:opacity-50"
+        className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl btn-brand py-2.5 font-bold disabled:opacity-50"
       >
         {busy ? "…" : "Send reset link"}
       </button>

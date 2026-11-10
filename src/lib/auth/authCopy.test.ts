@@ -43,7 +43,8 @@ check("…or 'a few minutes'", /a few minutes/.test(tooManyEmailsMessage({ code:
 
 // Error mapping (TS-11, WU-15, WC-04).
 check("C11: an unknown sign-in error gets the generic line, not the raw text", authErrorMessage({ code: "weird", message: "Database error saving new user" }, "signin") === "We couldn't sign you in. Check your e-mail and password, or reset your password.");
-check("an unknown sign-up error names support", authErrorMessage({ message: "Database error saving new user" }, "signup").includes(LEGAL.contactEmail));
+check("an unknown sign-up error names support", authErrorMessage({ message: "Something odd" }, "signup").includes(LEGAL.contactEmail));
+check("0073: a refused sign-up profile (reserved display name) points at the name", /display name/.test(authErrorMessage({ code: "unexpected_failure", message: "Database error saving new user" }, "signup")) && /reserved for FanFunnel staff/.test(authErrorMessage({ message: "Database error saving new user" }, "signup")));
 check("WC-04: 'Error sending confirmation email' gets a next step", /couldn't send the e-mail/i.test(authErrorMessage({ code: "unexpected_failure", message: "Error sending confirmation email" }, "signup")) && authErrorMessage({ message: "Error sending confirmation email" }, "signup").includes(LEGAL.contactEmail));
 check("the raw sentence is kept for the error log only", authErrorInfo({ message: "Error sending confirmation email" }, "signup").raw === "Error sending confirmation email");
 for (const [code, needle] of [

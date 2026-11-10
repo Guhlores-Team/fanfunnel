@@ -34,8 +34,9 @@ async function main() {
   check("WC-08: ?mode=signup opens sign-up mode", /Create your login/.test(html) && html.includes('data-mode="signup"'));
   check("WC-07: the three steps are named, step 1 current", /1\. Create your login/.test(html) && /2\. Confirm your e-mail/.test(html) && /3\. Tell us about you/.test(html) && /aria-current="step"/.test(html));
   check("WC-07: the intro says what happens next", /Step 1 of 3/.test(html) && /approved by hand/.test(html));
-  check("WU-16: display name has name/autocomplete=nickname and is required", /name="display_name"[^>]*autocomplete="nickname"|autocomplete="nickname"/i.test(html) && /name="display_name"[^>]*required|required[^>]*name="display_name"/.test(html));
+  check("WU-16: display name has name/autocomplete=nickname and stays optional (M1)", /name="display_name"/.test(html) && /autocomplete="nickname"/i.test(html) && !/name="display_name"[^>]*required=""/.test(html));
   check("the submit says what it does", /Create login &amp; continue/.test(html));
+  check("PA-16: the primary button is the brand button (dark ink on pink), never white on pink", /<button type="submit"[^>]*btn-brand/.test(html) && !/bg-pink-600/.test(html));
   check("the toggle still ends in 'Request access' only in sign-in mode", /Already have a login\? Sign in/.test(html));
 
   html = render({ suspended: "1" });
