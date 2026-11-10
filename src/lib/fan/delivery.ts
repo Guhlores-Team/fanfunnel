@@ -47,6 +47,17 @@ export function winDate(iso: string): string {
   }
 }
 
+/** RF-10: the same day in the viewer's own time zone (client only; see LocalWinDate). */
+export function winDateLocal(iso: string, locale?: string, timeZone?: string): string {
+  const t = typeof iso === "string" ? Date.parse(iso) : Number.NaN;
+  if (!Number.isFinite(t)) return "";
+  try {
+    return new Date(t).toLocaleDateString(locale, { year: "numeric", month: "long", day: "numeric", ...(timeZone ? { timeZone } : {}) });
+  } catch {
+    return winDate(iso);
+  }
+}
+
 /** Fan-facing words for a delivery state. */
 export function deliveryLabel(delivery: WinDelivery): string {
   switch (delivery.status) {

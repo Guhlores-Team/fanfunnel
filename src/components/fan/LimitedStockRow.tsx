@@ -5,7 +5,7 @@ import { isLowStock, limitedRowPrizes, stockLabel } from "./stockDisplay";
 
 /**
  * RM-2 · the slim "Limited" row under the wheel: one chip per limited prize
- * with its real count ("📸 Signed Polaroid · 3 left"), or "Claimed ✨" once it
+ * with its real count ("📸 Signed Polaroid · 3 left"), or "Sold out" once it
  * is gone. Renders nothing when the wheel hides its stock (no counts arrive).
  */
 export default function LimitedStockRow({ prizes }: { prizes: PublicPrize[] }) {
@@ -35,7 +35,9 @@ export default function LimitedStockRow({ prizes }: { prizes: PublicPrize[] }) {
               }`}
               style={
                 gone
-                  ? undefined
+                  // Muted text needs its own backing: the row can cross the
+                  // Preview badge band, like the page footer.
+                  ? { backgroundColor: "var(--theme-bg, transparent)" }
                   : {
                       borderColor: `color-mix(in oklab, ${c} ${low ? 75 : 50}%, transparent)`,
                       backgroundColor: `color-mix(in oklab, ${c} ${low ? 22 : 14}%, transparent)`,

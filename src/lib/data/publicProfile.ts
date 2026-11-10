@@ -109,6 +109,9 @@ export async function getPublicProfileBySlug(
   // a row stored one before the rule existed.
   if (isReservedName(slug)) return null;
   if (!isSupabaseConfigured()) {
+    // The demo has one creator, who answers under any link name (the demo
+    // tour and the e2e journeys open /c/<anything>); only a reserved name is
+    // nobody's page here too.
     const saved = mockGetPublicProfileFields();
     // Parity with the Supabase path: the demo's live game, fan-safe; an unset
     // tagline stays null so the page shows the game's own default line.
@@ -121,11 +124,12 @@ export async function getPublicProfileBySlug(
         avatarUrl: saved.avatarUrl || null,
         prizes: teaserPrizes(live?.prizes ?? []),
         odds: publicGameKind(live?.gameKind) === "bingo" ? [] : publicBaseOdds(live?.prizes ?? []),
-        hasTipUrl: true,
+        // PR-19: no "#" call to action in the demo; a saved link or none.
+        hasTipUrl: !!saved.tipUrl,
         gameKind: publicGameKind(live?.gameKind),
         look: await getCreatorThemeView(null),
       },
-      tipUrl: saved.tipUrl || "#",
+      tipUrl: saved.tipUrl || null,
     };
   }
   const sb = createServiceClient();

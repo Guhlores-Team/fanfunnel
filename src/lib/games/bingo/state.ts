@@ -2,8 +2,9 @@
 import type { Rarity } from "../core/types";
 import { RARITY_ORDER, MAX_WHEEL_PRIZES } from "../core/types";
 import { completedLines, BINGO_FULL_MASK, type BingoCell, type BingoState } from "./engine";
+import { hasOwn } from "@/lib/fan/uuid";
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const keys = (v: Record<string, unknown>, expected: string[]) => Object.keys(v).length === expected.length && expected.every((k) => Object.hasOwn(v, k));
+const keys = (v: Record<string, unknown>, expected: string[]) => Object.keys(v).length === expected.length && expected.every((k) => hasOwn(v, k));
 const count = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 const id = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 256;
 

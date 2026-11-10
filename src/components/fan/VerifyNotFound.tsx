@@ -2,7 +2,8 @@ import LegalLinks from "@/components/LegalLinks";
 import { brandVars } from "@/lib/theme";
 
 // /verify/<id> with nothing to verify answers 404 (batch 6 N2), with the same
-// explanation the page used to show at 200.
+// explanation the page used to show at 200. Rendered by the root not-found
+// (WA-02: a dead verify link is sent to /not-found/verify/<id>).
 export default function VerifyNotFound() {
   return (
     <main
@@ -22,7 +23,7 @@ export default function VerifyNotFound() {
           </p>
         </div>
       </div>
-      <footer className="relative z-[1] mt-8 text-[11px] tracking-wide text-muted/70">
+      <footer className="relative z-[1] mt-8 text-xs tracking-wide text-muted">
         Powered by FanFunnel · provably-fair spins
       </footer>
       <LegalLinks className="relative z-[1] mt-2" />

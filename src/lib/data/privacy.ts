@@ -35,6 +35,7 @@ import {
 import { EXPORT_PAGE_SIZE, EXPORT_ROW_CAP, exportStatus, safeExportValue } from "@/lib/privacy/exportRecords";
 import { publicCreatorName } from "@/lib/publicCreator";
 import { exportDelivery } from "@/lib/fan/delivery";
+import { claimCodeFor } from "@/lib/rewards/claimCode";
 import { creatorCanHostPlay } from "./creatorPlayable";
 import { fanLinkExpired, FAN_READ_TIMEOUT_MS } from "./unavailable";
 
@@ -256,7 +257,7 @@ export async function exportFanData(token: string): Promise<FanDataExport | null
     consents: { ageAndTermsAcceptedAt: str(fan.acked_at), termsVersion: str(fan.acked_terms_version), leaderboardOptIn: fan.leaderboard_opt_in === true },
     links: links.map((row) => ({ linkEndsWith: maskToken(str(row.token)), isThisLink: row.token === token, wheel: str((row.wheel as ExportRow | null)?.title), createdAt: str(row.created_at), active: row.is_active === true, pausedByYouAt: str(row.self_excluded_at), spinsRemaining: num(row.spins_remaining), spinsGrantedTotal: num(row.spins_granted_total), lastSpinAt: str(row.last_spin_at) })),
     topUps: grants.map((row) => ({ at: str(row.created_at) ?? "", spins: num(row.spins), bonusSpins: num(row.bonus_spins) })),
-    spins: spins.map((row) => ({ kind: row.kind === "bonus" ? "bonus" : "play", parentSpinId:str(row.parent_spin_id),bingoLine:typeof row.bingo_line === "number"?row.bingo_line:null, gameKind: str(row.game_kind) ?? "wheel", presentation: (row.presentation ?? null) as Json, id: String(row.id), at: str(row.created_at) ?? "", prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", wheel: str((row.wheel as ExportRow | null)?.title), shareId: str(row.share_id), fairness: { version: row.fair_version ?? null, serverSeed: str(row.server_seed), serverSeedHash: str(row.server_seed_hash), clientSeed: str(row.client_seed), nonce: row.nonce ?? null, seedCommitment: str(row.seed_commitment), poolHash: str(row.pool_hash), poolSnapshot: (row.pool_snapshot ?? null) as Json, trace: (row.fair_trace ?? null) as Json } })),
+    spins: spins.map((row) => ({ kind: row.kind === "bonus" ? "bonus" : "play", parentSpinId:str(row.parent_spin_id),bingoLine:typeof row.bingo_line === "number"?row.bingo_line:null, gameKind: str(row.game_kind) ?? "wheel", presentation: (row.presentation ?? null) as Json, id: String(row.id), at: str(row.created_at) ?? "", prize: str(row.prize_label) ?? "Prize", rarity: str(row.prize_rarity) ?? "common", wheel: str((row.wheel as ExportRow | null)?.title), shareId: str(row.share_id), claimCode: claimCodeFor(str(row.share_id)), fairness: { version: row.fair_version ?? null, serverSeed: str(row.server_seed), serverSeedHash: str(row.server_seed_hash), clientSeed: str(row.client_seed), nonce: row.nonce ?? null, seedCommitment: str(row.seed_commitment), poolHash: str(row.pool_hash), poolSnapshot: (row.pool_snapshot ?? null) as Json, trace: (row.fair_trace ?? null) as Json } })),
     prizes, instantReceipts,
     bingoCards:bingoCards.map(row=>({id:String(row.id),wheelId:String(row.wheel_id),cells:(row.cells??[]) as Json,markedMask:num(row.marked_mask),awardedLinesMask:num(row.awarded_lines_mask),version:num(row.version),status:str(row.status)??"unknown",createdAt:str(row.created_at),completedAt:str(row.completed_at)})),
     bingoLineAwards:bingoLineAwards.map(row=>({cardId:String(row.card_id),line:num(row.line_index),primarySpinId:String(row.primary_spin_id),bonusSpinId:String(row.bonus_spin_id),at:str(row.created_at)})),
@@ -343,13 +344,13 @@ export async function deleteFanData(
   return { ok: true, spinsKept };
 }
 
-/** True when any of this fan's wins with this creator still has a pending redemption. */
+/** True when any of this fan's wins with this creator still has a prize to deliver (pending or in progress). */
 async function prizeOwed(svc: Svc, fanId: string, creatorId: string): Promise<boolean> {
   const { data: spins, error } = await svc.from("spins").select("id").eq("fan_id", fanId).eq("creator_id", creatorId).limit(1000);
   if (error) return true; // fail closed: never erase what could not be checked
   const ids = ((spins ?? []) as { id: string }[]).map((s) => s.id);
   if (ids.length === 0) return false;
-  const { count, error: redemptionError } = await svc.from("redemptions").select("id", { count: "exact", head: true }).eq("creator_id", creatorId).eq("status", "pending").in("spin_id", ids);
+  const { count, error: redemptionError } = await svc.from("redemptions").select("id", { count: "exact", head: true }).eq("creator_id", creatorId).in("status", ["pending", "in_progress"]).in("spin_id", ids);
   if (redemptionError) return true;
   return (count ?? 0) > 0;
 }

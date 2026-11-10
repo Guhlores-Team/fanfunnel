@@ -11,6 +11,10 @@ import { applyStockMap } from "@/lib/games/wheel/publicView";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import { playWin, playBuildUp, unlockAudio, haptic, prefersReducedMotion } from "@/lib/sound";
 import { detectNearMiss, type NearMiss } from "./nearMiss";
+import { landingIndex, poolForResult } from "./wheelLanding";
+import LegalSheet from "./LegalSheet";
+import { OFFLINE_NOTE, useOnline } from "./useOnline";
+import { BALANCE_POLL_MS, shouldPollBalance, topUpDelta, topUpNote } from "./balanceSync";
 import { lastOfLine, oddsChangedSinceShown } from "./stockDisplay";
 import { spinErrorInfo, ackErrorMessage } from "../spinErrors";
 import {
@@ -72,14 +76,19 @@ import { parseDeliveredReward } from "./instantReward";
 import FocusChip from "./FocusChip";
 import { mergeFanWins } from "./spinPresentation";
 import { useSpinRecovery } from "./useSpinRecovery";
+import type { SpinRefusalDetail } from "./useSpinRecovery";
 import type { FanFocusView, FanOddsView } from "@/lib/data/focusView";
-import { readCommittedGame, readGameCard, currentGameCard, readCardSource, readPassGameKind, type CommittedGameView } from "./gameOutcome";
+import { readCommittedGame, readFanGameKind, readGameCard, currentGameCard, readCardSource, readPassGameKind, type CommittedGameView } from "./gameOutcome";
 import type { BingoState } from "@/lib/games/bingo/engine";
 import OpenInBrowser from "./OpenInBrowser";
+import InAppHint from "./InAppHint";
 import { currentInAppBrowser } from "./inAppBrowser";
 
 const noSubscribe = () => () => {};
-const recoveryPrimary = "btn-brand min-h-12 w-full rounded-2xl px-4 py-3 font-extrabold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]";
+/** RF-02: the kind the server committed, falling back to the page's kind. */
+const committedKind = (data: unknown, passGameKind: "wheel" | "scratch" | "bingo" | null) =>
+  readFanGameKind((data as { gameKind?: unknown } | null)?.gameKind) ?? passGameKind ?? "wheel";
+const recoveryPrimary = "btn-brand min-h-12 w-full rounded-2xl px-4 py-3 font-extrabold disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]";
 
 // Fit the wheel to small screens (with a sensible desktop cap).
 function useWheelSize() {
@@ -160,13 +169,50 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     base: PublicPrize[];
     map: Record<string, PublicStock>;
   } | null>(null);
+  // RF-01: the list the server drew from when it no longer matches the one
+  // this page rendered (a creator reordered, added or removed prizes while
+  // the tab was open). Keyed to the server payload it replaces, so a refresh
+  // (new prizes array) drops it.
+  const [poolOverride, setPoolOverride] = useState<{ base: PublicPrize[]; prizes: PublicPrize[] } | null>(null);
+  const livePrizes = poolOverride && poolOverride.base === pass.wheel.prizes ? poolOverride.prizes : pass.wheel.prizes;
   const prizes = useMemo(
     () =>
-      stockPatch && stockPatch.base === pass.wheel.prizes
-        ? applyStockMap(pass.wheel.prizes, stockPatch.map)
-        : pass.wheel.prizes,
-    [stockPatch, pass.wheel.prizes]
+      stockPatch && stockPatch.base === livePrizes
+        ? applyStockMap(livePrizes, stockPatch.map)
+        : livePrizes,
+    [stockPatch, livePrizes]
   );
+  // The list the wheel is drawing during a play: frozen when the result
+  // arrives so a server refresh mid-spin cannot move the slices under the
+  // pointer; released when the card closes.
+  const [frozenPrizes, setFrozenPrizes] = useState<PublicPrize[] | null>(null);
+  const wheelPrizes = frozenPrizes ?? prizes;
+  const poolChanged = useRef(false);
+  // RF-02: the committed game's kind differs from the page's (the creator
+  // switched games while this tab was open); the page refreshes on close.
+  const [gameSwitched, setGameSwitched] = useState(false);
+  // RF-06: a rate-limited refusal keeps play off until `Retry-After` passes.
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+  const [cooldownLeft, setCooldownLeft] = useState(0);
+  useEffect(() => {
+    if (cooldownUntil === null) return;
+    const tick = () => {
+      const left = Math.max(0, cooldownUntil - Date.now());
+      setCooldownLeft(left);
+      if (left <= 0) setCooldownUntil(null);
+    };
+    tick();
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, [cooldownUntil]);
+  const coolingDown = cooldownUntil !== null;
+  // RF-06: a needs_ack refusal reopens the gate; the tap is resumed once acknowledged.
+  const resumeAfterAck = useRef(false);
+  // WF-11: Terms / Privacy opened from the gate, in a sheet.
+  const [legalSheet, setLegalSheet] = useState<{ href: "/terms" | "/privacy"; title: string } | null>(null);
+  // WF-10: the win card's "Message" action opens the chat with the code ready.
+  const [chatRequest, setChatRequest] = useState<{ nonce: number; draft: string } | null>(null);
+  const online = useOnline();
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const mutedRef = useRef(muted);
@@ -271,9 +317,12 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     return () => { clearTimeout(boot); clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [refreshFocus, pass.focus, pass.odds, pass.blocked, paused]);
 
-  const validateGameResult = useCallback((data: unknown) => readCommittedGame(data, passGameKind ?? "wheel") !== null, [passGameKind]);
+  // RF-02: a committed outcome is read with the kind the server committed, not
+  // the kind this page was opened with: a creator can switch games while a
+  // fan's tab is open, and the spin they paid for must still be shown.
+  const validateGameResult = useCallback((data: unknown) => readCommittedGame(data, committedKind(data, passGameKind)) !== null, [passGameKind]);
   const onCommitted = useCallback((data: SpinResult, options: { present: boolean; recovered: boolean }) => {
-    const game = readCommittedGame(data, passGameKind ?? "wheel");
+    const game = readCommittedGame(data, committedKind(data, passGameKind));
     if (!game) throw new Error("Unconfirmed game outcome");
     if (options.present) void loadWinCard().catch(() => {});
     focusRevision.current++;
@@ -291,6 +340,12 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
       setCardPatch({ base: cardSource, card: readCardSource(data) !== undefined && liveCard.readable ? liveCard.card : game.presentation.after });
     }
     if (!options.present) return;
+    setGameSwitched(passGameKind !== null && game.gameKind !== passGameKind);
+    // RF-01: draw the list the prize was drawn from, and land on the prize.
+    const drawn = poolForResult(livePrizes, data);
+    poolChanged.current = drawn !== null || (!options.recovered && oddsChangedSinceShown(shownPoolHash.current, data.poolHash));
+    if (drawn) setPoolOverride({ base: pass.wheel.prizes, prizes: drawn });
+    setFrozenPrizes(drawn ?? prizes);
     setGameOutcome(game);
     setReceiptKey(data.attemptId ?? null);
     setStage(game.presentation?.kind === "scratch" && data.attemptId ? { presentation: game.presentation, key: data.attemptId } : null);
@@ -308,7 +363,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     dispatchReveal({ type: "start", rarity: data.prize.rarity,
       reducedMotion: options.recovered || prefersReducedMotion(), spinsBefore: sessionSpins });
     setBusy(false);
-    setResult({ index: data.prizeIndex, nonce: Date.now() });
+    setResult({ index: data.prizeIndex, prizeId: data.prize.id, nonce: Date.now() });
     setWon(data.prize);
     setWonShareId(typeof data.shareId === "string" ? data.shareId : null);
     setWonClaimCode(typeof data.claimCode === "string" && /^[0-9A-Z]{6}$/.test(data.claimCode) ? data.claimCode : null);
@@ -323,33 +378,86 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
       dispatchReveal({ type: "skip" });
       spinEndRef.current();
     }, SPIN_WATCHDOG_MS) : null;
-  }, [sessionSpins, router, passGameKind, cardSource]);
-  const onRefusal = useCallback((code: unknown) => {
+  }, [sessionSpins, router, passGameKind, cardSource, livePrizes, prizes, pass.wheel.prizes]);
+  const onRefusal = useCallback((code: unknown, detail: SpinRefusalDetail) => {
     tapPoolHash.current = null;
     const info = spinErrorInfo(code);
-    if (info.reopenAgeGate) setNeedsAck(true);
-    if (info.refreshPlay || code === "blocked") router.refresh();
+    if (info.reopenAgeGate) { setNeedsAck(true); resumeAfterAck.current = detail.terminal; }
+    if (info.refreshPlay || code === "blocked" || code === "not_found") router.refresh();
+    // RF-06: a rate limit is final; play comes back on its own after Retry-After.
+    if (detail.terminal && code === "rate_limited") setCooldownUntil(Date.now() + (detail.retryAfterMs ?? 5000));
     setBusy(false);
   }, [router]);
-  const recovery = useSpinRecovery({ token: pass.token, canRetry: !paused && !onBreak && !needsAck && canPresentGame,
+  // WF-09: another tab finished this spin; its win is in "Your wins" after a refresh.
+  const onReleased = useCallback(() => { setBusy(false); router.refresh(); }, [router]);
+  const recovery = useSpinRecovery({ token: pass.token, canRetry: !paused && !onBreak && !needsAck && canPresentGame, onReleased,
     onCommitted, onRefusal, validateResult: validateGameResult });
   const spinPending = recovery.locked;
   const { canSpin, label: spinLabel, balanceLabel } = spinControl({
     spinsRemaining, busy: busy || recovery.sending || revealInFlight(rv.phase), paused, onBreak,
     spinPending: recovery.locked && recovery.phase !== "revealing" && recovery.phase !== "sending",
   });
+  // RF-03: server-rendered values (a top-up, a new commitment, today's play)
+  // reach the open page on refresh only while nothing is in flight; a payload
+  // that lands mid-play is dropped (closing the card refreshes again).
+  const [syncedPass, setSyncedPass] = useState(pass);
+  // A payload that arrived mid-play may predate the play it interrupted (its
+  // balance would be one too high): it is never adopted, the page reads again.
+  const [skippedPass, setSkippedPass] = useState<FanPassView | null>(null);
+  const [resync, setResync] = useState(0);
+  // WF-06: plays the creator added while this page was open.
+  const [toppedUp, setToppedUp] = useState<number | null>(null);
+  const idle = !busy && recovery.phase === "ready" && rv.phase === "idle";
+  if (pass !== syncedPass) {
+    if (!idle) { if (skippedPass !== pass) setSkippedPass(pass); }
+    else if (skippedPass === pass) { setSyncedPass(pass); setSkippedPass(null); setResync((n) => n + 1); }
+    else adoptPass();
+  }
+  function adoptPass() {
+    setSyncedPass(pass);
+    setToppedUp(topUpDelta(spinsRemaining, pass.spinsRemaining));
+    setSpinsRemaining(pass.spinsRemaining);
+    setNextSpinHash(pass.nextSpinHash ?? null);
+    setFocus(pass.focus ?? null);
+    setOdds(pass.odds);
+    setPlay((p) => ({ ...p, today: pass.play?.today ?? 0, week: pass.play?.week ?? 0, reminder: pass.play?.reminder ?? null }));
+    setHistory((h) => mergeFanWins(pass.recentWins, h));
+    if (poolOverride && poolOverride.base !== pass.wheel.prizes) setPoolOverride(null);
+    setGameSwitched(false);
+  }
+  useEffect(() => { if (resync > 0) router.refresh(); }, [resync, router]);
+  // WF-06: out of plays with the page in front of them, the fan is waiting for
+  // a top-up: read the server every half minute, for ten minutes at most.
+  const balancePolls = useRef(0);
+  const balanceStopped = paused || onBreak || pass.blocked === true;
+  useEffect(() => {
+    if (spinsRemaining !== 0 || !idle || balanceStopped) return;
+    const timer = setInterval(() => {
+      if (!shouldPollBalance({ spinsRemaining: 0, idle: true, visible: document.visibilityState === "visible", online: navigator.onLine !== false, stopped: false, polls: balancePolls.current })) return;
+      balancePolls.current++;
+      router.refresh();
+    }, BALANCE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [spinsRemaining, idle, balanceStopped, router]);
   const runSpin = useCallback(async () => {
-    if (!canSpin || recovery.locked || !canPresentGame) return;
+    if (!canSpin || recovery.locked || !canPresentGame || coolingDown) return;
     if (!muted) { unlockAudio(); haptic(12); }
     void loadWinCard().catch(() => {});
     setError(null);
+    setToppedUp(null);
     setWonReward(null);
     setStage(null);
     tapPoolHash.current = shownPoolHash.current;
     // Drop any focus poll already in flight: the spin response brings the odds.
     focusRevision.current++;
     await recovery.begin(clientSeed, nextSpinHash);
-  }, [canSpin, recovery, muted, clientSeed, nextSpinHash, canPresentGame]);
+  }, [canSpin, recovery, muted, clientSeed, nextSpinHash, canPresentGame, coolingDown]);
+  // RF-06: the tap that met the gate goes on once the gate is confirmed.
+  useEffect(() => {
+    if (needsAck || !resumeAfterAck.current || !canSpin || recovery.locked || coolingDown) return;
+    resumeAfterAck.current = false;
+    void runSpin();
+  }, [needsAck, canSpin, recovery.locked, coolingDown, runSpin]);
 
   // RM-6: once today's spins reach the fan's reminder, the next SPIN tap asks
   // first ("Want a breather?"), once per threshold per day. Soft: Keep playing
@@ -395,7 +503,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     setBoardRefresh((n) => n + 1);
     if (!recoveredWin.current) setSessionSpins(bumpSessionSpins(sessionSpins));
     if (won) {
-      if (!muted && !recoveredWin.current) {
+      // RF-12: the mute switch as it is now, not as it was when the spin began.
+      if (!mutedRef.current && !recoveredWin.current) {
         playWin(won.rarity);
         if (rv.tier) haptic(rv.tier.haptic);
       }
@@ -417,19 +526,23 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         // (or epic) prize? Derived from the landed slice index + wheel order,
         // using the stock the fan saw while spinning (a sold-out neighbour
         // had 0% odds, so it is never a near miss).
-        const miss = detectNearMiss(prizes, result.index);
+        // RF-01: from the list the wheel actually drew, at the slice it stopped on.
+        const miss = detectNearMiss(wheelPrizes, landingIndex(wheelPrizes, result));
         setNearMiss(miss);
         if (miss) setBeatRow(true);
       }
     }
     // The wheel has stopped: now the counts may move (RM-2).
     if (pendingStock.current) {
-      setStockPatch({ base: pass.wheel.prizes, map: pendingStock.current });
+      setStockPatch({ base: livePrizes, map: pendingStock.current });
       pendingStock.current = null;
     }
+    // RF-01: the odds or the pool moved under this page; the prize book and
+    // the odds follow once the wheel is still (never mid-animation).
+    if (poolChanged.current) { poolChanged.current = false; router.refresh(); }
     // Opens the card now, or after the tier's short hold on the landed slice.
     dispatchReveal({ type: "stop" });
-  }, [won, wonShareId, wonInstant, muted, result, prizes, pass.wheel.prizes, pityAwarded, sessionSpins, rv.tier, chaseComplete, gameOutcome, activeGameKind]);
+  }, [won, wonShareId, wonInstant, result, wheelPrizes, livePrizes, pityAwarded, sessionSpins, rv.tier, chaseComplete, gameOutcome, activeGameKind, router]);
   useEffect(() => {
     spinEndRef.current = handleSpinEnd;
   }, [handleSpinEnd]);
@@ -478,7 +591,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   // The play button is disabled while a play runs, so focus was on <body> when
   // the win card opened and closing it left keyboard users nowhere. Hand focus
   // back to the play button once it is usable again, unless they moved on.
-  const playDisabled = !canSpin || recovery.locked || !canPresentGame;
+  const playDisabled = !canSpin || recovery.locked || !canPresentGame || coolingDown;
   const playRef = useRef<HTMLButtonElement>(null);
   const refocusPlay = useRef(false);
   const tryRefocusPlay = useCallback(() => {
@@ -486,9 +599,14 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
     const active = document.activeElement;
     if (active && active !== document.body) { refocusPlay.current = false; return; }
     const button = playRef.current;
-    if (button && !button.disabled) { button.focus(); refocusPlay.current = false; }
+    // WF-02: focus must not scroll the page to the button (on short or zoomed
+    // screens that put the wheel and the creator's note off the first screen).
+    if (button && button.getAttribute("aria-disabled") !== "true") { button.focus({ preventScroll: true }); refocusPlay.current = false; }
   }, []);
-  useEffect(() => { tryRefocusPlay(); }, [playDisabled, tryRefocusPlay]);
+  // Also when the gate goes: the play button only exists once the gate is
+  // passed (TS-14), and until that render focus is still on the gate's own
+  // button; this effect runs after it.
+  useEffect(() => { tryRefocusPlay(); }, [playDisabled, needsAck, tryRefocusPlay]);
   // FD-13: while a spin is unresolved the recovery action replaces the play button.
   const recoveryFirst = recovery.phase === "pending" || recovery.phase === "storage";
   const storageInApp = recovery.phase === "storage" ? currentInAppBrowser() : null;
@@ -497,8 +615,10 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
   const theaterOn = activeGameKind === "wheel" && theaterVisible(rv);
   const spotlight =
     rv.tier && result && (rv.phase === "landed" || rv.phase === "revealed")
-      ? { index: result.index, dim: rv.tier.spotlightDim }
+      ? { index: result.index, prizeId: result.prizeId, dim: rv.tier.spotlightDim }
       : null;
+  // TS-14: nothing behind the gate is in the page until the gate is confirmed.
+  const gated = needsAck;
 
   return (
     <div data-testid="fan-game" data-game-kind={activeGameKind ?? "unknown"} className="flex w-full max-w-md flex-col items-center gap-7">
@@ -528,6 +648,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
       {gallery}
 
+      {gated ? null : <>
       {engaged && pass.leaderboardEnabled && pass.creatorId && (
         <RecentWinsTicker creatorId={pass.creatorId} token={pass.token} refreshKey={boardRefresh} />
       )}
@@ -548,7 +669,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             // edge) so the layout box, even at the pulse's 1.05 scale peak,
             // stays inside the viewport on narrow phones.
             background:
-              "radial-gradient(circle closest-side, color-mix(in oklab, var(--brand) 38%, transparent), transparent)",
+              "radial-gradient(circle closest-side, color-mix(in oklab, var(--brand-ui) 38%, transparent), transparent)",
           }}
         />
         <div className="relative">
@@ -556,7 +677,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             <WheelAura key={result?.nonce} tier={rv.tier} phase={rv.phase} />
           )}
           <Wheel
-            prizes={pass.wheel.prizes}
+            prizes={wheelPrizes}
             brandColor={brand}
             labelColor={pass.wheel.labelColor}
             labelSize={pass.wheel.labelSize}
@@ -584,7 +705,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             data-glow-level={glow?.level ?? 0}
             className={`rounded-full border border-line bg-surface/70 px-4 py-1.5 text-sm font-medium text-ink${glowClass(glow?.level)}`}
           >
-            Spins left{" "}
+            {/* TS-10: a scratch or bingo fan has plays, not spins. */}
+            {activeGameKind === "scratch" || activeGameKind === "bingo" ? "Plays left" : "Spins left"}{" "}
             <span className="tnum ml-1 font-bold text-brand">
               {balanceLabel}
             </span>
@@ -593,7 +715,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             type="button"
             data-fab-avoid
             onClick={() => setMuted((m) => !m)}
-            className="rounded-full border border-line bg-surface/70 px-3 py-1.5 text-sm text-muted transition hover:text-ink"
+            className="min-h-11 rounded-full border border-line bg-surface/70 px-3.5 py-1.5 text-sm text-muted transition hover:text-ink"
             aria-label={muted ? "Unmute" : "Mute"}
             title={muted ? "Unmute" : "Mute"}
           >
@@ -613,16 +735,32 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
 
         <FocusChip focus={focus} onBreak={onBreak} />
 
+        {/* PA-04: aria-disabled keeps keyboard focus on the button through the
+            play (a disabled button drops focus to <body>); the click handler
+            refuses while it is off. */}
         <button
           ref={playRef}
           data-testid="fan-spin"
           data-fab-avoid
-          onClick={handleSpin}
-          disabled={playDisabled}
-          className={`btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]${recoveryFirst ? " hidden" : ""}`}
+          onClick={() => { if (!playDisabled) handleSpin(); }}
+          aria-disabled={playDisabled || undefined}
+          className={`btn-brand w-full rounded-2xl py-4 text-lg font-extrabold tracking-wide focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)] aria-disabled:opacity-60${recoveryFirst ? " hidden" : ""}`}
         >
-          {activeGameKind === "wheel" ? spinLabel : spinLabel === "SPIN" ? "PLAY" : spinLabel === "Spinning…" ? activeGameKind === "scratch" && gameOutcome?.presentation ? "Reveal your ticket" : "Playing…" : spinLabel}
+          {coolingDown ? `Try again in ${Math.max(1, Math.ceil(cooldownLeft / 1000))} s` : activeGameKind === "wheel" ? spinLabel : spinLabel === "SPIN" ? "PLAY" : spinLabel === "Spinning…" ? activeGameKind === "scratch" && gameOutcome?.presentation ? "Reveal your ticket" : "Playing…" : spinLabel}
         </button>
+        {!online && (
+          <p role="status" data-testid="offline-note" className="text-center text-sm text-muted text-pretty">{OFFLINE_NOTE}</p>
+        )}
+        {toppedUp !== null && (
+          <p role="status" data-testid="topup-note" className="text-center text-sm font-semibold text-ink text-pretty">
+            {topUpNote(toppedUp, pass.creatorTitle, activeGameKind ?? "wheel")} <span aria-hidden>🎉</span>
+          </p>
+        )}
+        {gameSwitched && (
+          <p role="status" data-testid="game-switched" className="text-center text-sm text-muted text-pretty">
+            {pass.creatorTitle} switched games while this page was open. This play still counts; the page updates when you close your win.
+          </p>
+        )}
 
         {paused && (
           <p role="status" className="text-center text-sm text-muted">
@@ -648,7 +786,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           {recovery.absent
             ? <button type="button" onClick={() => void recovery.retry()} disabled={paused || onBreak || needsAck}
                 data-testid="spin-recovery-retry" className={recoveryPrimary}>Try this spin again</button>
-            : <button type="button" onClick={() => void recovery.check()} data-testid="spin-recovery-check"
+            : <button type="button" onClick={() => void recovery.check({ manual: true })} data-testid="spin-recovery-check"
                 className={recoveryPrimary}>Check this spin</button>}
         </div>}
         {recovery.phase === "storage" && (storageInApp ? <>
@@ -663,7 +801,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
              phones, tall bingo cards), and its contrast must hold on the page,
              not on the badge. */
           <p
-            className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 rounded-2xl px-3 py-1 text-center text-[10px] tracking-wide text-muted"
+            className="flex w-full min-w-0 flex-wrap items-center justify-center gap-x-1 rounded-2xl px-3 py-1 text-center text-[11px] tracking-wide text-muted"
             style={{ backgroundColor: "var(--theme-bg)" }}
             title="The server committed to your next spin's random seed before you spin — after spinning, the verify page proves the outcome matches this commitment."
           >
@@ -685,6 +823,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           />
         )}
         <InstallNudge armed={reveal && won !== null && engaged} />
+        <InAppHint />
       </div>
 
       <LimitedStockRow prizes={prizes} />
@@ -718,7 +857,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
         <p role="note" data-testid="fan-blocked-note" className="max-w-sm text-center text-xs text-muted">
           {BLOCKED_FAN_MESSAGE}
         </p>
-      ) : needsAck ? null : (
+      ) : (
         <>
           <WishlistSection
             token={pass.token}
@@ -730,9 +869,11 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             token={pass.token}
             unlocked={pass.chatUnlocked ?? false}
             creatorTitle={pass.creatorTitle}
+            openRequest={chatRequest}
           />
         </>
       )}
+      </>}
 
       {theaterOn && rv.tier && (
         <RevealTheater
@@ -747,7 +888,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             type="button"
             onClick={skipReveal}
             data-testid="reveal-skip"
-            className="pointer-events-auto rounded-full border border-line bg-surface/90 px-5 py-2.5 text-sm font-semibold text-ink shadow-lg backdrop-blur-sm transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="pointer-events-auto rounded-full border border-line bg-surface/90 px-5 py-2.5 text-sm font-semibold text-ink shadow-lg backdrop-blur-sm transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             Skip <span aria-hidden="true">›</span>
           </button>
@@ -761,6 +902,9 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
           shareId={wonShareId}
           instant={wonInstant}
           claim={{ fanName: pass.fanName ?? null, at: wonAt, code: wonClaimCode }}
+          message={pass.blocked || !(pass.chatUnlocked ?? false) ? null : { label: `Message ${pass.creatorTitle}`, onClick: () => {
+            setChatRequest({ nonce: Date.now(), draft: `Hi! I just won ${won.label}${wonClaimCode ? ` (code ${wonClaimCode})` : ""}. ` });
+          } }}
           extra={<>
             {wonScarcity && <p data-testid="win-last-of" className="mt-2 text-sm font-bold text-ink">{wonScarcity}</p>}
             {oddsChanged && (
@@ -797,6 +941,7 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             setChaseComplete(false);
             setGameOutcome(null);
             setReceiptKey(null);
+            setFrozenPrizes(null);
             void recovery.acknowledge();
             router.refresh();
             refocusPlay.current = true;
@@ -826,14 +971,19 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
       {needsAck && (
         <AgeGate
           token={pass.token}
+          gameKind={passGameKind}
+          onLegal={(href, title) => setLegalSheet({ href, title })}
           onAck={() => {
             setNeedsAck(false);
             // The gate held focus; hand it to the play button (m6), not <body>.
+            // The effect on needsAck does it once the gate is gone: asking on
+            // the next frame could come before that render, find focus still
+            // on the gate's own button and give up.
             refocusPlay.current = true;
-            requestAnimationFrame(tryRefocusPlay);
           }}
         />
       )}
+      {legalSheet && <LegalSheet href={legalSheet.href} title={legalSheet.title} onClose={() => setLegalSheet(null)} />}
     </div>
   );
 }
@@ -848,15 +998,25 @@ export const AGE_CONFIRMATION = "I am 18 or older, and an adult where I live.";
  */
 function AgeGate({
   token,
+  gameKind,
+  onLegal,
   onAck,
 }: {
   token: string;
+  /** TS-10 / C5 / C6: a scratch or bingo fan is not told to "spin". */
+  gameKind: "wheel" | "scratch" | "bingo" | null;
+  onLegal: (href: "/terms" | "/privacy", title: string) => void;
   onAck: () => void;
 }) {
   const [adult, setAdult] = useState(false);
   const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const openLegal = (e: React.MouseEvent<HTMLAnchorElement>, href: "/terms" | "/privacy", title: string) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    onLegal(href, title);
+  };
   // FD-8: server-rendered checkboxes would accept ticks that hydration then
   // wipes, so they stay disabled (and say so) until the page can respond.
   const hydrated = useSyncExternalStore(noSubscribe, () => true, () => false);
@@ -912,7 +1072,7 @@ function AgeGate({
             id="agegate-title"
             className="mt-3 font-[family-name:var(--font-display)] text-xl font-extrabold text-ink"
           >
-            Before you spin
+            Before you play
           </h2>
           <p className="mt-2 text-sm text-muted text-pretty">
             FanFunnel is for adults only. Confirm your age and agree to the
@@ -928,7 +1088,7 @@ function AgeGate({
               checked={adult}
               disabled={!hydrated}
               onChange={(e) => setAdult(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand-ui)]"
             />
             <span className="text-ink">{AGE_CONFIRMATION}</span>
           </label>
@@ -938,15 +1098,19 @@ function AgeGate({
               checked={terms}
               disabled={!hydrated}
               onChange={(e) => setTerms(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand-ui)]"
             />
             <span className="text-ink">
               I agree to the{" "}
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+              {/* WF-11: a tap opens the text in a sheet over the gate (a new
+                  tab had no way back). The link itself still goes to a new
+                  tab with no Referer (the URL holds the fan's token) for a
+                  tap before the page can respond, or a deliberate new-tab click. */}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" onClick={(e) => openLegal(e, "/terms", "Terms of Service")} className="underline underline-offset-2">
                 Terms of Service
               </a>{" "}
               (see the{" "}
-              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={(e) => openLegal(e, "/privacy", "Privacy Policy")} className="underline underline-offset-2">
                 Privacy Policy
               </a>
               ) and acknowledge prizes are subject to the creator&rsquo;s fulfilment.
@@ -972,7 +1136,7 @@ function AgeGate({
           disabled={!ready}
           className="btn-brand mt-6 w-full rounded-2xl py-3.5 font-extrabold tracking-wide disabled:opacity-40"
         >
-          {busy ? "Confirming…" : "Enter & spin"}
+          {busy ? "Confirming…" : gameKind === "wheel" || gameKind === null ? "Enter & spin" : "Enter & play"}
         </button>
       </div>
       <style>{`

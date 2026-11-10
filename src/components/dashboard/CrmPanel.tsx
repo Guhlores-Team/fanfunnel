@@ -32,7 +32,7 @@ interface CreatorCrm {
 }
 
 const smallBtn =
-  "flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50";
+  "flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand-ui)] disabled:opacity-50";
 
 /**
  * Fan intelligence: lifetime value, your top spenders (whales) to nurture, and

@@ -32,7 +32,7 @@ export default function InstantReward({ reward }: { reward: DeliveredReward }) {
             target="_blank"
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
-            className="mt-3 inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="mt-3 inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
             data-testid="reward-open"
           >
             Open reward <span className="ml-1" aria-hidden="true">↗</span>
@@ -48,7 +48,7 @@ export default function InstantReward({ reward }: { reward: DeliveredReward }) {
             type="button"
             onClick={copyValue}
             data-testid="reward-copy"
-            className="mt-3 inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="mt-3 inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)]"
           >
             {copied ? "Copied!" : safe.kind === "code" ? "Copy code" : "Copy reward"}
           </button>

@@ -5,6 +5,7 @@ import { useFetch } from "@/lib/hooks/useFetch";
 import { FAN_CLIENT_HEADER } from "@/lib/api/fanClientHeader";
 import { blockedFanMessage } from "./blockedFan";
 import { spinsText } from "@/lib/format";
+import { hasOwn } from "@/lib/fan/uuid";
 
 interface Entry {
   rank: number;
@@ -42,7 +43,7 @@ async function postConsent(token: string, optIn: boolean, handle?: string): Prom
   });
   const raw: unknown = await response.json().catch(() => null);
   const value = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as { ok?: unknown; error?: unknown } : null;
-  return response.ok && value !== null && Object.hasOwn(value, "ok") && value.ok === true
+  return response.ok && value !== null && hasOwn(value, "ok") && value.ok === true
     ? { ok: true }
     : { ok: false, ...(typeof value?.error === "string" ? { error: value.error } : {}) };
 }
@@ -74,7 +75,7 @@ export function LeaderboardWithdrawal({ token, onWithdrawn }: { token: string; o
     <section data-testid="leaderboard-withdrawal" aria-label="Leaderboard privacy" className="w-full rounded-xl border border-line bg-surface/40 px-3 py-3">
       <p className="text-sm text-muted">You can withdraw your leaderboard consent here.</p>
       <button type="button" onClick={() => void withdraw()} disabled={busy || done} data-testid="leaderboard-withdraw"
-        className="mt-2 min-h-11 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:opacity-60">
+        className="mt-2 min-h-11 rounded-xl border border-line px-3 py-2 text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-ui)] disabled:opacity-60">
         {busy ? "Removing…" : "Remove me from the leaderboard"}
       </button>
       <p role={error ? "alert" : "status"} aria-live="polite" className="mt-2 text-xs text-muted">
@@ -143,9 +144,9 @@ export default function FanLeaderboard({
 
   return (
     <div className="w-full">
-      <p className="mb-2 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
+      <h2 className="mb-2 text-center text-xs font-medium uppercase tracking-[0.18em] text-muted">
         🏆 Top spinners
-      </p>
+      </h2>
 
       {view.entries.length === 0 ? (
         // Enabled but nobody has opted in yet: invite instead of hiding — the
@@ -157,7 +158,7 @@ export default function FanLeaderboard({
         <>
           {you && (
             <p className="mb-3 text-center text-sm font-semibold text-ink">
-              You&rsquo;re <span className="text-[var(--brand)]">#{you.rank}</span>
+              You&rsquo;re <span className="text-[var(--brand-text)]">#{you.rank}</span>
               {nextUp ? (
                 <span className="font-normal text-muted">
                   {" "}
@@ -177,13 +178,13 @@ export default function FanLeaderboard({
                 style={
                   you && e.rank === you.rank
                     ? {
-                        borderColor: "var(--brand)",
-                        background: "color-mix(in oklab, var(--brand) 16%, transparent)",
+                        borderColor: "var(--brand-ui)",
+                        background: "color-mix(in oklab, var(--brand-ui) 16%, transparent)",
                       }
                     : e.rank <= 3
                       ? {
-                          borderColor: "color-mix(in oklab, var(--brand) 45%, transparent)",
-                          background: "color-mix(in oklab, var(--brand) 8%, transparent)",
+                          borderColor: "color-mix(in oklab, var(--brand-ui) 45%, transparent)",
+                          background: "color-mix(in oklab, var(--brand-ui) 8%, transparent)",
                         }
                       : { borderColor: "var(--color-line)" }
                 }
@@ -194,7 +195,7 @@ export default function FanLeaderboard({
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
                   {e.handle}
                   {you && e.rank === you.rank && (
-                    <span className="ml-1.5 rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--brand-ink)]">
+                    <span className="ml-1.5 rounded-full bg-[var(--brand-ui)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--brand-ink)]">
                       You
                     </span>
                   )}
@@ -328,10 +329,10 @@ function LeaderboardOptIn({
           aria-describedby={hintId}
           disabled={busy}
           onClick={() => void save(!on, draft)}
-          className="shrink-0 rounded-full border border-line p-0.5 transition disabled:opacity-60"
+          className="shrink-0 rounded-full border border-line p-2.5 transition disabled:opacity-60"
         >
           <span
-            className={`relative block h-6 w-11 rounded-full transition ${on ? "bg-[var(--brand)]" : "bg-line"}`}
+            className={`relative block h-6 w-11 rounded-full transition ${on ? "bg-[var(--brand-ui)]" : "bg-line"}`}
           >
             <span
               className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${on ? "left-[1.375rem]" : "left-0.5"}`}
@@ -363,7 +364,7 @@ function LeaderboardOptIn({
               type="button"
               disabled={busy}
               onClick={() => void save(true, draft)}
-              className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand)] disabled:opacity-60"
+              className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-[var(--brand-ui)] disabled:opacity-60"
             >
               {on ? "Save" : "Join"}
             </button>

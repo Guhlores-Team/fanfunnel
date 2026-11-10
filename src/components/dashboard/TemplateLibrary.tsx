@@ -10,12 +10,12 @@ const well = "rounded-xl border border-[var(--hair)] p-4 [background:var(--s2)]"
 const row =
   "flex items-center gap-3 rounded-[10px] border border-[var(--hair)] bg-[color-mix(in_oklab,var(--color-ink)_3%,transparent)] px-3 py-2.5";
 const smallBtn =
-  "shrink-0 rounded-[8px] border border-[var(--hair)] px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+  "shrink-0 rounded-[8px] border border-[var(--hair)] px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:bg-[color-mix(in_oklab,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]";
 const mutedBtn =
-  "shrink-0 rounded-[8px] border border-[var(--hair)] px-2.5 py-1 text-xs font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]";
+  "shrink-0 rounded-[8px] border border-[var(--hair)] px-2.5 py-1 text-xs font-semibold text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)]";
 const dangerBtn =
-  "shrink-0 rounded-[8px] border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#fca5a5] transition-colors hover:bg-[#ef4444]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] disabled:opacity-50";
-const tick = <span aria-hidden="true" className="h-3.5 w-[3px] rounded-sm bg-[var(--brand)]" />;
+  "shrink-0 rounded-[8px] border border-[#ef4444] px-2.5 py-1 text-xs font-semibold text-[#fca5a5] transition-colors hover:bg-[#ef4444]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ui)] disabled:opacity-50";
+const tick = <span aria-hidden="true" className="h-3.5 w-[3px] rounded-sm bg-[var(--brand-ui)]" />;
 
 /**
  * Reusable template + prize library. Self-fetches the creator's saved wheel

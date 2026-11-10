@@ -64,7 +64,7 @@ export function TickHeader({
     <div className="mb-3.5">
       <div className="flex items-baseline justify-between gap-3">
         <h2 id={id} className="flex items-center gap-[9px] text-base font-bold tracking-[-0.01em] text-ink">
-          <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand)]" />
+          <span aria-hidden="true" className="h-4 w-[3px] shrink-0 rounded-sm bg-[var(--brand-ui)]" />
           {title}
         </h2>
         {right}
@@ -115,7 +115,7 @@ export function LoadError({ what, onRetry, error }: { what: string; onRetry: () 
       <button
         type="button"
         onClick={onRetry}
-        className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand)]"
+        className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:border-[var(--brand-ui)]"
       >
         Try again
       </button>

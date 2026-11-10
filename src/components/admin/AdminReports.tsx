@@ -161,7 +161,7 @@ export default function AdminReports() {
               onClick={() => setStatus(s)}
               className={`min-h-8 rounded-[8px] px-3 text-xs font-semibold transition-colors ${
                 status === s
-                  ? "bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand)_40%,transparent)]"
+                  ? "bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-ink ring-1 ring-[color-mix(in_oklab,var(--brand-ui)_40%,transparent)]"
                   : "text-muted hover:text-ink"
               }`}
             >

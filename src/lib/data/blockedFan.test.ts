@@ -125,7 +125,8 @@ async function main() {
   // --- Supabase path ----------------------------------------------------------------
   useSupabase = true;
   const blockedPass = {
-    creator_id: "c1", campaign_id: null, wheel_id: "w1", fan_id: "f1",
+    creator_id: "c1", campaign_id: null, wheel_id: "w1", fan_id: "f1", is_active: true, expires_at: null,
+    creator: { is_active: true, approval_status: "approved", role: "creator" },
     fan: { id: "f1", spins_remaining: 2, spins_granted_total: 3, blocked_at: "2026-10-29T00:00:00Z" as string | null,
       acked_at: "2026-10-29T00:00:00Z", acked_terms_version: LEGAL.version },
   };

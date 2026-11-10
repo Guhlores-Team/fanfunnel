@@ -379,7 +379,7 @@ export default function FanDetailDrawer({
             <div className="flex min-w-0 items-center gap-3">
               <span
                 aria-hidden="true"
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-[15px] font-bold text-ink"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-[15px] font-bold text-ink"
               >
                 {name ? initialsOf(name) : ""}
               </span>
@@ -419,7 +419,7 @@ export default function FanDetailDrawer({
               {/* Stat grid */}
               <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-[#1f1b27] bg-[#1f1b27]">
                 {stats.map((s) => (
-                  <div key={s.label} className="bg-base px-[15px] py-[13px]">
+                  <div key={s.label} className="bg-canvas px-[15px] py-[13px]">
                     <dd className="tnum text-[19px] font-bold leading-tight text-ink">
                       {pending ? (
                         <span className="skeleton inline-block h-5 w-10 rounded align-middle" />
@@ -1308,7 +1308,7 @@ function LinkSwitch({ fanId, pass, onChanged }: { fanId: string; pass: FanAccoun
         type="button"
         disabled={busy}
         onClick={() => void set(off)}
-        className="min-h-11 rounded-[9px] border border-line px-3 text-[12px] font-semibold text-ink transition-colors hover:border-[var(--brand)] disabled:opacity-50"
+        className="min-h-11 rounded-[9px] border border-line px-3 text-[12px] font-semibold text-ink transition-colors hover:border-[var(--brand-ui)] disabled:opacity-50"
       >
         {busy ? "…" : off ? "Switch this link on" : "Switch this link off"}
       </button>
@@ -1355,7 +1355,7 @@ function LinkRow({ url, newest, bare }: { url: string; newest: boolean; bare?: b
       <p className="min-w-0 flex-1 truncate text-xs text-muted" title={url}>
         {url}
         {newest && (
-          <span className="ml-2 rounded bg-[color-mix(in_oklab,var(--brand)_20%,transparent)] px-1.5 py-0.5 text-[10px] font-bold text-brand">
+          <span className="ml-2 rounded bg-[color-mix(in_oklab,var(--brand-ui)_20%,transparent)] px-1.5 py-0.5 text-[10px] font-bold text-brand">
             NEWEST
           </span>
         )}

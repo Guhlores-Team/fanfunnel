@@ -205,7 +205,10 @@ export async function focusJourney(page, { step, assert }, ctx) {
         const target = page.locator(`[data-testid='prize-book-item'][data-prize-id='${fixture.target.id}']`);
         assert(await target.getAttribute("data-focus-target") === "true", "selected prize is labelled as a target");
         const chance = state.odds.rows.find(row => row.prizeId === fixture.target.id).chance;
-        assert((await target.getByTestId("fan-prize-odds").innerText()).includes((chance * 100).toLocaleString("en-US", { maximumFractionDigits: 3 })), "displayed percentage is server-authoritative");
+        // WF-13: the fan reads the server's chance rounded for reading (one decimal from 1%, finer below; formatFanChance).
+        const pct = chance * 100;
+        const shown = pct < 0.001 ? "<0.001%" : `${Number(pct < 0.1 ? pct.toPrecision(2) : pct < 1 ? pct.toFixed(2) : pct.toFixed(1))}%`;
+        assert((await target.getByTestId("fan-prize-odds").innerText()).includes(shown), `displayed percentage is server-authoritative (${shown})`);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `no overflow at ${width}`);
         const dir = ensureArtifacts() + "focus/"; mkdirSync(dir, { recursive: true });
         await page.screenshot({ path: `${dir}focus-${width}.png`, fullPage: true });

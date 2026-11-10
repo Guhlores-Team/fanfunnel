@@ -1,4 +1,5 @@
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
+import { LINK_LIVE, fanLinkLive } from "./fanLinkLive";
 import { resolveWheelId } from "./wheels";
 import { focusDisplay } from "./focusDisplay";
 import { toWheelConfig, type DbWheelRow } from "./shared";
@@ -119,10 +120,11 @@ export async function getFanFocusState(token: string): Promise<{ focus: FanFocus
     return mockFanFocusState(token);
   }
   const sb = createServiceClient();
-  const { data, error } = await sb.from("fan_passes").select("is_active,self_excluded_at,fan:fans(blocked_at)").eq("token", token).maybeSingle();
+  const { data, error } = await sb.from("fan_passes").select(`${LINK_LIVE},self_excluded_at,fan:fans(blocked_at)`).eq("token", token).maybeSingle();
   if (error) return { error: "db_error" };
   if (!data) return { error: "not_found" };
-  const pass = data as unknown as { is_active: boolean; self_excluded_at: string | null; fan: { blocked_at: string | null } | null };
-  if (!pass.is_active || pass.self_excluded_at || !pass.fan || pass.fan.blocked_at) return { error: "blocked" };
+  const pass = data as unknown as { is_active: boolean; expires_at?: string | null; self_excluded_at: string | null; fan: { blocked_at: string | null } | null };
+  // PR-13: an expired link answers like a switched-off one.
+  if (!fanLinkLive(pass) || pass.self_excluded_at || !pass.fan || pass.fan.blocked_at) return { error: "blocked" };
   try { return await getFanFocusDisplay(token,sb); } catch { return { error: "db_error" }; }
 }

@@ -174,7 +174,7 @@ async function main() {
   const owed = await deleteFanData("tokA1aaaaaaa");
   check("a fan who is owed a prize is not deleted: prize_owed", "error" in owed && owed.error === "prize_owed");
   check("…and nothing was deleted or tombstoned", svc.statements.every((s) => s.op !== "delete") && svc.rows("link_tombstones").length === 0 && svc.rows("fans").some((f) => f.id === "fanA"));
-  check("…the owed check is pinned to fan A + creator A", svc.statements.some((s) => s.table === "spins" && eqValue(s, "fan_id") === "fanA" && eqValue(s, "creator_id") === CA) && svc.statements.some((s) => s.table === "redemptions" && eqValue(s, "creator_id") === CA && eqValue(s, "status") === "pending"));
+  check("…the owed check is pinned to fan A + creator A", svc.statements.some((s) => s.table === "spins" && eqValue(s, "fan_id") === "fanA" && eqValue(s, "creator_id") === CA) && svc.statements.some((s) => s.table === "redemptions" && eqValue(s, "creator_id") === CA && s.filters.some((f) => f.col === "status" && f.kind === "in" && JSON.stringify(f.value) === '["pending","in_progress"]')));
   svc.rows("redemptions").find((r) => r.spin_id === "s1")!.status = "fulfilled";
   svc.statements.length = 0;
   const del = await deleteFanData("tokA1aaaaaaa");

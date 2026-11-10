@@ -26,6 +26,8 @@ type Row = Record<string, unknown>;
 const db: Record<string, Row[]> = { fans: [], fan_passes: [], fan_checkins: [] };
 const writes: { table: string; op: string; row: Row }[] = [];
 let configured = true;
+/** Creators whose profile is suspended (profiles.is_active = false). */
+const suspended = new Set<string>();
 
 /** The slice of the supabase-js builder recordCheckin uses, over `db`. */
 function from(table: string) {
@@ -46,7 +48,9 @@ function from(table: string) {
     if (table === "fan_passes" && cols.includes("fan:fans(")) {
       rows = rows.map((r) => {
         const fan = db.fans.find((f) => f.id === r.fan_id);
-        return { ...r, fan: fan ? { blocked_at: fan.blocked_at ?? null, break_until: fan.break_until ?? null } : null };
+        // The link's creator is in good standing unless a test suspends them (creator:profiles embed).
+        return { ...r, fan: fan ? { blocked_at: fan.blocked_at ?? null, break_until: fan.break_until ?? null } : null,
+          creator: { is_active: !suspended.has(String(r.creator_id)), approval_status: "approved", role: "creator" } };
       });
     }
     return { data: rows, error: null };
@@ -169,6 +173,11 @@ async function main() {
   check("paused (self-excluded) link → 404", (await post({ token: "tok-3" })).status === 404);
   check("deactivated old link → 404", (await post({ token: "tok-4" })).status === 404);
   check("no write for a link that doesn't open", writes.length === 0);
+  // A suspended creator's link is not active: the answer the fan page gives.
+  suspended.add("creator-a");
+  check("a suspended creator's link → 404", (await post({ token: "tok-1", localDate: utcToday })).status === 404);
+  check("…and no visit was written", writes.length === 0);
+  suspended.clear();
 
   // --- 3. The engagement gate: a blocked fan gets no glow and no visit ------------
   const blocked = await post({ token: "tok-2", localDate: utcToday });

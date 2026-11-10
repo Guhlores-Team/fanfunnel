@@ -160,6 +160,13 @@ export interface SpinResult {
   prize: PublicPrize;
   /** Index of the winning prize within config.prizes (for client animation). */
   prizeIndex: number;
+  /**
+   * RF-01: the fan-safe projection of the prize list this play drew from, in
+   * wheel order. The page lands by prize id and swaps in this list when the
+   * creator changed the wheel after the page loaded (an index alone would
+   * point at the wrong slice). Absent on older receipts.
+   */
+  prizes?: PublicPrize[];
   spinsRemaining: number;
   /** Phase 2: true when this spin's outcome was forced by the pity system. */
   pityAwarded?: boolean;

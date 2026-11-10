@@ -1,4 +1,5 @@
 import { decodeRewardHistoryCursor, encodeRewardHistoryCursor, rewardHistoryTimestamp } from "@/lib/rewards/history";
+import { LINK_LIVE, fanLinkLive } from "./fanLinkLive";
 import type { Rarity } from "@/lib/games/wheel/types";
 // Data layer — #26 instant-delivery prizes (migration 0057).
 //
@@ -207,19 +208,21 @@ export async function getFanReward(
   // F5 refusal rule: unknown link 404, paused or blocked 403, inactive 404.
   const { data: passRow, error: passErr } = await sb
     .from("fan_passes")
-    .select("fan_id, is_active, self_excluded_at, fan:fans(blocked_at)")
+    .select(`fan_id, ${LINK_LIVE}, self_excluded_at, fan:fans(blocked_at)`)
     .eq("token", token)
     .maybeSingle();
   if (passErr) return { error: "db_error" };
   const pass = passRow as unknown as {
     fan_id: string;
     is_active: boolean;
+    expires_at?: string | null;
     self_excluded_at: string | null;
     fan: { blocked_at: string | null } | null;
   } | null;
   if (!pass) return { error: "not_found" };
   if (pass.self_excluded_at || pass.fan?.blocked_at) return { error: "blocked" };
-  if (!pass.is_active) return { error: "not_found" };
+  // PR-13: an expired link answers like a switched-off one.
+  if (!fanLinkLive(pass)) return { error: "not_found" };
 
   const { data: spinRow } = await sb.from("spins").select("id, fan_id, creator_id").eq("share_id", shareId).maybeSingle();
   const spin = spinRow as { id: string; fan_id: string | null; creator_id: string } | null;
@@ -252,11 +255,11 @@ export async function getFanRewardHistory(token: string, cursor?: string): Promi
   if (cursor !== undefined && !anchor) return { error: "bad_request" };
   const sb = createServiceClient();
   const { data, error } = await sb.from("fan_passes")
-    .select("fan_id, creator_id, is_active, self_excluded_at, fan:fans(blocked_at), creator:profiles!fan_passes_creator_id_fkey(is_active)")
+    .select(`fan_id, creator_id, ${LINK_LIVE}, self_excluded_at, fan:fans(blocked_at), creator:profiles!fan_passes_creator_id_fkey(is_active)`)
     .eq("token", token).maybeSingle();
   if (error) return { error: "db_error" };
-  const pass = data as unknown as { fan_id: string; creator_id: string; is_active: boolean; self_excluded_at: string | null; fan: { blocked_at: string | null } | null; creator: { is_active: boolean } | null } | null;
-  if (!pass || !pass.fan || !pass.is_active || !pass.creator?.is_active) return { error: "not_found" };
+  const pass = data as unknown as { fan_id: string; creator_id: string; is_active: boolean; expires_at?: string | null; self_excluded_at: string | null; fan: { blocked_at: string | null } | null; creator: { is_active: boolean } | null } | null;
+  if (!pass || !pass.fan || !fanLinkLive(pass) || !pass.creator?.is_active) return { error: "not_found" };
   if (pass.self_excluded_at || pass.fan.blocked_at) return { error: "blocked" };
   const scoped = () => sb.from("spins")
     .select("share_id, prize_label, prize_rarity, created_at, reward:spin_rewards!inner(kind)")

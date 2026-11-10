@@ -10,7 +10,7 @@
    generated — our hand-written CSS below relies on var(--color-*). */
 @theme {
   /* Tinted-dark neutrals (one consistent warm/plum hue, not cool+warm mixed) */
-  --color-base: #0c0a0e;
+  --color-canvas: #0c0a0e;
   --color-surface: #16131c;
   --color-surface-2: #1f1b27;
   --color-ink: #f4f1f6;
@@ -34,11 +34,14 @@
      computes for the default pink (white-on-pink is the tracked 3.52:1 defect). */
   --brand-ink: #160d12; /* readable text ON the brand fill (e.g. button labels) */
   --brand-text: var(--brand); /* brand color, legibility-adjusted, used AS text */
+  /* PA-01: the brand colour for NON-TEXT UI (focus rings, borders, button
+     fills): brandVars() lifts a near-black brand to 3:1 on the page surface. */
+  --brand-ui: var(--brand);
 
   /* --- Elevation system (redesign command-center) -------------------------
      Surfaces read as RAISED via an inset top-highlight + soft drop shadow, not
      a flat fill. Primary cards use --s1 + --lift; nested wells use --s2 (no
-     shadow). --hair is the card hairline; inputs sit on the --color-base well. */
+     shadow). --hair is the card hairline; inputs sit on the --color-canvas well. */
   --s1: linear-gradient(180deg, #1c1825, #16131d); /* raised card */
   --s2: #100d16; /* recessed well / nested block */
   --hair: #241f2e; /* card hairline border */
@@ -94,11 +97,23 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
+/* WA-02: the static not-found page holds three explanations; the URL fragment
+   (#nf-verify, #nf-busy) shows one without script, and once hydrated the
+   path sets data-kind (src/components/fan/NotFoundKinds.tsx). Without either,
+   the generic link page shows. */
+.nf-kinds > .nf-kind:not(.nf-default) { display: none; }
+.nf-kinds > .nf-kind:target { display: block; }
+.nf-kinds:has(> .nf-kind:not(.nf-default):target) > .nf-default { display: none; }
+.nf-kinds[data-kind] > .nf-kind { display: none; }
+.nf-kinds[data-kind="nf-link"] > #nf-link,
+.nf-kinds[data-kind="nf-verify"] > #nf-verify,
+.nf-kinds[data-kind="nf-busy"] > #nf-busy { display: block; }
+
 /* Radial brand glow used behind hero / wheel for atmosphere + depth. */
 .brand-glow {
   background:
     radial-gradient(60% 50% at 50% 12%, color-mix(in oklab, var(--brand) 24%, transparent), transparent 70%),
-    var(--color-base);
+    var(--color-canvas);
 }
 
 /* Form inputs — refined, brand focus ring, accessible. */
@@ -114,8 +129,8 @@ body {
 }
 .ff-input::placeholder { color: color-mix(in oklab, var(--color-ink) 30%, transparent); }
 .ff-input:focus {
-  border-color: var(--brand);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, transparent);
+  border-color: var(--brand-ui);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand-ui) 25%, transparent);
 }
 .ff-input[aria-invalid="true"],
 .ff-input[aria-invalid="true"]:focus {
@@ -159,12 +174,12 @@ input[type="time"] {
 .btn-brand {
   position: relative;
   background: linear-gradient(180deg,
-    color-mix(in oklab, var(--brand) 88%, white 12%),
-    var(--brand));
+    color-mix(in oklab, var(--brand-ui) 88%, white 12%),
+    var(--brand-ui));
   color: var(--brand-ink);
   box-shadow:
     0 1px 0 color-mix(in oklab, white 35%, transparent) inset,
-    0 12px 30px -10px color-mix(in oklab, var(--brand) 70%, transparent);
+    0 12px 30px -10px color-mix(in oklab, var(--brand-ui) 70%, transparent);
   transition: transform 0.12s ease, filter 0.15s ease, box-shadow 0.15s ease;
 }
 .btn-brand:hover { filter: brightness(1.06); }
@@ -201,7 +216,7 @@ input[type="time"] {
    outline follows each element's border-radius in modern browsers. Brand-tinted
    so it's visible on every surface. */
 :focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--brand-ui);
   outline-offset: 2px;
 }
 
@@ -271,14 +286,14 @@ input[type="time"] {
 
 /* RM-3 visit glow: a static ring in the creator's brand colour, brighter the
    more days the fan stopped by in the last week. No animation, no countdown. */
-.visit-glow-1 { box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 35%, transparent); }
+.visit-glow-1 { box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand-ui) 35%, transparent); }
 .visit-glow-2 {
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 60%, transparent),
-    0 0 14px 2px color-mix(in oklab, var(--brand) 35%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand-ui) 60%, transparent),
+    0 0 14px 2px color-mix(in oklab, var(--brand-ui) 35%, transparent);
 }
 .visit-glow-3 {
-  box-shadow: 0 0 0 2px var(--brand),
-    0 0 22px 5px color-mix(in oklab, var(--brand) 55%, transparent);
+  box-shadow: 0 0 0 2px var(--brand-ui),
+    0 0 22px 5px color-mix(in oklab, var(--brand-ui) 55%, transparent);
 }
 
 /* Recent-wins ticker: continuous horizontal scroll (loops via duplicated list).

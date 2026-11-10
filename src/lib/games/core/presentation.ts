@@ -5,9 +5,10 @@ import type { GamePresentation } from "./play";
 import { SCRATCH_DECORATIONS, type ScratchCell } from "../scratch/engine";
 import { BINGO_FULL_MASK, BINGO_LINE_MASKS, completedLines } from "../bingo/engine";
 import { parseBingoState } from "../bingo/state";
+import { hasOwn } from "@/lib/fan/uuid";
 
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const keys = (o: Record<string, unknown>, expected: string[]) => Object.keys(o).length === expected.length && expected.every((k) => Object.hasOwn(o, k));
+const keys = (o: Record<string, unknown>, expected: string[]) => Object.keys(o).length === expected.length && expected.every((k) => hasOwn(o, k));
 export interface ExpectedGamePresentation { kind: "scratch" | "bingo"; prizeId: string; label?: string }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 

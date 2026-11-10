@@ -32,14 +32,14 @@ export default function TopUpMoment({
       (a, b) => RARITY_ORDER.indexOf(b.rarity) - RARITY_ORDER.indexOf(a.rarity)
     )[0];
 
-  const color = target ? target.color ?? RARITY_COLORS[target.rarity] : "var(--brand)";
+  const color = target ? target.color ?? RARITY_COLORS[target.rarity] : "var(--brand-ui)";
 
   return (
     <div
       className="reveal w-full rounded-2xl border p-5 text-center"
       style={{
-        borderColor: "color-mix(in oklab, var(--brand) 50%, transparent)",
-        background: "color-mix(in oklab, var(--brand) 10%, transparent)",
+        borderColor: "color-mix(in oklab, var(--brand-ui) 50%, transparent)",
+        background: "color-mix(in oklab, var(--brand-ui) 10%, transparent)",
       }}
     >
       <p className="text-sm font-extrabold text-ink">Out of spins! 💖</p>
@@ -56,7 +56,7 @@ export default function TopUpMoment({
         </p>
       ) : (
         <p className="mt-1 text-sm text-muted">
-          More spins come from {creatorTitle}: fans can&rsquo;t buy them here.
+          More spins come from {creatorTitle}: fans can&rsquo;t get them here.
         </p>
       )}
       {tipUrl ? (

@@ -35,7 +35,12 @@ async function main() {
   check("the excluded prefixes hold route handlers", routes.length >= 2);
   for (const r of routes) {
     const code = readFileSync(r, "utf8");
-    check(`${r.slice(root.length)} sets Cache-Control itself`, /"Cache-Control"/.test(code) && /public, s-maxage=\d+/.test(code));
+    // A cacheable read says how long; the claim-code check (a POST verdict)
+    // says no-store on every answer, refusals included.
+    const verdict = r.endsWith("public/claim-check/route.ts");
+    check(`${r.slice(root.length)} sets Cache-Control itself`, /"Cache-Control"/.test(code) && (verdict
+      ? /"no-store"/.test(code) && !/return badRequest\(\);|return limited;/.test(code) && !/s-maxage/.test(code)
+      : /public, s-maxage=\d+/.test(code)));
   }
   console.log(`api cache default: ${passed} checks passed`);
 }

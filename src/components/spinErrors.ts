@@ -3,6 +3,8 @@
  * src/lib/data/index.ts, plus the route's own `bad_request`). Pure so it can be
  * unit-tested; raw server codes/text are never shown to the fan.
  */
+import { hasOwn } from "@/lib/fan/uuid";
+
 export interface SpinErrorInfo {
   message: string;
   /** The fan can continue by (re-)acknowledging the age gate / terms. */
@@ -13,10 +15,11 @@ export interface SpinErrorInfo {
   checkPendingSpin?: boolean;
 }
 
+
 const GENERIC: SpinErrorInfo = { message: "Something went wrong. Try again." };
 
 const MESSAGES: Record<string, SpinErrorInfo> = {
-  no_spins: { message: "You're out of spins! Tip your creator to get more. 💖" },
+  no_spins: { message: "You're out of spins. More come from your creator — fans can't get them here." },
   rate_limited: { message: "Whoa, slow down a sec — try again in a moment. 😅" },
   blocked: { message: "This link isn't active. Reach out to your creator." },
   on_break: { message: "You're taking a break. Your spins and prizes are safe. 💖", refreshPlay: true },
@@ -31,12 +34,14 @@ const MESSAGES: Record<string, SpinErrorInfo> = {
     message: "We couldn't confirm this spin yet. Check this saved spin to recover its result before playing again.",
     checkPendingSpin: true,
   },
+  // 0073 (CC-08): an attempt left unfinished for a day is closed by the ledger.
+  stale: { message: "That spin was never finished, so nothing was used up. You can play again." },
   bad_request: { message: "That didn't go through. Refresh the page and try again." },
   upgrade_required: { message: "This page needs an update before it can save a spin safely. Reload this link." },
 };
 
 export function spinErrorInfo(code: unknown): SpinErrorInfo {
-  return typeof code === "string" && Object.hasOwn(MESSAGES, code) ? MESSAGES[code] : GENERIC;
+  return typeof code === "string" && hasOwn(MESSAGES, code) ? MESSAGES[code] : GENERIC;
 }
 
 const ACK_GENERIC = "Couldn't save that — check your connection and try again.";
@@ -50,7 +55,7 @@ const ACK_MESSAGES: Record<string, string> = {
 
 /** Fan-facing copy for a failed POST /api/fans/ack (age gate / ToS). */
 export function ackErrorMessage(code: unknown): string {
-  return typeof code === "string" && Object.hasOwn(ACK_MESSAGES, code)
+  return typeof code === "string" && hasOwn(ACK_MESSAGES, code)
     ? ACK_MESSAGES[code]
     : ACK_GENERIC;
 }

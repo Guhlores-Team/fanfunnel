@@ -43,6 +43,9 @@ for (const code of KNOWN.filter((c) => c !== "needs_ack")) {
 
 // on_break (RM-6): the page reloads its play state so SPIN shows the break.
 check("on_break refreshes the play state", spinErrorInfo("on_break").refreshPlay === true);
+// 0073 (CC-08): a spin the ledger closed unfinished says nothing was used.
+check("stale says nothing was used and invites another play", /never finished/.test(spinErrorInfo("stale").message) && /play again/.test(spinErrorInfo("stale").message) && spinErrorInfo("stale").message !== generic);
+check("stale neither reopens the gate nor asks to check a saved spin", !spinErrorInfo("stale").reopenAgeGate && !spinErrorInfo("stale").checkPendingSpin);
 check("on_break reassures that spins and prizes are safe", /spins and prizes are safe/.test(spinErrorInfo("on_break").message));
 for (const code of KNOWN.filter((c) => c !== "on_break")) {
   check(`${code} does not refresh the play state`, !spinErrorInfo(code).refreshPlay);
@@ -61,7 +64,7 @@ for (const bad of [undefined, null, 42, {}, "", "totally_new_code"]) {
 }
 
 // Existing messages are preserved verbatim.
-check("no_spins message unchanged", spinErrorInfo("no_spins").message === "You're out of spins! Tip your creator to get more. 💖");
+check("C1: no_spins message names the creator as the only source, no tip ask", spinErrorInfo("no_spins").message === "You're out of spins. More come from your creator — fans can't get them here.");
 check("rate_limited message unchanged", spinErrorInfo("rate_limited").message === "Whoa, slow down a sec — try again in a moment. 😅");
 check("blocked message unchanged", spinErrorInfo("blocked").message === "This link isn't active. Reach out to your creator.");
 

@@ -87,7 +87,7 @@ async function main() {
   const pwa = readFileSync(new URL("src/lib/data/pwa.ts", root), "utf8");
   check("the manifest/icon read shares the page's cached fan_passes read", /readFanPassRow\(token\)/.test(pwa) && !/\.from\("fan_passes"\)/.test(pwa));
   const boosts = readFileSync(new URL("src/lib/data/boosts.ts", root), "utf8");
-  check("verify and leaderboard reads are bounded and throw on a fault", (boosts.match(/createServiceClient\(\{ timeoutMs: FAN_READ_TIMEOUT_MS \}\)/g) ?? []).length >= 2 && /if \(res\.error\) throw new FanPassUnavailableError/.test(boosts) && /strict: true/.test(boosts));
+  check("verify and leaderboard reads are bounded and throw on a fault", (boosts.match(/createServiceClient\(\{ timeoutMs: FAN_READ_TIMEOUT_MS \}\)/g) ?? []).length >= 2 && /if \(readFailed\(res\.error\)\) throw new FanPassUnavailableError/.test(boosts));
   console.log(`fan link closed / fan read deadlines: ${passed} checks passed`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -22,6 +22,8 @@ export interface WonPrize {
   instant?: boolean;
   /** T5: the prize's delivery state from its redemption (status and time only). */
   delivery?: WinDelivery;
+  /** WF-01: the server's claim code for this win (an HMAC of the share id), shown again under "Your wins". */
+  claimCode?: string;
 }
 
 /** Phase 3: a render-ready shareable win card. */

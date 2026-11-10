@@ -195,7 +195,7 @@ export default function NotificationBell({
         data-testid="notification-bell"
         onClick={() => (open ? close(false) : void openPanel())}
         className={`relative grid h-10 w-10 place-items-center rounded-[10px] border bg-surface transition-colors duration-150 hover:text-ink ${
-          open ? "border-[var(--brand)] text-ink" : "border-line text-muted"
+          open ? "border-[var(--brand-ui)] text-ink" : "border-line text-muted"
         }`}
       >
         <Glyph d={BELL} />
@@ -203,7 +203,7 @@ export default function NotificationBell({
           <span
             aria-hidden="true"
             data-testid="notification-count"
-            className="tnum absolute -right-1.5 -top-1.5 grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)] ring-2 ring-[#0c0a0e]"
+            className="tnum absolute -right-1.5 -top-1.5 grid h-[19px] min-w-[19px] place-items-center rounded-full bg-[var(--brand-ui)] px-[5px] text-[11px] font-bold text-[var(--brand-ink)] ring-2 ring-[#0c0a0e]"
           >
             {badge}
           </span>
@@ -250,7 +250,7 @@ export default function NotificationBell({
                         className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-[9px] ${
                           item.kind === "low_stock"
                             ? "bg-[color-mix(in_oklab,#f59e0b_16%,transparent)] text-[#fcd34d]"
-                            : "bg-[color-mix(in_oklab,var(--brand)_16%,transparent)] text-ink"
+                            : "bg-[color-mix(in_oklab,var(--brand-ui)_16%,transparent)] text-ink"
                         }`}
                       >
                         <Glyph d={KIND_ICON[item.kind]} size={16} />
@@ -271,7 +271,7 @@ export default function NotificationBell({
                       {isNew && (
                         <span
                           aria-hidden="true"
-                          className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[var(--brand)]"
+                          className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[var(--brand-ui)]"
                         />
                       )}
                     </button>

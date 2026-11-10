@@ -30,7 +30,7 @@ export default function TermsCheckbox({
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
         data-testid="terms-checkbox"
-        className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+        className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand-ui)]"
       />
       <span className="text-ink">
         I agree to the{" "}

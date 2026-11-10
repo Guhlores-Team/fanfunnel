@@ -18,7 +18,7 @@ export const NEUTRAL_APP_NAME = "Spins";
 /** Longest home-screen label we emit; launchers truncate around here anyway. */
 export const SHORT_NAME_MAX = 12;
 
-/** App background / splash colour (globals.css --color-base). */
+/** App background / splash colour (globals.css --color-canvas). */
 export const APP_BACKGROUND = "#0c0a0e";
 
 /**

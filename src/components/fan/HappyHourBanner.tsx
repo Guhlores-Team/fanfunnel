@@ -1,7 +1,7 @@
 "use client";
 
 import type { HappyHourStatus } from "@/lib/data/types";
-import { useNow } from "@/lib/hooks/useNow";
+import { useServerNow } from "./LinkPauseProvider";
 
 /** A time-boxed "rare odds boosted" banner shown to fans during a happy hour. */
 export default function HappyHourBanner({ status }: { status: HappyHourStatus }) {
@@ -13,7 +13,8 @@ function ActiveBanner({ endsAt, multiplier }: { endsAt: string; multiplier: numb
   // The countdown is clock-driven, so the server HTML and the hydration render
   // show a placeholder (`now` is null) and the live value fills in right after.
   // Computing it from Date.now() during render made SSR and client text differ.
-  const now = useNow(1000);
+  // RF-13: the server's clock, so a phone that is minutes off agrees with the server.
+  const now = useServerNow(1000);
   const left = now === null ? null : remaining(endsAt, now);
 
   if (left !== null && left <= 0) return null;
@@ -23,8 +24,8 @@ function ActiveBanner({ endsAt, multiplier }: { endsAt: string; multiplier: numb
       className="reveal flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3"
       style={{
         animationDelay: "0.1s",
-        borderColor: "color-mix(in oklab, var(--brand) 55%, transparent)",
-        background: "color-mix(in oklab, var(--brand) 14%, transparent)",
+        borderColor: "color-mix(in oklab, var(--brand-ui) 55%, transparent)",
+        background: "color-mix(in oklab, var(--brand-ui) 14%, transparent)",
       }}
     >
       <div className="flex items-center gap-2.5">
@@ -35,7 +36,7 @@ function ActiveBanner({ endsAt, multiplier }: { endsAt: string; multiplier: numb
           <p className="text-sm font-extrabold text-ink">Happy hour</p>
           <p className="text-xs text-muted">
             Rare odds boosted{" "}
-            <span className="font-bold text-[var(--brand)]">×{multiplier}</span>
+            <span className="font-bold text-[var(--brand-text)]">×{multiplier}</span>
           </p>
         </div>
       </div>

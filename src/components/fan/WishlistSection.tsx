@@ -25,7 +25,7 @@ export default function WishlistSection({
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [note, setNote] = useState<string | null>(null);
 
-  const toggle = async (label: string) => {
+  const toggle = async (label: string, prizeId: string) => {
     if (pending.has(label)) return;
     const isWanted = wanted.has(label);
     setPending((p) => new Set(p).add(label));
@@ -40,7 +40,8 @@ export default function WishlistSection({
       const res = await fetch("/api/wishlists", {
         method: isWanted ? "DELETE" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, prizeLabel: label }),
+        // RF-15: the prize id picks the right row when two prizes share a label.
+        body: JSON.stringify({ token, prizeLabel: label, prizeId }),
       });
       if (!res.ok) {
         // A4: tell a blocked fan why, instead of silently undoing the tap.
@@ -68,9 +69,9 @@ export default function WishlistSection({
 
   return (
     <div className="w-full">
-      <p className="mb-3 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-muted">
+      <h2 className="mb-3 text-center text-xs font-medium uppercase tracking-[0.18em] text-muted">
         Chasing a prize? Tap to wishlist
-      </p>
+      </h2>
       <div className="flex flex-wrap justify-center gap-2">
         {prizes.map((p) => {
           const c = p.color ?? RARITY_COLORS[p.rarity];
@@ -78,9 +79,9 @@ export default function WishlistSection({
           return (
             <button
               key={p.id}
-              onClick={() => toggle(p.label)}
+              onClick={() => toggle(p.label, p.id)}
               aria-pressed={on}
-              className="rounded-full px-3 py-1 text-xs font-semibold text-ink transition"
+              className="min-h-11 rounded-full px-3.5 py-1 text-sm font-semibold text-ink transition"
               style={{
                 backgroundColor: on
                   ? `color-mix(in oklab, ${c} 28%, transparent)`

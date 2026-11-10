@@ -44,7 +44,9 @@ const METHOD = /export\s+(?:async\s+function\s+|function\s+|const\s+)(GET|POST|P
 // first, because a per-user limiter needs the signed-in id as its key.
 const AUTH_RPC = /^(current_user_active)$/;
 // Pure helpers that live under @/lib/data but do no I/O (input checks, env reads).
-const PURE = new Set(["isUuid", "getPushConfig"]);
+// isPlausibleToken: the privacy routes test the token's shape before the
+// creator-session guard, which answers ahead of the fan's limiters (ATK-01).
+const PURE = new Set(["isUuid", "getPushConfig", "isPlausibleToken"]);
 function dataCall(src: string): RegExp {
   const names = [...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']@\/lib\/data(?:\/[^"']*)?["']/g)]
     .flatMap((m) => m[1].split(",").map((n) => n.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim()))

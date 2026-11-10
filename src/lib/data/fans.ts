@@ -1,4 +1,6 @@
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
+import { LINK_LIVE, fanLinkLive } from "./fanLinkLive";
+import { CREATOR_STANDING, creatorCanHostPlay, type CreatorStanding } from "./creatorPlayable";
 import { storedReportToken } from "@/lib/reports/reportToken";
 import { CompleteReadError, MAX_REPORT_PAGES, MAX_REPORT_ROWS, readScopedRows } from "./readPages";
 // Data layer — fans and grants: creator CRM, fan detail, grant edits, fan
@@ -1072,7 +1074,8 @@ export async function updateFanMeta(
  * from the request, and only the fan resolved from this token is updated.
  */
 export async function ackFan(
-  token: string
+  token: string,
+  evidence: { ipHash?: string | null; uaHash?: string | null } = {},
 ): Promise<{ ok: true } | { error: string }> {
   if (!isSupabaseConfigured()) return mockAckFan(token);
 
@@ -1080,17 +1083,35 @@ export async function ackFan(
   const resolved = await resolveFanByToken(sb, token);
   if (!resolved) return { error: "not_found" };
 
-  const { error } = await sb
-    .from("fans")
-    .update({ acked_at: new Date().toISOString(), acked_terms_version: LEGAL.version })
-    .eq("id", resolved.fanId);
-  return error ? { error: "db_error" } : { ok: true };
+  // TS-05 (0073): record_fan_ack stamps the acknowledgement with the server's
+  // own legal_terms_version() and keeps the consent evidence digests in a
+  // table only admins can read. Service role only.
+  const { data, error } = await (sb as unknown as {
+    rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { code?: string } | null }>;
+  }).rpc("record_fan_ack", { p_token: token, p_ip_hash: evidence.ipHash ?? null, p_ua_hash: evidence.uaHash ?? null });
+  if (error) {
+    // A database that has not reached 0073 yet has no such function: keep the
+    // gate working with the plain stamp rather than locking every fan out.
+    if (error.code !== "PGRST202" && error.code !== "42883") return { error: "db_error" };
+    const stamped = await sb
+      .from("fans")
+      .update({ acked_at: new Date().toISOString(), acked_terms_version: LEGAL.version })
+      .eq("id", resolved.fanId);
+    return stamped.error ? { error: "db_error" } : { ok: true };
+  }
+  // `unavailable` (the link was paused, expired or self-excluded, the fan
+  // blocked or the creator suspended between the read above and the stamp;
+  // nothing was written) answers like the paused link it is.
+  const status = (data as { status?: string } | null)?.status;
+  return status === "not_found" || status === "unavailable" ? { error: "not_found" } : { ok: true };
 }
 
 // --- Wishlist ---------------------------------------------------------------
 
 /**
  * Resolve the fan + creator + active wheel behind a token (service role).
+ * null for an unknown, switched-off or expired link and for a suspended
+ * creator's link (CREATOR_STANDING): callers answer not_found and write nothing.
  * `blocked` is the creator's block (fans.blocked_at): callers that let a fan
  * reach the creator (chat, wishlist, leaderboard opt-in) refuse it (A4).
  */
@@ -1107,7 +1128,7 @@ export async function resolveFanByToken(
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select("creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, fan:fans(blocked_at, acked_at, acked_terms_version)")
+    .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, ${LINK_LIVE}, fan:fans(blocked_at, acked_at, acked_terms_version), ${CREATOR_STANDING}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -1117,9 +1138,16 @@ export async function resolveFanByToken(
     wheel_id: string;
     pinned_wheel_id?: string | null;
     fan_id: string;
+    is_active?: boolean | null;
+    expires_at?: string | null;
     fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null;
+    creator?: CreatorStanding;
   } | null;
-  if (!pass) return null;
+  // PR-13 (0073): an expired link answers like a switched-off one.
+  if (!pass || !fanLinkLive(pass)) return null;
+  // A suspended (or unapproved) creator's links are not active: the same test
+  // and the same answer as the fan page (getFanPass), for every caller.
+  if (!creatorCanHostPlay(pass.creator)) return null;
   const wheelId = await resolveWheelId(sb, pass, new Date());
   if (!wheelId) return null;
   return {

@@ -37,7 +37,7 @@ function BonusWin({ win, token }: { win: BonusWinView; token: string }) {
   // Compact (QA b5 polish): several line bonuses must not push the card far
   // past a phone screen, so the label shares the heading line and the actions
   // share a row.
-  return <li className="min-w-0 rounded-xl border border-line bg-base p-2.5" data-testid="bingo-bonus" data-bonus-line={win.line}>
+  return <li className="min-w-0 rounded-xl border border-line bg-canvas p-2.5" data-testid="bingo-bonus" data-bonus-line={win.line}>
     <h4 className="break-words text-sm text-ink [overflow-wrap:anywhere]"><span className="font-bold">{bingoLineLabel(win.line)} bonus:</span>{" "}
       <span aria-hidden="true">{win.prize.emoji ?? "🎁"} </span>{win.prize.label}</h4>
     {reward ? <InstantReward reward={reward} /> : instant ? <RewardUnavailable /> : <p className="mt-1 text-xs text-muted">Send this bonus win to your creator to claim it.</p>}

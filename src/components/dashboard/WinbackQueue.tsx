@@ -137,7 +137,7 @@ export default function WinbackQueue({
               <div className="flex items-center gap-3">
                 <span
                   aria-hidden="true"
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand)_18%,transparent)] text-[15px] font-bold text-ink"
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[color-mix(in_oklab,var(--brand-ui)_18%,transparent)] text-[15px] font-bold text-ink"
                 >
                   {initialsOf(fan.name)}
                 </span>

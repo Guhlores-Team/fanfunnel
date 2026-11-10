@@ -14,7 +14,8 @@ import { LeaderboardWithdrawal } from "./FanLeaderboard";
  */
 export default function LinkDataRescue() {
   const pathname = usePathname();
-  const encodedToken = /^\/spin\/([^/?#]+)/.exec(pathname ?? "")?.[1] ?? null;
+  // The dead link's own address, or the not-found path it was sent to (WA-02).
+  const encodedToken = /^(?:\/not-found)?\/spin\/([^/?#]+)/.exec(pathname ?? "")?.[1] ?? null;
   let token: string | null = null;
   try { if (encodedToken) token = decodeURIComponent(encodedToken); } catch { /* Malformed links have no privacy credential. */ }
   const [open, setOpen] = useState(false);

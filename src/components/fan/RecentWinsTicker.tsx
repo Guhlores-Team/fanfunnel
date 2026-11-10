@@ -1,5 +1,7 @@
 "use client";
 
+import { brandText } from "@/lib/theme";
+
 import { RARITY_COLORS } from "@/lib/games/wheel/types";
 import type { Rarity } from "@/lib/games/wheel/types";
 import { useFetch } from "@/lib/hooks/useFetch";
@@ -68,7 +70,7 @@ export default function RecentWinsTicker({
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: c }} />
               <span className="font-semibold text-ink">@{w.handle}</span>
               <span>won</span>
-              <span className="font-medium" style={{ color: c }}>
+              <span className="font-medium" style={{ color: brandText(c, 4.5) }}>
                 {w.prizeLabel}
               </span>
             </span>

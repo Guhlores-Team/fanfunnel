@@ -33,12 +33,12 @@ export default function CreatorNote({
           <img
             src={avatarUrl}
             alt={creatorTitle}
-            className="block h-11 w-11 rounded-full object-cover ring-2 ring-[var(--brand)]"
+            className="block h-11 w-11 rounded-full object-cover ring-2 ring-[var(--brand-ui)]"
           />
         ) : (
           <span
-            className="grid h-11 w-11 place-items-center rounded-full text-lg ring-2 ring-[var(--brand)]"
-            style={{ background: "color-mix(in oklab, var(--brand) 25%, transparent)" }}
+            className="grid h-11 w-11 place-items-center rounded-full text-lg ring-2 ring-[var(--brand-ui)]"
+            style={{ background: "color-mix(in oklab, var(--brand-ui) 25%, transparent)" }}
           >
             💌
           </span>

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { formatChance, publicBaseOdds } from "./publicOdds";
+import { formatChance, formatFanChance, publicBaseOdds } from "./publicOdds";
 
 let passed = 0;
 function check(label: string, cond: boolean) {
@@ -23,4 +23,7 @@ check("nothing available: all 0, no NaN", publicBaseOdds([{ label: "A", weight: 
 check("format: plain percent", formatChance(0.6) === "60%" && formatChance(1 / 3) === "33.333%");
 check("format: tiny but real", formatChance(1e-7) === "<0.001%");
 check("format: zero", formatChance(0) === "0%");
+check("fan format: one decimal", formatFanChance(0.40404) === "40.4%" && formatFanChance(0.05) === "5%" && formatFanChance(1 / 3) === "33.3%");
+check("fan format: small but real", formatFanChance(0.0005) === "0.05%" && formatFanChance(0.000012) === "0.0012%" && formatFanChance(0.0000001) === "<0.001%");
+check("fan format: zero", formatFanChance(0) === "0%" && formatFanChance(Number.NaN) === "0%");
 console.log(`publicOdds.test: ${passed} checks passed`);

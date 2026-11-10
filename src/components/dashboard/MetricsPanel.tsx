@@ -156,7 +156,7 @@ export default function MetricsPanel({
                     aria-pressed={days === d}
                     className={`tnum rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors max-sm:min-h-11 max-sm:px-3.5 ${
                       days === d
-                        ? "bg-[var(--brand)] text-[var(--brand-ink)]"
+                        ? "bg-[var(--brand-ui)] text-[var(--brand-ink)]"
                         : "border border-line text-muted hover:text-ink"
                     }`}
                   >

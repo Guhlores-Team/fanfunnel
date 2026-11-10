@@ -1,5 +1,5 @@
-import { notFound } from "next/navigation";
 import LegalLinks from "@/components/LegalLinks";
+import { linkNotFound } from "@/lib/fan/linkNotFound";
 import { formatChance } from "@/lib/games/wheel/publicOdds";
 import type { Metadata } from "next";
 import { getPublicProfileBySlug } from "@/lib/data";
@@ -32,13 +32,15 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const data = await getPublicProfileBySlug(slug);
-  if (!data) return { title: "FanFunnel" };
+  // WA-06: a creator's public page is not the creator-dashboard app.
+  if (!data) return { title: "FanFunnel", manifest: null };
   const copy = publicGameCopy(data.profile.gameKind);
   const title = `${data.profile.creatorTitle} · ${copy.titleSuffix}`;
   const description = data.profile.tagline ?? copy.metaDescription;
   return {
     title,
     description,
+    manifest: null,
     openGraph: { title, description },
     twitter: { card: "summary_large_image", title, description },
   };
@@ -53,7 +55,7 @@ export default async function PublicProfilePage({
 }) {
   const { slug } = await params;
   const data = await getPublicProfileBySlug(slug);
-  if (!data) notFound();
+  if (!data) linkNotFound("c", slug);
   const { profile, tipUrl } = data;
   const { look } = profile;
   const copy = publicGameCopy(profile.gameKind);
@@ -73,14 +75,14 @@ export default async function PublicProfilePage({
           <img
             src={profile.avatarUrl}
             alt={profile.creatorTitle}
-            className="mx-auto mb-6 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand)]"
+            className="mx-auto mb-6 h-20 w-20 rounded-full object-cover ring-2 ring-[var(--brand-ui)]"
           />
         ) : (
           <div
             aria-hidden
             className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full text-4xl"
             style={{
-              background: `radial-gradient(circle, color-mix(in oklab, var(--brand) 40%, transparent), transparent 70%)`,
+              background: `radial-gradient(circle, color-mix(in oklab, var(--brand-ui) 40%, transparent), transparent 70%)`,
             }}
           >
             {copy.emoji}

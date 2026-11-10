@@ -26,7 +26,7 @@ import { sectionHref } from "./dashboardSection";
 
 const raised = "border border-[var(--hair)] [background:var(--s1)] shadow-[var(--lift)]";
 const secondaryBtn =
-  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-sm font-semibold text-ink transition-colors hover:border-[var(--brand-ui)]/60 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 const dangerBtn =
   "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] bg-[#dc2626] px-4 text-sm font-bold text-white transition-colors hover:bg-[#ef4444] disabled:cursor-not-allowed disabled:opacity-40";
 
