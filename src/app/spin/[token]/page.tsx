@@ -5,6 +5,7 @@ import { linkAttemptsBlocked, linkNotFound } from "@/lib/fan/linkNotFound";
 import { clientIpFromHeaders } from "@/lib/api/clientIp";
 import { fanMissBlockedFor, noteFanMiss } from "@/lib/api/fanMiss";
 import { fanLinkExpired } from "@/lib/fan/linkExpiryRead";
+import { publicGameCopy } from "@/lib/games/publicCopy";
 import { getCreatorThemeView, getFanAppInfo, getFanLinkStatus, getFanPass, getPausedFanWins } from "@/lib/data";
 import LinkGone from "@/components/fan/LinkGone";
 import PausedWins from "@/components/fan/PausedWins";
@@ -128,7 +129,8 @@ export default async function SpinPage({
           className="relative z-40 mt-10 flex flex-col items-center gap-2 rounded-2xl px-3 py-1.5 text-center text-[11px] tracking-wide text-muted"
           style={{ backgroundColor: "var(--theme-bg)" }}
         >
-          <span>Powered by FanFunnel · every spin lands on a prize</span>
+          {/* TS-10: the line names the game this fan plays (spin / ticket / play). */}
+          <span>{publicGameCopy(pass.wheel.gameKind).shareFooter}</span>
           <SafetyMenu token={token} />
           <LegalLinks />
         </footer>

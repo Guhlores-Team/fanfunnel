@@ -674,7 +674,8 @@ export default function FanGameController({ pass, gallery = null }: { pass: FanP
             data-glow-level={glow?.level ?? 0}
             className={`rounded-full border border-line bg-surface/70 px-4 py-1.5 text-sm font-medium text-ink${glowClass(glow?.level)}`}
           >
-            Spins left{" "}
+            {/* TS-10: a scratch or bingo fan has plays, not spins. */}
+            {activeGameKind === "scratch" || activeGameKind === "bingo" ? "Plays left" : "Spins left"}{" "}
             <span className="tnum ml-1 font-bold text-brand">
               {balanceLabel}
             </span>
