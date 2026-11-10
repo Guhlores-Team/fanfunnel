@@ -1,5 +1,6 @@
 // Data layer — inbox: DM templates, fan <-> creator chat threads and the
 // auto intro / outro messages.
+import { CREATOR_STANDING, creatorCanHostPlay, type CreatorStanding } from "./creatorPlayable";
 import { actorNames } from "./actorNames";
 import { demoActingCreator, resolveActingCreator } from "./seatScope";
 import { isActiveAdmin } from "@/lib/auth/adminCheck";
@@ -158,12 +159,13 @@ export async function sendFanMessage(
   const sb = createServiceClient();
   const { data: passData } = await sb
     .from("fan_passes")
-    .select("creator_id, fan:fans(id, spins_remaining, spins_granted_total, blocked_at, acked_at, acked_terms_version)")
+    .select(`creator_id, fan:fans(id, spins_remaining, spins_granted_total, blocked_at, acked_at, acked_terms_version), ${CREATOR_STANDING}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
   const pass = passData as unknown as {
     creator_id: string;
+    creator?: CreatorStanding;
     fan: {
       id: string;
       spins_remaining: number;
@@ -174,6 +176,9 @@ export async function sendFanMessage(
     } | null;
   } | null;
   if (!pass || !pass.fan) return { error: "not_found" };
+  // A suspended creator's link is not active (the fan page's answer): nothing
+  // is stored and no push reaches their devices.
+  if (!creatorCanHostPlay(pass.creator)) return { error: "not_found" };
   // A4: a fan the creator blocked can no longer message them.
   if (pass.fan.blocked_at) return { error: "blocked" };
   // T2: chat is behind the same age/terms gate as the spin.

@@ -698,6 +698,16 @@ function fanForToken(token: string): MockFan | null {
   return fanId ? store.fans.get(fanId) ?? null : null;
 }
 
+/**
+ * The fan behind a token for the routes that write to the creator's account
+ * or reach their devices (chat, wishlist, board opt-in, visit check-in, the
+ * age gate). Parity with resolveFanByToken: a suspended creator's link is not
+ * active, the answer the fan page gives (mockGetFanPass), so nothing is written.
+ */
+function fanReachingCreator(token: string): MockFan | null {
+  return mockDemoCreatorActive() ? fanForToken(token) : null;
+}
+
 // --- Wheel resolution -------------------------------------------------------
 
 function wheelCreatedAt(id: string): string {
@@ -3163,8 +3173,13 @@ export async function mockFireWebhooks(
 
 /** Mark the fan behind a token as having acknowledged the age-gate / ToS. */
 export function mockAckFan(token: string): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
+  // Parity with record_fan_ack (0073): only a live link is acknowledged. A
+  // switched-off, expired or self-excluded link and a blocked fan answer like
+  // a link that is not there (`unavailable`), and nothing is stamped.
+  const pass = fan.passes?.find((p) => p.token === token);
+  if (fan.selfExcludedAt || fan.blockedAt || (pass && (pass.isActive === false || mockPassExpired(pass)))) return { error: "not_found" };
   fan.ackedAt = new Date().toISOString();
   fan.ackedTermsVersion = LEGAL.version;
   return { ok: true };
@@ -3313,7 +3328,7 @@ export function mockAddWishlist(
   prizeLabel: string,
   prizeId: string | null = null
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3347,7 +3362,7 @@ export function mockRemoveWishlist(
   token: string,
   prizeLabel: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3521,7 +3536,7 @@ export function mockSetFanLeaderboardOptIn(
   optIn: boolean,
   handle?: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = optIn ? fanReachingCreator(token) : fanForToken(token); // opting out always works
   if (!fan || (optIn && fan.selfExcludedAt)) return { error: "not_found" };
   if (optIn && fan.blockedAt) return { error: "blocked" }; // A4: opting out always works
   if (optIn && fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2
@@ -3610,7 +3625,7 @@ export function mockSendFanMessage(
   token: string,
   body: string
 ): { ok: true } | { error: "not_found" | "blocked" | "needs_ack" | "locked" | "empty" } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3749,7 +3764,7 @@ export function mockSetChatSettings(input: {
 export function mockEnsureChatIntro(
   token: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3776,7 +3791,7 @@ export function mockEnsureChatIntro(
 export function mockSendChatOutro(
   token: string
 ): { ok: true } | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan) return { error: "not_found" };
   if (fan.blockedAt) return { error: "blocked" }; // A4: parity with resolveFanByToken
   if (fanNeedsAck(fan.ackedAt, fan.ackedTermsVersion)) return { error: "needs_ack" }; // T2: same gate as the spin
@@ -3896,7 +3911,7 @@ export function mockRecordCheckin(
   localDate: unknown,
   now: Date = new Date()
 ): ({ ok: true } & CheckinResult) | { error: string } {
-  const fan = fanForToken(token);
+  const fan = fanReachingCreator(token);
   if (!fan || fan.selfExcludedAt) return { error: "not_found" };
   if (!glowGateOpen(mockGlowGateInput(fan), now)) return { error: "not_allowed" };
   const day = clampCheckinDay(localDate, now);

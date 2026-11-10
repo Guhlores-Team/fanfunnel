@@ -1,4 +1,5 @@
 import { issueCreatorActorContext } from "@/lib/auth/creatorActorContext";
+import { CREATOR_STANDING, creatorCanHostPlay, type CreatorStanding } from "./creatorPlayable";
 import { storedReportToken } from "@/lib/reports/reportToken";
 import { CompleteReadError, MAX_REPORT_PAGES, MAX_REPORT_ROWS, readScopedRows } from "./readPages";
 // Data layer — fans and grants: creator CRM, fan detail, grant edits, fan
@@ -1098,13 +1099,19 @@ export async function ackFan(
       .eq("id", resolved.fanId);
     return stamped.error ? { error: "db_error" } : { ok: true };
   }
-  return (data as { status?: string } | null)?.status === "not_found" ? { error: "not_found" } : { ok: true };
+  // `unavailable` (the link was paused, expired or self-excluded, the fan
+  // blocked or the creator suspended between the read above and the stamp;
+  // nothing was written) answers like the paused link it is.
+  const status = (data as { status?: string } | null)?.status;
+  return status === "not_found" || status === "unavailable" ? { error: "not_found" } : { ok: true };
 }
 
 // --- Wishlist ---------------------------------------------------------------
 
 /**
  * Resolve the fan + creator + active wheel behind a token (service role).
+ * null for an unknown, switched-off or expired link and for a suspended
+ * creator's link (CREATOR_STANDING): callers answer not_found and write nothing.
  * `blocked` is the creator's block (fans.blocked_at): callers that let a fan
  * reach the creator (chat, wishlist, leaderboard opt-in) refuse it (A4).
  */
@@ -1121,7 +1128,7 @@ export async function resolveFanByToken(
 } | null> {
   const { data } = await sb
     .from("fan_passes")
-    .select("creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, expires_at, fan:fans(blocked_at, acked_at, acked_terms_version)")
+    .select(`creator_id, campaign_id, wheel_id, pinned_wheel_id, fan_id, expires_at, fan:fans(blocked_at, acked_at, acked_terms_version), ${CREATOR_STANDING}`)
     .eq("token", token)
     .eq("is_active", true)
     .maybeSingle();
@@ -1133,10 +1140,14 @@ export async function resolveFanByToken(
     fan_id: string;
     expires_at?: string | null;
     fan?: { blocked_at: string | null; acked_at?: string | null; acked_terms_version?: string | null } | null;
+    creator?: CreatorStanding;
   } | null;
   if (!pass) return null;
   // PR-13 (0073): an expired link answers like a switched-off one.
   if (linkExpired(pass.expires_at)) return null;
+  // A suspended (or unapproved) creator's links are not active: the same test
+  // and the same answer as the fan page (getFanPass), for every caller.
+  if (!creatorCanHostPlay(pass.creator)) return null;
   const wheelId = await resolveWheelId(sb, pass, new Date());
   if (!wheelId) return null;
   return {

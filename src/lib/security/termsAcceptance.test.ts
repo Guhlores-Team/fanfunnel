@@ -86,7 +86,7 @@ function builder(client: Call["client"], table: string) {
     if (table === "fan_passes") {
       const tok = call.ops.find(([op, a]) => op === "eq" && a[0] === "token")?.[1][1] as string | undefined;
       const fanId = tok ? passes[tok] : undefined;
-      return fanId ? [{ creator_id: "creator-1", campaign_id: null, wheel_id: "w1", fan_id: fanId }] : [];
+      return fanId ? [{ creator_id: "creator-1", campaign_id: null, wheel_id: "w1", fan_id: fanId, creator: { is_active: true, approval_status: "approved", role: "creator" } }] : [];
     }
     return [];
   };

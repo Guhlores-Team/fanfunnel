@@ -117,6 +117,7 @@ async function main() {
   useSupabase = true;
   const base = {
     creator_id: "c1", campaign_id: null, wheel_id: "w1", fan_id: "f1",
+    creator: { is_active: true, approval_status: "approved", role: "creator" },
     fan: { id: "f1", spins_remaining: 2, spins_granted_total: 3, blocked_at: null, acked_at: null as string | null, acked_terms_version: null as string | null },
   };
   for (const [label, fanRow] of [

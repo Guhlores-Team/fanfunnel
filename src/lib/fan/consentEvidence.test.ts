@@ -17,7 +17,7 @@ type Rpc = { name: string; args: Record<string, unknown> };
 const rpcs: Rpc[] = [];
 const updates: Record<string, unknown>[] = [];
 let rpcResult: { data: unknown; error: { code?: string } | null } = { data: { status: "ok" }, error: null };
-let pass: Record<string, unknown> | null = { creator_id: "c1", campaign_id: null, wheel_id: "w1", pinned_wheel_id: null, fan_id: "f1", expires_at: null, fan: { blocked_at: null, acked_at: null, acked_terms_version: null } };
+let pass: Record<string, unknown> | null = { creator_id: "c1", campaign_id: null, wheel_id: "w1", pinned_wheel_id: null, fan_id: "f1", expires_at: null, fan: { blocked_at: null, acked_at: null, acked_terms_version: null }, creator: { is_active: true, approval_status: "approved", role: "creator" } };
 const chain = (result: unknown) => { const q: Record<string, unknown> = {}; for (const m of ["select", "eq", "is", "lte", "gte", "or", "order", "limit", "in", "not"]) q[m] = () => q; q.maybeSingle = async () => result; q.then = (ok: (v: unknown) => unknown) => Promise.resolve(result).then(ok); return q; };
 mock.module("@/lib/supabase/server", {
   namedExports: {
@@ -63,6 +63,10 @@ async function main() {
   check("no evidence is null, never an empty string", rpcs.some((r) => r.name === "record_fan_ack" && r.args.p_ip_hash === null && r.args.p_ua_hash === null));
   rpcResult = { data: { status: "not_found" }, error: null };
   check("the RPC's not_found is not_found", JSON.stringify(await ackFan("tok", a)) === '{"error":"not_found"}');
+  // 0073 round 4: the function itself refuses a link that is not live
+  // (paused, expired, self-excluded, blocked fan, suspended creator).
+  rpcResult = { data: { status: "unavailable" }, error: null };
+  check("the RPC's unavailable answers like a paused link, and nothing is stamped", JSON.stringify(await ackFan("tok", a)) === '{"error":"not_found"}' && updates.length === 0);
   rpcResult = { data: null, error: { code: "57014" } };
   check("a failed RPC is db_error and stamps nothing", JSON.stringify(await ackFan("tok", a)) === '{"error":"db_error"}' && updates.length === 0);
   rpcResult = { data: null, error: { code: "PGRST202" } };
@@ -71,6 +75,8 @@ async function main() {
   pass = { ...pass!, expires_at: "2000-01-01T00:00:00Z" };
   rpcs.length = 0;
   check("an expired link cannot be acknowledged (PR-13)", JSON.stringify(await ackFan("tok", a)) === '{"error":"not_found"}' && !rpcs.some((r) => r.name === "record_fan_ack"));
+  pass = { ...pass!, expires_at: null, creator: { is_active: false, approval_status: "approved", role: "creator" } };
+  check("a suspended creator's link cannot be acknowledged", JSON.stringify(await ackFan("tok", a)) === '{"error":"not_found"}' && !rpcs.some((r) => r.name === "record_fan_ack"));
   pass = null;
   check("an unknown link is not_found before any write", JSON.stringify(await ackFan("nope", a)) === '{"error":"not_found"}' && !rpcs.some((r) => r.name === "record_fan_ack"));
 

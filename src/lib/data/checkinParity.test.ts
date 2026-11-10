@@ -36,7 +36,7 @@ function from(table: string) {
     let rows = db[table].filter((r) => filters.every((f) => f(r)));
     rows = range ? rows.slice(range[0], range[1] + 1) : rows.slice(0, limit);
     if (cols.includes("fan:fans(")) {
-      rows = rows.map((r) => ({ ...r, fan: { blocked_at: db.fans.find((f) => f.id === r.fan_id)?.blocked_at ?? null } }));
+      rows = rows.map((r) => ({ ...r, fan: { blocked_at: db.fans.find((f) => f.id === r.fan_id)?.blocked_at ?? null }, creator: { is_active: true, approval_status: "approved", role: "creator" } }));
     }
     return { data: rows, error: null };
   };
