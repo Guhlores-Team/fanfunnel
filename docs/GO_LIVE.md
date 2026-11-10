@@ -83,7 +83,7 @@ These account settings finish it. Do them in this order; none of them needs a co
 - [ ] **OWNER** (SUP-5): in [Vercel tokens](https://vercel.com/account/settings/tokens) replace the CI
       `VERCEL_TOKEN` with one scoped to the `easy-simple-sites` team with the shortest expiry that covers the
       planned Preview measurements, stored only as the `test-maintenance` environment secret.
-- [ ] **OWNER** (SC-02c): close the stale PR #42 (`claude/eager-volta-l8juq7`, still carrying the old
+- [ ] **OWNER** (SC-02c): close the stale PR #42 (the `eager-volta-l8juq7` branch, still carrying the old
       unhardened workflow with a job-level account token) and delete stale remote branches; tag `archive/*`
       instead of keeping branches. Any push to such a branch runs its own old workflow with the `test`
       environment.

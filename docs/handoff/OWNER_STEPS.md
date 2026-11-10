@@ -58,7 +58,7 @@ Once live, the daily / weekly / release routine is `docs/OWNER_CHECKLIST.md`; in
       Then https://vercel.com/easy-simple-sites/fanfunnel/settings/environments/production → keep automatic aliasing for Production ON.
       **Prove it before the real release** with a one-line code-only PR to `main` (I prepare it, you merge and approve): the new deployment must sit un-aliased (also the plain `fanfunnel.vercel.app` address, not only a custom domain) until the job is green.
 - [ ] 14c. **Fork protection and the branch allow-list**: https://vercel.com/easy-simple-sites/fanfunnel/settings/git → **Git Fork Protection** on. Since batch 7 `vercel.json` builds only `main` from Git (every other branch is off); after the first merge, confirm a Production deployment was created (`docs/PREVIEW_DEPLOY.md` says what to do if not).
-- [ ] 14d. **Close the stale pull request #42** (`claude/eager-volta-l8juq7`): it still carries the old workflow with the account token at job level; any push to it runs that file. Close it and delete the branch; delete other stale branches (keep `archive/*` as tags).
+- [ ] 14d. **Close the stale pull request #42** (the `eager-volta-l8juq7` branch): it still carries the old workflow with the account token at job level; any push to it runs that file. Close it and delete the branch; delete other stale branches (keep `archive/*` as tags).
 
 ## Stage 4 — Buy & connect (paid)
 
