@@ -18,6 +18,9 @@ const SE_PORTRAIT = { viewport: { width: 320, height: 568 }, isMobile: true, has
 const SE_LANDSCAPE = { viewport: { width: 568, height: 320 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const TIKTOK_ANDROID_UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230805.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36 trill_2023 musical_ly_31.0.3 JsSdk/1.0 NetType/WIFI Channel/googleplay AppName/musical_ly app_version/31.0.3 ByteLocale/en ByteFullLocale/en Region/US";
 const ip = () => `198.51.100.${1 + Math.floor(Math.random() * 250)}`;
+// A second documentation range for calls that must never meet an address the
+// link-budget step (WF-03) has used up.
+const quietIp = () => `203.0.113.${1 + Math.floor(Math.random() * 250)}`;
 
 async function json(res, what) {
   if (!res.ok()) throw new Error(`${what} failed (${res.status()}) ${(await res.text()).slice(0, 160)}`);
@@ -291,7 +294,10 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
     await step("b7 fan ATK-01: a request carrying a creator session is refused on every fan-only route", async () => {
       const fan = await own("B7 creator cookie fan", 2);
       const win = await json(await request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: fan.token, clientSeed: "cookie" } }), "spin");
-      const cookie = { cookie: "sb-demo-auth-token=creator-session" };
+      // Its own address: the per-address budgets of these routes (ten deletes
+      // an hour, for one) are not spent for the other journeys on this server.
+      const from = { "x-real-ip": quietIp() };
+      const cookie = { ...from, cookie: "sb-demo-auth-token=creator-session" };
       const routes = [
         ["/api/fans/ack", { token: fan.token }],
         ["/api/leaderboard/opt-in", { token: fan.token, optIn: true }],
@@ -307,9 +313,9 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
         const body = await r.json();
         assert(body.error === "creator_session", `${path} names the refusal (${body.error})`);
       }
-      const plain = await request.post(BASE + "/api/fan-data/export", { data: { token: fan.token } });
+      const plain = await request.post(BASE + "/api/fan-data/export", { headers: from, data: { token: fan.token } });
       assert(plain.status() === 200, `the same route without the cookie still serves the fan (${plain.status()})`);
-      const other = await request.post(BASE + "/api/fan-data/export", { headers: { cookie: "theme=dark; sb-demo-auth-token-verifier=x" }, data: { token: fan.token } });
+      const other = await request.post(BASE + "/api/fan-data/export", { headers: { ...from, cookie: "theme=dark; sb-demo-auth-token-verifier=x" }, data: { token: fan.token } });
       assert(other.status() === 200, `only a session cookie counts, not a look-alike (${other.status()})`);
     });
 
@@ -317,13 +323,14 @@ export async function fanB7Journey(browser, { step, assert }, sink, ctx) {
       const owedName = `B7 owed ${randomBytes(3).toString("hex")}`;
       const fan = await own(owedName, 1);
       await json(await request.post(BASE + "/api/spin", { data: { requestId: randomUUID(), token: fan.token, clientSeed: "owed" } }), "spin");
-      const refused = await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } });
+      const from = { "x-real-ip": quietIp() };
+      const refused = await request.post(BASE + "/api/fan-data/delete", { headers: from, data: { token: fan.token, confirm: "DELETE" } });
       assert(refused.status() === 409 && (await refused.json()).error === "prize_owed", `delete while a prize is owed → 409 prize_owed (${refused.status()})`);
       const list = await json(await request.get(`${BASE}/api/redemptions?status=pending&q=${encodeURIComponent(owedName)}`), "redemptions");
       const owed = (list.items ?? []).filter((r) => r.fanName === owedName);
       assert(owed.length >= 1, "the owed prize is in the queue");
       for (const r of owed) await json(await request.patch(`${BASE}/api/redemptions/${r.id}`, { data: { status: "fulfilled" } }), "fulfil");
-      const ok = await request.post(BASE + "/api/fan-data/delete", { data: { token: fan.token, confirm: "DELETE" } });
+      const ok = await request.post(BASE + "/api/fan-data/delete", { headers: from, data: { token: fan.token, confirm: "DELETE" } });
       assert(ok.status() === 200, `once delivered, the fan can erase (${ok.status()})`);
     });
 
