@@ -33,6 +33,7 @@ export type AuditAction =
   | "report.reopen"
   | "mfa.factor_removed"
   | "retention.cleanup"
+  | "legal.notice"
   | "system.canary.initialize"
   // Agency membership changes (WG-07) and admin reads of fan chats (WG-10).
   | "org.invite"

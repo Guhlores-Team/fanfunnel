@@ -10,12 +10,67 @@ import { randomUUID } from "node:crypto";
 // TS-04: links, phone numbers and handles are refused in the tagline, the
 //        creator note, prize names (PUT /api/wheel) and board names.
 // TS-18: a prize name longer than MAX_PRIZE_LABEL (80) is refused by the route.
-// TS-06: no change notice shows while none is announced.
+// TS-06: no change notice shows while none is announced; an admin announces
+//        one (Admin › Terms change notice) and the fan page, the public page
+//        and the dashboard show it until it is withdrawn; a date under 30 days,
+//        an older version or a past date is refused.
+// TS-05: the Privacy Policy lists the hashed consent evidence.
 // TS-07/09/12: Terms name team replies and the name rule; Privacy names the
 //        push services, the redirect timer key and the child-safety handling.
 // WA-17: security.txt carries Canonical and Policy, and the Policy URL resolves.
 
-import { acknowledgeFixtureFan, goto, BASE } from "./harness.mjs";
+import { acknowledgeFixtureFan, goto, passAgeGate, BASE } from "./harness.mjs";
+
+const NOTICE = { version: "2099-01-31", effectiveDate: "2099-01-31" };
+const NOTICE_TEXT = /Our Terms and Privacy Policy change on January 31, 2099\./;
+const setNotice = (request, data = NOTICE) => request.post(BASE + "/api/admin/legal-notice", { data });
+const clearNotice = (request) => request.post(BASE + "/api/admin/legal-notice", { data: { clear: true } });
+
+/** a11y states with the announced-change notice showing (and the admin card). Each clears the notice after its scan. */
+export function trustB7A11yStates(dashAdvisory = []) {
+  const announce = (ready = async () => {}) => async (page) => {
+    const res = await setNotice(page.request);
+    if (!res.ok()) throw new Error(`announce failed (${res.status()})`);
+    await page.reload();
+    await ready(page);
+    await page.getByTestId("legal-change-notice").first().waitFor({ timeout: 8000 }).catch(async (e) => {
+      // Say why: what the page itself gets from the notice read, and where it is.
+      const seen = await page.evaluate(() => fetch("/api/legal-notice").then(async (r) => `${r.status} ${await r.text()}`).catch((err) => `fetch failed: ${err}`)).catch((err) => `evaluate failed: ${err}`);
+      throw new Error(`no change notice on ${page.url()} (the page's own read: ${seen}; links: ${await page.getByRole("navigation", { name: "Legal" }).count()}): ${e.message}`);
+    });
+  };
+  const cleanup = async (page) => {
+    await clearNotice(page.request);
+  };
+  return [
+    { path: "/c/demo", name: "trust-b7 terms change notice (link-in-bio)", prep: announce(), cleanup },
+    {
+      // Its own fresh fan: after the e2e run's account reset /spin/demo is a 404.
+      path: null,
+      name: "trust-b7 terms change notice (fan page)",
+      prep: async (page) => {
+        const made = await page.request.post(BASE + "/api/passes", { data: { requestId: randomUUID(), name: `Notice A11y ${Math.random().toString(36).slice(2, 7)}`, spins: 1 } });
+        if (!made.ok()) throw new Error(`create fan failed (${made.status()})`);
+        const { token } = await made.json();
+        await acknowledgeFixtureFan(page.request, token);
+        await goto(page, `/spin/${token}`, 800);
+        await announce(passAgeGate)(page);
+      },
+      cleanup,
+    },
+    { path: "/dashboard", name: "trust-b7 terms change notice (dashboard)", prep: announce(), cleanup, advisory: dashAdvisory },
+    {
+      path: "/admin",
+      name: "trust-b7 admin Terms change notice card",
+      prep: async (page) => {
+        const card = page.getByRole("region", { name: "Terms change notice", exact: true });
+        await card.getByText("No change is announced.", { exact: true }).waitFor({ timeout: 8000 });
+        await card.scrollIntoViewIfNeeded();
+      },
+      advisory: dashAdvisory,
+    },
+  ];
+}
 
 async function json(res, what) {
   if (!res.ok()) throw new Error(`${what} failed (${res.status()})`);
@@ -113,8 +168,73 @@ export async function trustB7Journey(page, { step, assert }, ctx) {
     assert(/Browser push services \(Google, Apple, Mozilla\)/.test(privacy), "TS-09: push services are named as processors");
     assert(/ff-auth-redirect-at/.test(privacy), "TS-09: the sign-in redirect timer is in the storage list");
     assert(/National Center for Missing & Exploited Children/.test(privacy), "TS-12: child-safety handling is stated");
+    assert(/evidence of that confirmation: one-way scrambled \(hashed\) forms of the IP address/.test(privacy), "TS-05: the consent evidence is listed");
     assert((await page.locator("#report-abuse").count()) === 1, "the security.txt Policy anchor exists");
     assert(!/\b(buy|paid|purchase|gamble|bet|lottery)\b/i.test(privacy), "public-text rule on the Privacy Policy");
+  });
+
+  await step("trust-b7 TS-06: an admin announces a Terms change; fan pages and the dashboard show it until it is withdrawn", async () => {
+    const fan = await json(await post("/api/passes", { requestId: randomUUID(), name: `Notice Fan ${tag}`, spins: 1 }), "create fan");
+    await json(await acknowledgeFixtureFan(ctx.request, fan.token), "ack");
+    // Refusals first: nothing is stored by any of them.
+    const soon = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+    await expectRefusal(await setNotice(ctx.request, { version: "2099-01-31", effectiveDate: soon }), "too_soon", "10 days' notice", assert);
+    await expectRefusal(await setNotice(ctx.request, { version: "2020-01-01", effectiveDate: "2099-01-31" }), "version_not_later", "an older version", assert);
+    await expectRefusal(await setNotice(ctx.request, { version: "2099-01-31", effectiveDate: "2020-01-01", sooner: true }), "date_in_past", "a past date", assert);
+    await expectRefusal(await setNotice(ctx.request, { version: "soon", effectiveDate: "2099-01-31" }), "invalid_version", "a non-date version", assert);
+    const none = await json(await ctx.request.get(BASE + "/api/legal-notice"), "public notice");
+    assert(none.notice === null, `refused announcements store nothing (${JSON.stringify(none)})`);
+    // Fresh contexts: the fan has no creator session, and nothing is cached.
+    const fanCtx = await ctx.browser().newContext({ viewport: { width: 390, height: 844 } });
+    const dashCtx = await ctx.browser().newContext({ viewport: { width: 1280, height: 900 } });
+    try {
+      const announced = await json(await setNotice(ctx.request), "announce");
+      assert(announced.notice?.version === NOTICE.version && announced.notice?.effectiveDate === NOTICE.effectiveDate, "the notice is stored");
+      assert(["not_configured", "none"].includes(announced.mail?.status), `the demo never e-mails and says so (${JSON.stringify(announced.mail)})`);
+      const pub = await json(await ctx.request.get(BASE + "/api/legal-notice"), "public notice");
+      assert(pub.notice?.effectiveDate === NOTICE.effectiveDate && Object.keys(pub.notice).every((k) => ["version", "effectiveDate", "summary"].includes(k)), "the public read carries only the version and the date");
+      const fanPage = await fanCtx.newPage();
+      await goto(fanPage, `/spin/${fan.token}`, 800);
+      const fanNotice = fanPage.getByTestId("legal-change-notice").first();
+      await fanNotice.waitFor({ timeout: 8000 });
+      assert(NOTICE_TEXT.test(await fanNotice.innerText()), "the fan page footer shows the date");
+      assert((await fanNotice.getByRole("link", { name: "/terms" }).getAttribute("href")) === "/terms", "…and links the current text");
+      await goto(fanPage, "/c/demo", 600);
+      await fanPage.getByTestId("legal-change-notice").first().waitFor({ timeout: 8000 });
+      const dash = await dashCtx.newPage();
+      await goto(dash, "/dashboard", 1200);
+      const dashNotice = dash.getByTestId("legal-change-notice").first();
+      await dashNotice.waitFor({ timeout: 8000 });
+      assert(NOTICE_TEXT.test(await dashNotice.innerText()), "the dashboard shows the date");
+      // The admin card reads it back and withdraws it.
+      await goto(dash, "/admin", 1200);
+      const card = dash.getByRole("region", { name: "Terms change notice", exact: true });
+      await card.getByText("Announced: version 2099-01-31 takes effect on January 31, 2099.", { exact: true }).waitFor({ timeout: 8000 });
+      await card.getByRole("button", { name: "Withdraw" }).click();
+      await card.getByText("No change is announced.", { exact: true }).waitFor({ timeout: 8000 });
+      assert(/withdrawn/.test(await card.getByTestId("admin-legal-notice-status").innerText()), "the card confirms the withdrawal");
+      const after = await json(await ctx.request.get(BASE + "/api/legal-notice"), "public notice");
+      assert(after.notice === null, "the public read is empty again");
+      await goto(fanPage, `/spin/${fan.token}`, 800);
+      assert((await fanPage.getByTestId("legal-change-notice").count()) === 0, "the fan page no longer shows it");
+      // Announce through the form, too (the path an admin uses).
+      await card.getByLabel("New version (YYYY-MM-DD)").fill(NOTICE.version);
+      await card.getByLabel("Takes effect on (YYYY-MM-DD)").fill(soon);
+      await card.getByRole("button", { name: "Announce" }).click();
+      await card.getByText(/needs at least 30 days' notice/).waitFor({ timeout: 8000 });
+      await card.getByLabel("Takes effect on (YYYY-MM-DD)").fill(NOTICE.effectiveDate);
+      await card.getByRole("button", { name: "Announce" }).click();
+      await card.getByText("Announced: version 2099-01-31 takes effect on January 31, 2099.", { exact: true }).waitFor({ timeout: 8000 });
+      assert(/creators were NOT e-mailed|no active creators/.test(await card.getByTestId("admin-legal-notice-status").innerText()), "the card says honestly whether creators were e-mailed");
+      const audit = await json(await ctx.request.get(BASE + "/api/admin/audit"), "audit");
+      assert(JSON.stringify(audit).includes("legal.notice"), "the announcement is in Activity");
+    } finally {
+      await clearNotice(ctx.request);
+      await fanCtx.close();
+      await dashCtx.close();
+    }
+    const cleared = await json(await ctx.request.get(BASE + "/api/legal-notice"), "public notice");
+    assert(cleared.notice === null, "no notice is left behind for later journeys");
   });
 
   await step("trust-b7 WA-17: security.txt carries Canonical and Policy, and Policy resolves", async () => {
