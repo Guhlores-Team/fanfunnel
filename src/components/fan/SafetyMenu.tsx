@@ -8,14 +8,27 @@ import { PAUSED_CONFIRMATION, PAUSE_WARNING, pauseErrorMessage } from "./linkPau
 import LegalLinks from "@/components/LegalLinks";
 import { FAN_DELETED_CONFIRMATION, FanDataInline, FanDeleteFlow, downloadFanData, fanDataNeedsInline, fetchFanData, type FanDataFile } from "./FanDataControls";
 import { REPORT_REASONS } from "@/lib/reports/config";
+import { muteDoneMessage, muteErrorMessage, muteMenuExplanation, muteMenuLabel } from "@/lib/fan/chatMute";
 
 /**
  * A discreet safety menu on the fan page: report the creator (predatory /
- * rule-breaking), pause your own link (self-exclusion), download your data or
- * delete it. NOT a spend limit — a way out, a way to flag abuse, and the fan's
- * privacy rights.
+ * rule-breaking), mute the creator's messages and undo it (TS-17), pause your
+ * own link (self-exclusion), download your data or delete it. NOT a spend
+ * limit — a way out, a way to flag abuse, and the fan's privacy rights.
  */
-export default function SafetyMenu({ token, paused = false }: { token: string; paused?: boolean }) {
+export default function SafetyMenu({
+  token,
+  paused = false,
+  creatorTitle = "this creator",
+  chatMuted = false,
+}: {
+  token: string;
+  paused?: boolean;
+  /** The creator's public name, for the mute item. */
+  creatorTitle?: string;
+  /** TS-17: whether this fan has muted the creator's messages (from the page's read). */
+  chatMuted?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<null | "report" | "exclude" | "delete">(null);
   // After "Delete my data" the link is dead: closing the dialog reloads the
@@ -33,6 +46,9 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
   const { markPaused } = useLinkPause();
   // Inline failure on the pause confirm step so the fan can retry in place.
   const [pauseError, setPauseError] = useState<string | null>(null);
+  // TS-17: the fan's mute choice, starting from the page's read.
+  const [muted, setMuted] = useState(chatMuted);
+  const [muteError, setMuteError] = useState<string | null>(null);
   const close = () => {
     setOpen(false);
     if (deleted) window.location.reload();
@@ -107,6 +123,31 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
     }
   };
 
+  const toggleMute = async () => {
+    const next = !muted;
+    setBusy(true);
+    setMuteError(null);
+    try {
+      const res = await fetch("/api/fan/mute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, muted: next }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { muted?: unknown; message?: unknown };
+      if (!res.ok) {
+        setMuteError(muteErrorMessage(res.status, typeof body.message === "string" ? body.message : undefined));
+        return;
+      }
+      const now = body.muted === true;
+      setMuted(now);
+      setDone(muteDoneMessage(creatorTitle, now));
+    } catch {
+      setMuteError(muteErrorMessage("network"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // The sheet is rendered into the page's <main>: there it keeps the creator's
   // brand variables and paints above the game (the footer this button lives
   // in sits below the game's layer so the age gate can cover it).
@@ -123,6 +164,7 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
           setMode(null);
           setDone(null);
           setPauseError(null);
+          setMuteError(null);
           setExportNote(null);
           setInlineData(null);
         }}
@@ -168,6 +210,24 @@ export default function SafetyMenu({ token, paused = false }: { token: string; p
                     Predatory behaviour, scams, or breaking the rules.
                   </span>
                 </button>
+                {!paused && (
+                  <button
+                    onClick={toggleMute}
+                    disabled={busy}
+                    data-testid="mute-messages"
+                    className="mt-2 w-full rounded-xl border border-line px-4 py-3 text-left text-sm text-ink transition hover:border-[var(--brand-ui)] disabled:opacity-50"
+                  >
+                    {muted ? "🔔" : "🔕"} {muteMenuLabel(creatorTitle, muted)}
+                    <span className="mt-0.5 block text-xs text-muted">
+                      {muteMenuExplanation(creatorTitle, muted)}
+                    </span>
+                  </button>
+                )}
+                {muteError && (
+                  <p role="alert" data-testid="mute-error" className="mt-2 text-center text-xs text-amber-300">
+                    {muteError}
+                  </p>
+                )}
                 {!paused && (
                   <button
                     onClick={() => setMode("exclude")}

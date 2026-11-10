@@ -46,7 +46,7 @@ export const LEGAL = {
    * prints the new value. Update it ONLY together with `version` and
    * `effectiveDate` (docs/LEGAL_NOTES.md, "Version discipline").
    */
-  textHash: "3a8b21c1673ff372a48c6f3171ec6ac03a0f9087cc99a9491618d286468a569b",
+  textHash: "977ab93456ce283ca116591d96f061c21da6aa6382367a58b9068809599dc6a9",
   /** The change announced for a coming version, or null when none is announced. */
   upcoming: null as LegalChangeNotice | null,
   /** Advance notice before a material change to either document, or a creator fee, takes effect. */

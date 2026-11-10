@@ -51,6 +51,7 @@ export {
   selfExclude,
   updateFanMeta,
   ackFan,
+  setFanChatMute,
 } from "./fans";
 export { getCreatorObligations, obligationsFrom } from "./obligations";
 export { requestGameUnlock, listGameUnlockRequests } from "./gameUnlock";

@@ -39,11 +39,15 @@ export interface FanDataExport extends ExportStatus {
     referralCode: string | null;
     joinedThroughAReferral: boolean;
     friendsReferred: number;
+    /** TS-13: whether the creator has blocked you. */
+    blocked: boolean;
   };
   consents: {
     ageAndTermsAcceptedAt: string | null;
     termsVersion: string | null;
     leaderboardOptIn: boolean;
+    /** TS-17: when you muted this creator's messages (null = not muted). */
+    chatMutedAt: string | null;
   };
   links: {
     /** Last characters only, so this file can't be used to open every link. */
@@ -57,7 +61,8 @@ export interface FanDataExport extends ExportStatus {
     spinsGrantedTotal: number;
     lastSpinAt: string | null;
   }[];
-  topUps: { at: string; spins: number; bonusSpins: number }[];
+  /** TS-13: amountCents is the amount the creator noted against the top-up (0 when none). */
+  topUps: { at: string; spins: number; bonusSpins: number; amountCents: number }[];
   spins: {
     gameKind?: string;
     kind?: "play" | "bonus";
@@ -117,7 +122,7 @@ export interface CreatorDataExport extends ExportStatus {
 }
 
 export const FAN_EXPORT_EXCLUDED = [
-  "Creator-private notes, tags, costs, due dates, queue snoozes and templates",
+  "Creator-private notes, tags, prize costs, due dates, queue snoozes and templates",
   "Records of unrelated people, full personal-link tokens and future spin seeds",
   "Device credentials, webhook destinations and reward values, hints, fingerprints and encryption material",
 ];

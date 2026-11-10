@@ -5,6 +5,7 @@ import type { ChatMessage, FanThread, RedemptionItem } from "@/lib/data/types";
 import { seatPath, seatTabs, type SeatCreatorView, type SeatTab } from "./seatWorkspace";
 import LoadFailed from "@/components/dashboard/LoadFailed";
 import { loadJson } from "@/lib/hooks/loadJson";
+import { CREATOR_MUTED_MESSAGE } from "@/lib/fan/chatMute";
 
 // A19: where a staff seat does its job for the creators it is scoped to. A
 // chatter gets that creator's inbox only, a fulfiller the prize queue only, a
@@ -149,7 +150,11 @@ function SeatInbox({ creatorId, onError, onDraft }: { creatorId: string; onError
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fanId, body: draft, creatorId }),
       });
-      if (!r.ok) return onError("The reply was not sent.");
+      if (!r.ok) {
+        // TS-17: refused because the fan muted this creator's messages.
+        const refusal = (await r.json().catch(() => ({}))) as { error?: unknown };
+        return onError(r.status === 409 && refusal.error === "muted" ? CREATOR_MUTED_MESSAGE : "The reply was not sent.");
+      }
       setDraft("");
       onDraft?.("");
       await loadThread(fanId);

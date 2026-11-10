@@ -18,6 +18,7 @@ import { DEFAULT_SHOW_DETAILS } from "@/lib/push/config";
 import { toPushPayload } from "@/lib/push/payload";
 import { currentPushSubscription } from "@/lib/push/browser";
 import { usePushAvailable } from "./usePushAvailable";
+import { CREATOR_MUTED_MESSAGE } from "@/lib/fan/chatMute";
 
 /** A few one-tap canned replies the creator can drop into the composer. */
 const QUICK_REPLIES = [
@@ -693,6 +694,8 @@ function Thread({
   // threads or sections never loses it; a reload asks first (DashboardClient).
   const [draft, setDraft, clearDraft] = useSessionDraft(`inbox-reply:${fan.fanId}`, "", "an unsent reply");
   const [sending, setSending] = useState(false);
+  // TS-17: the fan muted this creator's messages; the send was refused.
+  const [mutedNote, setMutedNote] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -797,9 +800,19 @@ function Thread({
         if (res.ok) {
           // Reload the canonical thread, then drop the optimistic copy so we
           // don't double-render the now-persisted message.
+          setMutedNote(null);
           await load();
           setPending((p) => p.filter((m) => m.localId !== localId));
           return true;
+        }
+        // TS-17: refused because the fan muted the creator. A retry would be
+        // refused again, so the bubble goes, the text returns to the composer
+        // and the reason is said where the creator is typing.
+        if (res.status === 409 && ((await res.json().catch(() => ({}))) as { error?: unknown }).error === "muted") {
+          setPending((p) => p.filter((m) => m.localId !== localId));
+          setDraft((d) => (d.trim() ? d : body));
+          setMutedNote(CREATOR_MUTED_MESSAGE);
+          return false;
         }
       } catch {
         /* fall through to failed */
@@ -809,7 +822,7 @@ function Thread({
       );
       return false;
     },
-    [fan.fanId, load]
+    [fan.fanId, load, setDraft]
   );
 
   const send = async () => {
@@ -931,6 +944,11 @@ function Thread({
           </button>
         ))}
       </div>
+      {mutedNote && (
+        <p role="alert" data-testid="send-muted" className="px-3.5 pt-2 text-xs text-amber-200">
+          {mutedNote}
+        </p>
+      )}
       <div className="flex items-center gap-2 p-3 pt-2">
         <input
           value={draft}

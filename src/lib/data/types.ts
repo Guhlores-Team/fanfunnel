@@ -49,7 +49,7 @@ export interface HappyHour { id: string; wheelId: string; multiplier: number; st
 export interface HappyHourStatus { active: boolean; multiplier: number; endsAt: string | null }
 export type MessageSender = "fan" | "creator";
 /** Phase 3: a single chat message between a fan and a creator. */
-export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null; /** WG-07, creator side only: the team member who sent this reply for the creator. Never sent to fans. */ via?: string }
+export interface ChatMessage { id: string; sender: MessageSender; body: string; at: string; readAt: string | null; /** WG-07, creator side only: the team member who sent this reply for the creator. Never sent to fans. */ via?: string; /** TS-07: a creator message written by a team member, not the creator. Worked out on the server; the account id itself never leaves it. */ fromTeam?: boolean }
 /** Phase 3: a creator's inbox thread with one fan. */
 export interface FanThread { fanId: string; fanName: string; lastBody: string; lastAt: string; unread: number }
 /** Wave 3: a creator's editable auto intro/outro chat messages. */
@@ -92,6 +92,8 @@ export interface FanPassView {
    * never opts them in.
    */
   leaderboardOptIn?: boolean;
+  /** TS-17: this fan muted the creator's messages (fans.chat_muted_at set). */
+  chatMuted?: boolean;
   /** Phase 8C: optional personal note + avatar from the creator (mini-hero). */
   creatorNote?: string | null;
   creatorAvatarUrl?: string | null;
@@ -372,6 +374,8 @@ export interface FanDetail {
   dataStatus?: DataReadStatus;
   fanId: string; name: string;
   blocked: boolean; // fan is currently blocked (fans.blocked_at set)
+  /** TS-17: the fan muted the creator's messages (fans.chat_muted_at set). */
+  chatMuted?: boolean;
   /** RM-6: when the fan's break ends (null / absent = not on a break). */
   breakUntil?: string | null;
   notes: string | null; // free-form creator notes about the fan

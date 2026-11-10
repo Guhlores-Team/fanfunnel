@@ -13,7 +13,7 @@ const direct = [
   "src/app/api/fan-data/delete/route.ts",
   "src/app/api/fan-data/export/route.ts",
 ] as const;
-const viaFanToken = ["src/app/api/fan/reward/route.ts", "src/app/api/fan/break/route.ts"] as const;
+const viaFanToken = ["src/app/api/fan/reward/route.ts", "src/app/api/fan/break/route.ts", "src/app/api/fan/mute/route.ts"] as const;
 const read = (file: string) => readFileSync(new URL(`../../../${file}`, import.meta.url), "utf8");
 let passed = 0;
 for (const file of direct) {

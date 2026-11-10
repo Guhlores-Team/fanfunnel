@@ -64,6 +64,7 @@ export type FanPassRow = {
     acked_terms_version?: string | null;
     leaderboard_opt_in?: boolean | null;
     blocked_at?: string | null;
+    chat_muted_at?: string | null; // TS-17 (0073)
   } | null;
   creator: {
     display_name: string | null;
@@ -92,7 +93,7 @@ const fanReadClient = () => createServiceClient({ timeoutMs: FAN_READ_TIMEOUT_MS
  */
 export const readFanPassRow = cache(async (token: string): Promise<{ sb: ReturnType<typeof createServiceClient>; pass: FanPassRow | null }> => {
   const sb = fanReadClient();
-  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in, blocked_at)`;
+  const FAN = `fan:fans(id, display_name, handle, spins_remaining, spins_granted_total, referral_code, acked_at, acked_terms_version, leaderboard_opt_in, blocked_at, chat_muted_at)`;
   const CREATOR = `creator:profiles(display_name, tip_url, leaderboard_enabled, creator_note, avatar_url, pwa_icon_mode, is_active, approval_status, role)`;
   const primary = await sb
     .from("fan_passes")
@@ -259,6 +260,8 @@ async function readFanPassView(token: string): Promise<FanPassView | null> {
     leaderboardEnabled: pass.creator?.leaderboard_enabled ?? false,
     // Default false: anything other than an explicit true means "not opted in".
     leaderboardOptIn: pass.fan.leaderboard_opt_in === true,
+    // TS-17: the fan's own choice, shown on their Safety menu.
+    chatMuted: pass.fan.chat_muted_at != null,
     creatorNote: pass.creator?.creator_note ?? null,
     creatorAvatarUrl: pass.creator?.avatar_url ?? null,
     nextSpinHash,
