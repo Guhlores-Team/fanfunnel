@@ -91,6 +91,7 @@ async function main() {
   check("…a query parameter cannot change the name", !(out.html ?? "").includes("attacker@evil.example"));
   out = await render({ auth_link: "expired", type: "email_change" });
   check("A6: a failed e-mail change link says why nothing changed", /data-testid="signed-in-link-notice"/.test(out.html ?? "") && /e-mail change link was already used or has expired/.test(out.html ?? "") && /Nothing was changed/.test(out.html ?? ""));
+  check("A6: …and whose session this is (from the session)", /You(&#x27;|')re signed in as applicant@example\.com\./.test(out.html ?? ""));
   out = await render({ auth_link: "busy", type: "recovery" });
   check("A6: a transient failure says the link is still good", /still good/.test(out.html ?? "") && !/used|expired/.test((out.html ?? "").match(/data-testid="signed-in-link-notice"[^>]*>(.*?)<a /)?.[1] ?? "x used"));
   out = await render({});

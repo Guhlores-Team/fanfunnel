@@ -48,7 +48,7 @@ export default function SessionNotices({
       {failed && (
         <div role="status" data-testid="signed-in-link-notice" data-link-reason={reason ?? ""} className={box}>
           <span className="font-bold text-ink">{failed.title}.</span> <span>{failed.body}</span>
-          {email && <span> You&rsquo;re signed in as {email}.</span>}
+          {email && <span>{` You're signed in as ${email}.`}</span>}
           {dismiss}
         </div>
       )}
