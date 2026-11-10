@@ -64,6 +64,19 @@ npm run e2e:supabase                             # live TEST project: RLS + RPC 
   /verify, /leaderboard). These pages render user content only through React's escaping. Moving a
   route onto the nonce policy means adding it to the proxy and keeping it dynamic.
 
+## Reporting a vulnerability
+
+Please report security problems privately, never in a public issue or pull request:
+
+- **GitHub private vulnerability reporting** (Security → Report a vulnerability), once the owner
+  has enabled it (`docs/GO_LIVE.md` section 2, SC-03), or
+- e-mail the contact in `/.well-known/security.txt` (`support@easysimplesites.org`; until that
+  domain has inbound mail, see `docs/handoff/OWNER_STEPS.md` item 35).
+
+We acknowledge within 3 working days and keep you informed until the fix ships. Do not test
+against the live site with real fans' data; use the Preview (TEST database) and never exfiltrate
+another tenant's rows. Fan links, codes and keys found during research must not be published.
+
 ## If you suspect a leak
 1. Run `node scripts/security/rls-runtime-test.mjs` and `npm run e2e:supabase` against the TEST project. They fail loudly and name the table.
 2. Check the offending table's policies in `supabase/migrations_combined.sql`.
