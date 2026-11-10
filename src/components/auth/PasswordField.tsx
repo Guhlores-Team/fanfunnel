@@ -44,6 +44,9 @@ export default function PasswordField({
   const described = [describedBy, caps ? capsId : null].filter(Boolean).join(" ") || undefined;
   return (
     <div className={className}>
+      <label htmlFor={id} className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.05em] text-white/60">
+        {label}
+      </label>
       <div className="relative">
         <input
           id={id}

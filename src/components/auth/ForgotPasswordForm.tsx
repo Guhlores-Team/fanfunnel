@@ -73,6 +73,9 @@ export default function ForgotPasswordForm() {
       <h1 className="text-lg font-bold">Reset your password</h1>
       <p className="mt-1 text-sm text-white/50">Enter your account email and we&rsquo;ll send you a reset link.</p>
 
+      <label htmlFor="forgot-email" className="mt-5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-white/60">
+        Email address
+      </label>
       <input
         id="forgot-email"
         name="email"
@@ -82,7 +85,7 @@ export default function ForgotPasswordForm() {
         aria-label="Email address"
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? "forgot-error" : undefined}
-        className="ff-input mt-5 w-full"
+        className="ff-input mt-1 w-full"
         placeholder="you@example.com"
         value={email}
         onChange={(e) => setEmail(e.target.value)}

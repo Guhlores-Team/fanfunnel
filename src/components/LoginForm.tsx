@@ -173,35 +173,45 @@ export default function LoginForm({ params }: { params: LoginParams }) {
 
       <div className="mt-5 space-y-3">
         {mode === "signup" && (
-          <input
-            id="login-display-name"
-            name="display_name"
-            autoComplete="nickname"
-            required
-            minLength={2}
-            maxLength={80}
-            aria-label="Display name"
-            className="ff-input w-full"
-            placeholder="Display name (how fans know you)"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-          />
+          <div>
+            <label htmlFor="login-display-name" className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.05em] text-white/60">
+              Display name
+            </label>
+            <input
+              id="login-display-name"
+              name="display_name"
+              autoComplete="nickname"
+              required
+              minLength={2}
+              maxLength={80}
+              aria-label="Display name"
+              className="ff-input w-full"
+              placeholder="Display name (how fans know you)"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </div>
         )}
-        <input
-          ref={emailRef}
-          id="login-email"
-          name="email"
-          type="email"
-          required
-          autoComplete="email"
-          aria-label="Email address"
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? "login-error" : undefined}
-          className="ff-input w-full"
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
+        <div>
+          <label htmlFor="login-email" className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.05em] text-white/60">
+            Email address
+          </label>
+          <input
+            ref={emailRef}
+            id="login-email"
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+            aria-label="Email address"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? "login-error" : undefined}
+            className="ff-input w-full"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
         <PasswordField
           value={password}
           onChange={setPassword}
